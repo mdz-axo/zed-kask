@@ -59,7 +59,7 @@ The canonical examples included above (`sankey-flow/sankey-examples.j2`) are str
 - **Never fabricate nodes or edges.** Examples do not supply missing user data. A missing weight on a stated edge is a unitless `value=1` placeholder, not a measured count.
 - **Income statements with losses**: only if the loss or benefit is actually supplied by the user/source, model it as an inflow rather than inventing a branch. The accounting equation alone does not supply a weight or edge.
 - **Do NOT interrogate.** Extract what's in the prompt and flag gaps as notes. The agent can follow up if needed.
-- Do not declare the example's ontology label as the user's concept. Resolve actual terms with `onto_anchor`; financial terms use FIBO only on a returned FIBO match. Conservation is checked later on sourced edges.
+- Do not declare the example's ontology label as the user's concept. Resolve actual terms with `onto_anchor`; a domain anchor applies only when a published term actually resolves there. Conservation is checked later on sourced edges.
 
 ## Output
 

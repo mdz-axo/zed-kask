@@ -108,12 +108,11 @@ pub struct CanonicalTerms {
     pub concepts: Vec<String>,
 }
 
-/// Full published domain vocabularies in stable resolution order. FIBO
-/// precedes RDF Data Cube; OMC precedes PKO for media terms. DPV and CSO are
+/// Full published domain vocabularies in stable resolution order. RDF Data
+/// Cube precedes OMC; OMC precedes PKO for media terms. DPV and CSO are
 /// appended last so no existing domain resolution shifts: they claim only
 /// terms no earlier domain vocabulary already anchors.
 const PUBLISHED_DOMAIN: &[&str] = &[
-    "FIBO",
     "RDF Data Cube",
     "OMC",
     "PKO",
@@ -285,32 +284,15 @@ mod tests {
     #[test]
     fn resolves_each_ladder_rung_and_always_terminates() {
         for (term, tier, namespace, concept) in [
-            (
-                "corporation",
-                "domain_supplement",
-                "FIBO",
-                "fibo-be-le-cb:Corporation",
-            ),
+            ("corporation", "upper", "SUMO", sumo::CORPORATION),
             ("assertion", "domain_supplement", "SEPIO", sepio::ASSERTION),
             ("Provenance", "domain_supplement", "OMC", "omc:Provenance"),
             ("State", "domain_supplement", "OMC", "omc:State"),
             ("net margin", "derived", "derived", "net_margin"),
-            (
-                "term structure",
-                "domain_supplement",
-                "FIBO",
-                "fibo-ind-ind-ind:TermStructure",
-            ),
-            (
-                "interest rate",
-                "domain_supplement",
-                "FIBO",
-                "fibo-fnd-acc-cur:InterestRate",
-            ),
             ("quantity", "upper", "SUMO", "sumo:Quantity"),
             ("zephyr coefficient", "core", "core", "5w1h_core"),
             // Accepted alias loss (stopgap retired 2026-09-20): the derived
-            // aliases died with the entry; core ground, never a false FIBO pin.
+            // aliases died with the entry; core ground, never a false pin.
             ("cmp term structure", "core", "core", "5w1h_core"),
         ] {
             let resolved = resolve_term(term);
@@ -320,32 +302,33 @@ mod tests {
         }
     }
 
-    /// expect: a FIBO Release concept outside the named constants resolves
-    /// with the source's definition and its real, pinned module identity.
+    /// expect: a term outside the named constants resolves through the
+    /// published ladder with the source's definition and its real, pinned
+    /// source identity — here SUMO's FinancialOntology extension.
     #[test]
-    fn full_fibo_release_resolves_beyond_named_constants() {
-        let result = resolve_term("fibo-be-le-cb:BenefitCorporation");
-        assert_eq!(result.tier, "domain_supplement");
-        assert_eq!(result.namespace, "FIBO");
-        assert_eq!(result.concept, "fibo-be-le-cb:BenefitCorporation");
+    fn published_upper_resolves_beyond_named_constants() {
+        let result = resolve_term("sumo:ConsumerPriceIndex");
+        assert_eq!(result.tier, "upper");
+        assert_eq!(result.namespace, "SUMO");
+        assert_eq!(result.concept, "sumo:ConsumerPriceIndex");
         assert!(
             result
                 .definition
                 .as_deref()
-                .is_some_and(|text| text.contains("not-for-profit"))
+                .is_some_and(|text| text.contains("inflationary indicator"))
         );
-        assert!(result.source.as_deref().is_some_and(|source| {
-            source.contains("BE/LegalEntities/CorporateBodies.rdf") && source.contains("f59157fe")
-        }));
+        assert!(
+            result
+                .source
+                .as_deref()
+                .is_some_and(|source| source.contains("FinancialOntology.kif"))
+        );
     }
 
     /// expect: publisher lifecycle metadata remains distinct from the
     /// definition, even when the publisher supplies no definition text.
     #[test]
     fn publisher_status_does_not_masquerade_as_definition() {
-        let deprecated = resolve_term("fibo-be-corp-corp:BoardAgreement");
-        assert_eq!(deprecated.definition, None);
-        assert_eq!(deprecated.status.as_deref(), Some("deprecated"));
         let superseded = resolve_term("schema:Code");
         assert_eq!(
             superseded.status.as_deref(),
@@ -657,14 +640,13 @@ mod tests {
             ]
         );
         assert_eq!(
-            canonical.ontology_tags["fibo"],
-            ["fibo-be-le-cb:Corporation"]
+            canonical.ontology_tags["sumo"],
+            ["sumo:Corporation", "sumo:Quantity"]
         );
-        assert_eq!(canonical.ontology_tags["sumo"], ["sumo:Quantity"]);
         assert_eq!(canonical.ontology_tags["core"], ["5w1h_core"]);
         assert_eq!(
             canonical.concepts,
-            ["fibo-be-le-cb:Corporation", "sumo:Quantity", "5w1h_core"]
+            ["sumo:Corporation", "sumo:Quantity", "5w1h_core"]
         );
     }
 

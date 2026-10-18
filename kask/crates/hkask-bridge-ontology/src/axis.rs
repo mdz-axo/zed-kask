@@ -1,7 +1,7 @@
 //! Dual-axis domain-selection logic (P5.4 / P8.1).
 //!
 //! The two universal axes — state (Dublin Core) and process (PKO) — are
-//! always available. Domain supplements (FIBO, SEPIO, GOLEM, ML-Schema, RDF
+//! always available. Domain supplements (SEPIO, GOLEM, ML-Schema, RDF
 //! Data Cube, OMC — the `OntologyNamespace` variants) layer on top where the
 //! universal axes aren't specific enough for a domain.
 //!
@@ -48,8 +48,6 @@ pub enum OntologyAxis {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OntologyNamespace {
-    /// Financial Industry Business Ontology — financial / company analysis.
-    Fibo,
     /// SEPIO — scientific evidence and provenance: evidence, support,
     /// dispute, contradiction, confidence.
     Sepio,
@@ -72,7 +70,6 @@ impl std::str::FromStr for OntologyNamespace {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "fibo" => Ok(OntologyNamespace::Fibo),
             "sepio" => Ok(OntologyNamespace::Sepio),
             "golem" => Ok(OntologyNamespace::Golem),
             "mlschema" | "ml_schema" | "ml-schema" => Ok(OntologyNamespace::MlSchema),
@@ -87,7 +84,6 @@ impl std::str::FromStr for OntologyNamespace {
 impl std::fmt::Display for OntologyNamespace {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            OntologyNamespace::Fibo => write!(f, "fibo"),
             OntologyNamespace::Sepio => write!(f, "sepio"),
             OntologyNamespace::Golem => write!(f, "golem"),
             OntologyNamespace::MlSchema => write!(f, "mlschema"),
@@ -114,7 +110,7 @@ pub enum OntologyAnchor {
     /// Process axis (PKO) or state axis (DC+BIBO) — dual-axis framework (P5.4).
     /// `concept` is the canonical concept URI, e.g. "pko:StepExecution" or "bibo:Article".
     DualAxis { axis: OntologyAxis, concept: String },
-    /// Domain supplement — FIBO, SEPIO, GOLEM, ML-Schema, or SUMO (P8.1).
+    /// Domain supplement — SEPIO, GOLEM, ML-Schema, or SUMO (P8.1).
     /// Layered on top of the dual-axis core for domain-specific precision.
     /// SUMO is the universal fallback for domains without a specific supplement.
     DomainSupplement {
@@ -126,10 +122,10 @@ pub enum OntologyAnchor {
 impl OntologyAnchor {
     /// Return the information density expectation for this ontology tier.
     /// hKask tuning choices (not values derived from any published
-    /// source): FIBO-tagged financial passages and ML-Schema/Data Cube-tagged
-    /// statistical passages carry denser extractable content than the
-    /// baseline. Pinned by `ontology_anchor_density_factors` in the
-    /// condenser; adjust only with condenser-quality evidence.
+    /// source): ML-Schema/Data Cube-tagged statistical passages carry denser
+    /// extractable content than the baseline. Pinned by
+    /// `ontology_anchor_density_factors` in the condenser; adjust only with
+    /// condenser-quality evidence.
     pub fn density_factor(&self) -> f64 {
         match self {
             OntologyAnchor::Core => 1.0,
@@ -138,7 +134,6 @@ impl OntologyAnchor {
                 OntologyAxis::DcBibo => 1.0,
             },
             OntologyAnchor::DomainSupplement { namespace, .. } => match namespace {
-                OntologyNamespace::Fibo => 1.3,
                 OntologyNamespace::Sepio => 1.0,
                 OntologyNamespace::Golem => 1.0,
                 OntologyNamespace::MlSchema => 1.1,
@@ -175,7 +170,7 @@ impl OntologyAnchor {
 /// concept has no fit in the narrowest applicable ontology, the anchor
 /// falls to progressively broader scopes until one fits:
 ///
-/// 1. **Domain supplement** — RDF Data Cube, FIBO, SEPIO, GOLEM, ML-Schema, OMC: the
+/// 1. **Domain supplement** — RDF Data Cube, SEPIO, GOLEM, ML-Schema, OMC: the
 ///    domain's specific ontology, when the concept exists in its
 ///    published vocabulary. Never force a concept into an ontology that
 ///    has no place for it in its graph.
@@ -227,30 +222,6 @@ pub fn select_ontology_anchor(domain: &str) -> OntologyAnchor {
         return OntologyAnchor::DomainSupplement {
             namespace: OntologyNamespace::DataCube,
             concept: data_cube::DATA_SET.to_string(),
-        };
-    }
-    // Financial / company analysis → FIBO. Only domains FIBO's data space
-    // actually covers (companies, securities, portfolios, financial
-    // instruments). Forecasting, scenarios, and prediction markets are NOT
-    // FIBO concepts — they route to PKO (process) and Dublin Core (state)
-    // respectively (operator decision 2026-08-29: never force a concept into
-    // an ontology that has no place for it in its graph).
-    if [
-        "finance",
-        "financial",
-        "company",
-        "companies",
-        "stock",
-        "portfolio",
-        "dcf",
-        "screener",
-    ]
-    .iter()
-    .any(|kw| matches_kw(kw))
-    {
-        return OntologyAnchor::DomainSupplement {
-            namespace: OntologyNamespace::Fibo,
-            concept: dc_bibo::DATASET.to_string(),
         };
     }
     // Scientific reasoning → SEPIO.
@@ -353,7 +324,7 @@ pub fn select_ontology_anchor(domain: &str) -> OntologyAnchor {
         };
     }
     // Prediction markets → DC+BIBO dual-axis (state). A market is a general
-    // entity, not a FIBO financial instrument — Dublin Core's data space is
+    // entity, not a financial instrument — Dublin Core's data space is
     // the generalist state axis where it has a place (operator decision
     // 2026-08-29). Market records/quotes are datasets.
     if [
@@ -398,8 +369,7 @@ mod tests {
     /// Pin the operator decision (2026-08-29): never force a concept into an
     /// ontology that has no place for it in its graph. Forecasting and
     /// scenario-building are processes → PKO; prediction markets are general
-    /// market entities → Dublin Core; only domains FIBO's data space covers
-    /// (companies, securities, portfolios) route to FIBO.
+    /// market entities → Dublin Core.
     #[test]
     fn dispatch_routes_concepts_to_ontologies_that_have_them() {
         // Forecasting / scenarios are processes → PKO dual-axis.
@@ -445,18 +415,6 @@ mod tests {
                     concept: sumo::ENTITY.to_string(),
                 },
                 "a statistical hint alone does not establish a cube: {domain}"
-            );
-        }
-        // Financial domains FIBO actually covers stay on the FIBO supplement.
-        for domain in ["finance", "company", "stock", "portfolio"] {
-            let anchor = select_ontology_anchor(domain);
-            assert_eq!(
-                anchor,
-                OntologyAnchor::DomainSupplement {
-                    namespace: OntologyNamespace::Fibo,
-                    concept: dc_bibo::DATASET.to_string(),
-                },
-                "domain '{domain}' must stay on the FIBO supplement"
             );
         }
         // Media tools route to OMC — the condenser derives anchors from

@@ -172,7 +172,7 @@ pub fn mcp_server_db(server_id: &str, purpose: &str) -> PathBuf {
 
 /// Returns the relative path `mcp/{server_id}/{subdir}` for a server's
 /// internal directory (e.g. `mcp/swarm/agents/curated`,
-/// `mcp/companies/fibo-cache`, `mcp/corpus/ocr-health.json`). The caller
+/// `mcp/scenarios/forecasts`, `mcp/corpus/ocr-health.json`). The caller
 /// resolves this against the data dir via `resolve_under_data_dir`.
 ///
 /// This is the directory equivalent of [`mcp_server_db`] — use it for any
@@ -181,7 +181,7 @@ pub fn mcp_server_db(server_id: &str, purpose: &str) -> PathBuf {
 /// `servers/`) touches one helper, not 10+ call sites.
 ///
 /// Internal-system servers only (kata-kanban, swarm, scenarios, ...). The
-/// content servers (research, companies, corpus) use
+/// content servers (research, media, corpus) use
 /// [`mcp_artifacts_subdir`] under the visible artifacts dir instead.
 pub fn mcp_server_subdir(server_id: &str, subdir: &str) -> PathBuf {
     let base = PathBuf::from(MCP_DIR).join(sanitize_name(server_id));
@@ -392,8 +392,8 @@ mod tests {
     #[test]
     fn mcp_server_subdir_handles_empty_and_nested() {
         assert_eq!(
-            mcp_server_subdir("companies", "fibo-cache"),
-            PathBuf::from("mcp/companies/fibo-cache")
+            mcp_server_subdir("scenarios", "forecasts"),
+            PathBuf::from("mcp/scenarios/forecasts")
         );
         assert_eq!(mcp_server_subdir("swarm", ""), PathBuf::from("mcp/swarm"));
     }
@@ -428,7 +428,7 @@ mod tests {
         for relative in [
             agent_db("curator"),
             mcp_server_db("swarm", "memory"),
-            mcp_server_subdir("companies", "fibo-cache"),
+            mcp_server_subdir("scenarios", "forecasts"),
         ] {
             let resolved = resolve_under_data_dir(&relative);
             assert!(resolved.starts_with(resolve_data_dir()));
@@ -441,8 +441,8 @@ mod tests {
         // {artifacts_dir}/{server}-mcp/{artifact-type}/ — visible under
         // ~/Documents/zk-data/, never under the hidden internal data dir.
         assert_eq!(
-            mcp_artifacts_subdir("companies", "reports"),
-            PathBuf::from("companies-mcp/reports")
+            mcp_artifacts_subdir("research", "reports"),
+            PathBuf::from("research-mcp/reports")
         );
         assert_eq!(
             mcp_artifacts_subdir("media", "generated"),
@@ -463,7 +463,7 @@ mod tests {
         // The route must resolve under the artifacts dir (Documents-anchored)
         // and must NOT resolve under the internal data dir — the whole point
         // of the route is user visibility.
-        let relative = mcp_artifacts_subdir("companies", "reports");
+        let relative = mcp_artifacts_subdir("research", "reports");
         let resolved = resolve_under_artifacts_dir(&relative);
         assert!(resolved.starts_with(resolve_artifacts_dir()));
         assert!(!resolved.starts_with(resolve_data_dir()));

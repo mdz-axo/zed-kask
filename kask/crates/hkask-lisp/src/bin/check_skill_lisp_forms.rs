@@ -639,23 +639,23 @@ form: "(= (+ a b) 3)"
         );
 
         // PS-1 applies the ontology/spec modifiers exactly once. The prose
-        // receipt (base 0.7, FIBO + spec-checked -> 0.8) is pinned here so a
-        // modifier edit cannot silently diverge from the documented value.
-        let pragmatic_semantics = skill_candidate("pragmatic-semantics", "fibo_anchored");
-        let fibo_spec_checked = json!({
+        // receipt (base 0.7, domain anchor + spec-checked -> 0.8) is pinned
+        // here so a modifier edit cannot silently diverge from the documented value.
+        let pragmatic_semantics = skill_candidate("pragmatic-semantics", "domain_anchored");
+        let domain_spec_checked = json!({
             "base_confidence": 0.7,
-            "fibo_anchored": true,
+            "domain_anchored": true,
             "sumo_anchored": false,
             "spec_checked": true,
             "unanchored": false
         });
         assert_eq!(
-            eval_sandboxed(&pragmatic_semantics, &fibo_spec_checked).expect("PS-1 anchored case"),
+            eval_sandboxed(&pragmatic_semantics, &domain_spec_checked).expect("PS-1 anchored case"),
             json!(0.8)
         );
         let unanchored = json!({
             "base_confidence": 0.7,
-            "fibo_anchored": false,
+            "domain_anchored": false,
             "sumo_anchored": false,
             "spec_checked": false,
             "unanchored": true
@@ -667,7 +667,7 @@ form: "(= (+ a b) 3)"
     }
 
     /// The `PS-1` modifier values are stated in prose in the skill body and in
-    /// three companion templates. That prose drifted once already (FIBO +0.10 /
+    /// three companion templates. That prose drifted once already (domain +0.10 /
     /// SUMO +0.05 / unanchored -0.15 survived a gate edit to +0.05 / +0.03 /
     /// -0.10), so the documented values are pinned to the *gate's own* values
     /// rather than to literals: each modifier is derived by evaluating the live
@@ -675,14 +675,14 @@ form: "(= (+ a b) 3)"
     /// spelling. A gate edit that is not carried into the prose fails here.
     #[test]
     fn pragmatic_semantics_modifier_prose_matches_the_ps1_gate() {
-        let gate = skill_candidate("pragmatic-semantics", "fibo_anchored");
+        let gate = skill_candidate("pragmatic-semantics", "domain_anchored");
 
         let derive = |flag: &str| -> f64 {
             // A base of 0.5 keeps every branch clear of both clamps, so the
             // derived value is the modifier itself.
             let mut env = json!({
                 "base_confidence": 0.5,
-                "fibo_anchored": false,
+                "domain_anchored": false,
                 "sumo_anchored": false,
                 "spec_checked": false,
                 "unanchored": false
@@ -698,13 +698,13 @@ form: "(= (+ a b) 3)"
         // Non-vacuity control: a mutated gate yields a different derived value,
         // so the prose assertions below are bound to the real gate and cannot
         // pass against a stale one.
-        let mutated = gate.replace("fibo_anchored 0.05", "fibo_anchored 0.10");
+        let mutated = gate.replace("domain_anchored 0.05", "domain_anchored 0.10");
         assert_ne!(mutated, gate, "the control must actually mutate the gate");
-        let mutated_fibo = eval_sandboxed(
+        let mutated_domain = eval_sandboxed(
             &mutated,
             &json!({
                 "base_confidence": 0.5,
-                "fibo_anchored": true,
+                "domain_anchored": true,
                 "sumo_anchored": false,
                 "spec_checked": false,
                 "unanchored": false
@@ -715,12 +715,12 @@ form: "(= (+ a b) 3)"
         .expect("mutated PS-1 returns a number")
             - 0.5;
 
-        let fibo = derive("fibo_anchored");
+        let domain = derive("domain_anchored");
         let sumo = derive("sumo_anchored");
         let spec = derive("spec_checked");
         let unanchored = derive("unanchored");
         assert_ne!(
-            mutated_fibo, fibo,
+            mutated_domain, domain,
             "the control must be discriminating: a mutated gate must derive a different modifier"
         );
 
@@ -728,7 +728,7 @@ form: "(= (+ a b) 3)"
         // penalty is checked on its magnitude because the templates use the
         // typographic minus (U+2212) and the skill body the ASCII hyphen.
         let positive = |value: f64| format!("+{value:.2}");
-        let fibo_text = positive(fibo);
+        let domain_text = positive(domain);
         let sumo_text = positive(sumo);
         let spec_text = positive(spec);
         assert!(unanchored < 0.0, "the unanchored modifier is a penalty");
@@ -743,7 +743,7 @@ form: "(= (+ a b) 3)"
 
         let body = read(".agents/skills/pragmatic-semantics/SKILL.md");
         let expected_constraint_line = format!(
-            "FIBO {fibo_text}, SUMO {sumo_text}, spec_checked {spec_text}, unanchored -{unanchored_magnitude}"
+            "domain {domain_text}, SUMO {sumo_text}, spec_checked {spec_text}, unanchored -{unanchored_magnitude}"
         );
         assert!(
             body.contains(&expected_constraint_line),
@@ -754,8 +754,8 @@ form: "(= (+ a b) 3)"
         let conflict =
             read("kask/registry/templates/pragmatic-semantics/semantics-conflict-resolve.j2");
         assert!(
-            conflict.contains(&format!("the `PS-1` modifier is {fibo_text}")),
-            "semantics-conflict-resolve.j2 must carry the gate's FIBO modifier ({fibo_text})"
+            conflict.contains(&format!("the `PS-1` modifier is {domain_text}")),
+            "semantics-conflict-resolve.j2 must carry the gate's domain modifier ({domain_text})"
         );
         assert!(
             conflict.contains(&sumo_text),
@@ -765,16 +765,16 @@ form: "(= (+ a b) 3)"
         let provenance =
             read("kask/registry/templates/pragmatic-semantics/semantics-provenance-trace.j2");
         assert!(
-            provenance.contains(&format!("FIBO ({fibo_text}), SUMO ({sumo_text})")),
+            provenance.contains(&format!("domain ({domain_text}), SUMO ({sumo_text})")),
             "semantics-provenance-trace.j2 must carry the gate's modifiers \
-             (FIBO {fibo_text}, SUMO {sumo_text})"
+             (domain {domain_text}, SUMO {sumo_text})"
         );
 
         let classify =
             read("kask/registry/templates/pragmatic-semantics/semantics-classify-statement.j2");
         assert!(
-            classify.contains(&format!("| **FIBO** (financial) | {fibo_text} |")),
-            "semantics-classify-statement.j2 must carry the gate's FIBO modifier ({fibo_text})"
+            classify.contains(&format!("| **domain supplement** | {domain_text} |")),
+            "semantics-classify-statement.j2 must carry the gate's domain modifier ({domain_text})"
         );
         assert!(
             classify.contains(&format!("| **SUMO** (upper ontology) | {sumo_text} |")),

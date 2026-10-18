@@ -244,7 +244,7 @@ async fn public_tagging_identity_contract() {
             "dimensions":["what"],
             "dc_type":hkask_bridge_ontology::dc_bibo::DOCUMENT,
             "dc_subject":[],
-            "ontology_tags":{"fibo":["corporation"]},
+            "ontology_tags":{"sumo":["Corporation"]},
             "expertise_level":"analyst"
         }),
     ] {

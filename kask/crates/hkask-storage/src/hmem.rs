@@ -1147,7 +1147,7 @@ impl HMemStore {
     /// Query h_mems carrying at least one tag from an open-world ontology
     /// namespace (`$.ontology_tags.<namespace>`).
     ///
-    /// This is what makes adding a domain ontology (FIBO, GOLEM, SEPIO)
+    /// This is what makes adding a domain ontology (GOLEM, SEPIO, OMC)
     /// a data change rather than a schema change: the namespace is a key in
     /// the blob, and this query reaches it without a migration.
     ///

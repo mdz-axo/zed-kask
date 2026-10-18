@@ -136,7 +136,6 @@ mod tests {
         assert_eq!(tag_family("lrmoo"), Some("golem"));
         assert_eq!(tag_family("GOLEM"), Some("golem"));
         assert_eq!(tag_family("schema"), None);
-        assert_eq!(tag_family("fibo"), None);
     }
 
     /// Fabrication guard: every term in this module is published by the

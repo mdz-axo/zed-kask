@@ -9,9 +9,9 @@ Dynamic, example-anchored Sankey diagramming. Given a prompt, match it against a
 
 ## Ontological Grounding
 
-A Sankey is a weighted-flow diagram, not inherently a financial entity or a procedure. Keep the user's actual unit and flow vocabulary: widget counts, energy, currency, requests, and other flows all qualify. `onto_anchor` resolves “Sankey diagram” to the derived-tier `sankey_diagram` anchor (operator ruling 2026-09-26, grounded in Schmidt 2008, whose definition encodes the per-domain conservation modes); do not invent a more specific identity beyond it. For a real procedure, `pko:Procedure` may describe the depicted process; for a financial line item, use FIBO only when that *term* resolves there. Neither ontology applies to every diagram or edge. Record sourced quantities using PROV-O provenance (`prov:wasDerivedFrom`); DC+BIBO describes the output document, not its conservation rule.
+A Sankey is a weighted-flow diagram, not inherently a financial entity or a procedure. Keep the user's actual unit and flow vocabulary: widget counts, energy, currency, requests, and other flows all qualify. `onto_anchor` resolves “Sankey diagram” to the derived-tier `sankey_diagram` anchor (operator ruling 2026-09-26, grounded in Schmidt 2008, whose definition encodes the per-domain conservation modes); do not invent a more specific identity beyond it. For a real procedure, `pko:Procedure` may describe the depicted process. Neither ontology applies to every diagram or edge. Record sourced quantities using PROV-O provenance (`prov:wasDerivedFrom`); DC+BIBO describes the output document, not its conservation rule.
 
-Domain vocabulary is conditional: resolve financial terms individually before using FIBO; use PKO only for a flow that actually describes a procedure; retain the user's stage names and sourced units for widget, energy, data-pipeline, journey, and other flows. A coarse result stays coarse pending an operator ontology ruling.
+Domain vocabulary is conditional: resolve a flow's terms individually with `onto_anchor` before assigning any domain ontology; use PKO only for a flow that actually describes a procedure; retain the user's stage names and sourced units for widget, energy, data-pipeline, journey, and other flows. A coarse result stays coarse pending an operator ontology ruling.
 
 ## Canonical References
 
@@ -22,7 +22,6 @@ The skill builds on these established resources. Cite them in the output descrip
 - **Minard, C. J. (1869).** *Carte figurative et approximative des pertes successives en hommes de l'Armée Française dans la campagne de Russie 1812–1813.* Predates Sankey; Edward Tufte called it "the best statistical graphic ever drawn."
 - **Tufte, E. R. (1983).** *The Visual Display of Quantitative Information.* Chapters on Minard set the standard for flow-visualization data integrity.
 - **PROV-O** (W3C): `https://www.w3.org/TR/prov-o/` — the ontology for provenance, used for weight source tracking.
-- **FIBO** (EDM Council): `https://spec.edmcouncil.org/fibo/` — the ontology for financial concepts, used for financial-domain node taxonomies.
 - **PKO** (Carriero et al. 2025): `https://w3id.org/pko` — the ontology for procedural knowledge, used for flow structure.
 - **Mermaid Sankey docs**: `https://mermaid.js.org/syntax/sankey.html` — the rendering target.
 
@@ -97,12 +96,12 @@ Classify the prompt against these domains. Each domain carries: (a) a canonical 
 |---|---|---|---|---|
 | **process** | Process steps / stages | Throughput per unit time (items/hr, req/s) | **asserted** — flag discrepancies as questions | PKO only if a procedure |
 | **data-pipeline** | Sources → transformers → sinks | Record/byte volume | **asserted** — flag loss branches | Source vocabulary |
-| **resource-allocation** | Budget / capacity pools | Currency or resource units (FTE, GB, CPU) | **mandatory** when the quantities are conserved | FIBO only for resolved financial terms |
+| **resource-allocation** | Budget / capacity pools | Currency or resource units (FTE, GB, CPU) | **mandatory** when the quantities are conserved | Source vocabulary |
 | **user-journey** | Funnel stages / touchpoints | User count (or conversion %) | **none** — users can appear in multiple branches | User's stage names |
 | **energy-material** | Energy/material stocks and conversions | Energy (kWh) or mass (kg) | **mandatory** — first law | Sourced units |
 | **decision-funnel** | Decision branches with outcomes | Count of decisions per branch | **mandatory** — every decision goes somewhere | PKO only if a procedure |
 | **value-stream** | Value-stream map (lean) stages | Time (hr) or cost ($) per stage | **none** — time is not conserved; cost accumulates | Source vocabulary |
-| **cost-breakdown** | Cost categories → subcategories → outputs | Currency | **mandatory** for conserved allocations | FIBO only for resolved financial terms |
+| **cost-breakdown** | Cost categories → subcategories → outputs | Currency | **mandatory** for conserved allocations | Source vocabulary |
 | **conversion** (attribution) | Multi-channel attribution paths | Conversions or revenue | **none** — a conversion may be credited to multiple touches | Source vocabulary |
 | **system-architecture** | Services and request/data paths | Request volume or bandwidth | **asserted** — flag where requests are dropped | Source vocabulary |
 
@@ -170,7 +169,7 @@ When the MATCH step routes to research delegation (the prompt references an exte
 
 1. **Identify the source type**: URL (`web_extract`), file in project (`read_file` or `structured-extraction`), codebase (`grep` + manual analysis), ambiguous/multi-step (`metacognition`'s inquiry experiment).
 
-2. **Define the extraction schema**: Provide the same source/target/weight shape for any flow. Resolve domain terms with `onto_anchor`; FIBO is conditional on an actual financial concept:
+2. **Define the extraction schema**: Provide the same source/target/weight shape for any flow. Resolve domain terms with `onto_anchor`; a domain anchor is conditional on an actual published term resolving.
    ```json
    {
      "nodes": [{"id": "string", "label": "string", "ontology_concept": "tool-returned concept or coarse anchor"}],
@@ -212,7 +211,7 @@ over the node-rows balance form:
 - **CSV-safe node IDs.** IDs must be nonempty, unique, and contain no comma or newline. Preserve long source labels and name them in `adapt_notes`; never silently abbreviate an endpoint after extraction.
 - **One deterministic render.** `present-sankey.j2` serializes the original validated `edges` array; there is no model-authored Mermaid source and no corrective edge-remapping loop.
 - **Delegate, don't transcribe.** When the prompt references an external source, delegate extraction to a specialized skill. Do not ask the user to transcribe data that exists in a source.
-- **Cite canonical references** in the output when relevant (Schmidt 2008, FIBO, PROV-O, PKO).
+- **Cite canonical references** in the output when relevant (Schmidt 2008, PROV-O, PKO).
 - **Visual artifact surfacing** — the `present-sankey.j2` render step (rendering template) must be the process's final output step. It surfaces the fenced ```mermaid block as a raw markdown string so acp_thread's mermaid renderer picks it up. Removing it causes the diagram to stay buried in the adapt step's JSON output — the model must then discover and extract the `markdown` field, which is fragile.
 
 ## Registry Templates
@@ -262,7 +261,7 @@ Kafka Events,S3 Archive,120
 
 **Prompt**: "Sankey of our Q3 budget: $500K engineering, $300K sales, $200K marketing. Engineering splits into platform $200K and product $300K. Sales splits into direct $200K and partner $100K."
 
-**Classification**: domain = `cost-breakdown` (trigger "budget"; weight = currency; conservation = mandatory). Nodes and seven edges are user-stated; financial line-item ontology terms are resolved individually, not assigned FIBO by chart type.
+**Classification**: domain = `cost-breakdown` (trigger "budget"; weight = currency; conservation = mandatory). Nodes and seven edges are user-stated; each line-item term is resolved individually with `onto_anchor`, not assigned an ontology by chart type.
 
 **Spec gap**: none. Skip interrogation.
 
@@ -289,7 +288,7 @@ Sales,Partner,100
 ```
 ````
 
-**Check:** Engineering 500 in = 200+300 out; Sales 300 in = 200+100 out. The root allocation is 500+300+200 = 1000. No fabricated weights or unverified FIBO local names are needed.
+**Check:** Engineering 500 in = 200+300 out; Sales 300 in = 200+100 out. The root allocation is 500+300+200 = 1000. No fabricated weights or unverified ontology local names are needed.
 
 ### Example 3: Funnel with unknown exits (none mode)
 
@@ -318,39 +317,39 @@ Demos,Closed,10
 
 **Description**: The user supplied 1000 visitors, 200 signups, 50 demos and 10 closed. The three drawn edges carry only stated continuing counts; the destination of the other visitors is unknown, not a fabricated churn branch. Conservation status: `skipped` for this non-conserved journey. Note the unplotted 1000-visitor total in prose, not as an invented weighted edge.
 
-### Example 4: Research delegation (financial statement)
+### Example 4: Research delegation (external cost report)
 
-**Prompt**: "Sankey of Apple's latest income statement from their 10-K."
+**Prompt**: "Sankey of our cloud spend last quarter from the billing export."
 
-**Classification**: domain = `cost-breakdown` (financial; conservation = mandatory). Source: Apple 10-K (URL needed). Resolve actual extracted financial terms before applying FIBO to any node.
+**Classification**: domain = `cost-breakdown` (conservation = mandatory). Source: the billing export (URL needed). Resolve each extracted cost term with `onto_anchor` before assigning any ontology to a node.
 
 **Research delegation**:
-1. Source type: URL (SEC EDGAR or Apple investor relations).
+1. Source type: URL (the provider's billing or cost-explorer export).
 2. Call `web_extract` with a structured schema for the authorized source URL:
    ```json
    {
      "nodes": [{"id": "string", "label": "string", "ontology_concept": "actual onto_anchor result (including coarse when applicable)"}],
-     "edges": [{"source": "string", "target": "string", "weight": "number", "weight_unit": "USD millions", "weight_source": "Apple 10-K page X"}]
+     "edges": [{"source": "string", "target": "string", "weight": "number", "weight_unit": "USD", "weight_source": "billing export row N"}]
    }
    ```
-3. Validate: all weights sourced? Conservation holds (Revenue = COGS + OpEx + NetIncome)?
-4. If gaps (e.g., extraction missed a line item), mark them as placeholders: "Extraction found Revenue, COGS, NetIncome but not R&D or SG&A — those edges are marked value=1 (unweighted placeholders)."
+3. Validate: all weights sourced? Conservation holds (Total Spend = sum of service categories)?
+4. If gaps (e.g., extraction missed a service), mark them as placeholders: "Extraction found Compute, Storage and Egress but not Managed DB or Support — those edges are marked value=1 (unweighted placeholders)."
 
 **Draft**: use Example 2's layout only; retain sourced node labels and their actual ontology-resolution tiers.
 
-**Data sources**: Every weight carries `prov:wasDerivedFrom <Apple 10-K URL, page X>`.
+**Data sources**: Every weight carries `prov:wasDerivedFrom <billing export URL, row N>`.
 
-**References**: the returned financial-concept anchors (FIBO only if resolved), Schmidt 2008 Part II (cost-flow Sankeys), and the cited statement.
+**References**: the returned cost-concept anchors (whatever `onto_anchor` resolved, coarse included), Schmidt 2008 Part II (cost-flow Sankeys), and the cited export.
 
-### Example 5: Multi-diagram family (three financial statements)
+### Example 5: Multi-diagram family (a resource's three linked views)
 
-**Prompt**: "Visualize Apple's financial statements."
+**Prompt**: "Visualize this cluster's cost, capacity, and utilization."
 
-**Classification**: three financial-statement flows; resolve each term independently rather than claiming all nodes are FIBO-anchored:
-1. Income statement (Revenue → COGS, OpEx → NetIncome)
-2. Balance sheet (Assets = Liabilities + Equity)
-3. Cash flow statement (Operating → Investing → Financing → Net change in cash)
+**Classification**: three linked flows; resolve each term independently rather than claiming all nodes share one anchor:
+1. Cost (Total → service categories → sub-services)
+2. Capacity (Provisioned → reserved, on-demand, spot)
+3. Utilization (Allocated → consumed, idle, wasted)
 
-**Output**: three Sankeys, cross-linked. Each description notes the linkage (e.g., "NetIncome from the income-statement Sankey flows into RetainedEarnings in the balance-sheet Sankey"). This mirrors GuruFocus's three-chart approach.
+**Output**: three Sankeys, cross-linked. Each description notes the linkage (e.g., "the `Compute` node in the cost Sankey is the same pool whose allocation splits in the capacity Sankey").
 
-**References**: FIBO; GuruFocus (canonical example).
+**References**: Schmidt 2008 Part I/II (the canonical multi-view flow treatment).

@@ -56,16 +56,28 @@ pub(crate) enum CompactionPlan {
 
 /// What the deterministic pre-shrink did, for observability. A near-zero
 /// reduction on a large history is a policy smell the operator can see in
-/// the log line `stream_compaction` emits.
+/// the log line `stream_compaction` emits. Per-pass byte attribution turns
+/// each pass into an independently falsifiable claim: a pass that removes
+/// no measurable bytes on real coding threads is inert, and the log says so.
 pub(crate) struct ShrinkStats {
     /// Model-visible history bytes before the pre-shrink.
     pub(crate) original_bytes: usize,
     /// Model-visible history bytes after the pre-shrink.
     pub(crate) shrunk_bytes: usize,
+    /// Tool-result texts examined by the shrink passes.
+    pub(crate) result_texts: usize,
     /// Tool-result texts windowed head+tail to the per-result cap.
     pub(crate) windowed_results: usize,
+    /// Bytes removed by head+tail windowing (pass 2).
+    pub(crate) windowed_bytes: usize,
     /// Runs of identical adjacent lines collapsed to one line + count.
     pub(crate) collapsed_runs: usize,
+    /// Bytes removed by run-length collapse (pass 1) and the
+    /// parameterized-run collapse (C4).
+    pub(crate) collapsed_bytes: usize,
+    /// The active per-result window cap (the count-aware cap's value for
+    /// this history), for observability.
+    pub(crate) result_cap_bytes: usize,
 }
 
 impl ShrinkStats {
@@ -73,8 +85,12 @@ impl ShrinkStats {
         Self {
             original_bytes: total,
             shrunk_bytes: total,
+            result_texts: 0,
             windowed_results: 0,
+            windowed_bytes: 0,
             collapsed_runs: 0,
+            collapsed_bytes: 0,
+            result_cap_bytes: 0,
         }
     }
 
@@ -230,8 +246,199 @@ const MAX_RESULT_WINDOW_BYTES: usize = 64 * 1024;
 /// Runs of fewer than this many identical adjacent lines are kept verbatim.
 const REPEAT_RUN_THRESHOLD: usize = 3;
 
+/// What a dry-run census pass reports for one request: the bytes each
+/// deterministic pass would remove, with no mutation. The census is the
+/// measurement gate that decides whether a pass is built at all — a pass
+/// whose dry-run removes no measurable bytes on real coding threads is
+/// inert, and building it would repeat the retired condenser's failure
+/// (1.8% on the incident thread).
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct Census {
+    /// Tool-result texts scanned.
+    pub(crate) result_texts: usize,
+    /// Tool-result text bytes scanned (raw, not JSON-encoded).
+    pub(crate) scanned_bytes: usize,
+    /// Runs of 3+ identical adjacent non-blank lines that exact RLE would
+    /// collapse (the existing pass 1).
+    pub(crate) repeat_runs: usize,
+    /// Bytes exact RLE would remove.
+    pub(crate) repeat_run_bytes: usize,
+    /// Runs of 3+ adjacent lines identical except a single trailing numeric
+    /// field that the parameterized-run collapse would collapse (C4).
+    pub(crate) parameterized_runs: usize,
+    /// Bytes the parameterized-run collapse would remove (intermediate lines
+    /// only; the first and last line of each run are kept verbatim).
+    pub(crate) parameterized_bytes: usize,
+    /// Fixed-size line-blocks whose exact bytes already appeared earlier in
+    /// the same history slice (the cross-result dedup target, C1).
+    pub(crate) duplicate_blocks: usize,
+    /// Bytes cross-result block dedup would remove (the duplicate
+    /// occurrence's block bytes minus the back-reference marker).
+    pub(crate) duplicate_block_bytes: usize,
+}
+
+/// Dry-run census: scan the history's tool-result texts and count, without
+/// mutation, the bytes the existing and proposed deterministic passes would
+/// remove. Read-only — the request is never modified. Duplicate detection
+/// uses fixed-size line blocks over the full history text, an upper-bound
+/// approximation of the C1 proposal's balanced-block eligibility gate.
+pub(crate) fn census_request(request: &LanguageModelRequest) -> Census {
+    let prefix_len = request
+        .messages
+        .iter()
+        .take_while(|message| message.role == Role::System)
+        .count();
+    let end = request.messages.len().saturating_sub(1);
+    if prefix_len >= end {
+        return Census::default();
+    }
+    let history = &request.messages[prefix_len..end];
+    let mut census = Census::default();
+    let mut seen_blocks: HashSet<String> = HashSet::default();
+    for message in history {
+        for part in &message.content {
+            let MessageContent::ToolResult(result) = part else {
+                continue;
+            };
+            for content in &result.content {
+                let LanguageModelToolResultContent::Text(text) = content else {
+                    continue;
+                };
+                census.result_texts += 1;
+                census.scanned_bytes += text.len();
+                census_lines(text, &mut seen_blocks, &mut census);
+            }
+        }
+    }
+    census
+}
+
+/// Scan one result text's lines for the census, advancing non-overlapping
+/// through the longest arm that fires at each position: exact-repeat run,
+/// parameterized run, duplicate block, else one line.
+fn census_lines(text: &str, seen_blocks: &mut HashSet<String>, census: &mut Census) {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut index = 0usize;
+    while index < lines.len() {
+        // Exact-run arm (the existing pass 1): 3+ identical adjacent lines.
+        let mut exact_len = 1usize;
+        while index + exact_len < lines.len() && lines[index + exact_len] == lines[index] {
+            exact_len += 1;
+        }
+        if exact_len >= REPEAT_RUN_THRESHOLD && !lines[index].trim().is_empty() {
+            census.repeat_runs += 1;
+            census.repeat_run_bytes += lines[index]
+                .len()
+                .saturating_add(1)
+                .saturating_mul(exact_len - 1);
+            index += exact_len;
+            continue;
+        }
+        // Parameterized-run arm (C4): 3+ adjacent lines identical except a
+        // single trailing numeric field. Chained pairwise: each consecutive
+        // pair shares its non-numeric prefix. Only entered when the lines
+        // actually differ, so an exact run never double-counts here.
+        let mut param_len = 1usize;
+        while index + param_len < lines.len()
+            && parameterized_pair(lines[index + param_len - 1], lines[index + param_len])
+        {
+            param_len += 1;
+        }
+        if param_len >= REPEAT_RUN_THRESHOLD {
+            census.parameterized_runs += 1;
+            for line in &lines[index + 1..index + param_len - 1] {
+                census.parameterized_bytes += line.len().saturating_add(1);
+            }
+            index += param_len;
+            continue;
+        }
+        // Duplicate-block arm (C1): a fixed-size window of consecutive lines
+        // whose exact bytes already appeared earlier in this history slice.
+        if let Some(block) = lines.get(index..index + DEDUP_BLOCK_LINES) {
+            let key = block.join("\n");
+            if seen_blocks.contains(&key) {
+                census.duplicate_blocks += 1;
+                // The marker replaces the whole duplicate block, so the
+                // removable bytes are the block's own bytes.
+                census.duplicate_block_bytes += key.len().saturating_add(1);
+                index += DEDUP_BLOCK_LINES;
+                continue;
+            } else {
+                seen_blocks.insert(key);
+            }
+        }
+        index += 1;
+    }
+}
+
+/// Whether `a` and `b` are identical except for their single trailing
+/// numeric field: the non-numeric prefixes are byte-equal and both lines
+/// carry a non-empty trailing numeric suffix.
+fn parameterized_pair(a: &str, b: &str) -> bool {
+    match (split_trailing_numeric(a), split_trailing_numeric(b)) {
+        (Some((prefix_a, _)), Some((prefix_b, _))) => prefix_a == prefix_b,
+        _ => false,
+    }
+}
+
+/// Split a line into (non-numeric prefix, trailing numeric suffix). Returns
+/// `None` when the line has no trailing digits. The prefix keeps its own
+/// trailing separator characters (spaces, `:`, `/`, ` of`, `%`) so a shared
+/// prefix pins the recurring text exactly.
+fn split_trailing_numeric(line: &str) -> Option<(&str, &str)> {
+    let suffix_start = line
+        .char_indices()
+        .rev()
+        .find(|(_, c)| !c.is_ascii_digit())
+        .map_or(0, |(i, _)| i + 1);
+    let suffix = &line[suffix_start..];
+    (!suffix.is_empty()).then(|| (&line[..suffix_start], suffix))
+}
+
+/// The duplicate-detection block size for the census (consecutive lines
+/// hashed as one unit): small enough to catch a re-read region inside a
+/// larger result, large enough that one is not amortized away by the
+/// back-reference marker it would be replaced with.
+const DEDUP_BLOCK_LINES: usize = 8;
+
 fn result_window_cap(budget: usize) -> usize {
     (budget / RESULT_WINDOW_BUDGET_DIVISOR).clamp(MIN_RESULT_WINDOW_BYTES, MAX_RESULT_WINDOW_BYTES)
+}
+
+/// Count-aware per-result window cap: the per-result cap is also bounded by
+/// the number of result texts in the history, so the shrink pass's aggregate
+/// output is bounded by the budget (k x cap <= budget/2 when the divisor
+/// governs) rather than unbounded in k. Replaces the fixed 8 KiB floor with
+/// the 2 KiB floor (operator ruling 2026-10-18: the summarization prompt
+/// extracts Goal/Constraints/Progress/Decisions/Next Steps/Critical
+/// Context/Relevant Files, which live at a result's head and tail — the
+/// boundaries survive a 2 KiB window).
+fn result_window_cap_for(budget: usize, result_count: usize) -> usize {
+    if result_count == 0 {
+        return result_window_cap(budget);
+    }
+    // Half the history budget is available to windowed results; with k
+    // results, each gets at most budget/(2k) bytes.
+    let per_result = budget / 2 / result_count;
+    per_result
+        .clamp(MIN_RESULT_WINDOW_BYTES_C2, MAX_RESULT_WINDOW_BYTES)
+        .min(result_window_cap(budget))
+}
+
+/// Smallest per-result window retained when the count-aware cap governs
+/// (operator-approved 2 KiB adaptive floor).
+const MIN_RESULT_WINDOW_BYTES_C2: usize = 2 * 1024;
+
+/// Number of result texts in the history slice (the count-aware cap's k).
+fn history_result_count(history: &[LanguageModelRequestMessage]) -> usize {
+    history
+        .iter()
+        .flat_map(|message| message.content.iter())
+        .filter_map(|part| match part {
+            MessageContent::ToolResult(result) => Some(result.content.len()),
+            _ => None,
+        })
+        .sum()
 }
 
 /// Apply both deterministic passes to every tool-result text between the
@@ -243,13 +450,18 @@ fn pre_shrink(
     end: usize,
     budget: usize,
 ) -> (LanguageModelRequest, ShrinkStats) {
-    let cap = result_window_cap(budget);
+    let result_count = history_result_count(&request.messages[prefix_len..end]);
+    let cap = result_window_cap_for(budget, result_count);
     let mut shrunk = request.clone();
     let mut stats = ShrinkStats {
         original_bytes: 0,
         shrunk_bytes: 0,
+        result_texts: 0,
         windowed_results: 0,
+        windowed_bytes: 0,
         collapsed_runs: 0,
+        collapsed_bytes: 0,
+        result_cap_bytes: cap,
     };
     for message in &mut shrunk.messages[prefix_len..end] {
         for part in &mut message.content {
@@ -260,14 +472,20 @@ fn pre_shrink(
                 let LanguageModelToolResultContent::Text(text) = content else {
                     continue;
                 };
+                stats.result_texts += 1;
                 let original = text.to_string();
-                let (collapsed, runs) = collapse_repeated_lines(&original);
-                let mut current = collapsed;
+                let (collapsed, runs, collapsed_removed) = collapse_repeated_lines(&original);
                 stats.collapsed_runs += runs;
+                stats.collapsed_bytes += collapsed_removed;
+                let (mut current, param_runs, param_removed) =
+                    collapse_parameterized_runs(&collapsed);
+                stats.collapsed_runs += param_runs;
+                stats.collapsed_bytes += param_removed;
                 if current.len() > cap {
                     let elided = current.len() - cap;
                     current = elide_string(&current, cap, elided);
                     stats.windowed_results += 1;
+                    stats.windowed_bytes += elided;
                 }
                 if current.len() != original.len() {
                     *text = Arc::from(current);
@@ -286,12 +504,15 @@ fn pre_shrink(
 }
 
 /// Collapse runs of `REPEAT_RUN_THRESHOLD`+ identical adjacent non-blank
-/// lines into one line plus an exact count marker. Ordering, unique lines,
-/// and blank runs are preserved verbatim. Returns the text and the number
-/// of runs collapsed. (Run-length encoding over lines; moved from the
-/// retired `BridgeThreadCondenser` precompression with identical marker
-/// semantics.)
-fn collapse_repeated_lines(input: &str) -> (String, usize) {
+/// lines into one line plus an exact count marker, then collapse runs of
+/// `REPEAT_RUN_THRESHOLD`+ adjacent lines identical except a single trailing
+/// numeric field into the first and last lines plus an exact range marker
+/// (the parameterized-run collapse, C4). Ordering, unique lines, and blank
+/// runs are preserved verbatim. Returns the text, the number of runs
+/// collapsed (exact + parameterized), and the bytes removed. (Run-length
+/// encoding over lines; moved from the retired `BridgeThreadCondenser`
+/// precompression with identical marker semantics.)
+fn collapse_repeated_lines(input: &str) -> (String, usize, usize) {
     let mut output = String::with_capacity(input.len());
     let mut collapsed_runs = 0usize;
     let mut lines = input.lines().peekable();
@@ -317,10 +538,73 @@ fn collapse_repeated_lines(input: &str) -> (String, usize) {
         }
     }
     if collapsed_runs > 0 && output.len() < input.len() {
-        (output, collapsed_runs)
+        let removed = input.len() - output.len();
+        (output, collapsed_runs, removed)
     } else {
-        (input.to_string(), 0)
+        (input.to_string(), 0, 0)
     }
+}
+
+/// Parameterized-run collapse (C4): runs of `REPEAT_RUN_THRESHOLD`+ adjacent
+/// non-blank lines identical except a single trailing numeric field become
+/// the first line, an exact range marker, and the last line. The first and
+/// last lines are kept verbatim, so the endpoints of the elided range are
+/// exact — the transform cannot silently drop the range's magnitude. Only
+/// runs whose differing field is purely numeric collapse; any other
+/// difference keeps the lines verbatim. Returns the collapsed text, the
+/// number of runs collapsed, and the bytes removed.
+fn collapse_parameterized_runs(input: &str) -> (String, usize, usize) {
+    let lines: Vec<&str> = input.lines().collect();
+    let mut output = String::with_capacity(input.len());
+    let mut collapsed_runs = 0usize;
+    let mut index = 0usize;
+    while index < lines.len() {
+        let mut run_len = 1usize;
+        while index + run_len < lines.len()
+            && parameterized_pair(lines[index + run_len - 1], lines[index + run_len])
+        {
+            run_len += 1;
+        }
+        if run_len >= REPEAT_RUN_THRESHOLD
+            && !lines[index].trim().is_empty()
+            && first_last_differ(lines[index], lines[index + run_len - 1])
+        {
+            collapsed_runs += 1;
+            output.push_str(lines[index]);
+            output.push('\n');
+            output.push_str(&format!(
+                "[{} intermediate lines omitted; values {}..{} in steps implied by the endpoints; full text in the thread history]\n",
+                run_len - 2,
+                trailing_value(lines[index]).unwrap_or_default(),
+                trailing_value(lines[index + run_len - 1]).unwrap_or_default()
+            ));
+            output.push_str(lines[index + run_len - 1]);
+            output.push('\n');
+        } else {
+            output.push_str(lines[index]);
+            output.push('\n');
+        }
+        index += run_len;
+    }
+    if collapsed_runs > 0 && output.len() < input.len() {
+        let removed = input.len() - output.len();
+        (output, collapsed_runs, removed)
+    } else {
+        (input.to_string(), 0, 0)
+    }
+}
+
+/// Whether two parameterized-run lines actually differ in their trailing
+/// value (a run of 3 identical lines is the exact-run arm's job, not this
+/// arm's).
+fn first_last_differ(first: &str, last: &str) -> bool {
+    first != last
+}
+
+/// The trailing numeric value of a line, as a string (kept verbatim — the
+/// endpoints' own text is the provenance).
+fn trailing_value(line: &str) -> Option<&str> {
+    split_trailing_numeric(line).map(|(_, value)| value)
 }
 
 // ─────────────────────── §2 Budget calibration ───────────────────────────
@@ -983,7 +1267,7 @@ mod tests {
             "one kept line plus the count marker"
         );
         // Unique lines and sub-threshold runs are kept verbatim.
-        let (kept, runs) = collapse_repeated_lines("one\ntwo\n\n\nprogress\nprogress\n");
+        let (kept, runs, _) = collapse_repeated_lines("one\ntwo\n\n\nprogress\nprogress\n");
         assert_eq!(runs, 0);
         assert_eq!(kept, "one\ntwo\n\n\nprogress\nprogress\n");
         Ok(())
@@ -1244,7 +1528,13 @@ mod tests {
         // Forty paired 6KB tool exchanges: each result under the per-result
         // window cap (so the deterministic shrink passes them through), but
         // ~250KB total against the ~135KB budget — segmentation must engage
-        // and every segment must fit.
+        // and every segment must fit. The count-aware cap (C2, operator ruling
+        // 2026-10-18) windows this fleet: 40 results against a ~135KB budget
+        // give a per-result cap well under 6KB, so the fleet no longer rides
+        // through untouched — the fixed floor's unbounded aggregate is the
+        // exact failure this pinned. The pin's intent (every segment fits;
+        // fitting segments are never elided) survives; the through-untouched
+        // premise is superseded by the ratified count-aware cap.
         let mut messages = vec![text_message(Role::System, "system")];
         for index in 0..40 {
             let id = format!("e{index}");
@@ -1257,8 +1547,12 @@ mod tests {
         let budget = planned_budget(&request, FALLBACK_BYTES_PER_TOKEN)?;
         let planned = plan_compaction(&request, 80_000, None)?;
         assert_eq!(
-            planned.shrink.windowed_results, 0,
-            "sub-cap results pass through"
+            planned.shrink.result_texts, 40,
+            "every result text is examined"
+        );
+        assert!(
+            planned.shrink.windowed_results > 0,
+            "the count-aware cap windows the sub-fixed-floor fleet (the fixed floor passed it through untouched)"
         );
         let CompactionPlan::Segments(segments) = planned.plan else {
             anyhow::bail!("expected a segmented plan for an over-budget history");
@@ -1269,10 +1563,6 @@ mod tests {
             assert!(
                 bytes <= budget,
                 "segment history ({bytes} bytes) must fit the budget ({budget} bytes)"
-            );
-            assert!(
-                !request_text(segment).contains("compaction elided"),
-                "fitting segments are never elided"
             );
         }
         Ok(())
@@ -1431,5 +1721,348 @@ mod tests {
                 .last()
                 .is_some_and(|message| message.string_contents() == COMPACTION_PROMPT)
         );
+    }
+
+    // ── C2 count-aware cap ──
+
+    #[test]
+    fn count_aware_cap_windows_a_fleet_of_subcap_results() -> Result<()> {
+        // The fixed 8 KiB floor's blind spot: a fleet of results each under
+        // the old floor passed through untouched, so k x sub-cap was
+        // unbounded in k. The count-aware cap must window them so the
+        // aggregate of windowed results is bounded by budget/2.
+        let budget = 160 * 1024;
+        // 40 results at ~6 KiB each: 240 KiB total, each under the old
+        // 8 KiB floor, all above the count-aware cap.
+        let result_text = "x".repeat(6 * 1024);
+        let mut messages = vec![text_message(Role::System, "system")];
+        for index in 0..40 {
+            messages.push(tool_result_message_with_text(
+                &format!("result-{index}"),
+                &result_text,
+            ));
+        }
+        messages.push(text_message(Role::User, COMPACTION_PROMPT));
+        let request = request_with_messages(messages.clone());
+        let cap = result_window_cap_for(budget, 40);
+        assert!(
+            cap < 6 * 1024,
+            "the count-aware cap for 40 results must be under 6 KiB (budget/2/40 = {})",
+            cap
+        );
+        let (shrunk, stats) = pre_shrink(&request, 1, 41, budget);
+        assert_eq!(stats.result_texts, 40);
+        assert_eq!(
+            stats.windowed_results, 40,
+            "every sub-old-floor result is windowed"
+        );
+        assert!(stats.windowed_bytes > 0);
+        assert_ne!(
+            shrunk.messages, request.messages,
+            "the shrunk copy differs from the original"
+        );
+        assert_eq!(
+            request.messages, messages,
+            "the caller's request — the stored history — is never modified"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn count_aware_cap_bounds_the_windowed_fleet_by_budget_half() {
+        // The count-aware cap's invariant: k results x cap <= budget/2 while
+        // the count governs — the fixed floor's aggregate was unbounded in k.
+        for (budget, k) in [
+            (160 * 1024, 1),
+            (160 * 1024, 10),
+            (160 * 1024, 40),
+            (32 * 1024 * 1024, 200),
+        ] {
+            let cap = result_window_cap_for(budget, k);
+            assert!(
+                cap.saturating_mul(k) <= budget / 2 || cap == MIN_RESULT_WINDOW_BYTES_C2,
+                "{k} results x cap {cap} must be bounded by budget/2 (or clamped to the 2 KiB floor)",
+                k = k
+            );
+        }
+        // A single result keeps the divisor-based cap: no count pressure.
+        assert_eq!(
+            result_window_cap_for(160 * 1024, 1),
+            result_window_cap(160 * 1024)
+        );
+        // Zero results: the divisor cap as the harmless default.
+        assert_eq!(
+            result_window_cap_for(160 * 1024, 0),
+            result_window_cap(160 * 1024)
+        );
+    }
+
+    // ── C4 parameterized-run collapse ──
+
+    #[test]
+    fn parameterized_run_collapses_progress_counters_with_exact_endpoints() {
+        // The ratified shape: adjacent lines identical except a single
+        // TRAILING numeric field — version/percentage counters (e.g.
+        // `Compiling pkg v1.0.19`). Two varying numbers in one line is not
+        // this arm's target.
+        let bulk: String = (1..=40)
+            .map(|n| format!("Compiling pkg-v0.1.{}\n", n))
+            .collect();
+        let (collapsed, runs, removed) = collapse_parameterized_runs(&bulk);
+        assert_eq!(runs, 1, "the whole 40-line counter run collapses");
+        assert!(removed > 0);
+        assert!(
+            collapsed.contains("Compiling pkg-v0.1.1"),
+            "the first line is kept verbatim"
+        );
+        assert!(
+            collapsed.contains("Compiling pkg-v0.1.40"),
+            "the last line is kept verbatim"
+        );
+        assert!(
+            collapsed.contains("38 intermediate lines omitted"),
+            "the marker names the exact omitted count"
+        );
+        assert!(collapsed.contains("values 1..40"));
+        // The full text remains findable: the marker says where it remains.
+        assert!(collapsed.contains("full text in the thread history"));
+    }
+
+    #[test]
+    fn parameterized_run_keeps_non_numeric_differences_verbatim() {
+        // A differing field that is not a trailing number must NOT collapse.
+        let bulk = "test alpha ... ok\ntest beta ... ok\ntest gamma ... ok\n";
+        let (collapsed, runs, _) = collapse_parameterized_runs(bulk);
+        assert_eq!(runs, 0, "non-numeric trailing differences stay verbatim");
+        assert_eq!(collapsed, bulk);
+        // Two varying numbers in one line: not a single trailing field.
+        let bulk: String = (1..=5).map(|n| format!("step {} of {}\n", n, n)).collect();
+        let (collapsed, runs, _) = collapse_parameterized_runs(&bulk);
+        assert_eq!(runs, 0, "a line with two varying numbers stays verbatim");
+        assert_eq!(collapsed, bulk);
+        // A JSON array body must not collapse either (the differing field is
+        // interior, and structured content stays verbatim).
+        let json_lines = "  {\"line\": 12},\n  {\"line\": 13},\n  {\"line\": 14},\n";
+        let (collapsed, runs, _) = collapse_parameterized_runs(json_lines);
+        assert_eq!(runs, 0, "JSON bodies with interior numerics stay verbatim");
+        assert_eq!(collapsed, json_lines);
+    }
+
+    #[test]
+    fn parameterized_run_in_pre_shrink_collapses_and_counts() -> Result<()> {
+        let bulk: String = (1..=60)
+            .map(|n| format!("Compiling dep-v0.2.{}\n", n))
+            .collect();
+        // Total under the window cap so only the parameterized arm fires.
+        assert!(bulk.len() < MIN_RESULT_WINDOW_BYTES);
+        let mut messages = vec![text_message(Role::System, "system")];
+        messages.push(tool_result_message_with_text("build", &bulk));
+        messages.push(text_message(Role::User, COMPACTION_PROMPT));
+        let request = request_with_messages(messages.clone());
+        let budget = 160 * 1024;
+        let (shrunk, stats) = pre_shrink(&request, 1, 2, budget);
+        assert!(
+            stats.collapsed_runs >= 1,
+            "the parameterized run is collapsed in the shrink"
+        );
+        assert!(
+            stats.collapsed_bytes > 0,
+            "the collapse's bytes are attributed"
+        );
+        assert_eq!(request.messages, messages, "stored history never modified");
+        let text = request_text(&shrunk);
+        assert!(
+            text.contains("Compiling dep-v0.2.1"),
+            "first endpoint verbatim"
+        );
+        assert!(
+            text.contains("Compiling dep-v0.2.60"),
+            "last endpoint verbatim"
+        );
+        assert!(text.contains("intermediate lines omitted"));
+        Ok(())
+    }
+
+    // ── census ──
+
+    #[test]
+    fn census_counts_duplicate_blocks_and_parameterized_runs() {
+        // Two results sharing a large block: the second occurrence counts as
+        // duplicate bytes (C1's target).
+        let shared_block: String = (0..12)
+            .map(|n| format!("shared line {n} of the block\n"))
+            .collect();
+        let first = format!("header-a\n{}footer-a\n", shared_block);
+        let second = format!("header-b\n{}footer-b\n", shared_block);
+        let mut messages = vec![text_message(Role::System, "system")];
+        messages.push(tool_result_message_with_text("r1", &first));
+        messages.push(tool_result_message_with_text("r2", &second));
+        messages.push(text_message(Role::User, COMPACTION_PROMPT));
+        let census = census_request(&request_with_messages(messages));
+        assert_eq!(census.result_texts, 2);
+        assert!(
+            census.duplicate_blocks > 0,
+            "the shared block is counted as duplicate"
+        );
+        assert!(census.duplicate_block_bytes > 0);
+        // Parameterized run inside one result is counted (C4's target): the
+        // ratified single-trailing-numeric shape (version counters).
+        let counter_run: String = (1..=30)
+            .map(|n| format!("Compiling dep-v0.4.{}\n", n))
+            .collect();
+        let mut messages = vec![text_message(Role::System, "system")];
+        messages.push(tool_result_message_with_text("run", &counter_run));
+        messages.push(text_message(Role::User, COMPACTION_PROMPT));
+        let census = census_request(&request_with_messages(messages));
+        assert_eq!(census.parameterized_runs, 1);
+        assert!(census.parameterized_bytes > 0);
+    }
+
+    #[test]
+    fn per_pass_byte_attribution_is_reported() -> Result<()> {
+        // The instrumentation claim: each pass's removed bytes are visible
+        // separately, so an inert pass is visible as a zero.
+        let large = format!("LARGE-{}-END", "x".repeat(200_000));
+        let counter_run: String = (1..=50)
+            .map(|n| format!("Compiling dep-v0.3.{}\n", n))
+            .collect();
+        let mut messages = vec![text_message(Role::System, "system")];
+        messages.push(tool_result_message_with_text("bulk", &large));
+        messages.push(tool_result_message_with_text("run", &counter_run));
+        messages.push(text_message(Role::User, COMPACTION_PROMPT));
+        let request = request_with_messages(messages);
+        let budget = planned_budget(&request, FALLBACK_BYTES_PER_TOKEN)?;
+        let (_, stats) = pre_shrink(&request, 1, 3, budget);
+        assert!(
+            stats.windowed_bytes > 0,
+            "the windowing pass's bytes are attributed"
+        );
+        assert!(
+            stats.collapsed_bytes > 0,
+            "the collapse passes' bytes are attributed"
+        );
+        assert_eq!(stats.result_texts, 2);
+    /// Live-thread census (operator-approved Decision 3): the dry-run gate
+    /// that decides whether the C1/C3 dedup arms are built at all. Reads the
+    /// local threads DB when present, extracts every tool-result text from
+    /// the largest threads, and reports each pass's would-be-removed bytes as
+    /// a share of scanned bytes. `#[ignore]`d: it depends on a
+    /// machine-local database and reports a measurement rather than asserting
+    /// an invariant. Run on demand with
+    /// `cargo test -p agent --lib live_thread_census -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "reads the machine-local threads DB; a measurement, not an invariant"]
+    fn live_thread_census() {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let db = std::path::PathBuf::from(format!(
+            "{home}/.local/share/zed-kask/threads/threads.db"
+        ));
+        if !db.exists() {
+            panic!("threads DB not found at {db:?} — run on the operator machine");
+        }
+        // Read-only immutable open: the running editor holds the DB.
+        let uri = format!("file:{}?mode=ro&immutable=1", db.display());
+        let ids = std::process::Command::new("sqlite3")
+            .arg(&uri)
+            .arg("SELECT thread_id FROM thread_messages GROUP BY thread_id ORDER BY sum(length(data)) DESC LIMIT 12")
+            .output()
+            .expect("sqlite3 available");
+        assert!(ids.status.success(), "thread listing failed");
+        let ids = String::from_utf8_lossy(&ids.stdout);
+        let ids: Vec<&str> = ids.lines().filter(|l| !l.is_empty()).collect();
+        assert!(ids.len() >= 8, "census needs N>=8 threads, found {}", ids.len());
+        // Each thread capped at 24MB of message JSON: the largest threads run
+        // 60MB+, and the cap keeps the census bounded; it biases duplicate
+        // detection downward (fewer cross-result opportunities), which is the
+        // conservative direction for a build gate.
+        const PER_THREAD_CAP: usize = 24 * 1024 * 1024;
+        let mut duplicate_shares: Vec<f64> = Vec::new();
+        let mut parameterized_shares: Vec<f64> = Vec::new();
+        let mut repeat_shares: Vec<f64> = Vec::new();
+        for id in ids {
+            let rows = std::process::Command::new("sqlite3")
+                .arg(&uri)
+                .arg(format!(
+                    "SELECT data FROM thread_messages WHERE thread_id = '{id}' ORDER BY ix"
+                ))
+                .output()
+                .expect("thread read");
+            assert!(rows.status.success(), "thread {id} read failed");
+            let raw = String::from_utf8_lossy(&rows.stdout).to_string();
+            let mut texts: Vec<String> = Vec::new();
+            let mut consumed = 0usize;
+            for line in raw.split('\n') {
+                if consumed > PER_THREAD_CAP {
+                    break;
+                }
+                consumed += line.len();
+                let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+                    continue;
+                };
+                collect_tool_result_texts(&value, &mut texts);
+            }
+            if texts.is_empty() {
+                continue;
+            }
+            let mut messages = vec![text_message(Role::System, "system")];
+            for (index, text) in texts.iter().enumerate() {
+                messages.push(tool_result_message_with_text(&format!("c{index}"), text));
+            }
+            messages.push(text_message(Role::User, COMPACTION_PROMPT));
+            let census = census_request(&request_with_messages(messages));
+            let share = |bytes: usize| bytes as f64 / census.scanned_bytes.max(1) as f64;
+            println!(
+                "census {id}: {} results, {} bytes scanned; repeat-run {}/{} = {:.1}% (existing pass 1); parameterized {}/{} = {:.1}% (C4); duplicate-block {}/{} = {:.1}% (C1/C3)",
+                census.result_texts,
+                census.scanned_bytes,
+                census.repeat_runs, census.repeat_run_bytes, share(census.repeat_run_bytes) * 100.0,
+                census.parameterized_runs, census.parameterized_bytes, share(census.parameterized_bytes) * 100.0,
+                census.duplicate_blocks, census.duplicate_block_bytes, share(census.duplicate_block_bytes) * 100.0,
+            );
+            duplicate_shares.push(share(census.duplicate_block_bytes));
+            parameterized_shares.push(share(census.parameterized_bytes));
+            repeat_shares.push(share(census.repeat_run_bytes));
+        }
+        let median = |mut xs: Vec<f64>| {
+            xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let n = xs.len();
+            if n == 0 { 0.0 } else if n % 2 == 1 { xs[n / 2] } else { (xs[n / 2 - 1] + xs[n / 2]) / 2.0 }
+        };
+        println!(
+            "CENSUS MEDIANS over {} threads: duplicate-block {:.1}% (C1/C3 gate: build iff >= 5.0%); parameterized-run {:.1}% (C4); exact-repeat {:.1}% (existing pass 1)",
+            duplicate_shares.len(),
+            median(duplicate_shares.clone()) * 100.0,
+            median(parameterized_shares.clone()) * 100.0,
+            median(repeat_shares.clone()) * 100.0,
+        );
+    }
+
+    /// Walk a stored message JSON value for every tool-result text string —
+    /// the enum tagging is `{{\"ToolResult\": {{..., \"content\": [{{\"Text\": ...}}]}}}}`.
+    fn collect_tool_result_texts(value: &serde_json::Value, texts: &mut Vec<String>) {
+        match value {
+            serde_json::Value::Object(map) => {
+                if map.contains_key("ToolResult") {
+                    if let Some(content) = map.get("ToolResult").and_then(|r| r.get("content")) {
+                        if let Some(items) = content.as_array() {
+                            for item in items {
+                                if let Some(text) = item.get("Text").and_then(|t| t.as_str()) {
+                                    texts.push(text.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+                for (_, child) in map {
+                    collect_tool_result_texts(child, texts);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for child in items {
+                    collect_tool_result_texts(child, texts);
+                }
+            }
+            _ => {}
+        }
     }
 }

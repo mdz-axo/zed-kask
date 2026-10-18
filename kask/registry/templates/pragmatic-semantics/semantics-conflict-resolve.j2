@@ -60,9 +60,9 @@ When two statements are equal on all four higher tiers, the ontology tier breaks
 
 | Priority | Ontology Tier | Rationale |
 |----------|--------------|-----------|
-| 1 | Domain supplement — FIBO | OMG standard, highest adoption, precise financial semantics (rank is adoption-based, not the confidence modifier; the `PS-1` modifier is +0.05) |
-| 2 | Domain supplement — OMC | MovieLabs v2.8, Hollywood consortium standard |
-| 3 | Domain supplement — GOLEM | ERC-funded, aligned with CIDOC-CRM/LRMoo |
+| 1 | Domain supplement — OMC | MovieLabs v2.8, Hollywood consortium standard |
+| 2 | Domain supplement — GOLEM | ERC-funded, aligned with CIDOC-CRM/LRMoo |
+| 3 | Domain supplement — SEPIO | Monarch Initiative scientific-evidence ontology, precise evidence semantics (rank is adoption-based, not the confidence modifier; the `PS-1` modifier is +0.05) |
 | 4 | Dual-axis — PKO (process) | Standard process semantics, ISWC 2024 ontology |
 | 5 | Dual-axis — DC+BIBO (state) | Dublin Core, 25+ year metadata standard |
 | 6 | Domain supplement — ML-Schema | W3C Community Group, provisional bridge |
@@ -116,7 +116,7 @@ the final report.
 2. **Declarative beats Probabilistic beats Subjunctive**: Within the same ontological mode, higher certainty wins.
 3. **Prohibition beats Guardrail beats Guideline**: Within the same epistemic mode, stronger force wins.
 4. **Specification beats Implementation beats Inference**: Within the same force, higher provenance authority wins.
-5. **FIBO beats SUMO beats Unanchored**: When all 4 higher tiers are equal, the statement anchored to the higher-confidence ontology wins (FIBO +0.05 > SUMO +0.03 > unanchored −0.10, per gate `PS-1`). See Tier 5 ranking above.
+5. **Domain supplement beats SUMO beats Unanchored**: When all 4 higher tiers are equal, the statement anchored to the higher-confidence ontology wins (domain supplement +0.05 > SUMO +0.03 > unanchored −0.10, per gate `PS-1`). See Tier 5 ranking above.
 6. **Tie-breaking**: If all five tiers are equal, the conflict is genuinely ambiguous. Flag for human review rather than arbitrarily choosing.
 
 ## Resolution Strategies
@@ -158,7 +158,7 @@ Respond with a JSON object:
 - If the resolution is `"defer"`, state what evidence would break the tie.
 - If the resolution is `"escalate"`, state what human decision is needed.
 - When two statements tie on tiers 1-4, the ontology anchoring tier (Tier 5) breaks the tie.
-- FIBO-anchored statements outrank SUMO-anchored statements when all else is equal.
+- Domain-supplement-anchored statements outrank SUMO-anchored statements when all else is equal.
 - Unanchored statements (no ontology tier) are treated as ontological noise per P5.2.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Preserve the original prompt structure and formatting.

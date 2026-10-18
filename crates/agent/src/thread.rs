@@ -4055,12 +4055,17 @@ impl Thread {
                     let shrink = &planned.shrink;
                     if shrink.original_bytes > shrink.shrunk_bytes {
                         log::info!(
-                            "Compaction deterministic pre-shrink: {} -> {} bytes ({:.0}% reduction; {} results windowed, {} repeat runs collapsed)",
+                            "Compaction deterministic pre-shrink: {} -> {} bytes ({:.0}% reduction; {} results, cap {} bytes, {} result texts; windowed: {} results / {} bytes; runs collapsed: {} runs / {} bytes)",
                             shrink.original_bytes,
                             shrink.shrunk_bytes,
                             shrink.reduction_pct(),
                             shrink.windowed_results,
+                            shrink.result_cap_bytes,
+                            shrink.result_texts,
+                            shrink.windowed_results,
+                            shrink.windowed_bytes,
                             shrink.collapsed_runs,
+                            shrink.collapsed_bytes,
                         );
                     }
                     match planned.plan {
@@ -4084,8 +4089,28 @@ impl Thread {
                                 .await?;
                                 summaries.extend(batch_summaries);
                             }
-                            let request = crate::kask_compaction::merge_request(request, &summaries);
-                            Self::collect_compaction_summary(this, &model, request, Some((event_stream, &compaction_id)), cx.clone()).await
+                            let request =
+                                crate::kask_compaction::merge_request(request, &summaries);
+                            // The merge call's token cost is surfaced from the
+                            // same usage accounting the summary calls already
+                            // run (operator-approved Decision 1): the
+                            // bytes-vs-tokens trade of segment plans is
+                            // measurable from the log.
+                            let summary_count = summaries.len();
+                            let (merge_summary, merge_input_tokens) =
+                                Self::collect_compaction_summary_with_usage(
+                                    this,
+                                    &model,
+                                    request,
+                                    Some((event_stream, &compaction_id)),
+                                    cx.clone(),
+                                )
+                                .await?;
+                            log::info!(
+                                "Compaction merge call: {} summaries merged; merge-call input tokens: {}",
+                                summary_count, merge_input_tokens
+                            );
+                            Ok(merge_summary)
                         }
                     }
                 }.fuse() => result,
@@ -4152,8 +4177,24 @@ impl Thread {
         model: &LanguageModel,
         request: LanguageModelRequest,
         progress: Option<(&ThreadEventStream, &acp_thread::ContextCompactionId)>,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> Result<String> {
+        let (summary, _) =
+            Self::collect_compaction_summary_with_usage(this, model, request, progress, cx).await?;
+        Ok(summary)
+    }
+
+    /// Summarize one request, returning the summary and the call's observed
+    /// input tokens (cache reads included) — the per-call usage the merge-call
+    /// observability (operator-approved Decision 1) reads without new
+    /// accounting machinery.
+    async fn collect_compaction_summary_with_usage(
+        this: &WeakEntity<Self>,
+        model: &LanguageModel,
+        request: LanguageModelRequest,
+        progress: Option<(&ThreadEventStream, &acp_thread::ContextCompactionId)>,
+        mut cx: AsyncApp,
+    ) -> Result<(String, u64)> {
         let provider =
             cx.update(|cx| LanguageModelRegistry::read_global(cx).provider_for_model(model))?;
         let mut stream = provider.stream_completion(model, request, &cx).await?;
@@ -4181,7 +4222,6 @@ impl Thread {
                     })?;
                 }
                 LanguageModelCompletionEvent::Stop(StopReason::MaxTokens) => {
-                    // Usage-only chunks may follow the stop event.
                     truncated = true;
                 }
                 _ => {}
@@ -4193,7 +4233,8 @@ impl Thread {
         );
         let summary = summary.trim().to_string();
         anyhow::ensure!(!summary.is_empty(), "Compaction produced an empty summary");
-        Ok(summary)
+        let input_tokens = usage.input_tokens + usage.cache_read_input_tokens;
+        Ok((summary, input_tokens))
     }
 
     /// Enqueue a tool result that will be delivered asynchronously. The task

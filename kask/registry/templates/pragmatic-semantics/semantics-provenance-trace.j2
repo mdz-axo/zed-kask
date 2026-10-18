@@ -21,7 +21,7 @@ You are a provenance tracer. Trace a claim back through hKask's data layers to d
 | Layer | What Lives Here | Authority |
 |-------|-----------------|-----------|
 | **Specification** | `kask/docs/architecture/core/PRINCIPLES.md`, `kask/docs/architecture/core/MDS.md`, `kask/docs/reference/testing-protocol.md` | Highest — normative |
-| **Ontology tier** | Domain anchoring — FIBO (+0.05), SUMO (+0.03), GOLEM/ML-Schema/OMC (±0.00) | Confidence modifier applied once by gate `PS-1` — adjusts claim precision based on ontology adoption and mapping fidelity |
+| **Ontology tier** | Domain anchoring — domain supplement (+0.05), SUMO (+0.03), GOLEM/ML-Schema/OMC (±0.00) | Confidence modifier applied once by gate `PS-1` — adjusts claim precision based on ontology adoption and mapping fidelity |
 | **Design** | `kask/docs/architecture/` specifications, `DIVERGENCE.md`, interface specs | High — authoritative for structure |
 | **Implementation** | `kask/crates/*/src/**/*.rs`, `kask/mcp-servers/*/src/**/*.rs`, `crates/*/src/**/*.rs`, `Cargo.toml`, `build.rs` | Direct — what actually runs |
 | **Runtime observation** | Regulation spans (`reg.*`), variety counters, algedonic alerts | Empirical — what actually happens |

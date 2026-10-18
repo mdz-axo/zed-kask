@@ -75,8 +75,8 @@ mod tests {
             "source": "source.txt",
             "text": "A corporation is an organization.",
             "candidate_terms": ["corporation"],
-            "ontology_tags": {"fibo": [hkask_bridge_ontology::fibo::CORPORATION]},
-            "concepts": [hkask_bridge_ontology::fibo::CORPORATION]
+            "ontology_tags": {"sumo": [hkask_bridge_ontology::sumo::CORPORATION]},
+            "concepts": [hkask_bridge_ontology::sumo::CORPORATION]
         });
 
         let mut stale = base.clone();

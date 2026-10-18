@@ -614,8 +614,8 @@ impl MemoryStore {
         Ok(self.decayed(self.h_mem_store.query_by_pko_procedure(procedure)?))
     }
 
-    /// Recall h_mems tagged by an open-world ontology namespace (`fibo`,
-    /// `golem`, …) — the domain-supplement query.
+    /// Recall h_mems tagged by an open-world ontology namespace (`golem`,
+    /// `omc`, …) — the domain-supplement query.
     pub fn query_by_ontology_namespace(
         &self,
         namespace: &str,

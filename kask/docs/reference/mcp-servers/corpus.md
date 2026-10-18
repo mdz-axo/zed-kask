@@ -27,8 +27,7 @@ operator data has been rebuilt, ingested or used for training.
 
 | Group | Tool | Purpose |
 |---|---|---|
-| Gather (3) | `corpus_discover` | Discover an author's works and prepare a corpus manifest |
-| | `corpus_discover_company` | Discover company documents from an approved-source manifest |
+| Gather (2) | `corpus_discover` | Discover an author's works and prepare a corpus manifest |
 | | `corpus_cache_work` | Cache extracted work text by slug for reuse |
 | Process (12) | `corpus_convert` | Extract document/directory text; quality-gated directory resume and explicit OCR staging |
 | | `corpus_ocr` | Process PDF/image pages with the configured image-capable OCR model and verification report |

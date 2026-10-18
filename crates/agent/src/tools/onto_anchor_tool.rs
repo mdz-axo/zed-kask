@@ -16,11 +16,11 @@ use ui::SharedString;
 /// Anchor a domain term on a published ontology concept by walking the
 /// fallback ladder (P8.3, `hkask-bridge-ontology` root docs) in
 /// term-resolution form — the same ladder corpus chunk tagging and hMem
-/// content tagging walk per term (a metric with a real FIBO term resolves
+/// content tagging walk per term (a metric with a real published term resolves
 /// at rung 1; a term no domain source publishes resolves at the SUMO
 /// rung):
 ///
-/// 1. **Domain supplement** — pinned published sources (FIBO Q2 Release,
+/// 1. **Domain supplement** — pinned published sources (the RDF vocabularies,
 ///    W3C RDF Data Cube, OMC, PKO/P-Plan/PROV, SEPIO,
 ///    GOLEM/CIDOC-CRM/LRMoo, ML-Schema, RDF/RDFS, DPV, CSO).
 ///    Never force a term into an ontology that has no place for it.
@@ -57,7 +57,7 @@ use ui::SharedString;
 pub struct OntoAnchorToolInput {
     /// The domain term to anchor (e.g. "net margin", "corporation",
     /// "market capitalization") or a full prefixed URI
-    /// (e.g. "fibo-be-le-cb:Corporation").
+    /// (e.g. "pko:Procedure").
     #[serde(deserialize_with = "deserialize_term_field")]
     term: String,
     /// Optional relation question. Omit for the original resolution-only result.
@@ -83,7 +83,7 @@ where
     super::deserialize_teaching_field(
         deserializer,
         "term",
-        "a domain term string like \"net margin\" or \"fibo-be-le-cb:Corporation\"",
+        "a domain term string like \"net margin\" or \"pko:Procedure\"",
         false,
     )
 }
@@ -333,33 +333,28 @@ mod tests {
 
     /// expect: [P5] Rung 1 — a published domain term resolves to its
     /// vocabulary and URI, across separator and case variants, exactly as
-    /// the widget's IRR tile anchors on FIBO.
+    /// the widget's media tiles anchor on OMC.
     #[test]
     fn domain_terms_resolve_on_rung_one() {
         for (term, expected_uri) in [
-            ("corporation", "fibo-be-le-cb:Corporation"),
-            (
-                "MarketCapitalization",
-                "fibo-ind-mkt-bas:MarketCapitalization",
-            ),
-            (
-                "market capitalization",
-                "fibo-ind-mkt-bas:MarketCapitalization",
-            ),
-            ("fibo-be-le-cb:Corporation", "fibo-be-le-cb:Corporation"),
+            ("assertion", "sepio:0000030"),
+            ("Provenance", "omc:Provenance"),
+            ("omc:Provenance", "omc:Provenance"),
         ] {
             let resolved = resolve_term(term);
             assert_eq!(resolved.tier, "domain_supplement", "{term}: {resolved:?}");
-            assert_eq!(resolved.namespace, "FIBO", "{term}: {resolved:?}");
             assert_eq!(resolved.concept, expected_uri, "{term}: {resolved:?}");
         }
+        assert_eq!(resolve_term("assertion").namespace, "SEPIO");
+        assert_eq!(resolve_term("Provenance").namespace, "OMC");
     }
 
     /// expect: [P1] Rung 2 — the contested term of the 2026-09-10 session
     /// resolves as a derived concept carrying its recorded identity and
-    /// authority. FIBO publishes no ratio terms (verified 2026-08-29), so
-    /// the derived registry — where the operator ruling is recorded — is
-    /// the term's home. Never a void, never a private definition.
+    /// authority. No published vocabulary carries ratio terms (verified
+    /// 2026-08-29), so the derived registry — where the operator ruling is
+    /// recorded — is the term's home. Never a void, never a private
+    /// definition.
     #[test]
     fn net_margin_resolves_on_the_derived_rung() {
         let resolved = resolve_term("net margin");
@@ -374,7 +369,7 @@ mod tests {
     }
 
     /// expect: [P5] Rung 3 — a term the upper ontology publishes resolves
-    /// on SUMO, exactly as the widget anchors FIBO-less metrics on
+    /// on SUMO, exactly as the widget anchors unanchored metrics on
     /// `sumo:Quantity`.
     #[test]
     fn upper_ontology_terms_resolve_on_rung_three() {

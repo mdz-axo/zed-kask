@@ -39,14 +39,14 @@ use std::path::{Path, PathBuf};
 /// Case-insensitive on the namespace (fabrications can be any case); the
 /// term may contain letters, digits, underscores, and hyphens
 /// (`dlp:participant-in`, `gc:GP1i_has_Character`).
-const ONTOLOGY_TERM_PATTERN: &str = r"(?i)(pko|pplan|prov|fibo|golem|gc|crm|dlp|lrmoo|SEPIO|IAO|sumo|omc|mls|sdmx|dcterms|bibo|dcmitype|cito|schema|rdf):[A-Za-z][A-Za-z0-9_-]*";
+const ONTOLOGY_TERM_PATTERN: &str = r"(?i)(pko|pplan|prov|golem|gc|crm|dlp|lrmoo|SEPIO|IAO|sumo|omc|mls|sdmx|dcterms|bibo|dcmitype|cito|schema|rdf):[A-Za-z][A-Za-z0-9_-]*";
 
 /// Explicit, reviewed allowlist: (path from repo root, ontology term).
 ///
 /// Every entry pins a test's wire contract: the literal independently asserts
 /// what its corresponding server emits. This allowlist enforces routing,
 /// not validity: some historical test wire values (for example
-/// `fibo:Corporation` in a media fixture) are not published FIBO concept IDs.
+/// `omc:Sequence` in a media fixture) are not published concept IDs.
 ///
 /// Production code may NOT add entries here — reference a bridge constant
 /// instead. New entries require a justification naming either a pinned
@@ -68,10 +68,6 @@ const ALLOWED_LITERALS: &[(&str, &str)] = &[
     (
         "crates/hkask-media-widget/src/media_widget.rs",
         "omc:Sequence",
-    ),
-    (
-        "crates/hkask-media-widget/src/media_widget.rs",
-        "fibo:Corporation",
     ),
     ("crates/hkask-scenarios-widget/src/view.rs", "pko:Procedure"),
     ("crates/hkask-swarm-widget/src/block.rs", "pko:Procedure"),

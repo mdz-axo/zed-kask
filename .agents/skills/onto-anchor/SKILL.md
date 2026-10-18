@@ -50,10 +50,8 @@ The bridge crate is the single source of truth for ontology vocabulary
 compiled from SHA-256-pinned sources; named constants are only a consumer
 selection. Current coverage includes SUMO, schema.org, DCMI/BIBO/CiTO,
 PKO/P-Plan/PROV, SEPIO, GOLEM/CIDOC-CRM/LRMoo, OMC, ML-Schema, RDF/RDFS,
-W3C RDF Data Cube (`qb:`) and FIBO's Q2 **Release** set (157 modules, 6,443
-terms), not Provisional. The Cube source is pinned as `sources/rdf-data-cube/cube.ttl`
-with its PDDL 1.0 license; FIBO's selected modules are in `fibo-release-modules.tsv`.
-Former local `sdmx:` class-name aliases and five unlicensed `dlp:` constants
+W3C RDF Data Cube (`qb:`)), not Provisional. The Cube source is pinned as `sources/rdf-data-cube/cube.ttl`
+with its PDDL 1.0 license. Former local `sdmx:` class-name aliases and five unlicensed `dlp:` constants
 are removed, not silently translated into published IDs. Never invent a
 publisher definition where the source supplies none. No
 ontology vocabulary lives inside an MCP server.
@@ -61,7 +59,7 @@ ontology vocabulary lives inside an MCP server.
 Anchoring is a **scope-broadening walk, never a single pick** — the fallback
 ladder (P8.3, `axis.rs` and the bridge root docs):
 
-1. **Domain supplement** — exact terms in pinned sources (FIBO Q2 Release,
+1. **Domain supplement** — exact terms in pinned sources (RDF Data Cube,
    RDF Data Cube, OMC, PKO/P-Plan/PROV, SEPIO, GOLEM/CIDOC-CRM/LRMoo,
    ML-Schema, RDF/RDFS). A statistical provider hint does not prove its
    outputs are RDF cubes; unmatched SDMX Information Model names do not resolve here.
@@ -71,7 +69,7 @@ ladder (P8.3, `axis.rs` and the bridge root docs):
    (`derived::DERIVED_CONCEPTS`). This is where operator rulings become
    durable anchors.
 3. **Upper ontology** — the full SUMO distribution: formal categorization
-   when no domain or derived concept fits. A financial metric with no FIBO
+   when no domain or derived concept fits. A metric with no published
    term is a `sumo:Quantity`.
 4. **General vocabulary** — the full schema.org release, after SUMO so a
    formal category is preferred.
@@ -104,7 +102,7 @@ ruling (recorded in the derived registry) improves it.
   Coverage is per server, not fleet-wide; an untagged tool output is not an
   anchor — resolve its terms with `onto_anchor`.
 - **Per-term anchors**: corpus chunk tagging and hMem content tagging are
-  the reference implementations — a term with a real FIBO concept anchors
+  the reference implementations — a term with a real published concept anchors
   at rung 1; a term no domain source publishes anchors on `sumo:Quantity`
   (rung 3).
 - **Term resolution and relation traversal for the agent**: `onto_anchor`
@@ -142,7 +140,7 @@ ruling (recorded in the derived registry) improves it.
    changes are exactly the kind that should be build-gated, not
    runtime-mutable. The term resolves there ever after. Never assign a
    private definition in the meantime — fabricated ontology terms are a
-   documented failure mode (63 of 70 FIBO URIs were invented before the
+   documented failure mode (63 of 70 financial URIs were invented before the
    2026-08-29 purge), and semantic mislabeling passes every structural check
    (observed 2026-09-10: a "net margin" that was a pre-interest operating
    formula survived two operator corrections and a 112-green test suite —
@@ -157,9 +155,9 @@ All receipts executed live through `onto_anchor` (2026-10-01, batch-13 audit):
   authority "operator ruling 2026-09-10 (stated three times)" — the ruling
   that fixed the pre-interest operating formula is the derived registry's
   first authority citation, and the term resolves there ever after.
-- Domain rung with alternatives: `corporation` → tier `domain_supplement`,
-  `fibo-be-le-cb:Corporation` (FIBO Q2 Release) with the SUMO and schema.org
-  senses listed in `alternatives` — several vocabularies publishing the same
+- Domain rung with alternatives: `corporation` → tier `upper`,
+  `sumo:Corporation` with the schema.org sense listed in `alternatives` —
+  several vocabularies publishing the same
   word is the normal case; read them before relying on the chosen sense.
 - Relation traversal (the skill's own documented example):
   `{"term":"sustainable growth rate","relation_query":{"to":"net margin","max_hops":2}}`

@@ -3,7 +3,7 @@
 //! Canonical predicate URIs for the corpus assertion pipeline's expository
 //! passages (concepts, analysis, arguments). schema.org is the general-purpose
 //! vocabulary the extraction prompts offer alongside the domain ontologies
-//! (GOLEM for narrative, SEPIO for epistemic, FIBO for financial).
+//! (GOLEM for narrative, SEPIO for epistemic).
 //!
 //! The full schema.org release (every layer of the pinned version) is loaded
 //! from `sources/schema-org/` and resolved through `published`. This module is

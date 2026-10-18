@@ -13,8 +13,8 @@
 //!
 //!   gather → process (chunk/tag/embed/assertions) → output (QA export | compose)
 //!
-//! Tools (26):
-//! - Gather:     corpus_discover, corpus_cache_work, corpus_discover_company
+//! Tools (25):
+//! - Gather:     corpus_discover, corpus_cache_work
 //! - Process:    corpus_convert, corpus_ocr, corpus_is_complex, corpus_chunk,
 //!   corpus_build_chunk_representations, corpus_embedding_inventory, corpus_export_bundle, corpus_tag_chunks, corpus_embed, corpus_extract_assertions,
 //!   corpus_dedup_chunks, corpus_consolidate_chunks
@@ -31,7 +31,6 @@ mod backend;
 pub(crate) mod batch;
 pub(crate) mod compose;
 pub(crate) mod convert;
-pub(crate) mod corpus;
 mod helpers;
 mod index;
 pub(crate) mod inference_svc;
@@ -310,7 +309,7 @@ mod tool_surface_tests {
         );
     }
 
-    // The corpus server registers exactly 26 tools. A `#[tool]` method in an
+    // The corpus server registers exactly 25 tools. A `#[tool]` method in an
     // impl block WITHOUT `#[tool_router]` silently registers nothing while
     // `cargo check` passes — the former `corpus_prepare_training_dataset`
     // shipped that way (attributed, implemented, unreachable) until this pin
@@ -321,8 +320,8 @@ mod tool_surface_tests {
     hkask_mcp_server::tool_surface_pin!(
         CorpusServer::combined_router(),
         "combined_router",
-        26,
-        tool_surface_is_exactly_26_registered_tools,
+        25,
+        tool_surface_is_exactly_25_registered_tools,
     );
 
     /// Schema-shape pins for the calibration/grounding tools — the
@@ -1037,8 +1036,8 @@ mod smoke {
                 "text": text,
                 "dimensions": ["what"],
                 "candidate_terms": ["corporation"],
-                "ontology_tags": {"fibo": [hkask_bridge_ontology::fibo::CORPORATION]},
-                "concepts": [hkask_bridge_ontology::fibo::CORPORATION],
+                "ontology_tags": {"sumo": [hkask_bridge_ontology::sumo::CORPORATION]},
+                "concepts": [hkask_bridge_ontology::sumo::CORPORATION],
             })
         };
         let plain = classified(
@@ -1250,8 +1249,8 @@ mod smoke {
             "text": "The Cinderella curve describes firms with high returns on capital that fade over time.",
             "dimensions": ["what"],
             "candidate_terms": ["corporation"],
-            "ontology_tags": {"fibo": [hkask_bridge_ontology::fibo::CORPORATION]},
-            "concepts": [hkask_bridge_ontology::fibo::CORPORATION],
+            "ontology_tags": {"sumo": [hkask_bridge_ontology::sumo::CORPORATION]},
+            "concepts": [hkask_bridge_ontology::sumo::CORPORATION],
         });
         let doc2 = serde_json::json!({
             "entity_ref": "corpus:custom:doc2",
@@ -1260,8 +1259,8 @@ mod smoke {
             "text": "A passage about capital returns and their durability.",
             "dimensions": ["what"],
             "candidate_terms": ["corporation"],
-            "ontology_tags": {"fibo": [hkask_bridge_ontology::fibo::CORPORATION]},
-            "concepts": [hkask_bridge_ontology::fibo::CORPORATION],
+            "ontology_tags": {"sumo": [hkask_bridge_ontology::sumo::CORPORATION]},
+            "concepts": [hkask_bridge_ontology::sumo::CORPORATION],
         });
         std::fs::write(&tagged_path, format!("{doc1}\n{doc2}\n")).expect("write tagged jsonl");
 

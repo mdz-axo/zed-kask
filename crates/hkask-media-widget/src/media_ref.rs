@@ -364,7 +364,7 @@ pub struct MediaBlockBody {
     /// Stable gallery Asset identity when the publisher indexed this media.
     #[serde(default)]
     pub gallery_asset_id: Option<String>,
-    /// Ontology concept URI (e.g. `omc:CreativeWork`, `fibo:Corporation`,
+    /// Ontology concept URI (e.g. `omc:CreativeWork`, `sumo:Corporation`,
     /// `pko:Step`). Drives the "Explain" affordance's tool selection (the
     /// "I" pattern — ontology-bounded affordances). `None` on older blocks
     /// → the widget falls back to the default explain tool.

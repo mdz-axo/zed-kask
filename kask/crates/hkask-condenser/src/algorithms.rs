@@ -100,8 +100,8 @@ impl CondenserAlgorithm for RtkStyleAlgorithm {
         budget: usize,
         ontology_anchor: Option<&OntologyAnchor>,
     ) -> (String, Vec<CondenserHealthSignal>) {
-        // Ontology-aware head/tail split: FIBO financial data gets more tail
-        // (summary/conclusion often carries key financial ratios)
+        // Ontology-aware head/tail split: denser-anchored content gets more
+        // tail (summary/conclusion often carries the key measured values)
         let density_factor = ontology_anchor.map(|a| a.density_factor()).unwrap_or(1.0);
         let head_ratio = (0.3 / density_factor).clamp(0.15, 0.5);
         let head_count = (budget as f64 * head_ratio) as usize;
@@ -246,23 +246,6 @@ impl CondenserAlgorithm for WordRankAlgorithm {
 /// full compression pipeline.
 pub(crate) fn domain_saliency(line: &str, anchor: Option<&OntologyAnchor>) -> f64 {
     let direct = match anchor {
-        Some(OntologyAnchor::DomainSupplement {
-            namespace: OntologyNamespace::Fibo,
-            ..
-        }) => {
-            if line.contains('%') || line.contains('$') || line.chars().any(|c| c.is_ascii_digit())
-            {
-                0.5
-            } else if line.contains("ratio")
-                || line.contains("margin")
-                || line.contains("growth")
-                || line.contains("value")
-            {
-                0.3
-            } else {
-                0.0
-            }
-        }
         Some(OntologyAnchor::DomainSupplement {
             namespace: OntologyNamespace::Sumo,
             ..
@@ -769,27 +752,27 @@ mod tests {
 
     // ── End-to-end ontology-aware compression tests (P8.1) ───────────────
 
-    /// Financial text with FIBO anchoring preserves key numeric metrics.
+    /// SUMO-anchored structured data preserves key numeric measurements.
     #[test]
-    fn fibo_anchor_preserves_financial_metrics() {
+    fn sumo_anchor_preserves_structured_metrics() {
         let input = concat!(
-            "Company Profile: AAPL\n",
-            "Sector: Technology\n",
-            "Market Capitalization: 3.2T USD\n",
-            "P/E Ratio: 28.5\n",
-            "Revenue Growth: 5.2%\n",
-            "Free Cash Flow: 102B\n",
-            "Dividend Yield: 0.45%\n",
-            "This is a general description of the company's operations.\n",
-            "The company was founded in 1976 and is headquartered in Cupertino.\n",
-            "It designs, manufactures, and markets smartphones and computers.\n",
-            "The competitive landscape includes Samsung, Google, and Microsoft.\n",
-            "Management commentary: we expect continued growth in services.\n",
+            "Benchmark Profile: p95 latency\n",
+            "Run: 2026-10-18\n",
+            "p95 latency: 142.0 ms\n",
+            "p50 latency: 61.5 ms\n",
+            "Throughput change: 5.2%\n",
+            "Peak memory: 102 MB\n",
+            "Error rate: 0.45%\n",
+            "This is a general description of the run's conditions.\n",
+            "The harness was run on a Framework laptop in 2026.\n",
+            "It measures request handling under load.\n",
+            "The comparison baseline is the prior release.\n",
+            "Operator commentary: we expect continued improvement in latency.\n",
         );
         let algo = WordRankAlgorithm;
         let anchor = Some(OntologyAnchor::DomainSupplement {
-            namespace: OntologyNamespace::Fibo,
-            concept: hkask_bridge_ontology::fibo::CORPORATION.into(),
+            namespace: OntologyNamespace::Sumo,
+            concept: hkask_bridge_ontology::sumo::PROCESS.into(),
         });
         let (result, _) = algo.compress(
             input,
@@ -797,20 +780,20 @@ mod tests {
             ContextCategory::StructuredData,
             anchor.as_ref(),
         );
-        // FIBO anchor should prioritize lines with numeric financial data
-        // Soft profile (60% retention): enough budget for multiple financial lines
+        // The SUMO anchor's graph bonus should prioritize lines carrying
+        // process/measurement vocabulary.
+        // Soft profile (60% retention): enough budget for multiple metric lines
         assert!(
-            result.contains("Market Capitalization"),
-            "financial metric not preserved: {result}"
+            result.contains("p95 latency"),
+            "measurement not preserved: {result}"
         );
-        let has_numbers = result.contains("P/E")
-            || result.contains("Revenue Growth")
-            || result.contains("Free Cash Flow");
+        let has_numbers = result.contains("p50 latency")
+            || result.contains("Throughput change")
+            || result.contains("Peak memory");
         assert!(
             has_numbers,
-            "at least one additional financial metric should be preserved: {result}"
+            "at least one additional measurement should be preserved: {result}"
         );
-        // Financial lines should get higher scores than generic description
         let result_lines: Vec<&str> = result.lines().collect();
         assert!(result_lines.len() <= 30, "result exceeds budget");
     }
@@ -897,17 +880,18 @@ mod tests {
     #[test]
     fn derive_and_compress_with_correct_anchor() {
         // Simulate the engine's workflow: tool_name → derive anchor → compress
-        let tool_name = "company_profile";
+        let tool_name = "corpus_query";
         let anchor = select_ontology_anchor(tool_name);
         assert_eq!(
             anchor,
-            OntologyAnchor::DomainSupplement {
-                namespace: OntologyNamespace::Fibo,
-                concept: dc_bibo::DATASET.to_string()
+            OntologyAnchor::DualAxis {
+                axis: OntologyAxis::Pko,
+                concept: hkask_bridge_ontology::pko::PROCEDURE.to_string()
             }
         );
 
-        let input = "AAPL: revenue 383B, net income 97B, P/E 28.5, market cap 3.2T";
+        let input =
+            "Step 1: convert the document to text. Step 2: chunk it. Status: execution complete.";
         let algo = WordRankAlgorithm;
         let (result, _) = algo.compress(
             input,
@@ -915,14 +899,14 @@ mod tests {
             ContextCategory::StructuredData,
             Some(&anchor),
         );
-        // With FIBO anchoring, numeric financial content is high-signal
+        // With the PKO process anchor, step/status vocabulary is high-signal.
         // Normal profile (20% retention): short enough to pass through
         assert!(!result.is_empty());
-        // The result should include the key financial terms
+        // The result should include the process terms
         // (with Normal profile on short input, it may pass through entirely)
-        let has_financial =
-            result.contains("revenue") || result.contains("P/E") || result.contains("market cap");
-        assert!(has_financial, "financial content not preserved: {result}");
+        let has_process =
+            result.contains("Step 1") || result.contains("chunk") || result.contains("Status");
+        assert!(has_process, "process content not preserved: {result}");
     }
 
     // ── Property-based tests (Wave 2) ─────────────────────────────────────

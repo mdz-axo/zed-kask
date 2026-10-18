@@ -1,7 +1,7 @@
 //! SUMO (Suggested Upper Merged Ontology) vocabulary bridge.
 //!
 //! SUMO is the upper ontology — the general-purpose fallback for domains
-//! that don't map to a specific supplement (FIBO, SEPIO, GOLEM, ML-Schema).
+//! that don't map to a specific supplement (SEPIO, GOLEM, ML-Schema).
 //! It provides the foundational categories (Entity, Process, Object, Agent,
 //! Relation) that all domain supplements ultimately specialize. Where Dublin
 //! Core is the universal state axis and PKO is the universal process axis,
@@ -71,6 +71,15 @@ pub const QUANTITY: SumoConcept = "sumo:Quantity";
 /// SUMO: `sumo:TimeMeasure` (subclass of Quantity; temporal ordering/duration).
 pub const TIME_MEASURE: SumoConcept = "sumo:TimeMeasure";
 
+/// A corporation — a business organization with a legal identity distinct
+/// from its owners.
+/// SUMO: `sumo:Corporation` (subclass of `Business`).
+/// Re-homed here when the FIBO rung was removed: FIBO's
+/// `fibo-be-le-cb:Corporation` was the domain-supplement anchor for
+/// corporation terms, and SUMO publishes a class for the same concept.
+/// Resolved by `onto_anchor("corporation")` at the `upper` tier.
+pub const CORPORATION: SumoConcept = "sumo:Corporation";
+
 // ── Relations (for KG triples) ──────────────────────────────────────────────
 
 /// A subsumption / sub-class relation — A is-a B.
@@ -107,6 +116,7 @@ mod tests {
             TEXT,
             QUANTITY,
             TIME_MEASURE,
+            CORPORATION,
             SUBCLASS,
             PART,
             ATTRIBUTE,

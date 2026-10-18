@@ -149,7 +149,7 @@ The corpus server provides tools for style corpus management, prose generation, 
 
 | Server | Tools | Domain | Status |
 |--------|-------|--------|--------|
-| `hkask-mcp-corpus` | Gather: `corpus_discover`, `corpus_cache_work`, `corpus_discover_company`; process: `corpus_convert`, `corpus_ocr`, `corpus_is_complex`, `corpus_chunk`, `corpus_build_chunk_representations`, `corpus_embedding_inventory`, `corpus_export_bundle`, `corpus_tag_chunks`, `corpus_embed`, `corpus_extract_assertions`, `corpus_dedup_chunks`, `corpus_consolidate_chunks`; QA: `corpus_build_prompts`, `corpus_generate_qa_batch`, `corpus_ground_generated_qa`, `corpus_ingest_qa`, `corpus_purge_qa`; compose: `corpus_compose`, `corpus_rewrite`, `corpus_centroid`; manage: `corpus_cache`, `corpus_query`, `corpus_clear_index` | Corpus gathering + processing + QA generation + style exemplar composition | ✅ Implemented: 26 tools, enumerated at `kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:16-24` and pinned by `tool_surface_is_exactly_26_registered_tools` at `:321-326` |
+| `hkask-mcp-corpus` | Gather: `corpus_discover`, `corpus_cache_work`; process: `corpus_convert`, `corpus_ocr`, `corpus_is_complex`, `corpus_chunk`, `corpus_build_chunk_representations`, `corpus_embedding_inventory`, `corpus_export_bundle`, `corpus_tag_chunks`, `corpus_embed`, `corpus_extract_assertions`, `corpus_dedup_chunks`, `corpus_consolidate_chunks`; QA: `corpus_build_prompts`, `corpus_generate_qa_batch`, `corpus_ground_generated_qa`, `corpus_ingest_qa`, `corpus_purge_qa`; compose: `corpus_compose`, `corpus_rewrite`, `corpus_centroid`; manage: `corpus_cache`, `corpus_query`, `corpus_clear_index` | Corpus gathering + processing + QA generation + style exemplar composition | ✅ Implemented: 26 tools, enumerated at `kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:16-24` and pinned by `tool_surface_is_exactly_26_registered_tools` at `:321-326` |
 
 ### 4.3 Style Exemplar Architecture
 
@@ -162,11 +162,10 @@ The style exemplar system models a **human exemplar** — a named individual who
 | Public domain author | Static YAML (`works:` list pointing to Gutenberg URLs) | Named public-domain works | ✅ Implemented |
 | Mashup exemplar | Two-author centroid interpolation over source corpora | Registry-defined mashups | ✅ Implemented |
 | Academic author | `corpus_discover` in curated or agentic mode | Semantic Scholar, arXiv, web, and optional transcripts | ✅ Implemented (`kask/mcp-servers/hkask-mcp-corpus/src/tools/gather.rs:44-54,78-84`) |
-| Company corpus | `corpus_discover_company` from an approved-source manifest | SEC filings plus channel-allowlisted transcripts | ✅ Implemented (`kask/mcp-servers/hkask-mcp-corpus/src/tools/gather.rs:230-235,480-490`) |
 
 ### Discovery pipelines
 
-`corpus_discover` accepts an author name, mode, work limit, transcript/web switches, and optional output path; it delegates multi-source enumeration and emits a `corpus.yaml` for the processing pipeline (`kask/mcp-servers/hkask-mcp-corpus/src/tools/gather.rs:44-54,78-84`). `corpus_discover_company` starts from an approved company-source manifest, records excluded non-allowlisted sources, and emits coverage by source tier (`kask/mcp-servers/hkask-mcp-corpus/src/tools/gather.rs:230-235,480-529`). Both are current gather-stage tools, not planned wrappers around the research server.
+`corpus_discover` accepts an author name, mode, work limit, transcript/web switches, and optional output path; it delegates multi-source enumeration and emits a `corpus.yaml` for the processing pipeline (`kask/mcp-servers/hkask-mcp-corpus/src/tools/gather.rs:44-54,78-84`). It is a current gather-stage tool, not a planned wrapper around the research server.
 
 
 ---

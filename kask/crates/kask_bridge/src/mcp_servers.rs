@@ -59,9 +59,8 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_DB_PASSPHRASE",
         ],
         config_env: &[
-            // Data dir — still needed for the skills-registry manifest
-            // (`skills/registry/company-sources/`, read via
-            // `resolve_under_data_dir` in `gather.rs`).
+            // Data dir — the corpus server resolves its D28 layout paths
+            // (cache, artifacts) under this root via `resolve_under_data_dir`.
             "HKASK_DATA_DIR",
             // Artifacts dir — needed so the corpus server resolves its
             // `corpus-mcp/` artifacts (cache) under the same visible root

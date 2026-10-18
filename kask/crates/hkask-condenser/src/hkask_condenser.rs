@@ -19,13 +19,13 @@
 //!     `domain_saliency` scores text relevance against an ontology anchor using
 //!     graph proximity — used by `WordRankAlgorithm` internally.
 //! - **`ontology_graph`** — A lightweight cross-domain concept relationship
-//!   index (FIBO, SUMO, GOLEM, ML-Schema, PKO, DC+BIBO). Built once
+//!   index (SUMO, GOLEM, ML-Schema, PKO, DC+BIBO). Built once
 //!   at startup via `OnceLock`, zero dependencies, no reasoners. Used as a
 //!   saliency multiplier — lines containing concepts adjacent to the anchor
-//!   concept (e.g., "market_capitalization" when anchored to a FIBO corporation)
+//!   concept (e.g., "recall" when anchored to a SUMO memory process)
 //!   receive bonus scores.
 //! - **`types`** — Domain types: `OntologyAnchor` (3-tier classification),
-//!   `OntologyAxis` (Pko/DcBibo), `OntologyNamespace` (Fibo/Golem/Sumo/
+//!   `OntologyAxis` (Pko/DcBibo), `OntologyNamespace` (Sepio/Golem/Sumo/
 //!   MlSchema), compression profiles, health signals.
 //! - **`engine`** — `CondenserEngine` owns profile state and compression
 //!   dispatch. Selects an algorithm per compression via the static

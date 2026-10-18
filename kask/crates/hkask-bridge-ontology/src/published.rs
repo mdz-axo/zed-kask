@@ -3,7 +3,7 @@
 //!
 //! Loaded today: SUMO (every ontology file of the pinned distribution),
 //! schema.org (every type, enumeration member and property of the pinned
-//! release), FIBO (the pinned Q2 Release modules), and every RDF vocabulary
+//! release), and every RDF vocabulary
 //! of `published_sources::RDF_VOCABULARIES` — Dublin Core, BIBO, CiTO, PROV,
 //! PKO, P-Plan, ML-Schema, SEPIO, GOLEM, CIDOC-CRM, LRMoo, OMC,
 //! RDF 1.1, RDF Data Cube, DPV and CSO. Each term carries its published

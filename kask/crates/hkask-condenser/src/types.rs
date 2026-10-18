@@ -303,14 +303,14 @@ mod tests {
 
     #[test]
     fn ontology_anchor_density_factors() {
-        // FIBO financial data: densest (1.3x retention)
+        // ML-Schema: densest (1.1x retention)
         assert!(
             (OntologyAnchor::DomainSupplement {
-                namespace: OntologyNamespace::Fibo,
-                concept: hkask_bridge_ontology::fibo::CORPORATION.into()
+                namespace: OntologyNamespace::MlSchema,
+                concept: hkask_bridge_ontology::ml_schema::EXPERIMENT.into()
             }
             .density_factor()
-                - 1.3)
+                - 1.1)
                 .abs()
                 < 0.001
         );
@@ -356,8 +356,8 @@ mod tests {
         );
         assert_eq!(
             OntologyAnchor::DomainSupplement {
-                namespace: OntologyNamespace::Fibo,
-                concept: hkask_bridge_ontology::fibo::CORPORATION.into()
+                namespace: OntologyNamespace::Sumo,
+                concept: hkask_bridge_ontology::sumo::PROCESS.into()
             }
             .tier_label(),
             "domain_supplement"
@@ -388,8 +388,8 @@ mod tests {
     #[test]
     fn ontology_namespace_parsing() {
         assert_eq!(
-            "fibo".parse::<OntologyNamespace>().unwrap(),
-            OntologyNamespace::Fibo
+            "sepio".parse::<OntologyNamespace>().unwrap(),
+            OntologyNamespace::Sepio
         );
         assert_eq!(
             "golem".parse::<OntologyNamespace>().unwrap(),
@@ -413,7 +413,7 @@ mod tests {
     #[test]
     fn ontology_namespace_display_roundtrip() {
         let namespaces = [
-            OntologyNamespace::Fibo,
+            OntologyNamespace::Sepio,
             OntologyNamespace::Golem,
             OntologyNamespace::MlSchema,
             OntologyNamespace::Sumo,

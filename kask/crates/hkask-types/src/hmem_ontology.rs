@@ -253,8 +253,8 @@ mod tests {
             ["corporation", "unknown idea", "memory"]
         );
         assert_eq!(
-            merged.ontology_tags["fibo"],
-            [hkask_bridge_ontology::fibo::CORPORATION]
+            merged.ontology_tags["sumo"],
+            [hkask_bridge_ontology::sumo::CORPORATION]
         );
         assert_eq!(merged.ontology_tags["core"], ["5w1h_core"]);
         assert_eq!(

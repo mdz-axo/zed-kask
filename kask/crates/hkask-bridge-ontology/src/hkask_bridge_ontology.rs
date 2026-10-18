@@ -5,7 +5,6 @@
 //!
 //! Full, pinned published vocabularies are compiled into `published` by
 //! `build.rs`; the modules below offer named constants, not term inventories.
-//! FIBO includes the publisher's Q2 Release maturity set, not Provisional.
 //!
 //! Two universal axes (P5.4):
 //! - **State axis** — Dublin Core + BIBO + CiTO (`dc_bibo`): the "what is this"
@@ -21,7 +20,6 @@
 //!
 //! Domain supplements (P8.1) — layered on top where the universal axes aren't
 //! specific enough for a domain:
-//! - **FIBO** (`fibo`): financial / company analysis.
 //! - **SEPIO** (`sepio`): scientific evidence and provenance — evidence,
 //!   support, dispute, contradiction, confidence.
 //! - **GOLEM** (`golem`): literature, narrative, persona; includes pinned
@@ -85,7 +83,6 @@
 //! - PKO: Carriero et al. (2025, arXiv:2503.20634)
 //! - SUMO: <https://github.com/ontologyportal/sumo> — Pease, A. (2010).
 //!   Ontology: A Practical Guide. Articulate Software Press.
-//! - FIBO: <https://spec.edmcouncil.org/fibo/>
 //! - SEPIO: https://github.com/monarch-initiative/SEPIO-ontology
 //! - GOLEM: Pianzola et al. (GOLEM Lab, 2024). <https://ontology.golemlab.eu/>
 //! - ML-Schema: <https://www.w3.org/community/ml-schema/>
@@ -95,7 +92,6 @@ pub mod axis;
 pub mod data_cube;
 pub mod dc_bibo;
 pub mod derived;
-pub mod fibo;
 pub mod golem;
 pub mod ml_schema;
 pub mod omc;

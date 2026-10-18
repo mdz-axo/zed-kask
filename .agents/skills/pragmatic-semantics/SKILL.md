@@ -47,9 +47,9 @@ Statement classification (all axes of semantics-classify-statement, the tiers an
 4. Identify both the process axis (PKO) and state axis (DC+BIBO) if the statement is dual-axis.
 5. Map the statement to its constraint force (Prohibition, Guardrail, Guideline, Evidence, or Hypothesis) based on its ontological and epistemic modes.
 6. Classify the provenance of the statement (Specification, Design, Implementation, Runtime, Memory, Inference, External, or Unknown — the trace's data-layer hierarchy; `Runtime` replaces the former `Observation`, same concept).
-7. Emit unadjusted `base_confidence` and `spec_checked` from Step 1 (`semantics-classify-statement.j2`), then after Step 2 `onto_anchor` resolution compute the final adjusted confidence deterministically with `lisp_eval` gate `PS-1` (preventing double-counting of FIBO/SUMO ontology modifiers):
-   - form: `(min 1.0 (max 0.0 (+ base_confidence (if fibo_anchored 0.05 0.0) (if sumo_anchored 0.03 0.0) (if spec_checked 0.05 0.0) (if unanchored -0.10 0.0))))`
-   - env: `{ "base_confidence": <unadjusted base confidence from Step 1>, "fibo_anchored": <true|false from onto_anchor>, "sumo_anchored": <true|false from onto_anchor>, "spec_checked": <true only if the named spec was verified current>, "unanchored": <true|false> }`
+7. Emit unadjusted `base_confidence` and `spec_checked` from Step 1 (`semantics-classify-statement.j2`), then after Step 2 `onto_anchor` resolution compute the final adjusted confidence deterministically with `lisp_eval` gate `PS-1` (preventing double-counting of ontology modifiers):
+   - form: `(min 1.0 (max 0.0 (+ base_confidence (if domain_anchored 0.05 0.0) (if sumo_anchored 0.03 0.0) (if spec_checked 0.05 0.0) (if unanchored -0.10 0.0))))`
+   - env: `{ "base_confidence": <unadjusted base confidence from Step 1>, "domain_anchored": <true|false from onto_anchor — true when the term resolves to the domain-supplement rung>, "sumo_anchored": <true|false from onto_anchor>, "spec_checked": <true only if the named spec was verified current>, "unanchored": <true|false> }`
    - For Unknown provenance (or a specification claimed but not checked), apply the 0.3 ceiling and the 0.8 checked-specification floor over the resulting confidence.
 
 ### semantics-provenance-trace
@@ -69,7 +69,7 @@ Statement classification (all axes of semantics-classify-statement, the tiers an
 3. Break ties within the same ontological mode by epistemic certainty (Declarative > Probabilistic > Subjunctive).
 4. Break ties within the same epistemic mode by constraint force (Prohibition > Guardrail > Guideline > Evidence > Hypothesis).
 5. Break ties within the same constraint force by provenance authority (Specification > Design > Implementation > Runtime > Memory > External > Inference > Unknown — External ranks below every hKask layer and above inference; its domain authority flows through the Tier-5 anchoring, operator ruling 2026-09-30).
-6. Use ontology anchoring as the final tiebreaker, prioritizing the Tier-5 anchoring rank (FIBO over SUMO, unanchored as lowest priority — the rank is adoption-based, not the confidence modifier).
+6. Use ontology anchoring as the final tiebreaker, prioritizing the Tier-5 anchoring rank (domain supplement over SUMO, unanchored as lowest priority — the rank is adoption-based, not the confidence modifier).
 7. (D) Once each statement's classifications are fixed, verify strict Optimality Theory lexicographic dominance with `lisp_eval` gate `PS-2` (and use the 5-tier rank comparator for full tie-breaking):
    - `PS-2` form: `(or (< winner_t1_violations runner_up_t1_violations) (and (= winner_t1_violations runner_up_t1_violations) (< winner_t2_violations runner_up_t2_violations)) (and (= winner_t1_violations runner_up_t1_violations) (= winner_t2_violations runner_up_t2_violations) (<= winner_t3_violations runner_up_t3_violations)))`
    - `PS-2` env: `{ "winner_t1_violations": <count>, "runner_up_t1_violations": <count>, "winner_t2_violations": <count>, "runner_up_t2_violations": <count>, "winner_t3_violations": <count>, "runner_up_t3_violations": <count> }`
@@ -111,7 +111,7 @@ Gate — call `lisp_eval` with:
 |----------|---------|
 | `semantics-classify-statement.j2` | Classify a statement on three axes: ontological (IS/OUGHT), epistemic (declarative/probabilistic/subjunctive), and domain ontology anchoring (core/dual_axis/domain_supplement). Determine its constraint force, provenance, and confidence with tier-specific modifiers. |
 | `semantics-provenance-trace.j2` | Trace the provenance of a claim through hKask's data layers including ontology tier confidence modifiers. Identify evidence sources, confidence level, and verification recommendations. |
-| `semantics-conflict-resolve.j2` | Resolve a conflict between statements using 5-tier OT ranking. Rank by ontological type, epistemic mode, constraint force, evidence provenance, and ontology anchoring (FIBO > SUMO > unanchored). |
+| `semantics-conflict-resolve.j2` | Resolve a conflict between statements using 5-tier OT ranking. Rank by ontological type, epistemic mode, constraint force, evidence provenance, and ontology anchoring (domain supplement > SUMO > unanchored). |
 | `semantics-route-step.j2` | Classify a computation step into its D/P regime per P8.4 (entropy-matched routing): D (named oracle), P:propose-verify (named gate), P:probabilistic (named server), P:forecast (named resolution mechanism). Emits the step tag and flags both mismatch diseases. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `pragmatic-semantics/semantics-classify-statement`) and a context object with the required variables.
@@ -127,7 +127,7 @@ Template context variables (from each template's [inference] contract):
 
 All receipts executed live through `lisp_eval` (2026-10-01, backfill pass):
 
-- Classify form, spec-checked FIBO anchor at base 0.7 → `0.8` (FIBO
+- Classify form, spec-checked domain anchor at base 0.7 → `0.8` (domain
   +0.05 and spec_checked +0.05; the checked-specification floor of 0.8
   also holds it at 0.8).
 - Classify form, unknown provenance → `0.3` (the cap — unchecked
@@ -139,7 +139,7 @@ The skill's forms are executed at use time, never anchored in code.
 
 ## Constraints
 
-- `semantics-classify-statement.j2`: IS-statements are never Prohibitions. Declarative OUGHT-statements map to Prohibition or Guardrail. Unknown provenance → confidence ≤ 0.3. Specification provenance → confidence ≥ 0.8 (verify spec is current). Ontology and spec modifiers are applied once, by gate `PS-1` only (FIBO +0.05, SUMO +0.03, spec_checked +0.05, unanchored -0.10); this template emits the unadjusted `base_confidence` and never applies them itself.
+- `semantics-classify-statement.j2`: IS-statements are never Prohibitions. Declarative OUGHT-statements map to Prohibition or Guardrail. Unknown provenance → confidence ≤ 0.3. Specification provenance → confidence ≥ 0.8 (verify spec is current). Ontology and spec modifiers are applied once, by gate `PS-1` only (domain_anchored +0.05, SUMO +0.03, spec_checked +0.05, unanchored -0.10); this template emits the unadjusted `base_confidence` and never applies them itself.
 - `semantics-provenance-trace.j2`: Every step must identify a concrete location. Unknown source → confidence ≤ 0.2. Direct spec quotes → confidence ≥ 0.9. Inference steps reduce confidence by ≥ 0.1.
 - `semantics-conflict-resolve.j2`: OUGHT never loses to IS. Two Prohibitions conflicting → escalate. Resolution enum: override, scope, defer, escalate, confirm.
 - `semantics-route-step.j2`: Every D tag names a real oracle; every P tag names its collapse path. A step tagged D where the answer has genuine multiplicity, or P where a deterministic checker exists, is flagged as a mismatch disease, never silently relabelled.

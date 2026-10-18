@@ -16,9 +16,9 @@
 //! verdict) or falls to the upper/general layers. "Unanchored" as a
 //! terminal state is the failure mode this registry exists to close
 //! (observed 2026-09-10: "net margin" — the most-used term in the
-//! financial-analysis vocabulary — resolved to a void because FIBO
-//! publishes no ratio terms, and a pre-interest operating formula wore
-//! the label through three operator corrections).
+//! financial-analysis vocabulary — resolved to a void because the then-loaded
+//! FIBO rung published no ratio terms, and a pre-interest operating formula
+//! wore the label through three operator corrections).
 
 /// A derived concept: a recorded composition over anchored constituents.
 pub struct DerivedConcept {
@@ -35,7 +35,7 @@ pub struct DerivedConcept {
     pub constituents: &'static [&'static str],
     /// The authority record: an operator ruling (with date) or a
     /// published standard. An entry with no resolvable authority fails
-    /// the build (same discipline as the FIBO fixture).
+    /// the build (same discipline as the published-term fixture).
     pub authority: &'static str,
 }
 

@@ -9,10 +9,15 @@
 use hkask_types::BlockProvenance;
 use serde::Deserialize;
 
-// ── FIBO / methodology anchors ────────────────────────────────────────────
-pub const FIBO_FORECAST_ID: &str = "fibo-fbc-fct-ra:ForecastIdentifier";
-pub const FIBO_BRIER_SCORE: &str = "fibo-fbc-fct-ra:BrierScore";
-pub const FIBO_SCENARIO_PROBABILITY: &str = "fibo-fbc-fct-ra:ScenarioProbability";
+// ── Methodology anchors (derived rung) ────────────────────────────────────
+// These label the dashboard panels with the concept each one shows. The
+// terms resolve on the derived rung of the ontology ladder (see
+// `hkask-bridge-ontology/src/derived.rs`) — the fabricated
+// `fibo-fbc-fct-ra:*` URIs they used to carry were never in the FIBO
+// release and were removed with the FIBO rung (2026-10-18).
+pub const ANCHOR_FORECAST_ID: &str = "calibrated_forecast";
+pub const ANCHOR_BRIER_SCORE: &str = "brier_score";
+pub const ANCHOR_SCENARIO_PROBABILITY: &str = "scenario_planning";
 
 /// The discriminator-tagged body of a ```` ```scenarios ```` block.
 ///

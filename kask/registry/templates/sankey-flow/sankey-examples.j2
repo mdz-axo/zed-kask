@@ -9,7 +9,7 @@
   "domain": "cost-breakdown",
   "match_triggers": ["income statement", "revenue", "expenses", "profit", "loss", "earnings", "P&L", "financial statement", "10-K", "10-Q"],
   "conservation_mode": "mandatory",
-  "ontology_anchor": "resolve each financial term; FIBO only if matched",
+  "ontology_anchor": "resolve each term with onto_anchor; a domain anchor only if a published term matches",
   "weight_unit": "currency (e.g., USD millions)",
   "structure_description": "Revenue flows in from product/segment sources, unifies at a Total Revenue node (the '=' sign), then breaks out into expense categories and profit/loss. Negative profits (losses) flow BACK INTO the revenue pool as inflows — Revenue + |Loss| = Total Expenses. This is the income statement equation: Revenue = Expenses + Profits, where Profits can be negative.",
   "node_pattern": {
@@ -31,7 +31,7 @@
   "domain": "cost-breakdown",
   "match_triggers": ["budget", "allocation", "spend", "cost breakdown", "department budget"],
   "conservation_mode": "mandatory",
-  "ontology_anchor": "resolve each financial term; FIBO only if matched",
+  "ontology_anchor": "resolve each term with onto_anchor; a domain anchor only if a published term matches",
   "weight_unit": "currency",
   "structure_description": "A total budget flows out to departments, each department splits into sub-categories. Conservation is mandatory: every dollar is accounted for.",
   "node_pattern": {
@@ -97,7 +97,7 @@
   "domain": "cost-breakdown",
   "match_triggers": ["balance sheet", "assets", "liabilities", "equity"],
   "conservation_mode": "mandatory",
-  "ontology_anchor": "resolve each financial term; FIBO only if matched",
+  "ontology_anchor": "resolve each term with onto_anchor; a domain anchor only if a published term matches",
   "weight_unit": "currency",
   "structure_description": "Assets on one side, Liabilities + Equity on the other. The accounting equation: Assets = Liabilities + Equity. Conservation is mandatory.",
   "node_pattern": {

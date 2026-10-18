@@ -1,5 +1,5 @@
 {# goal: Extract RDF triples from text with confidence scores. #}
-{# v5: Narrative-aware with GOLEM, SEPIO, FIBO ontologies. #}
+{# v6: Narrative-aware with GOLEM, SEPIO, SUMO ontologies. #}
 {#     GOLEM predicates use pinned gc:, crm:, lrmoo: vocabularies. #}
 {#     Unlicensed DLP terms are excluded pending source verification. SEPIO predicates are the #}
 {#     official Monarch Initiative terms (SEPIO CURIEs, verified against #}
@@ -29,7 +29,7 @@ You are a knowledge graph extractor for a capabilities research corpus. Given a 
 This passage has already been classified with the following ontology tags:
 {{ ontology_context }}
 
-Use these tags to determine which predicates to use. If the tags include "golem", the passage is narrative — use GOLEM predicates. If the tags include "fibo" or "sepio" or "epistemic" or "pko", the passage is expository — use the corresponding domain predicates (FIBO for financial, SEPIO for scientific/epistemic, schema.org for general). If the tags include "other", use standard RDF predicates. If multiple are present, the passage is mixed — use whichever ontology best captures each triple.
+Use these tags to determine which predicates to use. If the tags include "golem", the passage is narrative — use GOLEM predicates. If the tags include "sepio" or "epistemic" or "pko", the passage is expository — use the corresponding domain predicates (SEPIO for scientific/epistemic, schema.org for general). If the tags include "other", use standard RDF predicates. If multiple are present, the passage is mixed — use whichever ontology best captures each triple.
 {% else %}
 
 ## Step 1: Classify the passage
@@ -54,13 +54,6 @@ Determine whether this passage is:
 - rdf:type, schema:name, schema:author, schema:mentions, schema:relatedTo
 - schema:about, schema:hasPart, schema:isPartOf, schema:subjectOf
 - schema:creator, schema:contributor, schema:dateCreated, schema:location
-
-### For financial/business passages — use standard RDF / schema.org predicates:
-- rdf:type, schema:about, schema:mentions, schema:relatedTo
-- (FIBO publishes no predicates for competitive advantage, valuation
-   methods, or capital allocation; until verified FIBO terms are wired in,
-   financial passages use the generic expository set — do NOT emit
-   fibo:-prefixed predicates)
 
 ### For scientific/epistemic passages — use SEPIO predicates (official Monarch Initiative terms):
 - SEPIO:0000030 — an agent asserts a proposition (a claim)
@@ -93,8 +86,7 @@ Text:
 Respond in JSON format:
 {"h_mems": [{"subject": "corpus:EntityName", "predicate": "gc:GP1i_has_Character", "object": "CharacterName", "confidence": 0.95}]}
 
-Example (expository): {"subject": "corpus:Damodaran", "predicate": "schema:author", "object": "Investment Valuation", "confidence": 0.98}
-Example (narrative): {"subject": "corpus:Berkshire", "predicate": "gc:GP1i_has_Character", "object": "Warren Buffett", "confidence": 0.95}
+Example (expository): {"subject": "corpus:Tetlock", "predicate": "schema:author", "object": "Expert Political Judgment", "confidence": 0.98}
+Example (narrative): {"subject": "corpus:Middlemarch", "predicate": "gc:GP1i_has_Character", "object": "Dorothea Brooke", "confidence": 0.95}
 Example (epistemic): {"subject": "corpus:Tetlock", "predicate": "SEPIO:0000189", "object": "Good Judgment Project data", "confidence": 0.90}
-Example (financial): {"subject": "corpus:Berkshire", "predicate": "schema:about", "object": "float reinvestment", "confidence": 0.85}
 </task>

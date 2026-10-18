@@ -1,12 +1,12 @@
 //! Ontology Concept Graph — lightweight cross-domain relationship index (P5.4/P8.1).
 //!
-//! Encodes relationships between concepts across all 6 domain ontologies
+//! Encodes relationships between concepts across the domain ontologies
 //! and the dual-axis framework. Built once at startup, zero dependencies,
-//! no reasoners, no OWL parsing — follows the `fibo.rs` bridge pattern.
+//! no reasoners, no OWL parsing — follows the bridge-module pattern.
 //!
 //! The graph serves the condenser as a saliency multiplier: when compressing
-//! content anchored to a concept (e.g., `fibo-be-le-cb:Corporation`), lines
-//! referencing related concepts (e.g., `fibo-ind-mkt-bas:MarketCapitalization`)
+//! content anchored to a concept (e.g., `pko:StepExecution`), lines
+//! referencing related concepts (e.g., `pko:StepVerification`)
 //! receive a bonus — structural knowledge about what "matters" in each
 //! domain. The graph's internal keys are hKask salience keywords (plain
 //! lowercase concept names), not ontology URIs.
@@ -17,9 +17,9 @@
 //! |------|---------|---------|
 //! | **PartOf** | A is a component of B | `pko:StepExecution` is part of `pko:ProcedureExecution` |
 //! | **Precedes** | A must happen before B | `sumo:encoding` precedes `sumo:memory_consolidation` |
-//! | **HasProperty** | A has attribute/measure B | `fibo-be-le-cb:Corporation` has `fibo-ind-mkt-bas:MarketCapitalization` |
+//! | **HasProperty** | A has attribute/measure B | `mlschema:Run` has `mlschema:Model` |
 //! | **RelatedTo** | A and B are linked in meaning | `sumo:salience` relates to `sumo:cued_recall` |
-//! | **CrossDomain** | A (domain X) maps to B (domain Y) | `pko:IssueOccurrence` may reference a `fibo-be-le-cb:Corporation` |
+//! | **CrossDomain** | A (domain X) maps to B (domain Y) | `pko:IssueOccurrence` may reference a `sumo:Process` |
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -29,14 +29,13 @@ use std::sync::OnceLock;
 pub(crate) enum OntologyRelation {
     PartOf,
     Precedes,
-    HasProperty,
     RelatedTo,
     CrossDomain,
 }
 
 /// A lightweight index of ontology concept relationships.
 ///
-/// Key: a concept keyword (lowercase, e.g., "corporation", "step_execution").
+/// Key: a concept keyword (lowercase, e.g., "step_execution", "encoding").
 /// Value: related concepts with relationship type.
 /// Lookup is substring-based — a line containing the related keyword
 /// adjacent to the anchored concept gets a saliency bonus.
@@ -120,48 +119,6 @@ impl OntologyGraph {
             ],
         );
         edges.insert("forgetting", vec![("purge", OntologyRelation::RelatedTo)]);
-
-        // ── FIBO financial ───────────────────────────────────────────────
-        edges.insert(
-            "corporation",
-            vec![
-                ("market_capitalization", OntologyRelation::HasProperty),
-                ("market cap", OntologyRelation::HasProperty),
-                ("price_earnings", OntologyRelation::HasProperty),
-                ("p/e", OntologyRelation::HasProperty),
-                ("enterprise_value", OntologyRelation::HasProperty),
-                ("pe_ratio", OntologyRelation::HasProperty),
-                ("debt_to_equity", OntologyRelation::HasProperty),
-                ("return_on_equity", OntologyRelation::HasProperty),
-                ("return_on_assets", OntologyRelation::HasProperty),
-                ("gross_profit_margin", OntologyRelation::HasProperty),
-                ("net_profit_margin", OntologyRelation::HasProperty),
-                ("revenue_growth", OntologyRelation::HasProperty),
-                ("free_cash_flow", OntologyRelation::HasProperty),
-                ("dividend_yield", OntologyRelation::HasProperty),
-            ],
-        );
-        edges.insert(
-            "portfolio",
-            vec![
-                ("security_holding", OntologyRelation::HasProperty),
-                ("holding_weight", OntologyRelation::HasProperty),
-                ("weighted_average", OntologyRelation::HasProperty),
-                ("attribution_analysis", OntologyRelation::HasProperty),
-                ("time_weighted_return", OntologyRelation::HasProperty),
-            ],
-        );
-        edges.insert(
-            "dcf",
-            vec![
-                ("free_cash_flow", OntologyRelation::HasProperty),
-                ("discount_rate", OntologyRelation::HasProperty),
-                ("terminal_growth", OntologyRelation::HasProperty),
-                ("enterprise_value", OntologyRelation::HasProperty),
-                ("equity_value", OntologyRelation::HasProperty),
-                ("margin_of_safety", OntologyRelation::HasProperty),
-            ],
-        );
 
         // ── GOLEM narrative ──────────────────────────────────────────────
         edges.insert(
@@ -279,10 +236,6 @@ pub(crate) fn anchor_keywords(anchor: &crate::types::OntologyAnchor) -> Vec<&'st
             ..
         } => vec!["article", "dataset", "document"],
         crate::types::OntologyAnchor::DomainSupplement {
-            namespace: crate::types::OntologyNamespace::Fibo,
-            ..
-        } => vec!["corporation", "portfolio", "dcf", "market"],
-        crate::types::OntologyAnchor::DomainSupplement {
             namespace: crate::types::OntologyNamespace::Sumo,
             ..
         } => vec!["encoding", "salience", "recall"],
@@ -325,15 +278,12 @@ mod tests {
     }
 
     #[test]
-    fn fibo_corporation_has_properties() {
+    fn sumo_recall_relates_to_encoding() {
         let g = graph();
-        let related = g.related("corporation");
-        assert!(
-            !related.is_empty(),
-            "corporation must have related concepts"
-        );
-        let has_market_cap = related.iter().any(|(kw, _)| *kw == "market_capitalization");
-        assert!(has_market_cap, "corporation → market_capitalization");
+        let related = g.related("recall");
+        assert!(!related.is_empty(), "recall must have related concepts");
+        let has_encoding = related.iter().any(|(kw, _)| *kw == "encoding");
+        assert!(has_encoding, "recall → encoding");
     }
 
     #[test]
@@ -365,10 +315,10 @@ mod tests {
     #[test]
     fn graph_adjacency_bonus_fires_on_related() {
         let g = graph();
-        // "corporation" → "market_capitalization" is a HasProperty edge
+        // "encoding" → "recall" is a RelatedTo edge
         let bonus = g.graph_adjacency_bonus(
-            "AAPL has a market capitalization of 3.2 trillion",
-            &["corporation"],
+            "Encoding completed, and cued recall returned 7 contexts",
+            &["encoding"],
         );
         assert!(bonus > 0.0, "should get bonus for related concept");
         assert!(bonus <= 0.5, "bonus must be capped");
@@ -377,7 +327,7 @@ mod tests {
     #[test]
     fn graph_adjacency_bonus_zero_for_unrelated() {
         let g = graph();
-        let bonus = g.graph_adjacency_bonus("the weather is nice today", &["corporation"]);
+        let bonus = g.graph_adjacency_bonus("the weather is nice today", &["encoding"]);
         assert!((bonus - 0.0).abs() < 0.001);
     }
 
@@ -386,8 +336,8 @@ mod tests {
         let g = graph();
         // Many related keywords in one line — should cap at 0.5
         let bonus = g.graph_adjacency_bonus(
-            "market_capitalization price_earnings enterprise_value debt_to_equity return_on_equity",
-            &["corporation"],
+            "encoding salience recall recognition_memory consolidation forgetting purge",
+            &["encoding"],
         );
         assert!(
             (bonus - 0.5).abs() < 0.001,
@@ -396,15 +346,15 @@ mod tests {
     }
 
     #[test]
-    fn anchor_keywords_fibo_returns_financial() {
+    fn anchor_keywords_sumo_returns_memory() {
         use crate::types::{OntologyAnchor, OntologyNamespace};
         let anchor = OntologyAnchor::DomainSupplement {
-            namespace: OntologyNamespace::Fibo,
-            concept: "fibo".into(),
+            namespace: OntologyNamespace::Sumo,
+            concept: "sumo".into(),
         };
         let kws = anchor_keywords(&anchor);
-        assert!(kws.contains(&"corporation"));
-        assert!(kws.contains(&"portfolio"));
+        assert!(kws.contains(&"encoding"));
+        assert!(kws.contains(&"recall"));
     }
 
     #[test]

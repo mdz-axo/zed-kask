@@ -123,8 +123,8 @@ pub struct MediaWidget {
     video_load_generation: u64,
     error: Option<SharedString>,
     warning: Option<SharedString>,
-    /// Ontology concept tag from the parsed block body (e.g. `omc:CreativeWork`,
-    /// `fibo:Corporation`). Drives the "Explain" affordance's tool selection
+    /// Ontology concept tag from the parsed block body (e.g. `omc:CreativeWork`).
+    /// Drives the "Explain" affordance's tool selection
     /// (the "I" pattern). `None` on older blocks → the widget falls back to
     /// the default explain tool.
     ontology: Option<String>,
@@ -1834,7 +1834,7 @@ mod tests {
         assert_eq!(explain_tool_for(SHOT), "describe_image");
         // Non-OMC and unknown concepts fall back to the general explain tool.
         assert_eq!(
-            explain_tool_for(hkask_bridge_ontology::fibo::CORPORATION),
+            explain_tool_for(hkask_bridge_ontology::sumo::CORPORATION),
             "describe_image"
         );
         assert_eq!(explain_tool_for(""), "describe_image");

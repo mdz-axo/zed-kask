@@ -16,7 +16,8 @@ use theme::ActiveTheme;
 use ui::{Color, Label, LabelCommon, LabelSize, prelude::*};
 
 use crate::block::{
-    EventNode, FIBO_BRIER_SCORE, FIBO_FORECAST_ID, FIBO_SCENARIO_PROBABILITY, ScenariosBlockBody,
+    ANCHOR_BRIER_SCORE, ANCHOR_FORECAST_ID, ANCHOR_SCENARIO_PROBABILITY, EventNode,
+    ScenariosBlockBody,
 };
 
 /// Server that hosts the scenario pipeline tools. Used as the fallback dispatch
@@ -222,7 +223,7 @@ impl ScenariosWidget {
             .border_1()
             .border_color(border_color)
             .child(
-                Label::new(format!("Calibration ({FIBO_BRIER_SCORE})"))
+                Label::new(format!("Calibration ({ANCHOR_BRIER_SCORE})"))
                     .size(LabelSize::Small)
                     .color(Color::Muted),
             )
@@ -314,7 +315,7 @@ impl ScenariosWidget {
             .border_color(border_color)
             .child(
                 Label::new(format!(
-                    "Event Matrix ({FIBO_SCENARIO_PROBABILITY}) — {} events",
+                    "Event Matrix ({ANCHOR_SCENARIO_PROBABILITY}) — {} events",
                     tree.nodes.len()
                 ))
                 .size(LabelSize::Small)
@@ -474,7 +475,7 @@ impl ScenariosWidget {
             .border_1()
             .border_color(border_color)
             .child(
-                Label::new(format!("Recent Forecasts ({FIBO_FORECAST_ID})"))
+                Label::new(format!("Recent Forecasts ({ANCHOR_FORECAST_ID})"))
                     .size(LabelSize::Small)
                     .color(Color::Muted),
             )
