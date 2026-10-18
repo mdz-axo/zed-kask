@@ -8,8 +8,6 @@ contract:
     outcome_statistics: object
   output:
     validation_verdict: string
-    correlation_r: number|null
-    directional_match_pct: number|null
     gaming_suspected: boolean|null
     validation_findings: array
 ---
@@ -70,16 +68,16 @@ For each forecaster with realized outcomes:
 2. Match each (forecast_probability, outcome, composite_score) triple by forecast identity; consume only the caller-computed Brier/correlation in `outcome_statistics`. If it is absent or mismatched, report `undetermined`, not the paper's r value.
 3. With fewer than 5 forecasters having resolved outcomes, the correlation is `Undetermined` (too few pairs to be informative), not a number.
 
-The paper found r=0.51 at the forecaster level. Report the observed correlation.
+The paper found r=0.51 at the forecaster level. The caller reads the observed correlation directly from `outcome_statistics`; do NOT restate it in your output — this template does not re-type caller-computed values.
 
 ## Step 3 — Directional Hypothesis Match
 
 The paper found >90% of statistically significant EQM-accuracy correlations match the directional hypotheses (Helps = positive correlation, Hurts = negative correlation).
 
 For each EQM marker (only when ≥5 resolved pairs exist; otherwise Undetermined):
-- Take its correlation with accuracy from the `lisp_eval` result.
+- Take its correlation with accuracy from the caller's `outcome_statistics`.
 - Check if the sign matches the directional hypothesis (Helps → positive, Hurts → negative).
-- Report the percentage of markers that match.
+- Report the percentage of markers that match in `validation_findings`; the caller reads the numeric percentage from `outcome_statistics`.
 
 ## Step 4 — Gaming Detection
 
@@ -95,8 +93,6 @@ Respond with a JSON object:
 ```json
 {
   "validation_verdict": "undetermined",
-  "correlation_r": null,
-  "directional_match_pct": null,
   "gaming_suspected": null,
   "validation_findings": [
     {"check": "outcome_correlation", "status": "skipped", "detail": "No qualifying caller-computed cohort result supplied."},
@@ -109,5 +105,5 @@ Respond with a JSON object:
 
 - If realized_outcomes are absent, return `validation_verdict: "undetermined"` — do NOT return "validated" or "ready".
 - Gaming detection requires comparable later resolved forecasts; missing data means `gaming_suspected: null`, not a claim of no gaming.
-- The correlation_r and directional_match_pct are null when outcomes are absent.
+- `correlation_r` and `directional_match_pct` are the caller's, read from `outcome_statistics`; never restate them in your output (a re-typed copy can drift from the computed value).
 - Do not fabricate validation results — if the data is insufficient, return "undetermined".
