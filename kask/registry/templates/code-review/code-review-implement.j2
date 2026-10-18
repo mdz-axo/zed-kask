@@ -8,8 +8,6 @@ contract:
     change_model: object
   output:
     fix_plan: array
-    fixes_generated: integer
-    applied_count: integer
     fixes_skipped: array
 ---
 {# Phase 5 — IMPLEMENT (Act phase; skip unless the user explicitly authorized fixes) #}
@@ -103,10 +101,12 @@ For other languages, follow the surrounding code's idioms.
 
 ## Step 6 — The agent applies edits and records the real count
 
-The agent applies each `fix_plan` edit via `edit_file`. `applied_count`
-reflects what the agent ACTUALLY applied (a fuzzy-match failure drops that
-fix — record it in `fixes_skipped` with reason `"edit_failed"`). The
-convergence re-review should see a reduced `blocker_delta`.
+The agent applies each `fix_plan` edit via `edit_file`. The applied count is
+the agent's own: it counts the successful `edit_file` results (a fuzzy-match
+failure drops that fix — record it in `fixes_skipped` with reason
+`"edit_failed"`). `fixes_generated` is `(length fix_plan)`; both are computed
+by the caller, never typed by this template. The convergence re-review should
+see a reduced `blocker_delta`.
 
 ## Output
 
@@ -124,13 +124,16 @@ Respond with a JSON object:
       "remedy": "named structural remedy applied"
     }
   ],
-  "fixes_generated": 0,
-  "applied_count": 0,
   "fixes_skipped": [
     {"finding_id": "CR-...", "reason": "no_remedy | cannot_locate | edit_failed | taste_no_remedy"}
   ]
 }
 ```
+
+Do NOT emit `fixes_generated` or `applied_count` — `fixes_generated` is
+`(length fix_plan)` (the caller's `lisp_eval` length form), and
+`applied_count` is only knowable from the agent's `edit_file` receipts after
+generation. This template cannot observe an application outcome.
 
 ## Constraints
 
@@ -145,8 +148,8 @@ Respond with a JSON object:
 - Honor project conventions and .rules (Rust: ? over unwrap, no let _ = on
   fallible ops, no panicking indexing, full names; GPUI constraints where
   applicable).
-- applied_count reflects what the agent actually applied, not what was
-  generated. A failed fuzzy match drops the fix into fixes_skipped.
+- The applied count is the agent's own `edit_file` receipts, not a template
+  emission; a failed fuzzy match drops the fix into fixes_skipped.
 - Do not implement changes the report did not authorize (no scope creep into
   unrelated refactors).
 - Handle missing variables gracefully.

@@ -10,9 +10,6 @@ contract:
   output:
     regression_test_code: string
     test_file_path: string
-    fix_applied: boolean
-    original_repro_fixed: boolean
-    diagnostic_tags_removed: boolean
     postmortem: string
     architecture_note: string
 ---
@@ -73,13 +70,16 @@ Respond with a JSON object:
 {
   "regression_test_code": "// The regression test (before the fix)",
   "test_file_path": "path/to/test/file.rs",
-  "fix_applied": true,
-  "original_repro_fixed": true,
-  "diagnostic_tags_removed": true,
   "postmortem": "Brief narrative: what was the bug, root cause, fix, and what would have prevented it.",
   "architecture_note": "If the fix reveals an architectural issue (no good test seam, tangled callers, hidden coupling), describe it here. Empty string if no architectural issue."
 }
 ```
+
+Do NOT emit `fix_applied`, `original_repro_fixed`, or `diagnostic_tags_removed` —
+those are states only the CALLER observes (the edit receipt, the regression-test
+run, and a `grep` for `[DIAG-` residue). The caller asserts them from its own
+receipts and `DIAG-2` evaluates them; a self-certified `original_repro_fixed:
+true` at generation time would be a false pass.
 
 If `has_correct_seam` is false, set `regression_test_code` to an empty string and explain why in `architecture_note`.
 
@@ -87,6 +87,6 @@ If `has_correct_seam` is false, set `regression_test_code` to an empty string an
 
 - Write the regression test BEFORE the fix.
 - If no correct seam exists, do NOT write a shallow test that gives false confidence.
-- All `[DIAG-xxxx]` tags must be removed before declaring done.
+- All `[DIAG-xxxx]` tags must be removed before declaring done; the caller verifies the removal.
 - The commit/PR message must state the confirmed hypothesis.
 
