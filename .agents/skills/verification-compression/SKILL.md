@@ -157,7 +157,7 @@ verification code.
    `removed_mappings` (removed_artifact + retained_artifact + same signal).
    The candidate graph keeps the same `required` and `before` arrays as the
    before graph. Do not select a convenient key subset. Run the deterministic
-   script `kask/scripts/generate-verification-preservation-proof.sh`
+   script `kask/scripts/audit/generate-verification-preservation-proof.sh`
    (`bash kask/scripts/audit/generate-verification-preservation-proof.sh
    <candidate-graph.json> <new-proof.lean>`): it rejects incomplete keys,
    missing mappings, and lost signals and deterministically emits the only

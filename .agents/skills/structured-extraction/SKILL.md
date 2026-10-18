@@ -59,7 +59,8 @@ Structured data extraction from unstructured text. Identifies entities, extracts
 5. Infer missing but required fields from surrounding context if possible (`inferred_fields`).
 6. Report fields that cannot be populated from available information as `unresolved_fields`.
 7. **Gate `SE-3` (Field coverage — D in `lisp_eval`):** Deterministically compute `field_coverage` (`total_fields`, `populated_fields`, `coverage_ratio`) from `extracted_data` and `schema_fields` (the property names of `target_schema`):
-   - form: `(let ((total (length schema_fields)) (pop (length extracted_data))) (list total pop (if (= total 0) 0.0 (/ pop total))))`
+   - form: `(begin (define pop-count (lambda (fs) (if (is_null fs) 0 (+ (if (is_null (assoc (car fs) extracted_data)) 0 1) (pop-count (cdr fs)))))) (let ((total (length schema_fields)) (pop (pop-count schema_fields))) (list total pop (if (= total 0) 0.0 (/ pop total)))))`
+   - Counts only schema-declared fields that are present and non-null in `extracted_data`; keys outside the schema and null values are not coverage, so `coverage_ratio` can never exceed 1.0.
    - env: `{ "schema_fields": <list of target_schema field names>, "extracted_data": <extracted_data object> }`
 
 **D/P labelling.** Entity identification, typing, relation extraction, confidence, field inference, and map-to-schema's type coercion and conflict resolution are P, critiqued by `SE-1` and by the operator; `SE-1` (substring check), `SE-2` (entity/relation counts and `orphan_entities`), `SE-3` (`field_coverage`), and the Convergence gate are D. Reference models: OpenIE (Banko et al. 2007, IJCAI), ACE2005 standoff annotation, CoNLL-2012 coreference.

@@ -22,7 +22,7 @@ General-purpose prompt enhancement skill for the zed-kask platform. Classifies p
 
 ## When NOT to Use
 
-- Training-config prompts — `lora-training` owns that domain.
+- Training-config prompts — model training is out of scope for the co-researcher mandate.
 
 ## Inputs
 
@@ -135,7 +135,7 @@ Array-valued context fields are plain JSON arrays — never stringified JSON. A 
    `round` is 1 at medium, 1–3 escalating at high. Produce `ratings`, `findings` (the failed-gap list that feeds a corrective Act), and `verdict` (`pass`, `rewrite_needed`, or `fail`). Challenge whether each proposed check actually establishes its claim and whether unrun checks are mislabeled as verified.
 5. Preserve the critic's specific failed checks and verdict. Skip this stage at low effort and set `grill_verdict = "skipped"`, `grill_ratings = []`; a skipped critic is not a `pass`.
 6. Run deterministic `lisp_eval` gate `PE-2` after the critique step to enforce the escalation bound:
-   - form: `(and (<= rounds_executed 3) (<= pdca_corrections 1) (if (= verdict "pass") (= blocking_defects 0) true))`
+   - form: `(and (<= rounds_executed 3) (<= pdca_corrections 1) (if (string= verdict "pass") (= blocking_defects 0) true))`
    - env: `{ "rounds_executed": <1..3>, "pdca_corrections": <0..1>, "verdict": "<pass|rewrite_needed|fail|skipped>", "blocking_defects": <count of unresolved Prohibition-tier defects> }`
 
 ### Local PDCA — Check and Act before output

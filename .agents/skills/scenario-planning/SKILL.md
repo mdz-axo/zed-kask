@@ -106,7 +106,7 @@ quantified backbone.
    (`importance >= 4` and `uncertainty >= 4` for high/high) and verify both
    `critical_uncertainties` fall in the high-importance, high-uncertainty
    quadrant:
-   - form: `(begin (define hi-hi (lambda (fs) (if (is_null fs) (list) (let ((f (car fs))) (if (and (>= (assoc "importance" f) 4) (>= (assoc "uncertainty" f) 4)) (cons (assoc "force" f) (hi-hi (cdr fs))) (hi-hi (cdr fs))))))) (let ((q1 (hi-hi driving_forces))) (list q1 (= (length critical_uncertainties) 2) (not (is_null (member (assoc "force" (nth 0 critical_uncertainties)) q1))) (not (is_null (member (assoc "force" (nth 1 critical_uncertainties)) q1))))))`
+   - form: `(begin (define hi-hi (lambda (fs) (if (is_null fs) (list) (let ((f (car fs))) (if (and (>= (assoc "importance" f) 4) (>= (assoc "uncertainty" f) 4)) (cons (assoc "force" f) (hi-hi (cdr fs))) (hi-hi (cdr fs))))))) (let ((q1 (hi-hi driving_forces))) (list q1 (= (length critical_uncertainties) 2) (member (assoc "force" (nth 0 critical_uncertainties)) q1) (member (assoc "force" (nth 1 critical_uncertainties)) q1))))`
    - env: `{ "driving_forces": <driving_forces>, "critical_uncertainties": <critical_uncertainties> }`
 11. Render `scenario-planning/axes-and-narratives` with `focal_question`,
    `critical_uncertainties`, and `planning_horizon` for the four quadrant

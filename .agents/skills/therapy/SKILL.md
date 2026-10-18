@@ -237,7 +237,7 @@ The scan's counts, the approved-proposal count, the execution check and the post
    - `reification_target`: for reification proposals, the skill/template/rule to create.
    - `reason`: why this resolution is proposed (citing the finding and the grounding).
    - `requires_approval`: true (all modifications require user approval).
-   - Verify proposal completeness and approval flags via `lisp_eval` (`TH-1`): `(and (= findings_count proposals_count) (= unapproved_auto_count 0))`.
+   - Verify proposal completeness and approval flags via `lisp_eval` (`TH-1`): `(and (>= proposals_count findings_count) (= findings_without_proposal 0) (= unapproved_auto_count 0))` — every finding must be addressed by at least one proposal, but a single finding may yield several (reification plus the purge/condense of its source memories), so proposals legitimately exceed findings. `findings_without_proposal` is the count of findings with no proposal referencing them.
 
 ### Phase 4 — User review and approval
 

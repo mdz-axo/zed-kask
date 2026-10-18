@@ -83,7 +83,7 @@ report), not just the tone.
 Before running Mode 1 or Mode 2 (or recommending a generation voice via `writing-style/style-recommend` with `document_brief` and `available_styles`), check with `lisp_eval` that the requested `style_name` is one of the 5 literary generation voices and not a non-generation technical corpus (`gentle-lovelace`, `david-dunning`):
 
 ```lisp
-(not (is_null (member style_name (list "hemingway" "woolf" "agatha-eliot" "jane-wilde" "ulysses-s-twain"))))
+(member style_name (list "hemingway" "woolf" "agatha-eliot" "jane-wilde" "ulysses-s-twain"))
 ```
 
 If `WS-1` returns `false`, stop before calling `corpus_compose` or rendering `writing-style/conversational-turn` and explain that `gentle-lovelace` and `david-dunning` are evaluation/centroid corpora without generation configs (for dimension-specific documentation rewrites, use `corpus_rewrite` directly with `dimension`).

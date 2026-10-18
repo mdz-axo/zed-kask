@@ -129,7 +129,7 @@ Output: a dependency table (unit → defines → uses → must-come-after).
 
 Verify the extracted `inventory_result` (`map.j2` output) with `lisp_eval` gate `UR-2` before proceeding to `decide.j2` — every unit in `functional_units` must appear in `topological_order` and every `"Prohibition"` unit in `constraint_force_table` must have a non-empty `enforcement_point`:
 ```
-form: (begin (define proh-ok (lambda (rows) (if (is_null rows) true (let ((r (car rows))) (if (string= (assoc "force" r) "Prohibition") (and (not (string= (assoc "enforcement_point" r) "")) (proh-ok (cdr rows))) (proh-ok (cdr rows))))))) (and (= (length functional_units) (length topological_order)) (> (length functional_units) 0) (proh-ok constraint_force_table)))
+form: (begin (define proh-ok (lambda (rows) (if (is_null rows) true (let ((r (car rows))) (if (string= (assoc "force" r) "Prohibition") (and (not (string= (assoc "enforcement_point" r) "")) (proh-ok (cdr rows))) (proh-ok (cdr rows))))))) (define all-in (lambda (xs ys) (if (is_null xs) true (and (member (car xs) ys) (all-in (cdr xs) ys))))) (and (= (length functional_units) (length topological_order)) (> (length functional_units) 0) (all-in functional_units topological_order) (all-in topological_order functional_units) (proh-ok constraint_force_table)))
 env:  { "functional_units": <functional_units>, "topological_order": <topological_order>, "constraint_force_table": <constraint_force_table> }
 ```
 

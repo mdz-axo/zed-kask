@@ -90,7 +90,7 @@ env: `W` = raw weights (one per criterion), `ALTS` = one list per alternative of
 ### Convergence
 
 8. Gate — call `lisp_eval` with:
-   - form: `(or (string= min_flip "none") (> min_flip 0.05))`
+   - form: `(or (and (stringp min_flip) (string= min_flip "none")) (and (numberp min_flip) (> min_flip 0.05)))`
    - env: `{ "min_flip": <the lisp_eval min_flip result> }`
    Robust or moderate outcomes (no flip at 5% or less) close the loop. A
    fragile outcome re-enters weight-and-score once with the critical-weight

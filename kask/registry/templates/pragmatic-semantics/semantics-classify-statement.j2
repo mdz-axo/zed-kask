@@ -45,10 +45,12 @@ Every statement in hKask exists within a 3-tier ontology architecture. The tier 
 
 ### Tier-Specific Confidence Modifiers
 
-| Domain Supplement | Confidence Modifier | Rationale |
+Reference only — these modifiers are applied by the `PS-1` `lisp_eval` gate after Step 2 `onto_anchor` resolution, never by this template. Emit `base_confidence` unadjusted.
+
+| Domain Supplement | Confidence Modifier (applied by `PS-1`) | Rationale |
 |-----------------|--------------------|-----------|
-| **FIBO** (financial) | +0.10 | OMG standard, built by Goldman Sachs/Citigroup/Bloomberg/Fed — high adoption, precise semantics |
-| **SUMO** (upper ontology) | +0.05 | Actively maintained upper ontology (Ontology Portal), broad coverage — formal categorization for unknown domains |
+| **FIBO** (financial) | +0.05 | OMG standard, built by Goldman Sachs/Citigroup/Bloomberg/Fed — high adoption, precise semantics |
+| **SUMO** (upper ontology) | +0.03 | Actively maintained upper ontology (Ontology Portal), broad coverage — formal categorization for unknown domains |
 | **GOLEM** (narrative) | ±0.00 | ERC-funded academic ontology, aligned with CIDOC-CRM — well-defined but domain-narrow |
 | **ML-Schema** (ML experiments) | ±0.00 | W3C Community Group — less adoption than FIBO, provisional bridge |
 | **OMC** (media creation) | ±0.00 | MovieLabs v2.8 standard, Hollywood consortium — domain-specific but well-adopted |
@@ -141,9 +143,8 @@ Respond with a JSON object:
 - Subjunctive statements map to Hypothesis unless strong evidence upgrades them.
 - If provenance is Unknown, confidence must be ≤ 0.3.
 - Apply the Specification confidence floor only when the named specification and its current applicability have actually been checked; a path supplied as context is not verification. Otherwise mark provenance as unknown and do not apply the floor or ontology boost to compensate for missing evidence.
-- FIBO-anchored statements: apply +0.10 confidence modifier (OMG standard, high adoption).
-- SUMO-anchored statements: apply +0.05 confidence boost (upper ontology, broad coverage).
-- Unanchored statements (no ontology tier): flag as ontological noise per P5.2, reduce confidence by 0.15.
+- Do NOT apply ontology confidence modifiers here. Emit `base_confidence` unadjusted; the `PS-1` `lisp_eval` gate applies the FIBO (+0.05), SUMO (+0.03), checked-specification (+0.05), and unanchored (−0.10) modifiers after Step 2 `onto_anchor` resolution. Applying them here double-counts them.
+- Unanchored statements (no ontology tier): flag as ontological noise per P5.2 in `reasoning`; the confidence reduction itself is applied by `PS-1`, not here.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Preserve the original prompt structure and formatting.
 - Handle missing variables gracefully (leave as-is or use default if specified).
