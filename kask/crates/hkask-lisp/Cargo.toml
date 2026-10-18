@@ -17,6 +17,10 @@ stacksafe.workspace = true
 proptest = { workspace = true }
 criterion = { workspace = true }
 
+[[bin]]
+name = "check-skill-lisp-forms"
+path = "src/bin/check_skill_lisp_forms.rs"
+
 [[bench]]
 name = "engine_bench"
 harness = false
