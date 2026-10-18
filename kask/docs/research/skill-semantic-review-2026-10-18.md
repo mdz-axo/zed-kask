@@ -1,13 +1,3 @@
----
-title: "Skill semantic review — 2026-10-18"
-audience: [architects, developers, agents, operators]
-last_updated: 2026-10-18
-version: "1.0.0"
-status: "Active"
-domain: "Cross-cutting"
-mds_categories: [composition, curation]
----
-
 # Skill semantic review — 2026-10-18
 
 Live census: 58 skills, 216 templates.
@@ -103,8 +93,8 @@ diff /tmp/live-skills.txt /tmp/ledger-skills.txt   # no output = set-equal
 | Composition edges | `kask/scripts/audit/skill-review-edges.sh` | 101 edges | all resolve |
 | Template refs | `kask/scripts/audit/skill-review-ledger-base.sh` (miss column) | 216 templates | 1 non-resolving (a documented placeholder) |
 | Template contracts | `kask/scripts/check-template-contracts.sh` | 216 templates | 0 flagged, 7 skipped |
-| Ontology anchors | `kask/scripts/audit/skill-review-anchors.sh` | 29 onto_anchor→derived citations | all present in derived.rs |
-| Doc citations | `kask/scripts/audit/skill-review-doc-cites.sh` | 25 in-tree doc paths | all resolve |
+| Ontology anchors | `kask/scripts/audit/skill-review-anchors.sh` | 37 skill-key citations (29 distinct keys) | 0 dangling |
+| Doc citations | `kask/scripts/audit/skill-review-doc-cites.sh` | 25 in-tree doc citations | 0 missing |
 | S13 anatomy | `kask/scripts/audit/skill-review-loop-anatomy.sh` + read-triage | 58 bodies | all state initial + target; flags read-triaged as false positives |
 | S14 leads | `kask/scripts/audit/skill-review-s14-leads.sh` | 17 contract leads | all read-triaged (P judgment or runtime observation) |
 
@@ -113,7 +103,8 @@ diff /tmp/live-skills.txt /tmp/ledger-skills.txt   # no output = set-equal
 Each skill's cited external source was checked at the depth the tree supports:
 the **derived-registry encoding** (`kask/crates/hkask-bridge-ontology/src/derived.rs`)
 was read and compared against the skill's claim for every `onto_anchor`→derived
-citation (29/29 present, chapter-level precision where the source warrants it).
+citation (37 skill-key citations over 29 distinct keys, 0 dangling; chapter-level
+precision where the source warrants it).
 The **primary sources themselves** — the books and papers — are not vendored in this
 tree, so no skill is marked `aligned` on the strength of having read its book.
 Two skills (gpui-bench, lean-prover) whose oracle is an external toolchain rather
@@ -137,8 +128,10 @@ cycle. No self-loops. The invocation graph is acyclic.
 - **9** server/process-owned, rendered by Rust callers rather than by a skill:
   `docproc/` (6, the corpus pipeline), `media/` (2, the media server),
   `experimentation/` (1, the experiment protocol).
-- Four live skills are tool-driven with no templates of their own:
-  algedonic-review, gpui-bench, onto-anchor, system-maintenance.
+- **Seven** live skills carry no templates of their own (the tpl column reads 0):
+  five tool-driven — algedonic-review, gpui-bench, onto-anchor, system-maintenance,
+  transcript-reel — and two that render the server-owned templates above:
+  build-corpus-pipeline (`docproc/`) and media-workflow (`media/`).
 
 Every template was therefore either read against its owning skill or accounted
 to the server that renders it — none is unaccounted for.
