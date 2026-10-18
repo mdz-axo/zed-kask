@@ -27,12 +27,10 @@ use serde::Deserialize;
 pub(crate) mod clustering;
 #[cfg(test)]
 mod ingest_tests;
-mod lora_config;
 pub(crate) mod qa_parsing;
 mod qa_types;
 
 pub(crate) use clustering::read_tagged_chunks;
-use lora_config::build_lora_config;
 use qa_parsing::{ParsedQa, QaRecordError, parse_qa_record};
 pub(crate) use qa_types::{QaType, parse_type_distribution, qa_type_instruction};
 
@@ -317,10 +315,10 @@ impl CorpusServer {
 
             // Brave clause-xiii exclusion (task c1d65229): QA candidates whose
             // canonical source chunk is Brave-derived never reach
-            // training-bound storage — Brave's API ToS bans using Search
+                        // QA-bound storage — Brave's API ToS bans using Search
             // Results to train AI models. The provenance map also stamps every
-            // training row and stored h_mem with its originating provider, so
-            // `training_assemble_dataset` can exclude any Brave-derived pair
+            // retained row and stored h_mem with its originating provider, so a
+            // downstream reader can exclude any Brave-derived pair
             // that reaches a DB by another path.
             let (source_chunks, _dropped_source_rows) =
                 crate::helpers::read_jsonl_lenient::<hkask_types::corpus::TaggedChunk>(
@@ -557,168 +555,6 @@ impl CorpusServer {
         })
         .await
     }
-
-    /// Prepare a training dataset from corpus QA pairs for LoRA fine-tuning.
-    ///
-    /// This tool bridges the docproc corpus pipeline and the training server:
-    /// 1. Reads Alpaca-format JSONL from `corpus_ingest_qa`
-    /// 2. Converts to ChatML format (what `training_submit` expects)
-    /// 3. Applies the lora-training skill's G-D1 gate (dataset size check)
-    /// 4. Returns lora-training config recommendations (rank, alpha, QLoRA)
-    ///
-    /// The config recommendations are derived from the lora-training skill's
-    /// 5-gate decision (G1 inference, G2 memory, G3 task distance, G4 quality,
-    /// G5 knowledge preservation) using the base model size and dataset stats.
-    #[tool(
-        description = "Convert Alpaca-format QA JSONL to ChatML training format, apply lora-training G-D1 dataset size gate, and return PEFT config recommendations (rank, alpha, QLoRA, init strategy) based on the base model and dataset characteristics. Bridges the docproc corpus pipeline to the training server."
-    )]
-    pub async fn corpus_prepare_training_dataset(
-        &self,
-        Parameters(req): Parameters<PrepareTrainingDatasetRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "corpus_prepare_training_dataset", async {
-            // Note: this site intentionally does NOT use `read_jsonl`/`read_jsonl_lenient`.
-            // It collects per-line parse errors (with line numbers) into the tool
-            // response (`parse_errors`), which is part of the external API. The
-            // shared helpers either propagate the first error (strict) or drop
-            // silently (lenient) — neither preserves the multi-error report.
-            // Containment + size cap are still enforced via `read_text_capped`.
-            let content = read_text_capped(&req.input_jsonl, "input_jsonl")?;
-
-            // Parse Alpaca-format lines and convert to ChatML
-            let mut chatml_lines: Vec<String> = Vec::new();
-            let mut parse_errors: Vec<serde_json::Value> = Vec::new();
-            let mut total_tokens_approx: usize = 0;
-
-            for (i, line) in content.lines().enumerate() {
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                match serde_json::from_str::<serde_json::Value>(trimmed) {
-                    Ok(v) => {
-                        let instruction = v.get("instruction")
-                            .and_then(|i| i.as_str())
-                            .unwrap_or("");
-                        let input = v.get("input")
-                            .and_then(|i| i.as_str())
-                            .unwrap_or("");
-                        let output = v.get("output")
-                            .and_then(|o| o.as_str())
-                            .unwrap_or("");
-
-                        if instruction.is_empty() || output.is_empty() {
-                            parse_errors.push(json!({
-                                "line": i + 1,
-                                "error": "missing instruction or output"
-                            }));
-                            continue;
-                        }
-
-                        // Build the user message (combine instruction + input if present)
-                        let user_content = if input.is_empty() {
-                            instruction.to_string()
-                        } else {
-                            format!("{instruction}\n\n{input}")
-                        };
-
-                        // Build the ChatML conversation
-                        let mut messages: Vec<serde_json::Value> = Vec::new();
-                        if let Some(ref sp) = req.system_prompt {
-                            messages.push(json!({"role": "system", "content": sp}));
-                        }
-                        messages.push(json!({"role": "user", "content": user_content}));
-                        messages.push(json!({"role": "assistant", "content": output}));
-
-                        let chatml = json!({"messages": messages});
-                        chatml_lines.push(serde_json::to_string(&chatml).unwrap_or_default());
-
-                        // Approximate token count (1 token ≈ 4 chars)
-                        total_tokens_approx += (user_content.len() + output.len()) / 4;
-                    }
-                    Err(e) => {
-                        parse_errors.push(json!({
-                            "line": i + 1,
-                            "error": format!("JSON parse error: {e}")
-                        }));
-                    }
-                }
-            }
-
-            let n_samples = chatml_lines.len();
-
-            // G-D1: Dataset size gate (from lora-training skill)
-            let mut gd1_warnings: Vec<String> = Vec::new();
-            if n_samples < 1000 {
-                gd1_warnings.push(format!(
-                    "G-D1 WARN: dataset has only {} examples — QLoRA paper §5 recommends small high-quality, but <1000 may be insufficient",
-                    n_samples
-                ));
-            }
-            if n_samples > 100_000 {
-                gd1_warnings.push(format!(
-                    "G-D1 WARN: dataset has {} examples — large datasets require quality audit (dedup, contamination)",
-                    n_samples
-                ));
-            }
-
-            // Generate a preview PEFT config recommendation based on the 5-gate
-            // heuristic (G1-G5). This is a PREVIEW — the authoritative
-            // recommendation comes from the `lora-training` skill's full 8-gate
-            // refinement (G0, G-D0, G1-G6) with operator accept/override. The
-            // operator should invoke `lora-training/select-method` before
-            // training. See `lora_config.rs` doc for the drift hazard.
-            tracing::info!(
-                target: "hkask.corpus.training_dataset",
-                base_model = %req.base_model,
-                n_samples,
-                "PEFT config preview generated — invoke the lora-training skill for the authoritative 8-gate recommendation before training",
-            );
-            let config_recommendation = build_lora_config(&req.base_model, n_samples);
-            let use_qlora = config_recommendation
-                .get("use_qlora")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            let recommended_r = config_recommendation
-                .get("lora")
-                .and_then(|l| l.get("r"))
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32;
-
-            // Write output if not dry run
-            if !req.dry_run && !chatml_lines.is_empty() {
-                crate::helpers::write_contained(
-                    &req.output_jsonl,
-                    &(chatml_lines.join("\n") + "\n"),
-                )?;
-            }
-
-            tracing::info!(
-                target: "hkask.docproc.training_dataset_prepared",
-                input_path = %req.input_jsonl,
-                output_path = %req.output_jsonl,
-                n_samples = n_samples,
-                approx_tokens = total_tokens_approx,
-                use_qlora = use_qlora,
-                recommended_r = recommended_r,
-                "Training dataset prepared from corpus QA pairs"
-            );
-
-            Ok(json!({
-                "input_jsonl": req.input_jsonl,
-                "output_jsonl": req.output_jsonl,
-                "n_samples": n_samples,
-                "approx_tokens": total_tokens_approx,
-                "parse_errors": parse_errors,
-                "parse_error_count": parse_errors.len(),
-                "gd1_warnings": gd1_warnings,
-                "config_recommendation": config_recommendation,
-                "dry_run": req.dry_run,
-                "next_step": "Pass output_jsonl to training_submit with the config_recommendation params"
-            }))
-        })
-        .await
-    }
 }
 
 // ── Build Prompts helpers ─────────────────────────────────────────────────
@@ -856,30 +692,4 @@ pub struct IngestQaRequest {
 
 fn default_dataset() -> String {
     "capabilities-reasoner".to_string()
-}
-
-// ── Training dataset preparation ───────────────────────────────────────────
-
-/// Request for `corpus_prepare_training_dataset`.
-///
-/// Converts Alpaca-format JSONL (from `corpus_ingest_qa`) to ChatML format
-/// (what `training_submit` expects), applies the lora-training skill's G-D1
-/// gate (dataset size check), and returns lora-training config recommendations.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct PrepareTrainingDatasetRequest {
-    /// Path to Alpaca-format JSONL (from corpus_ingest_qa).
-    /// Each line: {"instruction": "...", "input": "", "output": "..."}
-    pub input_jsonl: String,
-    /// Output path for ChatML-format JSONL (for training_submit).
-    /// Each line: {"messages": [{"role": "user", ...}, {"role": "assistant", ...}]}
-    pub output_jsonl: String,
-    /// Optional system prompt to prepend to each conversation.
-    #[serde(default)]
-    pub system_prompt: Option<String>,
-    /// Base model the dataset will be used to fine-tune (e.g., "Qwen/Qwen2.5-7B").
-    /// Used to generate lora-training config recommendations.
-    pub base_model: String,
-    /// If true, convert and validate without writing the output file.
-    #[serde(default)]
-    pub dry_run: bool,
 }

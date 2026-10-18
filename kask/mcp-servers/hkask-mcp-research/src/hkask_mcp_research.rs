@@ -2260,7 +2260,7 @@ pub(crate) fn credential_requirements() -> Vec<CredentialRequirement> {
 // research tool is an intentional surface change — this pin catches
 // accidental drift (a dropped `#[tool]` attribute, a registration change)
 // instead of shipping as an undocumented surface change. Mirrors
-// `hkask-mcp-training::tool_surface_is_exactly_9_registered_tools`.
+// the shared `tool_surface_pin!` macro every built-in server carries.
 #[cfg(test)]
 mod tool_surface_tests {
     use super::{ResearchServer, validate_extraction};

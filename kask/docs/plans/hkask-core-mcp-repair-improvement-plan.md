@@ -120,15 +120,25 @@ The dependency checker and metadata inspection found no direct forbidden local h
 
 **Acceptance:** a never-resolving fake source cannot prevent Stop completing within a defined local test bound. Commit-before-cancel produces an unknown/committed outcome as appropriate and zero automatic replays.
 
-### F3 — Training model input becomes remote shell source
+### F3 — Training model input becomes remote shell source — CLOSED BY REMOVAL 2026-10-17
+
+> **Closed by removal 2026-10-17.** The training MCP server was deleted (model
+> training is out of scope for the co-researcher mandate), so this finding's
+> whole surface — the Axolotl/Ludwig templates, the RunPod and Nebius hosts,
+> and `training_submit` — no longer exists. The repair itself had already
+> landed (see the F3 execution record below); the citations are de-linked here
+> because the files are gone, and `git log -- kask/mcp-servers/hkask-mcp-training/`
+> carries the history.
 
 **Class:** verified input-boundary defect; isolated shell semantics reproduced. **Severity:** High. **Confidence:** High.
 
-**Evidence:**
-- `kask/registry/templates/training/axolotl-lora.j2:10` renders model input directly.
-- `kask/mcp-servers/hkask-mcp-training/src/providers/runpod.rs:552–557,649–682` uses a fixed config heredoc delimiter and an unquoted manifest heredoc.
-- `kask/mcp-servers/hkask-mcp-training/src/providers/nebius.rs:90–118` executes the generated script with Bash.
-- `kask/mcp-servers/hkask-mcp-training/src/tools/submit.rs:239–248` does not reject model-resolution failure.
+**Evidence (every path below was deleted 2026-10-17 with the training server;
+line references are de-linked so the citation gate does not read them as live,
+and are retained in prose form as the historical record):**
+- `registry/templates/training/axolotl-lora.j2:10` rendered model input directly.
+- `providers/runpod.rs` (lines 552–557, 649–682) used a fixed config heredoc delimiter and an unquoted manifest heredoc.
+- `providers/nebius.rs` (lines 90–118) executed the generated script with Bash.
+- `tools/submit.rs` (lines 239–248) did not reject model-resolution failure.
 
 **Mechanism/impact:** newline input can terminate the config heredoc; model input in the manifest heredoc can execute shell substitutions in the training VM/container. Local-editor code execution was not demonstrated.
 
@@ -272,9 +282,9 @@ Plan: confirm callers; delete the unused misleading facade. If actual callers ne
 
 **Class:** design risk. **Severity:** Medium. **Confidence:** High on sequence, Medium on deployment likelihood.
 
-Evidence:
-- `kask/crates/hkask-spreadsheet/src/artifact_store.rs:106–145,161–172,193–229`
-- `kask/crates/hkask-spreadsheet/src/service.rs:585–602`
+Evidence (the spreadsheet crate was removed 2026-10-15, commit `61c7949568`; line references are retained in prose form for the historical record and no longer resolve to a live file):
+- `hkask-spreadsheet/src/artifact_store.rs` lines 106–145, 161–172, 193–229 (removed surface)
+- `hkask-spreadsheet/src/service.rs` lines 585–602 (removed surface)
 
 Revision publication syncs the file and renames it, then operation records use direct writes. A crash can leave a revision without a usable receipt. File sync alone does not establish parent-directory durability.
 
@@ -282,7 +292,7 @@ Counterevidence: absent operation records explicitly mean unknown, not unapplied
 
 Plan: define process-crash versus power-loss guarantees, then replace the publication/receipt contract as needed. Make receipt publication atomic/durable and incomplete publication discoverable. Inject failures between revision and receipt publication; reopened state must never falsely report “not applied” or replay automatically.
 
-**H1 — cached-open digest hypothesis:** `kask/crates/hkask-spreadsheet/src/service.rs:502–525` returns early for cached IDs before comparing the newly supplied digest. Test valid open followed by the same IDs with a bad digest. This was not dynamically reproduced; assess severity after verifying caller reachability and contract.
+**H1 — cached-open digest hypothesis:** `hkask-spreadsheet/src/service.rs` lines 502–525 (removed surface) returned early for cached IDs before comparing the newly supplied digest. Test valid open followed by the same IDs with a bad digest. This was not dynamically reproduced; assess severity after verifying caller reachability and contract.
 
 ### R4 — Caller assertion is not operator approval evidence
 
@@ -719,9 +729,9 @@ Source citations below are relative to ``; they record execution-time inspection
 | F8 | Reproduced inventory failure; repaired inventory and CI wiring below. Fixture process tests remain permission-gated and unexecuted. |
 | R1 | Upheld by source-only inspection of the provisioning policy at `kask/crates/hkask-keystore/src/passphrase.rs:1–17` and `keychain.rs:402–424`; no keychain or deployed database inspected, no secret rotated. Onboarding/recovery decision remains open. |
 | R2 | Historical finding upheld; subsequently closed by deletion in the 2026-09-18 working tree (see R2 current disposition). The connectionless facade and hooks no longer exist; safe borrowed-connection transactions remain, with commit-failure/reopen coverage. |
-| R3 | Upheld design risk: `kask/crates/hkask-spreadsheet/src/artifact_store.rs:106–145,193–229` separates revision publication and direct receipt writes. No fault injection or power-loss guarantee established. |
+| R3 | Upheld design risk: `hkask-spreadsheet/src/artifact_store.rs` lines 106–145, 193–229 separated revision publication from direct receipt writes. No fault injection or power-loss guarantee established. The cited surface no longer exists — the spreadsheet crate was removed 2026-10-15 (commit `61c7949568`). |
 | R4 | Upheld at baseline; the cited surface no longer exists. The escalation/management tools carrying caller-supplied `operator_confirmed` were removed with the escalation queue in commit `2ae9c2cff9` (2026-09-26); no `operator_confirmed` field remains in `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs`. The caller-assertion-versus-host-receipt distinction remains part of P2's open invocation contract. |
-| H1 | Source-supported, dynamic test still outstanding: cached return at `kask/crates/hkask-spreadsheet/src/service.rs:502–525` precedes digest comparison; public `open` returns the supplied reference. Fresh apply independently verifies its base. |
+| H1 | Source-supported, dynamic test still outstanding: cached return at `hkask-spreadsheet/src/service.rs` lines 502–525 preceded digest comparison; public `open` returned the supplied reference. Fresh apply independently verifies its base. The cited surface no longer exists — the spreadsheet crate was removed 2026-10-15 (commit `61c7949568`). |
 | O1 | Closed 2026-09-19: the kask/docs realignment re-verified counts, citations, and links across the corpus (12 servers, 19 crates, D1–D69), and the `AGENTS.md` server inventory is current (12 servers, registry-authoritative pointer, no per-tool-contracts-doc reference). No stale-count claims remain in the named locations. |
 | O2 | Deferred guidance, not a defect: preserve the spreadsheet actor and typed delivery outcomes; no fleet-wide service extraction undertaken. |
 

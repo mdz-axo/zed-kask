@@ -137,7 +137,7 @@ pub(crate) fn provision_db_passphrase() -> Result<String, ProvisionError> {
 
 // There is ONE DB passphrase (provisioned by
 // `hkask_keystore::provision_db_passphrase_string`) for every SQLCipher
-// database (curator, corpus, kanban, swarm memory, training, research).
+// database (curator, corpus, kanban, swarm memory, research).
 // The swarm memory DB has no separate passphrase; it opens with this one.
 
 /// Resolve the curator DB path.
@@ -198,7 +198,7 @@ pub(crate) fn kask_db_paths() -> Vec<(&'static str, String)> {
         .collect()
 }
 
-pub(crate) fn managed_database_layout() -> [(&'static str, &'static str, std::path::PathBuf); 5] {
+pub(crate) fn managed_database_layout() -> [(&'static str, &'static str, std::path::PathBuf); 4] {
     use hkask_types::agent_paths::{agent_db, mcp_server_db};
     [
         ("curator", "HKASK_CURATOR_DB", agent_db("curator")),
@@ -217,11 +217,6 @@ pub(crate) fn managed_database_layout() -> [(&'static str, &'static str, std::pa
             "HKASK_RESEARCH_DB",
             mcp_server_db("research", "research"),
         ),
-        (
-            "training",
-            "HKASK_TRAINING_DB",
-            mcp_server_db("training", "training"),
-        ),
     ]
 }
 
@@ -232,7 +227,7 @@ mod tests {
     // The requirement that drives this module:
     //
     // 1. **Default** — every SQLCipher DB (curator, swarm memory, corpus, RSS,
-    //    kata-kanan, training) opens with the fixed default `"allostery"`
+    //    kata-kanan) opens with the fixed default `"allostery"`
     //    on first run. The default and the whole provisioning chain
     //    (env → keychain → first-run default, empty env treated as unset)
     //    live in `hkask-keystore` (`provision_db_passphrase_string`);

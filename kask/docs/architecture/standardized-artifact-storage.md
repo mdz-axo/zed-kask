@@ -266,8 +266,9 @@ under the visible artifacts dir at `{server}-mcp/{artifact-type}/`:
 | Corpus cache files | corpus server | `corpus-mcp/cache/` (artifacts dir) |
 | Generated media | media server | `media-mcp/generated/` (artifacts dir) |
 
-LoRA adapter weights are hosted on HuggingFace (`AdapterSource::HuggingFace`);
-only SQLite metadata is local (`mcp/training/training.db`).
+Adapter weights are not stored: model training is out of scope for the
+co-researcher mandate, and the training server's `mcp/training/` tree was
+removed with it (2026-10-17).
 
 ### Agent DBs that MCP servers read
 

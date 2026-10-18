@@ -1,6 +1,7 @@
-//! Data Services sub-page — API key entry for EODHD, FMP, Exa, Tavily, Brave,
-//! RunPod, Nebius, HuggingFace, etc. Keys live in the OS keychain. The key's
-//! presence is the toggle — there is no separate enable/disable bool.
+//! Data Services sub-page — API key entry for EODHD, FMP, Exa, Tavily,
+//! Brave, RunPod OCR, Reduct.video, FRED, and other live descriptors. Keys
+//! live in the OS keychain. The key's presence is the toggle — there is no
+//! separate enable/disable bool.
 
 use super::*;
 use language_model::{LanguageModelProviderId, LanguageModelRegistry};
@@ -16,9 +17,9 @@ const RUNPOD_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new
 /// `api_url` (`https://api.runpod.io` — the ONE location for the RunPod
 /// key), updates the in-memory `ApiKeyState`, and notifies discovery so
 /// `RunPod/*` models refresh immediately — no restart required. The Data
-/// Services RunPod row writes the same slot via `write_credential` (which
-/// also nudges MCP servers); this call adds the live in-memory refresh
-/// that a bare keychain write doesn't perform.
+/// Services row writes the same slot via `write_credential`; no MCP child
+/// receives that key after training removal, so this direct provider refresh
+/// is the only runtime notification needed.
 fn refresh_runpod_endpoint_key(api_key: Option<String>, cx: &mut App) {
     let Some(provider) = LanguageModelRegistry::global(cx)
         .read(cx)
@@ -230,6 +231,29 @@ mod tests {
         assert_eq!(row.3, "REDUCT_API_KEY");
         assert_eq!(row.4, "kask://credentials/reduct_api_key");
         assert!(credential_url_feeds_mcp_servers(&row.4));
+    }
+
+    #[test]
+    fn runpod_row_keeps_native_keychain_slot_without_mcp_restart() {
+        let row = data_service_descriptors()
+            .into_iter()
+            .find(|(key, _, _, _, _)| *key == "runpod")
+            .expect("RunPod OCR must remain on Data Services");
+        assert_eq!(row.3, "RUNPOD_API_KEY");
+        assert_eq!(row.4, "https://api.runpod.io");
+        assert!(!credential_url_feeds_mcp_servers(&row.4));
+    }
+
+    /// The retired training-only vendors must not reappear as settings rows.
+    #[test]
+    fn training_only_data_services_are_absent() {
+        let keys = data_service_descriptors()
+            .into_iter()
+            .map(|(key, _, _, _, _)| key)
+            .collect::<std::collections::HashSet<_>>();
+        assert!(!keys.contains("hf_token"));
+        assert!(!keys.contains("nebius_project_id"));
+        assert!(!keys.contains("nebius_subnet_id"));
     }
 
     /// The endpoint-refresh id must identify the RunPod provider in the

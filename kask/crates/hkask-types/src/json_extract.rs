@@ -223,8 +223,8 @@ mod property_tests {
 /// Proof layer (kask/docs/reference/testing-protocol.md): Kani proves the
 /// allocation-free scan core `find_balanced_json` only. The fence-stripping
 /// wrapper allocates Strings and is covered by the property and example
-/// layers; the hkask-mcp-training R2 record shows proofs over allocation
-/// surfaces exceed the pinned 2 GiB / 120 s budget.
+/// layers; a prior proof run over allocation surfaces (the removed training
+/// crate's R2 record, 2026-10) exceeded the pinned 2 GiB / 120 s budget.
 ///
 /// Bound: symbolic inputs of 8 valid-UTF-8 bytes. Every input up to the
 /// bound is covered exhaustively; nothing beyond the bound is claimed.

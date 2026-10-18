@@ -56,20 +56,6 @@ pub struct LLMParameters {
     #[serde(default)]
     pub thinking_allowed: bool,
 
-    /// LoRA adapter to apply at inference time (for multi-LoRA serving).
-    /// When set, this COMPLETELY OVERRIDES the model — it is the full model
-    /// identifier including the base model. The adapter was trained on a specific
-    /// base model and cannot be applied to a different one.
-    ///
-    /// Format: `"Qwen3.5-9B#pragmatic-semantics-v1"` (multi-LoRA)
-    ///         `"accounts/<org>/models/my-model"` (hosted fine-tuned)
-    ///
-    /// The caller is responsible for resolving which base model the adapter
-    /// was trained on (via AdapterStore lookup by skill_name).
-    /// Default: None (use default model without adapter).
-    #[serde(default)]
-    pub adapter: Option<String>,
-
     /// System prompt for the chat request. When present, sent as a
     /// `{"role": "system"}` message before the user message. Used by
     /// inference paths that need few-shot examples as a proper system
@@ -103,7 +89,6 @@ impl LLMParameters {
             presence_penalty: 0.4,
             seed: None,
             thinking_allowed: false,
-            adapter: None,
             system_prompt: None,
             timeout_hint_secs: None,
         }

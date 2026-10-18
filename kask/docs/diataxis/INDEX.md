@@ -62,10 +62,10 @@ than receiving another per-crate set:
 `hkask-mcp-companies`, `hkask-mcp-corpus`, `hkask-mcp-curator`,
 `hkask-mcp-experimentation`, `hkask-mcp-kata-kanban`, `hkask-mcp-media`,
 `hkask-mcp-prediction-markets`, `hkask-mcp-research`, `hkask-mcp-scenarios`,
-`hkask-mcp-swarm`, and `hkask-mcp-training`.
+and `hkask-mcp-swarm`.
 
-The authoritative managed registry contains the same 11 IDs at
-`kask/crates/kask_bridge/src/mcp_servers.rs:49-513`.
+The authoritative managed registry contains the same 10 IDs at
+`kask/crates/kask_bridge/src/mcp_servers.rs`.
 
 ### hKask library and composition crates — complete 18-crate inventory
 

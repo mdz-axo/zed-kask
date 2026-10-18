@@ -1339,7 +1339,7 @@ mod smoke {
 // seam the merge comment at the router documents). Adding or removing a
 // prediction-markets tool is an intentional surface change; this pin
 // catches accidental drift instead of shipping as an undocumented surface
-// change. Mirrors `hkask-mcp-training::tool_surface_is_exactly_9_registered_tools`.
+// change. Mirrors the shared `tool_surface_pin!` macro every server carries.
 #[cfg(test)]
 mod tool_surface_tests {
     use super::PredictionMarketsServer;

@@ -322,7 +322,7 @@ pub struct McpServer {
 ///   outbound HTTPS calls; omitting these breaks certificate verification on
 ///   distributions that rely on them.
 ///
-/// Deliberately absent: every `*_API_KEY`, `HF_TOKEN`, `HKASK_SMTP_PASSWORD`,
+/// Deliberately absent: every `*_API_KEY`, `HKASK_SMTP_PASSWORD`,
 /// `HKASK_DB_PASSPHRASE`, and every other secret. A server that needs one of
 /// those must declare it in its credential allowlist
 /// (`kask_bridge::mcp_servers`), which is the point of the boundary.

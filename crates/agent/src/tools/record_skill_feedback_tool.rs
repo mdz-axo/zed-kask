@@ -21,7 +21,7 @@ use std::sync::Arc;
 /// its own verdicts at run time.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct RecordSkillFeedbackInput {
-    /// The skill whose output is being rated (e.g., "lora-training").
+    /// The skill whose output is being rated (e.g., "code-review").
     pub skill_id: String,
     /// The operator's disposition: true = accepted, false = rejected.
     pub accepted: bool,
@@ -121,7 +121,7 @@ mod tests {
         let task = cx.update(|cx: &mut App| {
             tool.run(
                 ToolInput::resolved(RecordSkillFeedbackInput {
-                    skill_id: "lora-training".to_string(),
+                    skill_id: "code-review".to_string(),
                     accepted: false,
                     note: Some("rank 16 too small for the dataset".to_string()),
                 }),
@@ -132,7 +132,7 @@ mod tests {
         let output = task.await.expect("tool runs");
 
         assert!(
-            output.contains("lora-training"),
+            output.contains("code-review"),
             "the tool confirms: {output}"
         );
         {
@@ -140,7 +140,7 @@ mod tests {
             assert_eq!(
                 *recorded,
                 vec![(
-                    "lora-training".to_string(),
+                    "code-review".to_string(),
                     false,
                     Some("rank 16 too small for the dataset".to_string())
                 )],
@@ -154,7 +154,7 @@ mod tests {
             .update(|cx: &mut App| {
                 Arc::new(RecordSkillFeedbackTool::new()).run(
                     ToolInput::resolved(RecordSkillFeedbackInput {
-                        skill_id: "lora-training".to_string(),
+                        skill_id: "code-review".to_string(),
                         accepted: true,
                         note: None,
                     }),

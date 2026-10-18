@@ -1686,10 +1686,6 @@ pub struct KaskSettingsContent {
     #[serde(default)]
     pub swarm: Option<KaskSwarmSettingsContent>,
 
-    /// Training MCP server configuration.
-    #[serde(default)]
-    pub training: Option<KaskTrainingSettingsContent>,
-
     /// Media MCP server configuration: model overrides for TTS, STT, vision,
     /// image generation, and video generation.
     #[serde(default)]
@@ -1890,12 +1886,6 @@ pub enum SwarmModeContent {
     Local,
 }
 
-#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
-pub struct KaskTrainingSettingsContent {
-    pub host: Option<String>,
-    pub cache_dir: Option<String>,
-}
-
 /// Media MCP server configuration (the `"kask.media"` section in settings.json).
 ///
 /// Model overrides for the media server's TTS, STT, vision, image generation,
@@ -1933,7 +1923,7 @@ pub struct KaskModelsSettingsContent {
     /// (provider-prefixed). When empty, falls back to the kask default.
     pub classifier_model: Option<String>,
     /// Dedicated QA generator (provider-prefixed). Empty means unconfigured;
-    /// never falls back to the active chat model or training base model.
+    /// never falls back to the active chat model.
     pub qa_generation_model: Option<String>,
     /// OCR vision model for scanned document OCR (provider-prefixed).
     /// When empty, falls back to the kask default (`RunPod/kask-ocr`).

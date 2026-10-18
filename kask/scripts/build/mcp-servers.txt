@@ -10,7 +10,6 @@
 hkask-mcp-research
 hkask-mcp-companies
 hkask-mcp-corpus
-hkask-mcp-training
 hkask-mcp-kata-kanban
 hkask-mcp-curator
 hkask-mcp-scenarios

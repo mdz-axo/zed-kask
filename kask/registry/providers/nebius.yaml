@@ -1,29 +1,38 @@
-# Provider profile — Nebius. Structural contract pinned by
-# kask/scripts/check-provider-profiles.sh; semantic reading owned by the
-# provider-audit skill.
+# Provider profile — Nebius. RETIRED 2026-10-17: archived in place per the
+# provider-audit retirement pass (Step 9). The sole consumer was the training
+# MCP server, removed because model training is outside the co-researcher
+# mandate. No in-tree code adopts this vendor; the settings rows and config_env
+# allowlist were purged with it. The dated readings below are preserved as the
+# audit record, not as a live contract.
+# Structural contract pinned by kask/scripts/check-provider-profiles.sh.
 id: nebius
 name: Nebius
-status: active
+status: retired
+retired:
+  date: "2026-10-17"
+  reason: >-
+    sole consumer (the training MCP server's GPU training host) removed —
+    model training is out of scope for the co-researcher mandate.
+  purged:
+    - Data Services rows and every in-tree read path for
+      NEBIUS_PROJECT_ID / NEBIUS_SUBNET_ID
+      (kask/crates/kask_bridge/src/inference_providers.rs)
+    - training server config_env NEBIUS_*
+      (kask/crates/kask_bridge/src/mcp_servers.rs)
+  retained_user_data:
+    - Any pre-existing kask://credentials/nebius_project_id or
+      kask://credentials/nebius_subnet_id entry is dormant and left
+      operator-owned; no code exposes, restores, reads, or injects either.
 roles:
-  - training-host
+  - training-host  # retired role — no in-tree consumer
 keychain:
   slot: none
   env_var: ""
-  note: no API key is consumed in-tree — the training host authenticates via
-    SSH public key (~/.ssh/id_ed25519.pub) plus NEBIUS_* infrastructure IDs
-    (kask/mcp-servers/hkask-mcp-training/src/providers.rs NebiusHost::new)
-consumed_capabilities:
-  - capability: training host (axolotl/ludwig harnesses dispatched to GPU VMs)
-    source: kask/mcp-servers/hkask-mcp-training/src/providers/nebius.rs
-  - capability: Data Services settings rows (project/subnet IDs)
-    source: kask/crates/kask_bridge/src/inference_providers.rs
-config_env:  # from kask/crates/kask_bridge/src/mcp_servers.rs (training server config_env)
-  - NEBIUS_PROJECT_ID
-  - NEBIUS_SUBNET_ID
-  - NEBIUS_GPU_PLATFORM
-  - NEBIUS_GPU_PRESET
-  - NEBIUS_IMAGE_FAMILY
-  - NEBIUS_CLI_PATH
+  note: no API key was consumed in-tree — the training host authenticated via
+    SSH public key plus NEBIUS_* infrastructure IDs. Both the host and the
+    IDs were removed 2026-10-17.
+consumed_capabilities: []  # retired — no in-tree consumer remains
+config_env: []  # purged with the training server
 deliberate_non_consumption: []
 data_terms:
   # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
@@ -33,7 +42,7 @@ data_terms:
     2026-10-13) process "both Input and Output data for the purpose of training
     smaller Models used exclusively for Speculative Decoding", with an
     opt-out ("If you prefer that we (i) do not store Your Inputs and
-    Outputs..."). Our consumption is the training cloud
+    Outputs..."). The retired consumption was the training cloud
     (nebius_project_id / nebius_subnet_id), not AI Studio inference.
   retention_published: >-
     yes — AI Studio privacy policy (docs.studio.nebius.com/legal/privacy-policy,
@@ -41,10 +50,9 @@ data_terms:
     necessary to fulfil the scopes described".
   operator_ruling: >-
     accept-as-is (operator ruling 2026-10-13): the AI Studio training clause
-    (speculative-decoding models, opt-out available) is scoped to AI Studio
-    inference; our consumption is the training cloud (NEBIUS_PROJECT_ID /
-    NEBIUS_SUBNET_ID), not AI Studio. Revisit if we consume AI Studio
-    inference or route sensitive data.
+    (speculative-decoding models, opt-out available) was scoped to AI Studio
+    inference; the retired consumption was the training cloud
+    (NEBIUS_PROJECT_ID / NEBIUS_SUBNET_ID), not AI Studio.
 status_surface:
   status_page: >-
     https://status.nebius.com live (HTTP 200, probed 2026-10-13).

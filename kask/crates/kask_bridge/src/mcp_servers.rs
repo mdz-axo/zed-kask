@@ -380,69 +380,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         ],
     },
     BuiltinMcpServer {
-        id: "training",
-        binary: "hkask-mcp-training",
-        description: "Training — LoRA training configuration and audit",
-        credentials: &[
-            "RUNPOD_API_KEY",
-            "HF_TOKEN",
-            // DB encryption passphrase — read by the training server for its
-            // job/adapter SQLite DB. Without this, the DB falls back to a
-            // default or in-memory store under governed launch.
-            "HKASK_DB_PASSPHRASE",
-        ],
-        config_env: &[
-            "HKASK_TRAINING_HOST",
-            "HKASK_TRAINING_CACHE_DIR",
-            "HKASK_TEMPLATE_ROOT",
-            "HKASK_DATA_DIR",
-            // HuggingFace persistence — required by HuggingFaceTraining::from_env()
-            // for the Runpod artifact publish path. Without these, training_submit
-            // fails at G-P1 under governed launch (B-1).
-            "HKASK_HF_ARTIFACT_OWNER",
-            "HKASK_HF_DATASET_REPO",
-            "HKASK_HF_MODEL_REPO",
-            // Training DB path — read by the server, falls back to default.
-            "HKASK_TRAINING_DB",
-            // RunPod operator overrides — read by runpod.rs, fall back to defaults.
-            // RUNPOD_TEMPLATE_ID moved here from `credentials`: it is a non-secret
-            // config value (a template ID), not a key. The training server reads
-            // it via std::env::var (hkask_mcp_training.rs), and the runpod provider
-            // has a real fallback when empty (DEFAULT_RUNPOD_DOCKER_IMAGE). The
-            // prior classification as a Secret was a smell — the comment at
-            // inference_providers.rs admitted it. Reclassifying silences the
-            // spurious "not set or empty" warning at launch while preserving the
-            // operator override path.
-            "RUNPOD_TEMPLATE_ID",
-            "RUNPOD_GPU_TYPE_ID",
-            "RUNPOD_CONTAINER_DISK_GB",
-            "RUNPOD_DOCKER_IMAGE",
-            "RUNPOD_DOCKER_ARGS",
-            "HKASK_PODS_FILE",
-            // Nebius operator overrides — read by providers.rs and nebius.rs.
-            // NEBIUS_PROJECT_ID and NEBIUS_SUBNET_ID moved here from
-            // `credentials` (same reclassification as RUNPOD_TEMPLATE_ID
-            // above): they are non-secret infrastructure IDs — a project
-            // identifier and a subnet identifier — not keys. Both are read
-            // via plain `std::env::var` (hkask_mcp_training.rs, providers.rs),
-            // the config-var access pattern, and no keychain tier is
-            // consulted for them. Carrying IDs on the credentials allowlist
-            // violated the file's own classification rule (credentials mean
-            // secrets) and logged spurious missing-credential warnings at
-            // launch.
-            "NEBIUS_PROJECT_ID",
-            "NEBIUS_SUBNET_ID",
-            "NEBIUS_GPU_PLATFORM",
-            "NEBIUS_GPU_PRESET",
-            "NEBIUS_IMAGE_FAMILY",
-            "NEBIUS_CLI_PATH",
-            // Swarm rollout event-store path — read via
-            // `hkask_types::agent_paths::swarm_events_db_path()` in
-            // `training_bridge_rollouts` (`tools/rollout_bridge.rs`).
-            "HKASK_SWARM_EVENTS_PATH",
-        ],
-    },
-    BuiltinMcpServer {
         id: "media",
         binary: "hkask-mcp-media",
         description: "Media — AI media generation (image, video, audio, gallery)",
@@ -492,7 +429,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         description: "Experimentation — experiment registry for the sharded experimentation program: registered experiments with pre-registered predictions, variant lineages, grounded fitness records, and selection fossils",
         // HKASK_DB_PASSPHRASE is the ONE SQLCipher passphrase — the experimentation
         // registry opens with it via the canonical resolve_db_passphrase
-        // chain (same as curator/kata-kanban/research/swarm/training). A
+        // chain (same as curator/kata-kanban/research/swarm). A
         // missing passphrase fails startup visibly (Infrastructure), never
         // an empty-key open.
         credentials: &["HKASK_DB_PASSPHRASE"],
@@ -674,32 +611,6 @@ pub async fn build_mcp_server_env(
             hkask_types::inference_ipc::TOOL_GRANT_ENV.to_string(),
             grant,
         );
-    }
-
-    // 1b. Non-secret `DATA_SERVICES` config rows (e.g. `NEBIUS_PROJECT_ID`,
-    //     `NEBIUS_SUBNET_ID`) live in `server.config_env` rather than
-    //     `server.credentials` so they do not log missing-credential warnings
-    //     on machines that do not use Nebius, while still exposing UI rows in
-    //     Data Services (`kask://credentials/nebius_*`). When the parent
-    //     shell did not already set them via `emit_operator_override_env`,
-    //     read the UI-persisted keychain slot quietly.
-    if let Some(server) = find_server(server_id) {
-        for (env_var, url) in crate::credential_urls_for_mcp() {
-            if server.config_env.contains(&env_var.as_str())
-                && !server.credentials.contains(&env_var.as_str())
-                && !env.contains_key(&env_var)
-                && let Some(value) = read_non_empty_keychain_credential(
-                    credentials_provider,
-                    server_id,
-                    &env_var,
-                    &url,
-                    cx,
-                )
-                .await
-            {
-                env.insert(env_var, value);
-            }
-        }
     }
 
     // 2. Credentials: resolve URLs, filter per-server, read from keychain.
@@ -1379,13 +1290,12 @@ mod tests {
         );
     }
 
-    // ── read-alignment for the five previously-unguarded servers ────
+    // ── read-alignment history and current per-server pins ─────────
     //
-    // Before these tests, only 5 of 13 servers had a read-alignment test.
-    // including `training` (the registry's largest secret grant) and `curator`
-    // (SMTP password). Drift in an unguarded server is silent in both
-    // directions: an under-grant means an operator override never arrives, and
-    // an over-grant hands a secret to a process that never reads it.
+    // This block began when only 5 of 13 then-registered servers had a
+    // read-alignment test. The retired training server's large secret grant
+    // helped expose both drift directions: under-grants silently drop operator
+    // overrides; over-grants hand secrets to processes that never read them.
     //
     // Each expectation below was derived by grepping the server's own source for
     // `std::env::var` / `ctx.credentials.get` sites, so the assertion is against
@@ -1515,59 +1425,62 @@ mod tests {
         );
     }
 
+    /// The training server was removed (training is outside the co-researcher
+    /// mandate). Pin its absence so a reintroduction is a deliberate decision
+    /// with its own registry entry, not an accidental revival.
     #[test]
-    fn training_allowlist_matches_actual_reads() {
-        let s = server_by_id("training");
-        // Read sites include HF_TOKEN, NEBIUS_PROJECT_ID,
-        // NEBIUS_SUBNET_ID, RUNPOD_API_KEY and HKASK_DB_PASSPHRASE. This is the
-        // largest secret grant in the registry, so pin that every granted secret
-        // has a read site.
-        let creds = s.credentials;
+    fn training_server_is_not_registered() {
         assert!(
-            creds.contains(&"HF_TOKEN"),
-            "training reads HF_TOKEN but it is not allowlisted"
+            !BUILT_IN_MCP_SERVERS.iter().any(|s| s.id == "training"),
+            "the training server was removed — reintroducing it needs a new \
+             registry entry, build-list line and settings surface"
         );
-        // Guard the other direction: the training server must not be handed the
-        // SMTP password or another server's DB keys.
-        assert!(
-            !creds.contains(&"HKASK_SMTP_PASSWORD"),
-            "training must not receive the SMTP password — no read site exists"
-        );
-        // RUNPOD_TEMPLATE_ID was reclassified from a credential to a config
-        // env var (it's a non-secret template ID, not a key). Pin that it's
-        // no longer in the credentials allowlist and is now in config_env,
-        // read via std::env::var in hkask_mcp_training.rs.
-        assert!(
-            !creds.contains(&"RUNPOD_TEMPLATE_ID"),
-            "RUNPOD_TEMPLATE_ID is a non-secret config value, not a credential — \
-             it must not be in the credentials allowlist"
-        );
-        assert!(
-            s.config_env.contains(&"RUNPOD_TEMPLATE_ID"),
-            "RUNPOD_TEMPLATE_ID was moved from credentials to config_env — \
-             it must be in the config_env allowlist so the operator override \
-             survives the governed launch's env_clear"
-        );
-        // NEBIUS_PROJECT_ID/NEBIUS_SUBNET_ID follow the same RUNPOD_TEMPLATE_ID
-        // rule: non-secret infrastructure IDs (project + subnet identifiers),
-        // read via std::env::var — config vars, not credentials.
-        for id in ["NEBIUS_PROJECT_ID", "NEBIUS_SUBNET_ID"] {
-            assert!(
-                !creds.contains(&id),
-                "{id} is a non-secret infrastructure ID, not a key — \
-                 it must not be in the credentials allowlist"
-            );
-            assert!(
-                s.config_env.contains(&id),
-                "{id} was reclassified from credentials to config_env — \
-                 it must be in the config_env allowlist so the operator override \
-                 survives the governed launch's env_clear"
-            );
+        // The training-only child grants must not reappear. RunPod itself is
+        // intentionally absent from this list: its API key remains live in the
+        // native D29 OCR provider, but no MCP child consumes it now.
+        const RETIRED_TRAINING_CREDENTIALS: &[&str] = &["HF_TOKEN", "RUNPOD_API_KEY"];
+        const RETIRED_TRAINING_CONFIG: &[&str] = &[
+            "HKASK_TRAINING_HOST",
+            "HKASK_TRAINING_CACHE_DIR",
+            "HKASK_TRAINING_DB",
+            "HKASK_HF_ARTIFACT_OWNER",
+            "HKASK_HF_DATASET_REPO",
+            "HKASK_HF_MODEL_REPO",
+            "RUNPOD_TEMPLATE_ID",
+            "RUNPOD_GPU_TYPE_ID",
+            "RUNPOD_CONTAINER_DISK_GB",
+            "RUNPOD_DOCKER_IMAGE",
+            "RUNPOD_DOCKER_ARGS",
+            "HKASK_PODS_FILE",
+            "NEBIUS_PROJECT_ID",
+            "NEBIUS_SUBNET_ID",
+            "NEBIUS_GPU_PLATFORM",
+            "NEBIUS_GPU_PRESET",
+            "NEBIUS_IMAGE_FAMILY",
+            "NEBIUS_CLI_PATH",
+        ];
+        for server in BUILT_IN_MCP_SERVERS {
+            for key in RETIRED_TRAINING_CREDENTIALS {
+                assert!(
+                    !server.credentials.contains(key),
+                    "{} still grants retired training credential {key}",
+                    server.id
+                );
+            }
+            for key in RETIRED_TRAINING_CONFIG {
+                assert!(
+                    !server.config_env.contains(key),
+                    "{} still grants retired training config {key}",
+                    server.id
+                );
+            }
         }
         assert!(
-            !s.config_env.is_empty(),
-            "training config_env should not be empty — it reads cache dir, host, \
-             template root and GPU/pod config"
+            !crate::credential_urls_for_mcp()
+                .iter()
+                .any(|(env_var, _)| env_var == "RUNPOD_API_KEY"),
+            "RunPod OCR is native-only after training removal; its key must not \
+             be injected into or restart MCP children"
         );
     }
 
@@ -1872,33 +1785,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn build_mcp_server_env_forwards_allowlisted_operator_overrides_and_data_service_config_slots()
-     {
+    async fn build_mcp_server_env_forwards_allowlisted_operator_overrides() {
         let _guard = ENV_TEST_LOCK.lock().await;
         let settings = crate::KaskSettings::default();
-        let mut secrets: std::collections::HashMap<String, Vec<u8>> =
-            crate::credential_urls_for_mcp()
-                .into_iter()
-                .map(|(_, url)| (url, b"disposable-test-secret".to_vec()))
-                .collect();
-        secrets.insert(
-            "kask://credentials/nebius_project_id".to_string(),
-            b"nebius-proj-from-keychain".to_vec(),
-        );
+        let secrets: std::collections::HashMap<String, Vec<u8>> = crate::credential_urls_for_mcp()
+            .into_iter()
+            .map(|(_, url)| (url, b"disposable-test-secret".to_vec()))
+            .collect();
         let provider = MockCredentialsProvider { secrets };
         unsafe {
             std::env::set_var("HKASK_CURATOR_DB", "/tmp/test-curator-override.db");
-            std::env::set_var("RUNPOD_TEMPLATE_ID", "tpl-override-123");
-            std::env::remove_var("NEBIUS_PROJECT_ID");
         }
         let cx = gpui::TestAppContext::single().to_async();
         let curator_env =
             build_mcp_server_env("curator", &settings, &provider, None, None, &cx).await;
-        let training_env =
-            build_mcp_server_env("training", &settings, &provider, None, None, &cx).await;
         unsafe {
             std::env::remove_var("HKASK_CURATOR_DB");
-            std::env::remove_var("RUNPOD_TEMPLATE_ID");
         }
         assert_eq!(
             curator_env.get("HKASK_CURATOR_DB"),
@@ -1912,16 +1814,6 @@ mod tests {
                 .get("HKASK_SWARM_MEMORY_DB")
                 .map(String::as_str),
             "HKASK_SWARM_MEMORY_DB must reach curator for swarm backfill sweep"
-        );
-        assert_eq!(
-            training_env.get("RUNPOD_TEMPLATE_ID"),
-            Some("tpl-override-123"),
-            "non-settings config_env overrides must survive build_mcp_server_env"
-        );
-        assert_eq!(
-            training_env.get("NEBIUS_PROJECT_ID"),
-            Some("nebius-proj-from-keychain"),
-            "DATA_SERVICES config_env entries must resolve from keychain when not overridden in shell"
         );
     }
 
@@ -2169,7 +2061,7 @@ mod tests {
             "the startup-default passphrase set is a stated requirement — \
              the ONE DB passphrase defaults to 'allostery' on first run and \
              every SQLCipher DB (curator, swarm memory, kanban, research, \
-             training) opens with it; changing this set is a requirements \
+             experimentation) opens with it; changing this set is a requirements \
              change, not a refactor"
         );
 

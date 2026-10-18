@@ -1,29 +1,25 @@
 # Provider profile — RunPod. Structural contract pinned by
 # kask/scripts/check-provider-profiles.sh; semantic reading owned by the
 # provider-audit skill.
+#
+# Scope narrowed 2026-10-17: the training-host role was retired with the
+# training MCP server (model training is out of scope for the co-researcher
+# mandate). The OCR-inference role is live and unaffected — the corpus
+# pipeline resolves RunPod/kask-ocr through the D29 LanguageModelProvider.
 id: runpod
 name: RunPod
 status: active
 roles:
-  - training-host
   - ocr-inference
 keychain:
   slot: https://api.runpod.io
   env_var: RUNPOD_API_KEY
 consumed_capabilities:
-  - capability: training host (axolotl/ludwig harnesses dispatched to GPU pods)
-    source: kask/mcp-servers/hkask-mcp-training/src/providers/runpod.rs
   - capability: dedicated LanguageModelProvider for OCR (RunPod/kask-ocr, olmOCR-2)
     source: DIVERGENCE.md D29
-  - capability: Data Services settings row ("RunPod (GPU cloud for training)")
+  - capability: Data Services settings row ("RunPod (serverless inference for OCR)")
     source: kask/crates/kask_bridge/src/inference_providers.rs
-config_env:  # from kask/crates/kask_bridge/src/mcp_servers.rs (training server config_env)
-  - RUNPOD_TEMPLATE_ID
-  - RUNPOD_GPU_TYPE_ID
-  - RUNPOD_CONTAINER_DISK_GB
-  - RUNPOD_DOCKER_IMAGE
-  - RUNPOD_DOCKER_ARGS
-  - HKASK_PODS_FILE
+config_env: []  # the RUNPOD_* GPU/pod overrides were purged with the training server
 deliberate_non_consumption:
   - capability: embeddings at the account api_url root
     reason: "no OpenAI-compatible root at https://api.runpod.io — each serverless

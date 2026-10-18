@@ -13,13 +13,13 @@
 //!
 //!   gather → process (chunk/tag/embed/assertions) → output (QA training | compose)
 //!
-//! Tools (27):
+//! Tools (26):
 //! - Gather:     corpus_discover, corpus_cache_work, corpus_discover_company
 //! - Process:    corpus_convert, corpus_ocr, corpus_is_complex, corpus_chunk,
 //!   corpus_build_chunk_representations, corpus_embedding_inventory, corpus_export_bundle, corpus_tag_chunks, corpus_embed, corpus_extract_assertions,
 //!   corpus_dedup_chunks, corpus_consolidate_chunks
 //! - QA output:  corpus_build_prompts, corpus_generate_qa_batch, corpus_ground_generated_qa,
-//!   corpus_ingest_qa, corpus_prepare_training_dataset, corpus_purge_qa
+//!   corpus_ingest_qa, corpus_purge_qa
 //! - Compose:    corpus_compose, corpus_rewrite, corpus_centroid
 //! - Manage:     corpus_cache, corpus_query, corpus_clear_index
 //!
@@ -310,18 +310,19 @@ mod tool_surface_tests {
         );
     }
 
-    // The corpus server registers exactly 27 tools. A `#[tool]` method in an
+    // The corpus server registers exactly 26 tools. A `#[tool]` method in an
     // impl block WITHOUT `#[tool_router]` silently registers nothing while
-    // `cargo check` passes — `corpus_prepare_training_dataset` shipped that
-    // way (attributed, implemented, unreachable) until this pin caught the
-    // class. One macro call: the count test plus the build.rs-generated
-    // TOOL_NAMES set against the live router (same-count renames included).
+    // `cargo check` passes — the former `corpus_prepare_training_dataset`
+    // shipped that way (attributed, implemented, unreachable) until this pin
+    // caught the class; it was removed with the training server. One macro
+    // call: the count test plus the build.rs-generated TOOL_NAMES set against
+    // the live router (same-count renames included).
     include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
     hkask_mcp_server::tool_surface_pin!(
         CorpusServer::combined_router(),
         "combined_router",
-        27,
-        tool_surface_is_exactly_27_registered_tools,
+        26,
+        tool_surface_is_exactly_26_registered_tools,
     );
 
     /// Schema-shape pins for the calibration/grounding tools — the

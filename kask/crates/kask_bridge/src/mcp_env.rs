@@ -14,7 +14,7 @@
 use crate::settings::{
     KaskCompaniesSettings, KaskCorpusSettings, KaskGeneralSettings, KaskMediaSettings,
     KaskMemorySettings, KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings,
-    KaskSwarmSettings, KaskTrainingSettings,
+    KaskSwarmSettings,
 };
 
 // Defaults are read from each subsection's `Default` impl so there's a
@@ -199,7 +199,7 @@ pub(crate) fn emit_corpus_template_root_env(
     data_dir: &str,
     env: &mut std::collections::HashMap<String, String>,
 ) {
-    // Always emit HKASK_TEMPLATE_ROOT so MCP servers (corpus, training,
+    // Always emit HKASK_TEMPLATE_ROOT so MCP servers (corpus,
     // swarm) find templates in production where the CWD-relative default
     // does not exist.
     env.insert(
@@ -316,21 +316,6 @@ pub(crate) fn emit_swarm_env(
     }
 }
 
-pub(crate) fn emit_training_env(
-    training: &KaskTrainingSettings,
-    env: &mut std::collections::HashMap<String, String>,
-) {
-    if !training.host.is_empty() {
-        env.insert("HKASK_TRAINING_HOST".to_string(), training.host.clone());
-    }
-    if !training.cache_dir.is_empty() {
-        env.insert(
-            "HKASK_TRAINING_CACHE_DIR".to_string(),
-            training.cache_dir.clone(),
-        );
-    }
-}
-
 pub(crate) fn emit_media_env(
     media: &KaskMediaSettings,
     env: &mut std::collections::HashMap<String, String>,
@@ -398,8 +383,6 @@ const SETTINGS_BACKED_CONFIG_ENV_VARS: &[&str] = &[
     "HKASK_A2A_HTTP_ENABLE",
     "HKASK_SWARM_MEMORY_DB",
     "HKASK_SWARM_EMBEDDING_DIM",
-    "HKASK_TRAINING_HOST",
-    "HKASK_TRAINING_CACHE_DIR",
     "HKASK_MEDIA_TTS_MODEL",
     "HKASK_MEDIA_STT_MODEL",
     "HKASK_MEDIA_VISION_MODEL",
@@ -691,8 +674,8 @@ mod tests {
         );
     }
 
-    // `HKASK_TEMPLATE_ROOT` must ALWAYS be emitted so MCP servers (corpus,
-    // training) find templates in production where the CWD-relative default
+    // `HKASK_TEMPLATE_ROOT` must ALWAYS be emitted so MCP servers (corpus)
+    // find templates in production where the CWD-relative default
     // ("kask/registry") does not exist. For default settings, the value is
     // resolved from `data_dir` as `{data_dir}/skills/registry/` — the path
     // where `seed_templates` writes at startup.

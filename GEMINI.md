@@ -683,7 +683,7 @@ panicked a live probe.
 Inline `McpToolError::internal(format!("…: {e}"))` over every variant of a domain
 error mis-classifies `NotFound`/`Unavailable`/auth variants as `Internal`. Use a
 `map_<domain>_error(e) -> McpToolError` fn that classifies per variant (see
-`map_media_error`, `map_portfolio_error`, `hkask-mcp-training/src/tools/error_mapping.rs`).
+`map_media_error` and the server-local error mappers that remain).
 
 ## Missing credentials must surface as `permission_denied`, not `unavailable`/`invalid_argument`/silent fallback
 
@@ -691,7 +691,7 @@ A missing credential is an authorization failure, not a transient unavailability
 
 ## API keys live at exactly one keychain location
 
-Data-service API keys (Exa, Tavily, Brave, SerpAPI, Firecrawl, FMP, EODHD, FRED, Nebius, HF Token, ABW, etc.) are stored in zed's `CredentialsProvider` keychain namespace under `kask://credentials/<key>` (label `zed-github-account`, attribute `url=kask://credentials/<key>`). Inference-provider API keys (OpenRouter, DeepInfra, RunPod, KiloCode) live at exactly one other location: the provider's `api_url` keychain slot (`https://openrouter.ai/api/v1`, `https://api.deepinfra.com/v1/openai`, `https://api.runpod.io`, `https://api.kilo.ai/api/gateway`) — the same slot zed's `ApiKeyState` reads and Settings → AI → LLM Providers writes; nothing reads or writes `kask://credentials/{openrouter,deepinfra,runpod,kilocode}`. There is NO `service=hkask` keychain fallback for API keys — `resolve_credential` reads API keys from env vars only (injected by `build_mcp_server_env`, which reads both slot kinds from zed's keychain). The legacy `service=hkask` namespace is fully removed and purged at startup (`hkask-keystore/src/keychain.rs`) — do not write anything to it; entries silently vanish. The single internal key `hkask_db_passphrase` lives in the `kask://credentials/` namespace; there is one passphrase for all SQLCipher DBs and no separate swarm-memory passphrase. Do NOT add `*_enabled` settings toggles — the key's presence in the keychain IS the toggle.
+Data-service API keys (Exa, Tavily, Brave, SerpAPI, Firecrawl, FMP, EODHD, FRED, ABW, etc.) are stored in zed's `CredentialsProvider` keychain namespace under `kask://credentials/<key>` (label `zed-github-account`, attribute `url=kask://credentials/<key>`). Inference-provider API keys (OpenRouter, DeepInfra, RunPod, KiloCode) live at exactly one other location: the provider's `api_url` keychain slot (`https://openrouter.ai/api/v1`, `https://api.deepinfra.com/v1/openai`, `https://api.runpod.io`, `https://api.kilo.ai/api/gateway`) — the same slot zed's `ApiKeyState` reads and Settings → AI → LLM Providers writes. `credential_urls_for_mcp` exposes only keys allowlisted by remaining child servers; native-only RunPod OCR and KiloCode keys stay out of child env and restart decisions. There is NO `service=hkask` keychain fallback for API keys. Dormant user-owned entries for retired services may remain in the OS keychain, but no settings, recovery, read, or injection path consumes them. The single internal key `hkask_db_passphrase` lives in the `kask://credentials/` namespace; there is one passphrase for all SQLCipher DBs and no separate swarm-memory passphrase. Do NOT add `*_enabled` settings toggles — the key's presence in the keychain IS the toggle.
 
 ## Canonical `HKASK_DB_PASSPHRASE` resolution helper
 

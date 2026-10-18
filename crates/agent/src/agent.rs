@@ -5565,7 +5565,7 @@ mod internal_tests {
                 Ok(())
             }),
         );
-        record_operator_feedback("lora-training", true, None).expect("feedback accepted");
+        record_operator_feedback("code-review", true, None).expect("feedback accepted");
         record_operator_feedback(
             "task-breakdown",
             false,
@@ -5576,14 +5576,14 @@ mod internal_tests {
             let recorded = recorded.lock().expect("recorded lock");
             recorded
                 .iter()
-                .filter(|(id, _, _)| id == "lora-training" || id == "task-breakdown")
+                .filter(|(id, _, _)| id == "code-review" || id == "task-breakdown")
                 .cloned()
                 .collect()
         };
         assert_eq!(
             relevant,
             vec![
-                ("lora-training".to_string(), true, None),
+                ("code-review".to_string(), true, None),
                 (
                     "task-breakdown".to_string(),
                     false,
@@ -5610,7 +5610,7 @@ mod internal_tests {
             recorded
                 .iter()
                 .filter(|(id, _, _)| {
-                    id == "lora-training" || id == "task-breakdown" || id == "media-workflow"
+                    id == "code-review" || id == "task-breakdown" || id == "media-workflow"
                 })
                 .cloned()
                 .collect()
@@ -7740,10 +7740,10 @@ mod internal_tests {
             .await
             .expect("session");
         cx.run_until_parked();
-        let skill_dir = dir.join("lora-training");
+        let skill_dir = dir.join("co-scientist");
         fs.pause_events();
         fs.create_dir(&skill_dir).await.expect("new skill dir");
-        let content = "---\nname: lora-training\ndescription: Later shipped skill\n---\nbody";
+        let content = "---\nname: co-scientist\ndescription: Later shipped skill\n---\nbody";
         fs.insert_file(skill_dir.join("SKILL.md"), content.as_bytes().to_vec())
             .await;
         let skill = agent_skills::parse_skill_frontmatter(
@@ -7763,7 +7763,7 @@ mod internal_tests {
                 state
                     .skills
                     .iter()
-                    .any(|skill| skill.name == "lora-training")
+                    .any(|skill| skill.name == "co-scientist")
             );
             assert!(state.skills.iter().any(|skill| skill.name == "user-skill"));
         });

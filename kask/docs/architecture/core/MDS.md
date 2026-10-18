@@ -59,25 +59,7 @@ The ontology is re-anchored to the **19 surviving hKask crates** (18 `hkask-*` +
 
 **Regulation spans:** `reg.kata` — coaching-prompt generation (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/kata.rs:44`). No `reg.kanban` namespace exists in code (zero hits in `kask/**/*.rs`, re-verified 2026-09-28).
 
-### 1.3 Adapter Domain
-
-**Crate:** `hkask-mcp-training::adapter` | **Goal Principle:** P3 (Generative Space) — LoRA adapter lifecycle management for agent-specialized inference
-
-| Entity | Description | Key Attributes |
-|--------|-------------|---------------|
-| `TrainedLoRAAdapter` | A trained LoRA adapter with provenance metadata | `id: Uuid`, `source: AdapterSource`, `checksum: Checksum`, `expertise: Expertise`, `owner: WebID`, `skill_name: Option<String>`, `lifecycle: AdapterLifecycle` (`kask/mcp-servers/hkask-mcp-training/src/adapter/adapter_store.rs:103`) |
-| `AdapterSource` | Provenance of the adapter | `HuggingFace { repo }` |
-| `AdapterStore` | CRUD store for trained adapters with checksum verification | Store, get_by_id, get_by_expertise, get_by_skill_name, list_all, list_owner, delete, store_blob, get_blob |
-| `Expertise` | Describes the domain expertise of a trained adapter | `domains: Vec<MdsDomain>`, `provenance: TrainingProvenance`, `capabilities: Vec<String>` (`adapter/expertise.rs`) |
-| `AdapterLifecycle` | Lifecycle state of a stored adapter | `kask/mcp-servers/hkask-mcp-training/src/adapter/expertise.rs:85` |
-
-> The former `AdapterRouter`, `EndpointLifecycle`/`EndpointPhase`, `AdapterConfig`, `CompositionEstimate`, and `ProviderSelection` entities are deleted: the prior `AdapterPort` trait + `AdapterRouter` impl were removed, and the tools use `AdapterStore` (CRUD) and `InferencePort` (inference) directly (`adapter.rs:18-20`, verified 2026-09-04).
-
-**Regulation spans:** `reg.adapter` — store/get/delete operations (`kask/mcp-servers/hkask-mcp-training/src/adapter/adapter_store.rs:275,347`)
-
-**Key contracts:** 8 `expect:` contract annotations across the adapter modules (`adapter/adapter_store.rs`, `adapter/expertise.rs`, `adapters.rs`; verified 2026-09-04)
-
-### 1.4 Service and runtime subsystems
+### 1.3 Service and runtime subsystems
 
 **Crate:** the last `hkask-services-*` crate (`hkask-services-core`) was folded into `hkask-mcp-corpus` as its `services_core` module (2026-10-13) — it had exactly one consumer and failed the deletion test. The editor process owns one `McpRuntime`; it spawns the 13 MCP binaries as child processes over stdio, discovers their tools, and governs dispatch (`kask/crates/hkask-mcp/src/runtime.rs:4-12,646-655,749-751`; registry at `kask/crates/kask_bridge/src/mcp_servers.rs:49-573`). There is no daemon or `KaskCore` singleton.
 
@@ -163,11 +145,11 @@ The Gentle-Lovelace prose rewriting capability lives in `hkask-mcp-corpus` as th
 
 ### 4.2 Corpus Server Tools
 
-The corpus server provides tools for style corpus management, prose generation, and QA training:
+The corpus server provides tools for style corpus management, prose generation, and QA generation:
 
 | Server | Tools | Domain | Status |
 |--------|-------|--------|--------|
-| `hkask-mcp-corpus` | Gather: `corpus_discover`, `corpus_cache_work`, `corpus_discover_company`; process: `corpus_convert`, `corpus_ocr`, `corpus_is_complex`, `corpus_chunk`, `corpus_build_chunk_representations`, `corpus_embedding_inventory`, `corpus_export_bundle`, `corpus_tag_chunks`, `corpus_embed`, `corpus_extract_assertions`, `corpus_dedup_chunks`, `corpus_consolidate_chunks`; QA: `corpus_build_prompts`, `corpus_generate_qa_batch`, `corpus_ground_generated_qa`, `corpus_ingest_qa`, `corpus_prepare_training_dataset`, `corpus_purge_qa`; compose: `corpus_compose`, `corpus_rewrite`, `corpus_centroid`; manage: `corpus_cache`, `corpus_query`, `corpus_clear_index` | Corpus gathering + processing + QA generation + style exemplar composition | ✅ Implemented: 27 tools, enumerated at `kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:16-24` and pinned by `tool_surface_is_exactly_27_registered_tools` at `:320-325` |
+| `hkask-mcp-corpus` | Gather: `corpus_discover`, `corpus_cache_work`, `corpus_discover_company`; process: `corpus_convert`, `corpus_ocr`, `corpus_is_complex`, `corpus_chunk`, `corpus_build_chunk_representations`, `corpus_embedding_inventory`, `corpus_export_bundle`, `corpus_tag_chunks`, `corpus_embed`, `corpus_extract_assertions`, `corpus_dedup_chunks`, `corpus_consolidate_chunks`; QA: `corpus_build_prompts`, `corpus_generate_qa_batch`, `corpus_ground_generated_qa`, `corpus_ingest_qa`, `corpus_purge_qa`; compose: `corpus_compose`, `corpus_rewrite`, `corpus_centroid`; manage: `corpus_cache`, `corpus_query`, `corpus_clear_index` | Corpus gathering + processing + QA generation + style exemplar composition | ✅ Implemented: 26 tools, enumerated at `kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:16-24` and pinned by `tool_surface_is_exactly_26_registered_tools` at `:321-326` |
 
 ### 4.3 Style Exemplar Architecture
 
@@ -486,17 +468,17 @@ Cross-references are verified by the link checker in CI (relative links within t
 | `hkask-steer-core` | Composition | The zed-free half of the Steer prompt surface: rendering and verification of the tool-advertisement contract against the server's build.rs-generated `TOOL_NAMES` (`advertised_tool_names`, `render_tool_names`). Split from `crates/hkask-steer` (2026-09-07) so the prompt-truth logic builds without the zed closure; `hkask-steer` (zed-side) keeps the `ConversationView` lifecycle and re-exports everything here. |
 | `hkask-inference` | Composition | `MediaRouter`, `InferenceIpcClient`, `ProviderId` — reads API keys from env vars injected into MCP children (`config.rs:109-129,218-228`); media generation is child-local while chat/vision/embed/list/rerank may cross the IPC bridge (`hkask_inference.rs:190-390`). The `InferencePort` has no `generate_batch` method, and the IPC protocol has no media-generation route. |
 | `hkask-mcp-server` (framework) | Composition | Per-tool child-process observability at tracing target `reg.tool` through `ToolSpanGuard` (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:10-27,92-119`). These stderr events are not Regulation-ledger records (`:128-131`). |
-| `hkask-forecast` | Domain | Forecast domain logic. The former bounded-proof (Kani) harness was removed 2026-09-19 (commit `5b4799bcad`); the two in-tree `cfg(kani)` harness sets are `kask/crates/hkask-types/src/json_extract.rs:231-269` and the five decision-core harnesses at `kask/mcp-servers/hkask-mcp-training/src/lora_validation/param_gates.rs:526-636` (committed `99f61e549a`) |
+| `hkask-forecast` | Domain | Forecast domain logic. The former bounded-proof (Kani) harness was removed 2026-09-19 (commit `5b4799bcad`); the two in-tree `cfg(kani)` harness sets are `kask/crates/hkask-types/src/json_extract.rs:231-269`; the training server's five decision-core harnesses were removed with it (2026-10-17) |
 
 | `hkask-condenser` | Curation | Context condensation — pure domain crate (compression algorithms, ontology-aware saliency, `CondenserEngine`). Consumed by `kask_bridge::BridgeThreadCondenser` for in-process thread condensation. |
 | `hkask-bridge-ontology` | Curation | Ontology bridge — Dublin Core + BIBO + CiTO + PKO core vocabulary and domain supplements (FIBO, SEPIO, GOLEM, ML-Schema). Single source of truth for ontology URIs and the dual-axis domain-selection logic. |
 | `hkask-email` | Lifecycle | Curator email — outbound via MXroute SMTP API (alerts, notifications, test) |
 | `hkask-lisp` | Composition | Sandboxed Lisp interpreter (`hkask_lisp::eval_sandboxed_with_budget`) for deterministic compute steps invoked by skills via the `lisp_eval` tool — bounded recursion, JSON-native, no I/O, no `eval`, no network. |
 | `hkask-mcp` | Composition | Child-process lifecycle, tool discovery, metering, and dispatch. Governed completion writes a `SpanKind::ToolCompleted` record to the injected sink and warns at tracing target `reg.mcp` if persistence fails (`kask/crates/hkask-mcp/src/runtime.rs:1598-1612`). |
-| `hkask-event-store` | Lifecycle, Composition | Append-only event log for agent rollouts (`EventStore`, `EventRecord`, `EventFilter`, `VerdictSource`, `RolloutKind`). Data-plane substrate for agent evaluation, training-data generation, and regulation. Wired via `kask_bridge/src/rollout_event_bridge.rs`; consumed by `hkask-regulation/src/cybernetics_loop.rs`. |
+| `hkask-event-store` | Lifecycle, Composition | Append-only event log for agent rollouts (`EventStore`, `EventRecord`, `EventFilter`, `VerdictSource`, `RolloutKind`). Data-plane substrate for agent evaluation and regulation. Wired via `kask_bridge/src/rollout_event_bridge.rs`; consumed by `hkask-regulation/src/cybernetics_loop.rs`. |
 | ~~`hkask-services-core`~~ (folded) | Domain | Foundation: `ServiceError`, `HkaskSettings` — folded into `hkask-mcp-corpus` (`services_core` module, 2026-10-13). |
 | `kask_bridge` | Composition | D8 — the bidirectional seam: in-process bridge exposing hKask port traits (InferencePort, ToolPort, MemoryPort, etc.) to MCP servers and zed-kask surfaces (composition root wires components directly) |
-| 11 MCP servers | Composition | The tools — child processes over stdio (D3), governed by the in-process `McpRuntime`: companies, corpus, curator, experimentation, kata-kanban, media, prediction-markets, research, scenarios, swarm, training. |
+| 10 MCP servers | Composition | The tools — child processes over stdio (D3), governed by the in-process `McpRuntime`: companies, corpus, curator, experimentation, kata-kanban, media, prediction-markets, research, scenarios, swarm. |
 
 > **Deleted crates:** see git history.
 

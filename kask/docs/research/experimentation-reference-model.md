@@ -20,7 +20,7 @@ The capability to evolve is already sharded across zed-kask's layers and stays s
 
 | Element | In zed-kask |
 | --- | --- |
-| Genotype (small, legible, versioned) | SKILL.md **plus its `.j2` templates as one composite genotype** (§5, Q2); agent cards (system_prompt, model_params, evaluators); MCP tool schemas; regulation thresholds; LoRA adapters; goal/task definitions. Structure over weights: prefer evolving text/config to fine-tuning when both could serve — cheaper, reviewable, revertible. |
+| Genotype (small, legible, versioned) | SKILL.md **plus its `.j2` templates as one composite genotype** (§5, Q2); agent cards (system_prompt, model_params, evaluators); MCP tool schemas; regulation thresholds; goal/task definitions. Structure over weights: this system evolves text and config only — cheaper, reviewable, revertible. Weight-level variation (fine-tuned adapters) is out of scope for the co-researcher mandate and has no executor here (the training server was removed 2026-10-17). |
 | Phenotype | A running session/agent/server expressing a genotype configuration. Fitness is measured on phenotypes; selection edits genotypes. |
 | Variation (sharded) | Mutation (GEPA prompt evolution; skill edits; `evolve_mcp_tool_schema` directives), recombination (adapter merging under merge contracts; skill bundling; roster composition), continuous calibration (thresholds — the scalar ES analog). |
 | Fitness (grounded only) | Deterministic evaluators, verifier gates, Brier scores on resolved outcomes, calibration readings, algedonic verdicts. Never LLM-only (the anti-gaming rule). Recorded runs only — never simulated (the GEPA house rule). |
@@ -29,7 +29,7 @@ The capability to evolve is already sharded across zed-kask's layers and stays s
 
 Two zed-kask-specific syntheses:
 
-1. **The pre-registered, Brier-scored prediction is the tiny controller.** The experiment machinery (swarm rollouts, eval harnesses, training jobs) is the big shared commodity part; the hypothesis plus prediction is the small, legible, evolvable part; the Brier score is the selection signal on the experimenter, not just the artifact. This is the advantage over the source setting: Ha's fitness functions are external benchmarks; this system scores its own hypotheses.
+1. **The pre-registered, Brier-scored prediction is the tiny controller.** The experiment machinery (swarm rollouts, eval harnesses) is the big shared commodity part; the hypothesis plus prediction is the small, legible, evolvable part; the Brier score is the selection signal on the experimenter, not just the artifact. This is the advantage over the source setting: Ha's fitness functions are external benchmarks; this system scores its own hypotheses.
 2. **D/P labelling is the legibility constraint that makes variants selectable.** The variant carries its own deterministic gates, declared evaluators, and lineage — it explains itself, so selection is auditable.
 
 ## 2. Current state — the shard map (probe evidence, 2026-09-30)
@@ -37,7 +37,6 @@ Two zed-kask-specific syntheses:
 | Layer | Genotype | Variation today | Fitness today | Gap |
 | --- | --- | --- | --- | --- |
 | Prompt/template | system prompts, `.j2` | GEPA sub-loop (mutation+crossover, Pareto frontier, pinned D forms) | `swarm_eval_agent_local` on disjoint feedback/selection sets; 10% cost noise band | "Prompts only (v1)"; no cross-run lineage |
-| Weights (FM) | LoRA adapters | retrain mode; verdict-bridged rollouts (SFT/DPO) | held-out eval; A/B on job completion | runs not registered or comparable |
 | Skill | SKILL.md + templates | skill-maintenance edits; therapy reification | fixed-task comparisons; pin tests | ad hoc A/Bs, no records |
 | Agent/swarm | agent cards | reconfigure; roster composition | `swarm_eval_agent_local`; task boards | no variant populations or retention |
 | Tool schema | MCP schemas | `evolve_mcp_tool_schema` directive | skill-use reports | fitness loop thin (issues, not outcomes) |
@@ -62,7 +61,6 @@ Generalizes GEPA (prompts-only v1) to the artifact classes. **The skill genotype
 | Standalone prompt/template | Runnable eval set, disjoint feedback/selection | Eval-set scores | GEPA dominance/convergence forms |
 | Tool schema | Skill-use reports over a window | Issue counts, resolution outcomes | Curator directive ledger |
 | Regulation scalar | Calibration/Brier records over a window | Calibration delta | Curator thresholds |
-| LoRA adapter | Held-out task set | `training_evaluate` scores | lora-training gates G-M1..G-Q5 |
 
 Protocol steps, every experiment:
 

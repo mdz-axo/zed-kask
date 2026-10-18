@@ -1181,7 +1181,7 @@ fn ingest_request_defaults_pin_the_capabilities_reasoner_name() {
 /// Brave-derived QA candidates are excluded from ingestion and the exclusion
 /// is surfaced (task c1d65229 — Brave API ToS clause xiii bans training AI
 /// models on Search Results). The retained pair carries its originating
-/// provider onto the stored h_mem, so `training_assemble_dataset` can
+/// provider onto the stored h_mem, so a downstream reader can
 /// exclude any Brave-derived pair that reaches a DB by another path.
 #[tokio::test]
 async fn ingest_excludes_brave_derived_candidates() -> anyhow::Result<()> {

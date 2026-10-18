@@ -76,7 +76,7 @@ impl OperatorFeedbackObservation {
 
 #[derive(Debug, Clone)]
 pub struct StoredSkillSpan {
-    /// Skill ID extracted from the invocation (e.g., "lora-training").
+    /// Skill ID extracted from the invocation (e.g., "code-review").
     pub skill_id: String,
     /// Phase: `outcome` or `operator_feedback`.
     pub phase: String,

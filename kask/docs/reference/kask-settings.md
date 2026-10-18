@@ -37,7 +37,6 @@ system deserializes `SettingsContent`, not `KaskSettings`).
 | `scenarios` | `KaskScenariosSettings` | derived `Default` |
 | `prediction_markets` | `KaskPredictionMarketsSettings` | derived `Default` |
 | `swarm` | `KaskSwarmSettings` | `Default` |
-| `training` | `KaskTrainingSettings` | derived `Default` |
 | `media` | `KaskMediaSettings` | `Default` |
 | `models` | `KaskModelsSettings` | `Default` |
 
@@ -62,11 +61,11 @@ queued or running work and releases capacity.
 ## MCP Servers (`KaskMcpSettings`)
 
 Toggle which of the built-in kask MCP servers are loaded.[^mcp-spec-settings]
-The 11 servers (`BUILT_IN_MCP_SERVERS` registry in `kask/crates/kask_bridge/src/mcp_servers.rs`,
+The 10 servers (`BUILT_IN_MCP_SERVERS` registry in `kask/crates/kask_bridge/src/mcp_servers.rs`,
 IDs via `builtin_mcp_server_ids()`):
 `companies`, `corpus`, `curator`, `experimentation`, `kata-kanban`, `media`,
-`prediction-markets`, `research`, `scenarios`, `swarm`, `training`. The crates live under `kask/mcp-servers/`
-(11 `hkask-mcp-*` crates).
+`prediction-markets`, `research`, `scenarios`, `swarm`. The crates live under `kask/mcp-servers/`
+(10 `hkask-mcp-*` crates).
 
 | Field | Type | Default |
 |-------|------|--------|
@@ -120,7 +119,7 @@ until per-invocation attribution/authority is implemented (repair plan P2).
 ## Data Services
 
 API keys for data services (Exa, Tavily, Brave, SerpAPI, Firecrawl, FMP,
-EODHD, Nebius, HuggingFace, FRED, etc.) are stored in the system
+EODHD, FRED, etc.) are stored in the system
 keychain under `kask://credentials/<key>`. Inference-provider keys
 (OpenRouter, DeepInfra, RunPod, KiloCode) are the exception — each lives at its
 provider's `api_url` keychain slot (one key, one location), the same slot
@@ -140,8 +139,6 @@ and injects them as environment variables into the MCP server child process.
 | `kask://credentials/fmp` | `HKASK_FMP_API_KEY` |
 | `kask://credentials/eodhd` | `HKASK_EODHD_API_KEY` |
 | `https://api.runpod.io` (provider slot) | `RUNPOD_API_KEY` |
-| `kask://credentials/nebius_project_id` | `NEBIUS_PROJECT_ID` |
-| `kask://credentials/hf_token` | `HF_TOKEN` |
 | `kask://credentials/fred` | `HKASK_FRED_API_KEY` |
 
 **To configure**: Enter the API key via Settings → Kask → Data Services.
@@ -349,13 +346,6 @@ The ABW API key is a secret — it lives in the keychain under
 deliberately duplicated across the crate boundary to avoid a circular
 dependency.
 
-## Training (`KaskTrainingSettings`)
-
-| Field | Type | Default | Notes |
-|-------|------|---------|-------|
-| `host` | `String` | `""` | `"nebius"` or `"runpod"`; empty = auto-detect from API keys |
-| `cache_dir` | `String` | `""` | Dataset pipeline cache; empty = agent adapters directory |
-
 ## Media (`KaskMediaSettings`)
 
 | Field | Type | Default | Env var |
@@ -381,7 +371,7 @@ operator's configured models, verbatim.[^ousterhout-models-settings]
 | `default_model` | `String` | `"OpenRouter/z-ai/glm-5.3"` | Injected as `HKASK_DEFAULT_MODEL` (`mcp_env.rs`); the zed-side inference stack resolves it from the registry, falling back to the zed default when the provider is not configured |
 | `embedding_model` | `String` | `""` (see note) | `effective_embedding_model()` resolves `models.embedding_model` → `corpus.embedding_model` → empty; the **embedding default lives in `KaskCorpusSettings::default()`** (`"OpenRouter/qwen/qwen3-embedding-8b"` — MRL: every embed request carries `dimensions = embedding_dim`, default 1024, so width-bound vec0 stores keep receiving fitting vectors) so a models-layer default cannot shadow corpus overrides; injected as `HKASK_EMBEDDING_MODEL` |
 | `classifier_model` | `String` | `"OpenRouter/z-ai/glm-5.2"` | Injected as `HKASK_CLASSIFIER_MODEL` (`mcp_env.rs`); consumed by corpus tagging, assertion extraction, and the memory write path's chunk tagging. glm-5.2 because the classifier must be non-thinking (or thinking-disable-able) — glm-5.3-flash cannot disable thinking |
-| `qa_generation_model` | `String` | `""` | Explicit QA tool `model` > this setting (`HKASK_QA_GENERATION_MODEL`, corpus allowlist). Unset/invalid fails visibly; never chat, classifier, or training base model |
+| `qa_generation_model` | `String` | `""` | Explicit QA tool `model` > this setting (`HKASK_QA_GENERATION_MODEL`, corpus allowlist). Unset/invalid fails visibly; never the chat or classifier model |
 | `ocr_model` | `String` | `"ollama/glm-ocr:latest"` | Injected as `HKASK_OCR_MODEL` |
 | `rerank_model` | `String` | `"deepinfra/Qwen/Qwen3-Reranker-8B"` | Shared `DEFAULT_RERANK_MODEL`; injected as `HKASK_RERANK_MODEL` |
 
@@ -395,8 +385,6 @@ tool overrides are errors, not requests to fall back.
 `resolve_qa_generation_model` in `hkask_inference::model_constants` enforces that
 precedence and provider qualification; the registry/provider remains authoritative for
 availability. Both corpus single and prepared-batch QA pass the selected model explicitly.
-The training server currently has no QA-generation caller: its evaluation model and
-training `base_model` remain unchanged, and it does not receive the QA env variable.
 The old `HKASK_QA_MODEL` remains a consolidation input only, not a QA-generation alias.
 
 There is no dedicated QA verification model setting (deleted 2026-09-18): an LLM
@@ -458,7 +446,7 @@ The SQLCipher passphrase is resolved through a canonical 2-tier helper,
 `hkask_mcp_server::server::resolve_db_passphrase(&ctx.credentials)`:
 `ctx.credentials.get("HKASK_DB_PASSPHRASE")` → `resolve_credential("HKASK_DB_PASSPHRASE")`
 (env → hKask keychain). All six DB-passphrase-consuming servers (kata-kanban,
-training, research, curator, swarm, corpus) use this helper, not inline
+research, curator, swarm, corpus) use this helper, not inline
 re-implementations; `ServerContext::resolve_db_credential` delegates to it. A miss
 returns `McpToolError::permission_denied` naming the env var.
 
@@ -475,7 +463,7 @@ keychain) without changing serde-default signatures.
 
 On first run, the DB passphrase defaults to `"allostery"`. There is ONE
 passphrase for every SQLCipher database (curator, corpus, swarm memory,
-kata-kanban, research, training — `kask/crates/kask_bridge/src/identity.rs:139-141`)
+kata-kanban, research — `kask/crates/kask_bridge/src/identity.rs:139-141`)
 — no per-DB passphrases. The user can change it later
 via the settings UI (Security page); the change is scheduled there and
 applied by the next editor startup, before any database opens.
@@ -550,11 +538,8 @@ comma-joined `BUILT_IN_MCP_SERVERS_IDS`, consumed only by the swarm server's
 | `HKASK_BRAVE_API_KEY` | Brave Search |
 | `HKASK_SERPAPI_API_KEY` | SerpAPI |
 | `HKASK_FIRECRAWL_API_KEY` | Firecrawl |
-| `RUNPOD_API_KEY` | RunPod |
-| `RUNPOD_TEMPLATE_ID` | RunPod template |
-| `NEBIUS_PROJECT_ID` | Nebius |
-| `NEBIUS_SUBNET_ID` | Nebius |
-| `HF_TOKEN` | HuggingFace |
+| `RUNPOD_API_KEY` | RunPod native provider (serverless OCR endpoint discovery) |
+
 | `FALAI_API_KEY` | fal.ai (media generation) |
 
 ### Inference Providers
@@ -603,8 +588,6 @@ into the editor process env).
 | `HKASK_LOCAL_SWARMS_DIR` | swarm | derived from `data_dir` as `mcp/swarm/swarms/` |
 | `HKASK_SWARM_MEMORY_DB` | swarm | derived from `data_dir` as `mcp/swarm/memory.db` |
 | `HKASK_ABW_API_KEY` | swarm | ABW API key (keychain only) |
-| `HKASK_TRAINING_HOST` | training | `training.host` |
-| `HKASK_TRAINING_CACHE_DIR` | training | `training.cache_dir` |
 | `HKASK_DEFAULT_MODEL` | all | `models.default_model` |
 | `HKASK_EMBEDDING_MODEL` | all | `models.embedding_model` / `corpus.embedding_model` |
 | `HKASK_CLASSIFIER_MODEL` | all | `models.classifier_model` |
@@ -614,7 +597,6 @@ into the editor process env).
 | `HKASK_CURATOR_DB` | curator | injected by deferred task |
 | `HKASK_KANBAN_DB` | kata-kanban | Operator override for kanban DB path (default `mcp/kata-kanban/kanban.db`) |
 | `HKASK_RESEARCH_DB` | research | Operator override for research DB path (default `mcp/research/research.db`) |
-| `HKASK_TRAINING_DB` | training | Operator override for training DB path (default `mcp/training/training.db`) |
 | `HKASK_SWARM_CONSENT_STORE` | swarm | Operator override for consent store path (default `mcp/swarm/consent.db`) |
 
 The collab server is launched directly by zed-kask (not via `mcp_env()`), so

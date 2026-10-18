@@ -306,7 +306,7 @@ members = [
     "kask/mcp-servers/hkask-mcp-research",
     "kask/mcp-servers/hkask-mcp-curator",
     "kask/mcp-servers/hkask-mcp-kata-kanban",
-    "kask/mcp-servers/hkask-mcp-training",
+
     "kask/mcp-servers/hkask-mcp-companies",
 
     "kask/mcp-servers/hkask-mcp-corpus",

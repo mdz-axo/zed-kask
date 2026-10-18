@@ -940,6 +940,7 @@ const RETIRED_SKILL_NAMES: &[&str] = &[
     "lint-creator",
     "lisp-scaffold-reasoning",
     "logo-builder",
+    "lora-training",
     "magna-carta-verifier",
     "pragmatic-laziness",
     "principle-constraints",
@@ -3282,7 +3283,6 @@ description: A skill with no body content
         // from this list, check the test output for a parse warning.
         let known_skills = [
             "bug-hunt",
-            "lora-training",
             "metacognition",
             "pragmatic-semantics",
             "pragmatic-cybernetics",
@@ -3341,24 +3341,24 @@ description: A skill with no body content
         seed_shipped_skills(fs.as_ref(), Path::new("/skills")).await;
 
         // A known shipped USER (non-core) skill must be present on disk after
-        // seeding. `lora-training` is non-core, so user edits to it are
+        // seeding. `co-scientist` is non-core, so user edits to it are
         // sovereign and must survive re-seeding.
-        let lora_training = Path::new("/skills/lora-training/SKILL.md");
+        let user_skill = Path::new("/skills/co-scientist/SKILL.md");
         assert!(
-            fs.is_file(lora_training).await,
-            "shipped skill 'lora-training' should be seeded to disk"
+            fs.is_file(user_skill).await,
+            "shipped skill 'co-scientist' should be seeded to disk"
         );
 
         // Overwrite the seeded file with a user edit, then re-seed. The
         // user edit must survive — seeding never clobbers existing files.
         fs.write(
-            lora_training,
-            b"---\nname: lora-training\ndescription: My custom edit\n---\n",
+            user_skill,
+            b"---\nname: co-scientist\ndescription: My custom edit\n---\n",
         )
         .await
         .unwrap();
         seed_shipped_skills(fs.as_ref(), Path::new("/skills")).await;
-        let content = fs.load(lora_training).await.unwrap();
+        let content = fs.load(user_skill).await.unwrap();
         assert!(
             content.contains("My custom edit"),
             "user edit to a shipped user skill must survive re-seeding; got: {content}"
@@ -3445,6 +3445,7 @@ description: A skill with no body content
             Path::new("/skills"),
             serde_json::json!({
                 "kata-coaching": { "SKILL.md": "stale retired copy" },
+                "lora-training": { "SKILL.md": "stale retired copy" },
                 "swarm-steering": { "SKILL.md": "stale copy", "notes.txt": "user notes" },
                 "my-user-skill": { "SKILL.md": "user body" },
             }),
@@ -3456,6 +3457,10 @@ description: A skill with no body content
         assert!(
             !fs.path_exists(Path::new("/skills/kata-coaching")),
             "a retired skill's copied directory must be removed on re-seed"
+        );
+        assert!(
+            !fs.path_exists(Path::new("/skills/lora-training")),
+            "the retired training skill must be removed from installed copies"
         );
         assert!(
             fs.is_file(Path::new("/skills/swarm-steering/notes.txt"))

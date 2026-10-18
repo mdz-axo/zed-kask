@@ -30,7 +30,7 @@ pub(crate) use {
     mcp_servers::render_mcp_servers_page, media::render_media_page, memory::render_memory_page,
     models::render_models_page, prediction_markets::render_prediction_markets_page,
     research::render_research_page, scenarios::render_scenarios_page,
-    security::render_security_page, swarm::render_swarm_page, training::render_training_page,
+    security::render_security_page, swarm::render_swarm_page,
 };
 mod corpus;
 mod mcp_servers;
@@ -41,7 +41,6 @@ mod prediction_markets;
 mod research;
 mod scenarios;
 mod swarm;
-mod training;
 
 use std::sync::{Arc, Mutex};
 
@@ -129,7 +128,7 @@ pub(crate) fn ensure_keychain_prefetch(cx: &impl AppContext) {
     if KEYCHAIN_PREFETCH_STARTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
         return;
     }
-    let urls: Vec<String> = kask_bridge::credential_urls_for_mcp()
+    let urls: Vec<String> = kask_bridge::data_service_credential_urls()
         .into_iter()
         .map(|(_, url)| url)
         .collect();
@@ -162,9 +161,8 @@ pub(crate) fn builtin_mcp_servers() -> Vec<(&'static str, &'static str)> {
 /// single source of truth; the UI re-binds it as `(key, label, dashboard_url,
 /// env_var, credential_url)` tuples for the settings UI's rendering pattern.
 /// The credential URL resolves through `kask_bridge::credential_url_for_key`
-/// so each row reads/writes exactly the slot `build_mcp_server_env` injects
-/// from (inference-provider-backed rows like RunPod live at the provider's
-/// `api_url`; everything else at `kask://credentials/<key>`).
+/// so each row reads/writes the same slot as its actual consumer. Native-only
+/// provider rows such as RunPod are intentionally absent from MCP-child env.
 pub(crate) fn data_service_descriptors() -> Vec<(
     &'static str,
     &'static str,
@@ -198,7 +196,8 @@ pub(crate) fn data_service_descriptors() -> Vec<(
 /// var synchronously (instant) and the session-level cache of recently-written
 /// URLs. `urls` carries the credential's canonical keychain URL(s) — one per
 /// credential (inference providers live at their `api_url`, data services at
-/// `kask://credentials/<key>`; `credential_urls_for_mcp` lists the same set).
+/// `kask://credentials/<key>`; `data_service_credential_urls` is the complete
+/// UI-prefetch set, while `credential_urls_for_mcp` is the child-consumer subset).
 pub(crate) fn has_credential(
     _provider: &Arc<dyn CredentialsProvider>,
     urls: &[&str],
@@ -247,13 +246,9 @@ pub(crate) fn write_credential(
     let provider = provider.clone();
     let url = url.to_string();
     let value = value.to_string();
-    // Whether this URL feeds MCP server env — `build_mcp_server_env` resolves
-    // exactly the URLs in `credential_urls_for_mcp`, so a write to one of them
-    // must restart the affected servers. This covers `kask://credentials/*`
-    // (data services) AND inference-provider `api_url` slots: the media server
-    // reads `DEEPINFRA_API_KEY`/`OPENROUTER_API_KEY` from the provider slots,
-    // so a write there is not restart-wasted work (the old kask-namespace-only
-    // guard predates that consolidation).
+    // Whether this URL feeds MCP server env. Native-only provider slots such
+    // as RunPod OCR still write their canonical keychain entry, but do not
+    // restart unrelated child processes.
     let feeds_mcp_servers = credential_url_feeds_mcp_servers(&url);
     cx.spawn(async move |cx| {
         if provider
@@ -309,12 +304,11 @@ pub(crate) fn delete_credential(
     })
 }
 
-/// Whether a credential URL feeds MCP server env — i.e. whether
-/// `credential_urls_for_mcp` (the URL set `build_mcp_server_env` resolves)
-/// contains it. Keychain writes/deletes to such URLs must nudge
-/// `SettingsStore` so governed MCP servers restart with the new value; for
-/// every other URL (none today — every UI-written credential feeds a server)
-/// a restart would be wasted work.
+/// Whether a credential URL feeds MCP server env. Keychain writes/deletes to
+/// such URLs must nudge `SettingsStore` so governed MCP servers restart with
+/// the new value. A native-only provider URL (RunPod OCR, KiloCode chat) is
+/// deliberately false: its provider is refreshed directly, and restarting
+/// child processes would be wasted work.
 fn credential_url_feeds_mcp_servers(url: &str) -> bool {
     kask_bridge::credential_urls_for_mcp()
         .iter()
@@ -336,16 +330,16 @@ fn credential_url_feeds_mcp_servers(url: &str) -> bool {
 /// file write → no file-watcher re-fire → no self-sustaining loop).
 ///
 /// Only call this for URLs that feed MCP server env (`credential_urls_for_mcp`)
-/// — data-service `kask://credentials/...` slots AND inference-provider
-/// `api_url` slots (the media server reads its provider keys from the latter).
-/// For any other URL a restart would be wasted work.
+/// — data-service `kask://credentials/...` slots and the provider `api_url`
+/// slots actually consumed by children. Native-only provider slots use their
+/// direct refresh path instead.
 pub(crate) fn nudge_mcp_servers(cx: &mut App) {
     SettingsStore::notify_observers(cx);
 }
 
 // ---------------------------------------------------------------------------
 // Shared input helper (used by companies, corpus, media, scenarios,
-// training, models sub-modules)
+// models sub-modules)
 // ---------------------------------------------------------------------------
 
 /// Build a settings input field that writes a string value to the kask settings
@@ -421,12 +415,6 @@ pub(crate) fn kask_string_input(
                             .get_or_insert_default()
                             .cache_ttl_secs = Some(v);
                     }
-                }
-                ("training", "host") => {
-                    kask.training.get_or_insert_default().host = Some(parsed);
-                }
-                ("training", "cache_dir") => {
-                    kask.training.get_or_insert_default().cache_dir = Some(parsed);
                 }
                 ("media", "tts_model") => {
                     kask.media.get_or_insert_default().tts_model = Some(parsed);
@@ -583,9 +571,9 @@ pub(crate) fn kask_page() -> SettingsPage {
             r#type: Default::default(),
             json_path: Some("kask.data_services"),
             description: Some(
-                "Configure API keys for data services (EODHD, FMP, Exa, Tavily, Brave, \
-                 RunPod, Nebius, HuggingFace). Keys are stored in the system keychain, \
-                 not in settings.json."
+                "Configure API keys for data services and native provider-backed tools \
+                 (EODHD, FMP, Exa, Tavily, Brave, RunPod OCR, Reduct.video, FRED). \
+                 Keys are stored in the system keychain, not in settings.json."
                     .into(),
             ),
             search_aliases: &[
@@ -597,9 +585,10 @@ pub(crate) fn kask_page() -> SettingsPage {
                 "firecrawl",
                 "fmp",
                 "financial modeling prep",
-                "huggingface",
+                "fred",
                 "keychain",
-                "nebius",
+                "ocr",
+                "reduct",
                 "runpod",
                 "serpapi",
                 "tavily",
@@ -673,7 +662,7 @@ pub(crate) fn kask_page() -> SettingsPage {
             json_path: None,
             description: Some(
                 "Change the SQLCipher passphrase for every kask memory database \
-                 (curator, swarm memory, kata-kanban, research, training). \
+                 (curator, swarm memory, kata-kanban, research). \
                  Scheduled here and applied at the next editor restart: every \
                  confirmed database is re-encrypted atomically before anything \
                  opens it, and a failure leaves all of them on the old \
@@ -785,18 +774,6 @@ pub(crate) fn kask_page() -> SettingsPage {
             render: render_media_page,
         }),
         SettingsPageItem::SubPageLink(SubPageLink {
-            title: "Training".into(),
-            r#type: Default::default(),
-            json_path: Some("kask.training"),
-            description: Some(
-                "Configure the training MCP server: host selection and cache directory.".into(),
-            ),
-            search_aliases: &["training", "lora", "host", "cache"],
-            in_json: true,
-            files: USER,
-            render: render_training_page,
-        }),
-        SettingsPageItem::SubPageLink(SubPageLink {
             title: "Models".into(),
             r#type: Default::default(),
             json_path: Some("kask.models"),
@@ -890,12 +867,11 @@ mod tests {
     /// fails loudly.
     #[test]
     fn nudge_guard_covers_provider_api_urls_and_excludes_legacy_slots() {
-        // Provider api_url slots with MCP consumers — MUST nudge when their
-        // keys change, so media and other children cannot keep stale keys.
+        // Provider slots with MCP-child consumers — MUST nudge when their
+        // keys change, so media children cannot keep stale keys.
         for url in [
             "https://openrouter.ai/api/v1",
             "https://api.deepinfra.com/v1/openai",
-            "https://api.runpod.io",
         ] {
             assert!(
                 credential_url_feeds_mcp_servers(url),
@@ -903,16 +879,16 @@ mod tests {
             );
         }
 
-        // KiloCode chat reads its native provider key, but no MCP child
-        // consumes it; rotating that slot does not restart MCP servers.
-        assert!(!credential_url_feeds_mcp_servers(
-            "https://api.kilo.ai/api/gateway"
-        ));
+        // Native-only providers keep their canonical slots but do not restart
+        // MCP children. RunPod's Data Services row refreshes its provider
+        // directly; KiloCode is configured through the native provider UI.
+        for url in ["https://api.runpod.io", "https://api.kilo.ai/api/gateway"] {
+            assert!(!credential_url_feeds_mcp_servers(url));
+        }
 
-        // Data-service kask slots — MUST nudge.
+        // Data-service kask slots with MCP-child consumers — MUST nudge.
         for url in [
             "kask://credentials/hkask_abw_api_key",
-            "kask://credentials/hkask_smtp_password",
             "kask://credentials/exa",
         ] {
             assert!(
@@ -920,6 +896,11 @@ mod tests {
                 "kask slot {url} feeds MCP server env and must nudge"
             );
         }
+
+        // In-process-only credentials do not restart children.
+        assert!(!credential_url_feeds_mcp_servers(
+            "kask://credentials/hkask_smtp_password"
+        ));
 
         // The LEGACY inference-provider kask slots feed nothing — nudging on
         // them would be wasted work, and their mere presence in the feed set

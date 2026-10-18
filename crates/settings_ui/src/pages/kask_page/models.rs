@@ -162,7 +162,7 @@ pub(crate) fn render_models_page(
                 .child(
                     Label::new(
                         "Dedicated non-thinking generator for corpus QA. Explicit tool model \
-                         overrides win. Independent of chat and the training base model. \
+                         overrides win. Independent of the chat model. \
                          Empty or invalid configuration fails visibly; no fallback.",
                     )
                     .size(LabelSize::Small)

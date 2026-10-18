@@ -1689,7 +1689,7 @@ mod tests {
                 description: "duplicate id".to_string(),
                 kind: RUBRIC_KIND_GROUNDED_REPORT.to_string(),
                 verification: RubricVerification::ReportRef {
-                    harness: "training_evaluate".to_string(),
+                    harness: "swarm_eval_agent_local".to_string(),
                 },
             },
         ];

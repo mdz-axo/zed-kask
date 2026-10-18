@@ -1,7 +1,7 @@
 ---
 title: "hKask Architecture Diagrams — Ontology Bridge, Skill/MCP/Lisp Seam, Credentials, Tool Port, Event Store, Viz-Core, Skill Learning Loop"
 audience: [architects, developers, agents]
-last_updated: 2026-09-28
+last_updated: 2026-10-17
 version: "1.2.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -78,7 +78,6 @@ graph TD
             research["hkask-mcp-research"]
             scenarios["hkask-mcp-scenarios"]
             swarm["hkask-mcp-swarm"]
-            training["hkask-mcp-training"]
         end
     end
 
@@ -95,13 +94,12 @@ graph TD
     research -->|"depends on"| shared
     scenarios -->|"depends on"| shared
     swarm -->|"depends on"| shared
-    training -->|"depends on"| shared
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ONT-001
-verified_date: 2026-09-28
-verified_against: kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs (pub mod axis L94, data_cube L95, dc_bibo L96, derived L97, fibo L98, golem L99, ml_schema L100, omc L101, ontology_graph L102, pko L103, published L104, rdf L107, schema_org L108, sepio L110, sumo L111, term_resolution L112); dependent Cargo.tomls — kask/crates/hkask-condenser, kask/crates/hkask-types (L19), kask/crates/kask_bridge (L16), crates/agent (L48), crates/hkask-media-widget, kask/mcp-servers/{companies, corpus, kata-kanban (L22), media, prediction-markets, research, scenarios, swarm, training}
+verified_date: 2026-10-17
+verified_against: kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs (pub mod axis L94, data_cube L95, dc_bibo L96, derived L97, fibo L98, golem L99, ml_schema L100, omc L101, ontology_graph L102, pko L103, published L104, rdf L107, schema_org L108, sepio L110, sumo L111, term_resolution L112); dependent Cargo.tomls — kask/crates/hkask-condenser, kask/crates/hkask-types (L19), kask/crates/kask_bridge (L16), crates/agent (L48), crates/hkask-media-widget, kask/mcp-servers/{companies, corpus, kata-kanban (L22), media, prediction-markets, research, scenarios, swarm}
 status: VERIFIED
 -->
 
@@ -202,8 +200,8 @@ architecture-beta
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ARCH-SKILL-MCP-LISP-001
-verified_date: 2026-09-28
-verified_against: crates/agent/src/tools/skill_tool.rs (SkillTool L127, run L194, render_skill_envelope L48, with_invoker L162); crates/agent_skills/agent_skills.rs (read_skill_body L841); crates/agent/src/tools/lisp_eval_tool.rs (LispEvalTool L190); crates/agent/src/tools/render_template_tool.rs (RenderTemplateTool L94); crates/agent/src/thread.rs (enabled_tools L5156); crates/agent/src/tools/list_mcp_tools_tool.rs (ListMcpToolsTool L58, enumerate_tool_listing L119); kask/crates/hkask-lisp/src/hkask_lisp.rs (eval_sandboxed_with_budget L2008); kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort L89); kask/crates/hkask-mcp/src/runtime.rs (impl ToolPort for McpRuntime L1530); kask/crates/hkask-regulation/src/energy.rs (CallCapManager, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/mcp_servers.rs (BUILT_IN_MCP_SERVERS L49 — 11 servers incl. media); crates/hkask-tool-invoker/src/hkask_tool_invoker.rs (ToolInvoker trait L121, shared_tool_invoker L148)
+verified_date: 2026-10-17
+verified_against: crates/agent/src/tools/skill_tool.rs (SkillTool L127, run L194, render_skill_envelope L48, with_invoker L162); crates/agent_skills/agent_skills.rs (read_skill_body L841); crates/agent/src/tools/lisp_eval_tool.rs (LispEvalTool L190); crates/agent/src/tools/render_template_tool.rs (RenderTemplateTool L94); crates/agent/src/thread.rs (enabled_tools L5156); crates/agent/src/tools/list_mcp_tools_tool.rs (ListMcpToolsTool L58, enumerate_tool_listing L119); kask/crates/hkask-lisp/src/hkask_lisp.rs (eval_sandboxed_with_budget L2008); kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort L89); kask/crates/hkask-mcp/src/runtime.rs (impl ToolPort for McpRuntime L1530); kask/crates/hkask-regulation/src/energy.rs (CallCapManager, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/mcp_servers.rs (BUILT_IN_MCP_SERVERS — 10 servers); crates/hkask-tool-invoker/src/hkask_tool_invoker.rs (ToolInvoker trait L121, shared_tool_invoker L148)
 status: VERIFIED
 -->
 
@@ -220,10 +218,10 @@ The only pre-dispatch refusal is `ToolPortError::EnergyBudgetExceeded` (the
 runaway-loop breaker). The model decides every tool call; skills do not
 dispatch MCP tools deterministically.
 
-The 11 on-disk MCP servers are enumerated by `BUILT_IN_MCP_SERVERS` in
+The 10 on-disk MCP servers are enumerated by `BUILT_IN_MCP_SERVERS` in
 `kask/crates/kask_bridge/src/mcp_servers.rs`: `companies`,
 `corpus`, `curator`, `experimentation`, `kata-kanban`, `research`, `scenarios`,
-`prediction-markets`, `swarm`, `training`, `media`.
+`prediction-markets`, `swarm`, `media`.
 
 ## Credential Resolution Chain
 

@@ -103,13 +103,14 @@ oracle, or weaken generators/assumptions to hide counterexamples.
   (Gödel plan R2 mandate). Pinned budgets per harness — `--default-unwind 12`, 2 GiB
   address-space limit, 120-second wall limit, all default safety and
   unwinding checks on — as recorded by the bounded-proof runner
-  `kask/scripts/check-bounded-proofs.sh`, which carries a `hkask-mcp-training`
-  case (its default) and a `hkask-types` case. The separate `hkask-forecast`
+  `kask/scripts/check-bounded-proofs.sh`, which carries a `hkask-types`
+  case (its default). The separate `hkask-forecast`
   harness set and its runner lines were removed 2026-09-19 (commit
-  `5b4799bcad`) — that removal did not touch the runner or the two in-tree
-  harness sets, whose current locations are
-  `kask/crates/hkask-types/src/json_extract.rs:231-269` and
-  `kask/mcp-servers/hkask-mcp-training/src/lora_validation/param_gates.rs:526-636`.
+  `5b4799bcad`); the `hkask-mcp-training` case and its five decision-core
+  harnesses were removed 2026-10-17 with the training server (model training
+  is out of scope for the co-researcher mandate). The one remaining in-tree
+  harness set is
+  `kask/crates/hkask-types/src/json_extract.rs:231-269`.
   Evidence: exit code, per-harness logs, source
   identity (sha256), manifest. Classify outcomes explicitly: a counterexample
   is a failure; resource exhaustion,

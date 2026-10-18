@@ -1,35 +1,20 @@
 #!/usr/bin/env bash
 # Explicit local proof run, not a promotion/approval gate. No automatic installs.
 # Usage: check-bounded-proofs.sh NEW_ARTIFACT_DIRECTORY [CRATE]
-#   CRATE selects the harness manifest; it defaults to hkask-mcp-training
-#   (the original, backward-compatible invocation). Add new proof-bearing
-#   crates by extending the case statement with their sources, harnesses, and
-#   scope line — never by loosening the shared budget discipline below.
+#   CRATE selects the harness manifest; it defaults to hkask-types, the one
+#   remaining proof-bearing crate (the hkask-mcp-training manifest was removed
+#   2026-10-17 with the training server). Add new proof-bearing crates by
+#   extending the case statement with their sources, harnesses, and scope
+#   line — never by loosening the shared budget discipline below.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 if [ "$#" -ne 1 ] && [ "$#" -ne 2 ]; then
     echo 'usage: check-bounded-proofs.sh NEW_ARTIFACT_DIRECTORY [CRATE]' >&2
     exit 2
 fi
-CRATE="${2:-hkask-mcp-training}"
+CRATE="${2:-hkask-types}"
 cd "$ROOT"
 case "$CRATE" in
-    hkask-mcp-training)
-        SOURCES=(
-            kask/mcp-servers/hkask-mcp-training/src/lora_validation/param_gates.rs
-            kask/mcp-servers/hkask-mcp-training/src/providers/types.rs
-            kask/mcp-servers/hkask-mcp-training/src/hkask_mcp_training.rs
-            Cargo.lock
-        )
-        HARNESSES=(
-            gm3_refuse_iff_degenerate_scaling
-            gm4_findings_follow_rank_thresholds
-            gm1_clean_iff_noop_init
-            safe_region_has_no_refusals
-            gm2_warns_iff_bias_breaks_merge
-        )
-        SCOPE='Scope: shared G-M1..G-M4 decision core only; diagnostics are regression-tested.'
-        ;;
     hkask-types)
         SOURCES=(
             kask/crates/hkask-types/src/json_extract.rs

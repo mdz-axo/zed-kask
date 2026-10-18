@@ -21,8 +21,9 @@ set need not be literary, single-author or related to a previous run.
 
 ## When NOT to Use
 
-For a question over an existing corpus, use `corpus_query`. Training execution
-belongs to `lora-training` after its separate model/configuration approval.
+For a question over an existing corpus, use `corpus_query`. Model training
+is out of scope for the co-researcher mandate and has no executor here —
+this pipeline's QA output is a research corpus, not a training submission.
 
 ## D/P labelling
 
@@ -748,16 +749,13 @@ evidence and correction findings, not duplicate corpus versions.
 5. Preserve `evidence_quotes`, source/chunk identity, `prompt_id`, `provenance`,
    concepts, difficulty, QA type, the grounding identity object (protocol,
    manifest SHA-256, `row_key`), and the candidate terms resolved through the
-   shared published-ontology resolver in the retained training JSONL/h_mems for
-   audits. For ChatML, call `training_assemble_dataset` with the same explicit
-   corpus `db_path` and `passphrase`, `dataset`, `train_split`, `output_path`;
-   omitting the DB queries the training server's separate store. Reconcile actual
-   train/validation totals with stored survivors and the agreed size target.
-   If using `corpus_prepare_training_dataset`, supply the operator-approved
-   `base_model`; its PEFT recommendation is advisory, not approval to train.
-6. Stop before training submission until the operator approves the base model
-   and LoRA configuration under `lora-training`. Do not infer approval from a
-   valid dataset, recommendation or audit exit code.
+   shared published-ontology resolver in the retained QA JSONL/h_mems for
+   audits. Reconcile actual retained totals with stored survivors and the
+   agreed size target.
+6. The QA export is the pipeline's terminal artifact: an evidence-carrying,
+   auditable corpus. Model training is out of scope for the co-researcher
+   mandate, so there is no downstream submission step — do not treat a valid
+   dataset as a staging artifact for one.
 
 ## Stage 10 — Verify and report actual state
 

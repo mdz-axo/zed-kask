@@ -201,7 +201,7 @@ pub(crate) fn open_existing_memory_store(
 
 /// Write `content` to a caller-supplied `output` path under containment.
 /// Single enforcement point for the corpus output writes of
-/// `corpus_dedup_chunks`, `corpus_ingest_qa`, `corpus_prepare_training_dataset`,
+/// `corpus_dedup_chunks`, `corpus_ingest_qa`,
 /// `corpus_tag_chunks`, `ConsolidationService::consolidate`, and
 /// `PromptBuilderService::build_prompts`. Delegates to the shared
 /// `hkask_mcp_server::server::write_contained` primitive: containment plus

@@ -16,7 +16,6 @@ use settings_content::{
     KaskMcpSettingsContent, KaskMediaSettingsContent, KaskMemorySettingsContent,
     KaskModelsSettingsContent, KaskPredictionMarketsSettingsContent, KaskResearchSettingsContent,
     KaskScenariosSettingsContent, KaskSettingsContent, KaskSwarmSettingsContent,
-    KaskTrainingSettingsContent,
 };
 
 use collections::HashMap;
@@ -56,7 +55,7 @@ pub struct KaskSettings {
     /// Kask-wide general configuration: global inference concurrency + batching.
     pub general: KaskGeneralSettings,
 
-    /// MCP server configuration — which of the 13 built-in servers to load.
+    /// MCP server configuration — which of the 10 built-in servers to load.
     pub mcp: KaskMcpSettings,
 
     /// Curator configuration.
@@ -84,9 +83,6 @@ pub struct KaskSettings {
 
     /// Swarm (Agent Bestiary World) MCP server configuration.
     pub swarm: KaskSwarmSettings,
-
-    /// Training MCP server configuration.
-    pub training: KaskTrainingSettings,
 
     /// Media MCP server configuration: model overrides for TTS, STT, vision,
     /// image generation, and video generation.
@@ -516,18 +512,6 @@ impl Default for KaskSwarmSettings {
     }
 }
 
-/// Training MCP server configuration.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
-pub struct KaskTrainingSettings {
-    /// Training host override: "nebius" or "runpod".
-    /// When empty, auto-detects from available API keys.
-    pub host: String,
-
-    /// Cache directory for dataset pipeline. When empty, uses the
-    /// agent adapters directory.
-    pub cache_dir: String,
-}
-
 /// Media MCP server configuration.
 ///
 /// Model overrides for the media server's TTS, STT, vision, image
@@ -614,7 +598,7 @@ pub struct KaskModelsSettings {
     pub classifier_model: String,
 
     /// Dedicated non-thinking QA generator (provider-prefixed). Empty is
-    /// unconfigured; explicit tool models override this, never chat or training.
+    /// unconfigured; explicit tool models override this, never the chat model.
     pub qa_generation_model: String,
 
     /// OCR vision model for scanned document OCR (provider-prefixed).
@@ -782,7 +766,6 @@ impl KaskSettings {
         crate::mcp_env::emit_scenarios_env(&data_dir, &mut env);
         crate::mcp_env::emit_prediction_markets_env(&data_dir, &self.prediction_markets, &mut env);
         crate::mcp_env::emit_swarm_env(&data_dir, &self.swarm, &mut env);
-        crate::mcp_env::emit_training_env(&self.training, &mut env);
         crate::mcp_env::emit_media_env(&self.media, &mut env);
         crate::mcp_env::emit_models_env(&self.models, &mut env);
         crate::mcp_env::emit_curator_distillation_env(&self.memory, &mut env);
@@ -848,10 +831,14 @@ impl KaskSettings {
 impl From<KaskMcpSettingsContent> for KaskMcpSettings {
     fn from(c: KaskMcpSettingsContent) -> Self {
         let default = Self::default();
+        let mut overrides = c.overrides;
+        overrides.remove("training");
+        let mut delegated_tools = c.delegated_tools.unwrap_or(default.delegated_tools);
+        delegated_tools.remove("training");
         Self {
             load_default: c.load_default.unwrap_or(default.load_default),
-            overrides: c.overrides,
-            delegated_tools: c.delegated_tools.unwrap_or(default.delegated_tools),
+            overrides,
+            delegated_tools,
         }
     }
 }
@@ -1028,16 +1015,6 @@ impl From<KaskSwarmSettingsContent> for KaskSwarmSettings {
     }
 }
 
-impl From<KaskTrainingSettingsContent> for KaskTrainingSettings {
-    fn from(c: KaskTrainingSettingsContent) -> Self {
-        let default = Self::default();
-        Self {
-            host: c.host.unwrap_or(default.host),
-            cache_dir: c.cache_dir.unwrap_or(default.cache_dir),
-        }
-    }
-}
-
 impl From<KaskMediaSettingsContent> for KaskMediaSettings {
     fn from(c: KaskMediaSettingsContent) -> Self {
         let default = Self::default();
@@ -1082,7 +1059,6 @@ impl From<KaskSettingsContent> for KaskSettings {
             scenarios: c.scenarios.map(Into::into).unwrap_or_default(),
             prediction_markets: c.prediction_markets.map(Into::into).unwrap_or_default(),
             swarm: c.swarm.map(Into::into).unwrap_or_default(),
-            training: c.training.map(Into::into).unwrap_or_default(),
             models: c.models.map(Into::into).unwrap_or_default(),
         }
     }
@@ -1203,7 +1179,7 @@ mod tests {
     // deserialization, NOT for Default::default(). When the user had a `kask`
     // section but no `kask.mcp` subsection, From<KaskSettingsContent> fell back
     // to KaskMcpSettings::default() → load_default: false, and sync_kask_mcp_servers
-    // treated all 13 servers as disabled, registering nothing. The manual Default
+    // treated all built-in servers as disabled, registering nothing. The manual Default
     // impl above returns true, matching the serde default.
     #[test]
     fn mcp_settings_default_load_default_is_true() {
@@ -1309,6 +1285,32 @@ mod tests {
             Some("/custom/artifacts-root"),
             "artifacts_dir setting must be emitted as HKASK_ARTIFACTS_DIR"
         );
+    }
+
+    #[test]
+    fn retired_training_settings_are_tolerated_but_cannot_reenter_runtime_state() {
+        let content: KaskSettingsContent = serde_json::from_value(serde_json::json!({
+            "training": {"host": "nebius", "cache_dir": "/tmp/adapters"},
+            "mcp": {
+                "load_default": true,
+                "overrides": {"training": true, "corpus": false},
+                "delegated_tools": {
+                    "training": ["training_submit"],
+                    "corpus": ["corpus_query"]
+                }
+            }
+        }))
+        .expect("legacy kask.training JSON must remain upgrade-tolerant");
+        let settings = KaskSettings::from(content);
+        assert!(!settings.mcp.overrides.contains_key("training"));
+        assert!(!settings.mcp.delegated_tools.contains_key("training"));
+        assert_eq!(settings.mcp.overrides.get("corpus"), Some(&false));
+        assert_eq!(
+            settings.mcp.delegated_tools.get("corpus"),
+            Some(&vec!["corpus_query".to_string()])
+        );
+        let serialized = serde_json::to_value(settings).expect("runtime settings serialize");
+        assert!(serialized.get("training").is_none());
     }
 
     // The present-but-null-field path: when a subsection is present but a field

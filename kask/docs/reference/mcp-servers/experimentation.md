@@ -26,7 +26,7 @@ runs, never simulated.
 
 1. **Declare** — `experiment_propose`: hypothesis, artifact layer (skill |
    agent_card | prompt_template | tool_schema | regulation_scalar |
-   lora_adapter | scientific_hypothesis — the general lab notebook, operator
+   scientific_hypothesis — the general lab notebook, operator
    ruling D2 2026-10-15), genotype refs, eval set, fitness function, noise
    band, **a typed rubric bundle** (P1: non-empty; at least one `metric`
    rubric and one `implementation` or `grounded_report` rubric; stable

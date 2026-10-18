@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
 # recover-keychain.sh — Recover API keys stranded in the old rust-keyring
-# namespace (service=stack.user.mdz-axolotl.key, username=<ENV_VAR>) back
-# into the kask://credentials/<key> namespace that zed-kask actually reads.
+# namespace (service=stack.user.mdz-axolotl.key, username=<ENV_VAR>) into
+# the canonical credential URL that zed-kask actually reads.
 #
-# Background: commits 84fc7f12e2 + 511e591748 (Aug 24) moved API-key reads
-# to kask://credentials/* exclusively. Keys that were only ever stored in
-# the old namespace became invisible to the code — even though they're
-# still in the keyring. This script recovers them.
+# Background: commits 84fc7f12e2 + 511e591748 (Aug 24) moved data-service
+# keys to kask://credentials/*; later inference-provider consolidation moved
+# those keys to their provider api_url slots. Keys left only in the old
+# namespace became invisible even though they remained in the keyring.
 #
 # Usage:
 #   bash script/recover-keychain.sh           # dry-run (default)
@@ -31,58 +31,67 @@ read_old() {
   secret-tool lookup username "$1" service "$OLD_SERVICE" 2>/dev/null || true
 }
 
-# Read a secret from the new kask:// namespace.
-# Args: <credential_key>
-read_new() {
-  secret-tool lookup url "kask://credentials/$1" 2>/dev/null || true
+# Resolve the canonical target URL for a credential key. Inference-provider
+# keys live at the provider API URL; pure data-service keys use the kask
+# namespace. RunPod remains live for OCR, so recovering it to the retired
+# kask://credentials/runpod slot would report success while leaving OCR broken.
+credential_url() {
+  case "$1" in
+    openrouter) printf '%s\n' 'https://openrouter.ai/api/v1' ;;
+    runpod) printf '%s\n' 'https://api.runpod.io' ;;
+    *) printf 'kask://credentials/%s\n' "$1" ;;
+  esac
 }
 
-# Write a secret to the new kask:// namespace with the exact attribute shape
+# Read a secret from its canonical current URL.
+# Args: <credential_key>
+read_new() {
+  url=$(credential_url "$1")
+  secret-tool lookup url "$url" 2>/dev/null || true
+}
+
+# Write a secret to its canonical current URL with the exact attribute shape
 # zed's LinuxPlatform::write_credentials produces (label=zed-github-account,
-# url=kask://credentials/<key>, username=kask).
+# username=kask).
 # Args: <credential_key> <value>
 write_new() {
-  local key="$1" value="$2"
+  local key="$1" value="$2" url
+  url=$(credential_url "$key")
   printf '%s' "$value" | secret-tool store \
     --label="$LABEL" \
-    url "kask://credentials/$key" \
+    url "$url" \
     username "kask" \
     2>/dev/null
 }
 
 # ─── Recovery map: old_username → new_credential_key ───
-# Only keys that (a) have a current kask://credentials consumer in
-# DATA_SERVICES / INFERENCE_PROVIDERS, and (b) are recoverable from the old
-# namespace. Conflicted keys (already re-entered with a different value) are
+# Only keys that (a) have a current credential consumer and (b) are
+# recoverable from the old namespace. Conflicted keys (already re-entered with a different value) are
 # listed separately for reporting but NOT overwritten.
 declare -a RECOVER=(
   "RUNPOD_API_KEY:runpod"
   "FMP_API_KEY:fmp"
-  "HF_TOKEN:hf_token"
 )
 
 # Keys present in both namespaces with DIFFERENT values — the new value was
 # re-entered manually after the namespace split. Don't overwrite; just report.
 declare -a CONFLICTS=(
   "OPENROUTER_API_KEY:openrouter"
-  "FAL_KEY:fal"
-  "TELNYX_API_KEY:telnyx"
 )
 
 # Keys that were never in either namespace — genuinely need regeneration.
 declare -a LOST=(
   "eodhd:HKASK_EODHD_API_KEY"
   "fred:HKASK_FRED_API_KEY"
-  "nebius_project_id:NEBIUS_PROJECT_ID"
-  "nebius_subnet_id:NEBIUS_SUBNET_ID"
   "hkask_abw_api_key:HKASK_ABW_API_KEY"
   "hkask_smtp_password:HKASK_SMTP_PASSWORD"
   "serpapi:HKASK_SERPAPI_API_KEY"
 )
 
-# Old-namespace keys with no current kask://credentials consumer. Listed for
+# Old-namespace keys with no current credential consumer. Listed for
 # awareness; not recovered. (Browserbase was dropped in fb2acf99c8; Qdrant
-# and GitHub are handled outside the kask credential namespace.)
+# and GitHub are handled outside this helper; training-only HuggingFace keys
+# retired with the training capability.)
 declare -a NO_CONSUMER=(
   "BROWSERBASE_API_KEY"
   "BROWSERBASE_PROJECT_ID"
@@ -91,6 +100,9 @@ declare -a NO_CONSUMER=(
   "GITHUB_TOKEN"
   "GITHUB_CLASSIC_PAT"
   "RUNPOD_REGISTRY_AUTH_ID"
+  "FAL_KEY"
+  "TELNYX_API_KEY"
+  "HF_TOKEN"
   "HUGGINGFACE_API_KEY"
 )
 
@@ -121,9 +133,11 @@ for pair in "${RECOVER[@]}"; do
 
   if [ "$MODE" = "apply" ]; then
     write_new "$new_key" "$old_val"
-    echo "  $new_key: RECOVERED (${#old_val} chars) from old $old_user → kask://credentials/$new_key"
+    target_url=$(credential_url "$new_key")
+    echo "  $new_key: RECOVERED (${#old_val} chars) from old $old_user → $target_url"
   else
-    echo "  $new_key: WOULD RECOVER (${#old_val} chars) from old $old_user → kask://credentials/$new_key"
+    target_url=$(credential_url "$new_key")
+    echo "  $new_key: WOULD RECOVER (${#old_val} chars) from old $old_user → $target_url"
   fi
   recovered=$((recovered + 1))
 done
@@ -175,11 +189,11 @@ done
 echo ""
 
 # ─── 4. Report no-consumer keys ───
-echo "--- old-namespace keys with no current kask consumer (not recovered) ---"
+echo "--- old-namespace keys with no current consumer (not recovered) ---"
 for old_user in "${NO_CONSUMER[@]}"; do
   old_val=$(read_old "$old_user")
   if [ -n "$old_val" ]; then
-    echo "  $old_user: present in old (${#old_val} chars) — no kask://credentials mapping"
+    echo "  $old_user: present in old (${#old_val} chars) — no current credential mapping"
   else
     echo "  $old_user: not found"
   fi
@@ -191,7 +205,7 @@ if [ "$MODE" = "dry-run" ] && [ "$recovered" -gt 0 ]; then
   echo "Run with --apply to write them:"
   echo "  bash script/recover-keychain.sh --apply"
 elif [ "$MODE" = "apply" ] && [ "$recovered" -gt 0 ]; then
-  echo "Applied. $recovered key(s) recovered to kask://credentials/*."
+  echo "Applied. $recovered key(s) recovered to their canonical credential URLs."
   echo "Restart zed-kask (or any running MCP servers) to pick them up."
 else
   echo "Nothing to recover."

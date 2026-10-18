@@ -30,7 +30,7 @@ mds_categories: [domain, composition]
 >
 > **Layout:** A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kask/`)
 > containing a `SKILL.md` file with YAML frontmatter (`name`, `description`, and optional metadata)
-> plus a markdown body of process instructions. **63 skills** are authored here and available in every zed-kask install. **281 Jinja2 templates across 58
+> plus a markdown body of process instructions. **61 skills** are authored here and available in every zed-kask install. **231 Jinja2 templates across 56
 > template namespaces** remain under `kask/registry/templates/` for use by `render_template`; these
 > are companion resources, not the source of truth for skill execution.
 
@@ -52,8 +52,8 @@ carrier of the loop itself.
 
 | Surface | Count | Notes |
 |---------|-------|-------|
-| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **63** | filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md` |
-| Template namespaces (`kask/registry/templates/*/`) | **58** (**281** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree |
+| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **61** | filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md` |
+| Template namespaces (`kask/registry/templates/*/`) | **56** (**231** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree |
 
 **The SKILL.md is the source of truth.** A skill is its `SKILL.md`. Template crates are
 read-only resources the skill body may reference via `render_template`.
@@ -117,7 +117,6 @@ annual. The embedded seed payload equals the authored tree (pinned in
 | `local-research-swarm` | Coordinate a project-sized, source-grounded research effort across a local agent roster, with a kanban board for work state and scoped A2A handoffs |
 | `swarm-intelligence` | Agent-swarm composition PDCA (SENSE → ORIENT → DECIDE → ACT → CHECK → CONVERGE), its receipt-checked local steering loop, and the swarm panel's agent/swarm authoring aid |
 | `system-maintenance` | Weekly system maintenance for this machine over the `~/system-maintenance/` scripts: run the health check, interpret warnings, preview and classify cleanups with probe-before-delete, execute the disposable class only, surface manual-review items, verify with reconciled measurements, and report a ledger |
-| `lora-training` | LoRA/QLoRA training config and contract enforcement: 8-gate PEFT method selection, 19-gate phase-aware audit (math/quantization/data/forgetting/harness/runtime/persistence) |
 
 ### Coding in your project
 
@@ -165,7 +164,7 @@ annual. The embedded seed payload equals the authored tree (pinned in
 | `doc-update` | Realign the kask/docs tree with the code: condensation triage (<75 cap, working target 60), ground-compare-recompose per docs-set, file:line citation gates, corpus-tool decision point |
 | `improv` | Agent interaction grammar (Plussing, Yes And, Freestyling, Riffing) |
 
-> **Filesystem reality (re-verified 2026-10-13):** `.agents/skills/` contains 63
+> **Filesystem reality (re-verified 2026-10-17):** `.agents/skills/` contains 61
 > `SKILL.md` directories (`mcp-tool-review` added 2026-10-02, `a353d629f5`;
 > `provider-audit` added 2026-10-13 with its template namespace and the
 > provider profile registry; `system-maintenance` added 2026-10-10). Merged by operator decision 2026-09-24:
@@ -177,10 +176,12 @@ annual. The embedded seed payload equals the authored tree (pinned in
 > `gradient-seeded-recombination`, `capabilities-reasoner`,
 > `principle-constraints`, `goal-analysis` (its judge moved to
 > `company-research/thesis-judge`, removed 2026-09-27 with the deep pipeline's
-> gate machinery). Folded 2026-09-26: `adapter-lifecycle` into
-> `self-improvement` (Fine-tuning run), `calibration-stewardship` into
+> gate machinery); `lora-training` (removed 2026-10-17 with the training
+> server — model training is out of scope for the co-researcher mandate).
+> Folded 2026-09-26: `adapter-lifecycle` into
+> `self-improvement`, `calibration-stewardship` into
 > `superforecasting` (Market-prior calibration check). Folded 2026-09-28
 > (commit `ebcd901c80`): `kata-coaching` into `kata-improvement` — the five
 > coaching templates moved to `kask/registry/templates/kata-improvement/`.
-> `kask/registry/templates/` contains 58
-> template namespaces holding 281 `.j2` and 2 `.jinja` files.
+> `kask/registry/templates/` contains 56
+> template namespaces holding 231 `.j2` files.

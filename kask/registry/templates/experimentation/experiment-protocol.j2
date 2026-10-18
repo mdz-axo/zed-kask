@@ -30,12 +30,10 @@ A prompt/template variant is the rendered artifact content. Fitness comes from a
 A tool-schema variant is the MCP tool's input schema. Fitness comes from skill-use reports over a window (issue counts, resolution outcomes); the curator directive ledger records the change.
 {% elif layer == 'regulation_scalar' %}
 A regulation-scalar variant is a threshold or energy-budget value. Fitness comes from calibration readings and Brier records over a window.
-{% elif layer == 'lora_adapter' %}
-A LoRA-adapter variant is a trained adapter. Fitness comes from `training_evaluate` on a held-out task set; the lora-training gates G-M1..G-Q5 apply.
 {% elif layer == 'scientific_hypothesis' %}
 A scientific-hypothesis variant is the operationalized hypothesis plus its measurement plan (D2, the general lab notebook): the genotype is small, legible, and versioned; fitness comes from recorded observations — harness reports, FRED/DBnomics series reads, prediction-market resolutions — never self-graded scores. The falsifiability admission gate and the headroom pre-check are the filters; artifact-layer experiments are the special case (`self-improvement` owns those — delegate).
 {% else %}
-UNKNOWN LAYER: `layer` must be one of skill, agent_card, prompt_template, tool_schema, regulation_scalar, lora_adapter, scientific_hypothesis. Return declare_args with a layer_error field naming the seven valid layers and do not propose an experiment.
+UNKNOWN LAYER: `layer` must be one of skill, agent_card, prompt_template, tool_schema, regulation_scalar, scientific_hypothesis. Return declare_args with a layer_error field naming the six valid layers and do not propose an experiment.
 {% endif %}
 
 ## The five steps (every experiment)

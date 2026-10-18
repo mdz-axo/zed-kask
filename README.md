@@ -50,9 +50,8 @@ The `media` MCP server is the fleet's largest (98 tools): image and video genera
 | `research`           | Web search, extraction, browsing, RSS feeds, evidence scoring, research-run ledger, paper identity | 27 |
 | `scenarios`          | Event-tree forecasting (Tetlock/Schwartz/Chermack)             | 17 |
 | `swarm`              | ABW cloud swarms + local swarm substrate + Xaman Ek curator     | 91 |
-| `training`           | LoRA/QLoRA training pipeline (dataset, submit, validate, evaluate) | 9 |
 
-Companies, scenarios, and prediction-markets form a three-layer forecasting stack (see [`kask/docs/reference/mcp-servers/README.md`](./kask/docs/reference/mcp-servers/README.md) for the full registry, architecture, and per-server count pins). All eleven servers auto-load by default (`load_default: true`) unless the operator disables the fleet or an individual server; the Curator additionally ships as a native in-process agent.
+Companies, scenarios, and prediction-markets form a three-layer forecasting stack (see [`kask/docs/reference/mcp-servers/README.md`](./kask/docs/reference/mcp-servers/README.md) for the full registry, architecture, and per-server count pins). All ten servers auto-load by default (`load_default: true`) unless the operator disables the fleet or an individual server; the Curator additionally ships as a native in-process agent.
 
 ## Installation
 

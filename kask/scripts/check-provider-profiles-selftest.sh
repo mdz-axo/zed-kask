@@ -17,11 +17,10 @@ trap 'rm -rf "$tmp"' EXIT
 root="$tmp/kask"
 mkdir -p "$root/crates/kask_bridge/src" \
   "$root/crates/hkask-inference/src" \
-  "$root/mcp-servers/hkask-mcp-training/src" \
   "$root/mcp-servers/hkask-mcp-research/src/research/providers" \
   "$root/registry/providers"
 
-# Synthetic anchors — the five the gate derives from.
+# Synthetic anchors — the four the gate derives from.
 cat > "$root/crates/kask_bridge/src/inference_providers.rs" <<'EOF'
 pub static INFERENCE_PROVIDERS: &[()] = &[
     id: "TestVendor",
@@ -33,14 +32,10 @@ EOF
 cat > "$root/crates/hkask-inference/src/media_providers.rs" <<'EOF'
 pub struct TestVendorMediaProvider {}
 EOF
-cat > "$root/mcp-servers/hkask-mcp-training/src/providers.rs" <<'EOF'
-match config.host { TrainingHostId::TestHost => {} }
-let _ = TrainingHostId::from_str(&h);
-EOF
 touch "$root/mcp-servers/hkask-mcp-research/src/research/providers/alpha.rs"
 
-# Derived synthetic adopted set: testvendor (inference + media), testhost
-# (training), alpha (research), dsone (data service).
+# Derived synthetic adopted set: testvendor (inference + media),
+# alpha (research), dsone (data service).
 
 profile() {
   cat > "$root/registry/providers/$1.yaml" <<EOF
@@ -86,9 +81,8 @@ expect_pass() {
   fi
 }
 
-# Case 1: clean tree — all four adopted vendors profiled.
+# Case 1: clean tree — all three adopted vendors profiled.
 profile testvendor
-profile testhost
 profile alpha
 profile dsone
 expect_pass "clean synthetic tree"

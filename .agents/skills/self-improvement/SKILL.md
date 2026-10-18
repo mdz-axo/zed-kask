@@ -1,11 +1,13 @@
 ---
 name: self-improvement
-description: "General self-improvement skill for FM-based agents. Drives persistent, endogenous adaptation across Foundation Model Improvement and Scaffolding Improvement via intrinsic demonstrations, evaluative feedback, and extrinsic exploratory experience. Runs the verifier-gated LoRA fine-tuning loop (rollout baseline, verdict-bridged dataset, gated submit, held-out adapter evaluation, feedback retrain) and GEPA prompt experimentation; files proposals, never commits."
+description: "General self-improvement skill for FM-based agents. Drives persistent, endogenous adaptation of the operational scaffold (prompts, memory, tools, control logic) via intrinsic demonstrations, evaluative feedback, and extrinsic exploratory experience. Runs GEPA prompt experimentation under a measured rollout harness; files proposals, never commits."
 ---
 
 # Self-Improvement
 
-General multi-purpose self-improvement skill for FM-based agents. Implements the unified self-induced update operator from Ren et al. (2026, arXiv:2607.13104). The skill drives persistent, endogenous adaptation across two pathways — Foundation Model Improvement (θ) and Scaffolding Improvement (Σ) — through intrinsic generative demonstrations, intrinsic evaluative feedback, and extrinsic exploratory experience. It embeds its own PDCA loops at the improvement-cycle level and wraps an outer Improvement Kata loop around all algorithmic approaches, following the Toyota Improvement Kata (direction → current condition → target condition → experiment).
+General multi-purpose self-improvement skill for FM-based agents. Implements the unified self-induced update operator from Ren et al. (2026, arXiv:2607.13104), restricted to the pathway this system can execute: Scaffolding Improvement (Σ) — prompts, memory, tools, control logic — through intrinsic generative demonstrations, intrinsic evaluative feedback, and extrinsic exploratory experience. It embeds its own PDCA loops at the improvement-cycle level and wraps an outer Improvement Kata loop around all algorithmic approaches, following the Toyota Improvement Kata (direction → current condition → target condition → experiment).
+
+**Scope boundary (operator ruling 2026-10-17):** the paper's Foundation Model Improvement pathway (θ — parameter updates via fine-tuning) is **out of scope for the co-researcher mandate** and has no executor in this system: the training server, the lora-training skill and the adapter lifecycle were removed. A task that genuinely requires a parameter update is reported as out of scope with its measured evidence — never simulated through a scaffold change presented as a fine-tune.
 
 ## Theoretical Foundation
 
@@ -22,32 +24,30 @@ where:
 - `𝒞_t` — task or deployment context
 - `𝒰` — the update operator (this skill's core)
 
-Two pathways instantiate 𝒰:
-1. **Foundation Model Improvement** (Section 5 of the paper): `θ_{t+1} = 𝒰_θ(θ_{1:t}; 𝒮_t)`, `Σ_{t+1} = Σ_t`
-2. **Scaffolding Improvement** (Section 6 of the paper): `Σ_{t+1} = 𝒰_Σ(Σ_{1:t}; 𝒮_t)`, `θ_{t+1} = θ_t`
+Two pathways instantiate 𝒰 in the paper; only the second is executable here:
+1. **Foundation Model Improvement** (Section 5): `θ_{t+1} = 𝒰_θ(θ_{1:t}; 𝒮_t)`, `Σ_{t+1} = Σ_t` — **out of scope**, no executor (see the scope boundary above)
+2. **Scaffolding Improvement** (Section 6): `Σ_{t+1} = 𝒰_Σ(Σ_{1:t}; 𝒮_t)`, `θ_{t+1} = θ_t` — the pathway this skill runs
 
-Three signal forms drive both pathways:
+Three signal forms drive the scaffolding pathway:
 - **Intrinsic Generative Demonstrations** (`𝒮_t ≈ 𝒟_t`): agent synthesizes training instances
 - **Intrinsic Evaluative Feedback** (`𝒮_t ≈ e_t`): agent judges candidate behavior
 - **Extrinsic Exploratory Experience** (`𝒮_t ≈ τ_t`): agent collects interaction trajectories
 
 ## When to Use
 
-- When an agent needs to durably modify its own configuration (prompts, memory, tools, control logic, or model parameters) based on execution experience
-- When you need to select the appropriate self-improvement pathway (FM improvement vs. scaffolding improvement) based on update target, signal availability, and resource constraints
+- When an agent needs to durably modify its own scaffold (prompts, memory, tools, control logic) based on execution experience
 - When you need to select the appropriate improvement signal (intrinsic demonstrations, intrinsic evaluations, or extrinsic experience) based on what the environment provides
 - When you need to run a structured PDCA improvement cycle with convergence detection and rollback safety
 - When you need to wrap an outer Improvement Kata loop around multiple improvement cycles to drive long-term capability gains
 - When you need to evaluate self-improvement claims rigorously (trajectory tracking, transfer testing, regression checks, cost accounting)
 - When you need to govern self-modification safely (verifier-gated updates, layered permission systems, critic decoupling)
-- When an agent's measured pass rate is poor and the operator wants a fine-tuned adapter, verdict-labeled rollouts should become training data, or a trained adapter needs held-out evaluation or a feedback retrain (the Fine-tuning run section)
 
 ## When NOT to Use
 
 - One-off corrections — if the fix is known, apply it directly; a PDCA cycle around a known fix is ceremony.
 - Skill authoring and maintenance — use `create-skill` / `skill-maintenance` (the scaffolding-improvement pathway delegates there anyway).
 - Memory curation — use `therapy`; reorganizing memory is not self-modification of configuration.
-- Choosing the PEFT configuration — use `lora-training`; the Fine-tuning run section below executes only an operator-accepted config.
+- Parameter updates (fine-tuning, LoRA adapters) — out of scope for the co-researcher mandate and unexecutable here; report the need, do not improvise a substitute.
 
 ## Architecture: Nested PDCA + Outer Kata
 
@@ -76,16 +76,13 @@ The skill follows a **three-layer architecture**:
          │
          ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  INNER LAYER: Signal-Specific Algorithm (per-pathway)            │
-│  FM Improvement:                                                  │
-│    §5.1 Intrinsic Generative Demos (generate → filter → fine-tune)│
-│    §5.2 Intrinsic Evaluative Feedback (sample → judge → optimize) │
-│    §5.3 Extrinsic Exploratory Experience (interact → reward → RL) │
+│  INNER LAYER: Signal-Specific Algorithm (per-signal)             │
 │  Scaffolding Improvement:                                         │
 │    §6.1 Prompt Optimization (scalar/qualitative/experimentation/gradient)│
 │    §6.2 Memory Experimentation (CRUD: Create/Read/Update/Delete)        │
 │    §6.3 Tool Governance (routing/refinement/creation)            │
 │    §6.4 Full Scaffolding (self-referential code rewrite)          │
+│  (FM Improvement §5.1–5.3 — out of scope, no executor)            │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -112,7 +109,7 @@ template cannot override. The gates are D:
 the propose-or-discard acceptance predicate, the regression count, the GEPA
 dominance and convergence computations, the noise-floor standard error,
 and the PDCA convergence form all run in `lisp_eval` over measured
-harness reports (`swarm_eval_agent_local`, `training_evaluate`) — a
+harness reports (`swarm_eval_agent_local`) — a
 candidate that fails the gate is discarded regardless of the model's
 assessment. (The `safety_violations` gate term is model-judged input:
 the gate is deterministic over its inputs, but that one input is P —
@@ -136,29 +133,32 @@ The outer Kata uses the `kata-improvement` step templates directly; this skill s
 
 ### si-select-pathway (PDCA Plan)
 
-1. Determine the update target: Foundation Model (θ) or Scaffolding (Σ).
-   - Default to Scaffolding (Σ) unless: (a) FM fine-tuning is explicitly permitted, (b) the capability gap requires parametric consolidation, (c) scaffold-level improvements have plateaued and the gap is in the model's internal representations.
+1. Confirm the update target is Scaffolding (Σ). Foundation Model (θ) is out of
+   scope for the co-researcher mandate and has no executor — a gap that genuinely
+   requires parametric consolidation is reported as out of scope with its measured
+   evidence, never routed to a scaffold change dressed as a fine-tune.
    - The paper notes: "Modifying the operational scaffold (Σ) drives a fast adaptation loop... parameter updates (θ) are much slower" (Section 9.1).
-2. If Scaffolding (Σ): determine which component to update — Prompt (p), Memory (m), Tool (𝒯), or Full Scaffolding (Σ).
+2. Determine which Σ component to update — Prompt (p), Memory (m), Tool (𝒯), or Full Scaffolding (Σ).
    - Prompt: when the bottleneck is task communication, objectives, or constraints.
    - Memory: when the bottleneck is long-horizon recall, cross-context knowledge transfer, or context-window pressure.
    - Tool: when the bottleneck is action execution, capability coverage, or tool reliability.
    - Full Scaffolding: when the bottleneck requires holistic reconfiguration of perception, reasoning, and execution.
 3. Determine the improvement signal: Intrinsic Generative Demos (𝒟_t), Intrinsic Evaluative Feedback (e_t), or Extrinsic Exploratory Experience (τ_t).
-   - Intrinsic Demos: when the agent can synthesize high-quality training instances from its own priors.
+   - Intrinsic Demos: when the agent can synthesize high-quality exemplars from its own priors.
    - Intrinsic Feedback: when the agent can judge candidate behavior through rubrics, consistency, or critique.
    - Extrinsic Experience: when the environment provides grounded feedback (unit tests, task success, rewards).
 4. Generate a concrete improvement plan: what operator 𝒰 will be applied, what signal 𝒮_t will drive it, what experiment scope and explicitly authorized resource constraints apply, and what acceptance criteria will gate the update. Do not invent token quotas; token usage is measured, not budgeted.
 5. On PDCA iteration 2+, compute variety repetition and route target deterministically with `lisp_eval` (`SI-1` — sub-pathway routing + variety check):
-   - form: `(let ((repeated (if (and (string= pathway prev_pathway) (string= scaffold_component prev_component) (string= primary_signal prev_signal)) 1 0)) (route (cond ((string= pathway "theta") (cond ((string= primary_signal "D_t") "self-improvement/si-exec-fm-demos") ((string= primary_signal "e_t") "self-improvement/si-exec-fm-feedback") ((string= primary_signal "tau_t") "self-improvement/si-exec-fm-experience") (t "invalid_route"))) ((string= pathway "sigma") (cond ((string= scaffold_component "p") "self-improvement/si-exec-scaffold-prompt") ((string= scaffold_component "m") "self-improvement/si-exec-scaffold-memory") ((string= scaffold_component "T") "self-improvement/si-exec-scaffold-tool") ((string= scaffold_component "sigma") "self-improvement/si-exec-scaffold-full") (t "invalid_route"))) (t "invalid_route")))) (list route repeated))`
-   - env: `{ "pathway": <"theta"|"sigma">, "scaffold_component": <"p"|"m"|"T"|"sigma"|"">, "primary_signal": <"D_t"|"e_t"|"tau_t">, "prev_pathway": <prior or "">, "prev_component": <prior or "">, "prev_signal": <prior or ""> }`
+   - form: `(let ((repeated (if (and (string= pathway prev_pathway) (string= scaffold_component prev_component) (string= primary_signal prev_signal)) 1 0)) (route (cond ((string= pathway "sigma") (cond ((string= scaffold_component "p") "self-improvement/si-exec-scaffold-prompt") ((string= scaffold_component "m") "self-improvement/si-exec-scaffold-memory") ((string= scaffold_component "T") "self-improvement/si-exec-scaffold-tool") ((string= scaffold_component "sigma") "self-improvement/si-exec-scaffold-full") (t "invalid_route"))) (t "invalid_route")))) (list route repeated))`
+   - env: `{ "pathway": <"sigma">, "scaffold_component": <"p"|"m"|"T"|"sigma">, "primary_signal": <"D_t"|"e_t"|"tau_t">, "prev_pathway": <prior or "">, "prev_component": <prior or "">, "prev_signal": <prior or ""> }`
+   A `pathway` of `"theta"` routes to `invalid_route` by construction — the θ executor was removed, so the form refuses rather than silently falling through to a scaffold template.
 6. Render `self-improvement/si-select-pathway` with `challenge`, `current_condition`, `target_condition`, `pathway_preference`, `signal_preference`, `scaffold_component`, `budget`, `acceptance_criteria`, and `context`:
    ```json
    {"template_ref": "self-improvement/si-select-pathway", "context": {
      "challenge": "<the capability gap the update operator should close>",
      "current_condition": "<Kata step 2 object: theta_t, sigma_t, performance/cost/safety metrics, metric_before>",
      "target_condition": "<Kata step 3 object: metrics_target, bounded in this session's experiments>",
-     "pathway_preference": "<'theta' or 'sigma'>",
+     "pathway_preference": "<'sigma'>",
      "signal_preference": "<'D_t', 'e_t', 'tau_t', or ''>",
      "scaffold_component": "<'p', 'm', 'T', 'sigma', or ''>",
      "budget": "<explicitly authorized experiment/compute/spend constraints only>",
@@ -166,7 +166,7 @@ The outer Kata uses the `kata-improvement` step templates directly; this skill s
      "context": "<the self-improvement framing from Outer Kata step 2>"
    }}
    ```
-   Respond with a JSON object containing `pathway` (θ or Σ), `scaffold_component` (if Σ: p, m, 𝒯, or Σ), `signal_type` (𝒟_t, e_t, or τ_t), `improvement_plan`, `budget`, `acceptance_criteria`, and `variety_check` (on PDCA iteration 2+: the pathway+signal combinations already attempted and the justification for the current selection when `repeated = 1`).
+   Respond with a JSON object containing `pathway` (Σ), `scaffold_component` (p, m, 𝒯, or Σ), `signal_type` (𝒟_t, e_t, or τ_t), `improvement_plan`, `budget`, `acceptance_criteria`, and `variety_check` (on PDCA iteration 2+: the component+signal combinations already attempted and the justification for the current selection when `repeated = 1`).
 
 ### si-agenda-generator (Plan-step extension — the experiment-designer loop)
 
@@ -194,16 +194,11 @@ When improvement work has no single named target — the operator asked for self
 
 1. Route deterministically using the `SI-1` `lisp_eval` route result from `si-select-pathway` (step 5) — no LLM router template is called.
 2. Render the selected sub-pathway template with `improvement_plan`, `current_config`, and `context`:
-   - **FM Improvement**:
-     - `si-exec-fm-demos.j2` (§5.1): Generate training instances, apply quality control, fine-tune via gradient descent, safeguard against model collapse.
-     - `si-exec-fm-feedback.j2` (§5.2): Sample candidate outputs, apply intrinsic evaluator, convert to update signal, optimize via RL/DPO/critique-conditioned fine-tuning.
-     - `si-exec-fm-experience.j2` (§5.3): Collect interaction trajectories from grounded or simulated environments, update via PPO/DPO.
    - **Scaffolding Improvement**:
      - `si-exec-scaffold-prompt.j2` (§6.1): Apply one of four paradigms (scalar/qualitative/experimentation/textual-gradient). For population-based experimentation with a Pareto frontier, run the "Prompt experimentation (GEPA)" sub-loop below.
      - `si-exec-scaffold-memory.j2` (§6.2): Apply signal-driven CRUD operations (Create/Read/Update/Delete).
      - `si-exec-scaffold-tool.j2` (§6.3): Apply dynamic tool routing, iterative refinement, or autonomous creation.
      - `si-exec-scaffold-full.j2` (§6.4): Treat entire scaffold as mutable program, generate patches, gate through verifier. Delegates to `diagnose` for reproduce→hypothesize→fix loops.
-   - All three FM sub-pathways execute through the "Fine-tuning run" section below.
    
    ```json
    {"template_ref": "<the SI-1 route result, e.g. self-improvement/si-exec-scaffold-prompt>", "context": {
@@ -238,7 +233,7 @@ When improvement work has no single named target — the operator asked for self
 
 ### Proposal card handoff (all improvement pathways)
 
-Use only **Algedonic review** for proposals. `kanban_board_list` must succeed before treating the board as absent: use the unique matching board ID, create it with `kanban_board_create` (name `Algedonic review`, default columns, shared `idempotency_key: "algedonic-review-board"`) if none matches, or stop on ambiguous matches. For `kanban_task_create`, supply that board ID, a title identifying the target and change, a description with the full proposed diff (or the complete adapter/prompt change), evidence and its limits, and verification criteria; set `criteria` to observable checks, `advances: []` unless a known goal criterion is cited, and reuse the same `idempotency_key` on retries. Keep the returned card ID and attach existing artifacts with `kanban_task_add_deliverable` when relevant. A failed lookup or write blocks filing; never create a file proposal or dated review note.
+Use only **Algedonic review** for proposals. `kanban_board_list` must succeed before treating the board as absent: use the unique matching board ID, create it with `kanban_board_create` (name `Algedonic review`, default columns, shared `idempotency_key: "algedonic-review-board"`) if none matches, or stop on ambiguous matches. For `kanban_task_create`, supply that board ID, a title identifying the target and change, a description with the full proposed diff (or the complete prompt change), evidence and its limits, and verification criteria; set `criteria` to observable checks, `advances: []` unless a known goal criterion is cited, and reuse the same `idempotency_key` on retries. Keep the returned card ID and attach existing artifacts with `kanban_task_add_deliverable` when relevant. A failed lookup or write blocks filing; never create a file proposal or dated review note.
 
 ### si-propose-or-discard (PDCA Act)
 
@@ -299,184 +294,6 @@ Registry recording (repair plan §P8 — the single record path, §P8.7-Q5): the
 6. **Check (D)** — no tool computes hypervolume, so report it `unverified`; call `lisp_eval` with `(and (>= iteration 2) (= new_members 0))` over the measured count of variants that entered the frontier this iteration; converged only when an iteration adds no new non-dominated member (a single arrival means the frontier is still moving). Minimum 2, maximum 5 iterations per session.
 7. **Act** — never adopt. Follow the Proposal card handoff above with a title naming the target and a description containing the proposed prompt diff, frontier content, measured scores, cost, lineage, eval-set identity, evidence and verification criteria. Report a blocked filing if the board or card cannot be created; never use a file fallback. The operator chooses on that card in the gemba walk. Record the outcome with `selection_record` when the card verdict is known — verdict `selected` with the proposed variant on acceptance, `rejected` with reasons otherwise, `algedonic_reference` the card ID; the deciding session writes it, and a session that files and exits without a verdict leaves the experiment `running` (its fitness and lineage are already recorded).
 
-### Fine-tuning run — the θ pathway executor (formerly adapter-lifecycle)
-
-When `si-select-pathway` selects Foundation Model Improvement (θ), the `si-exec-fm-*` templates plan the signal and this procedure executes it: measure, build a dataset from verdict-labeled rollouts, train under the `lora-training` math-contract gates, evaluate against the baseline, file a proposal. Use it only after a scaffold fix (prompt, skill body, tool schema) has been ruled out, a deterministic evaluator exists, and the operator has accepted a PEFT configuration from `lora-training`.
-
-#### Phase 1 — Measure (the rollout harness)
-
-Model policy: “local swarm” means execution on the hKask substrate, not a local
-or smaller LLM. Inherit the platform/curator defaults from Settings → Kask →
-Models through the host inference bridge. Do not substitute an unapproved
-local/cheaper model to avoid provider cost; if approved routing is unavailable,
-surface that blocker. Only an explicit operator choice may override the model.
-
-1. Define the task set: 3-10 representative tasks, each with a
-   deterministic response evaluator (contains / not_contains / regex)
-   and an explicit experiment scope (tasks/repeats and any approved run
-   deadline). Agree with the operator *before training* on the held-out
-   acceptance criterion and evaluation method for comparing the baseline
-   and candidate on identical inputs; record what outcome counts as
-   acceptance rather than inventing a pass-rate threshold afterward.
-   Token usage is observed evidence, not a quota. The local harness has
-   no credits_authorized or token-budget parameter.
-2. Call `swarm_eval_agent_local` (swarm server) with the agent name,
-   the task set, and repeats (2-3 for a first measurement). Read the
-   per-task pass rates and standard error. This is the BASELINE —
-   record it (it is also recorded as model_request + verdict events in
-   the event store). Register the acceptance claim in the same step:
-   `kanban_goal_create` with the baseline and target pass rates as
-   observable criteria and your intake prediction, linking this task
-   to the goal via `advances`.
-
-#### Phase 2 — Build the dataset
-
-3. Call `training_bridge_rollouts` (training server) with an `output_path`
-   under this run's folder, `~/Documents/zk-data/skills/self-improvement/adapter/{date}-{run}/`,
-   and `agent_name`, selecting mode `sft` for passed-rollout ChatML JSONL
-   or `preference` for DPO JSONL (`prompt`, `chosen`, `rejected`) when
-   passed and failed rollouts from the same harness task have retained
-   bodies. `both` emits separate files; choose the dataset compatible
-   with the operator-accepted trainer (do not pass `dpo` as a bridge mode).
-   Read `sft_path`/`sft_examples` or `preference_path`/`preference_examples`;
-   stop if the selected output is empty. Check `skipped_no_bodies` —
-   stripped captures cannot be bridged; note the count.
-4. Call `training_ingest_dataset` with the selected emitted dataset path
-   to normalize and cache it. Read the format detection and sample count.
-
-#### Phase 3 — Validate and submit (the gates)
-
-5. Call `training_validate_config` with the base model, the dataset
-   path, and the operator-accepted PEFT params (from the lora-training
-   skill's G6 gate). Read EVERY finding — refuse/warn severities must
-   be resolved or explicitly accepted by the operator before
-   submission. The G-D0 profile (format, sample count, token
-   estimates) must match the dataset you built.
-6. Call `training_submit` with the dataset path, base model, validated
-   params, and confirmed: true (only after the operator confirms the
-   spend). Record the job id.
-
-#### Phase 4 — Track and evaluate
-
-7. Poll `training_status` with the job id until completion. It reports
-   pod status, GPU, recent logs, and — on completion — registers the
-   adapter from the HuggingFace manifest. `ab_comparison` is available
-   only for a retrain with a previous adapter for the same skill and
-   both losses present; it compares previous vs new training loss, NOT
-   base-model vs candidate loss. First-time adapters have no such loss
-   comparison: do not synthesize one or block their held-out verdict on it.
-   On retrains, record any `loss_improved` as separate evidence; the
-   `auto_promoted` field is not evidence of the held-out evaluation gate.
-8. Prepare held-out tasks and expected answers that neither model trained
-   on. For a pass-rate comparison, run `training_evaluate` twice on the
-   SAME `test_dataset_path`, `method`, `max_examples`, and (if semantic)
-   `judge_model`: once with `model` set to the deployed baseline model,
-   once with `model` set to the deployed candidate adapter's model name.
-   Pass the corresponding `adapter_id` to label each report; this field
-   does NOT route inference — `model` does. Use exact_match / contains /
-   semantic / benchmark only with the matching ChatML or benchmark dataset;
-   semantic is LLM-judged and requires an explicit judge_model. Record
-   both `accuracy` values and per-example errors; use the Phase 1 harness
-   pass rate as diagnostic context, not as the denominator for this
-   different evaluator. Verify both model routes actually serve the intended
-   weights (returned model strings are reported, not attested). If the
-   candidate is not deployed or identity cannot be verified, do not treat
-   an evaluation of the base route as candidate evidence: no promotion.
-
-#### Phase 5 — Verdict and retrain
-
-9. Convergence gate — for a FIRST adapter, require verified candidate
-   deployment and both matched Phase 4 evaluations. Call `lisp_eval` with
-   the operator-approved acceptance predicate over the *measured* baseline
-   and candidate results; include deployment in the predicate. For example,
-   ONLY if the operator agreed that the candidate must strictly beat the
-   baseline on accuracy:
-   - form: `(and (= deployed 1) (> pass_rate baseline_pass_rate))`
-   - env: `{ "deployed": <1 only if the candidate route serves the adapter>,
-            "pass_rate": <candidate Phase 4 accuracy>,
-            "baseline_pass_rate": <baseline Phase 4 accuracy> }`
-   If the approved criterion differs, encode that exact criterion instead;
-   do not use the example as a default policy.
-   **Noise floor (always, in addition to the operator's criterion).** A
-   difference inside sampling noise is not evidence of improvement,
-   whatever margin the operator chose. From each `training_evaluate`
-   report's `correct` and example count, compute with `lisp_eval`:
-   - form: `(let ((pc (/ kc nc)) (pb (/ kb nb))) (let ((se (sqrt (+ (/ (* pc (- 1 pc)) nc) (/ (* pb (- 1 pb)) nb))))) (cond ((or (< nc 10) (< nb 10)) (list "undetermined" "fewer than 10 held-out examples")) ((= se 0) (list (if (> pc pb) "beyond_noise" "within_noise") 0)) (t (list (if (> (- pc pb) (* 2 se)) "beyond_noise" "within_noise") (- pc pb) (* 2 se))))))`
-   - env: `{ "kc": <candidate correct>, "nc": <candidate examples>, "kb": <baseline correct>, "nb": <baseline examples> }`
-   Accept only when the operator's criterion holds AND the result is
-   `beyond_noise` (the gain exceeds twice the combined standard error of
-   the two proportions). `within_noise` is reported as no demonstrated
-   improvement, with the difference and the noise band; `undetermined`
-   (fewer than 10 examples per side) blocks acceptance and asks for a
-   larger held-out set. Example: 42/50 vs 36/50 is a 12-point gain inside
-   a 16-point noise band — not demonstrated. The practical margin — how
-   large a real gain justifies deployment — remains the operator's. A first adapter can receive
-   an acceptance verdict with NO `ab_comparison`: its loss is not an input.
-   For a RETRAIN, apply the same deployed, matched held-out gate against
-   the agreed baseline (base model or prior deployed adapter, fixed before
-   evaluation). Record `ab_comparison` only if present. If the operator's
-   pre-agreed retrain criterion also requires improved loss vs the prior
-   adapter, include its evidenced `loss_improved` in `lisp_eval`; if that
-   comparison is absent, mark that criterion unresolved, not false or
-   satisfied. Counterexamples to an unconditional loss gate: a first
-   adapter with no `ab_comparison` but verified deployment and a passing
-   operator-approved held-out comparison can be accepted; a retrain with
-   `loss_improved: true` and `auto_promoted: true` but a failed matched
-   held-out criterion cannot. Never treat loss improvement or
-   `auto_promoted` alone as a pass-rate verdict. Missing deployment,
-   route verification, matched evaluation, or an approved criterion means
-   no acceptance/promotion;
-   report the gap rather than fabricate inputs or compare Phase 1 rates.
-   If a measured gate fails, diagnose the failures, curate the exchanges
-   into a feedback file, and re-enter Phase 3 with `training_submit`
-   passing feedback_path and skill_name (retrain mode merges feedback,
-   deduplicates by question, and increments the adapter version). Obtain
-   operator confirmation for each new submission. Bound: max 2 retrain
-   cycles per adapter version; a third failure escalates to the operator.
-10. File the measurements for review — the session that trained the
-    adapter does not record its acceptance (operator ruling 2026-09-24:
-    evaluation is separated from execution). Follow the Proposal card handoff
-    above with a title naming the adapter and a description containing the
-    proposed change/diff, adapter_id, baseline_pass_rate, pass_rate,
-    evaluation_method, model_routes, evidence_gaps, verification criteria
-    and evidence.
-    Use null pass rates when unmeasured. If board or card creation fails,
-    report filing blocked, never write a file fallback. The operator accepts
-    or rejects the adapter on that card in the gemba walk; promotion follows
-    only an accepted proposal.
-11. Judge the registered goal — call `kanban_goal_judge` against the
-    goal's criteria with a verdict and per-criterion results from the
-    measured pass rates; mark unmeasured criteria as unresolved rather
-    than guessing. When the operator confirms the outcome,
-    `kanban_goal_score` Brier-scores the intake prediction — the
-    scored acceptance record for this adapter change.
-
-#### Fine-tuning constraints
-
-- Training methods are what the training server accepts: sft (axolotl or ludwig) and dpo/kto/orpo/grpo (ludwig only); PPO is unavailable. The bridge emits only `sft` and `preference` datasets, and `training_validate_config` has no dataset-format check for grpo (G-D0 reports it undetermined) — for grpo, record the dataset-format gate as unverified in the proposal, never as passed.
-
-- Never submit with unresolved refuse-severity gate findings.
-- Do not record acceptance or recommend promotion without verified
-  deployment, matched held-out baseline/candidate evaluation, and the
-  operator's pre-agreed criterion being met. Do not require retrain-only
-  loss comparison for a first adapter or treat it as sufficient for a
-  retrain. The skill files measurements as a proposal; it does not record
-  a verdict, deploy, or promote.
-- Rollouts and training jobs consume provider resources; do not invent a
-  spend quota or promote on the basis of an unverified cost estimate.
-  Present the available estimate and obtain operator confirmation before
-  each Phase 3 submission.
-- If any MCP tool call fails, call `curator_report_skill_use_issue`
-  with skill_name "self-improvement", the tool name, step ordinal, failure
-  origin and error. A failed board or card write blocks proposal filing;
-  do not claim success from a planned call.
-- Clean up (storage Cleanup rule). A job the run abandons, or whose
-  retrain supersedes it, is stopped with `training_cancel` and confirmed
-  with `training_status`; never leave a paid pod running. When the
-  proposal card is filed, delete this run's dataset files except the exact
-  dataset the card cites, and list any kept file with its reason.
-  A discarded run leaves no proposal file or review note.
-
 ## Improvement Measure
 
 PDCA loops in this skill run within one session (operator ruling 2026-09-24). The signal is the measured Check result's `pass_rate` (the same value the step-1 gate reads, from the deterministic harness). After each full iteration compute with `lisp_eval` over the recorded pass rates, oldest first: `(and (>= (length xs) 3) (< (abs (- (nth (- (length xs) 1) xs) (nth (- (length xs) 2) xs))) 0.02) (< (abs (- (nth (- (length xs) 2) xs) (nth (- (length xs) 3) xs))) 0.02))` — converged when each adjacent pair among the last three measured pass rates differs by less than 0.02 (the form checks adjacent differences, not the max-min spread). An iteration with no measured pass rate adds nothing to the list; it cannot move the loop toward convergence. Convergence is checkable once three measured pass rates are recorded — the form requires `(>= (length xs) 3)` and two adjacent-pair checks, so two rates can never converge (verified live against the form, the deep-module DM1 class).
@@ -490,20 +307,17 @@ The skill implements the paper's safety recommendations (Section 9.1):
 1. **Verifier-gated updates**: Before any structural update is committed to Σ_{t+1} or θ_{t+1}, the proposed patch must pass verifier-gated checks covering functional correctness, tool permission boundaries, and robustness to random state perturbations.
 2. **Critic decoupling**: The critic (evaluator) is decoupled from the generator. If the agent conflates the roles of proposing updates and accepting them, it collapses into a self-confirming loop. In zed-kask the acceptor is the operator in the algedonic review; this skill only proposes.
 3. **Layered gating**: A strict permission system for self-modification. Improvement is only permitted within explicitly defined and continuously audited safety boundaries.
-4. **Version history for rollback**: Both pathways maintain version history (θ_{1:t} and Σ_{1:t}) to support validation and rollback against harmful modifications.
-5. **Fast-to-slow consolidation**: Scaffold-level improvements (fast, reversible) are validated through rigorous execution tests before parametric consolidation (slow, hard to trace) is considered.
+4. **Version history for rollback**: The scaffold maintains version history (Σ_{1:t}) to support validation and rollback against harmful modifications.
+5. **Fast-to-slow consolidation**: Scaffold-level improvements (fast, reversible) are validated through rigorous execution tests. Parametric consolidation (slow, hard to trace) is out of scope — the paper's slow path has no executor here.
 
 ## Registry Templates
 
 | Template | Purpose |
 |----------|---------|
-| `si-select-pathway.j2` | Select between Foundation Model Improvement and Scaffolding Improvement pathways based on the current Kata state and available resources. |
+| `si-select-pathway.j2` | Select the scaffold component and improvement signal from the current Kata state and available resources. |
 | `si-agenda-generator.j2` | Plan-step extension: design and prioritize the experiment agenda from regulation signals and registry history, with pre-registered predictions and headroom-aware eval sets. |
 | `si-evaluate-improvement.j2` | Report measured before/after harness pass rates, transfer, cost and safety for the Act gate (`regressions` is emitted null — the invoking agent computes it with `lisp_eval`); no verdict or Brier score. |
 | `si-propose-or-discard.j2` | From the measured evaluation and the deterministic gate result, either file a proposal for the algedonic review or discard the candidate; never commit. |
-| `si-exec-fm-demos.j2` | Foundation Model Improvement pathway — generate intrinsic demonstrations by sampling execution trajectories and reflecting on them. |
-| `si-exec-fm-experience.j2` | Foundation Model Improvement pathway — acquire extrinsic exploratory experience by running the agent in novel environments. |
-| `si-exec-fm-feedback.j2` | Foundation Model Improvement pathway — process intrinsic evaluative feedback from the improvement cycle. |
 | `si-exec-scaffold-full.j2` | Scaffolding Improvement pathway — update the full scaffold (prompt, memory, tool configuration) based on the improvement evaluation. |
 | `si-exec-scaffold-memory.j2` | Scaffolding Improvement pathway — update the agent's memory configuration based on the improvement evaluation. |
 | `si-exec-scaffold-prompt.j2` | Scaffolding Improvement pathway — update the agent's system prompt based on the improvement evaluation. |
@@ -527,7 +341,7 @@ The skill's forms are executed at use time, never anchored in code.
 
 ## Constraints
 
-- Default pathway is Scaffolding Improvement (Σ) unless FM fine-tuning is explicitly permitted.
+- The executable pathway is Scaffolding Improvement (Σ); Foundation Model fine-tuning is out of scope and has no executor.
 - No durable change is committed by the executing session. A candidate that passes the deterministic gate becomes a card on **Algedonic review**; only the operator in the gemba walk accepts it. No proposal files or dated review notes.
 - The configuration in use stays unchanged until the operator accepts a proposal, so no rollback of self-applied changes is needed.
 - The critic (evaluator) must be decoupled from the generator to prevent self-confirming loops.

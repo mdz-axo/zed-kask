@@ -74,7 +74,6 @@ pub struct SpanNamespace(String);
 /// which also validates against this set.
 const CANONICAL_NAMESPACES: &[&str] = &[
     // ── Core infrastructure ──
-    "reg.adapter",
     "reg.alert",
     // ── Seam architecture ──
     // reg.architecture.seam.* removed 2026-08-30 — the "seam watcher"
@@ -147,21 +146,12 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     // ── Batch (corpus AIMD concurrency ramp — ratified spec, PM decision
     // 2026-09-03) ──
     "reg.batch.concurrency",
-    // ── LoRA training (config validation and runtime alerts, training server) ──
-    "reg.lora.audit",
-    "reg.lora.runtime",
     // ── Skill (activation outcomes and operator feedback) ──
     // The editor records reg.skill.<skill-id>.outcome and
     // reg.skill.<skill-id>.operator_feedback (kask_bridge curator_stores);
     // ancestor matching makes every <skill-id> valid. Skills themselves emit
     // no spans.
     "reg.skill",
-    // ── Training providers (provider HTTP call observability — post-mortem 2026-07-19) ──
-    "reg.training.provider.runpod.cancel",
-    "reg.training.provider.runpod.status",
-    "reg.training.provider.runpod.submit",
-    // ── Training checkpoint (pod restart → Axolotl auto-resume) ──
-    "reg.training.checkpoint.resume",
     // ── Widget (viz widget render + compose-back telemetry — D18/D21 seams) ──
     // Hierarchical: reg.widget.* children (render, disagree, graph_render,
     // evidence_set, whatif_discarded, reask) are valid via ancestor match.

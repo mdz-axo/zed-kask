@@ -47,8 +47,8 @@ Multi-provider inference router for hKask — OpenRouter, Ollama, RunPod.
 | Variable | Description |
 |----------|-------------|
 | `OPENROUTER_API_KEY` | OpenRouter API key |
-| `RUNPOD_API_KEY` | RunPod API key (vision/OCR only) |
-| `RUNPOD_TEMPLATE_ID` | RunPod serverless template ID (alternative to `RUNPOD_BASE_URL`) |
+| `RUNPOD_API_KEY` | RunPod API key (endpoint discovery and OCR inference) |
+
 | `HKASK_DEFAULT_MODEL` | Default model for non-QA callers (e.g., `OR/z-ai/glm-5.2`) |
 | `HKASK_QA_GENERATION_MODEL` | Required dedicated QA generator unless explicitly supplied; full `Provider/model-id`, no default |
 | `HKASK_DEFAULT_PROVIDER` | Default provider code (OR, OM, RP; default: OR) |

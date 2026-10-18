@@ -110,7 +110,7 @@ retrieval consumer that needs at-rest secondary positions.
 
 | Term | Live probe (2026-10-13) | Path |
 |---|---|---|
-| `training` | core | **PROPOSE a ruling** (§3.2) citing ISO/IEC 22989:2022 3.3.15 — verified verbatim from the ISO OBP, cite-only. Load-bearing: the lora-training skill, the training server, ML chunks' candidate terms. Grill-me check: no `cso:training` topic exists in 3.5 (grep: 0) and no published sense matches, so a derived ruling is the honest path, not a fabrication over a published anchor |
+| `training` | core | **PROPOSE a ruling** (§3.2) citing ISO/IEC 22989:2022 3.3.15 — verified verbatim from the ISO OBP, cite-only. Load-bearing for ML research-content candidate terms; the former training skill/server consumers were removed 2026-10-17. Grill-me check: no `cso:training` topic exists in 3.5 (grep: 0) and no published sense matches, so a derived ruling is the honest path, not a fabrication over a published anchor |
 | `narrative` | core | **PROPOSE a ruling** (§3.3) citing GOLEM v1.1 — the narrative-domain ontology. Lower priority: the axis keyword `narrative` already routes artifacts to GOLEM (`axis.rs:273-288`); the ruling adds the term path for chunk candidate terms |
 | `personal knowledge` | core | **LEAVE COARSE.** No load-bearing usage found; the core's ruling-request note is the honest design, not a gap |
 | `knowledge asset` | core | **LEAVE COARSE.** Same |
@@ -188,8 +188,9 @@ are retained as the ruling record.
   learning algorithm, by using training data" (ISO/IEC 22989:2022, 3.3.15;
   the source text carries inline cross-references to 3.1.23, 3.2.10 and
   3.3.16). The machine-learning sense; the nameable violation is applying it
-  to non-ML senses (workforce training). In zed-kask it names the
-  lora-training pipeline (QLoRA adapters over a frozen base model).
+  to non-ML senses (workforce training). In zed-kask it classifies the ML
+  concept when it appears in research content; no model-training executor
+  remains after the 2026-10-17 capability removal.
   Cite-only: ISO bytes are copyrighted, never vendored.
 - **constituents:** `machine learning` (resolves published — `cso:machine_learning`,
   live-probed), `model` (resolves published — `mls:Model`, live-probed)

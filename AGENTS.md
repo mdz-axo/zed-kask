@@ -41,7 +41,7 @@ A skill **is** a `SKILL.md` file — the upstream Zed model. The body contains t
 hKask ships **11 MCP servers** launched by zed's `context_server` as child processes over stdio. They are the tool surface over the domain crates. (The `McpRuntime` that governs tool calls runs in-process; the servers themselves are child processes.)
 
 - **Runtime registry (authoritative, always current):** `BUILT_IN_MCP_SERVERS` in `kask/crates/kask_bridge/src/mcp_servers.rs`.
-- **On-disk servers:** `kask/mcp-servers/hkask-mcp-*` — companies, corpus, curator, experimentation, kata-kanban, media, prediction-markets, research, scenarios, swarm, training.
+- **On-disk servers:** `kask/mcp-servers/hkask-mcp-*` — companies, corpus, curator, experimentation, kata-kanban, media, prediction-markets, research, scenarios, swarm.
 - **Catalog + per-tool behavior:** `kask/docs/reference/mcp-servers/README.md` (server catalog with per-server tool-surface pin tests); per-tool behavior is enforced by the tool-behavior contract-test standard (`kask/scripts/check-mcp-tool-tests.sh` + the Testing standard section of the catalog README), not by a per-tool contracts doc.
 - **Tool dispatch:** `McpRuntime::invoke` (per-tick call ceiling / runaway-loop breaker) + per-agent `mcp_tools` allowlist (D3/D8).
 - **§13.1 at the MCP boundary:** MCP servers reach hKask primitives via `kask_bridge` (D8); they never link zed-kask crates directly.
@@ -56,10 +56,9 @@ hKask ships **11 MCP servers** launched by zed's `context_server` as child proce
 ### Agent-Autonomous (PDCA / defense / improvement cycles)
 - `metacognition` — Decompose → Assess → Calibrate → GEPA improve.
 - `essentialist` — 3-gate elimination (Exist → Surface → Contract).
-- `self-improvement` — pathway selection plus its GEPA (Genetic-Pareto) prompt-evolution sub-loop and its fine-tuning run (θ pathway executor).
+- `self-improvement` — scaffold-component selection plus its GEPA (Genetic-Pareto) prompt-evolution sub-loop.
 - `bug-hunt` / `diagnose` — Exploration and debugging.
 - `refactor-architecture` — End-to-end architecture refactoring (discover → audit → strangle → verify).
-- `lora-training` — PEFT method selection + math-contract gates (pre-flight before training job).
 - `skill-discovery` — Route tasks to installed skills, detect capability gaps, evaluate candidates before installation.
 
 ### Ensemble / Coaching (Multi-agent interaction)
@@ -118,8 +117,6 @@ Only #1 partially CI-gated; #2–#4 enforced by review.
 | Hard bug / regression | `diagnose` | `bug-hunt` (exploratory testing) |
 | Low confidence / high uncertainty | `metacognition` (assess + calibrate) | `falsifiability` (if hypothesis-conflict) or `improv` (riffing, for divergent exploration) |
 | Module design / simplification | `essentialist` (3 gates) | `deep-module` |
-| LoRA/QLoRA training config audit | `lora-training` | `tdd` (training-loop code) |
-| Fine-tuning run (submit, track, evaluate) | `self-improvement` (Fine-tuning run) | `lora-training` (config audit) |
 | Self-improvement / prompt evolution | `metacognition` | `self-improvement` GEPA sub-loop (post-convergence) |
 | Skill matching for a task | `skill-discovery` (route) | `task-breakdown` (decompose) first; detect-gap if coverage is partial |
 | Capability gap detection | `skill-discovery` | `skill-maintenance` (install/validate the new skill) |

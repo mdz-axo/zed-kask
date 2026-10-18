@@ -34,7 +34,7 @@ Design candidate experiments and rank them. Every candidate must be runnable end
 ### Candidate requirements (all mandatory)
 
 1. **Hypothesis** — falsifiable: names the artifact, the variant delta, and the measurable difference it should produce on the eval set.
-2. **Artifact layer** — exactly one of: skill, agent_card, prompt_template, tool_schema, regulation_scalar, lora_adapter. Skill genotypes are COMPOSITE (§P8.7-Q2): SKILL.md process text and its `.j2` templates are one variant; pin suites re-run in the same change.
+2. **Artifact layer** — exactly one of: skill, agent_card, prompt_template, tool_schema, regulation_scalar, scientific_hypothesis. Skill genotypes are COMPOSITE (§P8.7-Q2): SKILL.md process text and its `.j2` templates are one variant; pin suites re-run in the same change.
 3. **Genotype refs** — the concrete artifacts (paths or card identities).
 4. **Eval set** — a fixed task set with declared evaluators (contains/not_contains/regex), sized to fit the budget. **Headroom rule (§P8.7-Q6):** design the set so the current artifact plausibly scores BELOW 100% — harder discriminators (conservation checks — do the numbers add up; exact node or field labels; format contracts), never weaker evaluators. If the current artifact plausibly passes the whole set, harden the set or discard the candidate; the baseline pre-check voids a saturated set before challenger spend, so design to pass it.
 5. **Fitness function** — the per-objective aggregates from recorded runs (pass_rate; cost objective total_tokens).

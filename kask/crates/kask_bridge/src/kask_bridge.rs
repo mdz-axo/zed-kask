@@ -66,7 +66,7 @@ pub use inference_ipc_server::{
 pub use inference_providers::{
     DATA_SERVICES, DataServiceDescriptor, INFERENCE_PROVIDERS, InferenceProviderDescriptor,
     ResolvedEmbeddingCredentials, credential_url_for_key, credential_urls_for_mcp,
-    resolve_embedding_credentials,
+    data_service_credential_urls, resolve_embedding_credentials,
 };
 pub use inference_resilience::InferenceResilienceConfig;
 pub use inference_socket::{
@@ -93,7 +93,7 @@ pub use settings::{
     KaskCompaniesSettings, KaskCondenserSettings, KaskCorpusSettings, KaskCuratorEmailSettings,
     KaskCuratorSettings, KaskGeneralSettings, KaskMcpSettings, KaskMediaSettings,
     KaskMemorySettings, KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings,
-    KaskScenariosSettings, KaskSettings, KaskSwarmSettings, KaskTrainingSettings, SwarmModeConfig,
+    KaskScenariosSettings, KaskSettings, KaskSwarmSettings, SwarmModeConfig,
 };
 
 mod metacognition_bridge;

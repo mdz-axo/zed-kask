@@ -4,7 +4,7 @@
 //! program (repair plan §P8).
 //!
 //! One server owns the durable record of experiments across the
-//! seven artifact layers (§P8.3 + D2): registered experiments with
+//! six artifact layers (§P8.3 + D2): registered experiments with
 //! pre-registered Brier-scored predictions, typed rubric bundles, variant
 //! lineages with roles, sealed eval contracts (P2), grounded fitness
 //! records (recorded report refs only — never simulated), and selection

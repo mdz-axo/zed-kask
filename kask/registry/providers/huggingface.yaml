@@ -1,20 +1,38 @@
-# Provider profile — HuggingFace. Structural contract pinned by
-# kask/scripts/check-provider-profiles.sh; semantic reading owned by the
-# provider-audit skill.
+# Provider profile — HuggingFace. RETIRED 2026-10-17: archived in place per
+# the provider-audit retirement pass (Step 9). Both consumers were the
+# training MCP server (artifact publish path and open-weight base-model
+# hosting), removed because model training is outside the co-researcher
+# mandate. The HF_TOKEN Data Services row and child injection were removed;
+# any pre-existing dormant keychain entry remains operator-owned and unread.
+# The dated readings below are preserved as the audit record, not as a
+# live contract.
+# Structural contract pinned by kask/scripts/check-provider-profiles.sh.
 id: huggingface
 name: HuggingFace
-status: active
+status: retired
+retired:
+  date: "2026-10-17"
+  reason: >-
+    both consumers (training artifact publish path, open-weight base-model
+    hosting) removed with the training MCP server — model training is out of
+    scope for the co-researcher mandate.
+  purged:
+    - Data Services row HF_TOKEN and every in-tree read/injection path
+      (kask/crates/kask_bridge/src/inference_providers.rs)
+    - training server credentials/config_env HF_TOKEN, HKASK_HF_*
+      (kask/crates/kask_bridge/src/mcp_servers.rs)
+  retained_user_data:
+    - Any pre-existing kask://credentials/hf_token keychain entry is dormant
+      and left operator-owned; no code exposes, restores, reads, or injects it.
 roles:
-  - training-artifacts
-  - model-weights-host
+  - training-artifacts   # retired role — no in-tree consumer
+  - model-weights-host   # retired role — no in-tree consumer
 keychain:
-  slot: kask://credentials/hf_token
-  env_var: HF_TOKEN
-consumed_capabilities:
-  - capability: Runpod artifact publish path (datasets, adapters, models)
-    source: kask/crates/kask_bridge/src/mcp_servers.rs (training server — HKASK_HF_ARTIFACT_OWNER, HKASK_HF_DATASET_REPO, HKASK_HF_MODEL_REPO)
-  - capability: open-weight model hosting (base models for training)
-    source: kask/mcp-servers/hkask-mcp-training/src/huggingface.rs
+  slot: none
+  env_var: ""
+  note: the kask://credentials/hf_token slot has no reader or settings row;
+    any old entry is dormant operator-owned data, not a live capability.
+consumed_capabilities: []  # retired — no in-tree consumer remains
 deliberate_non_consumption: []
 data_terms:
   # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)

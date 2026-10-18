@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # CI gate: pin the build-profile seams (DIVERGENCE.md D46, D52, D85).
 #
-# The install CPU-burn defect: install.sh built the zed binary AND all 11
+# The install CPU-burn defect: install.sh built the zed binary AND all 10
 # MCP servers on the `release` profile (thin LTO + codegen-units=1), so
 # every server crate pinned one core for minutes and an install pegged
 # the whole machine. The fix has three parts that must drift together:

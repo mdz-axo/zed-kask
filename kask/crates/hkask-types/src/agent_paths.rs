@@ -172,7 +172,7 @@ pub fn mcp_server_db(server_id: &str, purpose: &str) -> PathBuf {
 
 /// Returns the relative path `mcp/{server_id}/{subdir}` for a server's
 /// internal directory (e.g. `mcp/swarm/agents/curated`,
-/// `mcp/companies/fibo-cache`, `mcp/training/adapters`). The caller
+/// `mcp/companies/fibo-cache`, `mcp/corpus/ocr-health.json`). The caller
 /// resolves this against the data dir via `resolve_under_data_dir`.
 ///
 /// This is the directory equivalent of [`mcp_server_db`] — use it for any
@@ -180,8 +180,8 @@ pub fn mcp_server_db(server_id: &str, purpose: &str) -> PathBuf {
 /// construction here means a layout change (e.g. renaming `mcp/` to
 /// `servers/`) touches one helper, not 10+ call sites.
 ///
-/// Internal-system servers only (kata-kanban, swarm, training, ...). The
-/// content servers (research, companies, portfolio, corpus) use
+/// Internal-system servers only (kata-kanban, swarm, scenarios, ...). The
+/// content servers (research, companies, corpus) use
 /// [`mcp_artifacts_subdir`] under the visible artifacts dir instead.
 pub fn mcp_server_subdir(server_id: &str, subdir: &str) -> PathBuf {
     let base = PathBuf::from(MCP_DIR).join(sanitize_name(server_id));

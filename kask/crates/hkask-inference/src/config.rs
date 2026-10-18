@@ -7,7 +7,8 @@
 //!
 //! - `OPENROUTER_BASE_URL` / `OPENROUTER_API_KEY` — OpenRouter (cloud, required)
 //! - `OLLAMA_BASE_URL` / `OLLAMA_API_KEY` — Ollama (local; key optional, header ignored)
-//! - `RUNPOD_API_KEY` / `RUNPOD_BASE_URL` or `RUNPOD_TEMPLATE_ID` — RunPod (vision/OCR only)
+//! - `RUNPOD_API_KEY` — RunPod endpoint discovery and OCR inference
+//!   (`language_models.runpod.api_url` configures the GraphQL API base URL)
 //! - `HKASK_DEFAULT_PROVIDER` — default provider for unprefixed models (RunPod, OpenRouter, ollama; default: OpenRouter)
 //! - `HKASK_DEFAULT_MODEL` — default model (injected from the visible
 //!   `kask.models.default_model` setting; NO code-constant fallback — unset

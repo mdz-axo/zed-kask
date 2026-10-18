@@ -6,7 +6,7 @@
 # structural contract:
 #   1. Every tree-adopted vendor has a profile. The adopted set is DERIVED at
 #      run time from five tree anchors — inference descriptor ids
-#      (INFERENCE_PROVIDERS), media provider structs, training host ids,
+#      (INFERENCE_PROVIDERS), media provider structs,
 #      research provider modules, and DATA_SERVICES credential keys — never
 #      from a hardcoded list, which would silently miss every addition
 #      (.rules, cross-seam test trap: name-pinned checks break on every
@@ -28,11 +28,10 @@ set -euo pipefail
 KASK_ROOT="${KASK_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 INFERENCE_SRC="$KASK_ROOT/crates/kask_bridge/src/inference_providers.rs"
 MEDIA_SRC="$KASK_ROOT/crates/hkask-inference/src/media_providers.rs"
-TRAINING_SRC="$KASK_ROOT/mcp-servers/hkask-mcp-training/src/providers.rs"
 RESEARCH_DIR="$KASK_ROOT/mcp-servers/hkask-mcp-research/src/research/providers"
 PROFILES_DIR="${PROFILES_DIR:-$KASK_ROOT/registry/providers}"
 
-for f in "$INFERENCE_SRC" "$MEDIA_SRC" "$TRAINING_SRC"; do
+for f in "$INFERENCE_SRC" "$MEDIA_SRC"; do
   [ -f "$f" ] || { echo "FAIL: derivation anchor missing: $f" >&2; exit 1; }
 done
 [ -d "$RESEARCH_DIR" ] || { echo "FAIL: derivation anchor missing: $RESEARCH_DIR" >&2; exit 1; }
@@ -45,11 +44,8 @@ adopted="$(
     sed -nE 's/^[[:space:]]*id: "([^"]+)".*/\1/p' "$INFERENCE_SRC" | tr '[:upper:]' '[:lower:]'
     # Media provider structs (DeepInfraMediaProvider → deepinfra).
     sed -nE 's/^pub struct ([A-Za-z]+)MediaProvider.*/\1/p' "$MEDIA_SRC" | tr '[:upper:]' '[:lower:]'
-    # Training host enum variants (TrainingHostId::Runpod → runpod). The
-    # negative lookahead excludes `from_str` — the str constructor is not a
-    # variant; without it the match derives a phantom vendor "from"
-    # (kask/mcp-servers/hkask-mcp-training/src/providers.rs).
-    grep -oP 'TrainingHostId::\K[A-Za-z]+(?![A-Za-z_(])' "$TRAINING_SRC" | tr '[:upper:]' '[:lower:]'
+    # The training-host anchor was removed with the training server
+    # (model training is out of scope for the co-researcher mandate).
     # Research provider modules. Module spellings normalize to the
     # credential-key identity: serapi.rs serves SerpAPI, whose DATA_SERVICES
     # credential key is "serpapi" (kask://credentials/serpapi) — one vendor,
@@ -67,9 +63,7 @@ adopted="$(
         case "$k" in
           hkask_db_passphrase | hkask_smtp_password) continue ;;
           hkask_abw_api_key) echo abw ;;
-          nebius_project_id | nebius_subnet_id) echo nebius ;;
           runpod) echo runpod ;;
-          hf_token) echo huggingface ;;
           reduct_api_key) echo reduct ;;
           *) echo "$k" ;;
         esac

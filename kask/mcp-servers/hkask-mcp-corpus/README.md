@@ -36,7 +36,7 @@ anchors do not turn generated assertions or exact citations into verified prose.
 |---|---|
 | Gather (3) | `corpus_discover`, `corpus_cache_work`, `corpus_discover_company` |
 | Process (11) | `corpus_convert`, `corpus_ocr`, `corpus_is_complex`, `corpus_chunk`, `corpus_build_chunk_representations`, `corpus_embedding_inventory`, `corpus_tag_chunks`, `corpus_embed`, `corpus_extract_assertions`, `corpus_dedup_chunks`, `corpus_consolidate_chunks` |
-| QA output (5) | `corpus_build_prompts`, `corpus_generate_qa_batch`, `corpus_ground_generated_qa`, `corpus_ingest_qa`, `corpus_prepare_training_dataset` |
+| QA output (4) | `corpus_build_prompts`, `corpus_generate_qa_batch`, `corpus_ground_generated_qa`, `corpus_ingest_qa` |
 | Compose (3) | `corpus_compose`, `corpus_rewrite`, `corpus_centroid` |
 | Manage (4) | `corpus_cache`, `corpus_query`, `corpus_clear_index`, `corpus_purge_qa` |
 
@@ -482,7 +482,7 @@ indices restart per call, so independent input partitions do not provide a
 whole-dataset idempotency guarantee. Reconcile the complete dataset rather than
 silently colliding or leaving stale records.
 
-## Audit and training gates
+## Audit gates
 
 `bash kask/scripts/audit-qa-quality.sh <generated.jsonl> <chunks.jsonl>` is read-only
 with respect to inputs. It verifies each structured citation against its own
@@ -495,16 +495,15 @@ checks propagate null scores rather than a passing partial average. The explicit
 citation-only control uses JSON-encoded structured citation objects, not prose.
 
 Exits 0/1/2/64 mean narrow checks complete / high citation findings / missing
-checks or data / usage error. No exit authorizes ingestion, a pilot or training.
+checks or data / usage error. No exit authorizes ingestion or a pilot.
 Run bounded synthetic controls via `kask/scripts/test-audit-qa-quality.sh` in
 scratch, then apply the skill's canonical semantic review gates. Keep current
-source/evidence artifacts available after ChatML conversion.
+source/evidence artifacts available with the exported QA.
 
-`training_assemble_dataset` must receive the corpus DB/path credentials to read
-its stored QA; its default DB belongs to the training server.
-`corpus_prepare_training_dataset` converts Alpaca to ChatML and supplies advisory
-PEFT recommendations for a provided base model. The operator still approves the
-base model and LoRA configuration before training submission.
+The QA export is this pipeline's terminal artifact: an evidence-carrying,
+auditable corpus. Model training is out of scope for the co-researcher mandate
+(the training server was removed 2026-10-17), so a successful export is a
+research corpus, never staged training data.
 
 ## Centroids and composition
 

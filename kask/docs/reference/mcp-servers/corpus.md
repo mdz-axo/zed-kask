@@ -12,9 +12,9 @@ mds_categories: [domain, composition, trust, lifecycle]
 
 The editor-managed MCP server processes documents into retrievable passages,
 classified chunks, evidence-carrying QA and style centroids. There is one current
-schema contract and **27 registered tools**, pinned by
-`tool_surface_is_exactly_27_registered_tools` at
-`kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:320-325`.
+schema contract and **26 registered tools**, pinned by
+`tool_surface_is_exactly_26_registered_tools` at
+`kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:321-326`.
 Parameter additions do not add tools.
 
 The [crate README](../../../mcp-servers/hkask-mcp-corpus/README.md) owns the detailed
@@ -42,11 +42,10 @@ operator data has been rebuilt, ingested or used for training.
 | | `corpus_extract_assertions` | Extract assertions from chunk text; optional tags guide predicates |
 | | `corpus_dedup_chunks` | Source-local similarity clustering; retain highest-salience representatives |
 | | `corpus_consolidate_chunks` | Synthesize source-local clusters, re-embed text, preserve derivation; synthesized tags are unverified; merged rows carry the license-conservative origin (any Brave member ⇒ brave) |
-| QA output (5) | `corpus_build_prompts` | Classified primary rows plus complete-source DB context → prepared QA records |
+| QA output (4) | `corpus_build_prompts` | Classified primary rows plus complete-source DB context → prepared QA records |
 | | `corpus_generate_qa_batch` | Execute prepared messages unchanged with owned output and reconciled outcomes |
 | | `corpus_ground_generated_qa` | Deterministic zero-inference `corpus-qa-grounding-v1` bundle: byte-span claim records over canonical chunks plus server-recomputed ontology resolutions; records facts only, authorizes nothing |
 | | `corpus_ingest_qa` | Re-executed grounding-gated admission: `corpus-qa-grounding-v1` manifest plus canonical source chunks, every citation claim strength-2 with at least one present required while a synthesized answer is admitted as model-mediated, then exact dedup with evidence retention and explicit storage status |
-| | `corpus_prepare_training_dataset` | Alpaca → ChatML plus dataset-size gate and advisory PEFT recommendations |
 | Compose (3) | `corpus_compose` | Retrieve exemplars, generate prose, optionally measure centroid distance |
 | | `corpus_rewrite` | Rewrite using a quality dimension and that dimension's centroid |
 | | `corpus_centroid` | Average eligible existing embeddings selected by prefix or explicit refs |
@@ -96,7 +95,6 @@ Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:994-109
 | `corpus_generate_qa_batch` | `prompts_jsonl`, `quality_adjudications_jsonl`, `output`, `concurrency`, optional QA `model` |
 | `corpus_ground_generated_qa` | `generated_jsonl`, `source_chunks_jsonl` (tagged chunks classified under `published-term-resolution-v2`), `output_dir` — must not already exist |
 | `corpus_ingest_qa` | `generated_jsonl`, `grounding_manifest` (path to the bundle's `manifest.json`), `source_chunks_jsonl`, `output`, `db_path`, `passphrase`, `dataset`, `owner`, `dry_run=false`; pass dataset/owner explicitly. Brave-derived candidates are dropped after the structural filter (surfaced as `brave_excluded`, never silent); retained rows and stored h_mems carry their chunk's `origin_provider` when recorded |
-| `corpus_prepare_training_dataset` | `input_jsonl`, `output_jsonl`, operator-approved `base_model`, optional `system_prompt`, `dry_run=false` |
 | `corpus_centroid` | `author`, `db_path`, `passphrase`; optional contained `refs_file`, quality `dimension` |
 | `corpus_compose` | `prompt`, `author`, `db_path`, `passphrase`, optional `config_path`, `no_validate=false` |
 | `corpus_rewrite` | `content`, `author`, `db_path`, `passphrase`, `dimension=composite`, optional `config_path` |
@@ -392,7 +390,7 @@ are explicit. Remaining local workers are aborted, without promising remote job
 cancellation. There is no automatic resume, atomic replacement or fsync guarantee.
 Wait for owners/workers to stop before inspection and an explicit overwrite rerun.
 
-## Ingestion, audit and training
+## Ingestion and audit
 
 Flat QA and generated envelopes use the same evidence schema. Ingestion fails closed
 on partial input (malformed, generator-error, or structurally incomplete rows) and
@@ -458,11 +456,11 @@ control has no narrative fields. Exit 0/1/2/64 means narrow checks complete / hi
 citation findings / missing checks or data / usage error, never launch approval.
 See the skill for canonical `grounding-verify`, semantic review and size gates.
 
-Pass the corpus `db_path` and `passphrase` to `training_assemble_dataset`; otherwise
-it reads the training server's separate store. Assembly filters Brave-stamped
-pairs out of the training set. `corpus_prepare_training_dataset`
-offers advisory PEFT settings. Training still requires operator base-model and
-LoRA approval; successful data preparation is not trained capability.
+The QA export is the pipeline's terminal artifact: an evidence-carrying,
+auditable corpus. Model training is out of scope for the co-researcher
+mandate (the training server was removed 2026-10-17), so there is no
+downstream submission step — a successful QA export is a research corpus,
+not staged training data.
 
 ## Style and retrieval
 

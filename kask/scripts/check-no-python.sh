@@ -11,7 +11,7 @@
 # false-positives on 62 template guardrail notes ("Do not execute
 # arbitrary Python code in Jinja2 expressions") and on documented
 # non-Python contrasts. Data, not code, is out of scope: vendored ontology
-# sources, literary style caches, the gitignored training virtualenv.
+# sources and literary style caches.
 #
 # Exit codes: 0 = clean, 1 = Python surface outside the allowlist.
 # Usage: bash kask/scripts/check-no-python.sh
@@ -45,7 +45,6 @@ scan_tree() {
     find "$KASK_ROOT" \
         \( -path '*/hkask-bridge-ontology/sources' \
         -o -path '*/registry/styles' \
-        -o -name '.venv-training' \
         -o -name 'target' \) -prune \
         -o -type f -print0
 }

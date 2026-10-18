@@ -1,4 +1,4 @@
-//! Inference provider descriptors for MCP server credential injection.
+//! Inference-provider and data-service credential descriptors.
 //!
 //! Kask uses zed's native inference provider infrastructure — providers are
 //! registered in Settings → AI → LLM Providers, not via kask settings. This
@@ -6,14 +6,16 @@
 //! - `resolve_embedding_credentials` (maps a provider-prefixed model string
 //!   to `(api_url, api_key)` for MCP servers that can't access zed's
 //!   `LanguageModelRegistry`; only `serves_embeddings` providers resolve)
-//! - `credential_urls_for_mcp` (builds keychain URLs so MCP server child
-//!   processes receive API keys via `build_mcp_server_env`)
+//! - `credential_urls_for_mcp` (builds the keychain URL set for credentials
+//!   that a remaining MCP child actually consumes)
+//! - `data_service_credential_urls` (builds the settings/keychain UI set)
 //!
 //! ONE key, ONE location: an inference provider's API key lives in the
 //! keychain at the provider's `api_url` — the same slot zed's
 //! `LanguageModelProvider`'s `ApiKeyState` reads. Every consumer
-//! (`ApiKeyState`, `build_mcp_server_env` via `credential_urls_for_mcp`,
-//! `resolve_embedding_credentials`, the IPC batch/rerank credential reads)
+//! (`ApiKeyState`, `credential_urls_for_mcp` for providers with remaining
+//! MCP-child consumers, `resolve_embedding_credentials`, the IPC batch/rerank
+//! credential reads)
 //! resolves that one slot, so the key cannot exist in two places that
 //! diverge. The former `kask://credentials/<credential_key>` duplicate was
 //! the 2026-08-31 split-brain: a stale copy there fed MCP servers a dead key
@@ -40,7 +42,8 @@ pub struct InferenceProviderDescriptor {
     /// slot zed's `ApiKeyState` reads (`credential_url_for_key` maps the
     /// provider's `credential_key` here).
     pub api_url: &'static str,
-    /// The env var name that MCP servers and hKask read for this provider's key.
+    /// The provider's credential environment variable. It may be native-only
+    /// (RunPod/KiloCode) or granted to selected MCP children.
     pub env_var: &'static str,
     /// The credential key that identifies this provider's key for lookups
     /// (`credential_url_for_key` maps it to the provider's `api_url`
@@ -60,11 +63,10 @@ pub struct InferenceProviderDescriptor {
     pub serves_embeddings: bool,
 }
 
-/// The inference providers used for credential injection and embedding
-/// model resolution. Providers are registered in zed's native Settings →
-/// AI → LLM Providers, not via kask settings.
-///
-/// OpenRouter is included for API-key injection into MCP servers.
+/// The inference providers used for keychain routing and embedding model
+/// resolution. Providers are registered in zed's native Settings → AI → LLM
+/// Providers, not via kask settings. Only providers named by a live MCP
+/// credential allowlist enter `credential_urls_for_mcp`.
 pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
     InferenceProviderDescriptor {
         id: "OpenRouter",
@@ -78,10 +80,9 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
     // RunPod has a dedicated `LanguageModelProvider` (D29), not an
     // `openai_compatible` entry. Its key lives at the provider `api_url`
     // (`https://api.runpod.io`) — the same slot the RunPod provider's
-    // `ApiKeyState` reads — and `credential_urls_for_mcp` injects it into
-    // MCP server env from there (`RUNPOD_API_KEY`). RunPod also has a
-    // `DATA_SERVICES` row (the Data Services settings UI entry); its env var
-    // matches this one, so the injection loop emits the pair exactly once.
+    // `ApiKeyState` reads. RunPod has no MCP-child credential consumer after
+    // the training server's removal; its `DATA_SERVICES` row remains solely
+    // as the native OCR provider's settings surface.
     InferenceProviderDescriptor {
         id: "RunPod",
         name: "RunPod",
@@ -94,8 +95,8 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
     // Ollama is a local LLM/embedding service (default port 11434). It's
     // OpenAI-compatible at `/v1` and requires no API key — an empty `env_var`
     // signals "no key needed" to `resolve_embedding_credentials` and skips
-    // it in `credential_urls_for_mcp` (no key to inject). Listed so the
-    // default embedding model resolves without a warning.
+    // it in `credential_urls_for_mcp` when no MCP child declares it. Listed so
+    // the default embedding model resolves without a warning.
     InferenceProviderDescriptor {
         id: "ollama",
         name: "Ollama",
@@ -144,7 +145,7 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
 /// and the settings UI's parallel `DATA_SERVICES` `&[(&str, &str, &str, &str)]`
 /// 4-tuple, which had overlapping fields in different positions.
 pub struct DataServiceDescriptor {
-    /// The env var name that MCP servers read for this credential.
+    /// The env var name that the credential's consumer reads.
     pub env_var: &'static str,
     /// The credential key — `credential_url_for_key` resolves it to the
     /// keychain URL. Used as the UI's row key.
@@ -172,12 +173,12 @@ pub fn provider_by_credential_key(
 
 /// The canonical keychain URL for a credential, keyed by `credential_key`:
 /// inference-provider-backed credentials (openrouter, deepinfra, runpod,
-/// kilocode) live
-/// at the provider's `api_url` — the same slot zed's `ApiKeyState` reads —
-/// while pure data-service credentials live at
-/// `kask://credentials/<credential_key>`. One key, one location: both the
-/// settings UI and `credential_urls_for_mcp` resolve their URLs through this
-/// function, so no consumer can read a slot the writer didn't target.
+/// kilocode) live at the provider's `api_url` — the same slot zed's
+/// `ApiKeyState` reads — while pure data-service credentials live at
+/// `kask://credentials/<credential_key>`. One key, one location: the settings
+/// UI, native providers, and any remaining MCP child consumer all resolve
+/// through this function, so no consumer can read a slot the writer did not
+/// target.
 pub fn credential_url_for_key(credential_key: &str) -> String {
     match provider_by_credential_key(credential_key) {
         Some(provider) => provider.api_url.to_string(),
@@ -187,7 +188,8 @@ pub fn credential_url_for_key(credential_key: &str) -> String {
 
 /// The canonical registry of data service credentials. The single source of
 /// truth consumed by:
-/// - `credential_urls_for_mcp` (builds keychain URLs for MCP env injection)
+/// - `data_service_credential_urls` (all settings/keychain-backed services)
+/// - `credential_urls_for_mcp` (the subset declared by remaining MCP children)
 /// - the settings UI (`data_services.rs` renders rows from this registry)
 /// - the coverage governance test (asserts MCP server allowlists align)
 ///
@@ -253,7 +255,7 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         dashboard_url: "",
         shows_in_ui: false,
     },
-    // curator, corpus, training, kata-kanban, research) via
+    // DB passphrase — supplied to the DB-backed MCP servers through
     // `ctx.credentials.get("HKASK_DB_PASSPHRASE")` for SQLCipher stores.
     // Not shown in the Data Services UI (no toggle; managed via the
     // hkask keystore chain).
@@ -277,49 +279,20 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
     // lives at the provider `api_url` slot (`https://api.runpod.io`, where the
     // RunPod `ApiKeyState` reads it), not at `kask://credentials/runpod`.
     // `credential_url_for_key("runpod")` maps this row to that slot, so the
-    // settings UI and `credential_urls_for_mcp` both read/write the same
-    // location the provider does. Shown in the UI as the training/GPU row.
+    // settings UI and native provider read/write the same location. Its live
+    // consumer is the corpus OCR pipeline, which resolves `RunPod/kask-ocr`
+    // through the D29 provider; no MCP child receives this key after the
+    // former GPU-training-host consumer was removed.
     DataServiceDescriptor {
         env_var: "RUNPOD_API_KEY",
         credential_key: "runpod",
-        label: "RunPod (GPU cloud for training)",
+        label: "RunPod (serverless inference for OCR)",
         dashboard_url: "https://runpod.io/",
         shows_in_ui: true,
     },
-    // RUNPOD_TEMPLATE_ID was here as a Secret, but it is architecturally a
-    // non-secret config value (a RunPod template ID). It has been moved to
-    // the training server's `config_env` allowlist and is read via
-    // `std::env::var` in hkask_mcp_training.rs. The runpod provider has a
-    // real fallback when empty (DEFAULT_RUNPOD_DOCKER_IMAGE). Keeping it in
-    // DATA_SERVICES caused a spurious "not set or empty" warning on every
-    // launch because `build_mcp_server_env` looked for a keychain entry
-    // that was never written — the child had a working default path the
-    // bridge couldn't see.
-    // Nebius project ID — same note as RUNPOD_TEMPLATE_ID above. Shown in
-    // the UI because the old UI listed it (operator convenience for the
-    // training host config).
-    DataServiceDescriptor {
-        env_var: "NEBIUS_PROJECT_ID",
-        credential_key: "nebius_project_id",
-        label: "Nebius Project ID (GPU cloud for training)",
-        dashboard_url: "https://nebius.com/",
-        shows_in_ui: true,
-    },
-    // Nebius subnet ID — same note as NEBIUS_PROJECT_ID above.
-    DataServiceDescriptor {
-        env_var: "NEBIUS_SUBNET_ID",
-        credential_key: "nebius_subnet_id",
-        label: "Nebius Subnet ID",
-        dashboard_url: "https://nebius.com/",
-        shows_in_ui: true,
-    },
-    DataServiceDescriptor {
-        env_var: "HF_TOKEN",
-        credential_key: "hf_token",
-        label: "HuggingFace Token",
-        dashboard_url: "https://huggingface.co/settings/tokens",
-        shows_in_ui: true,
-    },
+    // The Nebius (GPU training host) and HuggingFace (model-weights/artifact
+    // host) rows were removed with the training server: both existed only to
+    // configure training jobs, and neither has a remaining read site.
     // Reduct cloud media API. The media child alone receives this secret;
     // Data Services writes the same keychain slot used by MCP injection.
     DataServiceDescriptor {
@@ -334,7 +307,7 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
     // reference-level fetches. Optional (curated static fallback when absent),
     // but an operator who sets it via the settings UI expects it to reach the server.
     // Shown in the Data Services UI as an always-on row (no enable toggle —
-    // enabled when the key is present, mirroring `hf_token`/`serpapi`).
+    // enabled when the key is present, mirroring `serpapi`).
     DataServiceDescriptor {
         env_var: "HKASK_FRED_API_KEY",
         credential_key: "fred",
@@ -344,57 +317,50 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
     },
 ];
 
-/// Build the `(env_var, credential_url)` pairs for all credentials that
-/// should be injected into MCP server child processes.
-///
-/// Returns credential URLs for all data services and inference providers.
-/// The key's presence in env or keychain is the toggle — no settings bool.
+/// Build the `(env_var, credential_url)` pairs for all settings/keychain-backed
+/// data services, including credentials consumed in-process rather than by an
+/// MCP child (RunPod OCR and Curator SMTP).
+pub fn data_service_credential_urls() -> Vec<(String, String)> {
+    DATA_SERVICES
+        .iter()
+        .map(|desc| {
+            (
+                desc.env_var.to_string(),
+                credential_url_for_key(desc.credential_key),
+            )
+        })
+        .collect()
+}
+
+/// Build the `(env_var, credential_url)` pairs consumed by remaining MCP
+/// server child processes. The server registry is the authority: a Data
+/// Services or inference-provider key without a child credential allowlist is
+/// deliberately excluded, so native-only RunPod OCR does not trigger child
+/// restarts or receive an unused env grant.
 pub fn credential_urls_for_mcp() -> Vec<(String, String)> {
-    let mut urls = Vec::new();
+    let is_child_credential = |env_var: &str| {
+        crate::mcp_servers::BUILT_IN_MCP_SERVERS
+            .iter()
+            .any(|server| server.credentials.contains(&env_var))
+    };
+    let mut urls = data_service_credential_urls()
+        .into_iter()
+        .filter(|(env_var, _)| is_child_credential(env_var))
+        .collect::<Vec<_>>();
 
-    // Data services — inject unconditionally. The key's presence is the
-    // toggle: if it's not in the parent env or keychain, `build_mcp_server_env`
-    // skips it and the server surfaces `permission_denied`. A separate
-    // `*_enabled` bool on settings is a spandrel — it can only ever block a
-    // key that is already configured, which is pure negative value.
-    // URLs resolve through `credential_url_for_key`, so inference-provider-
-    // backed rows (RunPod) read the provider's `api_url` slot — the same
-    // slot zed's `ApiKeyState` and the settings UI use.
-    for desc in DATA_SERVICES {
-        urls.push((
-            desc.env_var.to_string(),
-            credential_url_for_key(desc.credential_key),
-        ));
-    }
-
-    // Inference providers with current MCP consumers — inject their keys from
-    // the `api_url` keychain slot, the same slot zed's `ApiKeyState` reads, so the child
-    // process and zed's provider infrastructure always see the same key.
-    // This is the 2026-08-31 401 fix: the child previously read a legacy
-    // `kask://credentials/<key>` slot that no update path ever refreshed,
-    // so a key rotated via Settings → AI → LLM Providers left MCP servers
-    // authenticating with the dead key. Providers whose env var a
-    // DATA_SERVICES entry already carries (RunPod) are skipped — the loop
-    // above emits that pair exactly once, at the same `api_url`. Ollama is
-    // skipped (empty env_var — local, no key needed). KiloCode remains a
-    // native chat provider, but no MCP server reads its key.
+    // Inference providers with current MCP consumers read from the provider's
+    // api_url keychain slot — the same slot zed's ApiKeyState reads. Ollama is
+    // keyless; native-only KiloCode and RunPod have no child allowlist; a
+    // provider already represented by a Data Services row is de-duplicated.
     for provider in INFERENCE_PROVIDERS {
         if provider.env_var.is_empty()
-            || provider.id == "KiloCode"
-            || DATA_SERVICES
-                .iter()
-                .any(|desc| desc.env_var == provider.env_var)
+            || !is_child_credential(provider.env_var)
+            || urls.iter().any(|(env_var, _)| env_var == provider.env_var)
         {
             continue;
         }
         urls.push((provider.env_var.to_string(), provider.api_url.to_string()));
     }
-
-    // Note: HKASK_SMTP_PASSWORD is in DATA_SERVICES as a Secret (unconditional
-    // injection). The consumer (curator server) gates on smtp_username being
-    // non-empty, and `build_mcp_server_env` skips injection when the
-    // keychain entry is absent — so emitting the URL unconditionally is
-    // harmless when email is not configured.
 
     urls
 }
@@ -528,11 +494,9 @@ mod tests {
     // 2026-08-31 split-brain fix — successor to the D29 mirror contract):
     // (a) every inference-provider key — RunPod included — resolves to the
     //     provider `api_url` slot via `credential_url_for_key`, so the
-    //     settings UI, MCP env injection, and zed's `ApiKeyState` all read
-    //     ONE location;
-    // (b) `credential_urls_for_mcp` injects each provider env var exactly
-    //     once, at the `api_url` slot — the legacy
-    //     `kask://credentials/<key>` slots feed nothing.
+    //     settings UI and zed's `ApiKeyState` read ONE location;
+    // (b) `credential_urls_for_mcp` includes only providers with remaining
+    //     child consumers. Native-only RunPod/KiloCode stay out of child env.
     //
     // NOT covered here: "RunPod is absent from the openai_compatible
     // registration set" — no such set exists in kask_bridge (providers are
@@ -563,15 +527,14 @@ mod tests {
     }
 
     #[test]
-    fn credential_urls_for_mcp_injects_provider_keys_from_their_api_url_slot() {
+    fn credential_urls_for_mcp_injects_only_provider_keys_with_child_consumers() {
         let urls = super::credential_urls_for_mcp();
 
-        // Every provider with a current MCP consumer appears exactly once,
+        // Provider keys with current MCP-child consumers appear exactly once,
         // resolved to the provider api_url slot (the same slot ApiKeyState reads).
         let expected = [
             ("OPENROUTER_API_KEY", "https://openrouter.ai/api/v1"),
             ("DEEPINFRA_API_KEY", "https://api.deepinfra.com/v1/openai"),
-            ("RUNPOD_API_KEY", "https://api.runpod.io"),
         ];
         for (env_var, api_url) in expected {
             let matches: Vec<&(String, String)> =
@@ -579,9 +542,7 @@ mod tests {
             assert_eq!(
                 matches.len(),
                 1,
-                "{env_var} must be injected exactly once (RunPod appears in both \
-                 registries — double-injection would leave the child with an \
-                 arbitrary one of the two slots)"
+                "{env_var} must be injected exactly once from its provider slot"
             );
             assert_eq!(
                 matches[0].1, api_url,
@@ -589,13 +550,20 @@ mod tests {
             );
         }
 
-        // The native KiloCode key still lives in its provider api_url slot,
-        // but no child process consumes it or needs a restart on rotation.
-        assert_eq!(
-            super::credential_url_for_key("kilocode"),
-            "https://api.kilo.ai/api/gateway"
+        // Native providers without MCP-child consumers stay at their canonical
+        // api_url slots but must not be granted to, or restart, any child.
+        for native_only in ["KILOCODE_API_KEY", "RUNPOD_API_KEY"] {
+            assert!(
+                !urls.iter().any(|(var, _)| var == native_only),
+                "native-only provider {native_only} must not enter MCP child env"
+            );
+        }
+        let data_service_urls = super::data_service_credential_urls();
+        assert!(
+            data_service_urls
+                .iter()
+                .any(|(var, url)| { var == "RUNPOD_API_KEY" && url == "https://api.runpod.io" })
         );
-        assert!(!urls.iter().any(|(var, _)| var == "KILOCODE_API_KEY"));
         for retired in ["RUNPOD_S3_ACCESS_KEY", "RUNPOD_S3_SECRET"] {
             assert!(
                 !urls.iter().any(|(var, _)| var == retired),
@@ -626,9 +594,9 @@ mod tests {
 
     /// D69 embedding eligibility: only providers that serve an OpenAI-compatible
     /// `/embeddings` endpoint resolve an embedding port. Chat-only KiloCode and
-    /// endpoint-discovery RunPod are recognized `INFERENCE_PROVIDERS` entries
-    /// (native chat pre-seeding, keychain `api_url` routing, RunPod OCR
-    /// credential injection all keep working through the descriptor) but must
+    // endpoint-discovery RunPod are recognized `INFERENCE_PROVIDERS` entries
+    // (native provider registration and keychain api_url routing keep working
+    // through the descriptor) but must
     /// NOT resolve embeddings: `LanguageModelEmbeddingPort` POSTs to
     /// `{api_url}/embeddings`, a route neither provider serves, so resolving
     /// one would let the editor log "semantic recall enabled" at startup and

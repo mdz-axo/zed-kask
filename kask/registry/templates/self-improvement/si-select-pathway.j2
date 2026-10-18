@@ -19,7 +19,7 @@ contract:
     acceptance_criteria: array
     variety_check: array|null
 ---
-{# goal: Select the improvement pathway (θ or Σ), scaffold component (if Σ), signal type (𝒟_t, e_t, or τ_t), and generate a concrete improvement plan with budget, acceptance criteria, and variety engineering to prevent knowledge bubbles across PDCA iterations. #}
+{# goal: Select the scaffold component (p, m, 𝒯, or Σ), signal type (𝒟_t, e_t, or τ_t), and generate a concrete improvement plan with budget, acceptance criteria, and variety engineering to prevent knowledge bubbles across PDCA iterations. #}
 You are an agent practicing the Self-Improvement Kata, grounded in the unified self-induced update operator formalism (Ren et al., 2026, arXiv:2607.13104).
 
 This is PDCA Plan: SELECT PATHWAY AND SIGNAL.
@@ -40,21 +40,15 @@ Context: {{ context | default({}) | tojson }}
 
 ## What You Must Do
 
-### Step 1: Determine the Update Target (Pathway Selection)
+### Step 1: Confirm the Update Target
 
-**Foundation Model Improvement (θ):** Updates model parameters. Slower, more stable, amortizes capability across tasks. Choose when:
-- (a) FM fine-tuning is explicitly permitted
-- (b) The capability gap requires parametric consolidation (scaffold-level improvements have plateaued)
-- (c) The gap is in the model's internal representations, not in how it's conditioned
+**Scaffolding Improvement (Σ)** is the only executable pathway here: it updates scaffold components — prompts, memory, tools, control logic. Faster, more reversible, task-specific.
 
-**Scaffolding Improvement (Σ):** Updates scaffold components. Faster, more reversible, task-specific. Choose when:
-- (a) The bottleneck is in task communication, memory, tool execution, or control logic
-- (b) FM fine-tuning is not permitted or not justified
-- (c) Fast, reversible adaptation is preferred
+**Foundation Model Improvement (θ)** — parameter updates via fine-tuning — is **out of scope for the co-researcher mandate** and has no executor in this system (the training server and adapter lifecycle were removed). If the capability gap genuinely requires parametric consolidation — the gap is in the model's internal representations, not in how it is conditioned, and scaffold-level improvements have plateaued — say so plainly in `improvement_plan` and return `pathway: "out_of_scope"`. Never relabel a scaffold change as a fine-tune.
 
-The paper notes: "Modifying the operational scaffold (Σ) drives a fast adaptation loop... parameter updates (θ) are much slower" (Section 9.1). Default to Σ unless θ is explicitly needed.
+The paper notes: "Modifying the operational scaffold (Σ) drives a fast adaptation loop... parameter updates (θ) are much slower" (Section 9.1).
 
-### Step 2: If Scaffolding (Σ), Determine Which Component
+### Step 2: Determine Which Σ Component
 
 - **Prompt (p):** when the bottleneck is task communication, objectives, or constraints
 - **Memory (m):** when the bottleneck is long-horizon recall, cross-context knowledge transfer, or context-window pressure
@@ -63,7 +57,7 @@ The paper notes: "Modifying the operational scaffold (Σ) drives a fast adaptati
 
 ### Step 3: Determine the Improvement Signal
 
-- **Intrinsic Generative Demos (𝒟_t):** Agent synthesizes training instances from its own priors. Choose when the agent can generate high-quality data and the bottleneck is in the training distribution.
+- **Intrinsic Generative Demos (𝒟_t):** Agent synthesizes exemplars from its own priors. Choose when the agent can generate high-quality material and the bottleneck is in the exemplar distribution.
 - **Intrinsic Evaluative Feedback (e_t):** Agent judges candidate behavior through rubrics, consistency, or critique. Choose when the agent can serve as its own critic and the bottleneck is in alignment or quality.
 - **Extrinsic Exploratory Experience (τ_t):** Agent collects interaction trajectories from grounded environments. Choose when the environment provides executable feedback (unit tests, task success, rewards).
 
@@ -80,19 +74,19 @@ Specify:
 The paper warns: "Insufficient diversity in generated demonstrations also narrows the solution space and leads to pattern collapse during iterations. In fact, agents may get trapped in knowledge bubbles and repeatedly generate data, which reinforces their existing biases" (Section 5.1).
 
 If this is PDCA iteration 2+:
-- Check whether the previous iteration's pathway+signal combination is the same as the current selection.
+- Check whether the previous iteration's component+signal combination is the same as the current selection.
 - If so, either:
   (a) Justify why the same combination is worth retrying (e.g., different hyperparameters, different data, different sub-pathway paradigm), or
   (b) Select a different combination to expand exploration coverage.
-- Track the set of pathway+signal combinations already attempted across PDCA iterations.
+- Track the set of component+signal combinations already attempted across PDCA iterations.
 - If all combinations for the current scaffold component have been exhausted, recommend switching to a different scaffold component or escalating to the outer Kata.
 
 This implements Ashby's Law of Requisite Variety: the regulator's variety (exploration coverage) must be at least as large as the system's variety (the space of possible improvements).
 
 ## Constraints
 
-- Default pathway is Scaffolding Improvement (Σ) unless FM fine-tuning is explicitly permitted.
+- The executable pathway is Scaffolding Improvement (Σ); Foundation Model fine-tuning is out of scope and has no executor.
 - The improvement plan must include the measured criteria that decide propose vs discard; acceptance belongs to the operator's algedonic review.
 - The critic (evaluator) must be decoupled from the generator.
 
-Respond with a JSON object containing `pathway` (exactly "theta" or "sigma"), `scaffold_component` (if sigma: exactly "p", "m", "T", or "sigma"), `signal_type` (exactly "D_t", "e_t", "tau_t", or an array of these for multi-signal), `improvement_plan`, `budget`, `acceptance_criteria`, and `variety_check` (if PDCA iteration 2+: list of previously attempted combinations and justification for current selection).
+Respond with a JSON object containing `pathway` (exactly "sigma", or "out_of_scope" when the gap genuinely requires a parameter update), `scaffold_component` (exactly "p", "m", "T", or "sigma"), `signal_type` (exactly "D_t", "e_t", "tau_t", or an array of these for multi-signal), `improvement_plan`, `budget`, `acceptance_criteria`, and `variety_check` (if PDCA iteration 2+: list of previously attempted combinations and justification for current selection).

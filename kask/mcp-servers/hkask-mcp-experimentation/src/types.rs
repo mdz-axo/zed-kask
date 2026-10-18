@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// The seven artifact layers (§P8.3 + D2) — the shard map's genotype
+/// The six artifact layers (§P8.3 + D2) — the shard map's genotype
 /// media. `scientific_hypothesis` (operator ruling 2026-10-15, D2 — the
 /// general lab notebook): the genotype is the operationalized hypothesis
 /// plus its measurement plan; fitness comes from recorded observations
@@ -14,7 +14,6 @@ pub const LAYERS: &[&str] = &[
     "prompt_template",
     "tool_schema",
     "regulation_scalar",
-    "lora_adapter",
     "scientific_hypothesis",
 ];
 
@@ -373,7 +372,7 @@ pub enum ExperimentationError {
     #[error("variant {0} does not belong to experiment {1}")]
     VariantNotInExperiment(String, String),
     #[error(
-        "layer must be one of skill, agent_card, prompt_template, tool_schema, regulation_scalar, lora_adapter, scientific_hypothesis; got {0:?}"
+        "layer must be one of skill, agent_card, prompt_template, tool_schema, regulation_scalar, scientific_hypothesis; got {0:?}"
     )]
     UnknownLayer(String),
     #[error("prediction confidence must be in [0, 1], got {0}")]

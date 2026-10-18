@@ -958,7 +958,6 @@ async fn tag_chunks_with_llm(
         typical_p: 0.0,
         seed: None,
         thinking_allowed: false,
-        adapter: None,
         system_prompt: None,
         timeout_hint_secs: None,
     };

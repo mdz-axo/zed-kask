@@ -36,9 +36,9 @@ exports no skill executor (`kask/crates/kask_bridge/src/kask_bridge.rs:50-124`).
 
 ## Settings hierarchy
 
-`KaskSettings` contains the data and artifact roots plus 14 subsystem sections:
+`KaskSettings` contains the data and artifact roots plus 13 subsystem sections:
 `general`, `mcp`, `curator`, `memory`, `condenser`, `research`, `companies`,
-`corpus`, `scenarios`, `prediction_markets`, `swarm`, `training`, `media`, and
+`corpus`, `scenarios`, `prediction_markets`, `swarm`, `media`, and
 `models` (`kask/crates/kask_bridge/src/settings.rs:35-96`).
 
 ```mermaid
@@ -57,7 +57,6 @@ classDiagram
         +scenarios: KaskScenariosSettings
         +prediction_markets: KaskPredictionMarketsSettings
         +swarm: KaskSwarmSettings
-        +training: KaskTrainingSettings
         +media: KaskMediaSettings
         +models: KaskModelsSettings
     }
@@ -149,10 +148,9 @@ classDiagram
         scenarios
         prediction-markets
         swarm
-        training
         media
     }
-    Registry --> BuiltinMcpServer : 11 entries
+    Registry --> BuiltinMcpServer : 10 entries
 ```
 
 <!-- DIAGRAM_ALIGNMENT
@@ -178,7 +176,6 @@ quoted env-var names inside each `credentials` / `config_env` array).
 | `scenarios` | 0 | 2 |
 | `prediction-markets` | 1 | 4 |
 | `swarm` | 2 | 19 |
-| `training` | 3 | 20 |
 | `media` | 4 | 10 |
 
 The media server's live router is pinned at 102 tools

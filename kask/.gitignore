@@ -58,9 +58,6 @@ data/
 # Personal format-shifted output (Kindle zips, etc.) — never commit
 output/
 
-# Python virtual environment (training tools) — not part of the Rust workspace
-.venv-training/
-
 # Distillation data — canonical copies live on HuggingFace
 #   HF: Axolotl-Partners/qwen36-distill-opus-dsv4
 distill_data/

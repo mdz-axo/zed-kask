@@ -31,7 +31,7 @@ You are declaring one experiment on the **{{ layer }}** layer.
 
 Write 2–5 rubrics, each a JSON object with keys `id`, `description`, `kind`, `verification`:
 
-1. At least one `metric` rubric — the measurable outcome, verified by `{"type": "report_ref", "harness": "<the harness that measures it>"}` (e.g. `swarm_eval_agent_local`, `training_evaluate`, or a data-series observation tool).
+1. At least one `metric` rubric — the measurable outcome, verified by `{"type": "report_ref", "harness": "<the harness that measures it>"}` (e.g. `swarm_eval_agent_local` or a data-series observation tool).
 2. At least one `implementation` or `grounded_report` rubric — the structural or evidence property, verified by `{"type": "contains", "spec": "..."}`, `{"type": "not_contains", "spec": "..."}`, or `{"type": "regex", "pattern": "..."}` (the swarm evaluator kinds).
 3. Stable snake_case ids (lowercase, digits, underscores; not digit-led); concrete measurable descriptions; no duplicates.
 
