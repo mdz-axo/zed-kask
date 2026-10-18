@@ -40,7 +40,7 @@ The skill manages the script fleet at `~/system-maintenance/` (this machine's co
 ## When NOT to Use
 
 - Code bugs or performance regressions — `diagnose`.
-- Repo docs, corpus, media, portfolio data dirs — their own skills/servers.
+- Repo docs, corpus, media data dirs — their own skills/servers.
 - Executing sudo work — this skill hands it off, never asks for or handles the password.
 
 ## Instructions — the maintenance pass (one bounded PDCA loop, max 2 re-entries)

@@ -56,10 +56,11 @@
 #   fails CI instead of degrading to tool-not-found at dispatch.
 # - check-reg-canonical.sh: every `reg.*` tracing target is a canonical
 #   namespace (registered in CANONICAL_NAMESPACES).
-# - check-skill-crossrefs.sh, check-forecast-conformance.sh and
-#   check-template-contracts.sh: skill cross-references resolve, the
-#   forecasting contract matches its primitives, and template contracts
-#   match template bodies.
+# - check-skill-crossrefs.sh, check-skill-crate-refs.sh,
+#   check-forecast-conformance.sh and check-template-contracts.sh: skill
+#   cross-references resolve, crate-shaped identifiers in skills/templates
+#   name live Cargo packages, the forecasting contract matches its
+#   primitives, and template contracts match template bodies.
 # - check-retired-record.sh: every skill retired within the change range
 #   is appended to RETIRED_SKILL_NAMES in the same change (the D1
 #   retirement convention) — a forgotten append would silently shrink
@@ -205,9 +206,10 @@ jobs:
         run: bash kask/scripts/check-mcp-registration.sh
       - name: Regulation namespaces — reg.* spans are canonical
         run: bash kask/scripts/check-reg-canonical.sh
-      - name: Skills — cross-references resolve; forecasting contract matches primitives; template contracts match bodies
+      - name: Skills — cross-references and crate references resolve; forecasting and template contracts agree
         run: |
           bash kask/scripts/check-skill-crossrefs.sh
+          bash kask/scripts/check-skill-crate-refs.sh
           bash kask/scripts/check-forecast-conformance.sh
           bash kask/scripts/check-template-contracts.sh
       - name: Provider profiles — every tree-adopted vendor has a registry profile carrying the contract keys

@@ -27,6 +27,20 @@ scan for contradictions/stale/fragmented → resolve, purge, condense → clean 
 
 Forgetting (purging/condensing) is NOT learning. It is shedding low-value information so it doesn't obstruct learning. The goldfish principle applies here: once a lesson is reified into proactive guidance, the episodic memory that produced the lesson can be forgotten — but the forgetting is a hygiene side-effect, not the learning step. The learning step is the reification.
 
+## Initial and target condition
+
+- **Initial condition:** a named memory store (curator, replica/corpus, or
+  swarm) reachable for a read-only scan, its charter version when the values
+  pass is triggered, and the Phase-2 predicted finding counts recorded before
+  the scan runs. A store that cannot be scanned is a blocked session, never a
+  clean one.
+- **Target condition:** every scan finding carries an operator decision
+  (approved, modified, or rejected); every approved proposal has an execution
+  result; the post-execute re-scan shows zero remaining contradictions on the
+  treated targets (the Check gate); and surviving findings are named in the
+  report's follow-up recommendations rather than silently dropped. An
+  unexecuted approval or an unreported survivor is not a finished session.
+
 ## D/P labelling
 
 The scan's counts, the approved-proposal count, the execution check and the post-treatment re-scan gate are D (`lisp_eval` over tool results). Finding classification, Festinger strategy choice and reification drafts are P; every P step except the Phase-2 prediction is critiqued by the operator's per-proposal approval in Phase 4 — nothing unapproved is executed. The prediction is critiqued by the Phase-6 gaps computation (D). Self-assessed memory quality is the Dunning case (`onto_anchor` → derived `metacognition`): the check comes from outside the session.
@@ -137,7 +151,7 @@ The scan's counts, the approved-proposal count, the execution check and the post
    **f. Charter alignment (the values pass)** — run on operator request or on charter version change (compare the charter's `version:` field against the version recorded in the latest values-pass awareness row — a deterministic trigger, not habit), not every session; it is a heavier semantic pass than the mechanical checks. Scope: the normative layer only (reified lessons, preferences, rulings, process guidance — the rows that steer behavior); the raw episodic layer is evidence and explicitly out of scope. Two checks:
    - **Guidance check** — one batched model pass (the distillation-port pattern) over the normative rows: does this guidance steer behavior in a way that conflicts with a charter value? Each candidate conflict cites the lesson h_mem, the charter value (V1–V8), and the discernment-test reasoning. A factually-true lesson can still be values-corrupting.
    - **Practice check** — per charter value, search lessons and history for evidence the system practices it; values with no practice evidence are flagged (the memory-level analog of the charter's IS vs OUGHT table).
-   Record the pass in a `curator-process|therapy_values_pass_<date>` awareness row carrying the charter version reviewed.
+   Record the pass in a `curator-process|therapy_values_pass_<date>` awareness row carrying the charter version reviewed. Emit the pass as a `values_pass` record for the Phase-6 report: `{ "charter_version": <the version: field reviewed>, "value_states": [ { "value": "V1".."V8", "state": "practiced" | "thin" | "conflicted" } ] }` — one entry per charter value, `conflicted` when the guidance check found a conflict citing it, `practiced`/`thin` from the practice check. The report's counts are computed from this array by the template; a count the model types instead is not the count.
 
    **Skill-use attribution gate:** before using a `skill_use_issue` as evidence for changing a skill, classify its `failure_origin` as `skill_contract`, `agent_execution`, `tool_implementation`, `provider_transport`, `environment_or_baseline`, `operator_interruption`, `expected_absence`, or `unknown`. Preserve the raw incident and total count. Only `skill_contract` and repeated `agent_execution` failures directly justify skill changes; route other origins to their owning subsystem. Keep `unknown` unresolved rather than averaging it into skill reliability.
 
@@ -302,12 +316,37 @@ the operator approved only partial merges is expected, not a failure.
    The gap is the session's calibration signal about this memory store, carried into the report's hygiene summary.
 1. Call `render_template` to render the report template:
    - template: `therapy/report.j2`
-   - variables: { "target": "<target name>", "findings": <scan findings>, "proposals": <all proposals, each with its Phase-4 approved flag>, "executions": <execution results, each with its success flag> }
+   - variables: { "target": "<target name>", "findings": <scan findings>, "proposals": <all proposals, each with its Phase-4 approved flag>, "executions": <execution results, each with its success flag>, "values_pass": <the Phase-2f values-pass record, or omitted when the pass did not run> }
+
+   Copyable context shape:
+   ```json
+   {
+     "target": "<target name>",
+     "findings": [],
+     "proposals": [],
+     "executions": [],
+     "values_pass": {
+       "charter_version": "<the version: field reviewed>",
+       "value_states": [
+         { "value": "V1", "state": "practiced|thin|conflicted" },
+         { "value": "V2", "state": "practiced|thin|conflicted" },
+         { "value": "V3", "state": "practiced|thin|conflicted" },
+         { "value": "V4", "state": "practiced|thin|conflicted" },
+         { "value": "V5", "state": "practiced|thin|conflicted" },
+         { "value": "V6", "state": "practiced|thin|conflicted" },
+         { "value": "V7", "state": "practiced|thin|conflicted" },
+         { "value": "V8", "state": "practiced|thin|conflicted" }
+       ]
+     }
+   }
+   ```
+   Omit `values_pass` (or pass `{}`) when the values pass did not run — the
+   template then states that explicitly instead of rendering empty counts.
 
 2. Following the template's guidance, produce a therapy session report:
    - **Memory hygiene summary**: how many contradictions resolved, how many fragmented memories merged/linked, how many confidence values recalibrated — every count over the render variables is computed by the template (approved proposals joined to finding classes; executions by success); compose prose around the rendered numbers, never re-type a count.
    - **Reification summary**: how many skills/templates/rules created, how many source memories purged or condensed, the cognitive load shed (estimated reduction in memory database size or retrieval noise).
-   - **Values alignment summary** (when the values pass ran): values practiced / thin / conflicted, conflicts found with their lesson + value citations, practice gaps carded, and the charter version reviewed.
+   - **Values alignment summary** (when the values pass ran): the charter version reviewed and the practiced/thin/conflicted counts are computed by the template from `values_pass.value_states` — compose prose around the rendered numbers, never re-type a count. Report the conflicts with their lesson + value citations, and the practice gaps carded.
    - **Per-issue detail**: what was found, what was proposed, what was approved, what was executed, what was the outcome.
    - **Recommendations**: follow-up actions for the user (e.g., "run another therapy session after the next consolidation cycle", "review the new skill's effectiveness after N invocations", "consider reifying the remaining reification candidates in a future session").
 
@@ -331,6 +370,11 @@ All receipts executed live through the tools — `lisp_eval` for the forms, `ren
   `[<survivor>]` → false.
 - Prediction reconciliation `(gaps found_counts predicted_counts)`:
   found `[2,1,0,3]` vs predicted `[1,2,0,2]` → `[1,-1,0,1]`.
+- `therapy/report` values-pass branches: omitted `values_pass` states that the
+  pass did not run; one V1–V8 row each with recognized states renders the
+  exact practiced/thin/conflicted counts; a duplicate/missing value, unknown
+  state, missing version, or wrong row count reports `Values pass incomplete`
+  and never renders alignment counts.
 - `therapy/classify` renders with `{target, findings}` and the findings list
   appears in the rendered prompt (before the repair the template never
   injected the findings it exists to classify).
