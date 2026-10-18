@@ -307,7 +307,7 @@ mod tests {
         assert!(
             (OntologyAnchor::DomainSupplement {
                 namespace: OntologyNamespace::MlSchema,
-                concept: hkask_bridge_ontology::ml_schema::EXPERIMENT.into()
+                concept: hkask_bridge_ontology::ml_schema::MODEL_EVALUATION.into()
             }
             .density_factor()
                 - 1.1)

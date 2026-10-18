@@ -336,8 +336,8 @@ mod tests {
         let g = graph();
         // Many related keywords in one line — should cap at 0.5
         let bonus = g.graph_adjacency_bonus(
-            "encoding salience recall recognition_memory consolidation forgetting purge",
-            &["encoding"],
+            "encoding memory_consolidation consolidation recall salience cued_recall",
+            &["encoding", "salience"],
         );
         assert!(
             (bonus - 0.5).abs() < 0.001,

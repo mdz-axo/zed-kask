@@ -880,18 +880,17 @@ mod tests {
     #[test]
     fn derive_and_compress_with_correct_anchor() {
         // Simulate the engine's workflow: tool_name → derive anchor → compress
-        let tool_name = "corpus_query";
+        let tool_name = "corpus_chunk";
         let anchor = select_ontology_anchor(tool_name);
         assert_eq!(
             anchor,
-            OntologyAnchor::DualAxis {
-                axis: OntologyAxis::Pko,
-                concept: hkask_bridge_ontology::pko::PROCEDURE.to_string()
+            OntologyAnchor::DomainSupplement {
+                namespace: OntologyNamespace::Golem,
+                concept: hkask_bridge_ontology::golem::WORK.to_string()
             }
         );
 
-        let input =
-            "Step 1: convert the document to text. Step 2: chunk it. Status: execution complete.";
+        let input = "The character enters the scene, and the narrative turns on that event.";
         let algo = WordRankAlgorithm;
         let (result, _) = algo.compress(
             input,
@@ -899,14 +898,15 @@ mod tests {
             ContextCategory::StructuredData,
             Some(&anchor),
         );
-        // With the PKO process anchor, step/status vocabulary is high-signal.
+        // With the GOLEM narrative anchor, narrative vocabulary is high-signal.
         // Normal profile (20% retention): short enough to pass through
         assert!(!result.is_empty());
-        // The result should include the process terms
+        // The result should include the narrative terms
         // (with Normal profile on short input, it may pass through entirely)
-        let has_process =
-            result.contains("Step 1") || result.contains("chunk") || result.contains("Status");
-        assert!(has_process, "process content not preserved: {result}");
+        let has_narrative = result.contains("character")
+            || result.contains("scene")
+            || result.contains("narrative");
+        assert!(has_narrative, "narrative content not preserved: {result}");
     }
 
     // ── Property-based tests (Wave 2) ─────────────────────────────────────

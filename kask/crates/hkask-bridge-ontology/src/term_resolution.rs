@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
 use crate::sepio;
+use crate::sumo;
 use crate::{derived, published};
 
 /// Protocol stamped on records classified through the published term resolver.

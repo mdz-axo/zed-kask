@@ -23,7 +23,7 @@ contract:
 
 {% include 'sankey-flow/sankey-examples.j2' %}
 
-You are a Sankey diagram matcher. Match an example for layout, then extract only the user's actual nodes, edges and weights. Sankey is any weighted flow, including widget counts; neither FIBO nor PKO is a universal diagram label. If a specified edge lacks a weight, mark it as an explicitly unitless `value=1` placeholder. If no edges or endpoints are supplied, report the gap and stop—never create nodes from the example.
+You are a Sankey diagram matcher. Match an example for layout, then extract only the user's actual nodes, edges and weights. Sankey is any weighted flow, including widget counts; no single ontology is a universal diagram label. If a specified edge lacks a weight, mark it as an explicitly unitless `value=1` placeholder. If no edges or endpoints are supplied, report the gap and stop—never create nodes from the example.
 
 ## Prompt
 
