@@ -16,7 +16,7 @@
 {#     object: string, #}
 {#     epistemic_mode: "IS" | "OUGHT" | "subjunctive" | "probabilistic", #}
 {#     materiality: "load_bearing" | "incidental" — load-bearing if the text's conclusions would change if the claim were wrong (ISA 320), #}
-{#     source_reference: string | null  # e.g. "company_transcript:chunk_3" or "dcf_valuation:terminal_value" #}
+{#     source_reference: string | null  # a citation key in the source pipeline's records — the tool name that produced the output and its field, e.g. "study_report:sample" #}
 {#   } #}
 {#   excluded_claims: array of { #}
 {#     text: string, #}
@@ -57,15 +57,15 @@ The following sources were called to produce this text. Each claim may or may no
 
 ## Instructions
 
-1. Read the target text and identify every declarative factual claim — a statement that asserts something about the world that could be true or false. A factual claim is an IS-mode declarative statement: "the company's revenue was $15.4B" is a factual claim; "the company should invest in AI" is an OUGHT (recommendation); "if the company enters the Chinese market, revenue could double" is subjunctive (scenario); "there is a 70% chance the stock outperforms" is probabilistic (forecast).
+1. Read the target text and identify every declarative factual claim — a statement that asserts something about the world that could be true or false. A factual claim is an IS-mode declarative statement: "the study's sample was 1,200 participants" is a factual claim; "the team should adopt the new protocol" is an OUGHT (recommendation); "if the protocol is adopted, dropout could halve" is subjunctive (scenario); "there is a 70% chance the effect replicates" is probabilistic (forecast).
 
 2. For each factual claim, extract:
    - `claim_id`: a unique identifier (e.g., "claim_001")
    - `text`: the exact text of the claim
    - `char_offset`: the character offset where the claim starts in the target text
-   - `subject`: the entity the claim is about (e.g., "company_revenue")
+   - `subject`: the entity the claim is about (e.g., "study_sample_size")
    - `predicate`: what is being asserted (e.g., "was")
-   - `object`: the value asserted (e.g., "$15.4B")
+   - `object`: the value asserted (e.g., "1,200")
    - `epistemic_mode`: IS / OUGHT / subjunctive / probabilistic (a grounding-verify cut of pragmatic-semantics' ontological + epistemic axes; only IS-declarative claims proceed to verification)
    - `materiality`: `load_bearing` or `incidental` (load-bearing if the text's conclusions would change if the claim were wrong per ISA 320)
    - `source_reference`: the named source the claim cites (tool_name + output_key or chunk_id), or null if uncited
@@ -85,27 +85,27 @@ Produce a JSON object:
   "claims": [
     {
       "claim_id": "claim_001",
-      "text": "the company's revenue was $15.4B in fiscal year 2024",
+      "text": "the study's sample was 1,200 participants across 3 sites",
       "char_offset": 142,
-      "subject": "company_revenue",
+      "subject": "study_sample_size",
       "predicate": "was",
-      "object": "$15.4B",
+      "object": "1,200",
       "epistemic_mode": "IS",
       "materiality": "load_bearing",
-      "source_reference": "dcf_valuation:revenue_current"
+      "source_reference": "study_report:sample"
     }
   ],
   "excluded_claims": [
     {
-      "text": "the company should invest in AI infrastructure",
+      "text": "the team should adopt the new protocol",
       "epistemic_mode": "OUGHT",
       "reason": "Recommendation, not a factual claim — does not require grounding"
     }
   ],
   "narrative_fields": [
     {
-      "field_name": "investment_thesis",
-      "text": "The company's durable competitive advantage stems from...",
+      "field_name": "methodology_review",
+      "text": "The study's durable methodological strength stems from...",
       "char_offset": 1200
     }
   ]

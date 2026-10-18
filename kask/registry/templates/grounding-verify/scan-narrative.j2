@@ -53,7 +53,7 @@ strength-2 claims, report the narrative scan as unverified.
 
 Each leak rule pairs a source block with a pattern:
 - `Word`: a distinctive keyword. If the narrative field contains this keyword AND the corresponding block is NOT sourced (no `tool_verified` or `platform_derived` claims for that block), it is a narrative leak.
-- `Quantity`: a unit (e.g., "bps", "%", "x"). The rule only fires when a digit precedes the unit (possibly with separators like spaces, hyphens, or tildes). This prevents false positives — "100% committed" in prose should trigger a financial claim check, but "committed" alone should not.
+- `Quantity`: a unit (e.g., "ms", "%", "x"). The rule only fires when a digit precedes the unit (possibly with separators like spaces, hyphens, or tildes). This prevents false positives — "100% certain" in prose should trigger a quantity claim check, but "certain" alone should not.
 
 ## Instructions
 
@@ -75,16 +75,16 @@ Produce a JSON object:
 {
   "narrative_leaks": [
     {
-      "field_name": "investment_thesis",
-      "block": "financial_profile",
+      "field_name": "methodology_review",
+      "block": "performance_profile",
       "rule_type": "Quantity",
-      "pattern": "bps",
-      "matched_text": "expanded 200bps",
+      "pattern": "ms",
+      "matched_text": "latency fell 40ms",
       "char_offset": 145
     }
   ],
   "clean_fields": [
-    { "field_name": "business_franchise", "rules_checked": 8 }
+    { "field_name": "methodology_notes", "rules_checked": 8 }
   ]
 }
 ```

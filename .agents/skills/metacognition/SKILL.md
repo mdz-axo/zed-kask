@@ -86,7 +86,7 @@ is the knowledge needed to see it).
 
 ### meta-experiment (Kata Step 4: Experiment / Do)
 
-1. Apply the predicted calibration — Falstaffian perspective rotation (the five shapes — predicate hollow, subject expansion, object inversion, direction reversal, value redefinition — defined in `company-research/falstaffian-competitive-rotation`; apply the rotation inline to the assessment), ellipsis analysis (render `metacognition/ellipsis-analysis` with `text` = the context text, `expectations`, `biases`, `assumptions`, and `domain`), strategy adjustment, or an **inquiry experiment** for a problem that needs branching, revision and deep-dive delegation (below).
+1. Apply the predicted calibration — Falstaffian perspective rotation (the five shapes — predicate hollow, subject expansion, object inversion, direction reversal, value redefinition — defined in `metacognition/falstaffian-rotation`; apply the rotation inline to the assessment), ellipsis analysis (render `metacognition/ellipsis-analysis` with `text` = the context text, `expectations`, `biases`, `assumptions`, and `domain`), strategy adjustment, or an **inquiry experiment** for a problem that needs branching, revision and deep-dive delegation (below).
 2. Re-measure the current condition after the experiment (the experiment changed the system).
 3. Produce new current_artifacts and current_procedure for the gap computation. Carry Step 2's measured `gap_before` and Step 3's predeclared reduction threshold unchanged; never recompute the baseline from post-experiment data.
 

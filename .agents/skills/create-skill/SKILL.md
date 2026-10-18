@@ -237,7 +237,7 @@ Run once, before any research or writing. A new skill that duplicates or belongs
    from a generic template. Each phase is grounded in an ontological anchor.
 4. Identify which skills this skill will compose (delegates via `skill` tool). If it runs 3+ peer skills on one task and needs their outputs merged, compose `skill-bundler` for the merge rather than writing a merge step.
 5. Identify which MCP tools the skill will call (e.g., `curator_memory_recall`,
-   `curator_consult`, `kanban_task_list`, `stock_quote`, `web_search`).
+   `curator_consult`, `kanban_task_list`, `web_search`).
 6. Identify which agent tools the skill will call (e.g., `lisp_eval` for
    deterministic computation, `read_file` for template loading).
 7. Select the teaching patterns the new skill instantiates — convergence,

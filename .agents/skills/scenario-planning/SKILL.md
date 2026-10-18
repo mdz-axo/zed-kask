@@ -38,9 +38,10 @@ this skill is the operating procedure for that pipeline.
 
 - A single quick probability estimate — use the `superforecasting`
   skill instead (it is the Tetlock-only fast path).
-- A financial 2x2 valuation matrix for a company — use the companies
-  server's `scenario_analysis` (the Schwartz 2x2 for valuation lives
-  there; this skill is the general event-tree pipeline).
+- A probability-weighted risk measure over scenario branches — the
+  scenarios server's `scenario_risk_measure` computes it over
+  caller-supplied branch returns (this skill is the general event-tree
+  pipeline).
 - The question has no deadline or no resolution criteria — refine it
   first (`scenario_triage` will classify it needs_refinement).
 

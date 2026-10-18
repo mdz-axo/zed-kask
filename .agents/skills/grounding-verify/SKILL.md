@@ -22,8 +22,12 @@ anchors retained: Fermi's five-rung verification ladder (presence,
 liveness, truth, grounding, binding — the rungs' zed-kask homes are
 mapped in `kask/docs/reference/verification-ladder.md`; this skill
 works the grounding, truth, presence and binding rungs over text, and
-liveness belongs to the regulation loop), the listening skill's
-retrieve-cite-verify process, and the Verification Commons Protocol
+liveness belongs to the regulation loop), the retrieve-cite-verify
+process (the technique the former `listening` skill exercised on
+earnings-call transcripts; that skill retired 2026-10-18 with the
+companies research skills — the process lives here and in any
+pipeline that cites a verbatim substring against its source), and the
+Verification Commons Protocol
 (Ostrom institutional design: bounded provenance, decoupled monitoring,
 graduated sanctions, conflict precedence, nested verification layers).
 The skill is domain-general — it works on any text + source pair — but
@@ -46,8 +50,8 @@ never `tool_verified` (strength 2). Only direct citations — verbatim quotes
 found via mechanical substring match, exact numbers found via `lisp_eval`
 numeric match — can be `tool_verified`.
 
-The extraction ceiling applies to arithmetic too. Derived numbers (EV from
-market cap + net debt, medians, discount percentages) are `platform_derived`
+The extraction ceiling applies to arithmetic too. Derived numbers (a
+total from its parts, medians, percentage changes) are `platform_derived`
 — strength 2 only when the derivation is stated as a `cross_check` form the
 interpreter evaluates against input values. Arithmetic presented without a
 falsifiable derivation is `model_inference`: legitimate, but unverified,
@@ -400,7 +404,7 @@ returns.
      `source_conflicts` finding: both values, both
      sources, both periods/definitions, the relative difference, and the
      precedence disposition. The default hierarchy is `primary source
-     (audited filing) > live market quote > derived metric > model
+     (the original record) > a live observation > derived metric > model
      inference`; a rule's `resolution` field overrides it for that
      quantity. The disposition: prefer the more direct source, disclose
      both values with their periods in the report appendix, and use the
@@ -612,7 +616,7 @@ Renders (declared contexts): `grounding-verify/extract-claims` with `target_text
 | Template | Purpose |
 |----------|---------|
 | `extract-claims.j2` | Extract all declarative factual claims from target text. Each claim is a (subject, predicate, object) tuple with character offset, epistemic mode classification (IS/OUGHT/subjunctive/probabilistic per pragmatic-semantics), and source reference. Emits `claims` (IS-mode only) and `excluded_claims` (other modes). |
-| `assign-provenance.j2` | Assign a provenance tier to each factual claim using the strength lattice. For each `tool_verified` or `platform_derived` claim, emits a `cross_check` specification (a lisp_eval form — `string-contains` for quotes, value-returning derivation forms for arithmetic) plus, for `platform_derived`, the `claimed_value`, `unit`, origin-tagged `inputs`, and `library_form`. Includes a canonical derivation form library (EV, multiples, growth, discount, median) plus data-driven batch drivers (cited numbers, cited quotes, origins, consistency, library verification) that run each check family as ONE call — select and bind instead of authoring. Consumes `congruence_rules` when provided. Each claim carries a `why` field (min 40 chars). Emits `provenance_assignments` with provenance, strength, source_reference, cross_check, claimed_value, unit, inputs, library_form, why. |
+| `assign-provenance.j2` | Assign a provenance tier to each factual claim using the strength lattice. For each `tool_verified` or `platform_derived` claim, emits a `cross_check` specification (a lisp_eval form — `string-contains` for quotes, value-returning derivation forms for arithmetic) plus, for `platform_derived`, the `claimed_value`, `unit`, origin-tagged `inputs`, and `library_form`. Includes a canonical derivation form library (sum, mean, ratio, change %, diff %, median) plus data-driven batch drivers (cited numbers, cited quotes, origins, consistency, library verification) that run each check family as ONE call — select and bind instead of authoring. Consumes `congruence_rules` when provided. Each claim carries a `why` field (min 40 chars). Emits `provenance_assignments` with provenance, strength, source_reference, cross_check, claimed_value, unit, inputs, library_form, why. |
 | `scan-narrative.j2` | Scan narrative (prose) fields for leak rules — patterns that assert something only a sourced block could support. Uses `Word` and `Quantity` leak rule variants. Emits `narrative_leaks` with (field, block, rule, matched_text) tuples. |
 | `compile-error-log.j2` | Compile the graduated-sanctions error log from all findings — `hallucination_findings` (class E), `rounding_notes` (class W), `source_conflicts` (class N) — into one append-only table with ID, class, claim, description, prior value, corrected value, severity, disposition, and a materiality `why`. |
 
@@ -625,11 +629,11 @@ variables.
 This skill is designed as a **delegation target**, mirroring the
 architectural role of `essentialist` and `falsifiability`:
 
-- **company-research-deep** and **company-research-flash** each run their
-  own author-side evidence review (`company-research/evidence-review`) over
-  their frozen drafts instead of a decoupled verifier; neither invokes this
-  skill (observed 2026-09-27; if a sibling adopts this skill, update this
-  note in the same change).
+- The former company-research skills (retired 2026-10-18 with the
+  companies MCP server) each ran their own author-side evidence review
+  over their frozen drafts instead of a decoupled verifier; neither
+  invoked this skill (observed 2026-09-27; if a sibling adopts this
+  skill, update this note in the same change).
 - Any pipeline that produces claims against source data can compose this
   skill as a verification step.
 
@@ -660,12 +664,12 @@ A verifier that reports values absent from the passed source outputs is
 fabricating, not verifying.
 
 **Congruence rules live with the composing pipeline.** This skill is
-domain-general; the domain-specific table (which tool is authoritative
+domain-general; the domain-specific table (which source is authoritative
 for which quantity, what tolerance applies) is supplied via context by
-the pipeline that knows the domain — e.g., the equity table
-(`income_statement` over `key_metrics` back-calculation, `stock_quote`
-for market cap) belongs to company-research-deep/flash's context
-construction, not to this skill's body.
+the pipeline that knows the domain — e.g., a performance report's table
+(benchmark runs authoritative for latency figures over a re-derived
+average) is constructed by the composing pipeline's context construction,
+not by this skill's body.
 
 **Deliberate scope boundaries (operator ratification, 2026-09-08):**
 verification tiers (depth selection) and the primary source pull live
@@ -678,8 +682,8 @@ single-pass by design and verifies against provided sources only.
   entity/relation tuples with character offsets).
 - Step 1 classifies claims by epistemic mode using `pragmatic-semantics`
   (IS/OUGHT, declarative/probabilistic/subjunctive).
-- Step 3 reuses the `listening` skill's retrieve-cite-verify process
-  (mechanical substring match for cited quotes).
+- Step 3 reuses the retrieve-cite-verify process (mechanical substring
+  match for cited quotes).
 - Step 3 uses `lisp_eval` for deterministic numeric verification.
 - The provenance lattice and extraction ceiling are adapted from Fermi's
   `grounding_trust.rs` (strength ordinal, `EXTRACTION_CEILING`).

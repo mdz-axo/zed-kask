@@ -18,7 +18,7 @@
 {#     claimed_value: number | null,  # platform_derived only — the value the report states #}
 {#     unit: number | null,  # platform_derived only — unit of the claim's last decimal place (0.1 for 17.9, 0.0001 for 0.1196, 1 for an integer) #}
 {#     inputs: array | null,  # platform_derived only — [{name: string, origin: string}] where origin is "source:<tool>:<field>" or "claim:<claim_id>" of an EARLIER claim #}
-{#     library_form: string | null,  # platform_derived only — the canonical library form selected ("ev", "ev_ebitda", "pe", "ps", "growth_pct", "discount_pct", "median"), null when authored #}
+{#     library_form: string | null,  # platform_derived only — the canonical library form selected ("sum", "mean", "ratio", "change_pct", "diff_pct", "median"), null when authored #}
 {#     why: string  # min 40 chars — why this provenance tier #}
 {#   } #}
 {#   sourced_blocks: array of { block_name: string, claim_ids: array of claim_id, is_sourced: boolean (provisional only) } #}
@@ -60,12 +60,11 @@ When a claim cites a source that a rule marks non-authoritative for that quantit
 
 Select and bind inputs — do not author your own form when one of these fits. Each references inputs by name; never embed the claimed result as a literal: a form that evaluates without its inputs fails Step 3's empty-env dependency check.
 
-- Enterprise value: `"(+ market_cap net_debt)"`
-- EV/EBITDA: `"(/ (+ market_cap net_debt) ebitda)"`
-- P/E: `"(/ price eps_diluted)"`
-- P/S: `"(/ market_cap revenue)"`
-- Growth %: `"(* 100 (/ (- revenue_current revenue_prior) revenue_prior))"`
-- Discount %: `"(* 100 (/ (- price_a price_b) price_b))"`
+- Sum: `"(+ part_a part_b)"` — a total stated as the sum of its parts
+- Mean: `"(/ total count)"` — an average stated over a counted set
+- Ratio: `"(/ numerator denominator)"` — a rate or proportion
+- Change %: `"(* 100 (/ (- current prior) prior))"` — a relative change between two measurements
+- Diff %: `"(* 100 (/ (- value_a value_b) value_b))"` — a percentage difference between two values
 - Median (any n) — the one recursive library form. It is provided pre-wrapped with the grading wrapper (its helper defines cannot sit inside a `let` binding): bind `values`, `claimed`, `unit` only, call it as-is, and pass `max_depth` >= 8 x list length:
 
 ```
@@ -101,7 +100,7 @@ Consistency comparisons — env: `{ "rules": [{ "quantity", "primary", "cross", 
 Library-form verification — env: `{ "records": [{ "claim_id", "library_form", "cross_check" }, ...] }`, one record per claim with a non-null `library_form`. The driver embeds the library texts as literals — keep it in sync with the list above:
 
 ```
-(define library (list (list "ev" "(+ market_cap net_debt)") (list "ev_ebitda" "(/ (+ market_cap net_debt) ebitda)") (list "pe" "(/ price eps_diluted)") (list "ps" "(/ market_cap revenue)") (list "growth_pct" "(* 100 (/ (- revenue_current revenue_prior) revenue_prior))") (list "discount_pct" "(* 100 (/ (- price_a price_b) price_b))") (list "median" "(define middle-of"))) (define text-for (lambda (name entries) (cond ((is_null entries) nil) ((member name (list (car (car entries)))) (car (cdr (car entries)))) (t (text-for name (cdr entries)))))) (define check-one (lambda (r) (let ((text (text-for (assoc "library_form" r) library))) (cond ((is_null text) (list (assoc "claim_id" r) 'unknown_name)) ((string-contains text (assoc "cross_check" r)) (list (assoc "claim_id" r) 'ok)) (t (list (assoc "claim_id" r) 'mismatch)))))) (define check-all (lambda (lst) (cond ((is_null lst) '()) (t (cons (check-one (car lst)) (check-all (cdr lst))))))) (check-all records)
+(define library (list (list "sum" "(+ part_a part_b)") (list "mean" "(/ total count)") (list "ratio" "(/ numerator denominator)") (list "change_pct" "(* 100 (/ (- current prior) prior))") (list "diff_pct" "(* 100 (/ (- value_a value_b) value_b))") (list "median" "(define middle-of)")) (define text-for (lambda (name entries) (cond ((is_null entries) nil) ((member name (list (car (car entries)))) (car (cdr (car entries)))) (t (text-for name (cdr entries)))))) (define check-one (lambda (r) (let ((text (text-for (assoc "library_form" r) library))) (cond ((is_null text) (list (assoc "claim_id" r) 'unknown_name)) ((string-contains text (assoc "cross_check" r)) (list (assoc "claim_id" r) 'ok)) (t (list (assoc "claim_id" r) 'mismatch)))))) (define check-all (lambda (lst) (cond ((is_null lst) '()) (t (cons (check-one (car lst)) (check-all (cdr lst))))))) (check-all records)
 ```
 
 ## The provenance lattice
@@ -119,16 +118,16 @@ Every claim is classified into one of these tiers:
 
 ## The extraction ceiling
 
-A claim that the LLM synthesizes from tool outputs is `model_inference`, NEVER `tool_verified`. The LLM is the ontologist; synthesis is extraction. Only direct citations — verbatim quotes from the transcript, exact numbers copied from an MCP tool output — can be `tool_verified`. A claim like "revenue grew 12% due to mix shift" has two parts: "revenue grew 12%" (could be `tool_verified` if the numbers are in the source) and "due to mix shift" (is `model_inference` — the LLM synthesized the causal explanation).
+A claim that the LLM synthesizes from tool outputs is `model_inference`, NEVER `tool_verified`. The LLM is the ontologist; synthesis is extraction. Only direct citations — verbatim quotes from the source, exact numbers copied from an MCP tool output — can be `tool_verified`. A claim like "latency fell 12% due to the new cache" has two parts: "latency fell 12%" (could be `tool_verified` if the numbers are in the source) and "due to the new cache" (is `model_inference` — the LLM synthesized the causal explanation).
 
 ## Instructions
 
 1. For each claim, determine which provenance tier applies:
    - If the claim's value appears to come directly from a source output (the exact number, the exact quote), classify it as `tool_verified` (provisional — Step 3 will mechanically verify). You MUST also emit a `cross_check` specification:
      - For quotes: a `lisp_eval` form — `"(string-contains quote source_text)"` — Step 3 binds `quote` (the cited substring) and `source_text` (the referenced chunk's text)
-     - For numbers: a `lisp_eval` form like `"(member 15450000000.0 source_revenue_values)"`
+     - For numbers: a `lisp_eval` form like `"(member 15450000000.0 source_latency_values)"`
    - If the claim is arithmetic on sourced values (a computed EV, a median, a discount percentage, a scoring formula), classify as `platform_derived` and emit the derivation as a value-returning `cross_check` form, plus `claimed_value` (the number the report states), `unit` (the unit of the claim's last decimal place: 0.1 for 17.9, 0.0001 for 0.1196, 1 for an integer), and `inputs` — each input value's name and origin (`source:<tool>:<field>`, or `claim:<claim_id>` for the output of an EARLIER claim in this run; forward references are rejected by Step 3's origins check). Prefer a canonical form from the library above when one fits — select and bind instead of authoring, and record the selection in `library_form` (null when authored; library forms skip Step 3's empty-env check). Never embed the claimed result as a literal: a form that evaluates without its inputs fails Step 3's empty-env dependency check. Arithmetic without a falsifiable derivation is `model_inference`.
-   - If the claim synthesizes or interprets source data (e.g., "the margin expansion was driven by mix shift"), classify as `model_inference`.
+   - If the claim synthesizes or interprets source data (e.g., "the latency drop was driven by the new cache"), classify as `model_inference`.
    - If no source the pipeline called can supply this claim (the model produced it from parametric knowledge), classify as `unavailable`.
    - If a source was called but returned nothing for this subject, classify as `tool_no_match`.
 
@@ -151,10 +150,10 @@ Produce a JSON object:
       "claim_id": "claim_001",
       "provenance": "tool_verified",
       "strength": 2,
-      "source_reference": "dcf_valuation:revenue_current",
-      "response_field": "revenue_current",
-      "cross_check": "(member 15450000000.0 source_revenue_values)",
-      "why": "Revenue figure appears directly in the DCF valuation MCP tool output under the revenue_current field."
+      "source_reference": "benchmark_run:p95_latency",
+      "response_field": "p95_latency_ms",
+      "cross_check": "(member 142.0 source_p95_values)",
+      "why": "The p95 latency figure appears directly in the source tool's output under the p95_latency_ms field."
     },
     {
       "claim_id": "claim_002",
@@ -163,28 +162,28 @@ Produce a JSON object:
       "source_reference": null,
       "response_field": null,
       "cross_check": null,
-      "why": "The causal claim about mix shift driving margin expansion is synthesized by the LLM from revenue and segment data — it is a judgment, not a retrieval."
+      "why": "The causal claim that the cache drove the latency drop is synthesized by the LLM from the latency and request-volume data — it is a judgment, not a retrieval."
     },
     {
       "claim_id": "claim_003",
       "provenance": "platform_derived",
       "strength": 2,
-      "source_reference": "stock_quote:marketCap + balance_sheet:netDebt",
+      "source_reference": "benchmark_run:p95_latency + baseline_run:p95_latency",
       "response_field": null,
-      "cross_check": "(+ market_cap net_debt)",
-      "claimed_value": 49300000000.0,
-      "unit": 100000000.0,
+      "cross_check": "(* 100 (/ (- current prior) prior))",
+      "claimed_value": -11.0,
+      "unit": 0.1,
       "inputs": [
-        { "name": "market_cap", "origin": "source:stock_quote:marketCap" },
-        { "name": "net_debt", "origin": "source:balance_sheet:netDebt" }
+        { "name": "current", "origin": "source:benchmark_run:p95_latency" },
+        { "name": "prior", "origin": "source:baseline_run:p95_latency" }
       ],
-      "library_form": "ev",
-      "why": "Enterprise value is market cap plus balance-sheet net debt; the canonical library form re-derives it so Step 3 can grade the difference."
+      "library_form": "change_pct",
+      "why": "The reported percentage change is the change_pct derivation over the two benchmark runs; the canonical library form re-derives it so Step 3 can grade the difference."
     }
   ],
   "sourced_blocks": [
-    { "block_name": "financial_profile", "claim_ids": ["claim_001", "claim_003"], "is_sourced": true },
-    { "block_name": "management_skill", "claim_ids": [], "is_sourced": false }
+    { "block_name": "performance_profile", "claim_ids": ["claim_001", "claim_003"], "is_sourced": true },
+    { "block_name": "methodology_notes", "claim_ids": [], "is_sourced": false }
   ],
   "cross_check_exemptions": []
 }

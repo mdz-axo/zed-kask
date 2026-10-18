@@ -28,8 +28,8 @@ Map a research institution onto zed-kask and every seat is occupied:
 
 | Research institution | zed-kask |
 | --- | --- |
-| Instruments & labs | The MCP servers — research (evidence ledgers, verification states), corpus, scenarios, experimentation, companies, prediction-markets |
-| Methods & protocols | The skills — superforecasting, falsifiability, grounding-verify, hypothesis-framer, co-scientist, listening, program-manager |
+| Instruments & labs | The MCP servers — research (evidence ledgers, verification states), corpus, scenarios, experimentation, prediction-markets |
+| Methods & protocols | The skills — superforecasting, falsifiability, grounding-verify, hypothesis-framer, co-scientist, program-manager |
 | Lab notebook & pre-registration | The experimentation server (sealed eval contracts, grounded fitness records) and Brier-scored goals |
 | Library & institutional memory | The corpus and curator memory, with therapy for reorganization |
 | Peer review & governance | The algedonic review gemba walk, consent gates, skill-use issue reporting |
