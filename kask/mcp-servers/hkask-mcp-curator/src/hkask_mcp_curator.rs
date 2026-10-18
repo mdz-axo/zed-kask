@@ -20,6 +20,7 @@ pub(crate) mod db;
 pub(crate) mod distillation;
 pub(crate) mod federated;
 pub(crate) mod forgetting;
+pub(crate) mod ontology;
 pub(crate) mod thread_turns;
 pub mod types;
 
@@ -248,16 +249,19 @@ impl CuratorServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "curator_ping", async {
             let stores = self.db.get();
-            Ok(json!({
-                "status": "ok",
-                "server": SERVER_NAME,
-                "curator_webid": self.webid.to_string(),
-                "stores": {
+            Ok(crate::ontology::annotate(
+                "curator_ping",
+                json!({
+                    "status": "ok",
+                    "server": SERVER_NAME,
+                    "curator_webid": self.webid.to_string(),
+                    "stores": {
 
-                    "regulation_store": stores.regulation_store.is_some(),
-                    "memory": stores.memory.is_some(),
-                }
-            }))
+                        "regulation_store": stores.regulation_store.is_some(),
+                        "memory": stores.memory.is_some(),
+                    }
+                }),
+            ))
         })
         .await
     }
@@ -429,7 +433,7 @@ impl CuratorServer {
                     ) {
                         result["note"] = json!(note);
                     }
-                    Ok(result)
+                    Ok(crate::ontology::annotate("curator_semantic_search", result))
                 }
                 // Degradation, not a silent fallback: the operator must be
                 // able to tell "no similar memories" from "semantic recall
@@ -449,12 +453,15 @@ impl CuratorServer {
                         .take(limit)
                         .map(|t| h_mem_fragment(t))
                         .collect();
-                    Ok(json!({
-                        "count": serialized.len(),
-                        "mode": "entity_exact",
-                        "note": format!("semantic recall unavailable — fell back to exact-entity lookup: {reason}"),
-                        "results": serialized,
-                    }))
+                    Ok(crate::ontology::annotate(
+                        "curator_semantic_search",
+                        json!({
+                            "count": serialized.len(),
+                            "mode": "entity_exact",
+                            "note": format!("semantic recall unavailable — fell back to exact-entity lookup: {reason}"),
+                            "results": serialized,
+                        }),
+                    ))
                 }
             }
         })
@@ -618,12 +625,15 @@ impl CuratorServer {
             }
             statuses.extend(external_statuses);
             let results = hkask_memory::interleave_ranked_batches(batches, limit);
-            Ok(json!({
-                "query": req.query,
-                "count": results.len(),
-                "results": results,
-                "sources": statuses,
-            }))
+            Ok(crate::ontology::annotate(
+                "curator_federated_search",
+                json!({
+                    "query": req.query,
+                    "count": results.len(),
+                    "results": results,
+                    "sources": statuses,
+                }),
+            ))
         })
         .await
     }
@@ -672,12 +682,15 @@ impl CuratorServer {
                         fragment
                     })
                     .collect();
-                return Ok(json!({
-                    "ontology_axis": axis,
-                    "ontology_value": value,
-                    "count": serialized.len(),
-                    "h_mems": serialized,
-                }));
+                return Ok(crate::ontology::annotate(
+                    "curator_memory_recall",
+                    json!({
+                        "ontology_axis": axis,
+                        "ontology_value": value,
+                        "count": serialized.len(),
+                        "h_mems": serialized,
+                    }),
+                ));
             }
 
             let mut result = json!({});
@@ -704,7 +717,7 @@ impl CuratorServer {
                     None,
                 );
             }
-            Ok(result)
+            Ok(crate::ontology::annotate("curator_memory_recall", result))
         })
         .await
     }
@@ -843,7 +856,7 @@ impl CuratorServer {
                 }
             }
 
-            Ok(result)
+            Ok(crate::ontology::annotate("curator_consult", result))
         })
         .await
     }
@@ -873,7 +886,10 @@ impl CuratorServer {
                             })
                         })
                         .collect();
-                    Ok(json!({"window_hours": hours, "ordering": "newest_first", "count": s.len(), "events": s}))
+                    Ok(crate::ontology::annotate(
+                        "curator_algedonic_log",
+                        json!({"window_hours": hours, "ordering": "newest_first", "count": s.len(), "events": s}),
+                    ))
                 }
                 Err(e) => Err(map_infra_error(&e, "Algedonic query failed")),
             }
@@ -934,12 +950,15 @@ impl CuratorServer {
             // was invoked”.
             RegulationSpan::Curation.emit("reg_query_observed");
 
-            Ok(json!({
-                "namespace": namespace_info,
-                "window_seconds": window_secs,
-                "count": events.len(),
-                "events": events
-            }))
+            Ok(crate::ontology::annotate(
+                "reg_query",
+                json!({
+                    "namespace": namespace_info,
+                    "window_seconds": window_secs,
+                    "count": events.len(),
+                    "events": events
+                }),
+            ))
         })
         .await
     }
@@ -1037,17 +1056,20 @@ impl CuratorServer {
 
             RegulationSpan::Curation.emit("skill_use_issue_reported");
 
-            Ok(json!({
-                "reported": true,
-                "entity": entity,
-                "skill_name": req.skill_name,
-                "tool_name": req.tool_name,
-                "step_ordinal": req.step_ordinal,
-                "failure_type": req.failure_type,
-                "failure_origin": req.failure_origin.as_str(),
-                "semantic_recall": "embedded",
-                "guidance": "The issue has been recorded in the curator's memory store. Use curator_memory_recall with entity 'skill_use_issue:<skill_name>' or curator_semantic_search to retrieve accumulated reports."
-            }))
+            Ok(crate::ontology::annotate(
+                "curator_report_skill_use_issue",
+                json!({
+                    "reported": true,
+                    "entity": entity,
+                    "skill_name": req.skill_name,
+                    "tool_name": req.tool_name,
+                    "step_ordinal": req.step_ordinal,
+                    "failure_type": req.failure_type,
+                    "failure_origin": req.failure_origin.as_str(),
+                    "semantic_recall": "embedded",
+                    "guidance": "The issue has been recorded in the curator's memory store. Use curator_memory_recall with entity 'skill_use_issue:<skill_name>' or curator_semantic_search to retrieve accumulated reports."
+                }),
+            ))
         })
         .await
     }
@@ -1220,16 +1242,19 @@ impl CuratorServer {
 
             RegulationSpan::Curation.emit("memory_inserted");
 
-            Ok(json!({
-                "inserted": true,
-                "entity": req.entity,
-                "attribute": req.attribute,
-                "confidence": 0.5,
-                "provenance": provenance,
-                "evidence_h_mem_id": req.evidence_h_mem_id,
-                "semantic_recall": "embedded",
-                "guidance": "Memory stored at confidence 0.5 with a semantic embedding, provenance model_inference (the extraction ceiling — a model-synthesized memory never retrieves as tool-observed). Use memory_update to adjust confidence after outcome observation. Retrieve via curator_memory_recall with this entity, or curator_semantic_search by meaning."
-            }))
+            Ok(crate::ontology::annotate(
+                "memory_insert",
+                json!({
+                    "inserted": true,
+                    "entity": req.entity,
+                    "attribute": req.attribute,
+                    "confidence": 0.5,
+                    "provenance": provenance,
+                    "evidence_h_mem_id": req.evidence_h_mem_id,
+                    "semantic_recall": "embedded",
+                    "guidance": "Memory stored at confidence 0.5 with a semantic embedding, provenance model_inference (the extraction ceiling — a model-synthesized memory never retrieves as tool-observed). Use memory_update to adjust confidence after outcome observation. Retrieve via curator_memory_recall with this entity, or curator_semantic_search by meaning."
+                }),
+            ))
         })
         .await
     }
@@ -1278,15 +1303,18 @@ impl CuratorServer {
 
             RegulationSpan::Curation.emit("memory_updated");
 
-            Ok(json!({
-                "updated": true,
-                "h_mem_id": req.h_mem_id,
-                "previous_confidence": existing_h_mem.confidence.value(),
-                "input_confidence": req.new_confidence,
-                "combined_confidence": combined.value(),
-                "reason": req.reason,
-                "guidance": "Confidence updated via Bayesian combination. Use curator_memory_recall to verify."
-            }))
+            Ok(crate::ontology::annotate(
+                "memory_update",
+                json!({
+                    "updated": true,
+                    "h_mem_id": req.h_mem_id,
+                    "previous_confidence": existing_h_mem.confidence.value(),
+                    "input_confidence": req.new_confidence,
+                    "combined_confidence": combined.value(),
+                    "reason": req.reason,
+                    "guidance": "Confidence updated via Bayesian combination. Use curator_memory_recall to verify."
+                }),
+            ))
         })
         .await
     }
@@ -1327,13 +1355,16 @@ impl CuratorServer {
                         .delete_h_mem(&target_id)
                         .map_err(|e| map_memory_store_error(e, "Failed to forget h_mem"))?;
                     RegulationSpan::Curation.emit("contradiction_forgotten");
-                    Ok(json!({
-                        "resolved": true,
-                        "strategy": "forget",
-                        "target_h_mem_id": req.target_h_mem_id,
-                        "contradicting_h_mem_ids": req.h_mem_ids,
-                        "reason": req.reason
-                    }))
+                    Ok(crate::ontology::annotate(
+                        "memory_resolve_contradiction",
+                        json!({
+                            "resolved": true,
+                            "strategy": "forget",
+                            "target_h_mem_id": req.target_h_mem_id,
+                            "contradicting_h_mem_ids": req.h_mem_ids,
+                            "reason": req.reason
+                        }),
+                    ))
                 }
                 "update_confidence" => {
                     let new_confidence = req.new_confidence.ok_or_else(|| {
@@ -1348,14 +1379,17 @@ impl CuratorServer {
                             map_memory_store_error(e, "Failed to update h_mem confidence")
                         })?;
                     RegulationSpan::Curation.emit("contradiction_confidence_lowered");
-                    Ok(json!({
-                        "resolved": true,
-                        "strategy": "update_confidence",
-                        "target_h_mem_id": req.target_h_mem_id,
-                        "new_confidence": new_confidence,
-                        "contradicting_h_mem_ids": req.h_mem_ids,
-                        "reason": req.reason
-                    }))
+                    Ok(crate::ontology::annotate(
+                        "memory_resolve_contradiction",
+                        json!({
+                            "resolved": true,
+                            "strategy": "update_confidence",
+                            "target_h_mem_id": req.target_h_mem_id,
+                            "new_confidence": new_confidence,
+                            "contradicting_h_mem_ids": req.h_mem_ids,
+                            "reason": req.reason
+                        }),
+                    ))
                 }
                 other => Err(McpToolError::invalid_argument(format!(
                     "Unknown strategy '{other}' — must be one of: forget, update_confidence"
@@ -1439,17 +1473,20 @@ impl CuratorServer {
 
             RegulationSpan::Curation.emit("memory_pruned");
 
-            Ok(json!({
-                "pruned": true,
-                "all_layers": all_layers,
-                "prefixes": req.prefixes,
-                "max_age_days": req.max_age_days,
-                "spare_recalled_within_days": req.spare_recalled_within_days,
-                "candidates": outcome.candidates,
-                "deleted_count": outcome.deleted_count,
-                "spared_count": outcome.spared_count,
-                "failed_count": outcome.failed_count,
-            }))
+            Ok(crate::ontology::annotate(
+                "curator_memory_prune",
+                json!({
+                    "pruned": true,
+                    "all_layers": all_layers,
+                    "prefixes": req.prefixes,
+                    "max_age_days": req.max_age_days,
+                    "spare_recalled_within_days": req.spare_recalled_within_days,
+                    "candidates": outcome.candidates,
+                    "deleted_count": outcome.deleted_count,
+                    "spared_count": outcome.spared_count,
+                    "failed_count": outcome.failed_count,
+                }),
+            ))
         })
         .await
     }
@@ -1479,15 +1516,18 @@ impl CuratorServer {
 
             RegulationSpan::Curation.emit("memory_deduped");
 
-            Ok(json!({
-                "deduped": true,
-                "scanned": outcome.scanned,
-                "groups_with_dupes": outcome.groups_with_dupes,
-                "deleted_count": outcome.deleted_count,
-                "failed_count": outcome.failed_count,
-                "skipped_non_string": outcome.skipped_non_string,
-                "skipped_turn_storage": outcome.skipped_turn_storage,
-            }))
+            Ok(crate::ontology::annotate(
+                "curator_memory_dedup",
+                json!({
+                    "deduped": true,
+                    "scanned": outcome.scanned,
+                    "groups_with_dupes": outcome.groups_with_dupes,
+                    "deleted_count": outcome.deleted_count,
+                    "failed_count": outcome.failed_count,
+                    "skipped_non_string": outcome.skipped_non_string,
+                    "skipped_turn_storage": outcome.skipped_turn_storage,
+                }),
+            ))
         })
         .await
     }
@@ -1596,12 +1636,15 @@ impl CuratorServer {
 
             RegulationSpan::Curation.emit("memory_extracted");
 
-            Ok(json!({
-                "thread_id": req.thread_id,
-                "turn_count": candidates.len(),
-                "candidates": candidates,
-                "guidance": "Review the candidates and insert worth keeping via memory_insert. Each candidate's h_mem_id is the evidence_citation for memory_insert.",
-            }))
+            Ok(crate::ontology::annotate(
+                "curator_memory_extract",
+                json!({
+                    "thread_id": req.thread_id,
+                    "turn_count": candidates.len(),
+                    "candidates": candidates,
+                    "guidance": "Review the candidates and insert worth keeping via memory_insert. Each candidate's h_mem_id is the evidence_citation for memory_insert.",
+                }),
+            ))
         })
         .await
     }

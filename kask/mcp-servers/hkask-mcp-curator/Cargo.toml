@@ -9,6 +9,7 @@ description = "Curator MCP server — system observability and regulatory memory
 hkask-mcp-server.workspace = true
 hkask-types.workspace = true
 hkask-storage.workspace = true
+hkask-bridge-ontology.workspace = true
 
 hkask-memory.workspace = true
 hkask-inference.workspace = true
