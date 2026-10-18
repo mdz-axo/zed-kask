@@ -685,6 +685,122 @@ form: "(= (+ a b) 3)"
         );
     }
 
+    /// The `PS-1` modifier values are stated in prose in the skill body and in
+    /// three companion templates. That prose drifted once already (FIBO +0.10 /
+    /// SUMO +0.05 / unanchored -0.15 survived a gate edit to +0.05 / +0.03 /
+    /// -0.10), so the documented values are pinned to the *gate's own* values
+    /// rather than to literals: each modifier is derived by evaluating the live
+    /// form with exactly one flag set, and the prose must contain the derived
+    /// spelling. A gate edit that is not carried into the prose fails here.
+    #[test]
+    fn pragmatic_semantics_modifier_prose_matches_the_ps1_gate() {
+        let gate = skill_candidate("pragmatic-semantics", "fibo_anchored");
+
+        let derive = |flag: &str| -> f64 {
+            // A base of 0.5 keeps every branch clear of both clamps, so the
+            // derived value is the modifier itself.
+            let mut env = json!({
+                "base_confidence": 0.5,
+                "fibo_anchored": false,
+                "sumo_anchored": false,
+                "spec_checked": false,
+                "unanchored": false
+            });
+            env[flag] = json!(true);
+            eval_sandboxed(&gate, &env)
+                .expect("PS-1 derives a single-flag modifier")
+                .as_f64()
+                .expect("PS-1 returns a number")
+                - 0.5
+        };
+
+        // Non-vacuity control: a mutated gate yields a different derived value,
+        // so the prose assertions below are bound to the real gate and cannot
+        // pass against a stale one.
+        let mutated = gate.replace("fibo_anchored 0.05", "fibo_anchored 0.10");
+        assert_ne!(mutated, gate, "the control must actually mutate the gate");
+        let mutated_fibo = eval_sandboxed(
+            &mutated,
+            &json!({
+                "base_confidence": 0.5,
+                "fibo_anchored": true,
+                "sumo_anchored": false,
+                "spec_checked": false,
+                "unanchored": false
+            }),
+        )
+        .expect("mutated PS-1 evaluates")
+        .as_f64()
+        .expect("mutated PS-1 returns a number")
+            - 0.5;
+
+        let fibo = derive("fibo_anchored");
+        let sumo = derive("sumo_anchored");
+        let spec = derive("spec_checked");
+        let unanchored = derive("unanchored");
+        assert_ne!(
+            mutated_fibo, fibo,
+            "the control must be discriminating: a mutated gate must derive a different modifier"
+        );
+
+        // The positive modifiers are the ones that drifted; the unanchored
+        // penalty is checked on its magnitude because the templates use the
+        // typographic minus (U+2212) and the skill body the ASCII hyphen.
+        let positive = |value: f64| format!("+{value:.2}");
+        let fibo_text = positive(fibo);
+        let sumo_text = positive(sumo);
+        let spec_text = positive(spec);
+        assert!(unanchored < 0.0, "the unanchored modifier is a penalty");
+        let unanchored_magnitude = format!("{:.2}", unanchored.abs());
+
+        let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let read = |relative: &str| {
+            let path = repo.join(relative);
+            fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()))
+        };
+
+        let body = read(".agents/skills/pragmatic-semantics/SKILL.md");
+        let expected_constraint_line = format!(
+            "FIBO {fibo_text}, SUMO {sumo_text}, spec_checked {spec_text}, unanchored -{unanchored_magnitude}"
+        );
+        assert!(
+            body.contains(&expected_constraint_line),
+            "SKILL.md must state the gate's own modifiers ({expected_constraint_line}); \
+             the prose has drifted from the gate"
+        );
+
+        let conflict =
+            read("kask/registry/templates/pragmatic-semantics/semantics-conflict-resolve.j2");
+        assert!(
+            conflict.contains(&format!("the `PS-1` modifier is {fibo_text}")),
+            "semantics-conflict-resolve.j2 must carry the gate's FIBO modifier ({fibo_text})"
+        );
+        assert!(
+            conflict.contains(&sumo_text),
+            "semantics-conflict-resolve.j2 must carry the gate's SUMO modifier ({sumo_text})"
+        );
+
+        let provenance =
+            read("kask/registry/templates/pragmatic-semantics/semantics-provenance-trace.j2");
+        assert!(
+            provenance.contains(&format!("FIBO ({fibo_text}), SUMO ({sumo_text})")),
+            "semantics-provenance-trace.j2 must carry the gate's modifiers \
+             (FIBO {fibo_text}, SUMO {sumo_text})"
+        );
+
+        let classify =
+            read("kask/registry/templates/pragmatic-semantics/semantics-classify-statement.j2");
+        assert!(
+            classify.contains(&format!("| **FIBO** (financial) | {fibo_text} |")),
+            "semantics-classify-statement.j2 must carry the gate's FIBO modifier ({fibo_text})"
+        );
+        assert!(
+            classify.contains(&format!("| **SUMO** (upper ontology) | {sumo_text} |")),
+            "semantics-classify-statement.j2 must carry the gate's SUMO modifier ({sumo_text})"
+        );
+    }
+
     #[test]
     fn guarded_union_and_assoc_null_check_are_accepted() {
         let forms = parse(
