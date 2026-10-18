@@ -291,7 +291,7 @@ impl ExperimentationServer {
             let max_runs = budget
                 .get("max_runs")
                 .and_then(serde_json::Value::as_u64)
-                .filter(|value| *value > 0)
+                .filter(|value| *value > 0 && *value <= i64::MAX as u64)
                 .ok_or_else(|| {
                     map_experimentation_error(ExperimentationError::BudgetMissingMaxRuns(
                         budget.to_string(),
@@ -404,7 +404,7 @@ impl ExperimentationServer {
                     "runs",
                 )));
             }
-            if run_count == 0 {
+            if run_count == 0 || run_count > i64::MAX as u64 {
                 return Err(map_experimentation_error(
                     ExperimentationError::RunCountInvalid(run_count),
                 ));
@@ -449,7 +449,7 @@ impl ExperimentationServer {
                     "runs",
                 )));
             }
-            if run_count == 0 {
+            if run_count == 0 || run_count > i64::MAX as u64 {
                 return Err(map_experimentation_error(
                     ExperimentationError::RunCountInvalid(run_count),
                 ));

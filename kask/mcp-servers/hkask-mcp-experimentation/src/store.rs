@@ -46,12 +46,27 @@ fn optional_text(row: &DbRow, idx: usize) -> Option<String> {
     row.get_str(idx).ok().map(str::to_string)
 }
 
-/// Read a required INTEGER column as u64 — a negative value is impossible
-/// by construction and surfaces as a serialization error, never silent.
+/// Read a required INTEGER column as u64 — a value outside the u64 range
+/// (negative on read, or wrapped by a legacy write) surfaces as a
+/// serialization error, never as a silently-normalized zero.
 fn required_int(row: &DbRow, idx: usize) -> Result<u64, ExperimentationError> {
     let value = row.get_int(idx).map_err(ExperimentationError::from)?;
     u64::try_from(value).map_err(|_| {
         ExperimentationError::Serialization(format!("negative integer at column {idx}"))
+    })
+}
+
+/// Convert a u64 budget/run count to the DbValue::Integer storage range —
+/// values above i64::MAX are rejected, never wrapped by an unchecked cast
+/// (a wrapped negative ceiling reads as an unspent budget forever: the
+/// budget refusal and the stuck-running sensor fail together). Callers
+/// validate the range at the tool boundary; this is the defensive floor
+/// under any caller that skips it.
+fn db_int(value: u64) -> Result<DbValue, ExperimentationError> {
+    i64::try_from(value).map(DbValue::Integer).map_err(|_| {
+        ExperimentationError::Serialization(format!(
+            "integer {value} exceeds the i64 storage range"
+        ))
     })
 }
 
@@ -265,7 +280,7 @@ impl ExperimentationStore {
                 DbValue::Text(value_column(noise_band)?),
                 DbValue::Text(value_column(prediction)?),
                 DbValue::Text(value_column(budget)?),
-                DbValue::Integer(max_runs as i64),
+                db_int(max_runs)?,
                 text_or_null(linked_goal_id),
                 DbValue::Text(value_column(rubrics)?),
                 DbValue::Text(STATUS_PROPOSED.to_string()),
@@ -549,30 +564,36 @@ impl ExperimentationStore {
         // the budget condition and the write are ONE statement, so two
         // concurrent fitness_record calls cannot both pass the check —
         // SQLite serializes writers and the second statement's WHERE
-        // sees the first's committed SUM.
+        // sees the first's committed SUM. The predicate counts fitness
+        // records AND final evaluations — both consume the same budget
+        // (§P8.9 step 2), so a final evaluation followed by a fitness
+        // record cannot undercount and slip past the ceiling.
         let params = [
             DbValue::Text(id.clone()),
             DbValue::Text(experiment_id.to_string()),
             DbValue::Text(variant_id.to_string()),
             DbValue::Text(value_column(&runs)?),
-            DbValue::Integer(run_count as i64),
+            db_int(run_count)?,
             DbValue::Text(value_column(scores)?),
             text_or_null(seal_column.as_deref()),
             DbValue::Text(created_at.clone()),
-            DbValue::Integer(ceiling as i64),
+            db_int(ceiling)?,
         ];
         let inserted = self.driver.execute(
             "INSERT INTO fitness_records \
              (id, experiment_id, variant_id, runs, run_count, scores, seal_id, created_at) \
              SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8 \
              WHERE ?5 + COALESCE((SELECT SUM(run_count) FROM fitness_records \
+               WHERE experiment_id = ?2), 0) \
+                 + COALESCE((SELECT SUM(run_count) FROM final_evaluations \
                WHERE experiment_id = ?2), 0) <= ?9",
             &params,
         )?;
         if inserted == 0 {
             let row = self.driver.query_optional(
-                "SELECT COALESCE(SUM(run_count), 0) FROM fitness_records \
-                 WHERE experiment_id = ?1",
+                "SELECT COALESCE((SELECT SUM(run_count) FROM fitness_records \
+                   WHERE experiment_id = ?1), 0) + COALESCE((SELECT SUM(run_count) \
+                   FROM final_evaluations WHERE experiment_id = ?1), 0)",
                 &[DbValue::Text(experiment_id.to_string())],
             )?;
             let recorded = row.and_then(|row| row.get_int(0).ok()).unwrap_or(0).max(0) as u64;
@@ -800,10 +821,10 @@ impl ExperimentationStore {
             DbValue::Text(variant_id.to_string()),
             DbValue::Text(seal.id.clone()),
             DbValue::Text(value_column(&runs)?),
-            DbValue::Integer(run_count as i64),
+            db_int(run_count)?,
             DbValue::Text(value_column(scores)?),
             DbValue::Text(created_at.clone()),
-            DbValue::Integer(ceiling as i64),
+            db_int(ceiling)?,
         ];
         let inserted = self.driver.execute(
             "INSERT INTO final_evaluations \
@@ -1425,6 +1446,144 @@ mod tests {
         assert!(
             matches!(&error, ExperimentationError::BudgetExhausted(id, would_record, ceiling)
                 if id == &experiment.id && *would_record == 19 && *ceiling == 18),
+            "unexpected error: {error}"
+        );
+    }
+
+    /// A-1: a max_runs above the i64 storage range must be rejected at the
+    /// store boundary — an unchecked `as i64` cast wraps it negative, and a
+    /// negative ceiling reads as an unspent budget forever (the budget
+    /// refusal and the stuck-running sensor fail together). The defensive
+    /// db_int floor rejects it even when a caller skips tool-boundary
+    /// validation.
+    #[test]
+    fn oversized_max_runs_is_rejected_never_wrapped() {
+        let store = store();
+        let oversized = i64::MAX as u64 + 1; // 9223372036854775808 — wraps to i64::MIN
+        let error = store
+            .propose_experiment(
+                "Hypothesis",
+                "skill",
+                &[".agents/skills/self-improvement/SKILL.md".to_string()],
+                &serde_json::json!({"task_set": "fixed-5"}),
+                "evaluator pass rate on the fixed set",
+                &serde_json::json!({"cost_band_pct": 10}),
+                &rubrics(),
+                &Prediction {
+                    claim: "variant B wins".to_string(),
+                    confidence: 0.7,
+                },
+                &serde_json::json!({"max_runs": 18}),
+                oversized,
+                None,
+                None,
+            )
+            .expect_err("oversized max_runs rejected, never wrapped");
+        assert!(
+            matches!(&error, ExperimentationError::Serialization(_)),
+            "unexpected error: {error}"
+        );
+        // No partially-inserted experiment row survives the refusal — the
+        // ceiling column never carries a wrapped value.
+        let population = store.population(None, None, None, 50).expect("population");
+        assert!(population.is_empty(), "no residue behind the refusal");
+    }
+
+    /// A-1: the fitness-record defensive floor — an oversized run_count is
+    /// rejected before the write, and the budget refusal it produces names
+    /// the true recorded total, not an undercounted one.
+    #[test]
+    fn oversized_run_count_is_rejected_never_wrapped() {
+        let store = store();
+        let experiment = propose(&store, "skill", None); // max_runs = 18
+        let baseline = variant_role(
+            &store,
+            &experiment.id,
+            "baseline",
+            None,
+            Some("baseline"),
+            VARIANT_ROLE_BASELINE,
+        );
+        let oversized = i64::MAX as u64 + 1;
+        let error = store
+            .record_fitness(
+                &experiment.id,
+                &baseline.id,
+                &["r1".to_string()],
+                oversized,
+                &serde_json::json!({}),
+                None,
+            )
+            .expect_err("oversized run_count rejected, never wrapped");
+        assert!(
+            matches!(&error, ExperimentationError::Serialization(_)),
+            "unexpected error: {error}"
+        );
+        // No partially-inserted fitness row survives behind the error.
+        let fitness = store
+            .fitness_for_experiment(&experiment.id)
+            .expect("fitness list");
+        assert!(fitness.is_empty(), "no residue behind the refusal");
+    }
+
+    /// A-1: the fitness budget predicate counts fitness records AND final
+    /// evaluations — both consume the same declared budget (§P8.9 step 2),
+    /// so a final evaluation followed by a fitness record cannot
+    /// undercount and slip past the ceiling.
+    #[test]
+    fn fitness_budget_counts_final_evaluations_too() {
+        let store = store();
+        let experiment = propose(&store, "skill", None); // max_runs = 18
+        let baseline = variant_role(
+            &store,
+            &experiment.id,
+            "baseline",
+            None,
+            Some("baseline"),
+            VARIANT_ROLE_BASELINE,
+        );
+        // Baseline fitness is required before a seal (SealFitnessMissing).
+        store
+            .record_fitness(
+                &experiment.id,
+                &baseline.id,
+                &["r0".to_string()],
+                3,
+                &serde_json::json!({}),
+                None,
+            )
+            .expect("baseline fitness");
+        // Seal so a final evaluation is possible.
+        let seal = store
+            .seal_experiment(&experiment.id, &baseline.id, 0.5)
+            .expect("seal");
+        // Final evaluation consumes 12 more of the 18-run budget.
+        store
+            .record_final_evaluation(
+                &experiment.id,
+                &baseline.id,
+                &["fev1".to_string()],
+                12,
+                &serde_json::json!({}),
+            )
+            .expect("final evaluation");
+        // A subsequent post-seal fitness record of 9 would total 3 + 12 + 9
+        // = 24 > 18 — the OLD fitness predicate counted only fitness_records
+        // (3) and let 3 + 9 = 12 through; the repaired predicate counts both
+        // tables and refuses it.
+        let error = store
+            .record_fitness(
+                &experiment.id,
+                &baseline.id,
+                &["r1".to_string()],
+                9,
+                &serde_json::json!({}),
+                Some(&seal.id),
+            )
+            .expect_err("fitness after final evaluation must count both");
+        assert!(
+            matches!(&error, ExperimentationError::BudgetExhausted(id, would_record, ceiling)
+                if id == &experiment.id && *would_record == 24 && *ceiling == 18),
             "unexpected error: {error}"
         );
     }

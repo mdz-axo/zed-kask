@@ -872,3 +872,52 @@ fn experimentation_declares_its_db_passphrase_as_required() {
         "the experimentation server must declare HKASK_DB_PASSPHRASE required — its run() \n         refuses to start without it, so an undeclared (vec![]) or optional form \n         misdescribes the startup contract"
     );
 }
+
+/// A-1: an oversized max_runs (> i64::MAX) is rejected at the tool boundary
+/// with the typed BudgetMissingMaxRuns error — an unchecked cast wraps it
+/// negative, and a negative ceiling reads as an unspent budget forever (the
+/// budget refusal and the stuck-running sensor fail together).
+#[tokio::test]
+async fn oversized_max_runs_is_rejected_through_the_tool_seam() {
+    let server = make_server();
+
+    let mut request = proposal("skill");
+    request.budget = AnyJsonValue(serde_json::json!({
+        "max_runs": 9223372036854775808u64
+    }));
+    let error = server
+        .experiment_propose(Parameters(request))
+        .await
+        .expect_err("oversized max_runs rejected");
+    assert!(error.to_string().contains("budget.max_runs"), "{error}");
+}
+
+/// A-1: an oversized run_count (> i64::MAX) is rejected at the tool boundary
+/// with the typed RunCountInvalid error — the defensive db_int floor under
+/// it would refuse the write even if this boundary check were removed.
+#[tokio::test]
+async fn oversized_run_count_is_rejected_through_the_tool_seam() {
+    let server = make_server();
+
+    let proposed = propose(&server, "skill").await; // max_runs = 18
+    let experiment_id = proposed["experiment"]["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+    let variant =
+        register_variant_with_role(&server, &experiment_id, "baseline", None, Some("baseline"))
+            .await;
+    let variant_id = variant["variant"]["id"].as_str().expect("id").to_string();
+    let error = server
+        .fitness_record(Parameters(FitnessRecordRequest {
+            experiment_id,
+            variant_id,
+            runs: vec!["harness report".to_string()],
+            run_count: 9223372036854775808u64,
+            scores: AnyJsonValue(serde_json::json!({})),
+            seal_id: None,
+        }))
+        .await
+        .expect_err("oversized run_count rejected");
+    assert!(error.to_string().contains("run_count"), "{error}");
+}

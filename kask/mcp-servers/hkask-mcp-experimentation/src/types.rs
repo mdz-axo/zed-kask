@@ -378,7 +378,7 @@ pub enum ExperimentationError {
     #[error("prediction confidence must be in [0, 1], got {0}")]
     ConfidenceOutOfRange(f64),
     #[error(
-        "budget.max_runs must be a positive integer — the declared budget is the Layer-A set point the server enforces (§P8.9 step 2, D-1); budget was: {0}"
+        "budget.max_runs must be a positive integer within the i64 range — the declared budget is the Layer-A set point the server enforces (§P8.9 step 2, D-1); budget was: {0}"
     )]
     BudgetMissingMaxRuns(String),
     #[error(
@@ -386,7 +386,7 @@ pub enum ExperimentationError {
     )]
     BudgetExhausted(String, u64, u64),
     #[error(
-        "run_count must be a positive integer — the number of rollouts the referenced reports cover (§P8.9 step 2); got {0}"
+        "run_count must be a positive integer within the i64 range — the number of rollouts the referenced reports cover (§P8.9 step 2); got {0}"
     )]
     RunCountInvalid(u64),
     #[error("verdict must be \"selected\" or \"rejected\", got {0:?}")]
