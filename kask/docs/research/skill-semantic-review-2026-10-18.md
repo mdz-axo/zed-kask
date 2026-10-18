@@ -289,11 +289,30 @@ immediate repair of reproduced mechanical/contract defects):
   `[false, ["overflow"]]`; duplicate failing gates dedup to one. The parser-backed
   gate now reads **302** candidates (was 301), 0 defects.
 
-Remaining S14 cards (all read-triaged live, all still open, none yet executed):
-`2a84b7ab` (grounding-verify Step-5 counts + GV-1 sides), `c1b87090` (create-skill
-core-rung count + `research_findings`), `a3f3270e` (superforecasting stage_0
-booleans + forecast-quality-gate weighted verdict), `0a7016fd` (upstream-rebase
-decide/execute/document measured states), `1d4286de` (diagnose-fix post-application
-booleans), `5ea2e646` (code-review-implement counts). Each is a small,
-self-contained removal of a model-typed aggregate; the cohort continues in the
-next session.
+Remaining S14 cards: **none** — the cohort is complete. All eight executed in this
+session (the two recorded above plus the six below), each verified through live
+`lisp_eval` fixtures rather than asserted:
+
+- `0a7016fd` upstream-rebase — `execute.j2`'s five measured states
+  (`compiled`/`tests_passed`/`invariant_holds`/`marker_count`/`call_site_count`)
+  and `decide.j2`'s `full_reapplication` and `document.j2`'s
+  `divergence_md_updated` left the contracts; the caller measures and `UR-3`
+  evaluates the measured values (commit `e3b6279efe`).
+- `1d4286de` diagnose-fix — the three post-application booleans left the
+  contract; `DIAG-2`'s caller-measured inputs are now named explicitly
+  (`57345244fd`).
+- `5ea2e646` code-review-implement — `fixes_generated` (`(length fix_plan)`) and
+  `applied_count` (the agent's `edit_file` receipts) left the contract
+  (`57345244fd`).
+- `a3f3270e` superforecasting — stage_0's two derived booleans left the contract
+  (SF-1 already computes the conjunction) and `gate_pass` moved into a new `SF-3`
+  gate computing the weighted totals (`02a110ed68`).
+- `2a84b7ab` grounding-verify — Step 5's ten reported counts and GV-1's class
+  counts are computed by new `GV-3`/`GV-3b` drivers (`f81e9b4484`).
+- `c1b87090` create-skill — the core-rung count and `research_findings` are
+  computed by a new `CS-3` gate, so the Phase 5 loop no longer branches on a
+  model-asserted scalar (`32c48a646c`).
+
+The corpus's pinned-form count rose from 301 to 310 across the cohort (the new
+`SF-3`, `GV-3`, `GV-3b`, `CS-3`, and `KSA-4` forms), all parser-clean with every
+symbol resolving.
