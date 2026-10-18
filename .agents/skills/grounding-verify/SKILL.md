@@ -589,6 +589,7 @@ floor.
    The log is append-only within the run — a correction records both
    the prior and the corrected value; it never erases the original. Verify that `totals` reconcile with class E/W/N counts and all `why` justifications are at least 40 characters via `lisp_eval` (`GV-1`):
    - form: `(and (= corrected_count e_count) (= warnings_count w_count) (= data_notes_count n_count) (>= min_why_len 40))`
+   - env: `{ "corrected_count": <the log's totals.corrected — class E>, "warnings_count": <totals.warnings — class W>, "data_notes_count": <totals.data_notes — class N>, "e_count": <class E entries actually in error_log>, "w_count": <class W entries in error_log>, "n_count": <class N entries in error_log>, "min_why_len": <length of the shortest why string in error_log> }`. The three totals fields come from the rendered log; the three class counts are tallied from `error_log` entries, so a `totals` line that disagrees with the entries it summarizes fails here rather than passing silently.
 
 4. The `verified_claims` registry is append-only within a verification
    run. A claim verified as `tool_verified` stays `tool_verified`. A

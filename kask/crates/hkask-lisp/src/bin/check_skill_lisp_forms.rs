@@ -801,6 +801,284 @@ form: "(= (+ a b) 3)"
         );
     }
 
+    /// Split a pinned `env:` schema block into (key, type-token) pairs.
+    ///
+    /// The blocks are schema notation, not JSON (`{"x": <int>, "y": "<string>"}`),
+    /// so keys are read by scanning at brace depth 1 for a quoted token
+    /// followed by `:`.
+    fn env_schema_entries(env: &str) -> Vec<(String, String)> {
+        let chars: Vec<char> = env.chars().collect();
+        let mut out = Vec::new();
+        let mut i = 0usize;
+        let mut depth = 0i32;
+        while i < chars.len() {
+            match chars[i] {
+                '{' | '[' => {
+                    depth += 1;
+                    i += 1;
+                }
+                '}' | ']' => {
+                    depth -= 1;
+                    i += 1;
+                }
+                '"' => {
+                    let start = i + 1;
+                    let mut j = start;
+                    while j < chars.len() && chars[j] != '"' {
+                        j += 1;
+                    }
+                    let key: String = chars[start..j.min(chars.len())].iter().collect();
+                    let after_quote = j + 1;
+                    let mut k = after_quote;
+                    while k < chars.len() && chars[k].is_whitespace() {
+                        k += 1;
+                    }
+                    if depth == 1 && k < chars.len() && chars[k] == ':' {
+                        let mut t = k + 1;
+                        let mut nested = 0i32;
+                        while t < chars.len() {
+                            let c = chars[t];
+                            if c == '{' || c == '[' {
+                                nested += 1;
+                            }
+                            if c == '}' || c == ']' {
+                                if nested == 0 {
+                                    break;
+                                }
+                                nested -= 1;
+                            }
+                            if c == ',' && nested == 0 {
+                                break;
+                            }
+                            t += 1;
+                        }
+                        let token: String = chars[k + 1..t].iter().collect();
+                        out.push((key, token.trim().to_string()));
+                    }
+                    i = after_quote;
+                }
+                _ => i += 1,
+            }
+        }
+        out
+    }
+
+    /// The env extractor is the instrument's own weak point: a mis-parsed
+    /// block reports declared keys as unbound (a false positive) or reads a
+    /// neighbouring block's keys (a false negative). Pin it against the three
+    /// marker spellings and a multi-line block that the corpus actually uses.
+    #[test]
+    fn env_extraction_handles_the_corpus_spellings() {
+        let keys = |env: &str| {
+            env_schema_entries(env)
+                .into_iter()
+                .map(|(key, _)| key)
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            keys(r#"{ "corrected_count": <int>, "min_why_len": <int> }"#),
+            vec!["corrected_count", "min_why_len"]
+        );
+        // A type token that is itself a bracketed structure must not leak its
+        // inner keys into the top-level set.
+        assert_eq!(
+            keys(r#"{ "findings": [{"id": "x", "severity": "y"}], "total": <int> }"#),
+            vec!["findings", "total"]
+        );
+
+        // The marker spellings: `env:`, `envs:`, `env (note):`.
+        for marker in [
+            "  - env: `{ \"a\": <int> }`\n",
+            "  - envs: `{ \"a\": <int> }`\n",
+            "  - env (all counts are this cycle's): `{ \"a\": <int> }`\n",
+        ] {
+            let body = format!("- form: `(and (<= a 1))`\n{marker}");
+            let pinned = pinned_gate_forms(&body);
+            assert_eq!(pinned.len(), 1, "one form expected for marker {marker:?}");
+            assert_eq!(keys(&pinned[0].1), vec!["a"], "marker {marker:?}");
+        }
+
+        // A wrapped block keeps every key.
+        let wrapped =
+            "- form: `(and (<= a 1))`\n  - env: `{ \"a\": <int>,\n            \"b\": <int> }`\n";
+        let pinned = pinned_gate_forms(wrapped);
+        assert_eq!(keys(&pinned[0].1), vec!["a", "b"]);
+
+        // A form with no env block yields an empty set, not a neighbour's.
+        let no_env = "- form: `(and (<= a 1))`\n\nSome prose.\n";
+        let pinned = pinned_gate_forms(no_env);
+        assert_eq!(pinned.len(), 1);
+        assert!(keys(&pinned[0].1).is_empty());
+    }
+
+    /// A stub value of the declared shape, so evaluation reaches every symbol
+    /// in the form instead of aborting on the first type error.
+    fn env_stub(token: &str) -> serde_json::Value {
+        let lowered = token.to_ascii_lowercase();
+        if token.starts_with('[') {
+            json!([])
+        } else if token.starts_with('{') {
+            json!({})
+        } else if lowered.contains("bool") {
+            json!(true)
+        } else if lowered.contains("int")
+            || lowered.contains("count")
+            || lowered.contains("number")
+            || lowered.contains("float")
+            || lowered.contains("ratio")
+            || lowered.contains("confidence")
+            || token.chars().any(|c| c.is_ascii_digit())
+        {
+            json!(1)
+        } else if lowered.contains("array") || lowered.contains("list") {
+            json!([])
+        } else if lowered.contains("object") {
+            json!({})
+        } else {
+            json!("")
+        }
+    }
+
+    /// Every (form, env) pair pinned in a SKILL.md body, in file order.
+    fn pinned_gate_forms(content: &str) -> Vec<(String, String)> {
+        let lines: Vec<&str> = content.lines().collect();
+        let mut out = Vec::new();
+        for (i, line) in lines.iter().enumerate() {
+            let Some(rest) = line.split("- form: `").nth(1) else {
+                continue;
+            };
+            let Some(form) = rest.split('`').next() else {
+                continue;
+            };
+            // The env schema block may wrap across lines, and the marker
+            // varies (`env: \``, `envs: \``, `env (note): \``), so locate an
+            // `env` token followed within a short span by `:` then a
+            // backtick, then gather until the closing backtick. A truncated
+            // block reports declared keys as unbound — the extractor's own
+            // false positive.
+            let mut env = String::new();
+            let mut joined = String::new();
+            let mut collecting = false;
+            for candidate in lines.iter().skip(i + 1).take(8) {
+                if !collecting {
+                    let Some(at) = candidate.find("env") else {
+                        continue;
+                    };
+                    let tail = &candidate[at..];
+                    let Some(colon) = tail.find(':') else {
+                        continue;
+                    };
+                    let after_colon = &tail[colon + 1..];
+                    let Some(tick) = after_colon.find('`') else {
+                        continue;
+                    };
+                    // A backtick before the colon is a different construction.
+                    if tail[..colon].contains('`') {
+                        continue;
+                    }
+                    let rest = &after_colon[tick + 1..];
+                    joined.push_str(rest);
+                    if rest.contains('`') {
+                        env = rest.split('`').next().unwrap_or_default().to_string();
+                        break;
+                    }
+                    collecting = true;
+                    continue;
+                }
+                joined.push(' ');
+                joined.push_str(candidate);
+                if candidate.contains('`') {
+                    env = joined.split('`').next().unwrap_or_default().to_string();
+                    break;
+                }
+            }
+            if env.is_empty() && collecting {
+                env = joined;
+            }
+            out.push((form.to_string(), env));
+        }
+        out
+    }
+
+    /// Walk a skill corpus and return (forms checked, symbol findings).
+    fn pinned_symbol_findings(skills_dir: &Path) -> (usize, Vec<String>) {
+        let mut files = Vec::new();
+        collect_files(skills_dir, CorpusKind::Skills, &mut files).expect("walk skill corpus");
+        files.sort();
+        let mut findings: Vec<String> = Vec::new();
+        let mut checked = 0usize;
+        for path in &files {
+            let content = fs::read_to_string(path)
+                .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+            for (form, env) in pinned_gate_forms(&content) {
+                checked += 1;
+                let mut env_object = serde_json::Map::new();
+                for (key, token) in env_schema_entries(&env) {
+                    env_object.insert(key, env_stub(&token));
+                }
+                if let Err(error) = eval_sandboxed(&form, &serde_json::Value::Object(env_object)) {
+                    let message = error.to_string();
+                    if message.contains("unbound symbol") {
+                        findings.push(format!("{}: {message} in {form}", display_path(path)));
+                    }
+                }
+            }
+        }
+        (checked, findings)
+    }
+
+    /// S12: a pinned gate form must resolve every symbol it references —
+    /// against the interpreter's builtins, its own definitions, or its
+    /// declared env keys. A form naming a builtin that does not exist (a typo,
+    /// or a builtin removed from the surface) raises `unbound symbol` and is
+    /// dead at use time; the parser-only gate cannot see it.
+    ///
+    /// Non-vacuity control: the same walk over a fixture skill whose form
+    /// references a name no env declares must produce a finding, so a clean
+    /// corpus result is not simply a walk that fails to evaluate.
+    #[test]
+    fn pinned_gate_forms_resolve_every_symbol() {
+        let skills_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../.agents/skills");
+        let (checked, findings) = pinned_symbol_findings(&skills_dir);
+        assert!(
+            checked > 40,
+            "expected the corpus to pin many forms, saw {checked}"
+        );
+        assert!(
+            findings.is_empty(),
+            "pinned gate forms reference symbols nothing binds:\n{}",
+            findings.join("\n")
+        );
+
+        // Non-vacuity control: a fixture skill with one undeclared symbol and
+        // one resolvable form must report exactly the undeclared one.
+        let fixture =
+            std::env::temp_dir().join(format!("hkask-lisp-s12-control-{}", std::process::id()));
+        let fixture_skill = fixture.join("control-skill");
+        fs::create_dir_all(&fixture_skill).expect("create fixture skill dir");
+        fs::write(
+            fixture_skill.join("SKILL.md"),
+            "# Control\n\n- form: `(and (<= rounds_executed 3) (<= no_such_symbol 1))`\n  - env: `{ \"rounds_executed\": <int> }`\n\n- form: `(and (<= rounds_executed 3) (>= rounds_executed 0))`\n  - env: `{ \"rounds_executed\": <int> }`\n",
+        )
+        .expect("write fixture skill");
+        let (control_checked, control_findings) = pinned_symbol_findings(&fixture);
+        fs::remove_dir_all(&fixture).ok();
+        assert_eq!(
+            control_checked, 2,
+            "the control must evaluate both fixture forms"
+        );
+        assert_eq!(
+            control_findings.len(),
+            1,
+            "the control must report exactly the undeclared symbol, got: {control_findings:?}"
+        );
+        assert!(
+            control_findings[0].contains("no_such_symbol"),
+            "the control must name the undeclared symbol, got: {control_findings:?}"
+        );
+    }
+
     #[test]
     fn guarded_union_and_assoc_null_check_are_accepted() {
         let forms = parse(
