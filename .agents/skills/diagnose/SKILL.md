@@ -27,6 +27,11 @@ instrumentation is gated on it), and the convergence arithmetic is D (the
 step 7). An unreproduced symptom is not yet an
 admitted target for root-cause elimination.
 
+## Initial and target condition
+
+- **Initial condition:** a specific symptom anchored to a real code entity/call chain, its fastest observed reproduction loop (or an explicit inability to reproduce), and the current ranked hypothesis set with prior evidence.
+- **Target condition:** `DIAG-2` is true, the convergence gap is at most 0.25, the original reproduction is fixed, the regression test and clippy pass, all diagnostic tags are removed, and the strengthened contract is recorded. Failed invariant/probe checks re-enter hypothesize or instrumentation with one variable changed. Eleven hypothesis cycles is the bound; exhaustion reports surviving hypotheses and missing discriminating evidence.
+
 ## When to Use
 
 - A hard bug or performance regression resists quick fixes and needs disciplined root-cause analysis

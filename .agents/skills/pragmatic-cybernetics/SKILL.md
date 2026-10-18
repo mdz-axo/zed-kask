@@ -8,6 +8,11 @@ description: Cybernetic reasoning framework for hKask's Regulation. VSM mapping,
 
 Cybernetic reasoning framework for hKask's Regulation. VSM mapping, feedback loop analysis (5 properties), variety engineering (Ashby's Law), Good Regulator check, and spec drift as cybernetic signal.
 
+## Initial and target condition
+
+- **Initial condition:** the loop/system description and concrete evidence for sensing, decision, action and return paths; counted disturbance and response classes; the observed S1–S5 mapping and algedonic-channel state.
+- **Target condition:** the convergence gate returns `viable`: no broken/none loop property, the algedonic channel is open, and regulator variety is at least system variety. Any other verdict re-enters the named failing analysis once with remediation or missing evidence applied; a second failure is the reported diagnosis, not another iteration.
+
 ## When to Use
 
 - Analyze a feedback loop's health across five properties (polarity, delay, gain, closure, fidelity) to diagnose failures and prescribe targeted remediation.

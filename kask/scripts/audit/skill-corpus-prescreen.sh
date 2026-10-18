@@ -28,6 +28,12 @@
 #      "checkably wrong" example; per-step routing correctness stays
 #      P). Codified 2026-10-08 from the D/P audit's hand-run
 #      label-vs-tool sweep.
+#   7. Initial + target condition presence (body-side, S13) — every
+#      SKILL.md states both sides of its loop contract. This is an
+#      advisory syntax floor only: the auditor still reads the named
+#      Check signal, threshold, bound and Act path. Initial-only and
+#      target-only skills both flag; a vague mention with no statement
+#      marker does not satisfy the floor.
 #
 # Advisory instrument: findings are proposals for read-triage, not edits.
 # Usage: ./skill-corpus-prescreen.sh [overlap_floor]   (default 0.25)
@@ -145,9 +151,9 @@ done
 # and its accepted-flags ledger govern templates only. Grep reads each
 # SKILL.md directly (no pipe — grep -q's early exit is safe on a file).
 # The SKILLS_DIR seam (the LEAN_SPEC_DIR pattern in check-lean-spec-pins.sh):
-# overridable so check-skill-corpus-dp-labels-selftest.sh can drive the D/P
-# checks over a fixture skills tree. The template checks above always run
-# against the live registry (read-only, green).
+# overridable so check-skill-corpus-dp-labels-selftest.sh can drive all
+# body-side checks over a fixture skills tree. The template checks above
+# always run against the live registry (read-only, green).
 SKILLS_DIR="${SKILLS_DIR:-$SCRIPT_DIR/../../../.agents/skills}"
 # The oracle vocabulary that makes a SKILL.md computation-prescribing (P8.4).
 # Widened 2026-10-08 with the benchmark vocabulary (cargo bench / cargo tree /
@@ -204,5 +210,47 @@ for skill_md in "$SKILLS_DIR"/*/SKILL.md; do
     fi
 done
 echo "checked $((dp_coherent + dp_incoherent)) oracle-naming SKILL.mds; $dp_coherent carry a D regime marker; $dp_incoherent flagged"
+
+# ── Body-side: initial + target condition statements (S13) ─────────────
+# This is deliberately a statement-presence floor, not semantic S13
+# adjudication. Accepted forms observed in the corpus are `Initial condition:` /
+# `Target condition:` (plain or bold, with optional `(T1)` / `(T2)` suffixes)
+# and the compact `**Initial:**` / `**Target:**` labels inside a dedicated
+# condition section. Only the body is inspected: frontmatter descriptions and
+# raw JSON/template field names are not loop contracts.
+s13_total=0
+s13_complete=0
+s13_flagged=0
+for skill_md in "$SKILLS_DIR"/*/SKILL.md; do
+    [ -f "$skill_md" ] || continue
+    s13_total=$((s13_total + 1))
+    has_initial=0
+    has_target=0
+    skill_body="$(awk '
+        NR == 1 && $0 == "---" { front = 1; next }
+        front && $0 == "---" { front = 0; next }
+        !front { print }
+    ' "$skill_md")"
+    if grep -qiE '(^|[^"`_[:alnum:]])initial condition([^:]*)?:' <<< "$skill_body" \
+        || grep -qiE '^[[:space:]]*[-*][[:space:]]+\*\*initial:\*\*' <<< "$skill_body"; then
+        has_initial=1
+    fi
+    if grep -qiE '(^|[^"`_[:alnum:]])target condition([^:]*)?:' <<< "$skill_body" \
+        || grep -qiE '^[[:space:]]*[-*][[:space:]]+\*\*target:\*\*' <<< "$skill_body"; then
+        has_target=1
+    fi
+    if [ "$has_initial" -eq 1 ] && [ "$has_target" -eq 1 ]; then
+        s13_complete=$((s13_complete + 1))
+    else
+        s13_flagged=$((s13_flagged + 1))
+        missing=""
+        [ "$has_initial" -eq 0 ] && missing="initial"
+        if [ "$has_target" -eq 0 ]; then
+            [ -n "$missing" ] && missing="$missing + target" || missing="target"
+        fi
+        echo "  ${skill_md#"$SKILLS_DIR"/}: missing $missing condition statement (S13 read-triage required)"
+    fi
+done
+echo "checked $s13_total SKILL.mds; $s13_complete carry initial + target condition statements; $s13_flagged flagged"
 
 echo "checked $checked templates; $flagged flagged; $accepted accepted (baseline)"

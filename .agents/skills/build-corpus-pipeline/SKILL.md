@@ -41,6 +41,11 @@ Stage 10 verification is D (`lisp_eval` over measured stage
 equalities and the separately evidenced semantic-gate boolean — never
 fixed totals, file sizes, or a model's success claim).
 
+## Initial and target condition
+
+- **Initial condition:** the caller-approved source inventory and hashes, corpus identity, requested branches, bound parameters and cost limits, resolved paths/credentials, and a run record with every stage initially unmeasured.
+- **Target condition:** the Stage 10 canonical equality gate is true for every requested branch, the separately evidenced semantic/retrieval/style checks pass where applicable, and every unrequested or failed branch is explicitly recorded. A failed stage re-enters at that exact stage after its capability or premise is repaired; three no-progress attempts halt for operator attention. Distribution is part of the target only when the caller requested a sealed bundle.
+
 ## Anchors and contract
 
 - **PKO** separates a procedure from its execution: record each stage's inputs,

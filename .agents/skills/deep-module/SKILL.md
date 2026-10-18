@@ -9,6 +9,11 @@ description: "Module design discipline based on Ousterhout's 'A Philosophy of So
 
 Module design discipline based on John Ousterhout's *A Philosophy of Software Design*. Apply the deletion test to evaluate whether a module deserves to exist: delete the callers — if complexity reappears, extract. Delete the module — if complexity vanishes, don't create it. Enforces depth (high benefit/cost ratio), interface minimalism (≤7 public functions — a kask operationalization; Ousterhout argues depth qualitatively), and dependency direction.
 
+## Initial and target condition
+
+- **Initial condition:** an existing module, its complete public-item inventory, implementation-line count or labelled estimate, callers and dependency code, and the invariants/complexity it claims to hide.
+- **Target condition:** the deletion-test recommendation is explicit, the applicable interface design passes `DM-2`, and the last three public-interface counts are equal; DELETE/MERGE uses the defined zero signal. A failed Check re-enters assessment/design with the named red flags. Five iterations is the bound; remaining instability is reported.
+
 ## When to Use
 
 - You are evaluating whether an existing module is deep (small interface, much behavior) or shallow (large interface, thin behavior)

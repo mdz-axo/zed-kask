@@ -13,6 +13,11 @@ description: Coordinate a project-sized, source-grounded research effort across 
 
 The coordinator is the actor executing this skill. The kanban board is the durable **project** task ledger. `swarm_thread_local` is the ordered member conversation; `swarm_task_board` is separate execution telemetry for `swarm_execute_plan_local`, NOT a mirror of the kanban board. Scoped `swarm_a2a_send` is an in-process message/response, NOT a board mutation or a hosted agent service. The coordinator reconciles the two surfaces after each result.
 
+## Initial and target condition
+
+- **Initial condition:** the caller's research request or parent-skill stage, current supported/unsupported/unresolved claim baseline, applicable source/spend/privacy limits, and either no project state or the caller-supplied board/swarm IDs with their live task/roster state.
+- **Target condition:** independently checked source evidence satisfies every task criterion and the convergence form reads `open=0`, `review=0`, `blocked=0` after the operator confirms Review items; project-created state is then cleaned up. Failed checks create targeted work and re-enter Do. Three no-new-evidence sweeps per invocation is the bound; unavailable or unauthorized evidence exits as an incomplete, resumable project.
+
 ## When to Use
 
 - A research project has at least two distinguishable transforms (for example, discover original sources and independently challenge claims), and new findings may change the next tasks or who does them.

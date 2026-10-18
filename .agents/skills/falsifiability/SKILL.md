@@ -13,6 +13,11 @@ Popper, *The Logic of Scientific Discovery* (1959); Platt, "Strong Inference", *
 
 **D/P labelling.** Steps 1–4 are P: admission classification, hypotheses, counterfactuals and tests are judgment, critiqued by the user's review (steps 2 and 4 present for it) and by the observations themselves. Step 1's admissibility gate check (`FAL-1` `lisp_eval`) is D over the classified fields. Step 5's per-hypothesis eliminate/corroborate call is P (does this observation contradict this prediction?), recorded in the auditable `falsification_log`. Step 5's verdict (`FAL-2` `lisp_eval` with disjoint-partition check), step 6's materiality guard, and step 6's convergence composite (the 0.50 verdict / 0.30 alternatives-eliminated / 0.20 remainder weights, computed over the cumulative eliminated set) are D (`lisp_eval`, forms below) over the counts step 5 recorded.
 
+## Initial and target condition
+
+- **Initial condition:** the claim or question to admit, its domain/context and concrete falsifying observation, plus any carried hypotheses, prior eliminations, designed tests and current-cycle observations.
+- **Target condition:** either one corroborated survivor with every alternative cumulatively eliminated (composite 0), or an honestly labelled hard block/irreducible remainder with the missing test named. An invalid partition re-enters elimination; `none_corroborated` restarts at hypothesize; a reducible remainder re-enters test design. Run at most one elimination cycle per initially admitted hypothesis (maximum seven); material no-progress with no new test stops earlier, and bound exhaustion reports the survivors rather than manufacturing convergence.
+
 ## When to Use
 
 - When you need to decide whether a claim or question is *testable at all* before committing resources to investigating it — the Popper admissibility gate.

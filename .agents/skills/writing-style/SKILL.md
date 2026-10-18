@@ -177,9 +177,10 @@ If `WS-1` returns `false`, stop before calling `corpus_compose` or rendering `wr
   and analysis against their centroids. Do not improvise a "style
   config" for them.
 
-## Initial condition and step types (D/P labelling)
+## Initial and target condition with step types (D/P labelling)
 
 - **Initial condition:** the named style, its catalog `config_path`, and (Mode 3) the source document.
+- **Target condition:** Mode 1 preserves every technical token through `WS-2`; Mode 2/3 meets the configured centroid threshold or records the operator's explicit acceptance of a surfaced miss; Mode 3 also preserves heading/fence/table parity. A miss may re-compose once; a second miss or a missing centroid is delivered as unvalidated rather than silently passed.
 
 | Step | Type | Oracle / critique |
 |------|------|-------------------|

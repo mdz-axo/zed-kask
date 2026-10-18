@@ -43,6 +43,11 @@ closes deterministically: `forecast_list` over the analyst's resolved
 forecasts → the calibration `lisp_eval` form (the `market_calibration`
 bucket Brier is market context, never the analyst's calibration).
 
+## Initial and target condition
+
+- **Initial condition:** the resolved company and as-of date, SCOUT inputs and prior analyst forecasts, source-keyed working records, requested output mode, and all downstream stages initially unrun.
+- **Target condition:** terminal DROP/HALT/BLOCK gates are honored, or the frozen note passes the publication gate with ENTER eligibility, adjusted confidence at least 0.50, evidence review performed and zero unresolved contradicted load-bearing claims; the final persisted artifact states its actual status. PARTIAL re-enters VALUATION, factual failures re-enter collection or the affected synthesis stage, and INCONSISTENT escalates. Three correction cycles total are the bound; exhaustion returns a labelled draft, never a publishable note.
+
 ## Instructions
 
 Execution order: collection setup and SCOUT → candidate note check → remaining collection → INTEL →

@@ -132,6 +132,12 @@ Fagan, "Design and code inspections to reduce errors in program development," IB
      can close after a single passing Check; it is not exempt from
      stating the initial/target condition and what a failed Check does.
      Do not add a useless second run merely to display PDCA vocabulary.
+     Mechanical enforcement point: `kask/scripts/audit/skill-corpus-prescreen.sh`
+     checks that every body states both an initial and a target condition;
+     `kask/scripts/check-skill-corpus-dp-labels-selftest.sh` pins canonical,
+     compact, initial-only, target-only, and frontmatter-only controls. This is
+     the syntax floor only — Check signal, threshold, bound, and Act re-entry
+     remain read-triage judgments under this check.
    - **S14**: No model-typed deterministic output. For every instruction
         step and template output: a value that is a function of inputs
         already available to a deterministic engine — a count or other

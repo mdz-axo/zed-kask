@@ -17,6 +17,11 @@ The four principles are from forrestchang's `CLAUDE.md` (github.com/forrestchang
 
 The assessment (step 1), the constrained plan (step 2) and the audit's four principle scores with their violations report (step 3) are P — judgment, critiqued by the operator and by the correction loop. The overall score and the gate are D (`lisp_eval`: the arithmetic mean `(/ (+ s1 s2 s3 s4) 4)` and the critical-violations/overall gate in step 4); a score the model states but does not supply to the form is not the mean — the form's env is the record.
 
+## Initial and target condition
+
+- **Initial condition:** the user's coding requirement, the actual code/tree or proposed diff, binding constraints, and the assumptions and success criteria produced before implementation.
+- **Target condition:** the pre-implementation `CG-1` plan gate passes and the post-implementation `CG-2` gate returns true — zero critical violations and mean principle score at least 0.7 — with every changed line traced to the request. A failing audit applies its concrete corrections and re-runs once; a second failure is delivered with its violations and score rather than silently accepted.
+
 ## When to Use
 
 - Before implementing a coding task, when you need to surface hidden assumptions, simplicity risks, and scope creep warnings

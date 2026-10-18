@@ -43,6 +43,11 @@ compiler-confirmed findings, counted from the actual tool output and computed
 with `lisp_eval` — a proposal the compiler has not seen is unreviewed, and a
 critique the compiler contradicts is overruled.
 
+## Initial and target condition
+
+- **Initial condition:** the Rust design problem and constraints, actual existing/proposed code, baseline compiler diagnostics and clippy output, ownership/invariant/error-domain observations, and the real reference blast radius.
+- **Target condition:** `IR-1` and `IR-2` pass and the Improvement Measure returns `converged`: the proposed code compiles, diagnostics contain no errors, clippy adds no warning, and all findings are reconciled with the compiler. `continue` re-enters inquiry with the challenge directives; `oscillating` escalates; `undetermined` remains unverified. Three iterations is the bound.
+
 ## When to Use
 
 - Assessing a Rust design problem against Graydon Hoare's principles to identify invariants, invalid states, ownership graphs, and error domains.

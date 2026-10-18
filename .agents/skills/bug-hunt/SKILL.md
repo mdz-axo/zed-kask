@@ -12,6 +12,11 @@ Bug hunting: explores a target crate for threats to user-defined quality. Applie
 
 Weinberg, *Quality Software Management, Vol. 1: Systems Thinking* (1992); Beizer, *Software Testing Techniques*, 2nd ed. (1990); Bach & Bolton, *Heuristic Test Strategy Model* (2006); Hendrickson, *Explore It!* (2013); Jia & Harman, "An Analysis and Survey of the Development of Mutation Testing", *IEEE TSE* 37(5) (2011); Barr et al., "The Oracle Problem in Software Testing: A Survey", *IEEE TSE* 41(5) (2015). `onto_anchor` → derived `exploratory_testing`, `test_oracle`, `mutation_testing`, `bug_taxonomy`, `good_regulator_theorem`.
 
+## Initial and target condition
+
+- **Initial condition:** the target crate, the user-defined quality criteria, the observed crate model and static baseline, plus any prior expedition or mutation report supplied for this run.
+- **Target condition:** after at least two and at most ten expeditions, the convergence form reports no new confirmed-or-potential file:line locations and zero malformed contract/location findings. A nonzero defect count returns those findings to the oracle; new locations feed the next charter. Bound exhaustion reports the remaining coverage and escalations instead of implying bug absence.
+
 ## When to Use
 
 - When exploring a target crate for threats to user-defined quality criteria.

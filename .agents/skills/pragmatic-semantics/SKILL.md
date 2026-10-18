@@ -16,6 +16,11 @@ Hume's is–ought distinction (*A Treatise of Human Nature*, 1739); Optimality T
 
 Statement classification (all axes of semantics-classify-statement, the tiers and resolution/escalation steps of semantics-conflict-resolve, provenance-trace steps 1–7) and semantics-route-step's regime classification, mismatch flags, and hybrid labeling are P — judgment, critiqued by the operator (a mismatch flag naming a nonexistent oracle is checkably wrong against the available_oracles input; a classification that contradicts its traced provenance is a finding). The confidence computation (classify step 7), the lexicographic ranking (conflict-resolve step 7), and the convergence gate are D (`lisp_eval`, the forms below). A D tag on a step with no real oracle is checkably wrong; a P tag on a step with a cheap deterministic checker is a precision-improvement candidate.
 
+## Initial and target condition
+
+- **Initial condition:** the statement(s) or computation step, system context and available oracles, plus the direct source material required to classify, trace provenance or resolve the named conflict.
+- **Target condition:** every requested analysis carries an honest status; the provenance gate has zero unverifiable gaps and `chain_confidence >= 0.8`; conflicts either produce a strict ranked resolution or an explicit tie/escalation; routing leaves zero unrouted and zero ungated P steps. Verification recommendations permit one provenance re-trace; persistent gaps or skipped analyses are reported rather than promoted to a pass.
+
 ## When to Use
 
 - When a statement needs classification on ontological (IS/OUGHT), epistemic (declarative/probabilistic/subjunctive), and domain ontology anchoring axes.

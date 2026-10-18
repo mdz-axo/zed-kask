@@ -27,6 +27,11 @@ to make every documented claim verifiable against the current tree.
   or say "not yet enforced". A claim without a resolvable citation is
   fabricated until proven otherwise.
 
+## Initial and target condition
+
+- **Initial condition:** the current `kask/docs/` inventory and count, governing documentation specs, the code surfaces each selected docs-set describes, and the existing claims/links/citations to classify.
+- **Target condition:** the tree remains below 75 files, every fold/delete names a successor, and all five Phase 6 gates (count, links, citations, frontmatter, no-deleted-surfaces) return true after registries and diagrams are reconciled. A failed gate re-enters its owning phase at most twice; a third failure ends the pass with that failure reported.
+
 ## When to Use
 
 - Code changed and the docs describing it may have drifted (renames, deleted

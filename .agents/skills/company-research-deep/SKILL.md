@@ -15,6 +15,11 @@ The evidence review is built on published verification practice (operator ruling
 
 **D/P labelling.** MCP valuation tools and the fixed-weight `lisp_eval` GORILLA scoring (`CRD-2`) are D, as are the claim-source key-closure check (the missing-keys form over `claim_source_keys` vs `source_keys`), the industry-outside-view field check, the Falstaffian rotation board/shape gate (`CRD-1`), the mechanical quote verification (`string-contains` against the keyed passage), the DSO/DIO/DPO/CCC derivation (`lisp_eval` arithmetic over audited inputs), the IMAGINE prediction structure gate (`CRD-3`), and the `stages_run` manifest check (`lisp_eval` over the composed report). Board rotation, Wardley evolution, capability assessments, Simon inquiry, IMAGINE scenarios and thesis pillars are judgments grounded in cited evidence and open to contrary cases. The evidence review records what was checked and what was found; it never certifies the report, and no mechanical match upgrades a claim's provenance.
 
+## Initial and target condition
+
+- **Initial condition:** the company request and as-of date, resolved official identity (and ticker when applicable), selected run mode, source-keyed originals plus the working evidence digest, and a stage record in which no perspective is presumed complete.
+- **Target condition:** all nine required perspectives are recorded as run with any limitations, and each applicable valuation tool is run or explicitly skipped-with-reason; both deliverables contain the checked load-bearing claims, explicit gaps and settled-or-deferred disagreements; the `stages_run` manifest and evidence-review note are present; and the reviewed texts are persisted unchanged. A failed handoff re-executes the affected stage and descendants; the single author-side evidence-review pass corrects what it can and exposes the remainder instead of looping or issuing a quality verdict.
+
 ## When to Use
 
 - When the user asks for a deep background, overview and outlook report on a company, using its name or ticker. No separately supplied research question, ticker, source list, acceptance task or thesis is required; derive the internal work from this request and the actual evidence. For a company without the inputs needed for an investment thesis, produce a sourced qualitative report with explicit gaps.

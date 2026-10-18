@@ -8,6 +8,10 @@ description: "Structured data extraction from unstructured text. Identifies enti
 
 Structured data extraction from unstructured text. Identifies entities, extracts inter-entity relations, and maps extracted data to target schemas with field-level coverage and inferred field population.
 
+## Initial and target condition
+
+- **Initial condition:** the exact source text, target schema and extraction hints, with no entity, relation or inferred field accepted before substring and schema checks.
+- **Target condition:** every retained entity/relation trigger passes `SE-1`, `SE-2` reconciles counts/orphans, `SE-3` computes schema-only coverage, and `unresolved_fields` is empty. A nonempty unresolved set re-enters entity identification once with those field names as hints; fields still absent after the second pass remain explicit and are never fabricated.
 
 ## When to Use
 

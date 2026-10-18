@@ -37,6 +37,11 @@ a D verdict — a found counterexample eliminates the conjecture hard. A
 checked proof establishes its exact stated proposition relative to its
 assumptions and axioms; it is never a claim about instances.
 
+## Initial and target condition
+
+- **Initial condition:** the exact Lean declaration, imports, hypotheses, pinned toolchain and trust policy, plus any existing proof attempt and actual diagnostics.
+- **Target condition:** every selected positive declaration passes `LP-1` and `LP-2`, the named theorem's axioms satisfy policy, expected negative controls fail for the intended reason, bookkeeping is complete and no outcome is unverified. A failed construction returns through refute to construct with the diagnostic classified. Bound: one initial attempt plus at most two revisions; after three construct/refute cycles, report the remaining goal, diagnostics and trust dependencies as blocked.
+
 ## When to Use
 
 - Constructing machine-checked proofs in Lean 4

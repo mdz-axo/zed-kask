@@ -9,6 +9,11 @@ General multi-purpose self-improvement skill for FM-based agents. Implements the
 
 **Scope boundary (operator ruling 2026-10-17):** the paper's Foundation Model Improvement pathway (θ — parameter updates via fine-tuning) is **out of scope for the co-researcher mandate** and has no executor in this system: the training server, the lora-training skill and the adapter lifecycle were removed. A task that genuinely requires a parameter update is reported as out of scope with its measured evidence — never simulated through a scaffold change presented as a fine-tune.
 
+## Initial and target condition
+
+- **Initial condition:** the named scaffold capability gap, current θ_t and Σ_t, `metric_before` across performance/cost/safety, a fixed eval set with an executable evaluator, explicit resource authority, and a pre-registered outcome prediction.
+- **Target condition:** within at most ten outer Kata experiments and five inner PDCA iterations per step, a measured scaffold candidate clears the deterministic acceptance/regression gates and is filed for independent algedonic judgment, or the baseline is retained with the blocker and remaining measured gap reported. A failed Check rolls back, discards or refines; this skill never adopts its own proposal.
+
 ## Theoretical Foundation
 
 The skill formalizes self-improvement as a **self-induced update operator** 𝒰 that maps the agent's current configuration to an updated one:
