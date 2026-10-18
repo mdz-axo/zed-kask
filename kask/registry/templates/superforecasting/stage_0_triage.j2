@@ -6,8 +6,6 @@ contract:
     time_horizon: string|null
   output:
     difficulty_level: string
-    goldilocks_zone: boolean
-    proceed_recommendation: boolean
     rationale: string
     resolution_criteria: string|null
     resolution_deadline: string|null
@@ -51,8 +49,6 @@ Evaluate the question against these criteria:
 
 Respond with a JSON object containing:
 - difficulty_level: One of "clocklike", "goldilocks", or "cloudlike"
-- goldilocks_zone: boolean (true if difficulty_level is "goldilocks")
-- proceed_recommendation: boolean (proceed only if in the goldilocks zone and the event can be resolved using supplied criteria and deadline)
 - resolution_criteria: the observable rule for yes/no resolution, or null if missing
 - resolution_deadline: the supplied event deadline, or null if missing; never infer a calendar date from `time_horizon`
 - rationale: Brief explanation of the classification decision

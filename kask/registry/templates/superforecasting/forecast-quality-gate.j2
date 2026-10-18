@@ -6,7 +6,6 @@ contract:
     record_result: object
     synthesis_output: object
   output:
-    gate_pass: boolean
     gate_findings: array
     calibration_realism_score: number
     confidence_justification_score: number
@@ -89,8 +88,12 @@ Is the forecast record complete enough for later Brier scoring and post-mortem a
 
 ## Thresholds
 
-- `gate_pass` = `true` only if **all four** scores are ≥ 0.60.
-- If any score < 0.60, `gate_pass` = `false` and the corresponding `gate_findings` entry must explain what failed and how to fix it.
+The four dimension scores above are YOUR judgments. The pass rule is NOT:
+`gate_pass` is computed by the `SF-3` `lisp_eval` gate from your scores (all
+four ≥ 0.60), and the per-criterion weighted totals are arithmetic over the
+criterion judgments you emit in `gate_findings`. Do NOT emit `gate_pass`.
+
+- A failing dimension must have a `gate_findings` entry explaining what failed and how to fix it.
 - An individual finding entry must include `check` (calibration_realism/confidence_justification/evidence_trail/record_completeness), `status` (pass/fail), and `note`.
 
 ## Output Requirements
@@ -99,7 +102,6 @@ Respond with a JSON object:
 
 ```json
 {
-  "gate_pass": true,
   "calibration_realism_score": 0.85,
   "confidence_justification_score": 0.80,
   "evidence_trail_score": 0.75,
@@ -133,7 +135,8 @@ Respond with a JSON object:
 
 - You are evaluating, not generating. Do not rewrite or improve the forecast.
 - Scores must be justified by specific evidence from the calibration and record outputs. Vague scores are invalid.
-- If `gate_pass` is `false`, each failing dimension must have a specific, actionable fix note.
+- Do NOT emit `gate_pass` — the `SF-3` `lisp_eval` gate computes it from your four scores; a self-certified pass is not a pass.
+- Each failing dimension must have a specific, actionable fix note.
 - The calibration realism check must verify the final probability against the defensible_range if one is provided.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Preserve the original prompt structure and formatting.

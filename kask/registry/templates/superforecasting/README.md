@@ -96,8 +96,6 @@ Each stage produces structured JSON output that feeds into subsequent stages:
 // Stage 0: Triage
 {
   "difficulty_level": "goldilocks",
-  "goldilocks_zone": true,
-  "proceed_recommendation": true,
   "rationale": "..."
 }
 

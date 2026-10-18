@@ -14,9 +14,10 @@ Tetlock & Gardner, *Superforecasting: The Art and Science of Prediction* (2015) 
 
 ## D/P labelling
 
-Every stage heading below carries its label. **D**: the eight `lisp_eval` forms
+Every stage heading below carries its label. **D**: the nine `lisp_eval` forms
 (the stage-0 triage gate `SF-1`, the stage-2 rate check and anchor check, the stage-4 posterior, the stage-5
-weighted average, the stage-5/stage-6 compensation-masking and defensible-range gate `SF-2`, the gate pass rule, the market-prior gate); the
+weighted average, the stage-5/stage-6 compensation-masking and defensible-range gate `SF-2`, the
+quality-gate weighted totals and pass rule `SF-3`, the market-prior gate); the
 `scenario_*` server oracles (triage classification, quantify rejection,
 calibration); `forecast_persist`; and Brier at resolution. **P**: triage,
 Fermi decomposition, outside-view comparability, and dragonfly-eye
@@ -28,7 +29,7 @@ one outcome.
 ## Initial and target condition
 
 - **Initial condition (T1):** the admitted question, its resolution criteria and deadline, any sourced historical observations, `market_context` / `expert_prior`, the optional EQM-derived `overconfidence_bias`, and — when resolved forecasts exist — the `scenario_calibration` curve for the bucket. A historical base rate is not presumed to exist.
-- **Target condition (T2):** either a sourced starting anchor followed by a probability with a defensible range and a record preserving the stage-0 resolution criteria/deadline, or an explicit evidence-gap exit with no numeric forecast. For a produced forecast, `forecast-quality-gate` `gate_pass = true` is the local target; accuracy is judged only by Brier over resolved forecasts, never by one outcome.
+- **Target condition (T2):** either a sourced starting anchor followed by a probability with a defensible range and a record preserving the stage-0 resolution criteria/deadline, or an explicit evidence-gap exit with no numeric forecast. For a produced forecast, `SF-3`'s `gate_pass = true` (over `forecast-quality-gate`'s four dimension scores) is the local target; accuracy is judged only by Brier over resolved forecasts, never by one outcome.
 
 ## When to Use
 
@@ -143,15 +144,17 @@ The former single inside-view step is split into three steps. Generation and cou
 
 1. Evaluate the forecast across four independent dimensions: calibration realism, confidence justification, evidence trail, and record completeness.
 2. Score each dimension on a 0–1 scale with specific evidence from the calibration and record outputs.
-3. Set gate_pass to true only if all four scores are >= 0.60.
-4. If gate_pass is false, each failing dimension must have a specific, actionable fix note.
+3. Compute the per-criterion weighted totals and the pass rule deterministically via `lisp_eval` gate **`SF-3`** — the template emits the four dimension scores and the criterion judgments; it never emits `gate_pass`:
+   - form: `(begin (define wsum (lambda (s w) (+ (* (nth 0 s) (nth 0 w)) (* (nth 1 s) (nth 1 w)) (* (nth 2 s) (nth 2 w)) (* (nth 3 s) (nth 3 w))))) (let ((cr (wsum (assoc "calibration_realism" crit) (list 0.30 0.25 0.20 0.25))) (cj (wsum (assoc "confidence_justification" crit) (list 0.35 0.30 0.20 0.15))) (et (wsum (assoc "evidence_trail" crit) (list 0.35 0.30 0.20 0.15))) (rc (wsum (assoc "record_completeness" crit) (list 0.35 0.25 0.20 0.20)))) (list cr cj et rc (and (>= cr 0.6) (>= cj 0.6) (>= et 0.6) (>= rc 0.6)))))`
+   - env: `{ "crit": [ {"calibration_realism": [1.0, 1.0, 1.0, 1.0]}, {"confidence_justification": [1.0, 1.0, 1.0, 1.0]}, {"evidence_trail": [1.0, 1.0, 1.0, 1.0]}, {"record_completeness": [1.0, 1.0, 1.0, 1.0]} ] }` — each list holds the four criterion judgments (0–1) for that dimension, in the table order above. Returns `[cr, cj, et, rc, gate_pass]`; `gate_pass` is the conjunction of all four weighted totals ≥ 0.60.
+4. If `gate_pass` is false, each failing dimension must have a specific, actionable fix note.
 5. You are evaluating, not generating — do not rewrite or improve the forecast.
 
 ### Loop (PDCA over the gate)
 
 - **Plan:** the gate's fix notes predict which stage's output, if revised, lifts the failing dimension to ≥ 0.60.
 - **Do:** re-run only the stage(s) the fix notes name, then every downstream stage.
-- **Check (D):** re-render the gate; pass iff all four scores ≥ 0.60, checked with `lisp_eval` `(and (>= s1 0.6) (>= s2 0.6) (>= s3 0.6) (>= s4 0.6))`.
+- **Check (D):** re-render the gate and re-run `SF-3`; pass iff `gate_pass` (the conjunction of all four weighted totals ≥ 0.60) is `true`.
 - **Act:** stop on pass, or after 2 gate cycles. On a second failure, deliver the forecast with the failing dimensions and their scores recorded as the remaining gap.
 
 ### Market-prior calibration check (formerly calibration-stewardship)
@@ -229,14 +232,14 @@ probability (alignment invariant) — before re-invoking superforecasting.
 Render `superforecasting/stage_0_triage` twice — once with a representative
 goldilocks-zone question carrying resolution criteria and a deadline (pass),
 once with the deadline omitted (the triage must refuse to proceed rather
-than invent one). Run the eight pinned `lisp_eval` forms with representative
+than invent one). Run the nine pinned `lisp_eval` forms with representative
 envs: `SF-1` passes only when `triage_zone` is `"goldilocks"`, `scenario_triage_class` is `"well_specified"` or `"goldilocks"`, and `resolution_criteria`/`resolution_deadline` are non-empty; the stage-2 rate check returns `invalid` on a zero sample and the
 computed rate otherwise; the anchor check bounds `p` to [0, 1]; the stage-4
 posterior form updates a prior; the stage-5 raw-model form derives composites,
 normalized weights and synthesized probability for valid 3-, 4- and 5-model
 arrays, and returns `[null, "invalid_models"]` for an out-of-range score,
-probability, blank model name or wrong model count; `SF-2` flags compensation masking and verifies `range_low <= final_probability <= range_high` with `range_low < range_high`; the gate form passes only
-when all four scores are >= 0.60; the market-prior gate requires
+probability, blank model name or wrong model count; `SF-2` flags compensation masking and verifies `range_low <= final_probability <= range_high` with `range_low < range_high`; `SF-3` computes the four weighted dimension totals from the criterion judgments and passes only
+when all four are >= 0.60 (a below-threshold dimension returns `gate_pass` false); the market-prior gate requires
 `stale_buckets = 0` and `without_snapshot_rate < 0.2`.
 
 ## Registry Templates
@@ -251,7 +254,7 @@ when all four scores are >= 0.60; the market-prior gate requires
 | `stage_5_synthesis.j2` | Synthesize a dragonfly-eye view by integrating multiple causal models and perspectives. Steel-man dissenting views and produce a synthesized probability. |
 | `stage_6_calibration.j2` | Calibrate the final probability using the full 0-100% scale. Justify precision against known calibration principles and the pipeline's evidence trail. |
 | `stage_7_record.j2` | Create a structured forecast record with resolution criteria and expiration date for later tracking, Brier scoring, and post-mortem analysis. |
-| `forecast-quality-gate.j2` | Independent quality gate that evaluates forecast calibration realism, confidence justification, evidence trail completeness, and record quality without self-assessment bias. Receives calibration and record outputs and produces calibrated 0-1 scores plus a gate_pass determination with actionable fix notes. |
+| `forecast-quality-gate.j2` | Independent quality gate that evaluates forecast calibration realism, confidence justification, evidence trail completeness, and record quality without self-assessment bias. Receives calibration and record outputs and emits the four 0-1 dimension scores plus the criterion judgments; `SF-3` (`lisp_eval`) computes the weighted totals and the pass rule, never the model. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `superforecasting/stage_0_triage`) and a context object with the required variables.
 
