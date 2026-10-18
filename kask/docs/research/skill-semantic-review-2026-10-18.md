@@ -271,3 +271,29 @@ hkask-bridge-ontology 75+4/0; clippy `-D warnings` clean over the touched scope.
 
 **Remainder at this pass:** unchanged at **zero** — the census still reads 58
 skills / 216 templates, set-equal to `/tmp/live-skills.txt`.
+
+## S14 cohort: deterministic aggregates off the model (2026-10-18, later session)
+
+Two of the S14 cards from the D/P sweep were executed (the operator authorized
+immediate repair of reproduced mechanical/contract defects):
+
+- **`3bcdb017` — eqm-validate re-typed caller-computed statistics** (commit
+  `014cf1ac6f`, 4+/8−). `correlation_r` and `directional_match_pct` left the LLM
+  output contract; the caller reads both from `outcome_statistics`, which the
+  template's own header and Step 2 already required. The contract now agrees with
+  the body and with `eqm/SKILL.md:129,137` (the step is `D`).
+- **`3c5fd9bf` — layout-review emitted cross-probe aggregates** (commit
+  `d0eeee1e4c`, 17+/12−). `all_probes_passed` and `failing_gates` left the
+  contract; a new `KSA-4` `lisp_eval` gate folds the probe list and set-differences
+  the gate results with dedup. Verified live: all-pass → `[true, []]`; mixed →
+  `[false, ["overflow"]]`; duplicate failing gates dedup to one. The parser-backed
+  gate now reads **302** candidates (was 301), 0 defects.
+
+Remaining S14 cards (all read-triaged live, all still open, none yet executed):
+`2a84b7ab` (grounding-verify Step-5 counts + GV-1 sides), `c1b87090` (create-skill
+core-rung count + `research_findings`), `a3f3270e` (superforecasting stage_0
+booleans + forecast-quality-gate weighted verdict), `0a7016fd` (upstream-rebase
+decide/execute/document measured states), `1d4286de` (diagnose-fix post-application
+booleans), `5ea2e646` (code-review-implement counts). Each is a small,
+self-contained removal of a model-typed aggregate; the cohort continues in the
+next session.
