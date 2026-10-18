@@ -136,6 +136,56 @@ cycle. No self-loops. The invocation graph is acyclic.
 Every template was therefore either read against its owning skill or accounted
 to the server that renders it — none is unaccounted for.
 
+## Independent assessment
+
+An independent agent (no prior context on this work, instructed to falsify) re-ran
+the instruments and reported **partially-achieved, confidence 0.82**. Its four
+per-criterion verdicts were PASS/PASS/PASS/PASS, but it refuted three of the
+ledger's own claims — all three reproduced and are repaired (commit 8b6af9c0297):
+
+1. The anchors instrument matched a bare `derived `key`` anywhere, reading a
+   skill's prose about something "EQM-derived" as an ontology anchor. Tightened to
+   require the `onto_anchor` context; the true figure is 37 skill-key citations
+   over 29 distinct keys, 0 dangling.
+2. Both audit scripts exited 1 on a clean sweep (`grep -o` returns 1 on no-match
+   under `pipefail`), so a green result read as failure.
+3. The template accounting named four zero-template skills; the tpl column reads
+   seven. Corrected.
+
+Two evidence gaps the assessor could not close, recorded as concerns:
+
+- `check-skill-crossrefs.sh` only checks refs carrying an explicit extension, so
+  the one bare ref (`create-skill` → `my-skill/analyze`, a documented placeholder)
+  is outside its reach — the passing gate is consistent with a miss it cannot see.
+- Reference-model verdicts rest on the in-tree derived-registry encoding; the primary
+  sources are not vendored.
+
+## Memory consolidation (companion pass, 2026-10-18)
+
+Run alongside this review because the skill corpus and the curator store share the
+same growth pressure. Store at pass time: **5,483 h_mems** against a 4,000 ceiling,
+composition 2,691 thread-tier / 1,749 knowledge / 724 goal-events / 285 other.
+
+All three mechanical valves returned clean, which is the finding:
+
+- **Dedup**: 5,509 scanned, **0 duplicate groups** — the writer-side canonical-key and
+  same-key dedup fixes hold.
+- **Prune** (skill_use_issue, 30d, spare-recall 7d): **0 candidates** — no stale incidents.
+- **Backfill**: **0 missing embeddings** (4 unsupported rows are non-string values, by design).
+- **Thread-tier shed working**: 0 rows older than 30 days; only 110 older than 7.
+- **Confidence floor holds**: 5,249 at floor, 1 below (a legacy row).
+
+The 204 apparent embedding orphans are all `curator:distilled:*` watermark rows —
+the distillation timer's coverage markers, bookkeeping by design, not content.
+
+What remains is **additive-only knowledge growth** (1,861 rows added in October, the
+layer that has no automatic forgetting path) plus **68 space-keyed entities** carrying
+canonical-form drift. Both are consolidation work for a therapy session, not mechanical
+valve work: renaming a drifted entity key must carry its embeddings (the `entity_ref`
+recall JOIN), and condensing near-duplicate lesson keys (`prompt-enhancement` 24 vs
+`prompt-enhance-skill` 11; `agent-workflow` 13 vs `agent-work` 11) needs per-group
+semantic judgment. Both require operator approval per the therapy skill's Phase 4.
+
 ## Findings
 
 Verified defects, both repaired in this review:
