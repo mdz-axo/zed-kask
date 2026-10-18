@@ -11,14 +11,14 @@ mds_categories: [composition, lifecycle]
 # Scenarios MCP Server Reference
 
 **Crate:** `kask/mcp-servers/hkask-mcp-scenarios`
-**Tools:** 17 — `scenario_frame`, `scenario_frame_document`, `scenario_brainstorm`, `scenario_build`, `scenario_quantify`, `scenario_propagate`, `scenario_recompute_posteriors`, `scenario_calibrate`, `scenario_update`, `scenario_synthesize`, `scenario_cross_validate`, `scenario_score`, `scenario_calibration`, `scenario_assess`, `scenario_triage`, `scenario_status`, `scenario_from_markets_set`. The direct market-record bridge is `scenario_from_markets_set`; a single record is passed as a set of one.
+**Tools:** 21 — `scenario_frame`, `scenario_frame_document`, `scenario_brainstorm`, `scenario_build`, `scenario_quantify`, `scenario_propagate`, `scenario_recompute_posteriors`, `scenario_calibrate`, `scenario_update`, `scenario_synthesize`, `scenario_cross_validate`, `scenario_score`, `scenario_calibration`, `scenario_assess`, `scenario_triage`, `scenario_status`, `scenario_from_markets_set`, `forecast_persist`, `forecast_record`, `forecast_list`, `scenario_risk_measure`. The direct market-record bridge is `scenario_from_markets_set`; a single record is passed as a set of one. The four forecast tools were ported from the retired companies server (2026-10-18).
 **Auto-start:** Yes by default with the full built-in set; operators can disable the fleet or this server through `kask.mcp` (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:327-340,704`).
 
-Tool count is pinned against the live `scenario_router()` by `tool_surface_is_exactly_17_registered_tools` (the `mod tests` pin in `kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs`).
+Tool count is pinned against the live `combined_router()` by `tool_surface_is_exactly_21_registered_tools` (the `mod tests` pin in `kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs`).
 
 ## Pipeline Architecture (DIAG-RF-005)
 
-This diagram shows the control flow between the 17 MCP tools in the scenarios server, grouped by pipeline phase. Solid arrows indicate the expected predecessor relationship enforced by the pipeline conventions. Dashed arrows indicate optional or independent paths.[^tetlock-scenarios-ref][^schwartz-scenarios-ref]
+This diagram shows the control flow between the 21 MCP tools in the scenarios server, grouped by pipeline phase. Solid arrows indicate the expected predecessor relationship enforced by the pipeline conventions. Dashed arrows indicate optional or independent paths.[^tetlock-scenarios-ref][^schwartz-scenarios-ref]
 
 ```mermaid
 flowchart TD
@@ -69,7 +69,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-005
 verified_date: 2026-10-06
-verified_against: kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (the 17 #[tool] handlers; tool_surface_is_exactly_17_registered_tools pin); kask/mcp-servers/hkask-mcp-scenarios/src/superforecast.rs; kask/mcp-servers/hkask-mcp-scenarios/src/types.rs
+verified_against: kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (the 21 #[tool] handlers; tool_surface_is_exactly_21_registered_tools pin); kask/mcp-servers/hkask-mcp-scenarios/src/superforecast.rs; kask/mcp-servers/hkask-mcp-scenarios/src/types.rs
 status: VERIFIED
 -->
 
@@ -86,9 +86,9 @@ and nothing else — each has its own contract:
    judgment in skill templates; the scenarios server quantifies the
    event-tree backbone underneath them.
 2. **Probability-weighted four-scenario distribution** —
-   `calibrate_forecast` on the companies server: Tetlock-calibrated
-   probabilities distributed across four Schwartz scenarios to produce
-   a probability-weighted intrinsic value.
+   Tetlock-calibrated probabilities distributed across four Schwartz
+   scenarios to produce a probability-weighted value, via the skill layer's
+   own templates over caller-supplied inputs.
 
 The scenarios server itself implements the MAIA event-based template
 (event sets as yes/no questions over fixed horizons; four scenario
@@ -115,7 +115,7 @@ full derivation is in git history — see the Redesign record):
 | CalibrationObservation | 10-bin curve, weighted bias, isotonic second channel | Tetlock calibration | `scenario_calibration` |
 | ScenarioProject | the spine: framing document, trees, assessment history, journal linkage | Chermack's unit of assessment | `ProjectStore` (see Project persistence) |
 | Narrative / Implications / Indicators | quadrant stories, strategies, early-warning indicators | Schwartz steps 5–8 | the skill layer (`scenario-planning` templates) — a ruled contract, not a server primitive |
-| ImpactMapping | per-node yes/no DCF deltas; 2^N paths weighted by probability | MAIA "events drive the financial forecast" | `scenario_impact_valuation` (companies server) |
+| ImpactMapping | per-node yes/no DCF deltas; 2^N paths weighted by probability | MAIA "events drive the financial forecast" | caller-authored impact mappings consumed by the skill layer (the former `scenario_impact_valuation` tool retired with the companies server; the shared `hkask_forecast` risk core survives) |
 | MarketBridge | market records → root events with provenance and gates | prediction-market base rates as priors | `scenario_from_markets_set` |
 | CertaintyTier | proximate ≥67% / probable 33–66% / possible <33% | MAIA three-level tier | `hkask_forecast` |
 
@@ -187,7 +187,7 @@ full derivation is in git history — see the Redesign record):
 
 - **Standard pipeline:** `scenario_frame` → `scenario_frame_document` → `scenario_brainstorm` → `scenario_build` → `scenario_quantify` → `scenario_calibrate` → `scenario_synthesize` → `scenario_score` → `scenario_assess`[^tetlock-key-paths]
 - **Research entry:** `scenario_build` with research text (skip brainstorming if events are extracted from web text)
-- **Companies bridge:** `scenario_quantify` → user authors per-node impact mappings → `scenario_impact_valuation` on `hkask-mcp-companies` (exogenous scenario events drive the company's DCF via additive assumption deltas, weighted by path probability)
+- **Valuation bridge (skill layer):** `scenario_quantify` → the caller authors per-node impact mappings and branch returns → the `scenario-planning` skill composes them with the scenario tree; the shared `hkask_forecast` risk core (`scenario_risk_measure`, `fuse_volatility`) is exposed by the scenarios server's `scenario_risk_measure` tool over caller-supplied branch returns. (The former companies-server `scenario_impact_valuation` DCF bridge retired 2026-10-18.)
 - **Markets bridge:** `scenario_from_markets_set` (a single market is a set-of-1) → `scenario_quantify`; market records come from `hkask-mcp-prediction-markets` (`market_lookup` / `market_match`)
 - **Update loop:** `scenario_propagate` re-propagates a tree after a prior revision; `scenario_update` applies a one-off Bayesian revision; `scenario_recompute_posteriors` recomputes under evidence in both directions (the shared `hkask_forecast::posterior` engine — the graph widget delegates to the same implementation)
 - **Independent:** `scenario_triage`, `scenario_status` callable at any point

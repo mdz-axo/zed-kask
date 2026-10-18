@@ -57,7 +57,7 @@ const fn hex_digit(nibble: u8) -> char {
 }
 
 /// Execute a GET query against `https://serpapi.com/search` and parse the
-/// JSON response body. Shared by `hkask-mcp-companies` and `hkask-mcp-corpus`.
+/// JSON response body. Shared by the corpus server and its siblings.
 pub async fn serpapi_get_json(
     client: &reqwest::Client,
     params: &[(&str, String)],

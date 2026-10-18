@@ -3,7 +3,7 @@
 //! Shared superforecasting computation engine (Tetlock GJP methodology).
 //!
 //! Canonical implementations used by both `hkask-mcp-scenarios` and
-//! `hkask-mcp-companies`. No MCP or server dependencies — pure math.
+//! the domain MCP servers (`hkask-mcp-scenarios`). No MCP or server dependencies — pure math.
 //!
 //! Pipeline:
 //! 1. Fermi decomposition — confidence-weighted sub-question averaging

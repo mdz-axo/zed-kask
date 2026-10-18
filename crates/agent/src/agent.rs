@@ -10676,7 +10676,7 @@ mod internal_tests {
         fs.insert_tree("/", json!({ "a": {} })).await;
         let project = Project::test(fs.clone(), [Path::new("/a")], cx).await;
 
-        for (server, expected_fragment) in [("companies", "companies"), ("curator", "curator")] {
+        for (server, expected_fragment) in [("scenarios", "scenarios"), ("curator", "curator")] {
             let thread_store = cx.new(|cx| ThreadStore::new(cx));
             let server_struct = CuratorAgentServer::new(fs.clone(), thread_store)
                 .with_extra_static_context(format!("workflow for {server}").into());

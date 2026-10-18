@@ -110,7 +110,7 @@ async fn directive_acknowledgments_report_actual_outcomes() {
             evidence: "variety deficit".to_string(),
         },
         CuratorDirective::EvolveMcpToolSchema {
-            server_name: "hkask-mcp-companies".to_string(),
+            server_name: "hkask-mcp-scenarios".to_string(),
             tool_name: "dcf_valuation".to_string(),
             evolution_type: SchemaEvolutionType::AddField,
             field_name: "discount_rate".to_string(),

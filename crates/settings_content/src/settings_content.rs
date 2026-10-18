@@ -1666,10 +1666,6 @@ pub struct KaskSettingsContent {
     #[serde(default)]
     pub research: Option<KaskResearchSettingsContent>,
 
-    /// Companies MCP server configuration.
-    #[serde(default)]
-    pub companies: Option<KaskCompaniesSettingsContent>,
-
     /// Corpus MCP server configuration.
     #[serde(default)]
     pub corpus: Option<KaskCorpusSettingsContent>,
@@ -1825,13 +1821,6 @@ pub struct KaskResearchSettingsContent {
     /// empty, the server resolves a default path under the hKask data
     /// directory.
     pub research_db: Option<String>,
-}
-
-#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
-pub struct KaskCompaniesSettingsContent {
-    pub chronic_staleness_days: Option<u32>,
-    pub fermi_defaults: Option<String>,
-    pub investor_required_return: Option<f64>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]

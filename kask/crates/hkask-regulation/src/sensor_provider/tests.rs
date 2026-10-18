@@ -51,7 +51,7 @@ async fn variety_sensor_emits_live_deficit_for_active_rut() {
         .increment_variety("hkask-mcp-media", "gallery_search")
         .await;
     ledger
-        .increment_variety("hkask-mcp-companies", "stock_quote")
+        .increment_variety("hkask-mcp-scenarios", "scenario_quantify")
         .await;
     let sensor = VarietySensor::new(Arc::new(tokio::sync::RwLock::new(ledger)), 1.0);
     let signal = sensor.sense().await.expect("active rut must emit a signal");

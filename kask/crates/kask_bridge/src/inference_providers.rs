@@ -198,20 +198,6 @@ pub fn credential_url_for_key(credential_key: &str) -> String {
 /// the module docs for the one-key-one-location invariant.
 pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
     DataServiceDescriptor {
-        env_var: "HKASK_EODHD_API_KEY",
-        credential_key: "eodhd",
-        label: "EODHD",
-        dashboard_url: "https://eodhd.com/dashboard",
-        shows_in_ui: true,
-    },
-    DataServiceDescriptor {
-        env_var: "HKASK_FMP_API_KEY",
-        credential_key: "fmp",
-        label: "FMP (Financial Modeling Prep)",
-        dashboard_url: "https://site.financialmodelingprep.com/developer/docs",
-        shows_in_ui: true,
-    },
-    DataServiceDescriptor {
         env_var: "HKASK_EXA_API_KEY",
         credential_key: "exa",
         label: "Exa",

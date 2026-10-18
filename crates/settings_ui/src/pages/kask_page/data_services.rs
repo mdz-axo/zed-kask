@@ -1,4 +1,4 @@
-//! Data Services sub-page — API key entry for EODHD, FMP, Exa, Tavily,
+//! Data Services sub-page — API key entry for Exa, Tavily,
 //! Brave, RunPod OCR, Reduct.video, FRED, and other live descriptors. Keys
 //! live in the OS keychain. The key's presence is the toggle — there is no
 //! separate enable/disable bool.

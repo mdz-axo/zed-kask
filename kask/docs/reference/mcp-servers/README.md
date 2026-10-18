@@ -28,11 +28,10 @@ mds_categories: [composition, domain]
 
 ## Server Catalog
 
-10 built-in MCP servers, **372 registered tools** fleet-wide (re-reconciled 2026-10-17 against the live `tool_surface_pin!` tests below — every server pins its exact count and generated tool-name set; unified by `ede1ba0ca8`, CI-gated by `kask/scripts/check-mcp-registration.sh`). `KaskMcpSettings::default()` sets `load_default: true`, so all ten auto-load unless the operator disables the fleet or an individual server (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs`).
+9 built-in MCP servers, **360 registered tools** fleet-wide (re-reconciled 2026-10-18 against the live `tool_surface_pin!` tests below — every server pins its exact count and generated tool-name set; unified by `ede1ba0ca8`, CI-gated by `kask/scripts/check-mcp-registration.sh`). `KaskMcpSettings::default()` sets `load_default: true`, so all nine auto-load unless the operator disables the fleet or an individual server (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs`).
 
 | Server | Crate | Purpose | Tools |
 |--------|-------|---------|------:|
-| [Companies](companies.md) | `kask/mcp-servers/hkask-mcp-companies` | FIBO-anchored financial forecasting, dual-provider routing, research notes and transcripts | 32 |
 | [Corpus](corpus.md) | `kask/mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 26 |
 | Curator | `kask/mcp-servers/hkask-mcp-curator` | Curator agent metacognition (memory, regulation query, algedonic signals, skill-use issue reporting) | 15 |
 | [Experimentation](experimentation.md) | `kask/mcp-servers/hkask-mcp-experimentation` | Experiment registry for the sharded experimentation program: registered experiments with pre-registered predictions, variant lineages, grounded fitness records, selection fossils | 8 |
@@ -41,16 +40,16 @@ mds_categories: [composition, domain]
 
 | [Prediction Markets](prediction-markets.md) | `kask/mcp-servers/hkask-mcp-prediction-markets` | Polymarket/Kalshi base rates, calibration, residuals | 27 |
 | [Research](research.md) | `kask/mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds, evidence scoring, research-run ledger, paper identity | 27 |
-| [Scenarios](scenarios.md) | `kask/mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) | 17 |
+| [Scenarios](scenarios.md) | `kask/mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) with equity forecast persistence and Brier scoring | 21 |
 | [Swarm](swarm.md) | `kask/mcp-servers/hkask-mcp-swarm` | Agent Bestiary World swarms + Xaman Ek curator + local swarm substrate (v2 §15) | 91 |
 
 ### Count verification (unified 2026-10-05; re-verified 2026-10-17)
 
-Every server pins its exact tool surface with the shared `tool_surface_pin!` macro (landed `ede1ba0ca8`, 2026-10-05): one macro call pins the exact tool count and the generated `TOOL_NAMES` set against the live router, so additions, drops, and same-count renames fail CI instead of degrading to tool-not-found. `kask/scripts/check-mcp-registration.sh` gates on the pin's presence for every server in `mcp-servers.txt` (CI: `.github/workflows/kask-invariants.yml`). Live pin sites (generated test names, re-verified 2026-10-17): companies 32 (`hkask_mcp_companies.rs:524`), corpus 26 (`hkask_mcp_corpus.rs:321`), curator 15 (`hkask_mcp_curator.rs:1766`), experimentation 8 (`hkask_mcp_experimentation.rs:82`), kata-kanban 27 (`hkask_mcp_kata_kanban.rs:1762`), media 102 (`hkask_mcp_media.rs:476`), prediction-markets 27 (`hkask_mcp_prediction_markets.rs:1348`), research 27 (`hkask_mcp_research.rs:2317`), scenarios 17 (`hkask_mcp_scenarios.rs:1891`), swarm 91 (`hkask_mcp_swarm.rs:985`). The portfolio server (18 tools) and the spreadsheet server (2 tools) were removed 2026-10-15; the training server (9 tools) and the corpus `corpus_prepare_training_dataset` bridge tool were removed 2026-10-17 — model training is out of scope for the co-researcher mandate.
+Every server pins its exact tool surface with the shared `tool_surface_pin!` macro (landed `ede1ba0ca8`, 2026-10-05): one macro call pins the exact tool count and the generated `TOOL_NAMES` set against the live router, so additions, drops, and same-count renames fail CI instead of degrading to tool-not-found. `kask/scripts/check-mcp-registration.sh` gates on the pin's presence for every server in `mcp-servers.txt` (CI: `.github/workflows/kask-invariants.yml`). Live pin sites (generated test names, re-verified 2026-10-18): corpus 26 (`hkask_mcp_corpus.rs:321`), curator 15 (`hkask_mcp_curator.rs:1766`), experimentation 8 (`hkask_mcp_experimentation.rs:82`), kata-kanban 27 (`hkask_mcp_kata_kanban.rs:1762`), media 102 (`hkask_mcp_media.rs:476`), prediction-markets 27 (`hkask_mcp_prediction_markets.rs:1348`), research 27 (`hkask_mcp_research.rs:2317`), scenarios 21 (`hkask_mcp_scenarios.rs:1891`), swarm 91 (`hkask_mcp_swarm.rs:985`). The portfolio server (18 tools) and the spreadsheet server (2 tools) were removed 2026-10-15; the training server (9 tools) and the corpus `corpus_prepare_training_dataset` bridge tool were removed 2026-10-17; the companies server (32 tools) was removed 2026-10-18 with the companies/FMP/EODHD/FIBO retirement — its provider-free forecast loop moved to the scenarios server (which grew 17 → 21).
 
 Per-server specifics that survive the unification: the curator pin additionally asserts the removed escalation/advice-review tools stay unregistered (`curator_escalations`, `curator_escalation_resolve`, `curator_escalation_dismiss`, `curator_escalation_dismiss_by_pattern`, `curator_advice_mark_applied`, `curator_advice_reviews`); the swarm pin's live partition is 48 cloud plus 43 non-cloud (33 local + 3 A2A + 4 knowledge + 3 swarm-scoped thread tools; `swarm_gate_readings` joined the local set 2026-10-10); the experimentation tool-behavior suite drives every tool end-to-end over the real engine actor (`tests/tool_behavior.rs`).
 
-Arithmetic: `32 + 26 + 15 + 8 + 27 + 102 + 27 + 27 + 17 + 91 = 372`.
+Arithmetic: `26 + 15 + 8 + 27 + 102 + 27 + 27 + 21 + 91 = 360`.
 
 ## Common Patterns
 
@@ -59,7 +58,7 @@ All servers follow these patterns:
 1. **Bootstrap:** `main.rs` calls `<crate>::run()`, which calls `hkask_mcp_server::run_server(name, version, factory, credentials)`. The `factory: FnOnce(ServerContext) -> Result<S, McpError>` closure receives a `ServerContext` (no ambient authority — all deps injected) and constructs the server struct. There is no separate `bootstrap_mcp_server` / `MCPBootstrap` step; that API was removed along with the `HKASK_MCP_HOST` / userpod identity concept.
 2. **Identity:** `ServerContext.webid: WebID` is the sole agent-identity source, resolved in transport from `HKASK_WEBID` (or an anonymous fallback). The `mcp_server!` macro generates a struct with `pub webid: WebID` plus the caller's custom domain fields — and nothing else (no `userpod`, no `daemon` field; the daemon was deleted in the 2026-07-25 cleanup and `DaemonClient` / `record_via_daemon` / `RealMemoryPort` are no longer part of the server contract).
 3. **Tool dispatch:** wrap each tool body in `execute_tool(self, "tool_name", async { ... })`. It emits the `reg.tool` span and serializes errors; ontology concepts belong in structured tool output, not span tags (`kask/crates/hkask-mcp-server/src/server.rs`). Thread-level memory is the richer narrative path; per-tool debug logging remains available at the call site.
-4. **Tool routing:** use rmcp's `#[tool(description = "...")]` on tool methods and `#[tool_router(...)]` on the impl blocks that generate routers. Servers with multiple tool impls sum those sub-routers and wire the result with `#[tool_handler(router = Self::combined_router())]`; single-router servers may use `#[tool_router(server_handler)]` directly. Current examples are Companies (`kask/mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs:282-292`) and Research (`kask/mcp-servers/hkask-mcp-research/src/hkask_mcp_research.rs:210`).
+4. **Tool routing:** use rmcp's `#[tool(description = "...")]` on tool methods and `#[tool_router(...)]` on the impl blocks that generate routers. Servers with multiple tool impls sum those sub-routers and wire the result with `#[tool_handler(router = Self::combined_router())]`; single-router servers may use `#[tool_router(server_handler)]` directly. Current examples are Scenarios (`kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs`, which sums `scenario_router` + `equity_forecast_router`) and Research (`kask/mcp-servers/hkask-mcp-research/src/hkask_mcp_research.rs:210`).
 5. **Error type:** `McpToolError` for tool-level errors, domain `Error` enums (via `thiserror`) for computation errors.
 6. **Governance:** `McpRuntime::invoke` (`kask/crates/hkask-mcp/src/runtime.rs`) **meters and dispatches; it does not authorize.** The pipeline is: charge one call against the agent's per-tick runaway ceiling → dispatch → emit the `reg.tool` span. Its fourth argument, `agent: WebID`, is an accounting identity, not a credential, and the only pre-dispatch refusal is `EnergyBudgetExceeded` (the runaway-loop breaker; resets each regulation tick). Tool authority is enforced at boundaries whose list the caller does not choose: the per-request `tool_allowlist` on the inference IPC `tool_invoke` dispatch (`kask/crates/kask_bridge/src/inference_ipc_server.rs`, fail-closed on missing/empty), each swarm agent card's `mcp_tools` allowlist, and the per-server MCP env/credential allowlists. The composition root passes the `Arc<McpRuntime>` directly wherever a `ToolPort` is needed (no adapter).
 
@@ -72,8 +71,8 @@ Every MCP server MUST include **tool-behavior contract tests** that invoke tools
 ## The Forecasting Stack: Three-Layer Architecture
 
 > Folded from the deleted `explanation/forecasting-and-scenarios.md` (2026-08-28). This section
-> explains how the [scenarios](scenarios.md), [prediction-markets](prediction-markets.md), and
-> [companies](companies.md) servers layer with the superforecasting skill and the
+> explains how the [scenarios](scenarios.md) and [prediction-markets](prediction-markets.md)
+> servers layer with the superforecasting skill and the
 > `hkask-forecast` library.
 
 Forecasting in hKask appears in four places — a natural-language skill, a pure-math Rust
@@ -91,9 +90,8 @@ The scenarios server implements three methodologies as an integrated pipeline:
   with a shrinkage estimator, Bayesian updating, dragonfly-eye synthesis
   (inverse-Brier weighting), Brier scoring, calibration tracking.
 - **Schwartz — scenario imagination** (Schwartz, 1991): the construction approach —
-  focal question, STEEP driving forces, 2×2 axis matrix (the matrix is implemented in the
-  companies server for financial modeling), implications. In the scenarios server this is
-  the framing/brainstorming surface (`scenario_frame`, `scenario_frame_document`,
+  focal question, STEEP driving forces, 2×2 axis matrix, implications. In the scenarios
+  server this is the framing/brainstorming surface (`scenario_frame`, `scenario_frame_document`,
   `scenario_brainstorm`).
 - **Chermack — project assessment** (Chermack, 2011): the five-phase evaluation framework
   (Preparation, Exploration, Development, Implementation, Project Assessment); the
@@ -124,22 +122,19 @@ stays where it is entangled with domain types and I/O.[^ousterhout-deep]
 flowchart TD
     Skill["Superforecasting skill<br/>natural-language judgment and process"]
     Math["hkask-forecast<br/>deterministic forecasting primitives"]
-    Scenarios["hkask-mcp-scenarios<br/>event trees and calibration"]
-    Companies["hkask-mcp-companies<br/>financial valuation"]
+    Scenarios["hkask-mcp-scenarios<br/>event trees, calibration, equity forecast loop"]
     Markets["hkask-mcp-prediction-markets<br/>market base rates and economic data"]
 
     Skill -->|"conformance contract"| Math
     Math --> Scenarios
-    Math --> Companies
     Math --> Markets
     Markets -->|"scenario_from_markets_set"| Scenarios
-    Scenarios -->|"scenario_impact_valuation inputs"| Companies
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-003
-verified_date: 2026-09-28
-verified_against: kask/crates/hkask-forecast/src/hkask_forecast.rs; kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs:17-36,429-492; kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs:591; kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:70
+verified_date: 2026-10-18
+verified_against: kask/crates/hkask-forecast/src/hkask_forecast.rs; kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:70
 status: VERIFIED
 -->
 
@@ -158,7 +153,7 @@ confidence-weighted averaging (Fermi), shrinkage estimation (outside view), Baye
 (evidence update), and Brier scoring (calibration tracking). Pure math, no domain types, no
 NLP, no I/O. The MCP servers consume it via `hkask_forecast::*`.
 
-**Domain MCP servers** (`hkask-mcp-scenarios`, `hkask-mcp-companies`,
+**Domain MCP servers** (`hkask-mcp-scenarios`,
 `hkask-mcp-prediction-markets`) — own the domain applications that compose the canonical
 primitives with domain-specific types and I/O. Domain logic stays here, not in
 `hkask-forecast`, because it is entangled with domain types and I/O — moving it up would
@@ -166,18 +161,17 @@ violate the deep-module discipline. The prediction-markets server is the outside
 arm: its `MarketRecord`s feed `scenario_from_markets_set` in the scenarios server, and
 its economic-data tools (FRED, World Bank, DBnomics) supply the macro context.
 
-### Why `SubQuestion` survives in scenarios but not in companies
+### Why `SubQuestion` survives in scenarios
 
-Both servers once defined a local `SubQuestion { question, estimate, confidence }`
-byte-identical to `hkask_forecast::FermiQuestion`. The essentialist deletion test treats
-them differently:[^ousterhout-deletion]
+Scenarios defines a local `SubQuestion { question, estimate, confidence }`
+byte-identical to `hkask_forecast::FermiQuestion`. The essentialist deletion test retains
+it:[^ousterhout-deletion]
 
-- **Companies** used `SubQuestion` as a standalone type with no embedding. Deleting it and
-  consuming `hkask_forecast::FermiQuestion` directly removed the duplicate type and the
-  conversion adapter in one move. **Eliminated.**
 - **Scenarios** embeds `SubQuestion` inside domain aggregates (`ScenarioEvent.sub_questions`,
   `Perspective.fermi_sub_questions`). Replacing it would be a wide type migration across many
   struct definitions for a 3-line saving. **Retained** — the adapter is the cheaper seam.
+  (The companies server, which held `SubQuestion` standalone and was **eliminated** in favour
+  of `hkask_forecast::FermiQuestion`, was removed 2026-10-18.)
 
 ### The conformance contract
 
@@ -253,14 +247,13 @@ and `scenario_score` (Brier at resolution — the only forecast-journal writer).
 
 ## Cross-links
 
-- [Companies MCP Server Reference](companies.md) — 40 registered tools, dual-provider routing, forecast store (DIAG-RF-004 inline)
 - [Corpus MCP Server Reference](corpus.md) — 26 `#[tool]` methods: corpus gathering, document processing, QA generation, style replicas
 - [Prediction Markets MCP Server Reference](prediction-markets.md) — 32 `#[tool]` methods: Polymarket/Kalshi base rates, calibration loop, CMP curves
-- [Scenario Forecasting Pipeline Diagram](scenarios.md) — 19 `#[tool]` methods, scenarios tool flow (DIAG-RF-005 inline)
+- [Scenario Forecasting Pipeline Diagram](scenarios.md) — 21 `#[tool]` methods, scenarios tool flow plus the equity forecast loop (DIAG-RF-005 inline)
 - [Swarm MCP Server Reference](swarm.md) — 90 registered tools (48 cloud + 42 non-cloud), dual mode, swarm-intelligence skill ecosystem, consent-gated cloud spend
-- [The Forecasting Stack: Three-Layer Architecture](#the-forecasting-stack-three-layer-architecture) — how scenarios + prediction-markets + companies layer over `hkask-forecast`
+- [The Forecasting Stack: Three-Layer Architecture](#the-forecasting-stack-three-layer-architecture) — how scenarios + prediction-markets layer over `hkask-forecast`
 - [MCP Tool Dispatch Sequence](../../diataxis/hkask-mcp-server/explanation.md) — MCP dispatch and governance (replaces the deleted `explanation/architecture-patterns.md`)
-- The point-in-time adversarial reviews of the companies, scenarios, and research servers (2026-07) are archived in git history; they are not current-state references.
+- The point-in-time adversarial reviews of the scenarios and research servers (2026-07) are archived in git history; they are not current-state references.
 
 ## Kata-Kanban Server Architecture (DIAG-IC-017)
 

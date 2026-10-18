@@ -869,7 +869,7 @@ pub enum CuratorDirectiveRequest {
     /// or automated migration agent to act on — it does not directly modify
     /// the compiled Rust struct.
     EvolveMcpToolSchema {
-        /// MCP server name (e.g., "hkask-mcp-companies").
+        /// MCP server name (e.g., "hkask-mcp-scenarios").
         server_name: String,
         /// Tool name on that server (e.g., "dcf_valuation").
         tool_name: String,

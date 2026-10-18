@@ -90,7 +90,7 @@ pub use passphrase_rotation::{
     schedule_db_passphrase_rotation,
 };
 pub use settings::{
-    KaskCompaniesSettings, KaskCondenserSettings, KaskCorpusSettings, KaskCuratorEmailSettings,
+    KaskCondenserSettings, KaskCorpusSettings, KaskCuratorEmailSettings,
     KaskCuratorSettings, KaskGeneralSettings, KaskMcpSettings, KaskMediaSettings,
     KaskMemorySettings, KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings,
     KaskScenariosSettings, KaskSettings, KaskSwarmSettings, SwarmModeConfig,

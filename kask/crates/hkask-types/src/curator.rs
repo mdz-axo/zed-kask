@@ -118,7 +118,7 @@ pub enum CuratorDirective {
     /// evolution request in the regulation ledger so a developer or
     /// automated migration agent can act on it.
     EvolveMcpToolSchema {
-        /// MCP server name (e.g., "hkask-mcp-companies").
+        /// MCP server name (e.g., "hkask-mcp-scenarios").
         server_name: String,
         /// Tool name on that server (e.g., "dcf_valuation").
         tool_name: String,

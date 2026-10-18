@@ -70,7 +70,6 @@ graph TD
             media_widget["hkask-media-widget"]
         end
         subgraph servers["MCP servers"]
-            companies["hkask-mcp-companies"]
             corpus["hkask-mcp-corpus"]
             kata_kanban["hkask-mcp-kata-kanban"]
             media["hkask-mcp-media"]
@@ -86,7 +85,6 @@ graph TD
     bridge -->|"depends on"| shared
     agent -->|"depends on"| shared
     media_widget -->|"depends on"| shared
-    companies -->|"depends on"| shared
     corpus -->|"depends on"| shared
     kata_kanban -->|"depends on"| shared
     media -->|"depends on"| shared
@@ -99,7 +97,7 @@ graph TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ONT-001
 verified_date: 2026-10-17
-verified_against: kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs (pub mod axis L94, data_cube L95, dc_bibo L96, derived L97, fibo L98, golem L99, ml_schema L100, omc L101, ontology_graph L102, pko L103, published L104, rdf L107, schema_org L108, sepio L110, sumo L111, term_resolution L112); dependent Cargo.tomls — kask/crates/hkask-condenser, kask/crates/hkask-types (L19), kask/crates/kask_bridge (L16), crates/agent (L48), crates/hkask-media-widget, kask/mcp-servers/{companies, corpus, kata-kanban (L22), media, prediction-markets, research, scenarios, swarm}
+verified_against: kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs (pub mod axis L94, data_cube L95, dc_bibo L96, derived L97, fibo L98, golem L99, ml_schema L100, omc L101, ontology_graph L102, pko L103, published L104, rdf L107, schema_org L108, sepio L110, sumo L111, term_resolution L112); dependent Cargo.tomls — kask/crates/hkask-condenser, kask/crates/hkask-types (L19), kask/crates/kask_bridge (L16), crates/agent (L48), crates/hkask-media-widget, kask/mcp-servers/{corpus, kata-kanban (L22), media, prediction-markets, research, scenarios, swarm}
 status: VERIFIED
 -->
 
@@ -218,9 +216,9 @@ The only pre-dispatch refusal is `ToolPortError::EnergyBudgetExceeded` (the
 runaway-loop breaker). The model decides every tool call; skills do not
 dispatch MCP tools deterministically.
 
-The 10 on-disk MCP servers are enumerated by `BUILT_IN_MCP_SERVERS` in
-`kask/crates/kask_bridge/src/mcp_servers.rs`: `companies`,
-`corpus`, `curator`, `experimentation`, `kata-kanban`, `research`, `scenarios`,
+The 9 on-disk MCP servers are enumerated by `BUILT_IN_MCP_SERVERS` in
+`kask/crates/kask_bridge/src/mcp_servers.rs`: `corpus`,
+`curator`, `experimentation`, `kata-kanban`, `research`, `scenarios`,
 `prediction-markets`, `swarm`, `media`.
 
 ## Credential Resolution Chain

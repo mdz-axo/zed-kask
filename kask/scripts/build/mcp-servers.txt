@@ -8,7 +8,6 @@
 # Consumers:
 #   - kask/scripts/build/install.sh        (mapfile -t MCP_SERVERS < this file)
 hkask-mcp-research
-hkask-mcp-companies
 hkask-mcp-corpus
 hkask-mcp-kata-kanban
 hkask-mcp-curator

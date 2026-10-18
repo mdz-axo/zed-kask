@@ -48,34 +48,6 @@ pub struct BuiltinMcpServer {
 /// Order is stable and meaningful — the kask panel uses index-based selection.
 pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
     BuiltinMcpServer {
-        id: "companies",
-        binary: "hkask-mcp-companies",
-        description: "Companies — company research and filings",
-        credentials: &[
-            // Each entry must have a read site in the crate (allowlist alignment).
-            "HKASK_EODHD_API_KEY",
-            "HKASK_FMP_API_KEY",
-            "HKASK_EXA_API_KEY",
-            "HKASK_TAVILY_API_KEY",
-            "HKASK_BRAVE_API_KEY",
-            // Read for corpus-mode transcript search. A prior comment here said
-            // "removed: no read site" — true only of this spelling; the server was
-            // reading the non-canonical `HKASK_SERPAPI_KEY`, which no allowlist or
-            // registry carried, so the key never arrived. Normalized on the
-            // kask/.env spelling.
-            "HKASK_SERPAPI_API_KEY",
-        ],
-        config_env: &[
-            // Data dir — needed so the companies server resolves its
-            // databases (fibo-cache, research store) under the same
-            // root as the parent process. Databases stay internal.
-            "HKASK_DATA_DIR",
-            "HKASK_CHRONIC_STALENESS_DAYS",
-            "HKASK_FERMI_DEFAULTS",
-            "HKASK_INVESTOR_REQUIRED_RETURN",
-        ],
-    },
-    BuiltinMcpServer {
         id: "corpus",
         binary: "hkask-mcp-corpus",
         description: "Corpus — document corpus and QA generation",
@@ -1005,44 +977,21 @@ mod tests {
         );
     }
 
-    // The companies server's only artifacts-dir read was the spreadsheet
-    // workbook root (scenario_impact_valuation's removed WorkbookWhatIf
-    // presentation). This pins the removal — re-add HKASK_ARTIFACTS_DIR
-    // only with a read site in hkask-mcp-companies.
-    #[test]
-    fn companies_config_env_has_no_artifacts_dir_after_spreadsheet_removal() {
-        let s = server_by_id("companies");
-        assert!(
-            !s.config_env.contains(&"HKASK_ARTIFACTS_DIR"),
-            "companies no longer resolves artifact routes — the spreadsheet \
-             workbook root was removed with the capability (2026-10-15)"
-        );
-    }
-
     // The curator server should receive only the DB passphrase, no data
     // service API keys and no SMTP password (it has no email sink — the
     // alert email runs in the editor process). This pins the blast-radius
     // reduction.
     #[test]
     fn curator_credentials_do_not_include_data_service_keys() {
-        let all_credentials: Vec<(String, String)> = [
-            "HKASK_EODHD_API_KEY",
-            "HKASK_FMP_API_KEY",
-            "HKASK_SMTP_PASSWORD",
-            "OPENROUTER_API_KEY",
-        ]
-        .iter()
-        .map(|env| (env.to_string(), "url".to_string()))
-        .collect();
+        let all_credentials: Vec<(String, String)> = ["HKASK_SMTP_PASSWORD", "OPENROUTER_API_KEY"]
+            .iter()
+            .map(|env| (env.to_string(), "url".to_string()))
+            .collect();
         let filtered = filter_credentials_for_server("curator", &all_credentials);
         let env_vars: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
         assert!(
             !env_vars.contains(&"HKASK_SMTP_PASSWORD"),
             "curator has no email sink — it must not receive HKASK_SMTP_PASSWORD"
-        );
-        assert!(
-            !env_vars.contains(&"HKASK_EODHD_API_KEY"),
-            "curator should NOT receive HKASK_EODHD_API_KEY"
         );
         assert!(
             !env_vars.contains(&"OPENROUTER_API_KEY"),

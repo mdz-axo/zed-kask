@@ -98,9 +98,7 @@ ruling (recorded in the derived registry) improves it.
 ## Where the pattern is implemented
 
 - **Per-tool output anchors**: MCP servers that tag their results attach a
-  bridge concept to the tool output's `ontology` field — e.g. the companies
-  server's `fibo::enrich_with_ontology`
-  (`kask/mcp-servers/hkask-mcp-companies/src/fibo.rs`) and the scenarios
+  bridge concept to the tool output's `ontology` field — e.g. the scenarios
   server's `ontology_anchor`
   (`kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs`).
   Coverage is per server, not fleet-wide; an untagged tool output is not an

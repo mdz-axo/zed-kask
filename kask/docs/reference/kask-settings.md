@@ -32,7 +32,6 @@ system deserializes `SettingsContent`, not `KaskSettings`).
 | `memory` | `KaskMemorySettings` | `Default` |
 | `condenser` | `KaskCondenserSettings` | `Default` |
 | `research` | `KaskResearchSettings` | derived `Default` |
-| `companies` | `KaskCompaniesSettings` | `Default` |
 | `corpus` | `KaskCorpusSettings` | `Default` |
 | `scenarios` | `KaskScenariosSettings` | derived `Default` |
 | `prediction_markets` | `KaskPredictionMarketsSettings` | derived `Default` |
@@ -61,11 +60,11 @@ queued or running work and releases capacity.
 ## MCP Servers (`KaskMcpSettings`)
 
 Toggle which of the built-in kask MCP servers are loaded.[^mcp-spec-settings]
-The 10 servers (`BUILT_IN_MCP_SERVERS` registry in `kask/crates/kask_bridge/src/mcp_servers.rs`,
+The 9 servers (`BUILT_IN_MCP_SERVERS` registry in `kask/crates/kask_bridge/src/mcp_servers.rs`,
 IDs via `builtin_mcp_server_ids()`):
-`companies`, `corpus`, `curator`, `experimentation`, `kata-kanban`, `media`,
+`corpus`, `curator`, `experimentation`, `kata-kanban`, `media`,
 `prediction-markets`, `research`, `scenarios`, `swarm`. The crates live under `kask/mcp-servers/`
-(10 `hkask-mcp-*` crates).
+(9 `hkask-mcp-*` crates).
 
 | Field | Type | Default |
 |-------|------|--------|
@@ -118,8 +117,7 @@ until per-invocation attribution/authority is implemented (repair plan P2).
 
 ## Data Services
 
-API keys for data services (Exa, Tavily, Brave, SerpAPI, Firecrawl, FMP,
-EODHD, FRED, etc.) are stored in the system
+API keys for data services (Exa, Tavily, Brave, SerpAPI, Firecrawl, FRED, etc.) are stored in the system
 keychain under `kask://credentials/<key>`. Inference-provider keys
 (OpenRouter, DeepInfra, RunPod, KiloCode) are the exception — each lives at its
 provider's `api_url` keychain slot (one key, one location), the same slot
@@ -136,8 +134,6 @@ and injects them as environment variables into the MCP server child process.
 | `kask://credentials/brave` | `HKASK_BRAVE_API_KEY` |
 | `kask://credentials/serpapi` | `HKASK_SERPAPI_API_KEY` |
 | `kask://credentials/firecrawl` | `HKASK_FIRECRAWL_API_KEY` |
-| `kask://credentials/fmp` | `HKASK_FMP_API_KEY` |
-| `kask://credentials/eodhd` | `HKASK_EODHD_API_KEY` |
 | `https://api.runpod.io` (provider slot) | `RUNPOD_API_KEY` |
 | `kask://credentials/fred` | `HKASK_FRED_API_KEY` |
 
@@ -258,16 +254,6 @@ Step 6 of the settings-flow checklist is **already implemented**, not skipped: S
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
 | `research_db` | `String` | `""` | Empty resolves under the Kask data directory; feeds and research-run ledger share this server-owned database path (`kask/crates/kask_bridge/src/settings.rs:330-336`) |
-
-## Companies (`KaskCompaniesSettings`)
-
-| Field | Type | Default | Notes |
-|-------|------|---------|-------|
-| `chronic_staleness_days` | `u32` | `0` | 0 = use hardcoded default (90); >0 = override |
-| `fermi_defaults` | `String` | `""` | JSON with `growth` + `margin` arrays; empty = hardcoded defaults |
-| `investor_required_return` | `f64` | `0.15` | Investor equity hurdle used in companies-MCP modified WACC; emitted on every managed launch |
-
-No `transactions_dir` field.
 
 ## Corpus (`KaskCorpusSettings`)
 
@@ -531,8 +517,6 @@ comma-joined `BUILT_IN_MCP_SERVERS_IDS`, consumed only by the swarm server's
 
 | Env Var | Service |
 |---------|--------|
-| `HKASK_EODHD_API_KEY` | EODHD |
-| `HKASK_FMP_API_KEY` | FMP |
 | `HKASK_EXA_API_KEY` | Exa |
 | `HKASK_TAVILY_API_KEY` | Tavily |
 | `HKASK_BRAVE_API_KEY` | Brave Search |
@@ -571,10 +555,6 @@ into the editor process env).
 
 | Env Var | Server | Source setting |
 |---------|--------|----------------|
-
-| `HKASK_CHRONIC_STALENESS_DAYS` | companies | `companies.chronic_staleness_days` |
-| `HKASK_FERMI_DEFAULTS` | companies | `companies.fermi_defaults` |
-| `HKASK_INVESTOR_REQUIRED_RETURN` | companies | `companies.investor_required_return` |
 
 | `HKASK_TEMPLATE_ROOT` | corpus, swarm | `corpus.template_root` |
 | `HKASK_SCENARIOS_DATA` | scenarios | derived from `data_dir` as `mcp/scenarios/` |

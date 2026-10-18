@@ -11,10 +11,10 @@ use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, Settings};
 pub use settings_content::CuratorInteractionMode;
 use settings_content::{
-    KaskCompaniesSettingsContent, KaskCondenserSettingsContent, KaskCorpusSettingsContent,
-    KaskCuratorEmailSettingsContent, KaskCuratorSettingsContent, KaskGeneralSettingsContent,
-    KaskMcpSettingsContent, KaskMediaSettingsContent, KaskMemorySettingsContent,
-    KaskModelsSettingsContent, KaskPredictionMarketsSettingsContent, KaskResearchSettingsContent,
+    KaskCondenserSettingsContent, KaskCorpusSettingsContent, KaskCuratorEmailSettingsContent,
+    KaskCuratorSettingsContent, KaskGeneralSettingsContent, KaskMcpSettingsContent,
+    KaskMediaSettingsContent, KaskMemorySettingsContent, KaskModelsSettingsContent,
+    KaskPredictionMarketsSettingsContent, KaskResearchSettingsContent,
     KaskScenariosSettingsContent, KaskSettingsContent, KaskSwarmSettingsContent,
 };
 
@@ -69,9 +69,6 @@ pub struct KaskSettings {
 
     /// Research MCP server configuration.
     pub research: KaskResearchSettings,
-
-    /// Companies MCP server configuration.
-    pub companies: KaskCompaniesSettings,
 
     /// Corpus MCP server configuration.
     pub corpus: KaskCorpusSettings,
@@ -331,30 +328,6 @@ pub struct KaskResearchSettings {
     pub research_db: String,
 }
 
-/// Companies MCP server configuration.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct KaskCompaniesSettings {
-    /// Chronic staleness threshold in days for superforecasting learning state.
-    pub chronic_staleness_days: u32,
-
-    /// Fermi decomposition defaults as JSON (growth + margin question arrays).
-    /// When empty, uses hardcoded defaults.
-    pub fermi_defaults: String,
-
-    /// Investor's required equity return used in companies-MCP modified WACC.
-    pub investor_required_return: f64,
-}
-
-impl Default for KaskCompaniesSettings {
-    fn default() -> Self {
-        Self {
-            chronic_staleness_days: 0,
-            fermi_defaults: String::new(),
-            investor_required_return: 0.15,
-        }
-    }
-}
-
 /// Corpus MCP server configuration.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct KaskCorpusSettings {
@@ -576,7 +549,9 @@ impl Default for KaskMediaSettings {
 //    `config_env` allowlist (pinned by `*_allowlist_matches_actual_reads`)
 // 5. The consuming MCP server — reads the env var
 // 6. `crates/settings_ui/src/pages/kask_page/models.rs` — the settings UI page
-// The standalone (non-zed) layer is `hkask-services-core/src/standalone_settings.rs`.
+// The standalone (non-zed) layer is
+// `kask/mcp-servers/hkask-mcp-corpus/src/services_core/standalone_settings.rs`
+// (folded in from the deleted `hkask-services-core`, 2026-10-13).
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct KaskModelsSettings {
     /// Default inference model (provider-prefixed, e.g. `"OpenRouter/z-ai/glm-5.3"`).
@@ -759,7 +734,6 @@ impl KaskSettings {
         crate::mcp_env::emit_curator_webid_env(&mut env);
         crate::mcp_env::emit_mcp_server_ids_env(&mut env);
         crate::mcp_env::emit_research_env(&self.research, &mut env);
-        crate::mcp_env::emit_companies_env(&self.companies, &mut env);
         let effective_embedding = self.effective_embedding_model();
         crate::mcp_env::emit_corpus_embedding_env(&self.corpus, &effective_embedding, &mut env);
         crate::mcp_env::emit_corpus_template_root_env(&self.corpus, &data_dir, &mut env);
@@ -948,21 +922,6 @@ impl From<KaskResearchSettingsContent> for KaskResearchSettings {
     }
 }
 
-impl From<KaskCompaniesSettingsContent> for KaskCompaniesSettings {
-    fn from(c: KaskCompaniesSettingsContent) -> Self {
-        let default = Self::default();
-        Self {
-            chronic_staleness_days: c
-                .chronic_staleness_days
-                .unwrap_or(default.chronic_staleness_days),
-            fermi_defaults: c.fermi_defaults.unwrap_or(default.fermi_defaults),
-            investor_required_return: c
-                .investor_required_return
-                .unwrap_or(default.investor_required_return),
-        }
-    }
-}
-
 impl From<KaskCorpusSettingsContent> for KaskCorpusSettings {
     fn from(c: KaskCorpusSettingsContent) -> Self {
         let default = Self::default();
@@ -1054,7 +1013,6 @@ impl From<KaskSettingsContent> for KaskSettings {
             memory: c.memory.map(Into::into).unwrap_or_default(),
             condenser: c.condenser.map(Into::into).unwrap_or_default(),
             research: c.research.map(Into::into).unwrap_or_default(),
-            companies: c.companies.map(Into::into).unwrap_or_default(),
             corpus: c.corpus.map(Into::into).unwrap_or_default(),
             scenarios: c.scenarios.map(Into::into).unwrap_or_default(),
             prediction_markets: c.prediction_markets.map(Into::into).unwrap_or_default(),
@@ -1433,21 +1391,6 @@ mod tests {
     // (operator ruling 2026-09-04). Lives in `settings.rs` (not
     // `mcp_env.rs`) because it pins `effective_embedding_model`, a method on
     // `KaskSettings` defined here.
-    #[test]
-    fn companies_investor_required_return_is_one_setting_and_reaches_mcp_env() {
-        let mut settings = KaskSettings::default();
-        assert_eq!(settings.companies.investor_required_return, 0.15);
-        assert_eq!(
-            settings.mcp_env().get("HKASK_INVESTOR_REQUIRED_RETURN"),
-            Some(&"0.15".to_string())
-        );
-        settings.companies.investor_required_return = 0.18;
-        assert_eq!(
-            settings.mcp_env().get("HKASK_INVESTOR_REQUIRED_RETURN"),
-            Some(&"0.18".to_string())
-        );
-    }
-
     #[test]
     fn effective_embedding_model_falls_back_to_corpus_when_models_empty() {
         let mut settings = KaskSettings::default();

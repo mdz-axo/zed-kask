@@ -1,9 +1,7 @@
 //! Data model for scenario planning and superforecasting.
 //!
 //! Scenario construction paradigm: MAIA event-tree — binomial events
-//! with conditional dependencies. The Schwartz 2×2 axis-driven mode
-//! lives in `hkask-mcp-companies` (see the bridge section of
-//! `kask/docs/reference/mcp-servers/companies.md`).
+//! with conditional dependencies.
 //!
 //! Shared: Fermi decomposition, outside/inside view calibration, Bayesian updating,
 //! Brier scoring, event tree computation, dragonfly-eye synthesis, calibration tracking.

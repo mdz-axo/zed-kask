@@ -339,7 +339,6 @@ carrying a concept URI string (e.g. `"pplan:Step"`, `"fibo-be-le-cb:Corporation"
 
 | Server | JSON key | Value example | Evidence |
 |---|---|---|---|
-| companies | `"ontology"` | `"fibo-be-le-cb:Corporation"` | `kask/mcp-servers/hkask-mcp-companies/src/fibo.rs:94-110` |
 | curator | `"ontology"` | per-template | `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:826-832` |
 | media | `"ontology"` | `"omc:CreativeWork"` | `kask/mcp-servers/hkask-mcp-media/src/media_block.rs:19-25` |
 | scenarios | `"ontology"` | per-tool | `kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs` |

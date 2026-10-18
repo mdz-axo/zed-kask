@@ -16,7 +16,6 @@
 //! the shared credential-cache helpers, shared constants, and `mod` declarations
 //! for the per-sub-page render modules under `kask_page/`.
 
-mod companies;
 mod condenser;
 mod curator;
 mod data_services;
@@ -24,7 +23,7 @@ mod general;
 mod security;
 
 pub(crate) use {
-    companies::render_companies_page, condenser::render_condenser_page, corpus::render_corpus_page,
+    condenser::render_condenser_page, corpus::render_corpus_page,
     curator::render_curator_email_page, curator::render_curator_page,
     data_services::render_data_services_page, general::render_general_page,
     mcp_servers::render_mcp_servers_page, media::render_media_page, memory::render_memory_page,
@@ -338,7 +337,7 @@ pub(crate) fn nudge_mcp_servers(cx: &mut App) {
 }
 
 // ---------------------------------------------------------------------------
-// Shared input helper (used by companies, corpus, media, scenarios,
+// Shared input helper (used by corpus, media, scenarios,
 // models sub-modules)
 // ---------------------------------------------------------------------------
 
@@ -371,27 +370,6 @@ pub(crate) fn kask_string_input(
                 }
                 ("research", "research_db") => {
                     kask.research.get_or_insert_default().research_db = Some(parsed);
-                }
-                ("companies", "chronic_staleness_days") => {
-                    if let Ok(v) = parsed.parse::<u32>() {
-                        kask.companies
-                            .get_or_insert_default()
-                            .chronic_staleness_days = Some(v);
-                    }
-                }
-                ("companies", "investor_required_return") => {
-                    if let Ok(value) = parsed.parse::<f64>()
-                        && value.is_finite()
-                        && value > 0.0
-                        && value < 1.0
-                    {
-                        kask.companies
-                            .get_or_insert_default()
-                            .investor_required_return = Some(value);
-                    }
-                }
-                ("companies", "fermi_defaults") => {
-                    kask.companies.get_or_insert_default().fermi_defaults = Some(parsed);
                 }
                 ("corpus", "embedding_model") => {
                     kask.corpus.get_or_insert_default().embedding_model = Some(parsed);
@@ -572,7 +550,7 @@ pub(crate) fn kask_page() -> SettingsPage {
             json_path: Some("kask.data_services"),
             description: Some(
                 "Configure API keys for data services and native provider-backed tools \
-                 (EODHD, FMP, Exa, Tavily, Brave, RunPod OCR, Reduct.video, FRED). \
+                 (Exa, Tavily, Brave, RunPod OCR, Reduct.video, FRED). \
                  Keys are stored in the system keychain, not in settings.json."
                     .into(),
             ),
@@ -580,11 +558,8 @@ pub(crate) fn kask_page() -> SettingsPage {
                 "api key",
                 "brave",
                 "data service",
-                "eodhd",
                 "exa",
                 "firecrawl",
-                "fmp",
-                "financial modeling prep",
                 "fred",
                 "keychain",
                 "ocr",
@@ -696,18 +671,6 @@ pub(crate) fn kask_page() -> SettingsPage {
             in_json: true,
             files: USER,
             render: render_research_page,
-        }),
-        SettingsPageItem::SubPageLink(SubPageLink {
-            title: "Companies".into(),
-            r#type: Default::default(),
-            json_path: Some("kask.companies"),
-            description: Some(
-                "Configure the companies MCP server: superforecasting staleness and Fermi defaults.".into(),
-            ),
-            search_aliases: &["companies", "fermi", "staleness", "superforecasting"],
-            in_json: true,
-            files: USER,
-            render: render_companies_page,
         }),
         SettingsPageItem::SubPageLink(SubPageLink {
             title: "Corpus".into(),

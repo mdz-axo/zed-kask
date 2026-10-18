@@ -12,9 +12,8 @@
 //! `mcp_servers`, the single canonical path.
 
 use crate::settings::{
-    KaskCompaniesSettings, KaskCorpusSettings, KaskGeneralSettings, KaskMediaSettings,
-    KaskMemorySettings, KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings,
-    KaskSwarmSettings,
+    KaskCorpusSettings, KaskGeneralSettings, KaskMediaSettings, KaskMemorySettings,
+    KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings, KaskSwarmSettings,
 };
 
 // Defaults are read from each subsection's `Default` impl so there's a
@@ -110,28 +109,6 @@ pub(crate) fn emit_research_env(
         env.insert(
             "HKASK_RESEARCH_DB".to_string(),
             research.research_db.clone(),
-        );
-    }
-}
-
-pub(crate) fn emit_companies_env(
-    companies: &KaskCompaniesSettings,
-    env: &mut std::collections::HashMap<String, String>,
-) {
-    if companies.chronic_staleness_days > 0 {
-        env.insert(
-            "HKASK_CHRONIC_STALENESS_DAYS".to_string(),
-            companies.chronic_staleness_days.to_string(),
-        );
-    }
-    env.insert(
-        "HKASK_INVESTOR_REQUIRED_RETURN".to_string(),
-        companies.investor_required_return.to_string(),
-    );
-    if !companies.fermi_defaults.is_empty() {
-        env.insert(
-            "HKASK_FERMI_DEFAULTS".to_string(),
-            companies.fermi_defaults.clone(),
         );
     }
 }
@@ -364,9 +341,6 @@ const SETTINGS_BACKED_CONFIG_ENV_VARS: &[&str] = &[
     "HKASK_MEMORY_LIFE_DAYS",
     "HKASK_MCP_SERVER_IDS",
     "HKASK_RESEARCH_DB",
-    "HKASK_CHRONIC_STALENESS_DAYS",
-    "HKASK_INVESTOR_REQUIRED_RETURN",
-    "HKASK_FERMI_DEFAULTS",
     "HKASK_EMBEDDING_DIM",
     "HKASK_EMBEDDING_MODEL",
     "HKASK_TEMPLATE_ROOT",

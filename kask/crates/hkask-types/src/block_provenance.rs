@@ -34,7 +34,7 @@ pub struct BlockProvenance {
     /// The MCP tool name that produced this block (e.g., `"scenario_quantify"`).
     #[serde(default)]
     pub tool: Option<String>,
-    /// The MCP server name that hosts the tool (e.g. `"hkask-mcp-companies"`).
+    /// The MCP server name that hosts the tool (e.g. `"hkask-mcp-scenarios"`).
     #[serde(default)]
     pub server: Option<String>,
     /// The args the tool was invoked with, as a JSON object. A widget re-issues
@@ -141,7 +141,7 @@ mod tests {
     fn provenance_round_trips_exactly() {
         let p = BlockProvenance {
             tool: Some("scenario_impact_valuation".into()),
-            server: Some("hkask-mcp-companies".into()),
+            server: Some("hkask-mcp-scenarios".into()),
             args: serde_json::json!({"symbol": "ACME"}),
             span_id: Some("span-42".into()),
         };
