@@ -244,6 +244,8 @@ and are retained in prose form as the historical record):**
 
 **Class:** design risk reflecting an explicit recovery tradeoff. **Severity:** High if encryption is relied upon against copied-file disclosure. **Confidence:** High.
 
+**Current disposition (2026-10-18, operator ruling B.3 Option A): RESOLVED — recoverable fixed bootstrap retained; the confidentiality claim was deleted, not the design.** The operator ruled that the recovery guarantee (a database the user can always open — no keychain/DB desync can orphan data) takes precedence over copied-file confidentiality. `PRINCIPLES.md` P11.1 was rewritten in the same change to name the boundary as structural isolation plus the keychain-held passphrase — not the database file — and to state plainly that a copied file still using the default passphrase is not confidential against an attacker who holds the source. No provisioning change, no migration, no rotation: the code already implements the ruled posture; the contradictory principle statement was the defect.
+
 Evidence: `kask/crates/hkask-keystore/src/passphrase.rs:1–17` and `kask/crates/hkask-keystore/src/keychain.rs:402–424`. First-run provisioning uses a public fixed default. A copied database using it does not require keychain access to decrypt.
 
 Counterevidence: source explicitly prioritizes recoverability; users can change the secret. No deployed database or keychain was inspected. This is not proof that any particular user's database still uses the default.
