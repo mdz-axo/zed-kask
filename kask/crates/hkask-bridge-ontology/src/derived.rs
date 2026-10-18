@@ -1760,6 +1760,55 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         constituents: &["calibrated_forecast", "bayesian_inference"],
         authority: "operator ruling 2026-10-14 (Cohort 13 skill-corpus audit); Berkson, JASA 39(227):357-365 (1944), doi:10.2307/2280041; Satopaa et al., Int. J. Forecasting 30(2):344-356 (2014), doi:10.1016/j.ijforecast.2013.09.009",
     },
+    DerivedConcept {
+        term: "run_length_encoding",
+        aliases: &["run-length encoding", "rle", "run length encoding"],
+        identity: "a run of n consecutive identical symbols is emitted as one symbol plus the count n",
+        definition: "Lossless data compression in which a run of repeated values is stored as a single value and a count. The count preserves the exact repetition magnitude — unlike lossy deduplication, which discards it. In zed-kask it grounds the compaction pre-shrink's pass 1 (3+ identical adjacent lines collapse to one line plus an exact count marker). A compression citation, not a context-management claim: the 2026-10-18 real-thread census measured this pass at 0.0% median, so it stays as a cheap lossless guard, not a load-bearing pass.",
+        constituents: &["data compression", "repetition"],
+        authority: "operator ruling 2026-10-18 (compaction-pipeline census session); ISO/IEC 10918-1 (JPEG, CCITT T.81, 1992) run-length entropy coding; Salomon, Data Compression: The Complete Reference (4th ed., 2007)",
+    },
+    DerivedConcept {
+        term: "truncation",
+        aliases: &[
+            "bounded-display truncation",
+            "head-tail truncation",
+            "windowing",
+            "head-tail windowing",
+        ],
+        identity: "a text longer than a bound is replaced by its head and tail plus a marker naming the removed middle",
+        definition: "Replacing a value that exceeds a display or transport bound with a bounded prefix and suffix, plus an in-band marker stating what was removed. The head/tail (bounded-display) form is distinguished from mid-content ellipsis: it cannot corrupt structured content, because the retained head and tail are contiguous and the cut lands on the caller's own boundary. In zed-kask it grounds the compaction pre-shrink's per-result windowing and the last-resort segment elision.",
+        constituents: &["bound", "display", "provenance"],
+        authority: "operator ruling 2026-10-18 (compaction-pipeline census session); POSIX head(1)/tail(1) bounded-display idiom (IEEE Std 1003.1)",
+    },
+    DerivedConcept {
+        term: "extractive_summarization",
+        aliases: &[
+            "extractive summarization",
+            "extractive compression",
+            "extractive-before-abstractive staging",
+        ],
+        identity: "select or delete spans of the source text, emitting no new prose",
+        definition: "Summarization that operates by selecting (or deleting) spans of the source, as opposed to abstractive summarization, which generates new text. The staging principle — cheap deterministic extractive selection before expensive abstractive compression — grounds the compaction pipeline's split between the deterministic pre-shrink (extractive: windowing, collapse) and the LLM summary pass (abstractive).",
+        constituents: &["summary", "selection"],
+        authority: "operator ruling 2026-10-18 (compaction-pipeline census session); Luhn, 'The Automatic Creation of Literature Abstracts', IBM Journal of Research and Development 2(2):159-165 (1958), doi:10.1147/rd.22.0159",
+    },
+    DerivedConcept {
+        term: "context_window",
+        aliases: &["context window", "input capacity", "context length"],
+        identity: "the maximum number of tokens a model can attend to in one request",
+        definition: "The bounded token budget a language model can process in a single request — input plus, where the provider shares the limit, the reserved output. Exceeding it is a hard provider rejection, not a degraded answer. In zed-kask it grounds the compaction budget calibration: the compaction model's input capacity, translated to a per-thread byte budget at the calibrated bytes-per-token ratio.",
+        constituents: &["token", "capacity"],
+        authority: "operator ruling 2026-10-18 (compaction-pipeline census session); Vaswani et al., 'Attention Is All You Need', NeurIPS 2017, arXiv:1706.03762 (self-attention over a fixed-length input window)",
+    },
+    DerivedConcept {
+        term: "context_compaction",
+        aliases: &["context compaction", "compaction", "thread compaction"],
+        identity: "replace a conversation's history with a summary so the thread continues inside the model's context window",
+        definition: "Replacing a thread's accumulated history with a model-written summary so subsequent requests fit the context window. In zed-kask the pipeline is a composition: deterministic pre-shrink on the request copy, budget calibration, planning (two-half / balanced segments / last-resort elision), concurrent segment summarization, and chronological merge — the stored history is never modified. The zed-kask-specific pipeline is specified in kask/docs/architecture/compaction-pipeline-spec.md.",
+        constituents: &["context window", "extractive summarization", "map-reduce"],
+        authority: "operator ruling 2026-10-18 (compaction-pipeline census session); zed-kask compaction-pipeline-spec.md (ratified 2026-09-29, D8)",
+    },
 ];
 /// Normalization matches the onto_anchor tool's: lowercase alphanumeric
 /// characters only, separators and case folded away.
@@ -2115,6 +2164,48 @@ mod tests {
             assert!(
                 concept.authority.starts_with("operator ruling 2026-10-14"),
                 "{term} cites the 2026-10-14 ruling"
+            );
+        }
+    }
+
+    /// expect: [P5] The compaction-pipeline census rulings (2026-10-18)
+    /// resolve to their published authorities and never fall back to the
+    /// coarse 5W1H core anchor.
+    #[test]
+    fn compaction_pipeline_rulings_resolve_with_authority() {
+        for (term, expected_term, marker) in [
+            ("run-length encoding", "run_length_encoding", "Salomon"),
+            ("RLE", "run_length_encoding", "10918"),
+            ("truncation", "truncation", "1003.1"),
+            ("head-tail windowing", "truncation", "2026-10-18"),
+            (
+                "extractive summarization",
+                "extractive_summarization",
+                "Luhn",
+            ),
+            (
+                "extractive-before-abstractive staging",
+                "extractive_summarization",
+                "1958",
+            ),
+            ("context window", "context_window", "1706.03762"),
+            (
+                "context compaction",
+                "context_compaction",
+                "compaction-pipeline-spec",
+            ),
+            ("thread compaction", "context_compaction", "2026-10-18"),
+        ] {
+            let concept = resolve_derived(term)
+                .expect("compaction-pipeline ruling must resolve in derived.rs");
+            assert_eq!(
+                concept.term, expected_term,
+                "{term} resolves to {expected_term}"
+            );
+            assert!(
+                concept.authority.contains(marker),
+                "{term}: {}",
+                concept.authority
             );
         }
     }
