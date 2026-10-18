@@ -237,6 +237,19 @@ fn emit_tool_span(
 pub trait ToolContext {
     /// The WebID of the caller serving this tool (for Regulation span attribution).
     fn webid(&self) -> &hkask_types::WebID;
+
+    /// The dual-axis ontology stamp for a tool response (P5.4, operator
+    /// ruling B.2 2026-10-18: every tool RESPONSE carries both axes).
+    ///
+    /// The default returns the body unchanged — a server that does not
+    /// carry a mapping is untouched by the contract. A server that stamps
+    /// (curator, experimentation, swarm) overrides this with its
+    /// server-local ontology mapping, so the stamp lands on every response
+    /// at the single point every tool already routes through —
+    /// `execute_tool` — instead of a per-site wrap at each tool's return.
+    fn annotate_response(&self, _tool_name: &str, body: serde_json::Value) -> serde_json::Value {
+        body
+    }
 }
 
 /// Execute a tool with automatic Regulation span emission and error serialization.
@@ -274,6 +287,11 @@ pub async fn execute_tool<C: ToolContext>(
             Vec::new()
         }
     };
+    // The dual-axis response stamp (P5.4) — one central point, so a
+    // server-level mapping stamps every response without a per-site wrap
+    // at each tool's return. Servers without a mapping keep the default
+    // (identity) and are untouched.
+    let result = result.map(|body| ctx.annotate_response(tool_name, body));
     span.finish(result, &drained)
 }
 

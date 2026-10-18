@@ -105,6 +105,7 @@ mod local_registry;
 mod local_runtime;
 mod local_swarms;
 mod local_tools;
+pub mod ontology;
 pub mod port_registry;
 pub mod request_types;
 mod sanitize;
@@ -161,7 +162,7 @@ hkask_mcp_server::mcp_server!(
         pub event_store: std::sync::Arc<LazyEventStore>,
         pub thread_store: std::sync::Arc<thread_store::SwarmThreadStore>,
         pub gate_store: std::sync::Arc<gate_store::GateCounterStore>,
-    }
+    } = crate::ontology::annotate;
 );
 
 impl SwarmServer {

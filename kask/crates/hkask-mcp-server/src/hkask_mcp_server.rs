@@ -71,18 +71,47 @@ macro_rules! validate_field {
 /// Generate a `ToolContext` impl for an MCP server struct.
 ///
 /// Assumes the struct has a `webid: WebID` field — the standard pattern
-/// for all hKask MCP servers.
+/// for all hKask MCP servers. The default impl carries no ontology
+/// stamp; a server with a dual-axis mapping (P5.4, operator ruling B.2
+/// 2026-10-18) passes its annotate function's PATH to override the
+/// default identity `annotate_response` — a path, never an expression,
+/// because macro hygiene hides the fn parameters from caller-site tokens
+/// while a path resolves at the expansion site.
 ///
 /// Usage:
 /// ```ignore
 /// impl_tool_context!(CommunicationServer);
+/// impl_tool_context!(SwarmServer, crate::ontology::annotate);
 /// ```
 #[macro_export]
 macro_rules! impl_tool_context {
+    // Default: no ontology stamp — the response body passes through
+    // unchanged (servers without a mapping are untouched by P5.4).
     ($type:ty) => {
         impl $crate::server::ToolContext for $type {
             fn webid(&self) -> &hkask_types::WebID {
                 &self.webid
+            }
+        }
+    };
+    // With an annotate override: the server-local dual-axis mapping
+    // stamps every response at the single point every tool already
+    // routes through (execute_tool), instead of a per-site wrap at each
+    // tool's return. The stamp is a function path — the macro calls it
+    // with the fn parameters (tool_name, body) at the expansion site,
+    // where hygiene keeps them visible to this expansion's own tokens.
+    ($type:ty, $annotate:path) => {
+        impl $crate::server::ToolContext for $type {
+            fn webid(&self) -> &hkask_types::WebID {
+                &self.webid
+            }
+
+            fn annotate_response(
+                &self,
+                tool_name: &str,
+                body: serde_json::Value,
+            ) -> serde_json::Value {
+                $annotate(tool_name, body)
             }
         }
     };
@@ -203,10 +232,43 @@ macro_rules! mcp_server {
         $crate::impl_tool_context!($name);
     };
 
-    // Variant with no custom fields
+    // Variant with custom fields AND a dual-axis annotate override
+    // (P5.4): the server-local mapping stamps every response centrally.
     (
         $(#[$meta:meta])*
-        $vis:vis struct $name:ident;
+        $vis:vis struct $name:ident {
+            $(
+                $(#[$field_meta:meta])*
+                $field_vis:vis $field:ident : $ty:ty
+            ),* $(,)?
+        } = $annotate:path $(;)?
+    ) => {
+        $(#[$meta])*
+        $vis struct $name {
+            /// Agent identity for capability tokens and ownership.
+            pub webid: hkask_types::WebID,
+            $(
+                $(#[$field_meta:meta])*
+                $field_vis $field : $ty
+            ),*
+        }
+
+        impl $name {
+            pub fn new(
+                webid: hkask_types::WebID,
+                $($field : $ty),*
+            ) -> Self {
+                Self { webid, $($field,)* }
+            }
+        }
+
+        $crate::impl_tool_context!($name, $annotate);
+    };
+
+    // Variant with no custom fields AND an annotate override (P5.4).
+    (
+        $(#[$meta:meta])*
+        $vis:vis struct $name:ident = $annotate:path $(;)?
     ) => {
         $(#[$meta])*
         $vis struct $name {
@@ -220,6 +282,6 @@ macro_rules! mcp_server {
             }
         }
 
-        $crate::impl_tool_context!($name);
+        $crate::impl_tool_context!($name, $annotate);
     };
 }
