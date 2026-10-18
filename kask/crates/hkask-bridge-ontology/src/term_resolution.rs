@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
 use crate::sepio;
+#[cfg(test)]
 use crate::sumo;
 use crate::{derived, published};
 
