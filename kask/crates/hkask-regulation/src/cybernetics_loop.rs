@@ -57,8 +57,8 @@ pub enum RolloutEventError {
 /// (no storage dep) while letting `verify_impact` answer "for rollout R,
 /// what was the metric before action A and after it?" as a query instead
 /// of a special-case struct walk, and write its impact verdict back so
-/// downstream consumers (training bridge, regression monitor, ORIENT)
-/// can see "the regulation system verified this action's impact."
+/// downstream event-store readers can see "the regulation system verified
+/// this action's impact."
 ///
 /// Canonical model: Agent Lightning's `RewardData.source` — the
 /// regulation loop's impact verdict is a `regulation_impact`-sourced

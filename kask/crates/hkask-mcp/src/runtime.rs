@@ -308,8 +308,8 @@ pub struct McpServer {
 /// per-server allowlist, so nothing here may be a credential. Each entry is
 /// justified:
 ///
-/// - `PATH`, `HOME` — subprocess resolution and data-dir derivation. `HOME` is
-///   read directly by the training server; several servers derive paths from it.
+/// - `PATH`, `HOME` — subprocess resolution and data-dir derivation. Several
+///   servers derive paths from `HOME`.
 /// - `XDG_DATA_HOME`, `XDG_RUNTIME_DIR` — read by kask crates for data/socket
 ///   paths on Linux.
 /// - `TMPDIR` — temp-file placement.
@@ -2077,8 +2077,7 @@ mod env_isolation_tests {
         );
         assert!(
             env.lines().any(|line| line.starts_with("HOME=")),
-            "HOME must pass through — the training server reads it directly and \
-             several servers derive data paths from it. Got:\n{env}"
+            "HOME must pass through — several servers derive data paths from it. Got:\n{env}"
         );
     }
 

@@ -225,11 +225,11 @@ pub struct LocalAgentCapabilities {
     #[serde(default)]
     pub temperature: Option<f64>,
     /// Provider-agnostic sampling overrides (fermi `agents.model_params`):
-    /// keys override the `temperature` field and add provider-specific
-    /// params (top_p, top_k, frequency_penalty, presence_penalty, min_p,
-    /// typical_p, seed, thinking_allowed, adapter). Merged over the
-    /// executor's defaults at dispatch time — same precedence as fermi's
-    /// `apply_tier_resolution` merging rung params over agent-level params.
+    /// keys override the `temperature` field and add known sampling params
+    /// (top_p, top_k, frequency_penalty, presence_penalty, min_p, typical_p,
+    /// seed, thinking_allowed). Merged over the executor's defaults at dispatch
+    /// time — same precedence as fermi's `apply_tier_resolution` merging rung
+    /// params over agent-level params.
     /// An explicit `thinking_allowed: false` is never overridden or retried;
     /// reasoning-mandatory endpoints fail with compatible-model guidance.
     #[serde(default)]

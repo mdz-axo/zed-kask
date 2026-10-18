@@ -1,8 +1,8 @@
 ---
 title: "Memory System Specification"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-10-13
-version: "5.3.1"
+last_updated: 2026-10-18
+version: "5.3.2"
 status: "Active"
 domain: "Lifecycle"
 mds_categories: [lifecycle, domain, curation, trust]
@@ -1237,7 +1237,7 @@ knowledge or consent.
 
 ## 12. Passphrases and provisioning
 
-All SQLCipher DBs (curator, corpus, swarm memory, kata-kanban, training)
+All managed SQLCipher DBs (curator, swarm memory, kata-kanban, research)
 share one passphrase architecture:
 
 - **Default:** `"allostery"` on first run

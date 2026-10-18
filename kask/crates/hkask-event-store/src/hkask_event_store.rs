@@ -44,8 +44,8 @@ use std::sync::Arc;
 ///
 /// The `clock` field is the seam: production construction wires the real
 /// `hkask_types::time::now_rfc3339_z` clock; tests inject a controllable clock
-/// so retention cutoffs (`compact`, `strip_bodies`) can be exercised at exact
-/// boundary instants without sleeping. The clock returns a `Z`-suffixed
+/// so retention cutoffs (`compact`) can be exercised at exact boundary instants
+/// without sleeping. The clock returns a `Z`-suffixed
 /// RFC3339 string so stored `created_at` values sort lexically against
 /// `Z`-suffixed cutoffs (see `now_rfc3339_z`).
 #[derive(Clone)]
@@ -81,10 +81,18 @@ impl EventStore {
         &self.driver
     }
 
-    /// Initialize the event schema. Idempotent — safe on an existing
-    /// database. Called by both constructors.
+    /// Initialize the event schema and remove raw model text left by the
+    /// retired training bridge. Idempotent — safe on an existing database.
+    /// Called by both constructors.
     fn init_schema(driver: &Arc<dyn DatabaseDriver>) -> Result<(), EventStoreError> {
         driver.execute_batch(SCHEMA_DDL)?;
+        driver.execute(
+            "UPDATE events SET payload = json_remove(payload, '$.request_body', '$.response_body') \
+             WHERE kind = 'model_request' \
+             AND (json_type(payload, '$.request_body') IS NOT NULL \
+                  OR json_type(payload, '$.response_body') IS NOT NULL)",
+            &[],
+        )?;
         Ok(())
     }
 
@@ -188,25 +196,6 @@ impl EventStore {
         Ok(dropped)
     }
 
-    /// Strip the request/response bodies from `model_request` events older
-    /// than the cutoff — the summary-compaction half of retention. Terminal
-    /// rollouts keep their shape (model, latency, usage, verdict) but lose
-    /// their bulk; the training bridge has already consumed the bodies it
-    /// will consume by then. Returns the number of events stripped —
-    /// surfaced, never silent.
-    ///
-    /// SQLite's `json_remove` updates the payload in place; events whose
-    /// payload lacks the keys are unaffected (0 rows changed for them).
-    pub fn strip_bodies(&self, cutoff_rfc3339: &str) -> Result<usize, EventStoreError> {
-        let stripped = self.driver.execute(
-            "UPDATE events SET payload = json_remove(payload, '$.request_body', '$.response_body') \
-             WHERE kind = 'model_request' AND created_at < ?1 \
-             AND json_type(payload, '$.request_body') IS NOT NULL",
-            &[DbValue::Text(cutoff_rfc3339.to_string())],
-        )?;
-        Ok(stripped)
-    }
-
     /// The current log position — the resume point for incremental readers.
     /// `None` on an empty log (absence, not zero: nothing has happened yet).
     pub fn cursor(&self) -> Result<Option<i64>, EventStoreError> {
@@ -259,6 +248,43 @@ mod tests {
             "usage": { "total_tokens": 87 },
             "finish_reason": "stop",
         })
+    }
+
+    #[test]
+    fn reopening_strips_legacy_training_bodies_but_keeps_telemetry() {
+        let driver = SqliteDriver::in_memory_driver();
+        driver
+            .execute_batch(SCHEMA_DDL)
+            .expect("create legacy schema");
+        driver
+            .execute(
+                "INSERT INTO events (rollout_id, kind, payload, created_at) \
+                 VALUES (?1, ?2, ?3, ?4)",
+                &[
+                    DbValue::Text("legacy-rollout".into()),
+                    DbValue::Text("model_request".into()),
+                    DbValue::Text(
+                        serde_json::json!({
+                            "model": "m",
+                            "latency_ms": 12,
+                            "request_body": "legacy prompt",
+                            "response_body": "legacy answer"
+                        })
+                        .to_string(),
+                    ),
+                    DbValue::Text("2026-10-17T00:00:00.000Z".into()),
+                ],
+            )
+            .expect("insert legacy event");
+
+        let store = EventStore::from_driver(driver).expect("reopen and clean legacy event");
+        let events = store.query(&EventFilter::default()).expect("query events");
+        assert_eq!(events.len(), 1);
+        let payload = &events[0].payload;
+        assert_eq!(payload["model"], "m");
+        assert_eq!(payload["latency_ms"], 12);
+        assert!(payload.get("request_body").is_none());
+        assert!(payload.get("response_body").is_none());
     }
 
     #[test]
@@ -433,53 +459,6 @@ mod tests {
         assert_eq!(all, expected, "positions must be contiguous");
     }
 
-    #[test]
-    fn strip_bodies_removes_only_old_model_requests() {
-        let store = memory_store();
-        let old = serde_json::json!({
-            "model": "m", "request_body": "the task", "response_body": "the answer"
-        });
-        let recent = serde_json::json!({
-            "model": "m", "request_body": "keep me", "response_body": "keep me too"
-        });
-        let verdict = serde_json::json!({"pass": true});
-        store.append("r-old", "model_request", &old).unwrap();
-        store.append("r-old", "verdict", &verdict).unwrap();
-        store.append("r-recent", "model_request", &recent).unwrap();
-
-        // "now" is after everything written — all model_requests are old.
-        let stripped = store.strip_bodies("9999-01-01T00:00:00Z").unwrap();
-        assert_eq!(stripped, 2, "both model_request events are stripped");
-
-        let events = store.query(&EventFilter::default()).unwrap();
-        for event in &events {
-            if event.kind == "model_request" {
-                assert!(
-                    event.payload.get("request_body").is_none(),
-                    "bodies must be gone after strip"
-                );
-                assert!(event.payload.get("response_body").is_none());
-                // Shape survives.
-                assert_eq!(event.payload.get("model").unwrap(), "m");
-            }
-            if event.kind == "verdict" {
-                // Non-model_request kinds are untouched.
-                assert_eq!(event.payload.get("pass").unwrap(), &serde_json::json!(true));
-            }
-        }
-    }
-
-    #[test]
-    fn strip_bodies_is_idempotent() {
-        let store = memory_store();
-        let body = serde_json::json!({"request_body": "x", "response_body": "y"});
-        store.append("r", "model_request", &body).unwrap();
-        assert_eq!(store.strip_bodies("9999-01-01T00:00:00Z").unwrap(), 1);
-        // Second pass finds nothing to strip — the guard on json_type
-        // prevents a no-op rewrite from counting.
-        assert_eq!(store.strip_bodies("9999-01-01T00:00:00Z").unwrap(), 0);
-    }
-
     // ── VerdictSource / RolloutKind wire round-trips ──────────────────
 
     #[test]
@@ -607,62 +586,6 @@ mod tests {
         assert!(
             !events.iter().any(|e| e.rollout_id == "old"),
             "old rollout is gone"
-        );
-    }
-
-    #[test]
-    fn strip_bodies_strips_old_keeps_recent_at_boundary() {
-        let _guard = CLOCK_TEST_GUARD
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        // One model_request before the cutoff (stripped), one after (kept).
-        // The boundary is the cutoff itself; `created_at < cutoff` is strict.
-        let store = EventStore::from_driver_with_clock(test_driver(), test_clock).expect("store");
-        set_test_clock("2026-08-20T09:00:00.000Z");
-        store
-            .append(
-                "r-old",
-                "model_request",
-                &serde_json::json!({
-                    "model": "m", "request_body": "old task", "response_body": "old answer"
-                }),
-            )
-            .unwrap();
-        set_test_clock("2026-08-20T13:00:00.000Z");
-        store
-            .append(
-                "r-recent",
-                "model_request",
-                &serde_json::json!({
-                    "model": "m", "request_body": "keep me", "response_body": "keep me too"
-                }),
-            )
-            .unwrap();
-        let stripped = store.strip_bodies("2026-08-20T11:00:00.000Z").unwrap();
-        assert_eq!(stripped, 1, "only the pre-cutoff model_request is stripped");
-
-        let events = store.query(&EventFilter::default()).unwrap();
-        let old_event = events
-            .iter()
-            .find(|e| e.rollout_id == "r-old")
-            .expect("old event present");
-        assert!(
-            old_event.payload.get("request_body").is_none(),
-            "old bodies stripped"
-        );
-        assert!(old_event.payload.get("response_body").is_none());
-        let recent_event = events
-            .iter()
-            .find(|e| e.rollout_id == "r-recent")
-            .expect("recent event present");
-        assert_eq!(
-            recent_event.payload.get("request_body").unwrap(),
-            "keep me",
-            "recent bodies survive"
-        );
-        assert_eq!(
-            recent_event.payload.get("response_body").unwrap(),
-            "keep me too"
         );
     }
 

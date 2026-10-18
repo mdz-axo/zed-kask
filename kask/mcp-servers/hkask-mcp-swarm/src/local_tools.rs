@@ -3438,7 +3438,7 @@ impl SwarmServer {
     /// rollout for that task — the harness measures end-to-end pass rate,
     /// which includes crashes, not just wrong answers.
     #[tool(
-        description = "Rollout harness: run one local agent against a task set N times each, evaluate each rollout with a deterministic evaluator (contains/not_contains/regex), and report per-task pass rates with standard error and totals. Each rollout is recorded as model_request + verdict events in the event store. Tasks capped at 10, repeats at 10, total rollouts at 50. After each run, old model_request bodies are stripped and very old rollouts are compacted (bodies_stripped/rollouts_compacted in the report)."
+        description = "Rollout harness: run one local agent against a task set N times each, evaluate each rollout with a deterministic evaluator (contains/not_contains/regex), and report per-task pass rates with standard error and totals. Each rollout is recorded as model_request + verdict events in the event store. Tasks capped at 10, repeats at 10, total rollouts at 50. After each run, very old rollouts are compacted (rollouts_compacted in the report)."
     )]
     pub(crate) async fn swarm_eval_agent_local(
         &self,
@@ -3636,38 +3636,14 @@ impl SwarmServer {
                     }
                 }
                 // Compaction caller (event-substrate item 2): after each
-                // harness run, strip bodies from old model_request events
-                // and drop very old rollouts. The training bridge has had
-                // its chance by now (operator-triggered, runs between harness
-                // calls); bodies from previous runs are bulk with no remaining
-                // consumer. Both counts are surfaced — never silent (the
-                // .rules failure-signal rule: a missing count means "nothing
-                // old enough to strip/drop", which must be distinguishable
-                // from "compaction failed").
+                // harness run, drop very old rollouts and surface the count.
+                // A missing count would conflate "nothing old enough" with
+                // "compaction failed", so failures warn and the report retains
+                // an explicit zero.
                 //
-                // Body retention: default 1 hour (configurable via
-                // `HKASK_SWARM_BODY_RETENTION_HOURS`). Rollout retention:
-                // default 7 days (configurable via
+                // Rollout retention: default 7 days (configurable via
                 // `HKASK_SWARM_ROLLOUT_RETENTION_DAYS`).
-                let (bodies_stripped, rollouts_compacted) = if let Some(store) = &event_store {
-                    let body_retention_hours = std::env::var("HKASK_SWARM_BODY_RETENTION_HOURS")
-                        .ok()
-                        .and_then(|s| s.parse::<i64>().ok())
-                        .unwrap_or(1);
-                    let body_cutoff = (chrono::Utc::now()
-                        - chrono::Duration::hours(body_retention_hours))
-                        .to_rfc3339();
-                    let stripped = match store.strip_bodies(&body_cutoff) {
-                        Ok(n) => n,
-                        Err(error) => {
-                            tracing::warn!(
-                                target: "hkask.mcp.swarm",
-                                error = %error,
-                                "strip_bodies failed after harness run"
-                            );
-                            0
-                        }
-                    };
+                let rollouts_compacted = if let Some(store) = &event_store {
                     let rollout_retention_days = std::env::var("HKASK_SWARM_ROLLOUT_RETENTION_DAYS")
                         .ok()
                         .and_then(|s| s.parse::<i64>().ok())
@@ -3675,7 +3651,7 @@ impl SwarmServer {
                     let rollout_cutoff = (chrono::Utc::now()
                         - chrono::Duration::days(rollout_retention_days))
                         .to_rfc3339();
-                    let compacted = match store.compact(&rollout_cutoff) {
+                    match store.compact(&rollout_cutoff) {
                         Ok(n) => n,
                         Err(error) => {
                             tracing::warn!(
@@ -3685,10 +3661,9 @@ impl SwarmServer {
                             );
                             0
                         }
-                    };
-                    (stripped, compacted)
+                    }
                 } else {
-                    (0, 0)
+                    0
                 };
                 Ok(serde_json::json!({
                     "agent_name": req.agent_name,
@@ -3702,7 +3677,6 @@ impl SwarmServer {
                     "capture_drops": capture_drops,
                     "capture_status": if event_store.is_some() { "available" } else { "unavailable" },
                     "capture_error": capture_error,
-                    "bodies_stripped": bodies_stripped,
                     "rollouts_compacted": rollouts_compacted,
                 }))
             },

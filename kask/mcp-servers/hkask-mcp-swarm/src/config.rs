@@ -110,7 +110,7 @@ pub struct SwarmConfig {
     /// `hkask-memory` `MemoryStore` backing the local knowledge tools). Must
     /// be >=8 chars. This is the ONE shared kask DB passphrase — resolved
     /// from `HKASK_DB_PASSPHRASE` (delivered as a credential via the
-    /// governed-launch allowlist), same as curator/kanban/research/training.
+    /// governed-launch allowlist), same as curator/kanban/research.
     /// If empty or too short, `LazyLocalMemory::get_or_init` returns an error
     /// and `swarm_search_knowledge_local` degrades to an empty result with a
     /// `memory_unconfigured` note (the generate tools proceed unseeded — memory

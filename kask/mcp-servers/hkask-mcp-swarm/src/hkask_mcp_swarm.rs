@@ -314,8 +314,8 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             // the first `swarm_eval_agent_local` call, not at startup. The
             // path contract — the D28 default plus the
             // `HKASK_SWARM_EVENTS_PATH` operator override, shared with zed's
-            // harness regression monitor and the training rollout bridge —
-            // lives in `hkask_types::agent_paths::swarm_events_db_path`.
+            // harness regression monitor — lives in
+            // `hkask_types::agent_paths::swarm_events_db_path`.
             let events_path = hkask_types::agent_paths::swarm_events_db_path();
             let event_store = std::sync::Arc::new(LazyEventStore::lazy(events_path));
             let thread_store = std::sync::Arc::new(thread_store::SwarmThreadStore::new(
@@ -730,6 +730,11 @@ mod smoke_tests {
             assert_eq!(report["tasks"][0]["pass_rate"], report["overall_pass_rate"]);
             assert_eq!(report["capture_status"], "unavailable");
             assert!(report["capture_error"].is_string());
+            assert!(
+                report.get("bodies_stripped").is_none(),
+                "raw-body retention was removed with the training bridge"
+            );
+            assert_eq!(report["rollouts_compacted"], 0);
             assert_eq!(
                 report["events_dropped"], 0,
                 "unavailable is not a fabricated dropped count"

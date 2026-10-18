@@ -24,8 +24,8 @@ pub fn now_rfc3339() -> String {
 ///
 /// This exists alongside `now_rfc3339()` because the event store's retention
 /// boundary cutoffs are written with a `Z` suffix (e.g. the far-future sentinel
-/// `"9999-01-01T00:00:00Z"`). Retention (`compact`, `strip_bodies`) selects
-/// rows by lexically comparing `created_at` against the cutoff, so the stored
+/// `"9999-01-01T00:00:00Z"`). Retention (`compact`) selects rows by lexically
+/// comparing `created_at` against the cutoff, so the stored
 /// timestamp MUST use the same suffix shape as the cutoff. Mixed suffixes
 /// break lexical ordering: `'+'` (0x2B) sorts before `'Z'` (0x5A), so a
 /// `+00:00`-suffixed `created_at` and a `Z`-suffixed cutoff of the same

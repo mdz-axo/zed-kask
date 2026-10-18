@@ -723,8 +723,8 @@ fn main() {
         };
         agent::set_template_base_path(template_base_path);
 
-        // Seed templates to the registry path so MCP servers (corpus,
-        // training) find them regardless of dev/prod. The `render_template`
+        // Seed templates to the registry path so MCP servers (corpus and
+        // swarm) find them regardless of dev/prod. The `render_template`
         // tool uses the live source tree in dev (via `template_base_path`
         // above), so this seeding only affects MCP servers which read
         // `HKASK_TEMPLATE_ROOT`. In dev, the seeded copy mirrors the
@@ -820,8 +820,8 @@ fn main() {
         // seam.
         let (cybernetics_loop_inner, harness_event_store) = {
             // The path contract (HKASK_SWARM_EVENTS_PATH override, D28
-            // default) is shared with the swarm server and the training
-            // rollout bridge — single-sourced in swarm_events_db_path.
+            // default) is shared by the swarm server and zed's harness
+            // regression monitor — single-sourced in swarm_events_db_path.
             let events_path = hkask_types::agent_paths::swarm_events_db_path();
             match kask_bridge::BridgeRolloutEventSource::open(&events_path) {
                 Ok(source) => {
@@ -1624,9 +1624,8 @@ fn main() {
 
                 // zed-kask: no separate swarm-memory passphrase provisioning —
                 // there is ONE passphrase (HKASK_DB_PASSPHRASE, provisioned
-                // above via `provision_agent`), and every SQLCipher DB
-                // (curator, swarm memory, kanban, research, training) opens
-                // with it.
+                // above via `provision_agent`), and every managed SQLCipher DB
+                // (curator, swarm memory, kanban, research) opens with it.
 
                 // Hoisted to the outer scope so the IPC server (started later
                 // in the `cx.update` block) can access it. Set inside the

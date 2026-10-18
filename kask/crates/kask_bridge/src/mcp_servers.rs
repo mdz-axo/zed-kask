@@ -315,10 +315,10 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         binary: "hkask-mcp-swarm",
         description: "Swarm — Agent Bestiary World agent swarms and Xaman Ek curator",
         // HKASK_DB_PASSPHRASE is the ONE SQLCipher passphrase — the swarm
-        // memory DB opens with it, same as curator/kanban/research/training.
-        // (The separate HKASK_SWARM_MEMORY_PASSPHRASE was removed: two
-        // passphrases for one system was a setup trap and a rotation
-        // inconsistency — rotating one left the other unopenable.)
+        // memory DB opens with it, same as curator/kanban/research. (The
+        // separate HKASK_SWARM_MEMORY_PASSPHRASE was removed: two passphrases
+        // for one system was a setup trap and a rotation inconsistency —
+        // rotating one left the other unopenable.)
         credentials: &["HKASK_ABW_API_KEY", "HKASK_DB_PASSPHRASE"],
         config_env: &[
             "HKASK_ABW_API_URL",
@@ -353,13 +353,12 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // (hkask_mcp_swarm.rs:264). Unallowlisted, an operator could not
             // enable or disable the listener.
             "HKASK_A2A_HTTP_ENABLE",
-            // Event-store path + retention knobs — read via `std::env::var`
-            // (hkask_mcp_swarm.rs events store; local_tools.rs retention
-            // sweep). Carried by `emit_operator_override_env`; without these
-            // entries an operator override is silently dropped under governed
-            // launch (`cmd.env_clear()`).
+            // Event-store path + rollout-retention knob — read via
+            // `std::env::var` (hkask_mcp_swarm.rs events store; local_tools.rs
+            // compaction sweep). Carried by `emit_operator_override_env`;
+            // without these entries an operator override is silently dropped
+            // under governed launch (`cmd.env_clear()`).
             "HKASK_SWARM_EVENTS_PATH",
-            "HKASK_SWARM_BODY_RETENTION_HOURS",
             "HKASK_SWARM_ROLLOUT_RETENTION_DAYS",
             // Embedding model — read by `local_knowledge.rs`
             // (`ingest_turn` / `recall_turns`) via
@@ -1518,6 +1517,15 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn swarm_config_env_excludes_retired_body_retention_control() {
+        let cfg = server_by_id("swarm").config_env;
+        assert!(!cfg.contains(&"HKASK_SWARM_BODY_RETENTION_HOURS"));
+        assert!(cfg.contains(&"HKASK_SWARM_EVENTS_PATH"));
+        assert!(cfg.contains(&"HKASK_SWARM_ROLLOUT_RETENTION_DAYS"));
+    }
+
     /// Every secret-shaped credential grant must be justified by a read site.
     /// This is the generic backstop for the 8 servers without a bespoke test:
     /// it cannot verify each name, but it catches the case where a credential

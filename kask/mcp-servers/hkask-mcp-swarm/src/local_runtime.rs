@@ -20,6 +20,23 @@ use crate::error::LocalSwarmError;
 use crate::local_registry::LocalAgentCard;
 use crate::sanitize::strip_leading_mentions;
 
+fn captured_inference_payload(
+    captured: &crate::agent_executor::CapturedInference,
+) -> serde_json::Value {
+    serde_json::json!({
+        // Provider-confirmed serving model — empty on error events (no
+        // confirmation exists); `requested_model` carries what was asked.
+        // Never the same field.
+        "model": captured.model,
+        "requested_model": captured.requested_model,
+        "status": captured.status,
+        "latency_ms": captured.latency_ms,
+        "usage": { "total_tokens": captured.total_tokens },
+        "tool_calls": captured.tool_calls,
+        "round": captured.round,
+    })
+}
+
 /// The local swarm runtime — lazily constructed inference.
 ///
 /// Constructed lazily on first tool call (the `run_server` factory closure
@@ -294,22 +311,7 @@ impl LocalSwarmRuntime {
         let drop_counter = std::sync::Arc::clone(&self.capture_drops);
         tokio::spawn(async move {
             while let Some(captured) = rx.recv().await {
-                let payload = serde_json::json!({
-                    // Provider-confirmed serving model — empty on error
-                    // events (no confirmation exists); `requested_model`
-                    // carries what was asked. Never the same field.
-                    "model": captured.model,
-                    "requested_model": captured.requested_model,
-                    "status": captured.status,
-                    "latency_ms": captured.latency_ms,
-                    "usage": { "total_tokens": captured.total_tokens },
-                    "tool_calls": captured.tool_calls,
-                    "round": captured.round,
-                    // Bodies for the training bridge. Empty on the error path
-                    // (no response) — absent, not fabricated.
-                    "request_body": captured.request_body,
-                    "response_body": captured.response_body,
-                });
+                let payload = captured_inference_payload(&captured);
                 if let Err(error) = store.append(&captured.rollout_id, "model_request", &payload) {
                     drop_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     tracing::warn!(
@@ -957,6 +959,30 @@ impl LocalDelegateResult {
             "ok": false,
             "error": error,
         })
+    }
+}
+
+#[cfg(test)]
+mod capture_payload_tests {
+    use super::captured_inference_payload;
+
+    #[test]
+    fn model_request_payload_excludes_raw_prompt_and_response_text() {
+        let captured = crate::agent_executor::CapturedInference {
+            rollout_id: "rollout-a".into(),
+            model: "confirmed-model".into(),
+            requested_model: "requested-model".into(),
+            status: "ok",
+            latency_ms: 5,
+            total_tokens: 8,
+            tool_calls: 1,
+            round: 2,
+        };
+        let payload = captured_inference_payload(&captured);
+        assert_eq!(payload["model"], "confirmed-model");
+        assert_eq!(payload["requested_model"], "requested-model");
+        assert!(payload.get("request_body").is_none());
+        assert!(payload.get("response_body").is_none());
     }
 }
 

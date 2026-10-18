@@ -1,8 +1,8 @@
 ---
 title: "hKask Architecture Principles"
 audience: [architects, developers, agents]
-last_updated: 2026-10-08
-version: "0.43.1"
+last_updated: 2026-10-18
+version: "0.43.2"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -270,7 +270,7 @@ degraded attribution state, not a claim of authenticated agency.
 
 **P12.1 — Surface-Host Mapping (v0.31.0, in-process pivot):**
 
-The editor process hosts the Agent panel, Curator, shared Regulation graph, and managed MCP runtime. The 13 MCP servers are child processes over stdio, not a second in-process surface. The former Kask panel and standalone admin CLI are deleted; inline D18 widgets and cross-domain Steer panels are the live interaction surfaces.
+The editor process hosts the Agent panel, Curator, shared Regulation graph, and managed MCP runtime. The 10 MCP servers are child processes over stdio, not a second in-process surface. The former Kask panel and standalone admin CLI are deleted; inline D18 widgets and cross-domain Steer panels are the live interaction surfaces.
 
 | Surface | Host | WebID Source | Storage | Keychain |
 |---------|------|-------------|---------|----------|

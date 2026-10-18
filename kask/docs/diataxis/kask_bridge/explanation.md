@@ -1,8 +1,8 @@
 ---
 title: "kask_bridge — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-09-28
-version: "1.4.0"
+last_updated: 2026-10-18
+version: "1.4.1"
 status: "Active"
 domain: "Integration"
 mds_categories: [trust, curation]
@@ -75,8 +75,8 @@ verified_against: crates/zed/src/main.rs:1535-1592 (deferred task + fallback ide
 status: VERIFIED
 -->
 
-There is one SQLCipher passphrase for curator, swarm-memory, kanban, research,
-and training databases. The deferred task explicitly performs no separate
+There is one SQLCipher passphrase for curator, swarm-memory, kanban, and
+research databases. The deferred task explicitly performs no separate
 swarm-memory provisioning (`crates/zed/src/main.rs:1625-1628`). Scheduled
 rotation is startup-coordinated: `schedule_db_passphrase_rotation` writes the
 pending slot (`hkask_db_passphrase_pending`) plus a pending record file, and

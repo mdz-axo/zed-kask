@@ -14,9 +14,9 @@
 //! Note: ML-Schema publishes no `wasDerivedFrom` property (that is PROV-O);
 //! derivation is modeled with `mls:hasOutput`.
 //!
-//! This module holds the ML-Schema concept vocabulary only. Server-specific
-//! dispatch (mapping a training operation or hyperparameter name to its
-//! ML-Schema concept) lives in the training server.
+//! This module holds the published ML-Schema concept vocabulary only. The
+//! terms remain available for classifying research content; the tree has no
+//! server-side model-training dispatcher.
 
 /// An ML-Schema concept URI.
 pub type MlConcept = &'static str;

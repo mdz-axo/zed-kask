@@ -1293,10 +1293,11 @@ mod tests {
             "training": {"host": "nebius", "cache_dir": "/tmp/adapters"},
             "mcp": {
                 "load_default": true,
-                "overrides": {"training": true, "corpus": false},
+                "overrides": {"training": true, "corpus": false, "future-server": true},
                 "delegated_tools": {
                     "training": ["training_submit"],
-                    "corpus": ["corpus_query"]
+                    "corpus": ["corpus_query"],
+                    "future-server": ["future_tool"]
                 }
             }
         }))
@@ -1305,9 +1306,14 @@ mod tests {
         assert!(!settings.mcp.overrides.contains_key("training"));
         assert!(!settings.mcp.delegated_tools.contains_key("training"));
         assert_eq!(settings.mcp.overrides.get("corpus"), Some(&false));
+        assert_eq!(settings.mcp.overrides.get("future-server"), Some(&true));
         assert_eq!(
             settings.mcp.delegated_tools.get("corpus"),
             Some(&vec!["corpus_query".to_string()])
+        );
+        assert_eq!(
+            settings.mcp.delegated_tools.get("future-server"),
+            Some(&vec!["future_tool".to_string()])
         );
         let serialized = serde_json::to_value(settings).expect("runtime settings serialize");
         assert!(serialized.get("training").is_none());

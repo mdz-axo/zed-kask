@@ -196,9 +196,8 @@ pub fn mcp_server_subdir(server_id: &str, subdir: &str) -> PathBuf {
 /// `HKASK_SWARM_EVENTS_PATH` operator override when set non-blank, else
 /// the D28 default `mcp/swarm/events.db` under the data dir.
 ///
-/// Single-sources a three-opener contract: the swarm server's `run()`
-/// writes the store, zed's harness regression monitor reads it (the
-/// phase-6 seam), and the training rollout bridge reads it — all three
+/// Single-sources a two-opener contract: the swarm server writes the store,
+/// and zed's harness regression monitor reads it (the phase-6 seam). Both
 /// must open the same database or the seam silently breaks.
 pub fn swarm_events_db_path() -> String {
     env_override_or_default(
@@ -401,9 +400,9 @@ mod tests {
 
     #[test]
     fn swarm_events_db_path_override_and_default_legs() {
-        // The contract three openers share (the swarm server's run(), zed's
-        // harness regression monitor, the training rollout bridge): a set
-        // override is used raw, a blank one falls back to the D28 default.
+        // The contract both openers share (the swarm server's run() and zed's
+        // harness regression monitor): a set override is used raw, a blank one
+        // falls back to the D28 default.
         let default = resolve_under_data_dir(&mcp_server_db("swarm", "events"))
             .to_string_lossy()
             .to_string();

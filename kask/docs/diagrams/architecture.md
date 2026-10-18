@@ -1,8 +1,8 @@
 ---
 title: "hKask Architecture Diagrams — Ontology Bridge, Skill/MCP/Lisp Seam, Credentials, Tool Port, Event Store, Viz-Core, Skill Learning Loop"
 audience: [architects, developers, agents]
-last_updated: 2026-10-17
-version: "1.2.0"
+last_updated: 2026-10-18
+version: "1.2.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -179,7 +179,7 @@ architecture-beta
     service tool_port(mcp)[ToolPort trait<br/>hkask-tool-port/src/tool_port.rs]
     service mcp_runtime(mcp)[McpRuntime<br/>hkask-mcp/src/runtime.rs]
     service call_cap(mcp)[CallCapManager<br/>hkask-regulation/src/energy.rs]
-    service servers(mcp)[13 MCP servers<br/>kask/mcp-servers/hkask-mcp-*]
+    service servers(mcp)[10 MCP servers<br/>kask/mcp-servers/hkask-mcp-*]
 
     service unwrap(agent)[unwrap_tool_envelope<br/>hkask-types/src/tool_response.rs]
 
@@ -414,7 +414,6 @@ classDiagram
         +append(rollout, kind, payload) Result~i64~
         +query(filter) Result~Vec~EventRecord~~
         +compact(cutoff_rfc3339) Result~usize~
-        +strip_bodies(cutoff_rfc3339) Result~usize~
         +cursor() Result~Option~i64~~
     }
     class EventRecord {
@@ -475,8 +474,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ES-001
-verified_date: 2026-09-28
-verified_against: kask/crates/hkask-event-store/src/hkask_event_store.rs (from_driver L62, from_driver_with_clock L71, driver L80, init_schema L86, append L93, query L134, compact L179, strip_bodies L200, cursor L212); kask/crates/hkask-event-store/src/types.rs (VerdictSource L43, RolloutKind L95, EventStoreError L168); kask/crates/kask_bridge/src/rollout_event_bridge.rs; kask/crates/hkask-regulation/src/cybernetics_loop.rs
+verified_date: 2026-10-18
+verified_against: kask/crates/hkask-event-store/src/hkask_event_store.rs (EventStore interface and retention); kask/crates/hkask-event-store/src/types.rs (VerdictSource, RolloutKind, EventStoreError); kask/crates/kask_bridge/src/rollout_event_bridge.rs; kask/crates/hkask-regulation/src/cybernetics_loop.rs
 status: VERIFIED
 -->
 

@@ -1,8 +1,8 @@
 ---
 title: "Standardized Artifact Storage"
 audience: [developers, architects, operators, agents]
-last_updated: 2026-09-28
-version: "2.4.0"
+last_updated: 2026-10-18
+version: "2.4.1"
 status: "Active"
 domain: "Lifecycle"
 mds_categories: [lifecycle, composition, trust]
@@ -266,9 +266,11 @@ under the visible artifacts dir at `{server}-mcp/{artifact-type}/`:
 | Corpus cache files | corpus server | `corpus-mcp/cache/` (artifacts dir) |
 | Generated media | media server | `media-mcp/generated/` (artifacts dir) |
 
-Adapter weights are not stored: model training is out of scope for the
-co-researcher mandate, and the training server's `mcp/training/` tree was
-removed with it (2026-10-17).
+No live code stores adapter weights: model training is out of scope for the
+co-researcher mandate, and the training server stopped owning or opening
+`mcp/training/` when it was removed (2026-10-17). Dormant files from a prior
+installation are preserved as operator-owned data; they expose no executable
+capability and are not deleted automatically.
 
 ### Agent DBs that MCP servers read
 

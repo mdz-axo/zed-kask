@@ -1,8 +1,8 @@
 ---
 title: "zed-kask — Minimal-Divergence Fork Architecture & Migration Plan"
 audience: [architects, integrators]
-last_updated: 2026-10-13
-version: "0.45.0"
+last_updated: 2026-10-18
+version: "0.45.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, trust, lifecycle]
@@ -10,7 +10,7 @@ mds_categories: [composition, trust, lifecycle]
 
 # zed-kask — Minimal-Divergence Fork Architecture & Migration Plan
 
-> **One-line frame:** `zed-kask` is a fork of Zed that tracks `upstream` and carries a named, test-pinned divergence surface. Zed-side files are not assumed byte-identical: `DIVERGENCE.md` records the current numbered seams and their retired gaps, while hKask libraries live under `kask/`, the editor owns the process-global Regulation/runtime graph, and 13 MCP servers run as governed child processes. The former Kask panel is deleted; the Agent panel, cross-domain Steer panels, and inline widgets are the live surfaces.
+> **One-line frame:** `zed-kask` is a fork of Zed that tracks `upstream` and carries a named, test-pinned divergence surface. Zed-side files are not assumed byte-identical: `DIVERGENCE.md` records the current numbered seams and their retired gaps, while hKask libraries live under `kask/`, the editor owns the process-global Regulation/runtime graph, and 10 MCP servers run as governed child processes. The former Kask panel is deleted; the Agent panel, cross-domain Steer panels, and inline widgets are the live surfaces.
 
 ## Table of contents
 
@@ -19,7 +19,7 @@ mds_categories: [composition, trust, lifecycle]
 - [§2 — The Essentialist Split](#2-the-essentialist-split-what-zed-kask-owns-vs-what-hkask-keeps)
   - [§2.1 — zed-kask owns (generic)](#21-zed-kask-owns-generic--inherited-from-upstream-not-modified-except-integration-seams)
   - [§2.2 — hKask keeps (unique: curator + sovereignty + tools)](#22-hkask-keeps-unique-curator--sovereignty--tools--compiled-into-zed-kask)
-  - [§2.3 — MCP load set (12 on disk)](#23-mcp-load-set-12-on-disk)
+  - [§2.3 — MCP load set (10 on disk)](#23-mcp-load-set-10-on-disk)
 - [§3 — The Minimal Divergence Map (current numbered D-seams)](#3-the-minimal-divergence-map-exact-zed-kask-touch-points)
 - [§4 — (removed)](#4-removed)
 - [§5 — (removed)](#5-removed)
@@ -40,7 +40,7 @@ mds_categories: [composition, trust, lifecycle]
 
 ---
 
-> **Current state (2026-09-23):** `kask/crates/` contains 19 libraries (18 `hkask-*` plus `kask_bridge`) and `kask/mcp-servers/` contains 13 server packages. The editor-side integration also includes Swarm, Kanban, Portfolio, and Media Steer panels plus inline viz widgets. [`DIVERGENCE.md`](../../../DIVERGENCE.md) is the authoritative Zed-side seam table; retired numbers are not active seams.
+> **Current state (2026-10-18):** `kask/crates/` contains 19 libraries (18 `hkask-*` plus `kask_bridge`) and `kask/mcp-servers/` contains 10 server packages. The editor-side integration also includes Swarm, Kanban, and Media Steer panels plus inline viz widgets. [`DIVERGENCE.md`](../../../DIVERGENCE.md) is the authoritative Zed-side seam table; retired numbers are not active seams.
 
 ---
 
@@ -60,7 +60,7 @@ mds_categories: [composition, trust, lifecycle]
 > 1. **zed-kask inherits the generic surface and infrastructure**: chat, editor UI, language-model routing, provider credentials, and thread storage. Some of those upstream files carry isolated D-seams; only files absent from `DIVERGENCE.md` are presumed unchanged.
 > 2. **Divergence #1 — skill execution:** `SkillTool::run` resolves the current project skill catalog, then reads the selected body through the injected project-aware resolver (`crates/agent/src/tools/skill_tool.rs:194-310`; implementation at `crates/agent/src/agent.rs:4641-4680`; registration at `:1029-1031`). Project-local skills resolve through project buffers, including remote workspaces and unsaved edits; global skills resolve through the filesystem. Slash activation uses the same resolver (`agent.rs:2320-2350`). The model reads the resulting `render_skill_envelope` and coordinates any PDCA loop, using `lisp_eval` for deterministic checks and `render_template` for `kask/registry/templates/` scaffolding. The template base path is wired at `crates/zed/src/main.rs:711-729`.
 > 3. **Divergence #2 — Curator agent:** the Curator (VSM S4) is a native in-process zed-kask agent (`Agent::Curator` variant, D2), selectable in the Agent Panel. Curation→Cybernetics directives flow through the `CuratorDirective` channel (`kask/crates/hkask-types/src/curator.rs:46`, wired in `crates/zed/src/main.rs:796-803`, sink at `:1155-1164`). ACP is optional (only for external-agent interop).
-> 4. **Divergence #3 — hKask tool processing:** compile hKask's keep-crates into zed-kask; host the 12 on-disk MCP servers (§2.3) as **child processes over stdio** (D3), governed by the in-process `McpRuntime`. Child tool wrappers emit tracing target `reg.tool`; governed completions persist `SpanKind::ToolCompleted`, with `reg.mcp` reserved for persistence diagnostics (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:108-134`; `kask/crates/hkask-mcp/src/runtime.rs:1598-1612`).
+> 4. **Divergence #3 — hKask tool processing:** compile hKask's keep-crates into zed-kask; host the 10 on-disk MCP servers (§2.3) as **child processes over stdio** (D3), governed by the in-process `McpRuntime`. Child tool wrappers emit tracing target `reg.tool`; governed completions persist `SpanKind::ToolCompleted`, with `reg.mcp` reserved for persistence diagnostics (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:108-134`; `kask/crates/hkask-mcp/src/runtime.rs:1598-1612`).
 > 5. **Thread → memory:** zed-kask threads parsed into per-user / Curator memory (D6).
 > 6. **Remove everything redundant from hKask:** the former inference router, daemon, ACP seam, standalone MCP launcher, REPL, chat service, Matrix transport, communication MCP, and backward-compatibility shims. **Nothing is removed from zed-kask** — it tracks upstream.
 > 7. **Magna Carta P1–P4, P12 non-negotiable.** Provider-side safety and refusal fallbacks are the active defense.
@@ -86,21 +86,21 @@ Inference routing (`crates/language_model`, `language_model_core`, `language_mod
 | `hkask-tool-port`                                                                        | **`ToolPort` dispatch seam** (`kask/crates/hkask-tool-port/src/tool_port.rs:89`). Not an enforcement point: it holds no tokens, no authorization check, and no taint labels (taint check removed: its inputs were constants).                                                                                                                                                                                                                                                                       |
 | `hkask-keystore`                                                                          | **Sovereignty crypto only:** DB passphrase, internal-secret derivation w/ versioning. Uses `oo7` (async Secret Service API) directly for all keychain access (no `SecretsPort` trait; `kask/crates/hkask-keystore/Cargo.toml:14`). `DEFAULT_PASSPHRASE` ("allostery") is the single source of truth for first-run provisioning.                                                        |
 | `hkask-steer-core`                                                                            | The zed-free half of the Steer prompt surface: rendering and verification of the tool-advertisement contract against the server's build.rs-generated `TOOL_NAMES`. Split from `crates/hkask-steer` (2026-09-07) so the prompt-truth logic builds without the zed closure. (Replaces `hkask-ledger`, deleted 2026-09-08 with the local budget system.)                                                                                                                                                           |
-| `hkask-event-store`                                                                       | Shared event store: harness-summary events feed the CyberneticsLoop's rollout-impact checks through `HarnessRegressionMonitor` (`kask_bridge/src/rollout_event_bridge.rs`). The monitor owns its scan cursor and advances only through summaries whose required checks were accepted; query failure or typed queue backpressure leaves the unaccepted suffix for retry. Assessment and verdict write-back remain later CyberneticsLoop phases. The training rollout bridge is a separate consumer of the same store. |
+| `hkask-event-store`                                                                       | Shared event store: harness-summary events feed the CyberneticsLoop's rollout-impact checks through `HarnessRegressionMonitor` (`kask_bridge/src/rollout_event_bridge.rs`). The monitor owns its scan cursor and advances only through summaries whose required checks were accepted; query failure or typed queue backpressure leaves the unaccepted suffix for retry. Assessment and verdict write-back remain later CyberneticsLoop phases. |
 | `hkask-inference`                                                                         | **Kept (revised):** MCP children use its process-local `MediaRouter` for media and its `InferenceIpcClient` for chat, vision, embedding, model-list, and rerank calls into the editor (`kask/crates/hkask-inference/src/hkask_inference.rs:190-390`). It reads provider configuration from the child environment (`config.rs:109-129,218-228`). The removed D34 `generate_batch` bridge is not part of this surface. |
 | `hkask-mcp-server` (framework)                                                            | MCP server framework with exact tracing target `reg.tool`; this child-stderr signal is observability, not a Regulation-ledger record (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:108-134`). Servers resolve `ServerContext.webid` from `HKASK_WEBID`, warning before anonymous fallback (`kask/crates/hkask-mcp-server/src/server/transport.rs:93-105`). |
 | `hkask-forecast`, `hkask-bridge-ontology`, `hkask-email`, `hkask-lisp` | Domain logic used by keep-crates/MCP servers.                                                                                                                                                                                                                                                                              |
 | `hkask-mcp`                                                                               | Child-process lifecycle, MCP dispatch, and metering. Per-agent `CallCap` is charged at `McpRuntime::invoke` as a runaway-loop breaker (fail-open on an unseeded agent ); governed completion persists `SpanKind::ToolCompleted`, and persistence failures warn at `reg.mcp` (`kask/crates/hkask-mcp/src/runtime.rs:1545-1612`).                                                                                                                                                                |
 | `hkask-condenser`                                                                         | In-process thread condensation via `kask_bridge::BridgeThreadCondenser`.                                                                                                                                                                                                                                                  |
-| 13 MCP servers (on-disk set)                                                              | **The tools** — child processes over stdio (D3), governed by the in-process `McpRuntime`.                                                                                                                                                                                                                                                                             |
+| 10 MCP servers (on-disk set)                                                              | **The tools** — child processes over stdio (D3), governed by the in-process `McpRuntime`. |
 
-### 2.3 MCP load set (11 on disk)
+### 2.3 MCP load set (10 on disk)
 
-The original 16 MCP servers were pruned to 10, then the **media** server was recovered (D35, 2026-08-28), the **experimentation** server was added (2026-10-05), the **portfolio** server was removed (2026-10-15), and the **spreadsheet** server (added 2026-09-18) was removed with its capability (2026-10-15) — **11 on disk**: `companies`, `corpus`, `curator`, `experimentation`, `kata-kanban`, `media`, `prediction-markets`, `research`, `scenarios`, `swarm`, `training`. The `BUILT_IN_MCP_SERVERS` constant in `kask/crates/kask_bridge/src/mcp_servers.rs:49-513` enumerates them (media entry at `mcp_servers.rs:446-488`, experimentation entry at `:490-513`); `builtin_mcp_server_ids()` (`mcp_servers.rs:516-518`) derives the ID list.[^anthropic-mcp]
+The original 16 MCP servers were pruned, the **media** server was recovered (D35, 2026-08-28), the **experimentation** server was added (2026-10-05), the **portfolio** and **spreadsheet** servers were removed with their capabilities (2026-10-15), and the **training** server was removed as outside the co-researcher mandate (2026-10-17). **10 remain on disk**: `companies`, `corpus`, `curator`, `experimentation`, `kata-kanban`, `media`, `prediction-markets`, `research`, `scenarios`, `swarm`. The `BUILT_IN_MCP_SERVERS` constant in `kask/crates/kask_bridge/src/mcp_servers.rs` is authoritative; `builtin_mcp_server_ids()` derives the ID list.[^anthropic-mcp]
 
-| On disk (11)                                                                                                          |
-| --------------------------------------------------------------------------------------------------------------------- |
-| `companies`, `corpus`, `curator`, `experimentation`, `kata-kanban`, `media`, `prediction-markets`, `research`, `scenarios`, `swarm`, `training` |
+| On disk (10) |
+| --- |
+| `companies`, `corpus`, `curator`, `experimentation`, `kata-kanban`, `media`, `prediction-markets`, `research`, `scenarios`, `swarm` |
 
 > The Curator MCP server is distinct from the native Curator agent and may be disabled by settings. The media server is pinned at exactly 102 registered tools by `tool_surface_is_exactly_102_registered_tools` (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:485`); its OMC mapping is checked across the same registered set at `:492`.
 

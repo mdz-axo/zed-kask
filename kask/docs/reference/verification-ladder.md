@@ -1,8 +1,8 @@
 ---
 title: "The Verification Ladder: Five Rungs and Their zed-kask Homes"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-10-10
-version: "1.0.0"
+last_updated: 2026-10-18
+version: "1.0.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [trust, composition, domain]
@@ -118,7 +118,7 @@ ported:
   write-path contradiction check (`memory_insert` refuses a differing value
   for an existing key, surfaced by id and routed to
   `memory_resolve_contradiction` / `memory_update`). Residual, disclosed:
-  the other servers' stores (kata-kanban, corpus, training) share the
+  the other active servers' stores (kata-kanban, corpus) share the
   schema and default to `model_inference` — fail-safe (never overstates),
   to be stamped in their own changes if their recall surfaces ever
   surface provenance.

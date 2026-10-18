@@ -131,9 +131,9 @@ pub fn map_infra_error(error: &hkask_types::InfrastructureError, context: &str) 
 /// appropriate `McpToolError` kind. Infrastructure variants (HMem/Embedding
 /// wrapping an `InfrastructureError`) route through [`map_infra_error`];
 /// missing entities and centroid embeddings are `not_found`; remaining
-/// embedding failures are `internal`. Canonical mapper shared by the corpus
-/// and training servers — reuse it instead of re-implementing per-crate
-/// copies.
+/// embedding failures are `internal`. Canonical mapper shared by the
+/// memory-backed corpus and curator servers — reuse it instead of
+/// re-implementing per-crate copies.
 #[must_use = "result must be used"]
 pub fn map_memory_store_error(
     error: hkask_memory::MemoryStoreError,

@@ -259,9 +259,9 @@ impl RolloutEventSource for BridgeRolloutEventSource {
     ) -> Result<(), RolloutEventError> {
         // Write the regulation loop's impact verdict back to the store as
         // a verdict event with source = regulation_impact. This closes the
-        // feedback loop: downstream consumers (training bridge, regression
-        // monitor, ORIENT) can see the regulation system's judgment
-        // alongside the harness's deterministic-evaluator verdicts.
+        // feedback loop: downstream event-store readers can see the
+        // regulation system's judgment alongside the harness's
+        // deterministic-evaluator verdicts.
         //
         // The payload carries typed wire strings (VerdictSource::RegulationImpact,
         // RolloutKind::Delegation) so consumers can parse them back without
