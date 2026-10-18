@@ -211,3 +211,63 @@ Concerns requiring further evidence (not defects):
 - `falstaffian-rotation.j2` is referenced extensionlessly (`metacognition/
   falstaffian-rotation`) rather than with the `.j2` suffix; it resolves, but a
   suffix-matching instrument would miss it.
+
+## Follow-on pass: anachronistic pins and citations (2026-10-18, later session)
+
+Four capability removals (companies/FIBO, training, portfolio, constant-maturity)
+landed after the review's ledger was composed. Each left a pin or citation naming
+surface that no longer exists — the operator's named defect class. The HEAD at this
+pass was `3adc75c9e1` (Remove the FIBO ontology rung).
+
+**Verified defects, all repaired:**
+
+1. **The PS-1 modifier pin was RED at HEAD.** The FIBO-rung removal renamed the
+   PS-1 env flag `fibo_anchored` → `domain_anchored` in the skill body, three
+   templates, and the pin — but wrote the pin's expected literals inconsistently
+   (bare `domain` where the prose reads `domain_anchored`) and deleted the
+   classify template's per-namespace `+0.05` row the pin still asserted. The
+   CI-wired gate (`check-skill-lisp-forms.sh`) failed three assertions. Repaired
+   by binding each carrier to the live prose; four prose-drift controls and the
+   gate-mutation control all discriminate. Commit `97f027ef37`.
+2. **`onto_anchor_tool`'s rung-1 pin asserted a non-existent concept.** The FIBO
+   removal rewrote the test to expect `sepio:0000030`, a lowercase URI the
+   resolver never produces — `assertion` maps to `sepio::ASSERTION` =
+   `SEPIO:0000001`. Rebound to the constant so a constant edit fails the pin
+   (control: a mutated constant fails). Commit `64d5d4c1d9`.
+3. **The retirement record was missing five shipped names.**
+   `RETIRED_SKILL_NAMES` (`crates/agent_skills/agent_skills.rs`) is the single
+   source of truth for both the installed-copy sweep and the crossrefs gate, and
+   its own contract says each retirement appends its name in the same commit.
+   `company-research-deep`, `company-research-flash`, `listening`,
+   `portfolio-review`, and `cmp-term-structure` were absent. A derived
+   reconciliation by that contract now reads **56/56, no gap either direction**.
+   Commit `64d5d4c1d9`.
+4. **Six derived-ontology citations named deleted template paths.**
+   `derived.rs` entries for `maia_listening`, `adjacent_possible`,
+   `earnings_quality`, `value_chain`, `cash_conversion_cycle`, `audit_evidence`,
+   and `materiality` cited `listening/apply-template.j2` and four
+   `company-research/*.j2` templates that no longer exist. Each re-anchored to
+   its surviving consumer or marked a research-content concept, following the
+   file's own precedent (the `lora-training` note). These edits rode a concurrent
+   stream's commit `f978c08ead` (shared tree); their content is verified present
+   in HEAD.
+5. **Test fixtures named deleted skills as opaque strings** in
+   `tool_retry_tracker`, `curator_stores` (two tests), `memory_store`, and
+   `hkask_lisp`; repointed to live names. Commit `64d5d4c1d9`.
+
+**New read-only instruments** (self-tested, commit `a0e77870ad`):
+
+- `kask/scripts/audit/derive-retired-skill-gap.sh` — re-derives the retirement
+  set by the record's own stated method and diffs it against the curated array.
+- `kask/scripts/audit/check-retired-shipped-status.sh` — reports whether a named
+  retired skill ever shipped (and so needs a sweep entry).
+
+**Gates at this pass's end:** prescreen 58/58 D/P + 58/58 conditions + 216
+contracts; crossrefs, crate-refs, lisp-forms (276 files / 301 candidates / 0
+defects), template-contracts, s9-s10, callsite, forecast-conformance all OK;
+retirement instruments reconcile. Suites: agent --lib 1076/0, agent_skills 100/0,
+hkask-lisp 41+7/0, hkask-memory 82+16/0, kask_bridge 274/0,
+hkask-bridge-ontology 75+4/0; clippy `-D warnings` clean over the touched scope.
+
+**Remainder at this pass:** unchanged at **zero** — the census still reads 58
+skills / 216 templates, set-equal to `/tmp/live-skills.txt`.
