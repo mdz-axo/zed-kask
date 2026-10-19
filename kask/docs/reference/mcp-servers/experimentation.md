@@ -1,8 +1,8 @@
 ---
 title: "Experimentation MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-10-15
-version: "0.42.0"
+last_updated: 2026-10-19
+version: "0.44.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [domain, composition, lifecycle, trust]
@@ -33,19 +33,33 @@ runs, never simulated.
    snake_case ids; verification in the swarm evaluator vocabulary —
    contains / not_contains / regex / report_ref), a pre-registered
    prediction with confidence in [0,1], and an energy budget carrying
-   `max_runs`. Optional `experiment_key` converges retried calls.
+   `max_runs`. Optional `design_spec` carries a typed, versioned scientific
+   DesignSpec — a JSON object with a non-empty `spec_version` string
+   (`types.rs` `validate_design_spec`) — for a `scientific_hypothesis`
+   declaration: it is stored, exposed through lineage/population reads, and
+   joins the seal fingerprint (a post-seal design edit yields a different
+   fingerprint rather than silently reusing a stale design); omit it for a
+   legacy artifact experiment. Optional `linked_goal_id` joins the
+   experiment to the kanban goal that Brier-scores its claim. Optional
+   `experiment_key` converges retried calls.
 2. **Vary** — `variant_register`: genotype configurations with an optional
    **role** (P4: baseline | challenger | ablation — exactly one baseline per
    experiment; an ablation names its parent variant) and optional parent
    lineage. The first variant moves the experiment to running.
 3. **Seal** — `experiment_seal` (P2): freezes the declaration's (eval_set,
-   rubrics, fitness_fn, noise_band) under a SHA-256 fingerprint and records
-   the headroom attestation — the baseline variant, its recorded fitness
-   evidence, and its measured pass rate (must be < 1.0; saturation is the
-   typed no-headroom void condition, §5 Q6). Pre-seal, only the baseline
-   records fitness; post-seal, every fitness record cites the seal.
-   An identical retried seal converges; a different attempt is a typed
-   refusal.
+   rubrics, fitness_fn, noise_band, design_spec) under a SHA-256 fingerprint
+   and records the headroom attestation — the baseline variant, its recorded
+   fitness evidence, and **exactly one of** a measured pass rate
+   (`baseline_pass_rate`, must be < 1.0; saturation is a typed no-headroom
+   refusal that voids via `selection_record`, §5 Q6) **or** a tagged
+   `scientific_headroom` criterion `{design_family, criterion, evidence}`
+   for a design family with no meaningful binary baseline pass rate
+   (single-arm calibration, observational estimation, equivalence; non-empty
+   `design_family`/`criterion`, `types.rs`
+   `validate_scientific_headroom`). Supplying both or neither is a typed
+   refusal. Pre-seal, only the baseline records fitness; post-seal, every
+   fitness record cites the seal. An identical retried seal converges; a
+   different attempt is a typed refusal.
 4. **Test** — `fitness_record`: grounded fitness — report references plus
    run_count (summed against `budget.max_runs`, typed `budget_exhausted`
    refusal past the ceiling) and per-objective scores. Immutable once
@@ -55,10 +69,17 @@ runs, never simulated.
    every prior fitness record and final evaluation for the experiment (the
    GEPA feedback/selection split made mechanical); run_count joins the
    budget ceiling atomically.
-6. **Select** — `selection_record`: the verdict — selected (naming the
-   winning variant) or rejected (with at least one reason). Both outcomes
-   persist as fossils; the first selection resolves the experiment.
-   `algedonic_reference` names the review record that chaired the selection.
+6. **Select** — `selection_record`: **exactly one of** a legacy `verdict` —
+   selected (naming the winning variant) or rejected (with at least one
+   reason) — **or** a typed `scientific_outcome` for a scientific design:
+   `rejected | corroborated | evidence_of_practical_equivalence |
+   inconclusive | measurement_void | design_void`. A scientific outcome is
+   stored as itself, never renamed selected/rejected. Only the two genuinely
+   binary outcomes (`rejected`, `corroborated`) enter Brier calibration; the
+   bounded and void outcomes are excluded on the typed field. Supplying both
+   or neither is a typed refusal. Both outcome classes persist as fossils;
+   the first selection resolves the experiment. `algedonic_reference` names
+   the review record that chaired the selection.
 
 Readback: `lineage_read` returns the ancestry chain (variant kind) or the
 full experiment record (experiment kind — variants, fitness, selections, the
@@ -90,8 +111,9 @@ measurement that was declared.
   under the same ruling, and a fresh full-schema registry is created on the next
   server open).
 - **Seal fingerprint**: SHA-256 (workspace `sha2`) over the canonical JSON of
-  (eval_set, fitness_fn, noise_band, rubrics) — identical declarations seal
-  to identical fingerprints; the pass rate round-trips through TEXT
+  (eval_set, fitness_fn, noise_band, rubrics, design_spec) — identical
+  declarations seal to identical fingerprints; the headroom arm
+  (`baseline_pass_rate` / `scientific_headroom`) round-trips through TEXT
   (Rust's shortest-round-trip f64 Display).
 - **Replay convergence**: `experiment_propose` and `variant_register` take
   optional caller keys (UNIQUE + INSERT OR IGNORE); `experiment_seal`
