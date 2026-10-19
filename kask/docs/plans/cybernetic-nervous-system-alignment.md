@@ -338,7 +338,7 @@ an actual displacement; CU-7 independent, smallest first.
   (`standalone_settings.rs:391`) — REJECTED: a test fixture inside
   `malformed_settings_surface_fallback`, in a live module with cited
   consumers (the corpus server's settings load,
-  `compose_tools.rs:23`, `hkask_mcp_corpus.rs:66`); (b)
+  `compose_tools.rs:23`, `hkask_mcp_corpus.rs:67`); (b)
   `HKASK_USE_*` opt-ins — one in the tree, `HKASK_USE_FAL_DOCRES`, and
   it is a removal guard pin (`mcp_servers.rs:1464-1471@training_server_is_not_registered`), not an
   opt-in — REJECTED; (c) settings knobs — the pub settings fields

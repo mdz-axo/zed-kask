@@ -154,7 +154,7 @@ Must pass before Phase E. Live-verified substitution for corpus:
 `onto_anchor("corporation")` currently returns `fibo-be-le-cb:Corporation`
 with `sumo:Corporation` and `schema:Corporation` as alternatives — removing
 FIBO resolves it to `sumo:Corporation` with a published definition. Apply
-to `hkask_mcp_corpus.rs:1040,1253,1263` and `ontology_io.rs:78`.
+to `hkask_mcp_corpus.rs:1041,1254,1264` and `ontology_io.rs:78`.
 Prediction-markets needs six anchors re-homed
 (`REFERENCE_INTEREST_RATE`, `INTEREST_RATE_BENCHMARK`,
 `CONSUMER_PRICE_INDEX`, `ECONOMIC_INDICATOR`, `REFERENCE_INDEX`,
