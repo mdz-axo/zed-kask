@@ -21,6 +21,7 @@ mod images;
 pub mod jobs;
 pub mod media_block;
 pub mod omc;
+pub(crate) mod ontology;
 mod templates;
 #[cfg(test)]
 mod test_support;
@@ -193,7 +194,7 @@ hkask_mcp_server::mcp_server!(
         /// Reduct key from this child process's credential allowlist. Never
         /// echoed in tools, logs, or error messages.
         pub reduct_api_key: Option<String>,
-    }
+    } = crate::ontology::annotate;
 );
 
 mod style;

@@ -26,7 +26,7 @@ This document assumes:
 
 ## 1. What has been built
 
-The media MCP server is the project's largest MCP server: **98 registered tools** out of 408 fleet-wide across 13 built-in servers (`kask/docs/reference/mcp-servers/README.md`). The count is not documentation — it is pinned end-to-end by the test `tool_surface_is_exactly_98_registered_tools`, which asserts `MediaServer::combined_router().list_all().len() == 98` (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:457-460`). The tool surface, grouped by the module that registers each tool (`kask/mcp-servers/hkask-mcp-media/src/tools.rs`):
+The media MCP server is the project's largest MCP server: **102 registered tools** out of 360 fleet-wide across 9 built-in servers (`kask/docs/reference/mcp-servers/README.md`). The count is not documentation — it is pinned end-to-end by the test `tool_surface_is_exactly_102_registered_tools`, which asserts `MediaServer::combined_router().list_all().len() == 102` (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:477-482`). The tool surface, grouped by the module that registers each tool (`kask/mcp-servers/hkask-mcp-media/src/tools.rs`):
 
 ### Gallery management — 26 tools (`src/tools/gallery.rs`)
 `gallery_organize`, `gallery_status`, `gallery_search`, `gallery_refresh`, `describe_image`, `gallery_analyze`, `gallery_name_face`, `face_validate`, `face_register`, `face_scan_folder`, `face_list`, `face_remove`, `gallery_timeline`, `gallery_record_generation`, `gallery_lineage`, `gallery_list_assets`, `gallery_asset_detail`, `gallery_reproduce`, `gallery_delete_image`, `gallery_add_media`, `gallery_create_album`, `gallery_list_albums`, `gallery_move_to_album`, `gallery_remove_from_album`, `gallery_delete_album`, `gallery_list_album_members`
@@ -90,7 +90,7 @@ Three pieces must stay in sync, and tests pin every seam:
 
 1. A tool is a `#[tool(description = ...)]`-annotated `pub async fn` inside a `#[tool(router(...))]` impl block in one of the ten `src/tools/*.rs` modules.
 2. `build.rs` scans `src/**/*.rs` for `#[tool`-annotated functions and generates the `TOOL_NAMES` const into `tool_names.gen.rs` (`kask/mcp-servers/hkask-mcp-media/build.rs:1-13`) — annotation-based, because the modules also contain non-tool `pub async fn` helpers.
-3. `combined_router()` sums the ten sub-routers and the `#[tool_handler(router = Self::combined_router())]` attribute wires it as the runtime surface (`src/hkask_mcp_media.rs:431-446`).
+3. `combined_router()` sums the ten sub-routers and the `#[tool_handler(router = Self::combined_router())]` attribute wires it as the runtime surface (`src/hkask_mcp_media.rs:446-461`).
 
 The pins: `tool_surface_is_exactly_98_registered_tools` (catches a sub-router silently missing from the sum — an unwired `#[tool]` block registers nothing while `cargo check` passes), `tool_names_match_live_router` (the generated const equals the live router), and `omc_mapping_covers_all_registered_tools` (every tool has an ontology arm) (`src/hkask_mcp_media.rs:449-545`). **Practical consequence: adding a tool means touching the count pin (98 → 99), the OMC mapping, and the docs reference in the same change.**
 
@@ -109,7 +109,7 @@ The gallery store itself is a durable SQLite DB at `{kask_data_dir}/mcp/media/ga
 
 ### Admission control and limits
 
-Direct heavy operations (provider calls, FFmpeg/ffprobe, yt-dlp, analysis, capture/transcription, transcript passes) share one **four-slot fail-fast semaphore** with background jobs (`MAX_CONCURRENT_HEAVY_OPERATIONS = 4`, `src/jobs.rs:15`; `admit_heavy_operation` at `src/hkask_mcp_media.rs:288-302`). The fifth operation fails before external work — never queued, clamped, or silently truncated. Cardinality limits live in `hkask_types::media_limits` and are shared with the panel rather than copied: concat ≤ 64 inputs, image sequences ≤ 256, keyframes ≤ 256, image generation ≤ 10 variants, workflow graphs ≤ 1 MiB (`README.md:100-112`).
+Direct heavy operations (provider calls, FFmpeg/ffprobe, yt-dlp, analysis, capture/transcription, transcript passes) share one **four-slot fail-fast semaphore** with background jobs (`MAX_CONCURRENT_HEAVY_OPERATIONS = 4`, `src/jobs.rs:15`; `admit_heavy_operation` at `src/hkask_mcp_media.rs:306-320`). The fifth operation fails before external work — never queued, clamped, or silently truncated. Cardinality limits live in `hkask_types::media_limits` and are shared with the panel rather than copied: concat ≤ 64 inputs, image sequences ≤ 256, keyframes ≤ 256, image generation ≤ 10 variants, workflow graphs ≤ 1 MiB (`README.md:100-112`).
 
 ### Error classification, OMC anchoring, display hints
 

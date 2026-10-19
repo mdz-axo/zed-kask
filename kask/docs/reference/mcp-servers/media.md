@@ -18,12 +18,12 @@ Tool count is pinned against the live router; the generated tool-name set is che
 
 ## Architecture
 
-The server is a thin binary over a library: `kask/mcp-servers/hkask-mcp-media/src/main.rs:6-9` calls `hkask_mcp_media::run()`, which resolves the inference port, opens the gallery DB, and hands a `MediaServer` constructor closure to `hkask_mcp_server::run_server` (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:544-686`). The single `InferencePort` separates two routes (D35): vision/chat/embed use the IPC bridge to zed's `LanguageModelRegistry`; `media_generate` dispatches child-locally through `LazyInferencePort` to the media process's `MediaRouter` using env-injected provider keys. Media generation never makes the IPC round-trip.
+The server is a thin binary over a library: `kask/mcp-servers/hkask-mcp-media/src/main.rs:6-9` calls `hkask_mcp_media::run()`, which resolves the inference port, opens the gallery DB, and hands a `MediaServer` constructor closure to `hkask_mcp_server::run_server` (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:547-689`). The single `InferencePort` separates two routes (D35): vision/chat/embed use the IPC bridge to zed's `LanguageModelRegistry`; `media_generate` dispatches child-locally through `LazyInferencePort` to the media process's `MediaRouter` using env-injected provider keys. Media generation never makes the IPC round-trip.
 
 ```mermaid
 flowchart TD
     binary["main.rs binary<br/>#[tokio::main] → run()"]
-    run["run()<br/>hkask_mcp_media.rs:544"]
+    run["run()<br/>hkask_mcp_media.rs:547"]
     port["InferencePort: vision/chat/embed via IPC; media generation child-local"]
     db["GalleryStore<br/>SQLite file DB, no in-memory fallback"]
     ffmpeg["FfmpegRunner::detect<br/>+ YtDlpRunner::detect"]
@@ -71,7 +71,7 @@ status: VERIFIED
 
 ## Bootstrap and configuration
 
-**Bootstrap pattern:** `kask/mcp-servers/hkask-mcp-media/src/main.rs:6-9` (`#[tokio::main] async fn main` → `hkask_mcp_media::run()`) → `run()` at `kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:544` → `hkask_mcp_server::run_server("hkask-mcp-media", env!("CARGO_PKG_VERSION"), ...)` at `kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:622`.
+**Bootstrap pattern:** `kask/mcp-servers/hkask-mcp-media/src/main.rs:6-9` (`#[tokio::main] async fn main` → `hkask_mcp_media::run()`) → `run()` at `kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:547` → `hkask_mcp_server::run_server("hkask-mcp-media", env!("CARGO_PKG_VERSION"), ...)` at `kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:625`.
 
 **Gallery DB:** durable file-backed SQLite at `{kask_data_dir}/mcp/media/gallery.db` (D28 — Standardized Artifact Storage), overridable via `HKASK_MEDIA_DB`. There is **no in-memory fallback**: a DB open failure aborts startup, because the fallback would make an outage look like an empty gallery. The file DB is unencrypted and therefore does **not** use `HKASK_DB_PASSPHRASE` (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:559-590`).
 
@@ -657,7 +657,7 @@ The Reduct group implements the cloud transcript/reel surface described in the T
 
 ### Support modules (no registered tools)
 
-Non-tool modules hold shared implementation, re-exported for the `tools/` group files (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:44-48`): `assets.rs` (`persist_slim_and_enrich` over the rollback-armed Asset/lineage/OMC publication aggregate), `faces.rs` (`default_face_folder`), `text.rs` (`draw_text_mut`, `load_meme_font`, `measure_text`), `style.rs`, `templates.rs` (minijinja environment), `transcript.rs` (`TranscriptBundle`, `TranscriptSegment`, `TimedWord`), `types.rs`, `gallery/state.rs` + `gallery/vision.rs`, `video/ffmpeg.rs` + `video/ytdlp.rs`, `media_block.rs` (display-hint blocks), `jobs.rs` (`JobStore` plus shared heavy-operation admission), `omc.rs` (OMC mapping).
+Non-tool modules hold shared implementation, re-exported for the `tools/` group files (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:45-49`): `assets.rs` (`persist_slim_and_enrich` over the rollback-armed Asset/lineage/OMC publication aggregate), `faces.rs` (`default_face_folder`), `text.rs` (`draw_text_mut`, `load_meme_font`, `measure_text`), `style.rs`, `templates.rs` (minijinja environment), `transcript.rs` (`TranscriptBundle`, `TranscriptSegment`, `TimedWord`), `types.rs`, `gallery/state.rs` + `gallery/vision.rs`, `video/ffmpeg.rs` + `video/ytdlp.rs`, `media_block.rs` (display-hint blocks), `jobs.rs` (`JobStore` plus shared heavy-operation admission), `omc.rs` (OMC mapping).
 
 ## Error classification
 
