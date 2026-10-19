@@ -1,8 +1,8 @@
 ---
 title: "Swarm Systems — Explanation: Why the Loops Are Shaped This Way"
 audience: [architects, developers]
-last_updated: 2026-09-28
-version: "2.2.0"
+last_updated: 2026-10-19
+version: "2.2.1"
 status: "Active"
 domain: "Swarm"
 mds_categories: [trust, curation]
@@ -12,7 +12,8 @@ mds_categories: [trust, curation]
 
 The swarm system separates cloud authority, local execution, type admission,
 and result evaluation so each decision has one enforcement point. Its live MCP
-surface is 91 tools: 48 cloud tools and 43 non-cloud tools (36 local, 4
+surface is 91 tools: 48 cloud tools and 43 non-cloud tools (33 local,
+3 swarm-scoped thread, 4
 knowledge, 3 A2A — count by pinning test for the total and per-file grep for
 the partition; `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:981-1011`).
 The Zed-side Steer surface renders its ABW/local tool split from the same
@@ -74,8 +75,9 @@ separately derives the cloud subset from `cloud_swarm_router`
 compare both the total name set and cloud partition against the registered
 routers (`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:981-1011`).
 
-The 43-tool non-cloud complement is 36 local tools, four knowledge tools, and
-three A2A tools (per-file grep over the same signature pattern). `swarm_get_local_agent`
+The 43-tool non-cloud complement is 33 local tools, three swarm-scoped thread
+tools, four knowledge tools, and three A2A tools (per-file grep over the same
+signature pattern). `swarm_get_local_agent`
 supplies one-card detail and execution statistics; `swarm_workflow_check_local`
 validates a card's declared workflow before execution
 (`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:963,1009-1057`).

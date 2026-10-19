@@ -1012,6 +1012,68 @@ mod tests {
         assert!(hkask_types::find_boolean_schema_positions(&schema).is_empty());
     }
 
+    // Wire-path pin (2026-10-19): `render_template.context` and `lisp_eval.env`
+    // are declared with the SAME `permissive_json_map_schema` helper and must
+    // advertise the identical permissive shape on the wire — through the full
+    // `normalize_tool_schema` pipeline, not only at raw `schema_for!` time. A
+    // live session observed the two advertised differently (`context` arrived
+    // at the model closed: `properties:{}, additionalProperties:false`, while
+    // `env` arrived permissive), with no in-tree transform producing that
+    // split (binary was current; `normalize_tool_schema` only injects
+    // `properties` at the root). The raw-schema pins above cannot catch a
+    // transform that acts between generation and the wire, so this pin asserts
+    // the normalized wire form of BOTH params and their equality: if any layer
+    // tightens `context` (or `env`) into a closed object, this fails.
+    #[test]
+    fn context_and_env_advertise_the_same_permissive_wire_schema() {
+        fn normalized_tool_schema<T: crate::AgentTool>() -> serde_json::Value {
+            let mut schema = T::input_schema().to_value();
+            language_model::tool_schema::normalize_tool_schema(&mut schema);
+            schema
+        }
+        let render = normalized_tool_schema::<super::super::RenderTemplateTool>();
+        let lisp = normalized_tool_schema::<super::super::LispEvalTool>();
+        for (tool_name, schema, field) in [
+            ("render_template", &render, "context"),
+            ("lisp_eval", &lisp, "env"),
+        ] {
+            let field_schema = schema
+                .get("properties")
+                .and_then(|p| p.get(field))
+                .unwrap_or_else(|| panic!("{tool_name}.{field} missing from wire schema"));
+            assert_eq!(
+                field_schema.get("type"),
+                Some(&serde_json::json!("object")),
+                "{tool_name}.{field} must stay object-typed on the wire"
+            );
+            assert_eq!(
+                field_schema.get("additionalProperties"),
+                Some(&serde_json::json!({})),
+                "{tool_name}.{field} must stay permissive on the wire"
+            );
+            assert!(
+                field_schema.get("properties").is_none(),
+                "{tool_name}.{field} must not gain a closed `properties` map on the wire"
+            );
+        }
+        // The two fields share one declaration helper; their wire schemas must
+        // be structurally identical (modulo each field's own doc-comment
+        // `description`), not merely individually well-formed.
+        let structural = |schema: Option<&serde_json::Value>| {
+            let mut s = schema
+                .expect("field schema")
+                .as_object()
+                .expect("object schema")
+                .clone();
+            s.remove("description");
+            serde_json::Value::Object(s)
+        };
+        assert_eq!(
+            structural(render.get("properties").and_then(|p| p.get("context"))),
+            structural(lisp.get("properties").and_then(|p| p.get("env")))
+        );
+    }
+
     #[test]
     fn header_with_trailing_whitespace_or_crlf_does_not_bypass_contract_validation() {
         for header_line in ["[inference]   \n", "[inference]\r\n"] {

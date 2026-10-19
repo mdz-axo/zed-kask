@@ -12,7 +12,7 @@ mds_categories: [domain, composition, trust, lifecycle]
 
 **Crate:** `kask/mcp-servers/hkask-mcp-curator`
 **Tools:** 15 — `curator_ping`, `curator_semantic_search`, `curator_federated_search`, `curator_memory_recall`, `curator_consult`, `curator_algedonic_log`, `reg_query`, `curator_report_skill_use_issue`, `memory_insert`, `memory_update`, `memory_resolve_contradiction`, `curator_memory_prune`, `curator_memory_dedup`, `curator_memory_backfill_embeddings`, `curator_memory_extract`
-**Auto-start:** Yes by default with the full built-in set; `kask.mcp.load_default=false` disables the fleet and `kask.mcp.overrides.curator=false` disables this server (server id `curator`, `kask/crates/kask_bridge/src/mcp_servers.rs:164`).
+**Auto-start:** Yes by default with the full built-in set; `kask.mcp.load_default=false` disables the fleet and `kask.mcp.overrides.curator=false` disables this server (server id `curator`, `kask/crates/kask_bridge/src/mcp_servers.rs:105`).
 
 The curator server is the **Curator's sovereign memory and regulation-readback
 surface**: the durable h_mem store the whole platform learns through, the
@@ -25,10 +25,10 @@ ORIENT surface) classify its loops.
 
 The server reads from the same `agents/curator/curator.db` the agent writes
 curator copies to — one store, two processes, no sync
-(`mcp_servers.rs:186-188`). `HKASK_WEBID` is mapped to this server only, so
+(`mcp_servers.rs:131-135`). `HKASK_WEBID` is mapped to this server only, so
 its writes carry the curator's identity (`mcp_servers.rs:189-197`), and the
 path resolution finds the same root the agent uses
-(`open_curator_stores`, `hkask_mcp_curator.rs:2467`).
+(`open_curator_stores`, `kask/mcp-servers/hkask-mcp-curator/src/db.rs:322`).
 
 ## Tool groups
 
@@ -72,7 +72,7 @@ path resolution finds the same root the agent uses
   (`hkask_mcp_curator.rs:297`; the canonical 2-tier chain at
   `kask/crates/hkask-mcp-server/src/server/credentials.rs:76`).
   No email-transport vars are injected here — the curator server has no
-  email role (`mcp_servers.rs:184`).
+  email role (`mcp_servers.rs:119-124`).
 - **Distillation**: `DistillationConfig::from_env()` — the consolidation
   pass's configuration surface.
 

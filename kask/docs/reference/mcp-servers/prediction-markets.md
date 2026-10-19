@@ -12,7 +12,7 @@ mds_categories: [domain, composition, lifecycle]
 
 **Crate:** `kask/mcp-servers/hkask-mcp-prediction-markets`
 **Tools:** 27 — 12 market tools (`market_lookup`, `market_match`, `market_ontology_map`, `market_calibration`, `market_record_resolution`, `market_subscribe_resolutions`, `market_ladder`, `market_volatility`, `market_residual`, `market_check_resolutions`, `market_history`, `prediction_markets_status`) plus 15 economic-data tools in `kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs` (`fred_search_series`, `fred_get_observations`, `fred_get_series_info`, `fred_list_categories`, `fred_get_release`, `wb_search_indicators`, `wb_get_observations`, `wb_list_countries`, `wb_list_topics`, `wb_get_indicator_info`, `dbnomics_search`, `dbnomics_list_providers`, `dbnomics_get_dataset`, `dbnomics_get_series`, `market_score_rationale`)
-**Auto-start:** Yes by default with the full built-in set; operators can disable the fleet or this server through `kask.mcp` (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:341-356,704`).
+**Auto-start:** Yes by default with the full built-in set; operators can disable the fleet or this server through `kask.mcp` (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:269-283,700-710`).
 
 > **Tool count note:** the server registers **27 `#[tool]` methods** — 12 in
 > `kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs` + 15 in `kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs`, both
@@ -226,7 +226,7 @@ The FRED missing-credential path is pinned at the tool seam
 ## Cross-links
 
 - [Scenarios MCP Server Reference](scenarios.md) — event-tree forecasting that consumes market base rates
-- [The Forecasting Stack: Three-Layer Architecture](README.md#the-forecasting-stack-three-layer-architecture) — how this server feeds the scenarios/companies forecasting layers
+- [The Forecasting Stack: Three-Layer Architecture](README.md#the-forecasting-stack-three-layer-architecture) — how this server feeds the scenarios forecasting layers (the companies layer was removed 2026-10-18)
 - [MCP Server Registry](README.md) — built-in server index
 
 ## Footnotes

@@ -1,8 +1,8 @@
 ---
 title: "hKask Diagram Index — Mermaid Verification Registry"
 audience: [architects, developers, agents]
-last_updated: 2026-10-18
-version: "2.8.0"
+last_updated: 2026-10-19
+version: "2.9.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [curation, composition]
@@ -32,12 +32,12 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | DIAGRAM_ID | Location | Verified date | Status |
 | --- | --- | --- | --- |
 | `DIAG-ARCH-LEARNING-LOOP-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-28 | VERIFIED |
-| `DIAG-ARCH-SKILL-MCP-LISP-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-28 | VERIFIED |
+| `DIAG-ARCH-SKILL-MCP-LISP-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-10-19 | VERIFIED |
 | `DIAG-ARCH-COMPACTION-001` | [`architecture/compaction-pipeline-spec.md`](./architecture/compaction-pipeline-spec.md) | 2026-10-05 | VERIFIED |
 | `DIAG-ARTIFACT-001` | [`architecture/standardized-artifact-storage.md`](./architecture/standardized-artifact-storage.md) | 2026-09-28 | VERIFIED |
-| `DIAG-BRIDGE-002` | [`diataxis/kask_bridge/reference.md`](./diataxis/kask_bridge/reference.md) | 2026-09-28 | VERIFIED |
-| `DIAG-BRIDGE-003` | [`diataxis/kask_bridge/reference.md`](./diataxis/kask_bridge/reference.md) | 2026-09-28 | VERIFIED |
-| `DIAG-BRIDGE-004` | [`diataxis/kask_bridge/reference.md`](./diataxis/kask_bridge/reference.md) | 2026-09-28 | VERIFIED |
+| `DIAG-BRIDGE-002` | [`diataxis/kask_bridge/reference.md`](./diataxis/kask_bridge/reference.md) | 2026-10-19 | VERIFIED |
+| `DIAG-BRIDGE-003` | [`diataxis/kask_bridge/reference.md`](./diataxis/kask_bridge/reference.md) | 2026-10-19 | VERIFIED |
+| `DIAG-BRIDGE-004` | [`diataxis/kask_bridge/reference.md`](./diataxis/kask_bridge/reference.md) | 2026-10-19 | VERIFIED |
 | `DIAG-BRIDGE-006` | [`diataxis/kask_bridge/explanation.md`](./diataxis/kask_bridge/explanation.md) | 2026-09-28 | VERIFIED |
 | `DIAG-BRIDGE-007` | [`diataxis/kask_bridge/explanation.md`](./diataxis/kask_bridge/explanation.md) | 2026-09-28 | VERIFIED |
 | `DIAG-CAP-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-28 | VERIFIED |
@@ -70,7 +70,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-MCPSRV-020` | [`diataxis/hkask-mcp-server/reference.md`](./diataxis/hkask-mcp-server/reference.md) | 2026-09-28 | VERIFIED |
 | `DIAG-MCPSRV-030` | [`diataxis/hkask-mcp-server/explanation.md`](./diataxis/hkask-mcp-server/explanation.md) | 2026-09-28 | VERIFIED |
 | `DIAG-MCPSRV-031` | [`diataxis/hkask-mcp-server/explanation.md`](./diataxis/hkask-mcp-server/explanation.md) | 2026-09-28 | VERIFIED |
-| `DIAG-MDS-001` | [`architecture/core/MDS.md`](./architecture/core/MDS.md) | 2026-09-28 | VERIFIED |
+| `DIAG-MDS-001` | [`architecture/core/MDS.md`](./architecture/core/MDS.md) | 2026-10-19 | VERIFIED |
 | `DIAG-MEDIA-PANEL-001` | [`diataxis/media_panel/reference.md`](./diataxis/media_panel/reference.md) | 2026-09-28 | VERIFIED |
 | `DIAG-MEDIA-PANEL-002` | [`diataxis/media_panel/reference.md`](./diataxis/media_panel/reference.md) | 2026-09-28 | VERIFIED |
 | `DIAG-MEM-ARCH` | [`architecture/memory-system-specification.md`](./architecture/memory-system-specification.md) | 2026-09-28 | VERIFIED |
@@ -131,7 +131,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-VIZ-SCENARIOS` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-28 | VERIFIED |
 | `DIAG-VIZ-SWARM` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-28 | VERIFIED |
 
-Metadata-date distribution: 83 records at 2026-09-28, two at 2026-09-30 (the cybernetic-nervous-system model diagrams), one externally-anchored record at 2026-09-16 (`DIAG-RES-CHUNK-001`, verified against arXiv/Anthropic engineering sources rather than tree files), and the remainder at October 2026 verification dates. All active records are `VERIFIED` (one tombstoned ID mention is excluded from the active count).
+Metadata-date distribution: 83 records at 2026-09-28, five at 2026-10-19 (the realignment pass re-verifying the companies-wave-touched records: `DIAG-ARCH-SKILL-MCP-LISP-001`, `DIAG-BRIDGE-002`, `DIAG-BRIDGE-003`, `DIAG-BRIDGE-004`, `DIAG-MDS-001`), three at 2026-10-13, two at 2026-09-30 (the cybernetic-nervous-system model diagrams), one at 2026-10-05, and one externally-anchored record at 2026-09-16 (`DIAG-RES-CHUNK-001`, verified against arXiv/Anthropic engineering sources rather than tree files). All active records are `VERIFIED` (one tombstoned ID mention is excluded from the active count).
 
 ## Retired/tombstone IDs (excluded from active registry validation)
 

@@ -3,7 +3,9 @@
 //! correct result — not by `cargo check`).
 //!
 //! The three forecast tools were ported from the companies MCP server
-//! (`kask/docs/plans/companies-fmp-eodhd-fibo-removal.md` §3 P1) with
+//! (companies/FMP/EODHD/FIBO removal, commit `3439db5e00` — the executed
+//! design record is preserved in git history at
+//! `kask/docs/plans/companies-fmp-eodhd-fibo-removal.md` §3 P1) with
 //! caller-supplied inputs only: the DCF-model gap decomposition was
 //! dropped with the providers (its inputs were provider statements);
 //! `forecast_record` must degrade VISIBLY on that absence (a named

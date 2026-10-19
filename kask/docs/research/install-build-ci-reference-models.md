@@ -152,6 +152,7 @@ enumeration (`kask-invariants.yml:147-149, 231-243, 250-254, 264-267`).
   failure mode (exit 37), not HTTP 416/404. The code treats curl 33/22
   as "let the hash decide" and everything else as transport failure,
   which covers the HTTP cases by design, but the pin is file://-shaped.
-- Docs count: this document moves `kask/docs` to 83 files (cap 85,
+- Docs count: this document was added when `kask/docs` held 83 files (cap 85,
   working target 75) — condensation direction per
-  `DOCUMENTATION_STANDARDS.md` §3.
+  `DOCUMENTATION_STANDARDS.md` §3 (measured count lives in the
+  [`docs README`](../README.md) corpus-size line).

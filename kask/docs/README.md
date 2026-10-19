@@ -1,8 +1,8 @@
 ---
 title: "zed-kask Documentation"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-10-18
-version: "2.7.1"
+last_updated: 2026-10-19
+version: "2.8.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -10,13 +10,13 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 # zed-kask Documentation
 
-> **zed-kask** is a minimal-divergence fork of the [Zed editor](https://zed.dev) with the hKask agent platform compiled in-process. The agent runtime, skills, Regulation nervous system, and sovereign memory run inside the editor as native surfaces; 10 managed MCP servers are launched as child processes over stdio by Zed's `context_server` host (`kask/crates/kask_bridge/src/mcp_servers.rs`).
+> **zed-kask** is a minimal-divergence fork of the [Zed editor](https://zed.dev) with the hKask agent platform compiled in-process. The agent runtime, skills, Regulation nervous system, and sovereign memory run inside the editor as native surfaces; 9 managed MCP servers are launched as child processes over stdio by Zed's `context_server` host (`kask/crates/kask_bridge/src/mcp_servers.rs` — the companies server was removed 2026-10-18, commit `3439db5e00`).
 
 **Canonical reference:** [`architecture/zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) describes the composition root and current crate inventory. The authoritative integration surface is [`DIVERGENCE.md`](../../DIVERGENCE.md), which lists current and retired numbered seams (retired numbers are never reused).
 
 **Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) lists 19 retained artifacts across 10 cross-cutting sets. Eight tutorials were folded on 2026-09-16; on 2026-09-28 the eight per-crate how-to documents were folded into their set references (each reference gained a Procedures section) and the hkask-tool-port explanation was folded into its reference; `diataxis/hkask-mcp-server/tutorial.md` is the one retained tutorial.
 
-**Corpus size (measured 2026-10-18, after the vector-store deduplication scope landed):** 78 Markdown documents and one live YAML inventory, 79 files total (`find kask/docs -type f | wc -l`) — **under** the formal **fewer-than-85** count gate. The 2026-10-18 vector-store pass added one scope/decision record ([`research/vector-store-deduplication-scope.md`](research/vector-store-deduplication-scope.md), +1), which sizes the remaining 1.03 GiB vector duplication and requests a decision; the same day's experimental-design pass added one real functional-trial record ([`research/adc-targeting-carrier-pilot-2026-10-18.md`](research/adc-targeting-carrier-pilot-2026-10-18.md), +1); the 2026-10-17 removal pass deleted the training-server reference and the LoRA training catalog (−2) when the training MCP capability was removed as out of scope for the co-researcher mandate; the same day's charter pass added the co-research-environment thesis charter ([`architecture/core/co-research-environment.md`](architecture/core/co-research-environment.md), +1 — the platform identity statement completing the charter triad with the Magna Carta and Magnifica Humanitas); the 2026-10-16 pass deleted the implemented agentic-scientist integration proposal and the superseded deterministic-vs-probabilistic routing study (−2, tombstones below); the earlier passes consolidated the media-server redesign set into [`reference/mcp-servers/media.md`](reference/mcp-servers/media.md) § Redesign record (−4) and deleted the point-in-time curiosity study (−1, tombstone below), while the concurrent ontology program added three operator-carded records ([`reference/native-ontologies.md`](reference/native-ontologies.md), [`research/ontology-anchoring-review.md`](research/ontology-anchoring-review.md), [`research/ontology-open-loops-resolution.md`](research/ontology-open-loops-resolution.md)) — net 86 → 79, four above the working **75-file target** (raised 60 → 75 by operator ruling 2026-10-07). Cap history: raised 79 → 85 by operator ruling 2026-10-07, justified by the experimentation and spreadsheet MCP servers' reference documentation and the Magnifica Humanitas values charter ([`core/magnifica-humanitas.md`](architecture/core/magnifica-humanitas.md)) grounding P1–P12; first raised 75 → 79 the same day; cap and target set by operator ruling 2026-09-30, [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3. [`principle-constraints.yaml`](architecture/principle-constraints.yaml) is a live governance inventory consumed by `kask/scripts/check-principle-constraints.sh`, not a deletion candidate.
+**Corpus size (measured 2026-10-19, after the companies-removal docs reconciliation):** 77 Markdown documents and one live YAML inventory, 78 files total (`find kask/docs -type f | wc -l`) — **under** the formal **fewer-than-85** count gate. The 2026-10-19 realignment pass deleted the executed companies-removal plan (`plans/companies-fmp-eodhd-fibo-removal.md`, −1, tombstone below) — its five operator decisions are all executed (commits `4f13f108da`, `3439db5e00`, `3adc75c9e1`, `6af8ab2e18`) and the ported forecast surface lives in [`reference/mcp-servers/scenarios.md`](reference/mcp-servers/scenarios.md) §§ Forecast persistence, and reconciled the companies-wave drift across the README, MDS, the architecture plan, the diataxis index, the skills registry, and the MCP registry (9 servers, 343 tools); the 2026-10-18 vector-store pass had added one scope/decision record ([`research/vector-store-deduplication-scope.md`](research/vector-store-deduplication-scope.md), +1), which sizes the remaining 1.03 GiB vector duplication and requests a decision; the same day's experimental-design pass added one real functional-trial record ([`research/adc-targeting-carrier-pilot-2026-10-18.md`](research/adc-targeting-carrier-pilot-2026-10-18.md), +1); the 2026-10-17 removal pass deleted the training-server reference and the LoRA training catalog (−2) when the training MCP capability was removed as out of scope for the co-researcher mandate; the same day's charter pass added the co-research-environment thesis charter ([`architecture/core/co-research-environment.md`](architecture/core/co-research-environment.md), +1 — the platform identity statement completing the charter triad with the Magna Carta and Magnifica Humanitas); the 2026-10-16 pass deleted the implemented agentic-scientist integration proposal and the superseded deterministic-vs-probabilistic routing study (−2, tombstones below); the earlier passes consolidated the media-server redesign set into [`reference/mcp-servers/media.md`](reference/mcp-servers/media.md) § Redesign record (−4) and deleted the point-in-time curiosity study (−1, tombstone below), while the concurrent ontology program added three operator-carded records ([`reference/native-ontologies.md`](reference/native-ontologies.md), [`research/ontology-anchoring-review.md`](research/ontology-anchoring-review.md), [`research/ontology-open-loops-resolution.md`](research/ontology-open-loops-resolution.md)) — net 86 → 78, three above the working **75-file target** (raised 60 → 75 by operator ruling 2026-10-07). Cap history: raised 79 → 85 by operator ruling 2026-10-07, justified by the experimentation and spreadsheet MCP servers' reference documentation and the Magnifica Humanitas values charter ([`core/magnifica-humanitas.md`](architecture/core/magnifica-humanitas.md)) grounding P1–P12; first raised 75 → 79 the same day; cap and target set by operator ruling 2026-09-30, [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3. [`principle-constraints.yaml`](architecture/principle-constraints.yaml) is a live governance inventory consumed by `kask/scripts/check-principle-constraints.sh`, not a deletion candidate.
 
 ## Repair and improvement plans
 
@@ -39,7 +39,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [`core/magna-carta.md`](architecture/core/magna-carta.md) | The Magna Carta — four sovereignty principles. |
 | [`core/magnifica-humanitas.md`](architecture/core/magnifica-humanitas.md) | Magnifica Humanitas — the values charter grounding P1–P12 in human dignity (source: Leo XIV, 2026). |
 | [`core/co-research-environment.md`](architecture/core/co-research-environment.md) | The Co-Research Environment — the thesis charter: what zed-kask is (identity, anatomy, lineage, collaboration test); completes the charter triad with the Magna Carta (liberties) and Magnifica Humanitas (values). |
-| [`core/MDS.md`](architecture/core/MDS.md) | Minimal Domain Specification — five-category taxonomy, 19 library/composition crates, and 10 MCP servers. |
+| [`core/MDS.md`](architecture/core/MDS.md) | Minimal Domain Specification — five-category taxonomy, 17 library/composition crates, and 9 MCP servers. |
 | [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) | Metadata, lifecycle, Mermaid alignment, citation, and writing standards, including operator-retained Proposed plans. |
 
 ## Reference
@@ -49,19 +49,18 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [`reference/testing-protocol.md`](reference/testing-protocol.md) | User expectation contracts, test-layer assignment, bounded proofs, and test-evidence validation. |
 | [`reference/verification-ladder.md`](reference/verification-ladder.md) | The five verification rungs (presence, liveness, truth, grounding, binding), their zed-kask homes and clocks, the provenance lattice, and the open rung gaps. |
 | [`reference/regulation-spans.md`](reference/regulation-spans.md) | Regulation tracing, persisted records, and actual MCP outcome paths. |
-| [`reference/mcp-servers/README.md`](reference/mcp-servers/README.md) | MCP server registry — 10 built-in servers, 372 registered tools fleet-wide, and the fleet tool surface. |
-| [`reference/mcp-servers/companies.md`](reference/mcp-servers/companies.md) | Companies server — valuation, forecasting, and portfolio analysis. |
-| [`reference/mcp-servers/corpus.md`](reference/mcp-servers/corpus.md) | Corpus server — gather → process → output pipeline. |
+| [`reference/mcp-servers/README.md`](reference/mcp-servers/README.md) | MCP server registry — 9 built-in servers, 343 registered tools fleet-wide, and the fleet tool surface. |
+| [`reference/mcp-servers/corpus.md`](reference/mcp-servers/corpus.md) | Corpus server — gather → process → output pipeline (25 tools). |
 | [`reference/mcp-servers/curator.md`](reference/mcp-servers/curator.md) | Curator server — sovereign memory, regulation readback, and the algedonic log (15 tools). |
-| [`reference/mcp-servers/experimentation.md`](reference/mcp-servers/experimentation.md) | Experimentation server — experiment registry for the sharded experimentation program (6 tools). |
+| [`reference/mcp-servers/experimentation.md`](reference/mcp-servers/experimentation.md) | Experimentation server — experiment registry for the sharded experimentation program (8 tools). |
 | [`reference/mcp-servers/kata-kanban.md`](reference/mcp-servers/kata-kanban.md) | Kata-kanban server — Toyota Kata task boards and persistent-until-resolved functional goals (27 tools). |
 | [`reference/mcp-servers/media.md`](reference/mcp-servers/media.md) | Media server — gallery, generation, transcription, jobs, and workflows. |
 
 | [`reference/mcp-servers/prediction-markets.md`](reference/mcp-servers/prediction-markets.md) | Prediction-markets server — Polymarket/Kalshi calibration and economic data. |
 | [`reference/mcp-servers/research.md`](reference/mcp-servers/research.md) | Research server — web/RSS retrieval, evidence scoring, run ledger, and paper identity. |
-| [`reference/mcp-servers/scenarios.md`](reference/mcp-servers/scenarios.md) | Scenarios server — Schwartz/Tetlock pipeline (17 tools). |
+| [`reference/mcp-servers/scenarios.md`](reference/mcp-servers/scenarios.md) | Scenarios server — Schwartz/Tetlock pipeline (21 tools; the provider-free forecast loop moved here from the removed companies server). |
 | [`reference/mcp-servers/swarm.md`](reference/mcp-servers/swarm.md) | Swarm server — Agent Bestiary World and local substrate (91 tools). |
-| [`reference/skills/README.md`](reference/skills/README.md) | Registry of 61 skills, 56 template namespaces, and 231 `.j2` resources. |
+| [`reference/skills/README.md`](reference/skills/README.md) | Registry of 59 skills, 55 template namespaces, and 222 `.j2` resources. |
 | [`loop-register.md`](loop-register.md) | Loop audit register — 25 system loops (L24 the experimentation protocol, L25 experimentation-health sensing, added 2026-09-30/10-01) with audit verdicts, three-layer (A/B/C) classifications with per-row sense→report→actuate maps and INV1–INV6 alignment verdicts (pass 3), deferred operator decisions, and the change-log ledger. |
 | [`reference/kask-settings.md`](reference/kask-settings.md) | Kask settings and environment reference. |
 | [`reference/lisp-eval-dialect.md`](reference/lisp-eval-dialect.md) | Sandboxed `lisp_eval` dialect and `form`/`env` contract. |
@@ -73,7 +72,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 | Document | Description |
 | --- | --- |
-| [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) | Registry of 108 current `DIAGRAM_ALIGNMENT` records representing 108 unique IDs; 34 records are in the five consolidated files and 74 are inline. |
+| [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) | Registry of 95 current `DIAGRAM_ALIGNMENT` records representing 95 unique IDs; 25 records are in the five consolidated diagram files and 70 are inline. |
 | [`diagrams/architecture.md`](diagrams/architecture.md) | Cross-cutting architecture diagrams. |
 | [`diagrams/kanban.md`](diagrams/kanban.md) | Kata-kanban state machines: task status, move controller, and the goal lifecycle (create → judge → score → acknowledge outbox). |
 | [`diagrams/swarm.md`](diagrams/swarm.md) | Swarm architecture and control loops. |
@@ -104,6 +103,12 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 ## Document lifecycle ledger
 
 Git history is the archive of record. Every removed document names its active successor here. The dated Corpus size measurement above, not this lifecycle ledger, applies the document-count gate (all files, per [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3) and identifies the live YAML inventory.
+
+### Deleted 2026-10-19 (companies-removal docs reconciliation — executed plan, successor recorded)
+
+| Artifact | Successor |
+| --- | --- |
+| `plans/companies-fmp-eodhd-fibo-removal.md` | The landed surface it specified — the ported forecast tools and their behavior tests in `kask/mcp-servers/hkask-mcp-scenarios/src/equity_forecast.rs` and `tests/equity_forecast_port.rs` (port commit `4f13f108da`; removal commits `3439db5e00` server+FMP/EODHD, `3adc75c9e1` FIBO rung, `6af8ab2e18` company-research skills); the executed five operator decisions (§5) are visible as: N2 the `scenario_risk_measure` wrapper over caller-supplied returns (documented in [`reference/mcp-servers/scenarios.md`](reference/mcp-servers/scenarios.md) § Design model), and the FIBO-anchor replacement resolving through the `qb:`/SUMO fallbacks in [`reference/ontology-bridge.md`](reference/ontology-bridge.md). Git history holds the full plan and its §5 decision log. |
 
 ### Deleted 2026-10-17 (training capability removal — out of scope for the co-researcher mandate)
 
@@ -215,7 +220,7 @@ Git history is the archive of record. Every removed document names its active su
 | `architecture/memory-system-and-therapy.md` | `architecture/memory-system-specification.md` §§9–11. |
 | `architecture/salience-specification.md` | Implemented `word_frequencies` surface in `diataxis/hkask-condenser/reference.md`. |
 | `architecture/hkask-types-core-domain-split.md` | No accepted successor architecture; `hkask-types` remains one crate, with current coverage in `diataxis/hkask-types/`. |
-| `architecture/core/scenarios-companies-bridge.md` | `reference/mcp-servers/companies.md` scenarios/companies bridge coverage. |
+| `architecture/core/scenarios-companies-bridge.md` | `reference/mcp-servers/scenarios.md` (the companies server was removed 2026-10-18, commit `3439db5e00`; its provider-free forecast loop lives in the scenarios server). |
 | `diagrams/` (25 of 28 files) | Five consolidated files under `diagrams/`; three memory diagrams moved into `architecture/memory-system-specification.md`. |
 | `REFRESH_TRIAGE.md` | This lifecycle ledger. |
 
@@ -263,9 +268,9 @@ The eight tutorial removals landed in `5881f1f406fafe12f4fc65a549dbf1eb0a62ca84`
 - [x] Six-field metadata plus `mds_categories` is present on every active or operator-retained Proposed document.
 - [x] Current-state Mermaid alignment and the Proposed conceptual exception satisfy `DOCUMENTATION_STANDARDS.md`.
 - [x] Internal links target retained documents; the eight folded how-to documents' links were repointed to their set references (2026-09-28).
-- [x] Diagram metadata has unique-ID/location registry parity (108 records, tree-verified 2026-10-05).
+- [x] Diagram metadata has unique-ID/location registry parity (95 records, tree-verified 2026-10-19).
 - [x] Edited citations use full repository-relative paths; 525 sampled citations resolved (2026-09-28), and the 2026-10-05 deep-alignment run re-verified every citation it touched against live code (the compaction entry points and pin sample, the d-seam DIVERGENCE rows, kanban R1, the 13 live tool-surface pin sites, `SignalMetric` at `signals.rs:14`) with the tree-wide relative-link sweep resolving.
-- [x] Document count is 79, under the fewer-than-85 cap (measured 2026-10-18, `find kask/docs -type f | wc -l`): the 2026-10-18 experimental-design pass added the ADC functional-trial record (+1) after the skill semantic-review ledger; the 2026-10-17 removal pass deleted the training-server reference and the LoRA training catalog (−2) with the training MCP capability; the same day's charter pass added the co-research-environment thesis charter (+1); the 2026-10-16 pass deleted two implemented/superseded research records (−2); earlier passes consolidated the media-server redesign set (−4), deleted the curiosity study (−1), and the concurrent ontology program added three carded records (+3); net 86 → 79. The 75-file working target is exceeded by four; the added trial is the evidence artifact required to validate this scientific capability rather than a synthetic smoke test.
+- [x] Document count is 78, under the fewer-than-85 cap (measured 2026-10-19, `find kask/docs -type f | wc -l`): the 2026-10-19 realignment pass deleted the executed companies-removal plan (−1) and reconciled the companies-wave drift (9 servers, 343 tools, 95 diagram records, 59 skills); the 2026-10-18 passes added the vector-store scope record and the ADC functional-trial record (+2); the 2026-10-17 removal pass deleted the training-server reference and the LoRA training catalog (−2) with the training MCP capability; the same day's charter pass added the co-research-environment thesis charter (+1); the 2026-10-16 pass deleted two implemented/superseded research records (−2); earlier passes consolidated the media-server redesign set (−4), deleted the curiosity study (−1), and the concurrent ontology program added three carded records (+3); net 86 → 78. The 75-file working target is exceeded by three — condensation direction, not a gate.
 
 ## See also
 

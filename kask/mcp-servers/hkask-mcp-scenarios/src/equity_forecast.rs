@@ -1,6 +1,7 @@
 //! Equity forecast persistence and outcome scoring — ported from the
-//! companies MCP server (Phase A P1 of the companies/FMP/EODHD/FIBO
-//! removal plan, `kask/docs/plans/companies-fmp-eodhd-fibo-removal.md`).
+//! companies MCP server (Phase A P1 of the companies/FMP/EODHD/FIBO removal,
+//! commit `3439db5e00`; the executed design record is preserved in git
+//! history at `kask/docs/plans/companies-fmp-eodhd-fibo-removal.md`).
 //!
 //! The tools that moved here are provider-free: every input arrives from
 //! the caller (`forecast_price_change` and `actual_price_change` are

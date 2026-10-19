@@ -12,7 +12,7 @@ mds_categories: [composition, lifecycle]
 
 **Crate:** `kask/mcp-servers/hkask-mcp-scenarios`
 **Tools:** 21 — `scenario_frame`, `scenario_frame_document`, `scenario_brainstorm`, `scenario_build`, `scenario_quantify`, `scenario_propagate`, `scenario_recompute_posteriors`, `scenario_calibrate`, `scenario_update`, `scenario_synthesize`, `scenario_cross_validate`, `scenario_score`, `scenario_calibration`, `scenario_assess`, `scenario_triage`, `scenario_status`, `scenario_from_markets_set`, `forecast_persist`, `forecast_record`, `forecast_list`, `scenario_risk_measure`. The direct market-record bridge is `scenario_from_markets_set`; a single record is passed as a set of one. The four forecast tools were ported from the retired companies server (2026-10-18).
-**Auto-start:** Yes by default with the full built-in set; operators can disable the fleet or this server through `kask.mcp` (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:327-340,704`).
+**Auto-start:** Yes by default with the full built-in set; operators can disable the fleet or this server through `kask.mcp` (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:254-268,700-710`).
 
 Tool count is pinned against the live `combined_router()` by `tool_surface_is_exactly_21_registered_tools` (the `mod tests` pin in `kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs`).
 

@@ -1,8 +1,8 @@
 ---
 title: "MCP Server Registry — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-10-13
-version: "0.43.0"
+last_updated: 2026-10-19
+version: "0.44.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, domain]
@@ -24,15 +24,15 @@ mds_categories: [composition, domain]
 >
 > **Hosting note (v0.32.2):** hKask runs in-process inside zed-kask. The standalone `kask mcp start
 > <id>` and `kask serve` CLI surfaces have been **deleted**. The `BUILT_IN_MCP_SERVERS` constant in
-> `kask/crates/kask_bridge/src/mcp_servers.rs` enumerates the 10 on-disk servers.
+> `kask/crates/kask_bridge/src/mcp_servers.rs` enumerates the 9 on-disk servers.
 
 ## Server Catalog
 
-9 built-in MCP servers, **360 registered tools** fleet-wide (re-reconciled 2026-10-18 against the live `tool_surface_pin!` tests below — every server pins its exact count and generated tool-name set; unified by `ede1ba0ca8`, CI-gated by `kask/scripts/check-mcp-registration.sh`). `KaskMcpSettings::default()` sets `load_default: true`, so all nine auto-load unless the operator disables the fleet or an individual server (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs`).
+9 built-in MCP servers, **343 registered tools** fleet-wide (re-reconciled 2026-10-19 against the live `tool_surface_pin!` tests below — every server pins its exact count and generated tool-name set; unified by `ede1ba0ca8`, CI-gated by `kask/scripts/check-mcp-registration.sh`). The earlier 360-tool fleet figure included the companies server (32 tools), removed 2026-10-18, commit `3439db5e00`. `KaskMcpSettings::default()` sets `load_default: true`, so all nine auto-load unless the operator disables the fleet or an individual server (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs`).
 
 | Server | Crate | Purpose | Tools |
 |--------|-------|---------|------:|
-| [Corpus](corpus.md) | `kask/mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 26 |
+| [Corpus](corpus.md) | `kask/mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 25 |
 | Curator | `kask/mcp-servers/hkask-mcp-curator` | Curator agent metacognition (memory, regulation query, algedonic signals, skill-use issue reporting) | 15 |
 | [Experimentation](experimentation.md) | `kask/mcp-servers/hkask-mcp-experimentation` | Experiment registry for the sharded experimentation program: registered experiments with pre-registered predictions, variant lineages, grounded fitness records, selection fossils | 8 |
 | Kata Kanban | `kask/mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards and persistent-until-resolved functional goals | 27 |
@@ -250,7 +250,7 @@ and `scenario_score` (Brier at resolution — the only forecast-journal writer).
 - [Corpus MCP Server Reference](corpus.md) — 26 `#[tool]` methods: corpus gathering, document processing, QA generation, style replicas
 - [Prediction Markets MCP Server Reference](prediction-markets.md) — 32 `#[tool]` methods: Polymarket/Kalshi base rates, calibration loop, CMP curves
 - [Scenario Forecasting Pipeline Diagram](scenarios.md) — 21 `#[tool]` methods, scenarios tool flow plus the equity forecast loop (DIAG-RF-005 inline)
-- [Swarm MCP Server Reference](swarm.md) — 90 registered tools (48 cloud + 42 non-cloud), dual mode, swarm-intelligence skill ecosystem, consent-gated cloud spend
+- [Swarm MCP Server Reference](swarm.md) — 91 registered tools (48 cloud + 43 non-cloud), dual mode, swarm-intelligence skill ecosystem, consent-gated cloud spend
 - [The Forecasting Stack: Three-Layer Architecture](#the-forecasting-stack-three-layer-architecture) — how scenarios + prediction-markets layer over `hkask-forecast`
 - [MCP Tool Dispatch Sequence](../../diataxis/hkask-mcp-server/explanation.md) — MCP dispatch and governance (replaces the deleted `explanation/architecture-patterns.md`)
 - The point-in-time adversarial reviews of the scenarios and research servers (2026-07) are archived in git history; they are not current-state references.

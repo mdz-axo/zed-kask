@@ -1,8 +1,8 @@
 ---
 title: "Corpus MCP Server — Reference"
 audience: [developers, operators]
-last_updated: 2026-10-13
-version: "0.42.0"
+last_updated: 2026-10-19
+version: "0.43.0"
 status: "Active"
 domain: "MCP Servers"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -12,9 +12,11 @@ mds_categories: [domain, composition, trust, lifecycle]
 
 The editor-managed MCP server processes documents into retrievable passages,
 classified chunks, evidence-carrying QA and style centroids. There is one current
-schema contract and **26 registered tools**, pinned by
-`tool_surface_is_exactly_26_registered_tools` at
-`kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:322-327`.
+schema contract and **25 registered tools**, pinned by
+`tool_surface_is_exactly_25_registered_tools` at
+`kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:321-327` (the
+`corpus_prepare_training_dataset` tool was removed 2026-10-17 with the training
+capability).
 Parameter additions do not add tools.
 
 The [crate README](../../../mcp-servers/hkask-mcp-corpus/README.md) owns the detailed

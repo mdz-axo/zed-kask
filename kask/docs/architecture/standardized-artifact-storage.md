@@ -296,7 +296,7 @@ under `mcp/{server_id}/`.
 
 | Class | Decision | Rationale |
 |---|---|---|
-| MCP servers | Parallel within class (`mcp/{server_id}/`) | Each server owns distinct DBs and credentials — per-entry `credentials`/`config_env` allowlists on `BUILT_IN_MCP_SERVERS` (`mcp_servers.rs:55-549`); server-ID segment enables browse-by-server. |
+| MCP servers | Parallel within class (`mcp/{server_id}/`) | Each server owns distinct DBs and credentials — per-entry `credentials`/`config_env` allowlists on `BUILT_IN_MCP_SERVERS` (`mcp_servers.rs:49-419`); server-ID segment enables browse-by-server. |
 | User skills | Shared (flat `skills/{skill_name}/`) | Skills are user-owned, not server-scoped. The skill tool resolves them through the D28 `GLOBAL_SKILLS_DIR_OVERRIDE` hook (`crates/agent_skills/agent_skills.rs:1314-1324`). |
 | User agent files | Shared (flat `agents/{agent_name}/`) | Agents are user-scoped, not server-scoped (`agent_paths.rs:159`). |
 | Archived chat threads | Shared (flat `threads/`) | Threads are user chat history, not server-scoped. |

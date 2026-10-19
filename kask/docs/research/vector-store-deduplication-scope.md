@@ -1,8 +1,17 @@
+---
+title: "Vector-store deduplication: scope and decision record"
+audience: [architects, developers, operators]
+last_updated: 2026-10-19
+version: "1.1.0"
+status: "Active"
+domain: "Persistence"
+mds_categories: [domain, lifecycle, trust]
+---
+
 # Vector-store deduplication: scope and decision record
 
-Date: 2026-10-18
 Status: **scoped, not implemented** — awaiting an operator decision (see §6).
-Evidence commit: `31d19d877b` (the distribution-side reduction that ships today).
+Composed: 2026-10-18. Evidence commit: `31d19d877b` (the distribution-side reduction that ships today).
 
 ## 1. The question
 

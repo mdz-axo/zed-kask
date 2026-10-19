@@ -1,8 +1,8 @@
 ---
 title: "Skill Registry — Reference"
 audience: [developers, skill-authors, agents]
-last_updated: 2026-10-13
-version: "0.42.0"
+last_updated: 2026-10-19
+version: "0.43.0"
 status: "Active"
 domain: "Core"
 mds_categories: [domain, composition]
@@ -30,7 +30,7 @@ mds_categories: [domain, composition]
 >
 > **Layout:** A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kask/`)
 > containing a `SKILL.md` file with YAML frontmatter (`name`, `description`, and optional metadata)
-> plus a markdown body of process instructions. **61 skills** are authored here and available in every zed-kask install. **231 Jinja2 templates across 56
+> plus a markdown body of process instructions. **59 skills** are authored here and available in every zed-kask install. **222 Jinja2 templates across 55
 > template namespaces** remain under `kask/registry/templates/` for use by `render_template`; these
 > are companion resources, not the source of truth for skill execution.
 
@@ -52,8 +52,8 @@ carrier of the loop itself.
 
 | Surface | Count | Notes |
 |---------|-------|-------|
-| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **61** | filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md` |
-| Template namespaces (`kask/registry/templates/*/`) | **56** (**231** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree |
+| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **59** | filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md` |
+| Template namespaces (`kask/registry/templates/*/`) | **55** (**222** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree |
 
 **The SKILL.md is the source of truth.** A skill is its `SKILL.md`. Template crates are
 read-only resources the skill body may reference via `render_template`.
@@ -67,14 +67,14 @@ annual. The embedded seed payload equals the authored tree (pinned in
 
 ---
 
-## Skills (61)
+## Skills (59)
 
 ### Research, markets and forecasting
 
 | Skill | Purpose |
 |-------|---------|
-| `company-research-deep` | Equity research deep pipeline. Nine analytical perspectives run as dependency waves over one extract-once evidence digest; every load-bearing claim is checked against retained sources before publication, and the report is never labelled verified or investment grade |
-| `company-research-flash` | Equity research flash pipeline. Sequential 23-step process with early-exit gates converging on LENS verdict consistency |
+| `experimental-design` | Design discriminating hypothesis tests before scientific spend: normalize provenance-carrying hypotheses, compare materially different candidate designs, gate validity and information, bind an executor, and produce versioned DesignSpec and FindingsSpec artifacts |
+| `hypothesis-testing` | Orchestrate one human-gated hypothesis-testing lifecycle: framing, falsifiability, experimental design, preregistration, executor-backed measurement, sealed findings, independent grounding audit, and human review |
 | `superforecasting` | Calibrated probability forecasting (Tetlock's Good Judgment Project) |
 | `scenario-planning` | Complete scenario project: Schwartz framing, forces and divergent 2x2 narratives with a quality gate and early-warning indicators, Tetlock quantification and propagation, Brier-scored resolution, Chermack assessment |
 | `eqm` | Explanation Quality Markers: score forecast rationales against the predictive 12 of the 60 EQMs via `market_score_rationale`, validate against realized outcomes (Brier), and improve a rationale in-session without changing its probability |
@@ -160,13 +160,14 @@ annual. The embedded seed payload equals the authored tree (pinned in
 | `mcp-tool-review` | Anchor a built-in MCP server's tools to published reference models and audit their functionality and quality — inventory reconciliation, fidelity-labeled checks, measured probes, bounded passes, and a findings artifact whose file:line citations are script-verified and routed to actuators |
 | `upstream-rebase` | Manage upstream Zed rebases for zed-kask: per-D-seam-file strategy, mapped re-application, test-pin, DIVERGENCE.md update |
 | `provider-audit` | Two-directional provider contract audit over kask-adopted vendors: inbound (provider alignment with principles P1–P4 and values V1–V8) and outbound (our code's alignment with provider capabilities), over the profile layer at `kask/registry/providers/`; carries the provider lifecycle — adoption gate, drift trigger, scheduled cadence, announcement trigger, retirement pass |
-| `doc-update` | Realign the kask/docs tree with the code: condensation triage (<75 cap, working target 60), ground-compare-recompose per docs-set, file:line citation gates, corpus-tool decision point |
+| `doc-update` | Realign the kask/docs tree with the code: condensation triage (<85 cap, working target 75), ground-compare-recompose per docs-set, file:line citation gates, corpus-tool decision point |
 | `improv` | Agent interaction grammar (Plussing, Yes And, Freestyling, Riffing) |
 
-> **Filesystem reality (re-verified 2026-10-17):** `.agents/skills/` contains 61
-> `SKILL.md` directories (`mcp-tool-review` added 2026-10-02, `a353d629f5`;
-> `provider-audit` added 2026-10-13 with its template namespace and the
-> provider profile registry; `system-maintenance` added 2026-10-10). Merged by operator decision 2026-09-24:
+> **Filesystem reality (re-verified 2026-10-19):** `.agents/skills/` contains 59
+> `SKILL.md` directories (the company-research deep/flash skills were retired
+> 2026-10-18 with the companies capability, commit `6af8ab2e18`;
+> `experimental-design` and `hypothesis-testing` were added 2026-10-16/18
+> with the experimentation program). Merged by operator decision 2026-09-24:
 > `gemba-walk` into `algedonic-review`, `skill-router` into `skill-discovery`
 > (route phase), `sequential-inquiry` into
 > `metacognition`, `swarm-compose-guide` into `swarm-intelligence`,
@@ -182,5 +183,5 @@ annual. The embedded seed payload equals the authored tree (pinned in
 > `superforecasting` (Market-prior calibration check). Folded 2026-09-28
 > (commit `ebcd901c80`): `kata-coaching` into `kata-improvement` — the five
 > coaching templates moved to `kask/registry/templates/kata-improvement/`.
-> `kask/registry/templates/` contains 56
-> template namespaces holding 231 `.j2` files.
+> `kask/registry/templates/` contains 55
+> template namespaces holding 222 `.j2` files.

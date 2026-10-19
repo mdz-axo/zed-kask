@@ -1,8 +1,8 @@
 ---
 title: "zed-kask Diataxis Documentation Index"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-09-28
-version: "1.5.0"
+last_updated: 2026-10-19
+version: "1.6.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -53,7 +53,7 @@ How-to quadrant alone.
 
 ## Out of scope for additional per-crate sets
 
-### MCP server crates — complete 12-server inventory
+### MCP server crates — complete 9-server inventory
 
 The managed server crates are documented cross-cuttingly under
 [`kask/docs/reference/mcp-servers/`](../reference/mcp-servers/README.md) rather
@@ -64,8 +64,9 @@ than receiving another per-crate set:
 `hkask-mcp-prediction-markets`, `hkask-mcp-research`, `hkask-mcp-scenarios`,
 and `hkask-mcp-swarm`.
 
-The authoritative managed registry contains the same 10 IDs at
-`kask/crates/kask_bridge/src/mcp_servers.rs`.
+The authoritative managed registry contains the same 9 IDs at
+`kask/crates/kask_bridge/src/mcp_servers.rs` (the companies server was removed
+2026-10-18, commit `3439db5e00`).
 
 ### hKask library and composition crates — complete 17-crate inventory
 
@@ -82,7 +83,7 @@ Eight have retained crate-named sets above; `hkask-bridge-ontology` is covered
 by [`ontology-bridge.md`](../reference/ontology-bridge.md). The remaining small
 support crates are covered by cross-cutting architecture/reference documents
 and crate-local implementation context rather than additional Diataxis sets.
-The workspace membership evidence is the repository-root `Cargo.toml:274-292`.
+The workspace membership evidence is the repository-root `Cargo.toml:271-287`.
 
 Zed-side crates such as `crates/agent`, `crates/agent_ui`, `crates/zed`, and
 `crates/media_panel` are documented here only where a zed-kask capability or

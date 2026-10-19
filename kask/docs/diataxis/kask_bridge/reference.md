@@ -1,8 +1,8 @@
 ---
 title: "kask_bridge — Reference"
 audience: [developers, architects, agents working at the zed↔hKask seam]
-last_updated: 2026-10-13
-version: "1.5.3"
+last_updated: 2026-10-19
+version: "1.5.4"
 status: "Active"
 domain: "Integration"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -36,10 +36,12 @@ exports no skill executor (`kask/crates/kask_bridge/src/kask_bridge.rs:50-124`).
 
 ## Settings hierarchy
 
-`KaskSettings` contains the data and artifact roots plus 13 subsystem sections:
-`general`, `mcp`, `curator`, `memory`, `condenser`, `research`, `companies`,
+`KaskSettings` contains the data and artifact roots plus 12 subsystem sections:
+`general`, `mcp`, `curator`, `memory`, `condenser`, `research`,
 `corpus`, `scenarios`, `prediction_markets`, `swarm`, `media`, and
-`models` (`kask/crates/kask_bridge/src/settings.rs:35-96`).
+`models` (`kask/crates/kask_bridge/src/settings.rs:56-89`; the former
+`companies` section was removed with the companies server 2026-10-18,
+commit `3439db5e00`).
 
 ```mermaid
 classDiagram
@@ -52,7 +54,6 @@ classDiagram
         +memory: KaskMemorySettings
         +condenser: KaskCondenserSettings
         +research: KaskResearchSettings
-        +companies: KaskCompaniesSettings
         +corpus: KaskCorpusSettings
         +scenarios: KaskScenariosSettings
         +prediction_markets: KaskPredictionMarketsSettings
@@ -96,8 +97,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-BRIDGE-003
-verified_date: 2026-09-28
-verified_against: kask/crates/kask_bridge/src/settings.rs:35-96 (KaskSettings); settings.rs:110-138 (general + Default); settings.rs:148-168 (mcp + Default); settings.rs:429-446,496-512 (swarm + Default); settings.rs:597-667 (models + Default)
+verified_date: 2026-10-19
+verified_against: kask/crates/kask_bridge/src/settings.rs:35-90 (KaskSettings); settings.rs general + Default; settings.rs mcp + Default; settings.rs swarm + Default; settings.rs models + Default
 status: VERIFIED
 -->
 
@@ -116,7 +117,6 @@ by `run_pending_db_passphrase_rotation` (`crates/zed/src/main.rs:373`) — see
 | `KaskCuratorSettings` | always on; algedonic threshold 0.8 | `kask/crates/kask_bridge/src/settings.rs:196-203` |
 | `KaskMemorySettings` | consolidation 300s; confidence 0.3; recall 5 at 0.3; auto-inject; federated auto-inject off with empty `federated_source_ids`; distillation 600s/300s; memory life 90 from `MemoryStore::default_memory_life_days`; forgetting 7 | `kask/crates/kask_bridge/src/settings.rs:284-300`; `kask/crates/hkask-memory/src/memory_store.rs:199` |
 | `KaskCondenserSettings` | normal profile; incoming-result compression off | `kask/crates/kask_bridge/src/settings.rs:320-326` |
-| `KaskCompaniesSettings` | staleness 0; no Fermi override; required return 0.15 | `kask/crates/kask_bridge/src/settings.rs:352-358` |
 | `KaskCorpusSettings` | dimension 1024; embedding default `OpenRouter/qwen/qwen3-embedding-8b` (MRL — every embed request carries `dimensions = embedding_dim`); template root `kask/registry` | `kask/crates/kask_bridge/src/settings.rs:377-383` |
 | `KaskSwarmSettings` | ABW mode; empty URL; credit ceiling 50; curator consent off; A2A HTTP off; dimension 1024; empty model override | `kask/crates/kask_bridge/src/settings.rs:496-512` |
 | `KaskMediaSettings` | STT and vision use shared constants; TTS/image/video empty | `kask/crates/kask_bridge/src/settings.rs:555-566` |
@@ -124,10 +124,10 @@ by `run_pending_db_passphrase_rotation` (`crates/zed/src/main.rs:373`) — see
 
 ## Built-in MCP registry
 
-`BUILT_IN_MCP_SERVERS` contains 12 descriptors
-(`kask/crates/kask_bridge/src/mcp_servers.rs:55-549`). IDs and descriptions
+`BUILT_IN_MCP_SERVERS` contains 9 descriptors
+(`kask/crates/kask_bridge/src/mcp_servers.rs:49-419`). IDs and descriptions
 are derived from that registry
-(`kask/crates/kask_bridge/src/mcp_servers.rs:551-554,598-603`).
+(`kask/crates/kask_bridge/src/mcp_servers.rs:421-427,598-603`).
 
 ```mermaid
 classDiagram
@@ -139,7 +139,6 @@ classDiagram
         +config_env: allowlist
     }
     class Registry {
-        companies
         corpus
         curator
         experimentation
@@ -150,42 +149,42 @@ classDiagram
         swarm
         media
     }
-    Registry --> BuiltinMcpServer : 10 entries
+    Registry --> BuiltinMcpServer : 9 entries
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-BRIDGE-004
-verified_date: 2026-09-28
-verified_against: kask/crates/kask_bridge/src/mcp_servers.rs:26-46 (BuiltinMcpServer); kask/crates/kask_bridge/src/mcp_servers.rs:49-513 (11-entry registry)
+verified_against: kask/crates/kask_bridge/src/mcp_servers.rs:26-46 (BuiltinMcpServer); kask/crates/kask_bridge/src/mcp_servers.rs:49-419 (9-entry registry)
 status: VERIFIED
+verified_date: 2026-10-19
 -->
 
 ### Allowlist sizes
 
 Sizes below are counted directly from each descriptor in
-`kask/crates/kask_bridge/src/mcp_servers.rs:49-513` (method: extraction of the
+`kask/crates/kask_bridge/src/mcp_servers.rs:49-419` (method: extraction of the
 quoted env-var names inside each `credentials` / `config_env` array).
 
 | Server | Credentials | Config |
 | --- | ---: | ---: |
-| `companies` | 6 | 4 |
-| `corpus` | 1 | 22 |
+| `corpus` | 1 | 18 |
 | `curator` | 1 | 12 |
-| `kata-kanban` | 1 | 4 |
+| `kata-kanban` | 1 | 3 |
 | `research` | 6 | 6 |
 | `scenarios` | 0 | 2 |
-| `prediction-markets` | 1 | 4 |
-| `swarm` | 2 | 19 |
+| `prediction-markets` | 1 | 3 |
+| `swarm` | 2 | 18 |
 | `media` | 4 | 10 |
+| `experimentation` | 1 | 2 |
 
 The media server's live router is pinned at 102 tools
-(`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:453-456`).
+(`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:481`).
 
 ## Child environment lifecycle
 
 `build_mcp_server_env` receives settings, a credential provider, an optional
 inference socket, and an optional timeout
-(`kask/crates/kask_bridge/src/mcp_servers.rs:548-556@build_mcp_server_env`). It then:
+(`kask/crates/kask_bridge/src/mcp_servers.rs:548-556@build_mcp_server_env`, full fn to `:746`). It then:
 
 1. filters non-secret configuration and adds the database catalog and delegated
    tool grant (`kask/crates/kask_bridge/src/mcp_servers.rs:560-588@build_mcp_server_env`);
@@ -211,8 +210,8 @@ condenser, and launches the configured servers
 ### Add a built-in MCP server
 
 Use this procedure to add a managed MCP server without leaking unrelated
-configuration or credentials. The canonical registry currently contains 12
-servers (`kask/crates/kask_bridge/src/mcp_servers.rs:55-549`).
+configuration or credentials. The canonical registry currently contains 9
+servers (`kask/crates/kask_bridge/src/mcp_servers.rs:49-419`).
 
 ```mermaid
 flowchart TD
@@ -225,8 +224,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-BRIDGE-002
-verified_date: 2026-09-28
-verified_against: kask/crates/kask_bridge/src/mcp_servers.rs:26-50 (descriptor shape); kask/crates/kask_bridge/src/mcp_servers.rs:55-549 (registry); kask/crates/kask_bridge/src/mcp_servers.rs:548-746 (build_mcp_server_env)
+verified_date: 2026-10-19
+verified_against: kask/crates/kask_bridge/src/mcp_servers.rs:26-50 (descriptor shape); kask/crates/kask_bridge/src/mcp_servers.rs:49-419 (registry); kask/crates/kask_bridge/src/mcp_servers.rs:548-746 (build_mcp_server_env)
 status: VERIFIED
 -->
 
@@ -235,9 +234,9 @@ status: VERIFIED
 Add one `BuiltinMcpServer` value to `BUILT_IN_MCP_SERVERS`. Supply a unique
 `id`, the binary name, the settings description, and both allowlists. The
 registry order is stable and used by the panel
-(`kask/crates/kask_bridge/src/mcp_servers.rs:26-55`). The ID and description
+(`kask/crates/kask_bridge/src/mcp_servers.rs:26-50`). The ID and description
 views derive from the registry, so no companion list is maintained
-(`kask/crates/kask_bridge/src/mcp_servers.rs:551-554,598-603`).
+(`kask/crates/kask_bridge/src/mcp_servers.rs:421-427,598-603`).
 
 #### 2. Declare the credential boundary
 
