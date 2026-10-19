@@ -131,6 +131,44 @@ mod tests {
                  to tool_to_pko and tool_to_dc in src/ontology.rs"
             );
         }
+        // The reverse direction: every name the mapping claims must be a
+        // registered tool. Coverage alone let a phantom name sit in the
+        // swarm mapping undetected (live 2026-10-18). Scanned from the two
+        // mapping functions' own source region, so no new registry is added
+        // and prose/tests cannot contribute names.
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ontology.rs"),
+        )
+        .expect("src/ontology.rs must be readable");
+        let region = src
+            .split_once("fn tool_to_pko")
+            .and_then(|(_, rest)| rest.split_once("fn tool_to_dual_axis"))
+            .map(|(region, _)| region)
+            .expect("the two mapping functions must bracket a region");
+        let mut mapped: Vec<&str> = Vec::new();
+        for chunk in region.split('"').skip(1).step_by(2) {
+            if !chunk.is_empty()
+                && chunk.contains('_')
+                && chunk
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c == '_' || c.is_ascii_digit())
+            {
+                mapped.push(chunk);
+            }
+        }
+        mapped.sort_unstable();
+        mapped.dedup();
+        assert!(
+            !mapped.is_empty(),
+            "the reverse scan found no mapping names — the instrument is broken"
+        );
+        for name in &mapped {
+            assert!(
+                TOOL_NAMES.contains(name),
+                "mapping names '{name}', which is not a registered tool — a stale or \
+                 misspelled arm in src/ontology.rs"
+            );
+        }
     }
 
     /// The mapping is defined only over the registered surface: an unknown
