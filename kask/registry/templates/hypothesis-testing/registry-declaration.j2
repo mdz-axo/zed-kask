@@ -59,8 +59,10 @@ Map the current contract without pretending it is a general scientific registry:
 
 Supply EXACTLY ONE attestation for `experiment_seal`; supplying both or neither is a typed refusal (`SealAttestationConflict`):
 
-- BINARY arm: the exact baseline/control mapping and a scientifically meaningful binary pass-rate definition.
-- SCIENTIFIC arm: a tagged `scientific_headroom` criterion `{design_family, criterion, evidence}` for a design family with no meaningful binary pass rate. `design_family` and `criterion` must be non-empty; `evidence` may be empty only when the criterion is self-evident from the family.
+- BINARY arm (HT-R token `compatible_binary`): the exact baseline/control mapping and a scientifically meaningful binary pass-rate definition.
+- SCIENTIFIC arm (HT-R token `compatible_scientific`): a tagged `scientific_headroom` criterion `{design_family, criterion, evidence}` for a design family with no meaningful binary pass rate. `design_family` and `criterion` must be non-empty; `evidence` may be empty only when the criterion is self-evident from the family.
+
+Name the selected arm in `registry_mapping` using that exact HT-R token, verbatim — never abbreviated to `binary` / `scientific`. The caller's HT-RM gate matches these tokens closed-world and refuses any other value, so an abbreviated or renamed arm blocks the write.
 
 Do not call a registry tool. Do not set a baseline result, fitness score or scientific outcome: those require real executor reports. The caller checks this output with HT-RM before any write.
 

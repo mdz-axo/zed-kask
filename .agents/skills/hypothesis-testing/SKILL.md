@@ -117,7 +117,7 @@ The mapper uses `layer="scientific_hypothesis"`; passes the versioned `DesignSpe
 
 `design_spec` must carry a non-empty `spec_version`; the server refuses it otherwise. No freeze coverage is lost by the top-level position — the seal fingerprints `(eval_set, fitness_fn, noise_band, rubrics, design_spec)` together, so post-seal design drift yields a different fingerprint from either position.
 
-Before any write, run HT-RM over the rendered mapping, binding `headroom_arm` to the arm HT-R returned:
+Before any write, run HT-RM over the rendered mapping, binding `headroom_arm` to the **verbatim HT-R result token** — `compatible_binary` or `compatible_scientific`, copied unchanged, never abbreviated to `binary` / `scientific` and never re-encoded:
 
 ```lisp
 (and (string= layer "scientific_hypothesis")
@@ -127,13 +127,16 @@ Before any write, run HT-RM over the rendered mapping, binding `headroom_arm` to
      (> max_runs 0)
      (> metric_rubric_count 0)
      (> impl_count 0)
-     (if (string= headroom_arm "binary")
-         (and meaningful_pass_rate_definition binary_resolution_present) t)
-     (if (string= headroom_arm "scientific")
-         (and design_family_nonempty criterion_nonempty) t)
      feedback_partition_present
-     selection_partition_present)
+     selection_partition_present
+     (cond ((string= headroom_arm "compatible_binary")
+            (and meaningful_pass_rate_definition binary_resolution_present))
+           ((string= headroom_arm "compatible_scientific")
+            (and design_family_nonempty criterion_nonempty))
+           (t (not t))))
 ```
+
+The arm check is a **closed-world `cond`, not two independent `if`s**. Each arm clause is reached only by its own token, and any unrecognised `headroom_arm` — `registry_schema_mismatch`, an abbreviated `binary` / `scientific`, a stale or misspelled token, an empty string — falls to the `(t (not t))` branch and fails the gate. An independent-`if` form cannot express this: a token matching neither arm skips both tests, each `if` yields its `t` default, and the conjunction authorises a write with **no** arm precondition ever checked. Write no fallback arm and no default-permit branch; an unknown arm is a refusal, never a pass.
 
 A false result returns to mapping once; a second failure stops as `registry_mapping_invalid` and performs no registry write.
 
@@ -248,6 +251,7 @@ Copy these complete contexts at render call sites; do not reconstruct them from 
 - Both attestations available → `compatible_binary` (preference order, not mutual exclusion); binary headroom with a non-binary claim and no scientific criterion → `registry_schema_mismatch`.
 - Genuine mismatch: missing baseline arm, inexpressible rubrics, zero run budget, missing partitions, unversioned DesignSpec, unbound executor, or neither attestation → HT-R `registry_schema_mismatch`; declaration mapper remains uncalled and no declaration args exist.
 - Declaration shape: `design_spec` is the top-level `experiment_propose` argument with non-empty `spec_version` and is never duplicated inside `eval_set`; HT-RM refuses a dual write.
+- HT-RM arm vocabulary: `headroom_arm` carries the verbatim HT-R token. `compatible_binary` with a meaningful pass-rate definition and present binary resolution → true; `compatible_scientific` with non-empty `design_family` and `criterion` → true. Each arm fails when its own precondition is false. Every other token — `registry_schema_mismatch`, abbreviated `binary` / `scientific`, empty or unrecognised — fails closed-world, with no arm precondition consulted and no registry write.
 - Arm registration: every predeclared arm registered before measurement — one baseline, challengers, ablations each naming `parent_variant_id`; a parentless ablation is refused.
 - Resolution: the ED-2 outcome passes verbatim into `scientific_outcome`, supplied alone; all six values round-trip unchanged; `rejected` carries non-empty reasons; the four non-calibrating outcomes are excluded from Brier on the typed field, with no literal marker invented.
 - Server constraints: pre-seal challenger fitness refused; post-seal missing/wrong seal refused; overlapping final refs refused; both-or-neither seal attestation refused; binary pass rate 1.0 refused; changed DesignSpec produces a different fingerprint/new experiment.
