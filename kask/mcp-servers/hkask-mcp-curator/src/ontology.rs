@@ -158,6 +158,36 @@ mod tests {
                  to tool_to_pko and tool_to_dc in src/ontology.rs"
             );
         }
+        // The reverse direction: every name the mapping claims must be a
+        // registered tool. Coverage alone let a phantom name sit in the
+        // swarm mapping undetected (live 2026-10-18: `swarm_delete_local`,
+        // a typo, matched no call site and still passed coverage). Scanned
+        // from the mapping source, so no new registry is introduced.
+        let ontology_src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ontology.rs"),
+        )
+        .expect("src/ontology.rs must be readable");
+        let mut mapped: Vec<&str> = Vec::new();
+        for chunk in ontology_src.split('"').skip(1).step_by(2) {
+            if (chunk.starts_with("curator_")
+                || chunk.starts_with("memory_")
+                || chunk.starts_with("reg_"))
+                && chunk
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c == '_' || c.is_ascii_digit())
+            {
+                mapped.push(chunk);
+            }
+        }
+        mapped.sort_unstable();
+        mapped.dedup();
+        for name in &mapped {
+            assert!(
+                TOOL_NAMES.contains(name),
+                "mapping names '{name}', which is not a registered tool — a stale or \
+                 misspelled arm in src/ontology.rs"
+            );
+        }
     }
 
     /// The stamp is additive: the body's own fields survive, and both
