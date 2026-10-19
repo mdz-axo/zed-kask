@@ -64,7 +64,6 @@ pub(crate) fn tool_to_pko(tool_name: &str) -> Option<PkoConcept> {
         | "swarm_fire"
         | "swarm_hire"
         | "swarm_delete_agent"
-        | "swarm_delete_local"
         | "swarm_remove_local"
         | "swarm_delete_swarm"
         | "swarm_delete_local_swarm"
@@ -183,7 +182,6 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
         | "swarm_fire"
         | "swarm_hire"
         | "swarm_delete_agent"
-        | "swarm_delete_local"
         | "swarm_remove_local"
         | "swarm_delete_swarm"
         | "swarm_delete_local_swarm"
@@ -319,6 +317,36 @@ mod tests {
                 tool_to_dual_axis(name).is_some(),
                 "no dual-axis mapping for registered tool '{name}'; add an explicit arm \
                  to tool_to_pko and tool_to_dc in src/ontology.rs"
+            );
+        }
+        // The reverse direction: every name the mapping claims must be a
+        // registered tool. Coverage alone let a phantom name sit in the
+        // mapping undetected (live 2026-10-18: `swarm_delete_local`, a typo
+        // for `swarm_delete_local_swarm`, matched no `execute_tool` call site
+        // and still passed the coverage assertion). Scanned from the same
+        // source the axes are defined in, so no new registry is introduced.
+        let ontology_src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ontology.rs"),
+        )
+        .expect("src/ontology.rs must be readable");
+        let mut mapped: Vec<String> = Vec::new();
+        for chunk in ontology_src.split('"').skip(1).step_by(2) {
+            if !chunk.is_empty()
+                && chunk.starts_with("swarm_")
+                && chunk
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c == '_' || c.is_ascii_digit())
+            {
+                mapped.push(chunk.to_string());
+            }
+        }
+        mapped.sort();
+        mapped.dedup();
+        for name in &mapped {
+            assert!(
+                live.contains(name),
+                "mapping names '{name}', which no `execute_tool` call site registers — \
+                 a stale or misspelled arm in src/ontology.rs"
             );
         }
     }
