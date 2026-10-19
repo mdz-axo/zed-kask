@@ -86,4 +86,39 @@ mod tool_surface_tests {
         8,
         tool_surface_is_exactly_8_registered_tools,
     );
+
+    /// The 2026-10-19 scientific-design evolution (task `f1a90cd2`) added
+    /// `design_spec`, `scientific_headroom` and `scientific_outcome`. A tool's
+    /// wire schema is generated from its request struct, so those fields are
+    /// callable — but the `#[tool(description)]` string is what a model reads
+    /// to *discover* them. A description that omits a new parameter is stale
+    /// misinformation: the capability exists and is invisible. This pin fails
+    /// if the three descriptions stop naming the fields they accept.
+    #[test]
+    fn tool_descriptions_name_the_scientific_design_fields() {
+        let router = crate::server::ExperimentationServer::experimentation_router();
+        let description = |name: &str| -> String {
+            router
+                .list_all()
+                .iter()
+                .find(|tool| tool.name == name)
+                .unwrap_or_else(|| panic!("tool {name} present"))
+                .description
+                .as_deref()
+                .unwrap_or_default()
+                .to_string()
+        };
+        assert!(
+            description("experiment_propose").contains("design_spec"),
+            "experiment_propose description must name design_spec"
+        );
+        assert!(
+            description("experiment_seal").contains("scientific_headroom"),
+            "experiment_seal description must name scientific_headroom"
+        );
+        assert!(
+            description("selection_record").contains("scientific_outcome"),
+            "selection_record description must name scientific_outcome"
+        );
+    }
 }
