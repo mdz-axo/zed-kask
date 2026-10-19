@@ -30,9 +30,9 @@ Design evidence that distinguishes the hypotheses in this `hypothesis-spec-v1`.
 
 ## Candidate synthesis
 
-Generate 2–5 materially different immutable candidate drafts. Vary the source of discrimination: intervention/randomized contrast; blocked/factorial screening; matching/counterbalancing; calibration/orthogonal measurement; positive/negative controls; justified natural/quasi experiment; valid sequential/adaptive design; measurement-first pilot; computational benchmark. If only one is credible, still include the strongest infeasible alternatives as drafts and set `only_credible_explanation` to a non-empty account of why each cannot answer the question. Otherwise set it to null.
+Generate 2–5 materially different immutable candidate drafts. Vary the source of discrimination: intervention/randomized contrast; blocked/factorial screening; matching/counterbalancing; calibration/orthogonal measurement; positive/negative controls; justified natural/quasi experiment; valid sequential/adaptive design; measurement-first pilot; computational benchmark. If only one credible design exists, emit that single draft and set `only_credible_explanation` to a non-empty account of why each materially different alternative cannot answer the question; otherwise set it to null.
 
-This stage proposes; it does not gate, rank or select. Do not emit `selected_design`, a gate verdict, a typed stop or an outcome.
+Every draft carries a unique, non-empty, stable `candidate_id`. This stage proposes; it does not gate, rank or select. Do not emit a selected design, gate verdict, typed stop or outcome.
 
 Each draft emits:
 
@@ -49,6 +49,6 @@ Each draft emits:
 - ethics/safety, reproducibility package and limitations;
 - flat semantic ED-1 inputs: `ethics_safety`, `feasibility`, `rivals_differ`, `equivalence_prespecified`, `identification`, `measurement_validity`, `information_adequacy`, `bias_control`, `preregistration`, `reproducibility`, each with a short evidence basis.
 
-A draft is immutable after this response. The caller computes candidate count and id uniqueness in ED-C, computes each ED-1 result in `lisp_eval`, and passes the exact drafts plus receipts to `select-design`; never regenerate a candidate after observing its gate result.
+A draft is immutable after this response. The caller checks ID uniqueness and cardinality in ED-C, computes each ED-1 result in `lisp_eval`, and passes the exact drafts plus receipts to `select-design`; never regenerate or revise a candidate after observing its gate result.
 
 Return JSON only with exactly `candidate_drafts`, `only_credible_explanation`.

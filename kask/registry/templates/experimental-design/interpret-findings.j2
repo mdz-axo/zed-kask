@@ -39,7 +39,7 @@ Create `findings-spec-v1` with:
 - reproduction package and audit refs;
 - typed operational failures (`executor_unavailable`, `protocol_deviation`, `measurement_failed`, `scientific_non_result`) where applicable; distinguish a valid non-result from an unavailable executor or unusable measurement.
 
-Emit flat semantic `ed2_inputs`: `design_valid`, `measurement_valid`, `prediction_contradicted`, `equivalence_prespecified`, `equivalence_met`, `precision_adequate`, `severe`, plus integer `report_count`. Each boolean carries a short evidence basis inside `findings_spec`; the flat values exist only for ED-2I/ED-2.
+Emit flat semantic `ed2_inputs`: `design_valid`, `measurement_valid`, `prediction_contradicted`, `equivalence_prespecified`, `equivalence_met`, `precision_adequate`, `severe`. Each boolean carries a short evidence basis inside `findings_spec`; the flat values exist only for ED-2I/ED-2. Do not emit a report count: the caller derives report presence deterministically from the exact `run_reports` array it supplied.
 
 Classification rules:
 

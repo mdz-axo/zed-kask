@@ -109,7 +109,7 @@ Three Curator schema-evolution directives were accepted and are tracked by task 
 
 | Pin case | Gate | Inputs varied | Returned |
 |---|---|---|---|
-| Wright-style transportability / instrument failure | ED-1 | `measurement_validity=false` | `measurement_void: instrument_invalid` |
+| Wright-style transportability / measurement failure | ED-1 | `measurement_validity=false` | `measurement_void: measurement_invalid` |
 | Underpowered design, pre-spend | ED-1 | `information_adequacy=false` | `no-headroom: no_information` |
 | Confounded observational causal claim | ED-1 | `identification=false` | `design_void: not_identified` |
 | Naive optional stopping | ED-1 | `preregistration=false` | `design_void: not_preregistered` |
@@ -118,9 +118,28 @@ Three Curator schema-evolution directives were accepted and are tracked by task 
 
   Remaining ED-1 branches confirmed reachable and distinct: `blocked: ethics_safety`, `blocked: infeasible`, `design_void: no_discrimination` (no rivals differ **and** no prespecified equivalence), `design_void: bias_uncontrolled`, `design_void: not_reproducible`. Remaining ED-2 branches: `design_void`, `measurement_void`, `rejected`, `corroborated`, `inconclusive`.
 
+- **Seam gates added and exercised in both directions (2026-10-19 correction pass).** The original single-pass templates let a model emit a selected design before the validity gate ran, type its own findings outcome, and type registry compatibility. Those three verdicts were removed from the templates and replaced with deterministic gates, each run against positive and negative controls:
+
+| Gate | Enforces | Positive control | Negative control |
+|---|---|---|---|
+| ED-0R | Missing-field/owner reconciliation, partition coverage and null-spec consistency | complete spec, and 2 missing fields with 2 owner rows across distinct partitions → `true` | a dropped owner row, a non-null spec with a missing field, the same field claimed by two owner partitions, and a partition field absent from `missing_fields` → `false` |
+| ED-C | 2–5 materially different candidates, unique non-empty ids, single-candidate justification | 3 unique drafts, and 1 draft with a non-empty explanation → `true` | duplicate ids, and 1 draft with an empty explanation → `false` |
+| ED-1S | Selection only from ED-1 `execute` survivors, with a distinct rejected alternative | selected `execute` candidate + distinct rejected alternative → `true`; single-candidate run with no alternative → `true` | selecting a `design_void` candidate, a draft with no gate receipt, and selected==rejected → `false` |
+| ED-2I | Internally consistent findings classification, with report presence derived from the real array | contradiction with valid measurement over 2 real reports, and zero reports correctly marked invalid → `true` | contradiction asserted together with equivalence met, and zero reports claimed valid → `false` |
+| HT-R | Registry compatibility verdict | all six scientific preconditions true → `compatible` | non-binary claim without partitions → `registry_schema_mismatch` |
+| HT-RM | Declaration mapping completeness before any write | complete mapping → `true` | zero implementation/grounded-report rubrics → `false` |
+
+  One defect was found and fixed by this exercise rather than by inspection: the first ED-1S form used a `null` literal the Lisp dialect does not bind, so it errored instead of returning a verdict. An erroring gate is a broken gate; the form now uses an empty-string sentinel and returns correctly in all four controls.
+
+  Three further edge defects were closed in the same pass, each pinned by a new negative control: (i) ED-0R originally compared only partition **lengths**, so a field claimed by two different owners, or a partition field missing from `missing_fields`, summed correctly and passed — it now checks partition-set uniqueness and coverage directly; (ii) `interpret-findings` emitted its own `report_count`, which let a model assert reports existed while supplying none — the count is removed from the template and ED-2I now derives presence from `(length run_reports)`, the exact array the caller passed in; (iii) the ED-1 measurement branch returns `measurement_void: measurement_invalid`, distinct in spelling from the registry's `measurement-void` reject-reason marker (`is_void_marker`, `kask/mcp-servers/hkask-mcp-experimentation/src/types.rs:356-358`) — the scientific outcome and the registry's calibration-exclusion token are different vocabularies and must not be substituted for one another.
+
+- **Precision is now load-bearing in ED-2, not advisory.** `rejected` requires `prediction_contradicted` **and** `precision_adequate`. Executed: a contradicted prediction with inadequate realized precision returns `inconclusive`; the same contradiction with adequate precision returns `rejected`. This closes the path by which an imprecise apparent contradiction could be reported as a refutation.
+
 - **Fault-localization ordering checked mechanically (the Wright lesson as executable precedence).** With `prediction_contradicted=true` **and** `measurement_valid=false`, ED-2 returns `measurement_void`, not `rejected`: an invalid instrument cannot manufacture a refutation. The converse also holds — with a valid instrument the same contradicted prediction returns `rejected`, so the precedence localizes the fault rather than shielding H1. This is the NASA-documented Wright pattern (failed 1900–1901 predictions traced to the assumed Smeaton coefficient and to Lilienthal coefficients that were valid for his wing geometry but did not transport to the Wrights' different geometry) encoded as gate order, not as a disposition to blame the instrument first.
 - **Imprecision never becomes support.** With `prediction_contradicted=false`, `severe=true` and `precision_adequate=false`, ED-2 returns `inconclusive`; `corroborated` requires `severe` **and** `precision_adequate` together. Verified by executing both input sets.
 - Branch-count correction: the ED-1 form carries **10** branches and ED-2 **6**. An earlier working note recorded ED-1 as 8; the count was re-measured by exercising every branch rather than by re-reading the note.
+- Gate-name correction: the ED-1 measurement branch now returns `measurement_void: measurement_invalid` rather than `instrument_invalid`. The narrower name implied the instrument was the fault; the Wright case is precisely a reference-data and transportability failure, so the auxiliary ledger must localize among instrument, reference data, analysis and domain shift.
+- Structural gates re-run green at this tree state with the two new templates included: `check-skill-lisp-forms.sh` (283 files, 59 skills, 319 Lisp candidates, 0 defects), `check-skill-crossrefs.sh`, `check-template-contracts.sh` (222 templates, 0 flagged), prescreen (59/59 D/P labelled, 59/59 initial+target), contract audit (222 templates, 0 flagged), call-site audit (210 call sites, 0 flagged), S9/S10 sweep (59 SKILL.mds, 0 flagged), `check-skill-crate-refs.sh` (0 dangling), `cargo test -p agent --lib corpus_` (4 render/strip tests), `-p agent_skills` (100 tests), `-p hkask-bridge-ontology --lib` (77 tests), `-p kask_bridge classifier` (3 tests). Test runs used `kask/scripts/cargo-test-nonzero.sh` so a filter matching zero tests fails rather than reporting a false green.
 
 ### Proposed, not executed
 
@@ -128,6 +147,8 @@ Three Curator schema-evolution directives were accepted and are tracked by task 
 - No independent confirmatory exposure-matched factorial study was performed.
 - No model-calibrated PBPK/spheroid validation was performed.
 - Decoupled `grounding-verify` could not run: three independent inference routes failed because provider catalogs named retired models. This report therefore carries an **in-thread self-check only**, with its confidence capped accordingly; no blanket verification label is claimed.
+- The Shadish–Cook–Campbell validity framework remains **partially verified**: research run `24d7fc791edc83f2` reached only the publisher's bibliographic record (Houghton Mifflin, 2002; ISBN 0395615569; 623 pages) and its stated four-part structure, with no accessible primary full text. The framework's four validity types are therefore cited as a structural organizer, not quoted; a direct citation still requires the primary text.
+- `hkask-bridge-ontology`'s `ontology_literal_guard` integration test fails at this tree state on `kask/mcp-servers/hkask-mcp-kata-kanban/src/ontology.rs:371`. That file belongs to a concurrent stream, is unmodified from HEAD, and the guard scans only `.rs` files — this correction pass modified no `.rs` file. Reported, not fixed: it is outside this work's write scope.
 
 ## Reference-model research status
 
