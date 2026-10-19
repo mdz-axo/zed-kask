@@ -2,6 +2,7 @@
 #![warn(clippy::let_underscore_future)]
 
 pub(crate) mod evidence_service;
+pub(crate) mod ontology;
 pub mod research;
 pub(crate) mod synthetic_service;
 
@@ -96,7 +97,7 @@ hkask_mcp_server::mcp_server!(
         /// with a surfaced reason naming the setting — unset is a legitimate
         /// degraded mode because the floor exists (never a hidden constant).
         pub embedding_model: Option<String>,
-    }
+    } = crate::ontology::annotate;
 );
 
 // ── RSS helpers ──
