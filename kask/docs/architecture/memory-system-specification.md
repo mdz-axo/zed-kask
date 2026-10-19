@@ -1251,7 +1251,7 @@ share one passphrase architecture:
   `kask/crates/hkask-keystore/src/keychain.rs:383`). The username-independent
   half (`provision_db_passphrase`, `identity.rs:132`) is spawned by
   `build_mcp_server_env` at MCP launch time so servers get a passphrase
-  even before login (`kask/crates/kask_bridge/src/mcp_servers.rs:778-784`).
+  even before login (`kask/crates/kask_bridge/src/mcp_servers.rs:686@build_mcp_server_env`).
   There is no swarm-memory provisioning step: the separate
   `HKASK_SWARM_MEMORY_PASSPHRASE` and its spawn site were removed — the
   swarm memory DB opens with the ONE shared passphrase, resolved inside
