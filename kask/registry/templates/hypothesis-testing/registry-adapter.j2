@@ -1,4 +1,4 @@
-{# goal: Classify the evidence-bearing semantic preconditions for mapping a complete `DesignSpec` onto the current artifact-oriented experimentation contract; it emits HT-R inputs and schema-evolution evidence, never a compatibility verdict or declaration args. #}
+{# goal: Classify the evidence-bearing semantic preconditions for mapping a complete `DesignSpec` onto the current experimentation contract; it emits HT-R inputs, never a compatibility verdict or declaration args. #}
 [inference]
 contract:
   input:
@@ -11,10 +11,9 @@ contract:
   output:
     compatibility_inputs: object
     incompatibilities: array
-    schema_evolution_evidence: object
 ---
 
-Map a completed scientific design onto the current experimentation registry only when the mapping is semantically honest.
+Map a completed scientific design onto the experimentation registry only when the mapping is semantically honest.
 
 ## Inputs
 
@@ -27,19 +26,32 @@ Map a completed scientific design onto the current experimentation registry only
 
 ## Compatibility classification
 
-Classify these flat booleans with a short evidence basis for each:
+Classify these flat booleans with a short evidence basis for each.
+
+The COMMON preconditions — false in either arm means `registry_schema_mismatch`:
 
 - `meaningful_baseline`: a scientifically meaningful control/baseline arm can be the one baseline variant;
-- `meaningful_binary_headroom`: a non-fabricated binary rubric pass-rate definition makes `baseline_pass_rate < 1.0` scientifically meaningful;
-- `genuinely_binary_claim`: the preregistered scientific resolution maps honestly to selected=1 / rejected=0;
 - `rubric_expressible`: every measurement routes through `report_ref` or deterministic `contains` / `not_contains` / `regex` verification;
 - `positive_max_runs`: the sealed design carries a positive run ceiling;
-- `partitions_valid`: real feedback and selection partitions exist, are disjoint by construction, and match the executor contract.
+- `partitions_valid`: real feedback and selection partitions exist, are disjoint by construction, and match the executor contract;
+- `design_spec_versioned`: the DesignSpec is first-class and carries a non-empty `spec_version`;
+- `executor_bound`: the DesignSpec binds an executor and a report schema.
 
-A calibration study, single-arm measurement, observational estimate, non-binary corroboration, equivalence conclusion without a genuinely binary preregistered resolution, missing selection partition, or design lacking a meaningful pass rate is incompatible. Do not narrow the science to fit the tool.
+The BINARY-arm preconditions — a design that carries a meaningful binary pass rate:
 
-`incompatibilities` names every false input with its evidence. Always emit `schema_evolution_evidence` requesting first-class typed `design_spec`, a tagged scientific headroom criterion, typed scientific outcomes with explicit calibration rules, and preservation of existing artifact experiments/literal void markers. This evidence remains useful even when the current design happens to map compatibly.
+- `binary_headroom`: a non-fabricated binary rubric pass-rate definition makes `baseline_pass_rate < 1.0` scientifically meaningful;
+- `genuinely_binary_claim`: the preregistered scientific resolution maps honestly to selected=1 / rejected=0. This governs ONLY the binary arm (pass-rate eligibility and Brier scoring); it is NOT a common precondition.
 
-Do not emit a compatibility verdict, `eval_set`, registry arguments, a baseline mapping or a pass rate. The caller computes HT-R. Only an HT-R `compatible` result can reach the separate `registry-declaration` template.
+The SCIENTIFIC-arm precondition — a design family with no meaningful binary pass rate:
 
-Return JSON only with exactly `compatibility_inputs`, `incompatibilities`, `schema_evolution_evidence`.
+- `scientific_headroom_criterion`: a tagged design-family criterion that makes the design non-saturated in a way a pass rate cannot express.
+
+The arms are a PREFERENCE ORDER, not mutual exclusion. A measurement study carrying BOTH a meaningful pass rate and a design-family criterion is admissible science and takes the binary arm. The server's exactly-one-of rule applies at SEAL time (you supply one attestation); it does not forbid a design capable of either.
+
+A calibration study, single-arm measurement, observational estimate, non-binary corroboration, or equivalence conclusion with no binary arm and no design-family criterion is incompatible. Do not narrow the science to fit the tool.
+
+`incompatibilities` names every false COMMON input (and, when both arms are refused, the refused arm inputs) with its evidence.
+
+Do not emit a compatibility verdict, `eval_set`, registry arguments, a baseline mapping or a pass rate. The caller computes HT-R. Only an HT-R `compatible_binary` or `compatible_scientific` result can reach the separate `registry-declaration` template.
+
+Return JSON only with exactly `compatibility_inputs`, `incompatibilities`.

@@ -1,4 +1,4 @@
-{# goal: After HT-R=`compatible`, map the versioned scientific artifacts, partitions, report schema and binary resolution into proposed registry arguments for HT-RM validation. #}
+{# goal: After HT-R returns compatible_binary or compatible_scientific, map the versioned scientific artifacts, partitions, report schema and headroom attestation into proposed registry arguments for HT-RM validation. #}
 [inference]
 contract:
   input:
@@ -11,10 +11,11 @@ contract:
     compatibility_evidence: object
   output:
     eval_set: object
+    design_spec: object
     registry_mapping: object
 ---
 
-The caller has already obtained HT-R=`compatible`. Map the exact artifacts without changing their scientific content. If the supplied compatibility evidence does not show every HT-R input true, refuse in prose rather than inventing declaration arguments; the caller treats that as `registry_mapping_invalid`.
+The caller has already obtained HT-R=`compatible_binary` or `compatible_scientific`. Map the exact artifacts without changing their scientific content. If the supplied compatibility evidence does not show every HT-R input true, refuse in prose rather than inventing declaration arguments; the caller treats that as `registry_mapping_invalid`.
 
 ## Scientific artifacts
 
@@ -28,29 +29,39 @@ The caller has already obtained HT-R=`compatible`. Map the exact artifacts witho
 
 ## Eval-set object
 
-Emit one object with:
+Emit one object carrying ONLY the experiment's cases, partitions and report schema — NOT the design:
 
 - `schema="experimental-design-registry-adapter-v1"`;
-- the exact `hypothesis_spec` and `design_spec`;
 - the exact feedback and selection partitions;
-- the exact executor-report schema.
+- the exact executor-report schema;
+- the eval cases.
+
+## DesignSpec — a first-class, top-level `experiment_propose` argument
+
+Emit the exact DesignSpec as a SEPARATE top-level `design_spec` argument (NOT nested inside `eval_set`). It must carry a non-empty `spec_version` (the server refuses an unversioned spec). The seal fingerprints `(eval_set, fitness_fn, noise_band, rubrics, design_spec)`, so the design joins the hash from either position — no freeze coverage is lost by moving it top-level. A dual write (top-level AND nested) is refused by HT-RM.
 
 ## Proposed registry mapping
 
-Map the current eight-tool contract without pretending it is a general scientific registry:
+Map the current contract without pretending it is a general scientific registry:
 
 - `layer="scientific_hypothesis"`;
 - `eval_set` as above;
+- `design_spec` as the top-level argument above;
 - rubric bundle with at least one `metric` rubric and at least one `implementation` or `grounded_report` rubric;
 - stable snake_case rubric ids;
 - verification only in `contains`, `not_contains`, `regex` or `report_ref`;
 - named `fitness_fn` computed from grounded executor reports;
 - `noise_band` carrying the prespecified uncertainty/indifference region;
 - positive `budget.max_runs` copied from the DesignSpec;
-- exact baseline/control mapping and scientifically meaningful binary pass-rate definition;
-- exact `binary_resolution_mapping` and linked binary goal id;
 - genotype refs for the versioned HypothesisSpec, DesignSpec and executable protocol/report schema.
+
+## Headroom attestation — exactly ONE arm
+
+Supply EXACTLY ONE attestation for `experiment_seal`; supplying both or neither is a typed refusal (`SealAttestationConflict`):
+
+- BINARY arm: the exact baseline/control mapping and a scientifically meaningful binary pass-rate definition.
+- SCIENTIFIC arm: a tagged `scientific_headroom` criterion `{design_family, criterion, evidence}` for a design family with no meaningful binary pass rate. `design_family` and `criterion` must be non-empty; `evidence` may be empty only when the criterion is self-evident from the family.
 
 Do not call a registry tool. Do not set a baseline result, fitness score or scientific outcome: those require real executor reports. The caller checks this output with HT-RM before any write.
 
-Return JSON only with exactly `eval_set`, `registry_mapping`.
+Return JSON only with exactly `eval_set`, `design_spec`, `registry_mapping`.

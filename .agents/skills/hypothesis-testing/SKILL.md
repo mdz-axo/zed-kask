@@ -43,8 +43,8 @@ Hypothesis testing is the one end-to-end scientific inquiry lifecycle in zed-kas
 | Step | Type | Oracle / critique |
 |---|---|---|
 | Framing, falsifiability and design | P + D gates | Owning skills and operator. |
-| Registry compatibility classification | P + D | P evidence classification; `lisp_eval` HT-R is the only compatibility verdict. |
-| Registry declaration mapping | P + D | Runs only after HT-R=`compatible`; `lisp_eval` HT-RM checks required mapping fields before any write. |
+| Registry compatibility classification | P + D | P evidence classification; `lisp_eval` HT-R is the only compatibility verdict, and it returns which arm. |
+| Registry declaration mapping | P + D | Runs only after HT-R returned a compatible arm; `lisp_eval` HT-RM checks required mapping fields for that arm before any write. |
 | Budget, seal citation, run-ref disjointness and fingerprint | D | Experimentation server typed refusals. |
 | Execution | D/P by domain | Named harness/data source/human report. |
 | Scientific interpretation | D over classified evidence | `experimental-design` ED-2. |
@@ -80,17 +80,26 @@ Render `hypothesis-testing/registry-adapter` to classify the current registry's 
 }
 ```
 
-Compute HT-R:
+Compute HT-R. The registry carries two seal attestations, so compatibility has two arms:
 
 ```lisp
-(if (and meaningful_baseline meaningful_binary_headroom genuinely_binary_claim rubric_expressible positive_max_runs partitions_valid) "compatible" "registry_schema_mismatch")
+(let ((common (and meaningful_baseline rubric_expressible positive_max_runs
+                   partitions_valid design_spec_versioned executor_bound)))
+  (cond ((not common) "registry_schema_mismatch")
+        ((and binary_headroom genuinely_binary_claim) "compatible_binary")
+        (scientific_headroom_criterion "compatible_scientific")
+        (t "registry_schema_mismatch")))
 ```
 
-The semantic booleans come from the adapter's cited evidence; the verdict does not. For calibration, single-arm measurement, observational estimation, non-binary evidence, practical equivalence without a genuinely binary preregistered resolution, or any design lacking a meaningful pass rate/baseline, HT-R must return `registry_schema_mismatch`. **Do not fabricate one.** Preserve the complete DesignSpec outside a fake experiment, keep all failed-condition evidence, and issue schema-evolution evidence for first-class `design_spec`, scientific headroom and typed scientific outcomes. Do not render the declaration mapper or call a registry write tool.
+The semantic booleans come from the adapter's cited evidence; the verdict does not.
+
+The arms are a **preference order, not mutual exclusion**. A design carrying both a meaningful binary pass rate and a design-family headroom criterion is admissible science: it takes the binary arm, because that arm also yields pass-rate eligibility and Brier calibration. The server's `SealAttestationConflict` refuses supplying *both attestations at seal* — it does not refuse a design *capable* of either. `genuinely_binary_claim` gates only the binary arm; a non-binary claim with a scientific criterion routes to `compatible_scientific` rather than to mismatch.
+
+Calibration, single-arm measurement, observational estimation and practical equivalence are **not** incompatible — they are the `compatible_scientific` arm, attested by a tagged scientific headroom criterion (`design_family`, `criterion`, `evidence`). `registry_schema_mismatch` means what it says: a missing baseline arm, inexpressible rubrics, no run ceiling, absent or non-disjoint partitions, an unversioned `DesignSpec`, an unbound executor, or neither headroom attestation available. On mismatch, preserve the complete DesignSpec outside a fake experiment, keep all failed-condition evidence, do not render the declaration mapper, and do not call a registry write tool. **Never fabricate a pass rate to force the binary arm.**
 
 ### 4. Declare, baseline and seal (HT-R compatible designs only)
 
-Render `hypothesis-testing/registry-declaration` only after HT-R returned `compatible`:
+Render `hypothesis-testing/registry-declaration` only after HT-R returned `compatible_binary` or `compatible_scientific`, passing the arm it returned:
 
 ```json
 {
@@ -104,12 +113,26 @@ Render `hypothesis-testing/registry-declaration` only after HT-R returned `compa
 }
 ```
 
-The mapper uses `layer="scientific_hypothesis"`; serializes `{ "schema": "experimental-design-registry-adapter-v1", "hypothesis_spec": ..., "design_spec": ..., "feedback_partition": ..., "selection_partition": ..., "executor_report_schema": ... }` inside `eval_set`; maps uncertainty/indifference regions to `noise_band`; carries positive `budget.max_runs`; and links the preregistered binary prediction to a kanban goal. Rubrics include ≥1 `metric` and ≥1 `implementation` or `grounded_report`, stable snake_case ids, and verification in `contains` / `not_contains` / `regex` / `report_ref`.
+The mapper uses `layer="scientific_hypothesis"`; passes the versioned `DesignSpec` as the **top-level `design_spec` argument** of `experiment_propose`, never nested inside `eval_set` and never written to both; serializes `{ "schema": "experimental-design-registry-adapter-v1", "hypothesis_spec": ..., "feedback_partition": ..., "selection_partition": ..., "executor_report_schema": ... }` inside `eval_set`; maps uncertainty/indifference regions to `noise_band`; carries positive `budget.max_runs`; and links a kanban goal only for a genuinely binary claim. Rubrics include ≥1 `metric` and ≥1 `implementation` or `grounded_report`, stable snake_case ids, and verification in `contains` / `not_contains` / `regex` / `report_ref`.
 
-Before any write, run HT-RM over the rendered mapping:
+`design_spec` must carry a non-empty `spec_version`; the server refuses it otherwise. No freeze coverage is lost by the top-level position — the seal fingerprints `(eval_set, fitness_fn, noise_band, rubrics, design_spec)` together, so post-seal design drift yields a different fingerprint from either position.
+
+Before any write, run HT-RM over the rendered mapping, binding `headroom_arm` to the arm HT-R returned:
 
 ```lisp
-(and (string= layer "scientific_hypothesis") design_spec_present (> max_runs 0) (> metric_rubric_count 0) (> implementation_or_report_rubric_count 0) meaningful_pass_rate_definition binary_resolution_present feedback_partition_present selection_partition_present)
+(and (string= layer "scientific_hypothesis")
+     design_spec_toplevel
+     (not design_spec_in_eval_set)
+     spec_version_nonempty
+     (> max_runs 0)
+     (> metric_rubric_count 0)
+     (> impl_count 0)
+     (if (string= headroom_arm "binary")
+         (and meaningful_pass_rate_definition binary_resolution_present) t)
+     (if (string= headroom_arm "scientific")
+         (and design_family_nonempty criterion_nonempty) t)
+     feedback_partition_present
+     selection_partition_present)
 ```
 
 A false result returns to mapping once; a second failure stops as `registry_mapping_invalid` and performs no registry write.
@@ -117,10 +140,10 @@ A false result returns to mapping once; a second failure stops as `registry_mapp
 Then:
 
 1. Create the linked goal only for a genuinely binary claim; prediction confidence comes from `superforecasting` / `scenario_calibrate` or an externally calibrated method, never unaided self-assessment.
-2. `experiment_propose` with the versioned eval-set object, rubrics, fitness function, noise band, budget and goal id.
-3. `variant_register(role="baseline")` for the predeclared control/baseline arm.
-4. Execute that arm through the DesignSpec-bound executor and `fitness_record(seal_id=null)` its real report references. Pre-seal fitness is baseline-only.
-5. `experiment_seal` with the scientifically meaningful baseline pass rate. At 1.0, close with first reject reason containing literal `no-headroom`; for information inadequacy use `no-headroom: no_information`. Redesign and re-declare; never weaken evaluators.
+2. `experiment_propose` with the versioned eval-set object, the top-level `design_spec`, rubrics, fitness function, noise band, budget and (binary arm only) goal id.
+3. `variant_register` **every arm the DesignSpec predeclared**, before measurement: the control as `role="baseline"` (exactly one), each comparator as `role="challenger"`, and each ablation as `role="ablation"` naming the `parent_variant_id` whose component it ablates — the server refuses a parentless ablation. Registration is not measurement: pre-seal challenger *fitness* is refused by the server (`ExperimentNotSealed`), so registering the full arm set early cannot leak a pre-seal measurement. Freeze the arm-selection rule here, before any feedback result is read.
+4. Execute the baseline arm through the DesignSpec-bound executor and `fitness_record(seal_id=null)` its real report references. Pre-seal fitness is baseline-only.
+5. `experiment_seal` with **exactly one** attestation, matching the HT-R arm: `baseline_pass_rate` for `compatible_binary` (the scientifically meaningful measured rate), or `scientific_headroom` — `{design_family, criterion, evidence}` with recorded report refs — for `compatible_scientific`. Supplying both, or neither, is a typed refusal. A binary pass rate at 1.0 is a typed no-headroom refusal: close with first reject reason containing literal `no-headroom` (for information inadequacy, `no-headroom: no_information`), redesign and re-declare; never weaken evaluators.
 
 Treat proposal as immutable preregistration. Seal fingerprints the already-preregistered eval contract; it is not permission to design after seeing baseline results.
 
@@ -159,16 +182,20 @@ Run `grounding-verify` as a decoupled audit over the exact report and retained s
 
 ### 7. Resolve through human review
 
-The algedonic review chairs disposition. Today’s registry can honestly call `selection_record(selected|rejected)` only for a genuinely binary preregistered claim. Never encode `corroborated`, `inconclusive` or `evidence_of_practical_equivalence` merely by renaming them selected/rejected.
+The algedonic review chairs disposition. Pass `FindingsSpec.typed_scientific_outcome` **verbatim** into `selection_record`'s `scientific_outcome` field — never renamed, never re-encoded as a binary verdict. The six values are the ED-2 vocabulary exactly: `rejected`, `corroborated`, `evidence_of_practical_equivalence`, `inconclusive`, `measurement_void`, `design_void`.
 
-- Binary claim held/refuted: record selected/rejected honestly; linked goal may be judged and operator-scored.
-- `measurement_void`, `design_void`, `inconclusive`, corroboration without a binary decision, or practical-equivalence result: preserve the FindingsSpec and review decision; if the registry cannot type it, close only with an applicable literal void marker or stop at schema mismatch. Never pollute the Brier record.
+Supply `scientific_outcome` **alone**. Do not also supply `verdict`: the tool layer synthesizes the stored resolution token from whichever single field is given, which is what satisfies the store's `verdict == outcome` equality check; supplying both is a typed `SelectionResolutionConflict` refusal. A `rejected` outcome still requires non-empty `reject_reasons`.
+
+- `rejected` and `corroborated` enter the Brier calibration record. A linked goal exists only for a genuinely binary claim, so only these two can judge and score one.
+- `evidence_of_practical_equivalence`, `inconclusive`, `measurement_void` and `design_void` are excluded from calibration **on the typed field itself** — no literal marker string is needed, and none should be invented. Preserve the FindingsSpec and the review decision; the fossil states honestly that the claim was neither held nor refuted.
+
+Literal `no-headroom` / `measurement-void` markers remain the closure path for **artifact-layer experiments only** (`self-improvement` owns those; they resolve through `verdict`, which has no typed field). A scientific design never needs them.
 
 Refinement requires a new versioned `HypothesisSpec` with lineage. Evidence that suggested it is exploratory and cannot confirm it; use a fresh sealed experiment or disjoint confirmatory set.
 
 ### 8. Metacognitive check and bounded improvement
 
-Before execution, record the design’s expected outcome and confidence. After execution, compare expectation with observation. Score only genuinely binary resolved claims. Periodically inspect calibration across experiments and revise the design method when systematic error appears; never count `design_void`, `measurement_void` or `inconclusive` as refutations.
+Before execution, record the design’s expected outcome and confidence. After execution, compare expectation with observation. Only `rejected` and `corroborated` outcomes carry a linked goal to score. Periodically inspect calibration across experiments and revise the design method when systematic error appears; never count `design_void`, `measurement_void` or `inconclusive` as refutations.
 
 Apply the conclusions-update gate HT-1 after each completed measurement batch:
 
@@ -182,8 +209,8 @@ Simple reconfirmation keeps the prior conclusion. At most three rejected updates
 
 | Template | Purpose |
 |---|---|
-| `registry-adapter.j2` | Classify the evidence-bearing semantic preconditions for mapping a complete `DesignSpec` onto the current artifact-oriented experimentation contract; it emits HT-R inputs and schema-evolution evidence, never a compatibility verdict or declaration args. |
-| `registry-declaration.j2` | After HT-R=`compatible`, map the versioned scientific artifacts, partitions, report schema and binary resolution into proposed registry arguments for HT-RM validation. |
+| `registry-adapter.j2` | Classify the evidence-bearing semantic preconditions for mapping a complete `DesignSpec` onto the current experimentation contract, for both the binary and scientific headroom arms; it emits HT-R inputs, never a compatibility verdict or declaration args. |
+| `registry-declaration.j2` | After HT-R returned a compatible arm, map the versioned scientific artifacts, partitions, report schema and (binary arm) resolution into proposed registry arguments for HT-RM validation. |
 | `report.j2` | Produce the hypothesis-testing study report from sealed design, real run reports, FindingsSpec, registry lineage and audit results, with proposed checks separated from executed checks. |
 | `conclusions.j2` | Apply HT-1 to update the distilled conclusion only on contradiction, new category, recommendation flip or meaningful refinement; reconfirmation keeps the prior text. |
 
@@ -216,9 +243,14 @@ Copy these complete contexts at render call sites; do not reconstruct them from 
 ## Regression case
 
 - HT-1: contradiction/new_category/flip/refinement → `update`; reconfirmation → `keep`.
-- Compatible registry path: meaningful control + binary rubric rate + binary claim + expressible reports + positive run budget + real disjoint partitions → HT-R `compatible`; registry declaration renders only then, and HT-RM must pass before `experiment_propose`.
-- Incompatible paths: single-arm calibration, observational estimation without binary pass rate, non-binary corroboration, or missing partitions → HT-R `registry_schema_mismatch`; declaration mapper remains uncalled and no declaration args exist.
-- Server constraints: pre-seal challenger fitness refused; post-seal missing/wrong seal refused; overlapping final refs refused; baseline 1.0 refused; changed DesignSpec produces a different fingerprint/new experiment.
+- Binary arm: meaningful control + binary rubric rate + genuinely binary claim + expressible reports + positive run budget + real disjoint partitions + versioned DesignSpec + bound executor → HT-R `compatible_binary`; seal attests `baseline_pass_rate`.
+- Scientific arm: single-arm calibration, observational estimation or equivalence with a tagged `{design_family, criterion, evidence}` criterion and the common inputs → HT-R `compatible_scientific`; seal attests `scientific_headroom`. These designs are admitted, not refused.
+- Both attestations available → `compatible_binary` (preference order, not mutual exclusion); binary headroom with a non-binary claim and no scientific criterion → `registry_schema_mismatch`.
+- Genuine mismatch: missing baseline arm, inexpressible rubrics, zero run budget, missing partitions, unversioned DesignSpec, unbound executor, or neither attestation → HT-R `registry_schema_mismatch`; declaration mapper remains uncalled and no declaration args exist.
+- Declaration shape: `design_spec` is the top-level `experiment_propose` argument with non-empty `spec_version` and is never duplicated inside `eval_set`; HT-RM refuses a dual write.
+- Arm registration: every predeclared arm registered before measurement — one baseline, challengers, ablations each naming `parent_variant_id`; a parentless ablation is refused.
+- Resolution: the ED-2 outcome passes verbatim into `scientific_outcome`, supplied alone; all six values round-trip unchanged; `rejected` carries non-empty reasons; the four non-calibrating outcomes are excluded from Brier on the typed field, with no literal marker invented.
+- Server constraints: pre-seal challenger fitness refused; post-seal missing/wrong seal refused; overlapping final refs refused; both-or-neither seal attestation refused; binary pass rate 1.0 refused; changed DesignSpec produces a different fingerprint/new experiment.
 - End-to-end functional trial: a real operator-supplied hypothesis runs design → honest executor boundary → FindingsSpec → grounding audit → human review. A synthetic case does not satisfy this trial.
 
 ## Constraints
