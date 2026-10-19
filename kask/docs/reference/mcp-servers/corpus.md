@@ -202,6 +202,50 @@ goal's durable record; the curator-memory batch record
 location (the operator-approved batch-record path; precedent
 `batch_prune_2026-10-07_spreadsheet`).
 
+### Shared h_mems storage contract and the shipped-bundle projection
+
+The `hmems`/`embeddings`/`vec0` storage schema in `hkask-storage` has three
+live consumers with different table requirements, so no schema change can be
+made "for one of them" without naming the others:
+
+| Consumer | File | Requires `hmems` | Why |
+|---|---|---|---|
+| Curator memory (read-write) | `~/.local/share/zed-kask/agents/curator/curator.db` (path resolution: `HKASK_CURATOR_DB` else `agents/curator/curator.db`, `kask_bridge/src/memory/curator_stores.rs:21`) | yes | `MemoryStore` deletion paths depend on it; ingestion writes it |
+| Corpus memory (read-write) | `~/.local/share/zed-kask/mcp/corpus/corpus-memory.db` | yes | QA/passage storage writes it (`corpus_ingest_qa`); the style-centroid path reads salience/method-signal rows (`compose.rs` `query_deduped`) |
+| Shipped bundle (read-only) | the `zk-ref-open.db` parts named by `kask/registry/zk-ref-open/bundle.json` | no | the federated read path reads exactly `embeddings` + `vec_embeddings` (`federated_recall.rs` — `hmems` is producer-owned and never read there) |
+
+The 2026-10-18 stripped export (commit `31d19d877b`, run
+`f22e5893…`, 269,821 passages, 2.3 GiB shipped vs the 3.4 GiB unstripped
+authoring fine.db) lands the projection this table names:
+`corpus_export_bundle` strips the producer-owned tables the read-only
+distribution path never reads (`DISTRIBUTION_EXCLUDED_TABLES`,
+`hkask-mcp-corpus/src/tools/calibration.rs`), then reclaims their pages. This
+is a deliberate consumer-scoped divergence, not a schema change: the
+authoring sealed run keeps every row — a stripped copy is read-only by
+construction, and opening one read-write would read every embedding as an
+orphan (`MemoryStore::delete_orphaned_embeddings` joins on `hmems`). Any
+future storage-format change (a column, an index, a vec0 layout) must state
+its disposition for all three consumers before it lands.
+
+Interior orphan `vec0` rows (a vector whose metadata row was deleted through
+a path that did not also delete the vector — therapy SQL passes, interrupted
+re-embeds) are invisible to retrieval (KNN inner-joins them out) and cost
+space only. The distribution path is always clean (`rebuild_vector_index`
+rebuilds vec0 from canonical rows at export). The authoring databases are
+the only unswept copies; sweep them with the maintenance binary:
+
+```bash
+HKASK_DB_PASSPHRASE=… cargo run -p hkask-storage --bin purge-orphaned-vectors -- <db> [<db> …]
+```
+
+The binary opens each database through the production pool so vec0 shadow
+tables stay consistent (a raw `DELETE FROM vec_embeddings` from the
+`sqlcipher` CLI would corrupt the index), checkpoints, sweeps, and full-
+vacuums. A database open read-write elsewhere reports `ConsumersActive`
+rather than interleaving writes (the exclusive maintenance lease). Executed
+live 2026-10-19 over the zk-ref-open authoring DB (the
+`.pre-orphan-sweep-2026-10-19` copy is the pre-sweep snapshot).
+
 ### Document size and containment
 
 Normal PDF conversion passes the contained canonical path to Poppler and uses
