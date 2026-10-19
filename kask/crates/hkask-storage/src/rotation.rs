@@ -754,6 +754,55 @@ pub(crate) mod tests {
         path
     }
 
+    /// Retry a should-succeed exclusive-lease operation with a bounded wait
+    /// on the lease refusal.
+    ///
+    /// The tests drop their pools and immediately call
+    /// `rotate_passphrase`/`export_database_keyed`, encoding a synchronous-
+    /// teardown assumption. The lease outlives the last drop by a small,
+    /// nondeterministic margin on this machine: parallel-suite runs fail
+    /// roughly one in six should-succeed acquires with `ConsumersActive`
+    /// ("would block") — the failing test varies, the tempdirs never
+    /// overlap, and rotation tests alone never reproduce. Every holder the
+    /// code can name (the pool cache, the manager, each
+    /// `LeasedSqliteConnection`, the r2d2 worker tasks) drops synchronously,
+    /// so the residual holder is in the async teardown path the harness
+    /// cannot observe; the exact holder is UNCONFIRMED.
+    ///
+    /// Production does not have this race: callers must close every consumer
+    /// BEFORE rotation (the documented lease precondition) and tolerate
+    /// `ConsumersActive` as a retryable signal. The retry here mirrors that
+    /// contract for the tests' own should-succeed acquires — bounded attempts
+    /// with a short sleep, so a test still fails fast if the lease is held by
+    /// a REAL leak (the other asserts in this module hold real consumers open
+    /// and expect the refusal; they never route through this helper).
+    /// expect: "A closed-over store's exclusive maintenance succeeds within a bounded wait" [P1]
+    fn lease_after_close<T>(
+        mut attempt: impl FnMut() -> Result<T, RotationError>,
+    ) -> Result<T, RotationError> {
+        const ATTEMPTS: usize = 40;
+        let mut last = None;
+        for ordinal in 0..ATTEMPTS {
+            match attempt() {
+                Ok(value) => return Ok(value),
+                Err(error @ RotationError::ConsumersActive { .. }) => {
+                    // 25 ms x 40 ≈ 1 s ceiling — far above the observed
+                    // teardown margin, far below a real leak's hold time.
+                    eprintln!(
+                        "lease_after_close: attempt {}/{} refused ({}); retrying",
+                        ordinal + 1,
+                        ATTEMPTS,
+                        error
+                    );
+                    last = Some(error);
+                    std::thread::sleep(std::time::Duration::from_millis(25));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Err(last.expect("at least one refusal when the loop exhausts"))
+    }
+
     /// expect: "Key changes never silently strand my data behind the wrong key" [P1]
     #[test]
     fn verify_database_key_accepts_the_matching_passphrase_and_rejects_a_wrong_one() {
@@ -804,8 +853,12 @@ pub(crate) mod tests {
             .to_string_lossy()
             .into_owned();
 
-        export_database_keyed(&source, "old-passphrase", &destination, "bundle-key-1234")
-            .expect("keyed export");
+        // `make_test_db`'s pool closed at helper scope; the lease can
+        // marginally outlive it in async teardown (see `lease_after_close`).
+        lease_after_close(|| {
+            export_database_keyed(&source, "old-passphrase", &destination, "bundle-key-1234")
+        })
+        .expect("keyed export");
 
         assert_eq!(
             std::fs::read(&source).expect("re-read source"),
@@ -863,7 +916,10 @@ pub(crate) mod tests {
             .to_string_lossy()
             .into_owned();
         std::fs::copy(&source, &copy).expect("copy");
-        rotate_passphrase(&copy, "old-passphrase", "new-key-12345").expect("rotate");
+        // make_test_db's pool closed at helper scope; the lease can
+        // marginally outlive it in async teardown (see `lease_after_close`).
+        lease_after_close(|| rotate_passphrase(&copy, "old-passphrase", "new-key-12345"))
+            .expect("rotate");
         let header = std::fs::read(&copy).expect("read rotated");
         assert!(
             header[..16].iter().any(|byte| *byte != 0),
@@ -985,7 +1041,10 @@ pub(crate) mod tests {
                  DELETE FROM feeds WHERE id=100;",
             ).expect("populated RSS schema");
         }
-        rotate_passphrase(&path, "old-passphrase", "new-passphrase").expect("rotate populated RSS");
+        // The setup's pool closed at scope end; the lease can marginally
+        // outlive it in async teardown (see `lease_after_close`).
+        lease_after_close(|| rotate_passphrase(&path, "old-passphrase", "new-passphrase"))
+            .expect("rotate populated RSS");
         let database = Database::open(&path, "new-passphrase").expect("reopen");
         let pool = database.sqlite_pool().expect("pool");
         let connection = pool.get().expect("connection");
@@ -1060,7 +1119,10 @@ pub(crate) mod tests {
                 .expect("row identity");
             connection.execute_batch("INSERT INTO vec_embeddings(rowid,embedding) SELECT rowid,vector FROM embeddings;").expect("initial index");
         }
-        rotate_passphrase(&path, "old-passphrase", "new-passphrase").expect("rotate");
+        // The setup's pool closed at scope end; the lease can marginally
+        // outlive it in async teardown (see `lease_after_close`).
+        lease_after_close(|| rotate_passphrase(&path, "old-passphrase", "new-passphrase"))
+            .expect("rotate");
         let database = Database::open(&path, "new-passphrase").expect("reopen");
         let driver: std::sync::Arc<dyn crate::database::driver::DatabaseDriver> =
             std::sync::Arc::new(crate::database::sqlite::SqliteDriver::new(
@@ -1161,8 +1223,9 @@ pub(crate) mod tests {
                     )
                     .expect("malformed canonical vector fixture");
             }
-            let error = rotate_passphrase(&path, "old-passphrase", "new-passphrase")
-                .expect_err("invalid vector must fail");
+            let error =
+                lease_after_close(|| rotate_passphrase(&path, "old-passphrase", "new-passphrase"))
+                    .expect_err("invalid vector must fail");
             assert!(matches!(error, RotationError::Sql { .. }));
             assert_eq!(count_hmems(&path, "old-passphrase"), 1);
             assert_eq!(count_embeddings(&path, "old-passphrase"), 1);
@@ -1189,8 +1252,9 @@ pub(crate) mod tests {
                 )
                 .expect("invalid foreign-key fixture");
         }
-        let error = rotate_passphrase(&path, "old-passphrase", "new-passphrase")
-            .expect_err("foreign-key violation");
+        let error =
+            lease_after_close(|| rotate_passphrase(&path, "old-passphrase", "new-passphrase"))
+                .expect_err("foreign-key violation");
         assert!(error.to_string().contains("foreign-key check failed"));
         assert_eq!(count_hmems(&path, "old-passphrase"), 1);
         assert!(!Path::new(&format!("{path}.new")).exists());
@@ -1222,8 +1286,10 @@ pub(crate) mod tests {
         assert_eq!(count_hmems(&path, "old-passphrase"), 1);
         assert_eq!(count_embeddings(&path, "old-passphrase"), 1);
 
-        // Rotate.
-        rotate_passphrase(&path, "old-passphrase", "new-passphrase").expect("rotate");
+        // Rotate. make_test_db's pool closed at helper scope; the lease can
+        // marginally outlive it in async teardown (see `lease_after_close`).
+        lease_after_close(|| rotate_passphrase(&path, "old-passphrase", "new-passphrase"))
+            .expect("rotate");
 
         // The old passphrase should no longer work — `sqlite_pool()` verifies
         // the passphrase via a probe connection.
@@ -1311,7 +1377,10 @@ pub(crate) mod tests {
         ));
         connection.execute("INSERT INTO hmems (id,entity,attribute,value,valid_from,owner_webid) VALUES ('last-write','entity','attr','value','2026-01-01T00:00:00Z','webid:test')", []).expect("last in-flight write");
         drop(connection);
-        rotate_passphrase(&path, "old-passphrase", "new-passphrase").expect("all consumers closed");
+        // Every named consumer is closed; the lease can marginally outlive
+        // the drops in async teardown (see `lease_after_close`).
+        lease_after_close(|| rotate_passphrase(&path, "old-passphrase", "new-passphrase"))
+            .expect("all consumers closed");
         assert_eq!(count_hmems(&path, "new-passphrase"), 2);
     }
 
@@ -1351,11 +1420,15 @@ pub(crate) mod tests {
         ));
         drop(pool);
         drop(database);
-        rotate_passphrase(
-            alias.to_str().expect("path"),
-            "old-passphrase",
-            "new-passphrase",
-        )
+        // Every named consumer is closed; the lease can marginally outlive
+        // the drops in async teardown (see `lease_after_close`).
+        lease_after_close(|| {
+            rotate_passphrase(
+                alias.to_str().expect("path"),
+                "old-passphrase",
+                "new-passphrase",
+            )
+        })
         .expect("rotate canonical target");
         assert!(
             std::fs::symlink_metadata(&alias)
@@ -1389,8 +1462,13 @@ pub(crate) mod tests {
             let original = std::fs::read(&path).expect("original bytes");
             let artifact = format!("{path}{suffix}");
             std::fs::write(&artifact, &original).expect("recovery file");
+            // Not lease_after_close: the refusal must be RecoveryRequired —
+            // an unrelated ConsumersActive would otherwise pass this assert.
             let result = rotate_passphrase(&path, "old-passphrase", "new-passphrase");
-            assert!(result.is_err(), "must not overwrite {suffix}");
+            assert!(
+                matches!(result, Err(RotationError::RecoveryRequired { .. })),
+                "must refuse {suffix} for the recovery reason, got {result:?}"
+            );
             assert_eq!(
                 std::fs::read(&artifact).expect("artifact retained"),
                 original
