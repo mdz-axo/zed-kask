@@ -1,9 +1,9 @@
 ---
 title: "ADC targeting versus carrier-exposure pilot"
 audience: [researchers, operators, agents]
-last_updated: 2026-10-18
-version: "1.0.0"
-status: "Partial — design and published-data pilot complete; biological execution and decoupled audit blocked"
+last_updated: 2026-10-19
+version: "1.0.3"
+status: "Partial — design, published-data pilot, and decoupled audit complete; targeting estimand ratified on the Colombo tissue-disposition scale with a TOST shape; margin magnitude remains domain-expert-blocked; biological execution blocked"
 domain: "Oncology pharmacology"
 mds_categories: [domain, trust, lifecycle]
 ---
@@ -19,9 +19,31 @@ This is the real functional trial for the `experimental-design` and `hypothesis-
 The testable formulation keeps four live rivals:
 
 1. **Carrier/exposure dominant:** antibody carriage and linker/payload solubility determine intact/released payload exposure, which dominates efficacy.
-2. **Targeting dominant:** antigen-specific binding and internalization deliver a practically meaningful efficacy advantage at matched exposure.
-3. **Release/bystander dominant:** released membrane-permeable payload and bystander diffusion dominate both intact-carrier exposure and target binding.
-4. **Mixed mechanism:** targeting, exposure and release interact; dominance changes with antigen density, tumor transport and linker/payload properties.
+2. **Targeting dominant:** selective delivery to tumor tissue — not mere antigen binding — delivers a practically meaningful efficacy advantage at matched total-body exposure.
+3. **Release/bystander dominant:** released membrane-permeable payload and bystander diffusion dominate both intact-carrier exposure and selective delivery.
+4. **Mixed mechanism:** delivery, exposure and release interact; dominance changes with antigen density, tumor transport and linker/payload properties.
+
+### Targeting estimand — Colombo-anchored recalibration (v1.0.2)
+
+**Operator correction (2026-10-19):** the estimand for "targeting" is a **tissue-level biodistribution** question — whether the drug goes *only* to the target tissue, or *everywhere*, or to *some places but not others in some other pattern* — not a receptor-binding question. Binding is binding; binding is not targeting. The earlier formulation's rival 2 ("antigen-specific binding and internalization") conflated the two and is corrected above to *selective delivery*.
+
+**Published authority (Raffaele Colombo, ADC therapeutic development, Zymeworks):**
+
+- Colombo R, Rich JR. "The therapeutic window of antibody drug conjugates: A dogma in need of revision." *Cancer Cell* 2022;40:1255–1263. DOI `10.1016/j.ccell.2022.09.016`, PMID 36240779. The revision thesis: "the tolerated doses of ADCs are not significantly different from those of related small molecules" — i.e. selective delivery does not widen the tolerable dose the way the magic-bullet model predicts.
+- Colombo R, Tarantino P, Rich JR, LoRusso PM, de Vries EGE. "The Journey of Antibody–Drug Conjugates: Lessons Learned from 40 Years of Development." *Cancer Discov* 2024;14:2089–2108. DOI `10.1158/2159-8290.CD-24-0708`. Open-access full text. Load-bearing statements, verbatim: "the primary disposition of ADCs stems from normal tissue uptake, an element downplayed by the 'magic bullet' concept"; "the majority of an injected ADC dose is metabolized in normal tissues and not at the tumor site"; direct tumor targeting accounts for **less than 1% of the injected dose**, with **>99%** distributing to normal tissues; and, in closing, "the spotlight has gradually moved from the 1% of conjugate that reaches the tumor to the 99% that reaches other parts of the body."
+- Vogel M, Colombo R, Tarantino P. "Beyond the Guided Missile Paradigm: Embracing the Complexity of Antibody-Drug Conjugates." *J Clin Oncol* 2025;43:3339–3344. DOI `10.1200/JCO-25-01235`, PMID 40961403. The guided-missile analogy is "being replaced by a more complex concept involving targeted payload delivery, sustained release in circulation and the tumor microenvironment, and immune interactions."
+
+**Consequence for the estimand.** Under Colombo's framing the primary quantity is a **tissue disposition ratio** — the fraction of injected dose delivered to tumor tissue versus the normal-tissue distribution, and its pattern (tumor-only / uniform / heterogeneous-partial). The rival contrast is *selective delivery versus non-selective distribution at matched total-body exposure*, which is a biodistribution measurement, not a binding assay. Target occupancy and internalization remain supporting measurements (they can produce binding without selective delivery), never the estimand itself.
+
+### Margin ratification record (v1.0.3, operator instruction 2026-10-19)
+
+Operator instruction 2026-10-19 ("proceed with all the open items 2, 3 and Q4–Q6") closed Q4–Q6 on the agent's recommendations, each stated with its functional consequence at proposal time:
+
+- **Q4 — ratifying authority.** The operator (PI) ratified the estimand, the scale and the test shape. The **margin magnitude** (the provisional 20%) remains reserved to a domain expert per the operator's original ruling — the agent cannot ratify a magnitude and has not. A published-derivation route was probed and found empty: OpenAlex full-text search for an ADC disposition-ratio equivalence-margin magnitude returned no on-point result (2026-10-19; 5 hits, none establishing a magnitude). Absence of a hit is not proof of absence — recorded as an empty probe, not as evidence the literature lacks one.
+- **Q5 — scale.** The margin is stated on the **tissue disposition ratio**: a relative practical-equivalence bound on the tumor:normal tissue payload-delivery ratio, compared between the targeted and matched-nonbinding antibody arms at matched total-body exposure. The provisional magnitude is 20% relative.
+- **Q6 — shape.** **TOST** (two one-sided tests). The operator's mechanism claim — efficacy driven by carriage/exposure, not targeting — is an equivalence claim about the targeting contribution, so the confirmatory test bounds the absolute selective-delivery difference inside the margin rather than merely testing non-inferiority in one direction.
+
+The confirmatory factorial remains **BLOCKED**, now on a single remaining condition: the domain-expert ruling on the margin magnitude. Estimand, scale, shape and ratification authorities are recorded above; nothing else gates execution.
 
 ## Versioned design artifacts
 
@@ -43,9 +65,9 @@ The testable formulation keeps four live rivals:
 - **Units:** blocked isogenic antigen-positive and antigen-negative organoid/xenograft systems; random allocation within model/batch.
 - **Factors:** antibody specificity (targeted versus matched nonbinding isotype), antigen state (positive/negative), linker-payload hydrophilicity/solubility condition; dose adjusted or modeled to support exposure matching.
 - **Controls:** unconjugated targeted/nonbinding antibodies; free payload at matched released-payload exposure; vehicle; positive cytotoxic control; orthogonal target-occupancy/internalization assay.
-- **Measurements:** intact ADC, total/conjugated antibody and released payload PK; plasma and tumor AUC; antigen density; target occupancy/internalization; spatial penetration; tumor-growth-inhibition AUC/regression; toxicity; linker stability/DAR over time.
-- **Identification:** specificity × antigen-state interaction at matched intact/released-payload exposure identifies targeting contribution; hydrophilicity/exposure main effect identifies carrier/solubility contribution; released-payload/bystander measurements distinguish the release rival; material interactions support the mixed mechanism.
-- **Information:** simulate the full interaction model using pilot variance; power/precision target is the primary interaction confidence width relative to a domain-ratified practical margin. The provisional 20% margin is not executable until ratified.
+- **Measurements:** intact ADC, total/conjugated antibody and released payload PK; plasma and tumor AUC; **tissue-level biodistribution (fraction of injected dose per organ: tumor versus liver, spleen, kidney, marrow — the Colombo disposition ratio)**; antigen density; target occupancy/internalization (supporting, not the estimand); spatial penetration; tumor-growth-inhibition AUC/regression; toxicity; linker stability/DAR over time.
+- **Identification:** specificity × antigen-state interaction at matched total-body exposure identifies the *selective-delivery* (targeting) contribution; the tissue disposition ratio (fraction of injected dose in tumor versus normal tissue) is the primary observable, with target occupancy/internalization as supporting measurements that can be present without selective delivery; hydrophilicity/exposure main effect identifies carrier/solubility contribution; released-payload/bystander measurements distinguish the release rival; material interactions support the mixed mechanism.
+- **Information:** simulate the full interaction model using pilot variance; power/precision target is the primary interaction confidence width relative to a domain-ratified practical margin. The margin's scale (tumor:normal tissue disposition ratio, relative) and TOST shape are ratified (v1.0.3); the 20% magnitude remains provisional pending the domain-expert ruling.
 - **Analysis:** preregister mixed-effects model, primary interactions, missing-data/exclusion rules, multiplicity, sensitivity to exposure matching and measurement error.
 - **Stopping:** fixed design unless an independently justified sequential method is preregistered; no naive peeking. Positive `max_runs` is set by the final power/simulation result.
 - **Executor:** qualified human biological laboratory under applicable ethics/safety approvals. The agent did not execute it.
@@ -99,13 +121,13 @@ Three Curator schema-evolution directives were accepted and are tracked by task 
 
 - Research run `b2a919f746200d85` opened before ADC design.
 - Hamblett 2004 primary full text retrieved and agent-annotated verified.
-- Thurber et al. 2008 and McCombs/Owen 2015 full texts retrieved and agent-annotated verified.
+- Thurber et al. 2008 (PMC2820307) full text retrieved and agent-annotated verified; the McCombs/Owen mechanistic-model source (PMC3729444) was retrieved but carries no agent verification annotation in run `b2a919f746200d85` — v1.0.1 corrects an earlier over-claim that both were verified.
 - Hamblett AUC×DAR arithmetic executed through `lisp_eval`.
 - ED-0 returned `ready`.
 - ED-1 returned `design_void: no_discrimination` for the observational pilot, `execute` for the factorial design, and `design_void: not_identified` for the uncalibrated modeling alternative.
 - ED-2 returned `inconclusive` for the executed reanalysis.
 - Registry adapter rendered and exposed the schema mismatch; three directives and one tracked task were created.
-- **Pin-case set closed (all five named cases, plus exhaustive branch coverage).** Executed through `lisp_eval` against the gate forms exactly as they appear in `.agents/skills/experimental-design/SKILL.md` §3 and §6. Every ED-1 branch (10) and every ED-2 branch (6) was reached, and each returned a distinct, correct classification:
+- **Pin-case set closed (the five named ED-1 cases plus the ED-2 valid-equivalence case — six table rows below — and exhaustive branch coverage).** Executed through `lisp_eval` against the gate forms exactly as they appear in `.agents/skills/experimental-design/SKILL.md` §3 and §6. Every ED-1 branch (10) and every ED-2 branch (6) was reached, and each returned a distinct, correct classification:
 
 | Pin case | Gate | Inputs varied | Returned |
 |---|---|---|---|
@@ -139,17 +161,19 @@ Three Curator schema-evolution directives were accepted and are tracked by task 
 - **Imprecision never becomes support.** With `prediction_contradicted=false`, `severe=true` and `precision_adequate=false`, ED-2 returns `inconclusive`; `corroborated` requires `severe` **and** `precision_adequate` together. Verified by executing both input sets.
 - Branch-count correction: the ED-1 form carries **10** branches and ED-2 **6**. An earlier working note recorded ED-1 as 8; the count was re-measured by exercising every branch rather than by re-reading the note.
 - Gate-name correction: the ED-1 measurement branch now returns `measurement_void: measurement_invalid` rather than `instrument_invalid`. The narrower name implied the instrument was the fault; the Wright case is precisely a reference-data and transportability failure, so the auxiliary ledger must localize among instrument, reference data, analysis and domain shift.
-- Structural gates re-run green at this tree state with the two new templates included: `check-skill-lisp-forms.sh` (283 files, 59 skills, 319 Lisp candidates, 0 defects), `check-skill-crossrefs.sh`, `check-template-contracts.sh` (222 templates, 0 flagged), prescreen (59/59 D/P labelled, 59/59 initial+target), contract audit (222 templates, 0 flagged), call-site audit (210 call sites, 0 flagged), S9/S10 sweep (59 SKILL.mds, 0 flagged), `check-skill-crate-refs.sh` (0 dangling), `cargo test -p agent --lib corpus_` (4 render/strip tests), `-p agent_skills` (100 tests), `-p hkask-bridge-ontology --lib` (77 tests), `-p kask_bridge classifier` (3 tests). Test runs used `kask/scripts/cargo-test-nonzero.sh` so a filter matching zero tests fails rather than reporting a false green.
+- Structural gates re-run green at this tree state with the two new templates included: `check-skill-lisp-forms.sh` (283 files, 59 skills, 319 Lisp candidates, 0 defects), `check-skill-crossrefs.sh`, `check-template-contracts.sh` (222 templates, 0 flagged), prescreen (59/59 D/P labelled, 59/59 initial+target; one foreign template flag, `metacognition/falstaffian-rotation.j2` LOW OVERLAP 22%, from commit `6af8ab2e18` and outside this pass's scope), call-site audit (210 call sites, 0 flagged), S9/S10 sweep (59 SKILL.mds, 0 flagged), `check-skill-crate-refs.sh` (0 dangling), `cargo test -p agent --lib corpus_` (4 render/strip tests), `-p agent_skills` (100 tests), `-p hkask-bridge-ontology --lib` (77 tests), `-p kask_bridge classifier` (3 tests). Test runs used `kask/scripts/cargo-test-nonzero.sh` so a filter matching zero tests fails rather than reporting a false green.
 
 ### Proposed, not executed
 
 - No new organoid, animal or human-subject measurement was performed.
 - No independent confirmatory exposure-matched factorial study was performed.
 - No model-calibrated PBPK/spheroid validation was performed.
-- Decoupled `grounding-verify` could not run: three independent inference routes failed because provider catalogs named retired models. This report therefore carries an **in-thread self-check only**, with its confidence capped accordingly; no blanket verification label is claimed.
+- At authoring time the decoupled `grounding-verify` audit could not dispatch. Root cause, identified and fixed 2026-10-19: the operator's swarm `default_agent_model` setting pinned one retired model (`deepinfra/XiaomiMimo/Mimo-V2.6-Pro`), and every unpinned local agent card resolved to it — a single-setting failure recorded symptomatically above as "three retired provider routes." After the settings correction, a decoupled agent audit ran (2026-10-19): 39 claims checked (27 internal, 12 external), no high-severity finding; seven wording/label findings (M2, L1–L5) were filed, verified against the tree, and applied in this revision. No blanket verification label is claimed.
 - The Shadish–Cook–Campbell validity framework remains **partially verified**: research run `24d7fc791edc83f2` reached only the publisher's bibliographic record (Houghton Mifflin, 2002; ISBN 0395615569; 623 pages) and its stated four-part structure, with no accessible primary full text. The framework's four validity types are therefore cited as a structural organizer, not quoted; a direct citation still requires the primary text.
-- `hkask-bridge-ontology`'s `ontology_literal_guard` integration test fails at this tree state on `kask/mcp-servers/hkask-mcp-kata-kanban/src/ontology.rs:371`. That file belongs to a concurrent stream, is unmodified from HEAD, and the guard scans only `.rs` files — this correction pass modified no `.rs` file. Reported, not fixed: it is outside this work's write scope.
+- `hkask-bridge-ontology`'s `ontology_literal_guard` integration test fails at this tree state on `kask/mcp-servers/hkask-mcp-kata-kanban/src/ontology.rs:371`. That file belongs to a concurrent stream, is unmodified from HEAD, and the failing test scans `.rs` files only (the same guard file separately verifies `.j2` template terms; that test is unaffected) — this correction pass modified no `.rs` file. Reported, not fixed: it is outside this work's write scope.
 
 ## Reference-model research status
 
 Research run `1de4616cbe7c793d` bound Platt, NIST/SEMATECH, JCGM/VIM, Wasserstein/Lazar, Greenland et al., Lakens equivalence and sample-size justification, Wald, Nosek, Munafò, NASA/Smithsonian Wright history, Mayo, Lakatos and anytime-valid guidance to DesignSpec fields or gates. Shadish–Cook–Campbell was retrieved only through secondary sources and remains partially verified pending direct primary-text retrieval.
+
+Research run `88aae61a6e98a398` bound the Colombo ADC-disposition reference models for the targeting estimand: Colombo & Rich 2022 (`10.1016/j.ccell.2022.09.016`, abstract + citation metadata retrieved from the publisher landing page; full text TDM-reserved), Colombo et al. 2024 (`10.1158/2159-8290.CD-24-0708`, open-access full text, 20 pages, retrieved and quoted verbatim), and Vogel/Colombo/Tarantino 2025 (`10.1200/JCO-25-01235`, full text retrieved). All three are recorded on the run as `partial` (retrieved, agent-annotated; not independently audited) — no blanket verification label is claimed.
