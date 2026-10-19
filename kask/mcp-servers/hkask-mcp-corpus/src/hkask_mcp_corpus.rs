@@ -35,6 +35,7 @@ mod helpers;
 mod index;
 pub(crate) mod inference_svc;
 pub(crate) mod ocr;
+pub(crate) mod ontology;
 pub(crate) mod path_safety;
 #[cfg(test)]
 mod property_tests;
@@ -243,7 +244,7 @@ hkask_mcp_server::mcp_server!(
         pub inference_router: Arc<dyn InferencePort>,
         pub index: Arc<crate::index::PassageIndex>,
         pub llm_ocr: Arc<crate::ocr::llm_ocr::LlmOcrExecutor>,
-    }
+    } = crate::ontology::annotate;
 );
 
 // ── Server constructor + core methods ──────────────────────────────────────
