@@ -2054,7 +2054,10 @@ fn main() {
                                 // The health source is the `RealMemoryPort` itself —
                                 // it implements `MemoryHealthSource` by reading from
                                 // the curator's `MemoryStore` behind the self-healing
-                                // handle.
+                                // handle. `TripleCount` counts the sheddable tiers
+                                // (turn storage + goal events); the additive-by-design
+                                // knowledge layer is exempt (algedonic card 33b0eebb,
+                                // option (A), 2026-10-18).
                                 let memory_health_source: std::sync::Arc<
                                     dyn hkask_regulation::MemoryHealthSource,
                                 > = real_memory_typed.clone();

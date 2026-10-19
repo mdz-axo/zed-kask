@@ -1128,7 +1128,7 @@ fn compute_includes_notify_dispositions() {
 /// the memory-store growth breach escalates through the standard algedonic
 /// path — the board card class is `memory_store_growth` (the reason string
 /// the delivery path carries into the card) — and a store under the ceiling
-/// fires nothing. The sensor reads state (h_mem count vs
+/// fires nothing. The sensor reads state (sheddable-tier h_mem count vs
 /// `triple_count_max`), never events, so the therapy session that reduces
 /// the count is the response, not a new breach: the under-ceiling case is
 /// exactly the post-therapy state.
@@ -1136,7 +1136,7 @@ fn compute_includes_notify_dispositions() {
 async fn growth_breach_escalates_to_the_board_and_recovery_does_not() {
     let (source, regulation) = loop_with_memory_observations();
 
-    // Over the ceiling (fixture h_mem_count 1_000_000 vs the 4_000 default).
+    // Over the ceiling (fixture sheddable-tier count 1_000_000 vs the 4_000 default).
     let over = regulation.sense().await;
     let growth_signal = over
         .iter()
@@ -1165,6 +1165,50 @@ async fn growth_breach_escalates_to_the_board_and_recovery_does_not() {
             .all(|signal| signal.metric != SignalMetric::TripleCount
                 || Deviation::from_signal(signal).is_none()),
         "an under-ceiling store must not deviate on TripleCount"
+    );
+}
+
+/// The re-scope boundary (operator ruling on algedonic card 33b0eebb,
+/// option (A), 2026-10-18): the growth ceiling counts the SHEDDABLE tiers
+/// (turn storage + goal events) — the tiers with forgetting valves, whose
+/// growth above a ceiling genuinely signals a stuck valve. An
+/// additive-tier-only store above the old ceiling's total (1_000_000
+/// knowledge rows, sheddable tiers at 0) must NOT breach — the knowledge
+/// layer is additive-by-design (distillation appends lessons, nothing
+/// deletes them; recall quality is protected by confidence decay, not
+/// deletion). Under the pre-flip sensor (which counted the whole store),
+/// this exact state deviated on TripleCount — that is the recurring
+/// `memory_store_growth` false positive this re-scope eliminates. The
+/// real prefix-scoped exclusion (`sheddable_h_mem_count` against a real
+/// `MemoryStore`) is pinned in `kask_bridge`.
+#[tokio::test]
+async fn additive_only_store_above_the_old_ceiling_does_not_breach() {
+    let (source, regulation) = loop_with_memory_observations();
+
+    // Additive-tier-only growth: case 3 — 1_000_000 knowledge rows,
+    // sheddable tiers at 0.
+    source.0.store(3, std::sync::atomic::Ordering::SeqCst);
+    let sensed = regulation.sense().await;
+    assert!(
+        sensed
+            .iter()
+            .all(|signal| signal.metric != SignalMetric::TripleCount
+                || Deviation::from_signal(signal).is_none()),
+        "an additive-tier-only store must not deviate on TripleCount — the \
+         knowledge layer's growth is distillation working, not a valve stall"
+    );
+
+    // And the positive half still holds: a sheddable-tier breach still fires
+    // (case 0 — the breach state; also asserted by
+    // growth_breach_escalates_to_the_board_and_recovery_does_not).
+    source.0.store(0, std::sync::atomic::Ordering::SeqCst);
+    let breach = regulation.sense().await;
+    assert!(
+        breach
+            .iter()
+            .any(|signal| signal.metric == SignalMetric::TripleCount
+                && Deviation::from_signal(signal).is_some()),
+        "a sheddable-tier store above the ceiling must still deviate on TripleCount"
     );
 }
 
@@ -1207,18 +1251,24 @@ fn loop_with_memory_observations() -> (Arc<MemoryObservations>, CyberneticsLoop)
     (source, regulation)
 }
 
+/// Case-indexed memory-source double: 0 = sheddable tiers at 1_000_000 (the
+/// breach state), 1 = sheddable tiers at 0 (healthy, post-therapy), 2 = store
+/// unavailable (`None` — must mask as unavailability, never as zero), 3 =
+/// additive-tier-only growth (1_000_000 knowledge rows, sheddable tiers at 0 —
+/// the re-scope boundary case; the real prefix-scoped exclusion is pinned in
+/// `kask_bridge` against a real `MemoryStore`).
 struct MemoryObservations(std::sync::atomic::AtomicUsize);
 #[async_trait::async_trait]
 impl crate::MemoryHealthSource for MemoryObservations {
-    async fn h_mem_count(&self) -> Option<usize> {
+    async fn sheddable_h_mem_count(&self) -> Option<usize> {
         match self.0.load(std::sync::atomic::Ordering::SeqCst) {
             0 => Some(1_000_000),
-            1 => Some(0),
+            1 | 3 => Some(0),
             _ => None,
         }
     }
     async fn low_confidence_count(&self, _: f64) -> Option<usize> {
-        self.h_mem_count().await
+        self.sheddable_h_mem_count().await
     }
     async fn memory_life_days(&self) -> f64 {
         if self.0.load(std::sync::atomic::Ordering::SeqCst) == 0 {

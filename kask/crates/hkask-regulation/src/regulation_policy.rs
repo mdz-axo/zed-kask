@@ -19,12 +19,15 @@ pub(crate) enum RegulationReason {
     VarietyDeficitExceeded,
 
     ToolReliabilityDegraded,
-    /// The memory-store growth breach: h_mem count above `triple_count_max` —
-    /// the store has outgrown the ~3-day therapy forgetting-valve cadence.
-    /// Escalates through the standard algedonic path (card class
-    /// `memory_store_growth`); see the `TripleCount` rule in
-    /// `RegulationPolicy::default` and the ceiling's definition at
-    /// `set_points::DEFAULT_TRIPLE_COUNT_MAX` (algedonic card c148d75d).
+    /// The memory-store growth breach: sheddable-tier h_mem count (turn
+    /// storage + goal events) above `triple_count_max` — the sheddable tiers
+    /// have outgrown the ~3-day therapy forgetting-valve cadence. The
+    /// additive-by-design knowledge layer is exempt (algedonic card
+    /// 33b0eebb, option (A), 2026-10-18). Escalates through the standard
+    /// algedonic path (card class `memory_store_growth`); see the
+    /// `TripleCount` rule in `RegulationPolicy::default` and the ceiling's
+    /// definition at `set_points::DEFAULT_TRIPLE_COUNT_MAX` (algedonic card
+    /// c148d75d).
     MemoryStoreGrowth,
     LowConfidenceCountObserved,
     ConsolidationCandidatesObserved,
@@ -148,12 +151,16 @@ impl RegulationPolicy {
                     }],
                 },
                 // ── Memory-store growth (the forgetting-valve breach) → Escalate ──
-                // `TripleCount` is the memory-store growth sensor: h_mem count
-                // above `triple_count_max` means the store has outgrown the ~3-day
-                // therapy forgetting-valve cadence (the verified
-                // curator-process|therapy_forgetting_valve_cadence lesson,
+                // `TripleCount` is the memory-store growth sensor: SHEDDABLE-tier
+                // h_mem count (turn storage + goal events — the tiers with
+                // forgetting valves) above `triple_count_max` means a valve has
+                // stalled past the ~3-day therapy forgetting-valve cadence (the
+                // verified curator-process|therapy_forgetting_valve_cadence lesson,
                 // confidence 0.891 — measured 2026-10-08: the store grew 218 →
                 // 2,863 rows over ~30 days with the lesson unfollowed). The
+                // additive-by-design knowledge layer is exempt — its growth is
+                // distillation working, not a valve stall (algedonic card
+                // 33b0eebb, option (A), 2026-10-18). The
                 // breach escalates through the standard algedonic path (card
                 // class `memory_store_growth`) so the operator sees it in the
                 // next review walk and a therapy session runs — a Notify here

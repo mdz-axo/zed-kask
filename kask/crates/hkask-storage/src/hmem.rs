@@ -1011,6 +1011,25 @@ impl HMemStore {
         self.count_rows("SELECT COUNT(*) FROM hmems", &[])
     }
 
+    /// Count h_mems by entity prefix (LIKE 'prefix%').
+    ///
+    /// The counting counterpart of `query_by_entity_prefix` — same prefix
+    /// semantics (must not contain SQL LIKE wildcards), but returns the row
+    /// count without loading rows. Used by the memory-health growth sensor's
+    /// sheddable-tier count (turn storage + goal events).
+    ///
+    /// expect: "The system provides durable storage for h_mem data"
+    /// \[P3\] Motivating: Generative Space — count by entity prefix
+    /// pre:  prefix is non-empty and contains no LIKE wildcards
+    /// post: returns the number of h_mems whose entity starts with `prefix`
+    #[must_use = "result must be used"]
+    pub fn count_by_entity_prefix(&self, prefix: &str) -> Result<usize, HMemError> {
+        self.count_rows(
+            "SELECT COUNT(*) FROM hmems WHERE entity LIKE ?1",
+            &[DbValue::Text(format!("{}%", prefix))],
+        )
+    }
+
     /// Query h_mems whose `valid_from` (observation timestamp) is older than
     /// the given cutoff. Used by age-based pruning — distinct from confidence
     /// decay, which lowers recall weight but never deletes. An h_mem that is

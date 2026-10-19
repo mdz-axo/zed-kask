@@ -1188,15 +1188,15 @@ pub struct BridgeMemoryPort {
 
 #[async_trait::async_trait]
 impl hkask_regulation::MemoryHealthSource for RealMemoryPort {
-    async fn h_mem_count(&self) -> Option<usize> {
+    async fn sheddable_h_mem_count(&self) -> Option<usize> {
         let store = self.curator_store.get()?;
-        match store.h_mem_count() {
+        match store.sheddable_h_mem_count() {
             Ok(count) => Some(count),
             Err(e) => {
                 tracing::warn!(
                     target: "reg.sensor.memory",
                     error = %e,
-                    "h_mem_count: store query failed — returning None (not 0)"
+                    "sheddable_h_mem_count: store query failed — returning None (not 0)"
                 );
                 None
             }
@@ -1843,6 +1843,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
+
     /// Control: a query with no rare-term signal leaves the dense order
     /// among content rows unchanged — the lexical leg is silent without
     /// signal, and only the metadata penalty applies.
@@ -2077,6 +2078,70 @@ pub(crate) mod tests {
             shared
                 .iter()
                 .any(|h_mem| h_mem.attribute == "kanban_goal_judge")
+        );
+    }
+
+    /// The re-scoped growth sensor, pinned against a REAL `MemoryStore` through
+    /// the production `RealMemoryPort` impl (operator ruling on algedonic card
+    /// 33b0eebb, option (A), 2026-10-18): `sheddable_h_mem_count` counts the
+    /// tiers with forgetting valves — turn storage (`curator:thread:`) plus
+    /// goal events (`curator:goal:`) — and EXCLUDES the additive-by-design
+    /// knowledge layer. A knowledge-only store above the old 4,000 total
+    /// ceiling reads sheddable=0; adding a turn row moves it. This is the
+    /// boundary that stops the recurring `memory_store_growth` false
+    /// positive the pre-flip sensor (whole-store count) produced.
+    #[tokio::test]
+    async fn sheddable_count_excludes_the_additive_knowledge_layer() {
+        use hkask_regulation::MemoryHealthSource as _;
+
+        let port = in_memory_port();
+        let store = port.curator_store.get().expect("curator store");
+        let webid = port.curator_webid;
+
+        // The additive-only state: 5,000 knowledge rows (no entity prefix —
+        // the bare-name / bare-slug knowledge classes), 0 sheddable rows.
+        // Above the old whole-store 4,000 ceiling.
+        for i in 0..5_000 {
+            let entity = format!("knowledge-tier-{i}");
+            let knowledge = hkask_storage::HMem::new(
+                entity.as_str(),
+                "lesson",
+                serde_json::Value::String(format!("knowledge lesson {i}")),
+                webid,
+            );
+            store.store(knowledge).expect("seed knowledge h_mem");
+        }
+        assert_eq!(
+            store.h_mem_count().expect("total count"),
+            5_000,
+            "fixture: the additive-only state is above the old whole-store ceiling"
+        );
+        assert_eq!(
+            port.sheddable_h_mem_count().await,
+            Some(0),
+            "knowledge-only growth must not reach the growth sensor — \
+             distillation working is not a valve stall"
+        );
+
+        // Adding sheddable rows moves the sensed count — both prefixes.
+        let turn = hkask_storage::HMem::new(
+            "curator:thread:shed-thread",
+            "chunk:0",
+            serde_json::Value::String("turn storage row".to_string()),
+            webid,
+        );
+        store.store(turn).expect("seed turn h_mem");
+        let goal = hkask_storage::HMem::new(
+            "curator:goal:shed-goal",
+            "kanban_goal_create",
+            serde_json::json!({"goal_id": "shed-goal"}),
+            webid,
+        );
+        store.store(goal).expect("seed goal h_mem");
+        assert_eq!(
+            port.sheddable_h_mem_count().await,
+            Some(2),
+            "turn storage and goal events are both sensed — the valve-stall tiers"
         );
     }
 

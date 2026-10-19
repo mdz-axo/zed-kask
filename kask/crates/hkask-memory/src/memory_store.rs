@@ -201,6 +201,11 @@ pub(crate) const DEFAULT_MEMORY_LIFE_DAYS: f64 = crate::bayesian::DEFAULT_MEMORY
 /// Entity prefixes holding conversation-turn storage, not knowledge facts.
 const TURN_STORAGE_PREFIX: &str = "curator:thread:";
 
+/// Entity prefix holding kanban goal events (create/judge/score/acknowledge) —
+/// the acknowledge-triggered forgetting valve's tier (card 4cb70cec). Sheddable
+/// like turn storage, unlike the additive-by-design knowledge layer.
+const GOAL_EVENT_PREFIX: &str = "curator:goal:";
+
 /// Unified memory store — one store for all h_mems.
 ///
 /// The ontology blob on each h_mem carries dual-axis anchoring. `store()`
@@ -960,6 +965,31 @@ impl MemoryStore {
 
     pub fn h_mem_count(&self) -> Result<usize, MemoryStoreError> {
         Ok(self.h_mem_store.count()?)
+    }
+
+    /// Count of h_mems in the sheddable tiers — turn storage
+    /// (`curator:thread:`) plus goal events (`curator:goal:`) — the two tiers
+    /// with forgetting valves (the distillation-gated turn pass and the
+    /// acknowledge-triggered goal valve). The knowledge layer is
+    /// deliberately excluded: it is additive-by-design (distillation
+    /// appends candidate lessons and nothing deletes them; recall quality is
+    /// protected by confidence decay, not deletion — operator ruling on
+    /// algedonic card 33b0eebb, option (A), 2026-10-18). This is the count the
+    /// regulation growth sensor (`TripleCount`) senses — the ceiling monitors
+    /// a valve-stall signal on the tiers that CAN shed, not store size
+    /// (option (B), making the system forget true lessons unused, was
+    /// declined; option (C), a recall-visibility floor, is a recall-behavior
+    /// change and would not stop the size alarm without (A)).
+    ///
+    /// Sized against the measured 2026-10-18 steady state: 2,691 turn rows +
+    /// 724 goal rows = 3,415 sheddable vs 1,861 additive knowledge rows — the
+    /// 4,000 ceiling now sits on the tier that grows when a valve stalls.
+    pub fn sheddable_h_mem_count(&self) -> Result<usize, MemoryStoreError> {
+        let turns = self
+            .h_mem_store
+            .count_by_entity_prefix(TURN_STORAGE_PREFIX)?;
+        let goals = self.h_mem_store.count_by_entity_prefix(GOAL_EVENT_PREFIX)?;
+        Ok(turns + goals)
     }
 
     /// Delete an h_mem and, when this was the entity's last row, the

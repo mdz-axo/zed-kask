@@ -384,10 +384,15 @@ impl Sensor for OcrHealthSensor {
 /// This is the `.rules` broken-feedback-loop pattern at structural scale.
 #[async_trait::async_trait]
 pub trait MemoryHealthSource: Send + Sync {
-    /// Total h_mem count (valid h_mems only). `None` if the store is
+    /// Count of h_mems in the sheddable tiers — turn storage
+    /// (`curator:thread:`) plus goal events (`curator:goal:`) — the two tiers
+    /// with forgetting valves. The additive-by-design knowledge layer is
+    /// excluded (operator ruling on algedonic card 33b0eebb, option (A),
+    /// 2026-10-18: the growth ceiling monitors a valve-stall signal on the
+    /// tiers that CAN shed, not store size). `None` if the store is
     /// unavailable — the sensor returns `None` (not 0, which would mask a
     /// broken store as "empty but healthy").
-    async fn h_mem_count(&self) -> Option<usize>;
+    async fn sheddable_h_mem_count(&self) -> Option<usize>;
 
     /// Count of h_mems at or below the given confidence threshold.
     async fn low_confidence_count(&self, threshold: f64) -> Option<usize>;
@@ -400,11 +405,13 @@ pub trait MemoryHealthSource: Send + Sync {
 ///
 /// Emits signals for 4 `SignalMetric` variants that previously had policy
 /// rules but no sensor:
-/// - `TripleCount` — h_mem count above the set-point: the memory-store growth
-///   breach (the store has outgrown the ~3-day therapy forgetting-valve
-///   cadence; escalates as `memory_store_growth` — see
-///   `set_points::DEFAULT_TRIPLE_COUNT_MAX` for the ceiling's basis and
-///   algedonic card c148d75d)
+/// - `TripleCount` — sheddable-tier h_mem count (turn storage + goal events)
+///   above the set-point: the memory-store growth breach. The additive-by-design
+///   knowledge layer is exempt (operator ruling on algedonic card 33b0eebb,
+///   option (A), 2026-10-18 — its growth is distillation working; a size alarm
+///   on it fires on normal operation forever). Escalates as
+///   `memory_store_growth` — see `set_points::DEFAULT_TRIPLE_COUNT_MAX` for
+///   the ceiling's basis and algedonic card c148d75d)
 /// - `LowConfidenceCount` — low-confidence h_mem count above the set-point
 /// - `ConsolidationCandidates` — same count using the consolidation floor
 /// - `MemoryLife` — configured memory life days below the set-point (too short)
@@ -414,10 +421,10 @@ pub trait MemoryHealthSource: Send + Sync {
 pub(crate) struct MemoryHealthSensor {
     source: Arc<dyn MemoryHealthSource>,
     metric: SignalMetric,
-    /// Set-point: max h_mem count before `TripleCount` fires — the
-    /// memory-store growth ceiling (see `set_points::DEFAULT_TRIPLE_COUNT_MAX`
-    /// for the valve-cadence constraint and measured basis; algedonic card
-    /// c148d75d).
+    /// Set-point: max sheddable-tier h_mem count (turn storage + goal events)
+    /// before `TripleCount` fires — the memory-store growth ceiling (see
+    /// `set_points::DEFAULT_TRIPLE_COUNT_MAX` for the valve-cadence constraint
+    /// and measured basis; algedonic card c148d75d).
     triple_count_max: usize,
     /// Set-point: max low-confidence h_mem count before `LowConfidenceCount` fires.
     low_confidence_max: usize,
@@ -462,7 +469,7 @@ impl Sensor for MemoryHealthSensor {
                 self.memory_life_min_days,
             ),
             SignalMetric::TripleCount => (
-                self.source.h_mem_count().await? as f64,
+                self.source.sheddable_h_mem_count().await? as f64,
                 self.triple_count_max as f64,
             ),
             SignalMetric::LowConfidenceCount => (
