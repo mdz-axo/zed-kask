@@ -1843,6 +1843,76 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// The shipped distribution copy omits `hmems` (producer-owned; the
+    /// federated read path never touches it) and is vacuumed. Admission and
+    /// retrieval must be unaffected: a stripped source serves hits exactly as
+    /// a full one does.
+    ///
+    /// expect: "A corpus shipped without its producer-owned tables still answers queries" [P1]
+    /// pre:  a sealed federated fixture whose hmems rows have been dropped
+    /// post: admission succeeds and the named document still surfaces
+    #[tokio::test]
+    async fn a_stripped_sealed_source_still_serves_retrieval() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let manifest_path = hkask_memory::test_support::sealed_federated_fixture_documents(
+            directory.path(),
+            "fixture-reference",
+            "Fixture research library",
+            "test-model",
+            "test-model",
+            &hybrid_retrieval_documents(),
+        )?;
+        let source_dir = manifest_path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("manifest has no parent dir"))?;
+        let database_path = source_dir.join("reference.db");
+        let database_str = database_path
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("non-UTF-8 database path"))?;
+
+        let query = "dignity of work and the positive limit";
+        let before = hybrid_retrieval_batches(&manifest_path, query).await?;
+        assert!(
+            !before[0].hits.is_empty(),
+            "the unstripped fixture must return hits before the strip"
+        );
+
+        hkask_storage::strip_producer_tables(database_str, "test-passphrase", &["hmems"])
+            .map_err(|error| anyhow::anyhow!("strip failed: {error}"))?;
+        for suffix in ["-wal", "-shm"] {
+            let sidecar = format!("{database_str}{suffix}");
+            if std::path::Path::new(&sidecar).exists() {
+                std::fs::remove_file(sidecar)?;
+            }
+        }
+        // The strip changes the database bytes, so the run identity's index
+        // pin must be re-derived before admission will accept the source —
+        // exactly the order the production export path uses (strip, then
+        // measure the content pins).
+        let identity_path = source_dir.join("run-identity.json");
+        let mut identity: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&identity_path)?)?;
+        identity["indexes"]["reference"] =
+            serde_json::json!(hkask_memory::test_support::sha256_file(&database_path)?);
+        hkask_memory::test_support::reseal_fixture_identity(&mut identity)?;
+        std::fs::write(&identity_path, serde_json::to_vec_pretty(&identity)?)?;
+
+        let after = hybrid_retrieval_batches(&manifest_path, query).await?;
+        assert_eq!(
+            after[0]
+                .hits
+                .iter()
+                .map(|hit| hit.entity_ref.clone())
+                .collect::<Vec<_>>(),
+            before[0]
+                .hits
+                .iter()
+                .map(|hit| hit.entity_ref.clone())
+                .collect::<Vec<_>>(),
+            "the stripped source must serve the same hits in the same order"
+        );
+        Ok(())
+    }
 
     /// Control: a query with no rare-term signal leaves the dense order
     /// among content rows unchanged — the lexical leg is silent without

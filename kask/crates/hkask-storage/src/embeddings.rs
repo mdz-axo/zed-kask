@@ -9,9 +9,26 @@
 //! Deduplicating would require backend-conditional retrieval (join vec0 for
 //! the KNN path, read the column for the metadata path) — more complexity
 //! for ~4 KB/embedding savings. The redundancy earns its keep by preserving
-//! the uniform retrieval abstraction. If per-agent storage becomes a concern
-//! at scale, the escape hatch is a vec0 auxiliary column (`+vector BLOB`)
-//! to eliminate the `embeddings.vector` copy.
+//! the uniform retrieval abstraction.
+//!
+//! The previously documented escape hatch — a vec0 auxiliary column
+//! (`+vector BLOB`) to eliminate the `embeddings.vector` copy — does not
+//! work, and was measured rather than assumed (sqlite-vec 0.1.9 source read
+//! 2026-10-18): an auxiliary column is materialized into its own shadow
+//! table (`{table}_auxiliary(rowid PRIMARY KEY, value00 …)`, written by a
+//! separate `INSERT INTO …_auxiliary`), so it stores a SECOND copy of the
+//! vector rather than referencing the one vec0 already holds. Adding it
+//! would grow the database, not shrink it.
+//!
+//! A real dedupe is available and was verified: vec0 returns its `embedding`
+//! column byte-for-byte identical to the canonical blob (pinned by
+//! `tests/vector_dedupe_probe.rs`), so `embeddings.vector` could be dropped
+//! and the vector read back from vec0. That is a canonical-store change
+//! touching `store`, `get_by_ids`, `get_by_prefix`, `get_all_by_prefix`,
+//! `search`, and `rebuild_vector_index` — i.e. every database, including the
+//! read-write curator store — so it needs its own design and evaluation, not
+//! a side effect of the distribution path. `strip_producer_tables`
+//! (`rotation.rs`) is the distribution-side reduction that ships today.
 use hkask_types::InfrastructureError;
 use hkask_types::NotFound;
 

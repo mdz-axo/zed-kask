@@ -339,6 +339,23 @@ fn embedding_inventory(
     }))
 }
 
+/// Tables present in the authoring run but excluded from the shipped copy.
+///
+/// Federated recall opens a sealed source read-only and reads exactly two
+/// tables: `embeddings` (metadata + vector) and `vec_embeddings` (KNN).
+/// `hmems` is producer-owned — the read-write memory path migrates and reads
+/// it, and the federated path deliberately never does
+/// (`federated_recall.rs` — "`hmems`, being producer-owned and never read
+/// here, carries"). It is the largest table in the zk-ref-open fine index
+/// (576 MB of 3.28 GB) and shipping it inflates every install's download for
+/// data no shipped read path touches.
+///
+/// A stripped copy is a read-only artifact: `hmems` is the join key
+/// `MemoryStore::delete_orphaned_embeddings` uses, so opening a stripped copy
+/// read-write would read every embedding as an orphan. Admission opens it
+/// read-only, which is the only supported access.
+const DISTRIBUTION_EXCLUDED_TABLES: &[&str] = &["hmems"];
+
 /// The distribution stage of the corpus pipeline: turn one sealed calibration
 /// run into a shippable, hash-pinned bundle. The sealed run is never
 /// modified; the shipped copy is rekeyed to the caller-named PUBLIC bundle
@@ -509,6 +526,24 @@ fn export_bundle_staged(
             })?;
         }
     }
+
+    // Strip producer-owned tables the read-only distribution path never reads,
+    // then reclaim their pages. Federated recall reads exactly `embeddings` and
+    // `vec_embeddings`; `hmems` is the largest table in the zk-ref-open fine
+    // index and no federated read path touches it. The authoring run keeps its
+    // rows — only this shipped copy is stripped. Stripping must happen BEFORE
+    // the content pins are measured, so the recorded passage count describes
+    // the artifact that actually ships.
+    hkask_storage::strip_producer_tables(
+        &work_str,
+        &request.bundle_key,
+        DISTRIBUTION_EXCLUDED_TABLES,
+    )
+    .map_err(|error| {
+        McpToolError::failed_precondition(format!(
+            "stripping producer-owned tables from the distribution copy failed: {error}"
+        ))
+    })?;
 
     // Content pins, measured from the rekeyed copy under the bundle key —
     // exactly what admission later verifies against them.

@@ -56,6 +56,9 @@ pub enum RotationError {
     /// The new passphrase is invalid (too short, empty, etc.).
     #[error("Invalid new passphrase: {0}")]
     InvalidNewPassphrase(String),
+    /// A table name offered for stripping is not a bare SQL identifier.
+    #[error("Refusing to strip table {0:?}: not a bare SQL identifier")]
+    InvalidTableName(String),
     #[error("Could not establish database quiescence for {path}: {source}")]
     ConsumersActive {
         path: String,
@@ -389,6 +392,119 @@ pub fn export_database_keyed(
         source = %source,
         destination = %destination_path,
         "Keyed database export complete — source untouched, destination under the new passphrase"
+    );
+    Ok(())
+}
+
+/// Drop producer-owned tables that a read-only distribution copy never
+/// reads, then reclaim their pages.
+///
+/// # Why this exists
+///
+/// The distribution stage ships one corpus index to every install. Federated
+/// recall reads exactly two tables — `embeddings` and `vec_embeddings` (plus a
+/// `sqlite_master` existence check for the latter). `hmems` is the largest
+/// producer-owned table in the zk-ref-open fine index (576 MB of 3.28 GB) and
+/// no read path in `hkask-memory`'s federated source touches it. Shipping it
+/// inflates every consumer's download for data nothing reads.
+///
+/// The authoring/staging database keeps its `hmems` rows — style composition
+/// and the corpus tools read them there. Only the shipped copy is stripped.
+///
+/// # Safety property this must preserve
+///
+/// Dropping `hmems` removes the entity_ref join key that
+/// `MemoryStore::delete_orphaned_embeddings` uses to detect orphans: on a
+/// stripped database that sweep would read every embedding as an orphan and
+/// delete the whole corpus. A stripped copy is therefore a *read-only*
+/// artifact; this function does not make it safe to open read-write, and the
+/// bundle's admission path opens it read-only (`Database::open_read_only`,
+/// which sets `query_only` and never runs schema initialization).
+///
+/// # Arguments
+///
+/// - `db_path`: the distribution copy to strip (never the authoring source).
+/// - `passphrase`: the copy's own key.
+/// - `tables`: table names to drop. Each must be a bare SQL identifier — the
+///   caller controls this list and it is validated, never interpolated raw.
+///
+/// # What happens
+///
+/// Each named table is dropped (its indexes go with it), the database is
+/// vacuumed to reclaim the freed pages, and the result must pass an integrity
+/// check. A failure leaves the caller's copy in whatever state it reached;
+/// the export path discards the whole work directory on error.
+///
+/// expect: "A shipped corpus copy carries only what its readers read" [P1]
+/// pre:  db_path is a distribution copy the caller owns; tables are bare identifiers
+/// post: Ok(()) proves the named tables are gone, the copy is integral, and pages are reclaimed
+pub fn strip_producer_tables(
+    db_path: &str,
+    passphrase: &str,
+    tables: &[&str],
+) -> Result<(), RotationError> {
+    if tables.is_empty() {
+        return Ok(());
+    }
+    for table in tables {
+        let valid = !table.is_empty()
+            && table.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            && !table.chars().next().is_some_and(|c| c.is_ascii_digit());
+        if !valid {
+            return Err(RotationError::InvalidTableName(table.to_string()));
+        }
+    }
+    let canonical = canonical_db_path(db_path)?;
+    let database = Database::open(&canonical, passphrase).map_err(|source| {
+        RotationError::PassphraseMismatch {
+            path: canonical.clone(),
+            source,
+        }
+    })?;
+    let pool = database
+        .sqlite_pool()
+        .map_err(|source| RotationError::PassphraseMismatch {
+            path: canonical.clone(),
+            source,
+        })?;
+    let connection = pool.get().map_err(|error| RotationError::Sql {
+        path: canonical.clone(),
+        error: rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
+            Some(format!("strip pool get: {error}")),
+        ),
+    })?;
+    let mut statement = String::new();
+    for table in tables {
+        statement.push_str(&format!("DROP TABLE IF EXISTS \"{table}\";\n"));
+    }
+    statement.push_str("VACUUM;\n");
+    connection
+        .execute_batch(&statement)
+        .map_err(|error| RotationError::Sql {
+            path: canonical.clone(),
+            error,
+        })?;
+    let integrity: String = connection
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+        .map_err(|error| RotationError::Sql {
+            path: canonical.clone(),
+            error,
+        })?;
+    if integrity != "ok" {
+        return Err(RotationError::Sql {
+            path: canonical,
+            error: rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CORRUPT),
+                Some(format!("stripped copy failed integrity check: {integrity}")),
+            ),
+        });
+    }
+    tracing::info!(
+        target: "reg.storage",
+        path = %db_path,
+        tables = tables.len(),
+        "Distribution copy stripped of producer-owned tables"
     );
     Ok(())
 }
@@ -753,6 +869,88 @@ pub(crate) mod tests {
             header[..16].iter().any(|byte| *byte != 0),
             "the rotated database's salt is random, not the shared zero salt"
         );
+    }
+
+    /// expect: "A shipped corpus copy carries only what its readers read" [P1]
+    /// pre:  a copy holding both a producer-owned table and the read tables
+    /// post: the named table is gone, the read tables survive, the copy is integral
+    #[test]
+    fn strip_removes_only_the_named_tables_and_reclaims_their_pages() {
+        let directory = tempfile::tempdir().expect("temporary database");
+        let path = make_test_db(directory.path(), "shipped.db", "bundle-key-1234");
+        {
+            let db = Database::open(&path, "bundle-key-1234").expect("open");
+            let conn = db.sqlite_pool().expect("pool").get().expect("conn");
+            conn.execute_batch(
+                "CREATE TABLE bulk(x BLOB);
+                 INSERT INTO bulk VALUES(zeroblob(4000000));",
+            )
+            .expect("bulk table");
+        }
+
+        strip_producer_tables(&path, "bundle-key-1234", &["bulk"]).expect("strip");
+
+        let db = Database::open(&path, "bundle-key-1234").expect("reopen");
+        let conn = db.sqlite_pool().expect("pool").get().expect("conn");
+        let gone: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'bulk'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("bulk check");
+        assert_eq!(gone, 0, "the named table is dropped");
+        let kept: i64 = conn
+            .query_row("SELECT COUNT(*) FROM embeddings", [], |row| row.get(0))
+            .expect("embeddings check");
+        assert_eq!(kept, 1, "the read table survives the strip");
+        let freelist: i64 = conn
+            .query_row(
+                "SELECT freelist_count FROM pragma_freelist_count",
+                [],
+                |row| row.get(0),
+            )
+            .expect("freelist check");
+        assert_eq!(freelist, 0, "the strip reclaims the freed pages");
+    }
+
+    /// expect: "A strip can never be turned into a destructive table-name injection" [P1]
+    /// pre:  a caller-supplied table name that is not a bare identifier
+    /// post: the call is refused and the database is untouched
+    #[test]
+    fn strip_refuses_a_table_name_that_is_not_a_bare_identifier() {
+        let directory = tempfile::tempdir().expect("temporary database");
+        let path = make_test_db(directory.path(), "shipped.db", "bundle-key-1234");
+        for hostile in ["embeddings; DROP TABLE hmems", "", "1starts_with_digit"] {
+            let error = strip_producer_tables(&path, "bundle-key-1234", &[hostile])
+                .expect_err("a non-identifier is refused");
+            assert!(
+                matches!(error, RotationError::InvalidTableName(_)),
+                "the refusal names the invalid table, got: {error}"
+            );
+        }
+        let db = Database::open(&path, "bundle-key-1234").expect("reopen");
+        let conn = db.sqlite_pool().expect("pool").get().expect("conn");
+        let hmems: i64 = conn
+            .query_row("SELECT COUNT(*) FROM hmems", [], |row| row.get(0))
+            .expect("hmems check");
+        assert_eq!(hmems, 1, "a refused strip leaves the database untouched");
+    }
+
+    /// expect: "An empty strip list is a no-op, not an error" [P3]
+    /// pre:  no tables named
+    /// post: Ok(()) and the database is unchanged
+    #[test]
+    fn strip_with_no_tables_is_a_no_op() {
+        let directory = tempfile::tempdir().expect("temporary database");
+        let path = make_test_db(directory.path(), "shipped.db", "bundle-key-1234");
+        strip_producer_tables(&path, "bundle-key-1234", &[]).expect("no-op strip");
+        let db = Database::open(&path, "bundle-key-1234").expect("reopen");
+        let conn = db.sqlite_pool().expect("pool").get().expect("conn");
+        let embeddings: i64 = conn
+            .query_row("SELECT COUNT(*) FROM embeddings", [], |row| row.get(0))
+            .expect("embeddings check");
+        assert_eq!(embeddings, 1, "the no-op leaves the copy intact");
     }
 
     /// expect: "Rotating my populated RSS database preserves feeds, search, and future updates" [P1]

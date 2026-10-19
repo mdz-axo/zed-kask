@@ -21,7 +21,7 @@ hkask-inference.workspace = true
 image.workspace = true
 
 base64.workspace = true
-reqwest.workspace = true
+
 
 # Office format backends (S2: backend/pipeline separation)
 # docx-rs: DOCX reader (paragraphs, tables, lists, headings)
