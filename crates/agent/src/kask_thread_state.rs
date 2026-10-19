@@ -64,6 +64,15 @@ pub(crate) struct KaskThreadState {
     // Truncation detection (D25)
     last_completion_truncated: bool,
 
+    // zed-kask: false-halt fix (card bd7dbf68) — set when the event loop
+    // breaks on a streaming tool's error while its (or a sibling's) input is
+    // still streaming, abandoning the in-flight parallel batch. Read by
+    // `flush_pending_message` to report never-started tool uses as
+    // interrupted-by-sibling-failure rather than falsely as canceled by the
+    // user. Reset alongside `last_completion_truncated` at the start of each
+    // completion request.
+    interrupted_by_tool_failure: bool,
+
     // Caching
     cached_system_prompt: Option<CachedSystemPrompt>,
     cached_filtered_context: Option<CachedFilteredContext>,
@@ -85,6 +94,7 @@ impl KaskThreadState {
             deferred_tool_results: Vec::new(),
             turn_goal_events: Vec::new(),
             last_completion_truncated: false,
+            interrupted_by_tool_failure: false,
             cached_system_prompt: None,
             cached_filtered_context: None,
             tool_trace: None,
@@ -170,6 +180,30 @@ impl KaskThreadState {
     /// request so the flag reflects only the most recent completion.
     pub fn reset_truncation_flag(&mut self) {
         self.last_completion_truncated = false;
+    }
+
+    /// zed-kask: false-halt fix (card bd7dbf68) — set when the event loop
+    /// breaks on a streaming tool's error while input is still streaming,
+    /// abandoning the in-flight batch. The tool uses that never started (a
+    /// sibling failure interrupted the stream before they were dispatched)
+    /// are reported as interrupted-by-sibling-failure, never as a user
+    /// cancellation.
+    pub fn on_tool_failure_interrupted_batch(&mut self) {
+        self.interrupted_by_tool_failure = true;
+    }
+
+    /// Whether the last completion's batch was interrupted by a streaming
+    /// tool failure. Read by `flush_pending_message` to distinguish
+    /// sibling-failure interruption from genuine user cancellation.
+    pub fn batch_interrupted_by_tool_failure(&self) -> bool {
+        self.interrupted_by_tool_failure
+    }
+
+    /// Reset the interruption flag. Called at the start of each completion
+    /// request alongside `reset_truncation_flag` so the flag reflects only
+    /// the most recent completion.
+    pub fn reset_batch_interruption_flag(&mut self) {
+        self.interrupted_by_tool_failure = false;
     }
 
     /// Warning for a turn that ends with `StopReason::MaxTokens` (D43).

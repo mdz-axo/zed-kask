@@ -81,6 +81,14 @@ const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
 const TOOL_TRUNCATED_MESSAGE: &str = "Tool call was interrupted because the model's output reached the token limit before completing the tool input. Try again with a shorter or simpler tool call.";
 const TOOL_CALL_INTERRUPTED_BY_FOLLOW_UP_MESSAGE: &str =
     "Permission denied: user sent a follow-up message instead of approving the tool call.";
+/// zed-kask: false-halt fix (card bd7dbf68) — used when a sibling tool call in
+/// the same batch failed while the stream was still emitting this call's
+/// input, so the call never started. The user canceled nothing: a parallel
+/// sibling's failure interrupted the stream. Distinct from
+/// `TOOL_CANCELED_MESSAGE` (the user stopped the turn) and
+/// `TOOL_TRUNCATED_MESSAGE` (the model's own output hit the token limit), so
+/// the model knows to re-issue the call rather than treat it as user intent.
+const TOOL_INTERRUPTED_BY_SIBLING_FAILURE_MESSAGE: &str = "Tool call was interrupted because a sibling tool call in the same batch failed while the stream was still emitting this call's input; the call never started. The user canceled nothing. Re-issue this tool call.";
 pub(crate) const FOLLOW_UP_PERMISSION_DENIED_OPTION_ID: &str = "follow_up_permission_denied";
 
 /// The error string `ToolInput::recv()` returns when the channel closes without
@@ -2495,6 +2503,30 @@ impl Thread {
         }
     }
 
+    /// zed-kask: false-halt fix (card bd7dbf68) — test-support accessor: the
+    /// most recent stored agent message whose content carries a tool use with
+    /// this id. The message that owns an interrupted batch's tool uses is not
+    /// necessarily the thread's last message (a continuation round may have
+    /// followed), so tests locate it by tool-use ownership.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn find_agent_message_with_tool_use(
+        &self,
+        tool_use_id: &LanguageModelToolUseId,
+    ) -> Option<&AgentMessage> {
+        self.messages.iter().rev().find_map(|message| {
+            message.as_agent_message().and_then(|agent_message| {
+                agent_message
+                    .content
+                    .iter()
+                    .any(|content| match content {
+                        AgentMessageContent::ToolUse(tool_use) => tool_use.id == *tool_use_id,
+                        _ => false,
+                    })
+                    .then_some(agent_message)
+            })
+        })
+    }
+
     pub fn add_default_tools(
         &mut self,
         environment: Rc<dyn ThreadEnvironment>,
@@ -3421,6 +3453,8 @@ impl Thread {
                 let request = this.build_completion_request(intent, cx)?;
                 this.current_request_token_usage = TokenUsage::default();
                 this.kask.reset_truncation_flag(); // zed-kask: D25
+                // zed-kask: false-halt fix (card bd7dbf68)
+                this.kask.reset_batch_interruption_flag();
                 anyhow::Ok((model, provider, request))
             })??;
 
@@ -3498,6 +3532,7 @@ impl Thread {
                     tool_result = futures::StreamExt::select_next_some(&mut tool_results) => {
                         let (owning_message_ix, tool_result) = tool_result;
                         let is_error = tool_result.is_error;
+                        let failing_tool_name = tool_result.tool_name.clone();
                         let is_still_streaming = this
                             .read_with(cx, |this, _cx| {
                                 this.running_turn
@@ -3514,7 +3549,33 @@ impl Thread {
                         // but we are no longer streaming its input (i.e. there
                         // are parallel tool calls) we want to continue
                         // processing those tool inputs.
+                        //
+                        // zed-kask: false-halt fix (card bd7dbf68) — this break
+                        // abandons any tool calls the model was still emitting
+                        // (never-started siblings in the pending message). Mark
+                        // the batch interrupted so `flush_pending_message`
+                        // reports them as interrupted-by-sibling-failure
+                        // instead of falsely as canceled by the user. The turn
+                        // continues (drain-and-continue): the failing result and
+                        // the interruption message are delivered to the model in
+                        // a continuation request so it can re-issue the
+                        // abandoned call — this is not a turn end, so no stop
+                        // reason is sent; the warn is the operator-visible label
+                        // (the D43 `max_tokens_turn_end_warning` precedent: a
+                        // stop with no visible signal reads as a silent halt).
                         if is_error && is_still_streaming {
+                            let thread_id = this
+                                .read_with(cx, |thread, _| thread.id().to_string())
+                                .unwrap_or_default();
+                            log::warn!(
+                                target: "agent.thread",
+                                "[thread {thread_id}] Parallel tool batch interrupted: tool '{}' failed while its (or a sibling's) input was still streaming; never-started sibling calls are reported as interrupted (not user-canceled) and the turn continues so the model can re-issue them",
+                                failing_tool_name
+                            );
+                            this.update(cx, |this, _| {
+                                this.kask.on_tool_failure_interrupted_batch();
+                            })
+                            .ok();
                             break;
                         }
                         continue;
@@ -5479,6 +5540,11 @@ impl Thread {
                 let cancel_message = if self.kask.last_completion_truncated() {
                     // zed-kask: D25
                     TOOL_TRUNCATED_MESSAGE
+                } else if self.kask.batch_interrupted_by_tool_failure() {
+                    // zed-kask: false-halt fix (card bd7dbf68) — the batch
+                    // broke on a sibling's mid-stream failure; this call
+                    // never started, and the user canceled nothing.
+                    TOOL_INTERRUPTED_BY_SIBLING_FAILURE_MESSAGE
                 } else {
                     TOOL_CANCELED_MESSAGE
                 };

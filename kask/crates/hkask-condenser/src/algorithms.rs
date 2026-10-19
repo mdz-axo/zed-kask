@@ -540,7 +540,6 @@ pub fn classify_tool(tool_name: &str) -> ContextCategory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hkask_bridge_ontology::dc_bibo;
 
     #[test]
     fn compute_budget_passthrough_when_within_profile() {

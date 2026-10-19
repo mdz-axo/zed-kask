@@ -10677,6 +10677,158 @@ async fn test_queued_message_does_not_end_turn_without_boundary_flag(cx: &mut Te
 }
 
 #[gpui::test]
+async fn test_sibling_failure_interrupts_stream_reports_interruption_not_user_cancel(
+    cx: &mut TestAppContext,
+) {
+    // zed-kask: false-halt fix (card bd7dbf68). Live incident 2026-10-15: a
+    // parallel batch (edit_file + grep + curator_semantic_search) returned
+    // "Tool canceled by user" on calls the operator did not cancel. Mechanism:
+    // a streaming tool (edit_file) errored while its input was still streaming
+    // → the event loop `break` (thread.rs `is_error && is_still_streaming`)
+    // abandoned the batch → the non-streaming sibling's partial tool_use sat in
+    // the pending message, never started → `flush_pending_message` stamped it
+    // TOOL_CANCELED_MESSAGE because no truncation flag was set. The user had
+    // canceled nothing.
+    //
+    // This test pins the honest attribution: the never-started sibling gets
+    // the interrupted-by-sibling-failure message (naming the real cause and
+    // telling the model to re-issue the call), never the user-cancellation
+    // message. The failing streaming tool keeps its own real error result.
+    init_test(cx);
+    always_allow_tools(cx);
+
+    let ThreadTest {
+        model,
+        fake,
+        thread,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(StreamingFailingEchoTool {
+            receive_chunks_until_failure: 1,
+        });
+        thread.add_tool(EchoTool);
+    });
+
+    let _events = thread
+        .update(cx, |thread, cx| {
+            thread.send(
+                ClientUserMessageId::new(),
+                ["Use the streaming_failing_echo tool and the echo tool"],
+                cx,
+            )
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // The streaming tool is dispatched immediately on its partial input and
+    // fails after one chunk while still streaming.
+    let failing_tool_use = LanguageModelToolUse {
+        id: "call_1".into(),
+        name: StreamingFailingEchoTool::NAME.into(),
+        raw_input: "hello".into(),
+        input: language_model::LanguageModelToolUseInput::Json(json!({ "text": "hello" })),
+        is_input_complete: false,
+        thought_signature: None,
+    };
+    fake.send_last_event(
+        &model,
+        LanguageModelCompletionEvent::ToolUse(failing_tool_use.clone()),
+    );
+
+    // The non-streaming sibling's input is emitted next, while the streaming
+    // sibling is still consuming its chunks: this tool_use lands in the pending
+    // message (never started — EchoTool does not support input streaming and
+    // is_input_complete is false), exactly the incident shape.
+    let abandoned_tool_use = LanguageModelToolUse {
+        id: "call_2".into(),
+        name: EchoTool::NAME.into(),
+        raw_input: r#"{"text": "partial"#.into(),
+        input: language_model::LanguageModelToolUseInput::Json(json!({ "text": "partial" })),
+        is_input_complete: false,
+        thought_signature: None,
+    };
+    fake.send_last_event(
+        &model,
+        LanguageModelCompletionEvent::ToolUse(abandoned_tool_use.clone()),
+    );
+    cx.run_until_parked();
+
+    // End the stream without ever completing either input. The failing
+    // streaming tool's error breaks the loop while its input is still
+    // streaming, abandoning the already-delivered sibling — no `end_last`
+    // needed (the loop break is the stream's terminal event for this round,
+    // as in `test_streaming_tool_error_breaks_stream_loop_immediately`).
+    cx.run_until_parked();
+
+    // The turn must have flushed a tool result for the never-started sibling,
+    // and it must be the interruption message — not a user cancellation. The
+    // agent message owning both tool uses is the one that owns call_1's tool
+    // use; search the thread's messages rather than assume it is the last one
+    // (a continuation round may follow).
+    thread.read_with(cx, |thread, _| {
+        let owning_message = thread
+            .find_agent_message_with_tool_use(&failing_tool_use.id)
+            .expect("the flushed agent message owning the interrupted batch must exist");
+        let failing_result = owning_message
+            .tool_results
+            .get(&failing_tool_use.id)
+            .expect("the failing streaming tool's real error result must be present");
+        assert!(failing_result.is_error);
+        assert_eq!(failing_result.text_contents(), "failed");
+
+        let abandoned_result = owning_message
+            .tool_results
+            .get(&abandoned_tool_use.id)
+            .expect("the never-started sibling's tool use must have a flushed result");
+        assert!(
+            abandoned_result.is_error,
+            "the never-started sibling's result must be an error"
+        );
+        assert_eq!(
+            abandoned_result.text_contents(),
+            "Tool call was interrupted because a sibling tool call in the same batch failed while the stream was still emitting this call's input; the call never started. The user canceled nothing. Re-issue this tool call.",
+            "the never-started sibling must be reported as interrupted-by-sibling-failure, \
+             never as canceled by the user (card bd7dbf68)"
+        );
+    });
+
+    // (i) drain-and-continue: the continuation request must carry both real
+    // results — the failing sibling's error and the never-started call's
+    // interruption message — so the model can re-issue the abandoned call.
+    let completions = fake.pending_completions();
+    let continuation = completions
+        .get(1)
+        .expect("a continuation request must follow the interrupted batch");
+    let result_texts: Vec<String> = continuation
+        .messages
+        .iter()
+        .flat_map(|message| message.content.iter())
+        .filter_map(|c| match c {
+            language_model::MessageContent::ToolResult(r) => Some(r.text_contents()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        result_texts.len(),
+        2,
+        "the continuation must carry both real results (the failing sibling's \
+         error and the never-started call's interruption message), got: {result_texts:?}"
+    );
+    assert!(
+        result_texts.contains(&"failed".to_string()),
+        "the failing streaming tool's real error must reach the model"
+    );
+    assert!(
+        result_texts
+            .iter()
+            .any(|t| t.contains("Re-issue this tool call")),
+        "the interrupted-sibling message must reach the model so it can re-issue"
+    );
+}
+
+#[gpui::test]
 async fn test_streaming_tool_error_breaks_stream_loop_immediately(cx: &mut TestAppContext) {
     init_test(cx);
     always_allow_tools(cx);
