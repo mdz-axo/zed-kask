@@ -55,3 +55,41 @@ fn validate_bounds_tool_reliability_threshold() {
         "> 1.0 is unsatisfiable — every aggregate would deviate every tick"
     );
 }
+
+/// `algedonic_events_max` round-trips from YAML config and defaults to 0
+/// — the knob exists (option (B), algedonic card f69162f4, operator ruling
+/// 2026-10-19), but the policy is unchanged until the operator sets it.
+#[test]
+fn algedonic_events_max_round_trips_from_config() {
+    let config = SetPointsConfig::from_yaml("algedonic_events_max: 3\n").expect("valid yaml");
+    let points = SetPoints::from_config(&config);
+    assert_eq!(points.algedonic_events_max, 3);
+    assert_eq!(
+        SetPoints::default().algedonic_events_max,
+        0,
+        "the default set point is unchanged — option (B) alters no behavior"
+    );
+}
+
+/// Pins the bounds check for `algedonic_events_max`: a value at or above
+/// `max_alerts` configures a vacuous sensor — the actionable count can
+/// never exceed the log cap, so the sensor could never fire and the
+/// operator cannot distinguish "no advisories" from "check disabled"
+/// (the same class the `tool_reliability_threshold` bounds check rejects).
+#[test]
+fn validate_bounds_algedonic_events_max() {
+    let mut points = SetPoints::default();
+    assert!(points.validate().is_ok(), "defaults must validate");
+
+    points.algedonic_events_max = points.max_alerts - 1;
+    assert!(
+        points.validate().is_ok(),
+        "a tolerance below the log cap is satisfiable and valid"
+    );
+
+    points.algedonic_events_max = points.max_alerts;
+    assert!(
+        points.validate().is_err(),
+        "a tolerance at the log cap can never be exceeded — the sensor is silently disabled"
+    );
+}

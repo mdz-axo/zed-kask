@@ -2377,3 +2377,64 @@ async fn unchanged_signal_telemetry_does_not_displace_later_novel_events() {
         "suppression must be observable on the persistent-condition heartbeat"
     );
 }
+
+/// The `AlgedonicEvents` set point reads the loop's `SetPoints` field —
+/// `algedonic_events_max` — instead of the hardcoded 0.0 literal (algedonic
+/// card f69162f4, option (B), operator ruling 2026-10-19: the knob exists,
+/// the policy is unchanged until the operator sets it). A configured
+/// tolerance below the observed count is a deviation; a tolerance at or
+/// above it is not.
+#[test]
+fn algedonic_events_set_point_reads_the_configured_tolerance() {
+    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    runtime.block_on(async {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::default()));
+
+        // One actionable (Warning-or-Critical) alert in the log: a 0% success
+        // Critical over 5 operations — the same fixture shape the
+        // sense_reports_algedonic_log_population pin uses.
+        {
+            let ledger_guard = ledger.read().await;
+            for _ in 0..5 {
+                ledger_guard.record_outcome("algedonic_tolerance_test", false, None).await;
+            }
+            let log_count = ledger_guard.alert_log_count().await;
+            drop(ledger_guard);
+            assert!(
+                log_count > 0,
+                "sanity: the 0% fixture produced an actionable alert"
+            );
+        }
+
+        // The default loop deviates on 1 actionable alert (set point 0 — the
+        // unchanged policy).
+        let default_loop = CyberneticsLoop::new(Arc::clone(&ledger));
+        let default_signals = default_loop.sense().await;
+        let signal = default_signals
+            .iter()
+            .find(|s| s.metric == SignalMetric::AlgedonicEvents)
+            .expect("AlgedonicEvents must be sensed");
+        assert_eq!(signal.set_point, 0.0);
+        assert!(
+            Deviation::from_signal(signal).is_some(),
+            "default tolerance 0 — one actionable alert still deviates (option (B) alters no behavior)"
+        );
+
+        // A configured tolerance at or above the observed count must not
+        // deviate: the knob calibrates the metric without a recompile.
+        let mut points = crate::set_points::SetPoints::default();
+        points.algedonic_events_max = 1;
+        let calibrated_loop = CyberneticsLoop::with_set_points(Arc::clone(&ledger), points);
+        let calibrated_signals = calibrated_loop.sense().await;
+        let signal = calibrated_signals
+            .iter()
+            .find(|s| s.metric == SignalMetric::AlgedonicEvents)
+            .expect("AlgedonicEvents must be sensed");
+        assert_eq!(signal.set_point, 1.0);
+        assert_eq!(signal.value, 1.0);
+        assert!(
+            Deviation::from_signal(signal).is_none(),
+            "a configured tolerance at the observed count must not deviate — the knob calibrates without a recompile"
+        );
+    });
+}

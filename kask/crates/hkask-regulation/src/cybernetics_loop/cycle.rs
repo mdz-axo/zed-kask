@@ -370,6 +370,11 @@ impl super::CyberneticsLoop {
         // critical alerts. Set-points are 0.0 — any positive count is a
         // deviation. The dampener prevents repeat-escalation spam while an
         // alert awaits review; `clear_reviewed_alerts` closes the loop.
+        // `AlgedonicEvents`'s tolerance is operator-configurable
+        // (`algedonic_events_max`, default 0 — option (B) on algedonic card
+        // f69162f4, operator ruling 2026-10-19: the knob exists, the policy
+        // is unchanged until the operator sets it); the other two stay 0.0
+        // — unresolved escalations and critical alerts are never normal.
         let (actionable_count, escalated_count, critical_count) = {
             let ledger = self.ledger.read().await;
             (
@@ -383,7 +388,7 @@ impl super::CyberneticsLoop {
                 LoopId::Cybernetics,
                 SignalMetric::AlgedonicEvents,
                 actionable_count as f64,
-                0.0,
+                self.set_points.algedonic_events_max as f64,
             ));
         }
         {

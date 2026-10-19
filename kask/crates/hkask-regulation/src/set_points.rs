@@ -87,6 +87,23 @@ pub(crate) const DEFAULT_MAX_SKILL_SPAN_HISTORY: usize = 50;
 /// log clearing is a separate maintenance choice, not verification.
 pub(crate) const DEFAULT_MAX_ALERTS: usize = 200;
 
+/// Default maximum actionable (Warning-or-Critical) alerts before
+/// `AlgedonicEvents` fires — the algedonic-advisory tolerance.
+///
+/// Default 0: every actionable alert deviates — the pre-2026-10-19 behavior,
+/// preserved by option (B) on algedonic card f69162f4 (operator ruling
+/// 2026-10-19: the knob exists, the policy is unchanged until the operator
+/// sets it via `HKASK_REG_CONFIG` under the key `algedonic_events_max`).
+/// Only Critical alerts escalate to the board (`algedonic.rs` —
+/// `escalated: severity == AlertSeverity::Critical`), while the metric
+/// counts Warning too, so a loop that carries any standing advisory fires
+/// under the default — the operator calibrates that tolerance here rather
+/// than in a recompile. Bounds: a value at or above `max_alerts` is rejected
+/// by `SetPoints::validate` (the actionable count can never reach the log
+/// cap, so such a tolerance silently disables the sensor — the same class
+/// the `tool_reliability_threshold` bounds check rejects).
+pub(crate) const DEFAULT_ALGEDONIC_EVENTS_MAX: usize = 0;
+
 // ── Memory health defaults ──
 /// Default max h_mem count before `TripleCount` fires — the memory-store
 /// growth ceiling. Counted over the SHEDDABLE tiers (turn storage + goal
@@ -172,6 +189,13 @@ pub struct SetPoints {
     /// entries are evicted. Default: 200. When the log approaches this cap,
     /// the cybernetics loop emits an `AlgedonicLogApproachingCap` signal.
     pub max_alerts: usize,
+    /// Maximum actionable (Warning-or-Critical) alerts before
+    /// `AlgedonicEvents` fires — the algedonic-advisory tolerance.
+    /// Default: 0 (every actionable alert deviates — the pre-2026-10-19
+    /// behavior; option (B) on algedonic card f69162f4 exposes the knob,
+    /// it does not decide the policy). See `DEFAULT_ALGEDONIC_EVENTS_MAX`
+    /// for the measured basis and bounds.
+    pub algedonic_events_max: usize,
     // ── Memory health set-points (v0.34.0) ──
     /// Maximum h_mem count before `TripleCount` fires — the memory-store
     /// growth ceiling, counted over the SHEDDABLE tiers (turn storage +
@@ -223,6 +247,7 @@ pub(crate) struct SetPointsConfig {
     pub tool_reliability_threshold: Option<f64>,
     pub max_skill_span_history: Option<usize>,
     pub max_alerts: Option<usize>,
+    pub algedonic_events_max: Option<usize>,
     pub triple_count_max: Option<usize>,
     pub low_confidence_max: Option<usize>,
     pub low_confidence_threshold: Option<f64>,
@@ -265,6 +290,7 @@ impl Default for SetPoints {
             tool_reliability_threshold: DEFAULT_TOOL_RELIABILITY_THRESHOLD,
             max_skill_span_history: DEFAULT_MAX_SKILL_SPAN_HISTORY,
             max_alerts: DEFAULT_MAX_ALERTS,
+            algedonic_events_max: DEFAULT_ALGEDONIC_EVENTS_MAX,
             triple_count_max: DEFAULT_TRIPLE_COUNT_MAX,
             low_confidence_max: DEFAULT_LOW_CONFIDENCE_MAX,
             low_confidence_threshold: DEFAULT_LOW_CONFIDENCE_THRESHOLD,
@@ -319,6 +345,9 @@ impl SetPoints {
                 .max_skill_span_history
                 .unwrap_or(defaults.max_skill_span_history),
             max_alerts: config.max_alerts.unwrap_or(defaults.max_alerts),
+            algedonic_events_max: config
+                .algedonic_events_max
+                .unwrap_or(defaults.algedonic_events_max),
             triple_count_max: config.triple_count_max.unwrap_or(defaults.triple_count_max),
             low_confidence_max: config
                 .low_confidence_max
@@ -390,6 +419,19 @@ impl SetPoints {
             return Err(anyhow::anyhow!(
                 "tool_reliability_threshold must be in (0.0, 1.0], got {}",
                 self.tool_reliability_threshold
+            ));
+        }
+        // An `algedonic_events_max` at or above `max_alerts` can never be
+        // exceeded — the actionable count cannot reach the log cap — so it
+        // silently disables the `AlgedonicEvents` sensor. Reject it so
+        // `load_set_points` falls back to the default instead of running a
+        // blind sensor (the same class the `tool_reliability_threshold`
+        // bounds check rejects).
+        if self.algedonic_events_max >= self.max_alerts {
+            return Err(anyhow::anyhow!(
+                "algedonic_events_max ({}) must be < max_alerts ({}) — at or above the log cap the sensor is silently disabled",
+                self.algedonic_events_max,
+                self.max_alerts
             ));
         }
         Ok(())
