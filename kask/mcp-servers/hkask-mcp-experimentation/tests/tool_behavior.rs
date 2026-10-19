@@ -67,6 +67,7 @@ fn proposal(layer: &str) -> ExperimentProposeRequest {
             confidence: 0.7,
         },
         budget: AnyJsonValue(serde_json::json!({"energy_budget": "one eval run", "max_runs": 18})),
+        design_spec: None,
         linked_goal_id: None,
         experiment_key: None,
     }
@@ -174,7 +175,8 @@ async fn full_protocol_runs_through_the_tool_seam() {
         .experiment_seal(Parameters(ExperimentSealRequest {
             experiment_id: experiment_id.clone(),
             baseline_variant_id: baseline_id.clone(),
-            baseline_pass_rate: 0.6,
+            baseline_pass_rate: Some(0.6),
+            scientific_headroom: None,
         }))
         .await
         .expect("experiment_seal succeeds");
@@ -213,7 +215,8 @@ async fn full_protocol_runs_through_the_tool_seam() {
     let selection = server
         .selection_record(Parameters(SelectionRecordRequest {
             experiment_id: experiment_id.clone(),
-            verdict: "selected".to_string(),
+            verdict: Some("selected".to_string()),
+            scientific_outcome: None,
             selected_variant_id: Some(challenger_id.clone()),
             reject_reasons: Vec::new(),
             algedonic_reference: Some("algedonic 2026-09-30#1".to_string()),
@@ -400,7 +403,8 @@ async fn experiment_seal_freezes_the_contract_through_the_tool_seam() {
         .experiment_seal(Parameters(ExperimentSealRequest {
             experiment_id: experiment_id.clone(),
             baseline_variant_id: baseline_id.clone(),
-            baseline_pass_rate: 0.6,
+            baseline_pass_rate: Some(0.6),
+            scientific_headroom: None,
         }))
         .await
         .expect("seal succeeds");
@@ -447,7 +451,8 @@ async fn experiment_seal_freezes_the_contract_through_the_tool_seam() {
         .experiment_seal(Parameters(ExperimentSealRequest {
             experiment_id: experiment_id.clone(),
             baseline_variant_id: baseline_id.clone(),
-            baseline_pass_rate: 0.7,
+            baseline_pass_rate: Some(0.7),
+            scientific_headroom: None,
         }))
         .await
         .expect_err("different seal refused");
@@ -477,7 +482,8 @@ async fn experiment_seal_freezes_the_contract_through_the_tool_seam() {
         .experiment_seal(Parameters(ExperimentSealRequest {
             experiment_id: fresh_id,
             baseline_variant_id: fresh_baseline_id,
-            baseline_pass_rate: 1.0,
+            baseline_pass_rate: Some(1.0),
+            scientific_headroom: None,
         }))
         .await
         .expect_err("saturation refused");
@@ -515,7 +521,8 @@ async fn final_evaluation_record_enforces_disjointness_through_the_tool_seam() {
         .experiment_seal(Parameters(ExperimentSealRequest {
             experiment_id: experiment_id.clone(),
             baseline_variant_id: baseline_id,
-            baseline_pass_rate: 0.6,
+            baseline_pass_rate: Some(0.6),
+            scientific_headroom: None,
         }))
         .await
         .expect("seal");
@@ -676,7 +683,8 @@ async fn unknown_records_are_not_found_and_resolved_experiments_refuse_work() {
     server
         .selection_record(Parameters(SelectionRecordRequest {
             experiment_id: experiment_id.clone(),
-            verdict: "selected".to_string(),
+            verdict: Some("selected".to_string()),
+            scientific_outcome: None,
             selected_variant_id: Some(variant_id),
             reject_reasons: Vec::new(),
             algedonic_reference: None,
@@ -704,7 +712,8 @@ async fn unknown_records_are_not_found_and_resolved_experiments_refuse_work() {
     let error = server
         .selection_record(Parameters(SelectionRecordRequest {
             experiment_id: fresh.clone(),
-            verdict: "selected".to_string(),
+            verdict: Some("selected".to_string()),
+            scientific_outcome: None,
             selected_variant_id: None,
             reject_reasons: Vec::new(),
             algedonic_reference: None,
@@ -715,7 +724,8 @@ async fn unknown_records_are_not_found_and_resolved_experiments_refuse_work() {
     let error = server
         .selection_record(Parameters(SelectionRecordRequest {
             experiment_id: fresh,
-            verdict: "rejected".to_string(),
+            verdict: Some("rejected".to_string()),
+            scientific_outcome: None,
             selected_variant_id: None,
             reject_reasons: Vec::new(),
             algedonic_reference: None,
@@ -920,4 +930,289 @@ async fn oversized_run_count_is_rejected_through_the_tool_seam() {
         .await
         .expect_err("oversized run_count rejected");
     assert!(error.to_string().contains("run_count"), "{error}");
+}
+
+// ── Scientific-design evolution through the tool seam (task `f1a90cd2`) ──
+
+/// A proposal carrying a typed `DesignSpec` — the scientific declaration the
+/// artifact `proposal` helper cannot express.
+fn design_proposal(design_spec: serde_json::Value) -> ExperimentProposeRequest {
+    ExperimentProposeRequest {
+        hypothesis: "Carrier exposure versus targeting dominates ADC efficacy".to_string(),
+        layer: "scientific_hypothesis".to_string(),
+        genotype_refs: vec!["experimental-design/ED-1 validity gate form".to_string()],
+        eval_set: AnyJsonValue(
+            serde_json::json!({"schema": "experimental-design-registry-adapter-v1"}),
+        ),
+        fitness_fn: "primary interaction confidence width relative to the ratified margin"
+            .to_string(),
+        noise_band: AnyJsonValue(serde_json::json!({"tie_rule": "within the practical margin"})),
+        rubrics: vec![
+            Rubric {
+                id: "interaction_width".to_string(),
+                description: "the primary interaction interval is narrower than the margin"
+                    .to_string(),
+                kind: RUBRIC_KIND_METRIC.to_string(),
+                verification: RubricVerification::ReportRef {
+                    harness: "swarm_eval_agent_local".to_string(),
+                },
+            },
+            Rubric {
+                id: "design_spec_present".to_string(),
+                description: "the declaration carries the versioned design_spec".to_string(),
+                kind: RUBRIC_KIND_IMPLEMENTATION.to_string(),
+                verification: RubricVerification::Contains {
+                    spec: "design_spec_version".to_string(),
+                },
+            },
+        ],
+        prediction: Prediction {
+            claim: "targeting contributes a practically meaningful advantage".to_string(),
+            confidence: 0.6,
+        },
+        budget: AnyJsonValue(serde_json::json!({"max_runs": 24})),
+        linked_goal_id: None,
+        design_spec: Some(AnyJsonValue(design_spec)),
+        experiment_key: None,
+    }
+}
+
+/// Criterion 1: the tool boundary accepts a versioned design, exposes it on
+/// the record, and refuses an unversioned one with a typed error.
+#[tokio::test]
+async fn design_spec_is_versioned_at_the_tool_boundary() {
+    let server = make_server();
+    let response = server
+        .experiment_propose(Parameters(design_proposal(serde_json::json!({
+            "spec_version": "design-spec-v1",
+            "spec_id": "adc-factorial-v1",
+        }))))
+        .await
+        .expect("versioned design accepted");
+    let proposed = envelope(&response);
+    assert_eq!(
+        proposed["experiment"]["design_spec"]["spec_id"],
+        "adc-factorial-v1"
+    );
+
+    // Unversioned → typed invalid_argument.
+    let error = server
+        .experiment_propose(Parameters(design_proposal(serde_json::json!({
+            "spec_id": "no-version",
+        }))))
+        .await
+        .expect_err("unversioned design refused");
+    assert!(error.to_string().contains("spec_version"), "{error}");
+}
+
+/// Criterion 2: `experiment_seal` accepts a tagged scientific headroom
+/// criterion through the tool seam, with no baseline pass rate.
+#[tokio::test]
+async fn scientific_headroom_seals_through_the_tool_seam() {
+    let server = make_server();
+    let proposed = envelope(
+        &server
+            .experiment_propose(Parameters(design_proposal(serde_json::json!({
+                "spec_version": "design-spec-v1",
+            }))))
+            .await
+            .expect("propose"),
+    );
+    let experiment_id = proposed["experiment"]["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+    let baseline =
+        register_variant_with_role(&server, &experiment_id, "baseline", None, Some("baseline"))
+            .await;
+    let baseline_id = baseline["variant"]["id"].as_str().expect("id").to_string();
+    server
+        .fitness_record(Parameters(FitnessRecordRequest {
+            experiment_id: experiment_id.clone(),
+            variant_id: baseline_id.clone(),
+            runs: vec!["baseline report".to_string()],
+            run_count: 2,
+            scores: AnyJsonValue(serde_json::json!({"pass_rate": 0.6})),
+            seal_id: None,
+        }))
+        .await
+        .expect("baseline fitness");
+
+    let sealed = envelope(
+        &server
+            .experiment_seal(Parameters(ExperimentSealRequest {
+                experiment_id: experiment_id.clone(),
+                baseline_variant_id: baseline_id.clone(),
+                baseline_pass_rate: None,
+                scientific_headroom: Some(hkask_mcp_experimentation::types::ScientificHeadroom {
+                    design_family: "single_arm".to_string(),
+                    criterion: "the single-arm interval width is below the ratified margin"
+                        .to_string(),
+                    evidence: vec!["power simulation report".to_string()],
+                }),
+            }))
+            .await
+            .expect("headroom seal"),
+    );
+    assert_eq!(
+        sealed["seal"]["scientific_headroom"]["design_family"],
+        "single_arm"
+    );
+    assert!(sealed["seal"]["baseline_pass_rate"].is_null());
+
+    // Neither attestation → typed failed_precondition.
+    let fresh = envelope(
+        &server
+            .experiment_propose(Parameters(design_proposal(serde_json::json!({
+                "spec_version": "design-spec-v1",
+            }))))
+            .await
+            .expect("propose"),
+    );
+    let fresh_id = fresh["experiment"]["id"].as_str().expect("id").to_string();
+    let fresh_baseline =
+        register_variant_with_role(&server, &fresh_id, "baseline", None, Some("baseline")).await;
+    let fresh_baseline_id = fresh_baseline["variant"]["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+    server
+        .fitness_record(Parameters(FitnessRecordRequest {
+            experiment_id: fresh_id.clone(),
+            variant_id: fresh_baseline_id.clone(),
+            runs: vec!["baseline report".to_string()],
+            run_count: 2,
+            scores: AnyJsonValue(serde_json::json!({"pass_rate": 0.6})),
+            seal_id: None,
+        }))
+        .await
+        .expect("baseline fitness");
+    let error = server
+        .experiment_seal(Parameters(ExperimentSealRequest {
+            experiment_id: fresh_id,
+            baseline_variant_id: fresh_baseline_id,
+            baseline_pass_rate: None,
+            scientific_headroom: None,
+        }))
+        .await
+        .expect_err("no attestation refused");
+    assert!(error.to_string().contains("exactly one"), "{error}");
+}
+
+/// Criterion 1 (read paths): a typed `design_spec` is exposed through
+/// both the population query and the lineage read.
+#[tokio::test]
+async fn design_spec_is_exposed_through_lineage_and_population() {
+    let server = make_server();
+    let proposed = envelope(
+        &server
+            .experiment_propose(Parameters(design_proposal(serde_json::json!({
+                "spec_version": "design-spec-v1",
+                "spec_id": "adc-factorial-v1",
+            }))))
+            .await
+            .expect("propose"),
+    );
+    let experiment_id = proposed["experiment"]["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+
+    let lineage = envelope(
+        &server
+            .lineage_read(Parameters(LineageReadRequest {
+                artifact_ref: experiment_id.clone(),
+            }))
+            .await
+            .expect("lineage"),
+    );
+    assert_eq!(
+        lineage["experiment"]["design_spec"]["spec_id"],
+        "adc-factorial-v1"
+    );
+
+    let population = envelope(
+        &server
+            .population_query(Parameters(PopulationQueryRequest {
+                layer: Some("scientific_hypothesis".to_string()),
+                status: None,
+                created_since: None,
+                limit: None,
+            }))
+            .await
+            .expect("population"),
+    );
+    let row = population["experiments"]
+        .as_array()
+        .expect("array")
+        .iter()
+        .find(|row| row["id"] == experiment_id.as_str())
+        .expect("row present");
+    assert_eq!(row["design_spec"]["spec_id"], "adc-factorial-v1");
+}
+
+/// Criterion 3: a typed scientific outcome resolves through the tool seam and
+/// is never renamed to selected/rejected.
+#[tokio::test]
+async fn scientific_outcome_resolves_through_the_tool_seam() {
+    let server = make_server();
+    let proposed = envelope(
+        &server
+            .experiment_propose(Parameters(design_proposal(serde_json::json!({
+                "spec_version": "design-spec-v1",
+            }))))
+            .await
+            .expect("propose"),
+    );
+    let experiment_id = proposed["experiment"]["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+    register_variant(&server, &experiment_id, "arm", None).await;
+
+    let resolved = envelope(
+        &server
+            .selection_record(Parameters(SelectionRecordRequest {
+                experiment_id: experiment_id.clone(),
+                verdict: None,
+                selected_variant_id: None,
+                reject_reasons: Vec::new(),
+                algedonic_reference: None,
+                scientific_outcome: Some("evidence_of_practical_equivalence".to_string()),
+            }))
+            .await
+            .expect("typed outcome resolves"),
+    );
+    assert_eq!(
+        resolved["selection"]["scientific_outcome"],
+        "evidence_of_practical_equivalence"
+    );
+    assert_eq!(
+        resolved["selection"]["verdict"],
+        "evidence_of_practical_equivalence"
+    );
+
+    // Both verdict and outcome → typed invalid_argument.
+    let fresh = envelope(
+        &server
+            .experiment_propose(Parameters(design_proposal(serde_json::json!({
+                "spec_version": "design-spec-v1",
+            }))))
+            .await
+            .expect("propose"),
+    );
+    let fresh_id = fresh["experiment"]["id"].as_str().expect("id").to_string();
+    register_variant(&server, &fresh_id, "arm", None).await;
+    let error = server
+        .selection_record(Parameters(SelectionRecordRequest {
+            experiment_id: fresh_id,
+            verdict: Some("selected".to_string()),
+            selected_variant_id: None,
+            reject_reasons: Vec::new(),
+            algedonic_reference: None,
+            scientific_outcome: Some("inconclusive".to_string()),
+        }))
+        .await
+        .expect_err("both resolutions refused");
+    assert!(error.to_string().contains("exactly one"), "{error}");
 }

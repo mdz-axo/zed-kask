@@ -30,6 +30,28 @@ pub const STATUSES: &[&str] = &[STATUS_PROPOSED, STATUS_RUNNING, STATUS_RESOLVED
 pub const VERDICT_SELECTED: &str = "selected";
 pub const VERDICT_REJECTED: &str = "rejected";
 
+/// Typed scientific outcome vocabulary (task `f1a90cd2`) — the design-family
+/// resolution set that replaces `selected`/`rejected` for a design with no
+/// meaningful binary baseline. Only the two genuinely binary resolutions
+/// (`rejected`, `corroborated`) enter Brier calibration; the bounded and the
+/// two void outcomes never test the preregistered binary claim and are
+/// excluded on this typed field, never by parsing reject-reason text.
+pub const SCIENTIFIC_OUTCOME_REJECTED: &str = "rejected";
+pub const SCIENTIFIC_OUTCOME_CORROBORATED: &str = "corroborated";
+pub const SCIENTIFIC_OUTCOME_EQUIVALENCE: &str = "evidence_of_practical_equivalence";
+pub const SCIENTIFIC_OUTCOME_INCONCLUSIVE: &str = "inconclusive";
+pub const SCIENTIFIC_OUTCOME_MEASUREMENT_VOID: &str = "measurement_void";
+pub const SCIENTIFIC_OUTCOME_DESIGN_VOID: &str = "design_void";
+
+pub const SCIENTIFIC_OUTCOMES: &[&str] = &[
+    SCIENTIFIC_OUTCOME_REJECTED,
+    SCIENTIFIC_OUTCOME_CORROBORATED,
+    SCIENTIFIC_OUTCOME_EQUIVALENCE,
+    SCIENTIFIC_OUTCOME_INCONCLUSIVE,
+    SCIENTIFIC_OUTCOME_MEASUREMENT_VOID,
+    SCIENTIFIC_OUTCOME_DESIGN_VOID,
+];
+
 /// A pre-registered prediction — the tiny controller (§P8.1). The claim is
 /// scored against the experiment's measured outcome by the linked kanban
 /// goal; the confidence is the experiment's own probability for the claim.
@@ -40,6 +62,26 @@ pub struct Prediction {
     pub claim: String,
     /// The experiment's own confidence in the claim, in [0, 1].
     pub confidence: f64,
+}
+
+/// The tagged scientific headroom criterion (task `f1a90cd2`) — the seal
+/// attestation for a design family that has no meaningful binary baseline
+/// pass rate (single-arm calibration, observational estimation, equivalence).
+/// `design_family` is the tag; `criterion` states what makes the design
+/// non-saturated in a way a pass rate cannot express; `evidence` carries the
+/// recorded report refs that support it. This is the honest alternative to
+/// fabricating a `baseline_pass_rate`.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ScientificHeadroom {
+    /// The design family the criterion applies to (e.g.
+    /// `measurement_or_calibration`, `observational_estimation`, `single_arm`,
+    /// `equivalence`).
+    pub design_family: String,
+    /// The headroom criterion — what makes this design informative, stated so
+    /// it can fail.
+    pub criterion: String,
+    /// Recorded report refs evidencing the criterion.
+    pub evidence: Vec<String>,
 }
 
 /// Rubric kinds (the v3 create-idea rules): every declaration carries at
@@ -132,6 +174,45 @@ pub fn validate_rubrics(rubrics: &[Rubric]) -> Result<(), ExperimentationError> 
     Ok(())
 }
 
+/// Validate an optional scientific `DesignSpec` (task `f1a90cd2`): it must be
+/// a JSON object carrying a non-empty `spec_version` string, so a stored
+/// design is always versioned (the versioned-artifact requirement). `None` is
+/// valid — legacy artifact experiments carry no design.
+pub fn validate_design_spec(
+    design_spec: Option<&serde_json::Value>,
+) -> Result<(), ExperimentationError> {
+    let Some(spec) = design_spec else {
+        return Ok(());
+    };
+    let Some(object) = spec.as_object() else {
+        return Err(ExperimentationError::DesignSpecInvalid(
+            "not a JSON object".to_string(),
+        ));
+    };
+    match object
+        .get("spec_version")
+        .and_then(serde_json::Value::as_str)
+    {
+        Some(version) if !version.trim().is_empty() => Ok(()),
+        _ => Err(ExperimentationError::DesignSpecInvalid(
+            "missing or empty spec_version".to_string(),
+        )),
+    }
+}
+
+/// Validate a tagged scientific headroom criterion (task `f1a90cd2`): the
+/// design family and criterion must be non-empty. The evidence refs may be
+/// empty only when the criterion is self-evident from the design family; a
+/// supplied criterion is never silently blanked.
+pub fn validate_scientific_headroom(
+    headroom: &ScientificHeadroom,
+) -> Result<(), ExperimentationError> {
+    if headroom.design_family.trim().is_empty() || headroom.criterion.trim().is_empty() {
+        return Err(ExperimentationError::ScientificHeadroomIncomplete);
+    }
+    Ok(())
+}
+
 /// A registered experiment (§P8.4 `experiment_propose`).
 #[derive(Debug, Clone, Serialize)]
 pub struct ExperimentRecord {
@@ -155,6 +236,12 @@ pub struct ExperimentRecord {
     /// The typed rubric bundle (P1, the agentic-scientist-v3 integration) —
     /// the machine-checkable eval contract declared before measurement.
     pub rubrics: Vec<Rubric>,
+    /// The optional typed, versioned scientific `DesignSpec` (task
+    /// `f1a90cd2`) — present for scientific-hypothesis declarations carrying a
+    /// first-class design, `None` for legacy artifact experiments. When
+    /// present it joins the seal fingerprint, so post-seal design drift is
+    /// refused rather than silently reused.
+    pub design_spec: Option<serde_json::Value>,
     pub status: String,
     pub created_at: String,
 }
@@ -215,6 +302,11 @@ pub struct SelectionRecord {
     pub selected_variant_id: Option<String>,
     pub reject_reasons: Vec<String>,
     pub algedonic_reference: Option<String>,
+    /// The typed scientific outcome (task `f1a90cd2`) when this selection
+    /// resolved a scientific design rather than a legacy artifact experiment.
+    /// `None` for legacy `selected`/`rejected` selections; the calibration
+    /// record keys on this field, never on reject-reason text.
+    pub scientific_outcome: Option<String>,
     pub created_at: String,
 }
 
@@ -234,8 +326,13 @@ pub struct SealRecord {
     /// The fitness-record ids that evidence the baseline measurement.
     pub baseline_fitness_ids: Vec<String>,
     /// The measured baseline pass rate — validated < 1.0 at seal time
-    /// (the headroom pre-check, §5 Q6).
-    pub baseline_pass_rate: f64,
+    /// (the headroom pre-check, §5 Q6). `None` for a design-family seal
+    /// attested by `scientific_headroom` instead.
+    pub baseline_pass_rate: Option<f64>,
+    /// The tagged scientific headroom criterion (task `f1a90cd2`) for a design
+    /// family without a meaningful binary baseline pass rate. Exactly one of
+    /// `baseline_pass_rate` / `scientific_headroom` is set.
+    pub scientific_headroom: Option<ScientificHeadroom>,
     pub created_at: String,
 }
 
@@ -269,6 +366,9 @@ pub struct ExperimentHealth {
     pub recorded_runs: u64,
     pub prediction_confidence: Option<f64>,
     pub verdict: Option<String>,
+    /// The typed scientific outcome (task `f1a90cd2`) when the first selection
+    /// carried one — the calibration-exclusion key.
+    pub scientific_outcome: Option<String>,
     pub reject_reasons: Vec<String>,
 }
 
@@ -306,8 +406,13 @@ impl ExperimentationHealthSnapshot {
     /// failure: the eval set cannot discriminate) or "measurement-void"
     /// (infrastructure failure: the runs never produced a valid
     /// measurement) — never tested their claim, so they are excluded from
-    /// the calibration record rather than scored as refuted. Returns
-    /// `(mean_brier, claim_count)`; `None` when no measured claims exist.
+    /// the calibration record rather than scored as refuted. A typed
+    /// scientific outcome (task `f1a90cd2`) takes precedence: only
+    /// `corroborated` (held) and `rejected` (refuted) calibrate, while
+    /// `evidence_of_practical_equivalence`, `inconclusive`,
+    /// `measurement_void` and `design_void` are excluded on the typed field.
+    /// Returns `(mean_brier, claim_count)`; `None` when no measured claims
+    /// exist.
     pub fn resolved_claim_brier(&self) -> Option<(f64, u32)> {
         let mut sum = 0.0;
         let mut claims = 0u32;
@@ -318,6 +423,26 @@ impl ExperimentationHealthSnapshot {
             let Some(confidence) = experiment.prediction_confidence else {
                 continue;
             };
+            // A typed scientific outcome (task `f1a90cd2`) is the
+            // authoritative resolution when present: only the two genuinely
+            // binary outcomes calibrate. The bounded and void outcomes are
+            // excluded structurally, on the typed field itself — never by
+            // parsing reject-reason text (the `is_void_marker` first-reason
+            // trap).
+            if let Some(outcome) = experiment.scientific_outcome.as_deref() {
+                match outcome {
+                    SCIENTIFIC_OUTCOME_CORROBORATED => {
+                        sum += (confidence - 1.0) * (confidence - 1.0);
+                        claims += 1;
+                    }
+                    SCIENTIFIC_OUTCOME_REJECTED => {
+                        sum += confidence * confidence;
+                        claims += 1;
+                    }
+                    _ => continue,
+                }
+                continue;
+            }
             match experiment.verdict.as_deref() {
                 Some(VERDICT_SELECTED) => {
                     sum += (confidence - 1.0) * (confidence - 1.0);
@@ -391,6 +516,22 @@ pub enum ExperimentationError {
     RunCountInvalid(u64),
     #[error("verdict must be \"selected\" or \"rejected\", got {0:?}")]
     UnknownVerdict(String),
+    #[error(
+        "scientific_outcome must be one of rejected, corroborated, evidence_of_practical_equivalence, inconclusive, measurement_void, design_void; got {0:?}"
+    )]
+    UnknownScientificOutcome(String),
+    #[error(
+        "supply exactly one of verdict or scientific_outcome — got verdict={0:?} scientific_outcome={1:?}"
+    )]
+    SelectionResolutionConflict(Option<String>, Option<String>),
+    #[error(
+        "experiment_seal requires exactly one of baseline_pass_rate or scientific_headroom — a design either has a meaningful binary pass rate or it does not, never both and never neither"
+    )]
+    SealAttestationConflict,
+    #[error(
+        "design_spec must be a versioned JSON object carrying a non-empty spec_version string; got {0}"
+    )]
+    DesignSpecInvalid(String),
     #[error("status must be one of proposed, running, resolved; got {0:?}")]
     UnknownStatus(String),
     #[error("a selected experiment must name its selected_variant_id")]
@@ -441,6 +582,10 @@ pub enum ExperimentationError {
         "baseline saturation at pass rate {0}: the eval set cannot discriminate (no headroom) — void the experiment via selection_record with a no-headroom reject reason, redesign the eval set, and re-declare (§5 Q6)"
     )]
     NoHeadroom(f64),
+    #[error(
+        "scientific_headroom.design_family and .criterion must be non-empty — the headroom attestation is the seal's whole claim when no baseline pass rate exists"
+    )]
+    ScientificHeadroomIncomplete,
     #[error("the seal's baseline variant {0} must carry the baseline role; got role {1:?} (P2)")]
     SealBaselineMismatch(String, String),
     #[error("the baseline variant has no recorded fitness — measure it before sealing (P2)")]

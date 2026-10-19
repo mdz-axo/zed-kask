@@ -138,6 +138,7 @@ mod tests {
                 9,
                 None,
                 None,
+                None,
             )
             .expect("propose");
         // The baseline measures pre-seal (P2) — 9 runs at the ceiling.

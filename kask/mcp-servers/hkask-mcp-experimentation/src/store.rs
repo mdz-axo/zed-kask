@@ -20,9 +20,10 @@ use sha2::{Digest, Sha256};
 
 use crate::types::{
     ExperimentHealth, ExperimentRecord, ExperimentationError, ExperimentationHealthSnapshot,
-    FinalEvaluationRecord, FitnessRecord, Prediction, Rubric, STATUS_PROPOSED, STATUS_RESOLVED,
-    STATUS_RUNNING, SealRecord, SelectionRecord, VARIANT_ROLE_ABLATION, VARIANT_ROLE_BASELINE,
-    VARIANT_ROLES, VERDICT_REJECTED, VERDICT_SELECTED, VariantRecord,
+    FinalEvaluationRecord, FitnessRecord, Prediction, Rubric, SCIENTIFIC_OUTCOME_REJECTED,
+    SCIENTIFIC_OUTCOMES, STATUS_PROPOSED, STATUS_RESOLVED, STATUS_RUNNING, ScientificHeadroom,
+    SealRecord, SelectionRecord, VARIANT_ROLE_ABLATION, VARIANT_ROLE_BASELINE, VARIANT_ROLES,
+    VERDICT_REJECTED, VERDICT_SELECTED, VariantRecord,
 };
 
 /// Serialize a column value as canonical JSON text. `?Sized` admits slice
@@ -44,6 +45,22 @@ fn text_or_null(value: Option<&str>) -> DbValue {
 /// Read an optional TEXT column (NULL or missing value → None).
 fn optional_text(row: &DbRow, idx: usize) -> Option<String> {
     row.get_str(idx).ok().map(str::to_string)
+}
+
+/// Read an optional JSON column. A NULL or absent cell reads as `None`; a
+/// present cell is parsed and a malformed value surfaces as a serialization
+/// error rather than a silent `None` (the silent-fallback trap). The typed
+/// scientific fields (`design_spec`, `scientific_headroom`) are optional.
+fn optional_json<T: serde::de::DeserializeOwned>(
+    row: &DbRow,
+    idx: usize,
+) -> Result<Option<T>, ExperimentationError> {
+    match row.get_str(idx) {
+        Ok(text) => serde_json::from_str(text).map(Some).map_err(|error| {
+            ExperimentationError::Serialization(format!("JSON column {idx}: {error}"))
+        }),
+        Err(_) => Ok(None),
+    }
 }
 
 /// Read a required INTEGER column as u64 — a value outside the u64 range
@@ -70,6 +87,73 @@ fn db_int(value: u64) -> Result<DbValue, ExperimentationError> {
     })
 }
 
+/// Column names of a table, via `PRAGMA table_info` (the same introspection
+/// the kanban idempotency store uses to gate its additive columns).
+fn column_names(driver: &dyn DatabaseDriver, table: &str) -> Result<Vec<String>, DbError> {
+    let rows = driver.query(&format!("PRAGMA table_info({table})"), &[])?;
+    Ok(rows
+        .iter()
+        .filter_map(|row| row.get_str(1).ok().map(str::to_string))
+        .collect())
+}
+
+/// Guarded additive migration for the 2026-10-19 scientific-design evolution
+/// (task `f1a90cd2`). `experiments.design_spec` and
+/// `selection_records.scientific_outcome` are plain nullable `ADD COLUMN`s.
+/// `seals.baseline_pass_rate` must relax from `NOT NULL` (a design-family
+/// seal carries `scientific_headroom` instead), which SQLite cannot do in
+/// place — that table is rebuilt with its rows copied verbatim, so a sealed
+/// experiment is preserved rather than dropped. Each step is gated on the
+/// column set, so a fresh database (already created with the target schema)
+/// and an already-migrated one are both no-ops.
+fn migrate_scientific_design_columns(driver: &dyn DatabaseDriver) -> Result<(), DbError> {
+    if !column_names(driver, "experiments")?
+        .iter()
+        .any(|column| column == "design_spec")
+    {
+        driver.execute_batch("ALTER TABLE experiments ADD COLUMN design_spec TEXT")?;
+    }
+    if !column_names(driver, "selection_records")?
+        .iter()
+        .any(|column| column == "scientific_outcome")
+    {
+        driver.execute_batch("ALTER TABLE selection_records ADD COLUMN scientific_outcome TEXT")?;
+    }
+    if !column_names(driver, "seals")?
+        .iter()
+        .any(|column| column == "scientific_headroom")
+    {
+        // The rebuild runs inside ONE transaction: SQLite DDL is
+        // transactional, so a failure between the RENAME and the DROP rolls
+        // back to the intact original `seals` table. `execute_batch` in
+        // autocommit would leave the table renamed-and-absent on a mid-batch
+        // failure — an unacceptable window over the live registry's seals.
+        driver.transaction(&mut |tx| {
+            tx.execute_batch(
+                "ALTER TABLE seals RENAME TO seals_pre_scientific; \
+                 CREATE TABLE seals (\
+                     id TEXT PRIMARY KEY, \
+                     experiment_id TEXT NOT NULL UNIQUE, \
+                     fingerprint TEXT NOT NULL, \
+                     baseline_variant_id TEXT NOT NULL, \
+                     baseline_fitness_ids TEXT NOT NULL, \
+                     baseline_pass_rate TEXT, \
+                     created_at TEXT NOT NULL, \
+                     scientific_headroom TEXT \
+                 ); \
+                 INSERT INTO seals (id, experiment_id, fingerprint, baseline_variant_id, \
+                                    baseline_fitness_ids, baseline_pass_rate, created_at, \
+                                    scientific_headroom) \
+                     SELECT id, experiment_id, fingerprint, baseline_variant_id, \
+                            baseline_fitness_ids, baseline_pass_rate, created_at, NULL \
+                     FROM seals_pre_scientific; \
+                 DROP TABLE seals_pre_scientific;",
+            )
+        })?;
+    }
+    Ok(())
+}
+
 fn experiment_from_row(row: &DbRow) -> Result<ExperimentRecord, ExperimentationError> {
     Ok(ExperimentRecord {
         id: row.get_str(0)?.to_string(),
@@ -84,6 +168,7 @@ fn experiment_from_row(row: &DbRow) -> Result<ExperimentRecord, ExperimentationE
         max_runs: required_int(row, 11)?,
         linked_goal_id: optional_text(row, 12),
         rubrics: row.get_json(13)?,
+        design_spec: optional_json(row, 14)?,
         status: row.get_str(9)?.to_string(),
         created_at: row.get_str(10)?.to_string(),
     })
@@ -121,14 +206,19 @@ fn selection_from_row(row: &DbRow) -> Result<SelectionRecord, ExperimentationErr
         selected_variant_id: optional_text(row, 3),
         reject_reasons: row.get_json(4)?,
         algedonic_reference: optional_text(row, 5),
+        scientific_outcome: optional_text(row, 7),
         created_at: row.get_str(6)?.to_string(),
     })
 }
 
 fn seal_from_row(row: &DbRow) -> Result<SealRecord, ExperimentationError> {
-    let pass_rate = row.get_str(5)?.parse::<f64>().map_err(|error| {
-        ExperimentationError::Serialization(format!("baseline_pass_rate column: {error}"))
-    })?;
+    let pass_rate = optional_text(row, 5)
+        .map(|text| {
+            text.parse::<f64>().map_err(|error| {
+                ExperimentationError::Serialization(format!("baseline_pass_rate column: {error}"))
+            })
+        })
+        .transpose()?;
     Ok(SealRecord {
         id: row.get_str(0)?.to_string(),
         experiment_id: row.get_str(1)?.to_string(),
@@ -137,6 +227,7 @@ fn seal_from_row(row: &DbRow) -> Result<SealRecord, ExperimentationError> {
         baseline_fitness_ids: row.get_json(4)?,
         baseline_pass_rate: pass_rate,
         created_at: row.get_str(6)?.to_string(),
+        scientific_headroom: optional_json(row, 7)?,
     })
 }
 
@@ -177,6 +268,7 @@ impl ExperimentationStore {
                  max_runs INTEGER NOT NULL, \
                  linked_goal_id TEXT, \
                  rubrics TEXT NOT NULL, \
+                 design_spec TEXT, \
                  status TEXT NOT NULL, \
                  created_at TEXT NOT NULL \
              ); \
@@ -207,7 +299,8 @@ impl ExperimentationStore {
                  selected_variant_id TEXT, \
                  reject_reasons TEXT NOT NULL, \
                  algedonic_reference TEXT, \
-                 created_at TEXT NOT NULL \
+                 created_at TEXT NOT NULL, \
+                 scientific_outcome TEXT \
              ); \
             CREATE TABLE IF NOT EXISTS seals (\
                  id TEXT PRIMARY KEY, \
@@ -215,8 +308,9 @@ impl ExperimentationStore {
                  fingerprint TEXT NOT NULL, \
                  baseline_variant_id TEXT NOT NULL, \
                  baseline_fitness_ids TEXT NOT NULL, \
-                 baseline_pass_rate TEXT NOT NULL, \
-                 created_at TEXT NOT NULL \
+                 baseline_pass_rate TEXT, \
+                 created_at TEXT NOT NULL, \
+                 scientific_headroom TEXT \
              ); \
             CREATE TABLE IF NOT EXISTS final_evaluations (\
                  id TEXT PRIMARY KEY, \
@@ -232,12 +326,20 @@ impl ExperimentationStore {
              CREATE INDEX IF NOT EXISTS fitness_by_variant ON fitness_records(variant_id); \
              CREATE INDEX IF NOT EXISTS selection_by_experiment ON selection_records(experiment_id)",
         )?;
-        // Full schema at creation — there is no migration surface: the
+        // Full schema at creation — there is no legacy-import path: the
         // pre-contract accommodations (nullable max_runs, roleless
-        // variants, rubric-less declarations, the ALTER machinery) were
-        // removed 2026-10-15 under the operator's no-backward-compatibility
-        // ruling (§P8.7-Q5), so every database is created by this batch
-        // alone.
+        // variants, rubric-less declarations) were removed 2026-10-15 under
+        // the operator's no-backward-compatibility ruling (§P8.7-Q5).
+        //
+        // The 2026-10-19 scientific-design evolution (task `f1a90cd2`) is
+        // NOT such an accommodation: it adds capability to a table that
+        // already holds real resolved experiments (drift probes, the
+        // prompt-enhance and FEDFUNDS cycles), so its columns are added by a
+        // guarded additive migration that preserves every existing row — the
+        // `IdempotencyStore::with_driver` shape. `CREATE TABLE IF NOT EXISTS`
+        // is a no-op on an existing table, so a fresh database gets the
+        // columns above and an existing one is upgraded below.
+        migrate_scientific_design_columns(&*driver)?;
         Ok(Self { driver })
     }
 
@@ -260,6 +362,7 @@ impl ExperimentationStore {
         max_runs: u64,
         linked_goal_id: Option<&str>,
         experiment_key: Option<&str>,
+        design_spec: Option<&serde_json::Value>,
     ) -> Result<ExperimentRecord, ExperimentationError> {
         let id = format!("exp_{}", uuid::Uuid::new_v4().simple());
         let created_at = chrono::Utc::now().to_rfc3339();
@@ -267,8 +370,8 @@ impl ExperimentationStore {
             "INSERT OR IGNORE INTO experiments \
              (id, experiment_key, hypothesis, layer, genotype_refs, eval_set, \
               fitness_fn, noise_band, prediction, budget, max_runs, linked_goal_id, \
-              rubrics, status, created_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+              rubrics, design_spec, status, created_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             &[
                 DbValue::Text(id.clone()),
                 text_or_null(experiment_key),
@@ -283,6 +386,11 @@ impl ExperimentationStore {
                 db_int(max_runs)?,
                 text_or_null(linked_goal_id),
                 DbValue::Text(value_column(rubrics)?),
+                design_spec
+                    .map(value_column)
+                    .transpose()?
+                    .map(DbValue::Text)
+                    .unwrap_or(DbValue::Null),
                 DbValue::Text(STATUS_PROPOSED.to_string()),
                 DbValue::Text(created_at),
             ],
@@ -304,7 +412,8 @@ impl ExperimentationStore {
     pub fn experiment_by_id(&self, id: &str) -> Result<ExperimentRecord, ExperimentationError> {
         let row = self.driver.query_optional(
             "SELECT id, hypothesis, layer, genotype_refs, eval_set, fitness_fn, \
-             noise_band, prediction, budget, status, created_at, max_runs, linked_goal_id, rubrics \
+             noise_band, prediction, budget, status, created_at, max_runs, linked_goal_id, rubrics, \
+             design_spec \
              FROM experiments WHERE id = ?1",
             &[DbValue::Text(id.to_string())],
         )?;
@@ -316,7 +425,8 @@ impl ExperimentationStore {
     fn experiment_by_key(&self, key: &str) -> Result<ExperimentRecord, ExperimentationError> {
         let row = self.driver.query_optional(
             "SELECT id, hypothesis, layer, genotype_refs, eval_set, fitness_fn, \
-             noise_band, prediction, budget, status, created_at, max_runs, linked_goal_id, rubrics \
+             noise_band, prediction, budget, status, created_at, max_runs, linked_goal_id, rubrics, \
+             design_spec \
              FROM experiments WHERE experiment_key = ?1",
             &[DbValue::Text(key.to_string())],
         )?;
@@ -653,7 +763,8 @@ impl ExperimentationStore {
         &self,
         experiment_id: &str,
         baseline_variant_id: &str,
-        baseline_pass_rate: f64,
+        baseline_pass_rate: Option<f64>,
+        scientific_headroom: Option<&ScientificHeadroom>,
     ) -> Result<SealRecord, ExperimentationError> {
         let experiment = self.experiment_by_id(experiment_id)?;
         if experiment.status == STATUS_RESOLVED {
@@ -661,13 +772,22 @@ impl ExperimentationStore {
                 experiment_id.to_string(),
             ));
         }
-        if !(0.0..=1.0).contains(&baseline_pass_rate) {
-            return Err(ExperimentationError::SealPassRateInvalid(
-                baseline_pass_rate,
-            ));
-        }
-        if baseline_pass_rate >= 1.0 {
-            return Err(ExperimentationError::NoHeadroom(baseline_pass_rate));
+        // Exactly one attestation: a meaningful binary pass rate or a tagged
+        // scientific headroom criterion. Both-supplied or neither is a typed
+        // refusal — the headroom pre-check must have a subject.
+        match (&baseline_pass_rate, &scientific_headroom) {
+            (Some(pass_rate), None) => {
+                if !(0.0..=1.0).contains(pass_rate) {
+                    return Err(ExperimentationError::SealPassRateInvalid(*pass_rate));
+                }
+                if *pass_rate >= 1.0 {
+                    return Err(ExperimentationError::NoHeadroom(*pass_rate));
+                }
+            }
+            (None, Some(headroom)) => {
+                crate::types::validate_scientific_headroom(headroom)?;
+            }
+            _ => return Err(ExperimentationError::SealAttestationConflict),
         }
         let variant = self.variant_by_id(baseline_variant_id)?;
         if variant.experiment_id != experiment_id {
@@ -688,12 +808,17 @@ impl ExperimentationStore {
         }
         // The fingerprint freezes the eval contract: SHA-256 over the
         // canonical JSON of the sealed declaration fields (serde_json's
-        // object map is key-sorted, so the serialization is canonical).
+        // object map is key-sorted, so the serialization is canonical). The
+        // typed `design_spec` joins the fingerprint (task `f1a90cd2`), so
+        // post-seal design drift yields a different fingerprint rather than
+        // silently reusing a stale design. A `None` design serializes as
+        // JSON `null`, so legacy declarations seal to a stable fingerprint.
         let sealed_contract = serde_json::json!({
             "eval_set": experiment.eval_set,
             "fitness_fn": experiment.fitness_fn,
             "noise_band": experiment.noise_band,
             "rubrics": experiment.rubrics,
+            "design_spec": experiment.design_spec,
         });
         let mut hasher = Sha256::new();
         hasher.update(value_column(&sealed_contract)?.as_bytes());
@@ -707,16 +832,23 @@ impl ExperimentationStore {
         let inserted = self.driver.execute(
             "INSERT OR IGNORE INTO seals \
              (id, experiment_id, fingerprint, baseline_variant_id, baseline_fitness_ids, \
-              baseline_pass_rate, created_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+              baseline_pass_rate, created_at, scientific_headroom) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             &[
                 DbValue::Text(id.clone()),
                 DbValue::Text(experiment_id.to_string()),
                 DbValue::Text(fingerprint.clone()),
                 DbValue::Text(baseline_variant_id.to_string()),
                 DbValue::Text(value_column(&baseline_fitness_ids)?),
-                DbValue::Text(baseline_pass_rate.to_string()),
+                baseline_pass_rate
+                    .map(|rate| DbValue::Text(rate.to_string()))
+                    .unwrap_or(DbValue::Null),
                 DbValue::Text(created_at.clone()),
+                scientific_headroom
+                    .map(value_column)
+                    .transpose()?
+                    .map(DbValue::Text)
+                    .unwrap_or(DbValue::Null),
             ],
         )?;
         if inserted == 0 {
@@ -727,9 +859,14 @@ impl ExperimentationStore {
                         .to_string(),
                 )
             })?;
+            let pass_rate_matches = match (existing.baseline_pass_rate, baseline_pass_rate) {
+                (Some(a), Some(b)) => (a - b).abs() < f64::EPSILON,
+                (None, None) => true,
+                _ => false,
+            };
             if existing.baseline_variant_id == baseline_variant_id
                 && existing.fingerprint == fingerprint
-                && (existing.baseline_pass_rate - baseline_pass_rate).abs() < f64::EPSILON
+                && pass_rate_matches
             {
                 return Ok(existing);
             }
@@ -745,6 +882,7 @@ impl ExperimentationStore {
             baseline_variant_id: baseline_variant_id.to_string(),
             baseline_fitness_ids,
             baseline_pass_rate,
+            scientific_headroom: scientific_headroom.cloned(),
             created_at,
         })
     }
@@ -756,7 +894,7 @@ impl ExperimentationStore {
     ) -> Result<Option<SealRecord>, ExperimentationError> {
         let row = self.driver.query_optional(
             "SELECT id, experiment_id, fingerprint, baseline_variant_id, \
-             baseline_fitness_ids, baseline_pass_rate, created_at \
+             baseline_fitness_ids, baseline_pass_rate, created_at, scientific_headroom \
              FROM seals WHERE experiment_id = ?1",
             &[DbValue::Text(experiment_id.to_string())],
         )?;
@@ -889,12 +1027,30 @@ impl ExperimentationStore {
         selected_variant_id: Option<&str>,
         reject_reasons: &[String],
         algedonic_reference: Option<&str>,
+        scientific_outcome: Option<&str>,
     ) -> Result<(SelectionRecord, ExperimentRecord), ExperimentationError> {
         let experiment = self.experiment_by_id(experiment_id)?;
         if experiment.status == STATUS_RESOLVED {
             return Err(ExperimentationError::ExperimentResolved(
                 experiment_id.to_string(),
             ));
+        }
+        // The resolution token is either a legacy verdict (selected/rejected)
+        // or a typed scientific outcome (task `f1a90cd2`). A scientific
+        // outcome is stored as itself — never renamed to selected/rejected,
+        // which would mislabel the fossil.
+        if let Some(outcome) = scientific_outcome {
+            if !SCIENTIFIC_OUTCOMES.contains(&outcome) {
+                return Err(ExperimentationError::UnknownScientificOutcome(
+                    outcome.to_string(),
+                ));
+            }
+            if verdict != outcome {
+                return Err(ExperimentationError::SelectionResolutionConflict(
+                    Some(verdict.to_string()),
+                    Some(outcome.to_string()),
+                ));
+            }
         }
         match verdict {
             VERDICT_SELECTED => {
@@ -911,6 +1067,14 @@ impl ExperimentationStore {
             }
             VERDICT_REJECTED => {
                 if reject_reasons.is_empty() {
+                    return Err(ExperimentationError::RejectedWithoutReasons);
+                }
+            }
+            other if SCIENTIFIC_OUTCOMES.contains(&other) => {
+                // A scientific outcome needs no binary variant; a rejection
+                // still names why, every other outcome stands on the typed
+                // field alone.
+                if other == SCIENTIFIC_OUTCOME_REJECTED && reject_reasons.is_empty() {
                     return Err(ExperimentationError::RejectedWithoutReasons);
                 }
             }
@@ -933,8 +1097,8 @@ impl ExperimentationStore {
             tx.execute(
                 "INSERT INTO selection_records \
                  (id, experiment_id, verdict, selected_variant_id, reject_reasons, \
-                  algedonic_reference, created_at) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                  algedonic_reference, created_at, scientific_outcome) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 &[
                     DbValue::Text(id.clone()),
                     DbValue::Text(experiment_id.to_string()),
@@ -943,6 +1107,7 @@ impl ExperimentationStore {
                     DbValue::Text(reject_reasons_column.clone()),
                     text_or_null(algedonic_reference),
                     DbValue::Text(created_at.clone()),
+                    text_or_null(scientific_outcome),
                 ],
             )?;
             let resolved = tx.execute(
@@ -978,6 +1143,7 @@ impl ExperimentationStore {
             selected_variant_id: selected_variant_id.map(str::to_string),
             reject_reasons: reject_reasons.to_vec(),
             algedonic_reference: algedonic_reference.map(str::to_string),
+            scientific_outcome: scientific_outcome.map(str::to_string),
             created_at,
         };
         Ok((record, updated))
@@ -989,7 +1155,7 @@ impl ExperimentationStore {
     ) -> Result<Vec<SelectionRecord>, ExperimentationError> {
         let rows = self.driver.query(
             "SELECT id, experiment_id, verdict, selected_variant_id, reject_reasons, \
-             algedonic_reference, created_at \
+             algedonic_reference, created_at, scientific_outcome \
              FROM selection_records WHERE experiment_id = ?1 ORDER BY created_at",
             &[DbValue::Text(experiment_id.to_string())],
         )?;
@@ -1029,7 +1195,8 @@ impl ExperimentationStore {
         let rows = self.driver.query(
             &format!(
                 "SELECT id, hypothesis, layer, genotype_refs, eval_set, fitness_fn, \
-                 noise_band, prediction, budget, status, created_at, max_runs, linked_goal_id, rubrics \
+                 noise_band, prediction, budget, status, created_at, max_runs, linked_goal_id, rubrics, \
+                 design_spec \
                  FROM experiments WHERE {where_clause} ORDER BY created_at DESC LIMIT {limit}",
             ),
             &params,
@@ -1050,7 +1217,9 @@ impl ExperimentationStore {
              (SELECT s.verdict FROM selection_records s WHERE s.experiment_id = e.id \
                ORDER BY s.created_at LIMIT 1) AS verdict, \
              (SELECT s.reject_reasons FROM selection_records s WHERE s.experiment_id = e.id \
-               ORDER BY s.created_at LIMIT 1) AS reject_reasons \
+               ORDER BY s.created_at LIMIT 1) AS reject_reasons, \
+             (SELECT s.scientific_outcome FROM selection_records s WHERE s.experiment_id = e.id \
+               ORDER BY s.created_at LIMIT 1) AS scientific_outcome \
              FROM experiments e ORDER BY e.created_at DESC",
             &[],
         )?;
@@ -1067,6 +1236,7 @@ impl ExperimentationStore {
                     prediction_confidence: Some(prediction.confidence),
                     recorded_runs: row.get_int(6).unwrap_or(0).max(0) as u64,
                     verdict: optional_text(row, 7),
+                    scientific_outcome: optional_text(row, 9),
                     reject_reasons: row.get_json::<Vec<String>>(8).ok().unwrap_or_default(),
                 })
             })
@@ -1080,8 +1250,10 @@ mod tests {
     use super::*;
     use crate::types::{
         Prediction, RUBRIC_KIND_GROUNDED_REPORT, RUBRIC_KIND_IMPLEMENTATION, RUBRIC_KIND_METRIC,
-        Rubric, RubricVerification, VARIANT_ROLE_ABLATION, VARIANT_ROLE_BASELINE,
-        VARIANT_ROLE_CHALLENGER, validate_rubrics,
+        Rubric, RubricVerification, SCIENTIFIC_OUTCOME_CORROBORATED,
+        SCIENTIFIC_OUTCOME_DESIGN_VOID, SCIENTIFIC_OUTCOME_EQUIVALENCE,
+        SCIENTIFIC_OUTCOME_INCONCLUSIVE, SCIENTIFIC_OUTCOME_MEASUREMENT_VOID, ScientificHeadroom,
+        VARIANT_ROLE_ABLATION, VARIANT_ROLE_BASELINE, VARIANT_ROLE_CHALLENGER, validate_rubrics,
     };
     use hkask_storage::database::sqlite::SqliteDriver;
 
@@ -1132,6 +1304,7 @@ mod tests {
                 18,
                 None,
                 key,
+                None,
             )
             .expect("propose")
     }
@@ -1218,7 +1391,7 @@ mod tests {
             )
             .expect("baseline fitness");
         let seal = store
-            .seal_experiment(&experiment.id, &baseline.id, 0.6)
+            .seal_experiment(&experiment.id, &baseline.id, Some(0.6), None)
             .expect("seal");
         let fitness = store
             .record_fitness(
@@ -1245,6 +1418,7 @@ mod tests {
                 Some(&challenger.id),
                 &[],
                 Some("algedonic 2026-09-30#1"),
+                None,
             )
             .expect("selection");
         assert_eq!(selection.verdict, VERDICT_SELECTED);
@@ -1271,6 +1445,7 @@ mod tests {
                 VERDICT_REJECTED,
                 None,
                 &["late".into()],
+                None,
                 None,
             )
             .expect_err("resolved refuses re-selection");
@@ -1327,21 +1502,28 @@ mod tests {
         let experiment = propose(&store, "skill", None);
         variant(&store, &experiment.id, "challenger", None, None);
         let error = store
-            .record_selection(&experiment.id, VERDICT_SELECTED, None, &[], None)
+            .record_selection(&experiment.id, VERDICT_SELECTED, None, &[], None, None)
             .expect_err("selected without a variant");
         assert!(matches!(
             error,
             ExperimentationError::SelectedWithoutVariant
         ));
         let error = store
-            .record_selection(&experiment.id, VERDICT_REJECTED, None, &[], None)
+            .record_selection(&experiment.id, VERDICT_REJECTED, None, &[], None, None)
             .expect_err("rejected without reasons");
         assert!(matches!(
             error,
             ExperimentationError::RejectedWithoutReasons
         ));
         let error = store
-            .record_selection(&experiment.id, "maybe", None, &["reason".into()], None)
+            .record_selection(
+                &experiment.id,
+                "maybe",
+                None,
+                &["reason".into()],
+                None,
+                None,
+            )
             .expect_err("unknown verdict");
         assert!(matches!(error, ExperimentationError::UnknownVerdict(_)));
         // A valid rejected selection still resolves the experiment.
@@ -1351,6 +1533,7 @@ mod tests {
                 VERDICT_REJECTED,
                 None,
                 &["no variant beat the noise band".to_string()],
+                None,
                 None,
             )
             .expect("rejected selection");
@@ -1477,6 +1660,7 @@ mod tests {
                 oversized,
                 None,
                 None,
+                None,
             )
             .expect_err("oversized max_runs rejected, never wrapped");
         assert!(
@@ -1555,7 +1739,7 @@ mod tests {
             .expect("baseline fitness");
         // Seal so a final evaluation is possible.
         let seal = store
-            .seal_experiment(&experiment.id, &baseline.id, 0.5)
+            .seal_experiment(&experiment.id, &baseline.id, Some(0.5), None)
             .expect("seal");
         // Final evaluation consumes 12 more of the 18-run budget.
         store
@@ -1617,6 +1801,7 @@ mod tests {
                 Some(&baseline.id),
                 &[],
                 Some("card 1"),
+                None,
             )
             .expect("selection");
         let snapshot = store.health_snapshot().expect("snapshot");
@@ -1652,6 +1837,7 @@ mod tests {
                     recorded_runs: 3,
                     prediction_confidence: Some(0.5),
                     verdict: None,
+                    scientific_outcome: None,
                     reject_reasons: Vec::new(),
                 },
                 // Running, fresh, but the whole budget is recorded with no
@@ -1665,6 +1851,7 @@ mod tests {
                     recorded_runs: 9,
                     prediction_confidence: Some(0.5),
                     verdict: None,
+                    scientific_outcome: None,
                     reject_reasons: Vec::new(),
                 },
                 // Running, fresh, budget unspent → healthy.
@@ -1677,6 +1864,7 @@ mod tests {
                     recorded_runs: 3,
                     prediction_confidence: Some(0.5),
                     verdict: None,
+                    scientific_outcome: None,
                     reject_reasons: Vec::new(),
                 },
                 // Rejected at 0.5 confidence → Brier 0.25.
@@ -1689,6 +1877,7 @@ mod tests {
                     recorded_runs: 18,
                     prediction_confidence: Some(0.5),
                     verdict: Some(VERDICT_REJECTED.to_string()),
+                    scientific_outcome: None,
                     reject_reasons: vec!["claim refuted".to_string()],
                 },
                 // No-headroom void → excluded from the calibration record.
@@ -1701,6 +1890,7 @@ mod tests {
                     recorded_runs: 9,
                     prediction_confidence: Some(0.9),
                     verdict: Some(VERDICT_REJECTED.to_string()),
+                    scientific_outcome: None,
                     reject_reasons: vec!["no-headroom: baseline saturated at 1.0".to_string()],
                 },
                 // Measurement-void (infrastructure failure) → also excluded:
@@ -1715,6 +1905,7 @@ mod tests {
                     recorded_runs: 18,
                     prediction_confidence: Some(0.5),
                     verdict: Some(VERDICT_REJECTED.to_string()),
+                    scientific_outcome: None,
                     reject_reasons: vec![
                         "measurement-void: 7/9 rollouts errored at the provider (0 tokens)"
                             .to_string(),
@@ -1767,6 +1958,7 @@ mod tests {
                         VERDICT_SELECTED,
                         Some(&variant_id),
                         &[],
+                        None,
                         None,
                     )
                 }));
@@ -2017,7 +2209,7 @@ mod tests {
             )
             .expect("baseline fitness");
         let seal = store
-            .seal_experiment(&experiment.id, &baseline.id, 0.6)
+            .seal_experiment(&experiment.id, &baseline.id, Some(0.6), None)
             .expect("seal");
         assert_eq!(seal.baseline_variant_id, baseline.id);
         assert_eq!(seal.baseline_fitness_ids.len(), 1);
@@ -2025,13 +2217,13 @@ mod tests {
 
         // An identical retried seal converges on the existing record.
         let retried = store
-            .seal_experiment(&experiment.id, &baseline.id, 0.6)
+            .seal_experiment(&experiment.id, &baseline.id, Some(0.6), None)
             .expect("replay converges");
         assert_eq!(retried.id, seal.id);
 
         // A different seal attempt is a typed refusal.
         let error = store
-            .seal_experiment(&experiment.id, &baseline.id, 0.7)
+            .seal_experiment(&experiment.id, &baseline.id, Some(0.7), None)
             .expect_err("different seal refused");
         assert!(matches!(error, ExperimentationError::AlreadySealed(_, _)));
 
@@ -2103,7 +2295,7 @@ mod tests {
 
         // A saturated baseline is the no-headroom void condition (§5 Q6).
         let error = store
-            .seal_experiment(&experiment.id, &baseline.id, 1.0)
+            .seal_experiment(&experiment.id, &baseline.id, Some(1.0), None)
             .expect_err("saturation refused");
         assert!(matches!(
             error,
@@ -2112,7 +2304,7 @@ mod tests {
 
         // An out-of-range rate is invalid input.
         let error = store
-            .seal_experiment(&experiment.id, &baseline.id, 1.5)
+            .seal_experiment(&experiment.id, &baseline.id, Some(1.5), None)
             .expect_err("out-of-range rate refused");
         assert!(matches!(
             error,
@@ -2122,7 +2314,7 @@ mod tests {
         // The seal's variant must carry the baseline role.
         let challenger = variant(&store, &experiment.id, "challenger", None, None);
         let error = store
-            .seal_experiment(&experiment.id, &challenger.id, 0.6)
+            .seal_experiment(&experiment.id, &challenger.id, Some(0.6), None)
             .expect_err("non-baseline seal refused");
         assert!(matches!(
             error,
@@ -2140,7 +2332,7 @@ mod tests {
             VARIANT_ROLE_BASELINE,
         );
         let error = store
-            .seal_experiment(&fresh.id, &fresh_baseline.id, 0.6)
+            .seal_experiment(&fresh.id, &fresh_baseline.id, Some(0.6), None)
             .expect_err("unmeasured baseline refused");
         assert!(matches!(error, ExperimentationError::SealFitnessMissing));
     }
@@ -2168,7 +2360,7 @@ mod tests {
                 )
                 .expect("baseline fitness");
             store
-                .seal_experiment(&experiment.id, &baseline.id, 0.5)
+                .seal_experiment(&experiment.id, &baseline.id, Some(0.5), None)
                 .expect("seal")
         };
         // Identical declarations seal to identical fingerprints.
@@ -2194,6 +2386,7 @@ mod tests {
                 },
                 &serde_json::json!({"max_runs": 18}),
                 18,
+                None,
                 None,
                 None,
             )
@@ -2242,7 +2435,7 @@ mod tests {
             )
             .expect("baseline fitness");
         let seal = store
-            .seal_experiment(&experiment.id, &baseline.id, 0.6)
+            .seal_experiment(&experiment.id, &baseline.id, Some(0.6), None)
             .expect("seal");
         let challenger = variant(&store, &experiment.id, "challenger", None, None);
         store
@@ -2305,5 +2498,354 @@ mod tests {
             ExperimentationError::BudgetExhausted(id, would, ceiling)
                 if id == experiment.id && would == 19 && ceiling == 18
         ));
+    }
+
+    // ── Scientific-design evolution (task `f1a90cd2`) ────────────────────
+
+    /// Propose an experiment carrying a typed `DesignSpec` — the scientific
+    /// declaration the artifact-only `propose` helper cannot express.
+    fn propose_design(
+        store: &ExperimentationStore,
+        design_spec: &serde_json::Value,
+    ) -> ExperimentRecord {
+        store
+            .propose_experiment(
+                "Carrier exposure versus targeting dominates ADC efficacy",
+                "scientific_hypothesis",
+                &["experimental-design/ED-1 validity gate form".to_string()],
+                &serde_json::json!({"schema": "experimental-design-registry-adapter-v1"}),
+                "primary interaction confidence width relative to the ratified margin",
+                &serde_json::json!({"tie_rule": "within the practical margin"}),
+                &rubrics(),
+                &Prediction {
+                    claim: "targeting contributes a practically meaningful advantage".to_string(),
+                    confidence: 0.6,
+                },
+                &serde_json::json!({"max_runs": 24}),
+                24,
+                None,
+                None,
+                Some(design_spec),
+            )
+            .expect("propose with design")
+    }
+
+    fn design_spec(stopping: &str) -> serde_json::Value {
+        serde_json::json!({
+            "spec_version": "design-spec-v1",
+            "spec_id": "adc-factorial-v1",
+            "design_family": "blocked_factorial",
+            "stopping": stopping,
+        })
+    }
+
+    /// Register the baseline arm and record its fitness — the pre-seal
+    /// preamble every seal test needs.
+    fn baseline_with_fitness(
+        store: &ExperimentationStore,
+        experiment_id: &str,
+        pass_rate: f64,
+    ) -> VariantRecord {
+        let baseline = variant_role(
+            store,
+            experiment_id,
+            "baseline",
+            None,
+            None,
+            VARIANT_ROLE_BASELINE,
+        );
+        store
+            .record_fitness(
+                experiment_id,
+                &baseline.id,
+                &["baseline report".to_string()],
+                2,
+                &serde_json::json!({"pass_rate": pass_rate}),
+                None,
+            )
+            .expect("baseline fitness");
+        baseline
+    }
+
+    /// Criterion 1: a typed, versioned `design_spec` is stored and read back
+    /// through the record; a legacy eval_set-only declaration carries `None`.
+    #[test]
+    fn design_spec_is_stored_and_read_back() {
+        let store = store();
+        let with_design = propose_design(&store, &design_spec("fixed: all branches once"));
+        assert_eq!(
+            with_design
+                .design_spec
+                .as_ref()
+                .and_then(|v| v.get("spec_id")),
+            Some(&serde_json::json!("adc-factorial-v1")),
+        );
+        let readback = store.experiment_by_id(&with_design.id).expect("readback");
+        assert!(readback.design_spec.is_some());
+
+        // Legacy artifact declaration: no design_spec.
+        let legacy = propose(&store, "skill", None);
+        assert!(legacy.design_spec.is_none());
+    }
+
+    /// The store persists whatever design object it is handed — the
+    /// version check is a tool-boundary contract (`validate_design_spec`,
+    /// pinned in `tool_behavior.rs`), matching the `validate_rubrics` split.
+    /// This pins the store half: an arbitrary object round-trips.
+    #[test]
+    fn store_round_trips_the_design_object_verbatim() {
+        let store = store();
+        let design = serde_json::json!({"spec_version": "design-spec-v1", "nested": {"a": 1}});
+        let experiment = propose_design(&store, &design);
+        assert_eq!(experiment.design_spec.as_ref(), Some(&design));
+    }
+
+    /// Criterion 1 (fingerprint): changing only the DesignSpec yields a
+    /// different seal fingerprint — post-seal design drift is refused, not
+    /// silently reused.
+    #[test]
+    fn design_spec_joins_the_seal_fingerprint() {
+        let store = store();
+        let seal_for = |stopping: &str| -> SealRecord {
+            let experiment = propose_design(&store, &design_spec(stopping));
+            let baseline = baseline_with_fitness(&store, &experiment.id, 0.6);
+            store
+                .seal_experiment(&experiment.id, &baseline.id, Some(0.6), None)
+                .expect("seal")
+        };
+        let fixed = seal_for("fixed: all branches once");
+        let sequential = seal_for("sequential: stop at 3 matches");
+        assert_ne!(fixed.fingerprint, sequential.fingerprint);
+
+        // A design-less legacy seal fingerprints stably (design_spec → null).
+        let legacy = propose(&store, "skill", None);
+        let legacy_baseline = baseline_with_fitness(&store, &legacy.id, 0.6);
+        let a = store
+            .seal_experiment(&legacy.id, &legacy_baseline.id, Some(0.6), None)
+            .expect("legacy seal");
+        assert!(a.baseline_pass_rate == Some(0.6));
+        assert!(a.scientific_headroom.is_none());
+    }
+
+    /// Criterion 2: a design-family seal attests `scientific_headroom` with no
+    /// baseline pass rate; supplying both or neither is a typed refusal.
+    /// Covers the single-arm and observational-estimation design families.
+    #[test]
+    fn scientific_headroom_replaces_the_pass_rate() {
+        let store = store();
+        for family in ["single_arm", "observational_estimation"] {
+            let experiment = propose_design(&store, &design_spec("fixed"));
+            let baseline = baseline_with_fitness(&store, &experiment.id, 0.6);
+            let headroom = ScientificHeadroom {
+                design_family: family.to_string(),
+                criterion: "the estimate interval width is below the ratified margin".to_string(),
+                evidence: vec!["power simulation report".to_string()],
+            };
+            let seal = store
+                .seal_experiment(&experiment.id, &baseline.id, None, Some(&headroom))
+                .expect("headroom seal");
+            assert!(seal.baseline_pass_rate.is_none());
+            assert_eq!(
+                seal.scientific_headroom
+                    .as_ref()
+                    .map(|h| h.design_family.as_str()),
+                Some(family)
+            );
+        }
+
+        let headroom = ScientificHeadroom {
+            design_family: "single_arm".to_string(),
+            criterion: "the single-arm interval width is below the ratified margin".to_string(),
+            evidence: vec!["power simulation report".to_string()],
+        };
+
+        // Both supplied → typed refusal.
+        let both = propose_design(&store, &design_spec("fixed"));
+        let both_baseline = baseline_with_fitness(&store, &both.id, 0.6);
+        let error = store
+            .seal_experiment(&both.id, &both_baseline.id, Some(0.6), Some(&headroom))
+            .expect_err("both attestations refused");
+        assert!(matches!(
+            error,
+            ExperimentationError::SealAttestationConflict
+        ));
+
+        // Neither supplied → typed refusal.
+        let neither = propose_design(&store, &design_spec("fixed"));
+        let neither_baseline = baseline_with_fitness(&store, &neither.id, 0.6);
+        let error = store
+            .seal_experiment(&neither.id, &neither_baseline.id, None, None)
+            .expect_err("no attestation refused");
+        assert!(matches!(
+            error,
+            ExperimentationError::SealAttestationConflict
+        ));
+    }
+
+    /// Criterion 3 + calibration: only `corroborated` and `rejected` typed
+    /// outcomes calibrate; equivalence, inconclusive and the two void
+    /// outcomes are excluded on the typed field, never by reject-reason text.
+    /// Each outcome gets its own store so the aggregate Brier reading isolates
+    /// exactly one claim.
+    #[test]
+    fn scientific_outcomes_drive_calibration_exclusion() {
+        let outcome_brier = |outcome: &str| -> Option<(f64, u32)> {
+            let store = store();
+            let experiment = propose_design(&store, &design_spec("fixed"));
+            baseline_with_fitness(&store, &experiment.id, 0.6);
+            let reasons: Vec<String> = if outcome == SCIENTIFIC_OUTCOME_REJECTED {
+                vec!["no variant beat the margin".to_string()]
+            } else {
+                Vec::new()
+            };
+            store
+                .record_selection(&experiment.id, outcome, None, &reasons, None, Some(outcome))
+                .expect("selection");
+            store
+                .health_snapshot()
+                .expect("snapshot")
+                .resolved_claim_brier()
+        };
+        // `corroborated` calibrates (claim held).
+        assert!(outcome_brier(SCIENTIFIC_OUTCOME_CORROBORATED).is_some());
+        // `rejected` calibrates (claim refuted).
+        assert!(outcome_brier(SCIENTIFIC_OUTCOME_REJECTED).is_some());
+        // The bounded and void outcomes never enter calibration.
+        assert!(outcome_brier(SCIENTIFIC_OUTCOME_EQUIVALENCE).is_none());
+        assert!(outcome_brier(SCIENTIFIC_OUTCOME_INCONCLUSIVE).is_none());
+        assert!(outcome_brier(SCIENTIFIC_OUTCOME_MEASUREMENT_VOID).is_none());
+        assert!(outcome_brier(SCIENTIFIC_OUTCOME_DESIGN_VOID).is_none());
+    }
+
+    /// Criterion 3 (vocabulary): an unknown scientific outcome is a typed
+    /// refusal, and a resolution conflict (outcome without matching token) is
+    /// refused — a scientific outcome is never renamed selected/rejected.
+    #[test]
+    fn scientific_outcome_vocabulary_is_closed() {
+        let store = store();
+        let experiment = propose_design(&store, &design_spec("fixed"));
+        baseline_with_fitness(&store, &experiment.id, 0.6);
+        let error = store
+            .record_selection(&experiment.id, "proved", None, &[], None, Some("proved"))
+            .expect_err("unknown outcome refused");
+        assert!(matches!(
+            error,
+            ExperimentationError::UnknownScientificOutcome(_)
+        ));
+        // A legacy verdict token paired with a scientific outcome is refused.
+        let error = store
+            .record_selection(
+                &experiment.id,
+                VERDICT_REJECTED,
+                None,
+                &[],
+                None,
+                Some(SCIENTIFIC_OUTCOME_INCONCLUSIVE),
+            )
+            .expect_err("resolution conflict refused");
+        assert!(matches!(
+            error,
+            ExperimentationError::SelectionResolutionConflict(..)
+        ));
+    }
+
+    /// Criterion 4 (legacy): a legacy artifact experiment still seals with a
+    /// pass rate and resolves selected/rejected — the scientific vocabulary
+    /// is additive, never a replacement.
+    #[test]
+    fn legacy_artifact_experiments_are_unchanged() {
+        let store = store();
+        let experiment = propose(&store, "skill", None);
+        let baseline = baseline_with_fitness(&store, &experiment.id, 0.5);
+        let seal = store
+            .seal_experiment(&experiment.id, &baseline.id, Some(0.5), None)
+            .expect("legacy seal");
+        assert_eq!(seal.baseline_pass_rate, Some(0.5));
+        let (selection, updated) = store
+            .record_selection(
+                &experiment.id,
+                VERDICT_SELECTED,
+                Some(&baseline.id),
+                &[],
+                None,
+                None,
+            )
+            .expect("legacy selection");
+        assert_eq!(selection.verdict, VERDICT_SELECTED);
+        assert!(selection.scientific_outcome.is_none());
+        assert_eq!(updated.status, STATUS_RESOLVED);
+    }
+
+    /// The migration guard (task `f1a90cd2`): a database created with the
+    /// PRE-evolution schema (no `design_spec`, no `scientific_outcome`, and a
+    /// `NOT NULL` `baseline_pass_rate`) is upgraded in place — existing rows
+    /// survive with their values intact, and the new columns arrive. This is
+    /// the property that protects the live registry's resolved experiments.
+    #[test]
+    fn pre_evolution_database_is_migrated_without_data_loss() {
+        let driver = SqliteDriver::in_memory_driver();
+        // The pre-2026-10-19 schema, verbatim from the previous revision.
+        driver
+            .execute_batch(
+                "CREATE TABLE experiments (\
+                     id TEXT PRIMARY KEY, experiment_key TEXT UNIQUE, hypothesis TEXT NOT NULL, \
+                     layer TEXT NOT NULL, genotype_refs TEXT NOT NULL, eval_set TEXT NOT NULL, \
+                     fitness_fn TEXT NOT NULL, noise_band TEXT NOT NULL, prediction TEXT NOT NULL, \
+                     budget TEXT NOT NULL, max_runs INTEGER NOT NULL, linked_goal_id TEXT, \
+                     rubrics TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL \
+                 ); \
+                 CREATE TABLE selection_records (\
+                     id TEXT PRIMARY KEY, experiment_id TEXT NOT NULL, verdict TEXT NOT NULL, \
+                     selected_variant_id TEXT, reject_reasons TEXT NOT NULL, \
+                     algedonic_reference TEXT, created_at TEXT NOT NULL \
+                 ); \
+                 CREATE TABLE seals (\
+                     id TEXT PRIMARY KEY, experiment_id TEXT NOT NULL UNIQUE, \
+                     fingerprint TEXT NOT NULL, baseline_variant_id TEXT NOT NULL, \
+                     baseline_fitness_ids TEXT NOT NULL, baseline_pass_rate TEXT NOT NULL, \
+                     created_at TEXT NOT NULL \
+                 );",
+            )
+            .expect("pre-evolution schema");
+        // One pre-existing resolved experiment with a sealed pass rate.
+        driver
+            .execute_batch(
+                "INSERT INTO experiments VALUES (\
+                     'exp_legacy', NULL, 'legacy hypothesis', 'skill', '[\"r\"]', '{}', 'f', '{}', \
+                     '{\"claim\":\"c\",\"confidence\":0.7}', '{\"max_runs\":6}', 6, NULL, \
+                     '[]', 'resolved', '2026-10-16T09:00:00Z'); \
+                 INSERT INTO seals VALUES (\
+                     'seal_legacy', 'exp_legacy', 'fp', 'var_legacy', '[]', '0.6', \
+                     '2026-10-16T09:00:00Z');",
+            )
+            .expect("legacy rows");
+
+        // Opening the store runs the guarded migration.
+        let store = ExperimentationStore::with_driver(driver).expect("migrated store");
+
+        // The pre-existing seal survived with its pass rate, and the new
+        // nullable column is present and NULL.
+        let seal = store
+            .seal_for_experiment("exp_legacy")
+            .expect("seal read")
+            .expect("seal present");
+        assert_eq!(seal.baseline_pass_rate, Some(0.6));
+        assert!(seal.scientific_headroom.is_none());
+        // The experiment read back with no design_spec.
+        let experiment = store
+            .experiment_by_id("exp_legacy")
+            .expect("experiment read");
+        assert!(experiment.design_spec.is_none());
+    }
+
+    /// The migration guard is idempotent: opening an already-migrated store a
+    /// second time is a no-op (no duplicate columns, no error).
+    #[test]
+    fn migration_is_idempotent() {
+        let driver = SqliteDriver::in_memory_driver();
+        let _first = ExperimentationStore::with_driver(driver.clone()).expect("first open");
+        // A fresh store over a database whose schema was created by the first
+        // open must not error on the second migration pass.
+        ExperimentationStore::with_driver(driver).expect("second open");
     }
 }

@@ -19,8 +19,8 @@ use serde::Deserialize;
 
 use crate::store::ExperimentationStore;
 use crate::types::{
-    ExperimentationError, LAYERS, Prediction, Rubric, STATUSES, VARIANT_ROLE_CHALLENGER,
-    validate_rubrics,
+    ExperimentationError, LAYERS, Prediction, Rubric, STATUSES, ScientificHeadroom,
+    VARIANT_ROLE_CHALLENGER, validate_design_spec, validate_rubrics, validate_scientific_headroom,
 };
 
 hkask_mcp_server::mcp_server!(
@@ -58,7 +58,10 @@ pub fn map_experimentation_error(error: ExperimentationError) -> McpToolError {
         | ExperimentationError::DuplicateRubricId(_)
         | ExperimentationError::RubricIdInvalid(_)
         | ExperimentationError::UnknownVariantRole(_)
-        | ExperimentationError::AblationWithoutParent => {
+        | ExperimentationError::AblationWithoutParent
+        | ExperimentationError::UnknownScientificOutcome(_)
+        | ExperimentationError::SelectionResolutionConflict(..)
+        | ExperimentationError::DesignSpecInvalid(_) => {
             McpToolError::invalid_argument(error.to_string())
         }
         ExperimentationError::DuplicateBaseline(..) => {
@@ -71,6 +74,8 @@ pub fn map_experimentation_error(error: ExperimentationError) -> McpToolError {
         | ExperimentationError::ExperimentNotSealed(_)
         | ExperimentationError::SealCitationMissing(..)
         | ExperimentationError::NoHeadroom(_)
+        | ExperimentationError::SealAttestationConflict
+        | ExperimentationError::ScientificHeadroomIncomplete
         | ExperimentationError::SealFitnessMissing => {
             McpToolError::new(McpErrorKind::FailedPrecondition, error.to_string())
         }
@@ -137,6 +142,11 @@ pub struct ExperimentProposeRequest {
     /// pre-registered claim against the measured outcome; this field is the
     /// explicit registry ↔ goal-loop join.
     pub linked_goal_id: Option<String>,
+    /// The optional typed, versioned scientific `DesignSpec` (task
+    /// `f1a90cd2`) — a JSON object carrying a non-empty `spec_version`. When
+    /// present it is stored, exposed through lineage/population reads, and
+    /// joins the seal fingerprint. Omit for legacy artifact experiments.
+    pub design_spec: Option<AnyJsonValue>,
     /// Optional replay-convergence key: a retried call returns the existing
     /// experiment instead of duplicating it.
     pub experiment_key: Option<String>,
@@ -168,8 +178,15 @@ pub struct ExperimentSealRequest {
     /// fitness — must be < 1.0 (the headroom pre-check, §5 Q6). A
     /// saturated baseline (1.0) is a typed no-headroom refusal: void the
     /// experiment via selection_record with a no-headroom reject reason,
-    /// redesign the eval set, and re-declare.
-    pub baseline_pass_rate: f64,
+    /// redesign the eval set, and re-declare. Supply exactly one of this
+    /// and `scientific_headroom`.
+    pub baseline_pass_rate: Option<f64>,
+    /// The tagged scientific headroom criterion (task `f1a90cd2`) for a
+    /// design family with no meaningful binary baseline pass rate —
+    /// single-arm calibration, observational estimation, equivalence. The
+    /// honest alternative to fabricating a pass rate. Supply exactly one of
+    /// this and `baseline_pass_rate`.
+    pub scientific_headroom: Option<ScientificHeadroom>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -211,8 +228,9 @@ pub struct FinalEvaluationRecordRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SelectionRecordRequest {
     pub experiment_id: String,
-    /// "selected" or "rejected".
-    pub verdict: String,
+    /// "selected" or "rejected" — the legacy binary verdict for an artifact
+    /// experiment. Supply exactly one of this and `scientific_outcome`.
+    pub verdict: Option<String>,
     /// Required when verdict is selected: the winning variant.
     pub selected_variant_id: Option<String>,
     /// Required when verdict is rejected: why it was rejected — the
@@ -220,6 +238,13 @@ pub struct SelectionRecordRequest {
     pub reject_reasons: Vec<String>,
     /// The algedonic review record that chaired the selection (§P8.7-Q4).
     pub algedonic_reference: Option<String>,
+    /// The typed scientific outcome (task `f1a90cd2`) when this selection
+    /// resolves a scientific design rather than an artifact experiment:
+    /// rejected | corroborated | evidence_of_practical_equivalence |
+    /// inconclusive | measurement_void | design_void. Only `rejected` and
+    /// `corroborated` enter Brier calibration; the rest are excluded on this
+    /// typed field. Supply exactly one of this and `verdict`.
+    pub scientific_outcome: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -260,6 +285,7 @@ impl ExperimentationServer {
             prediction,
             budget,
             linked_goal_id,
+            design_spec,
             experiment_key,
         }): Parameters<ExperimentProposeRequest>,
     ) -> Result<String, McpToolError> {
@@ -286,6 +312,11 @@ impl ExperimentationServer {
             // contract — the same grammar the execution harnesses verify
             // against (the swarm evaluator vocabulary).
             validate_rubrics(&rubrics).map_err(map_experimentation_error)?;
+            // The optional typed DesignSpec (task `f1a90cd2`) must be a
+            // versioned JSON object when supplied — a design is a versioned
+            // artifact, never an unversioned blob.
+            let design_spec_value = design_spec.map(|value| value.0);
+            validate_design_spec(design_spec_value.as_ref()).map_err(map_experimentation_error)?;
             // §P8.9 step 2 (D-1: enforce): the declared budget must carry a
             // machine-readable run ceiling — the Layer-A set point.
             let max_runs = budget
@@ -312,6 +343,7 @@ impl ExperimentationServer {
                     max_runs,
                     linked_goal_id.as_deref(),
                     experiment_key.as_deref(),
+                    design_spec_value.as_ref(),
                 )
                 .map_err(map_experimentation_error)?;
             Ok(crate::ontology::annotate(
@@ -365,14 +397,23 @@ impl ExperimentationServer {
             experiment_id,
             baseline_variant_id,
             baseline_pass_rate,
+            scientific_headroom,
         }): Parameters<ExperimentSealRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "experiment_seal", async {
             require_non_empty("experiment_id", &experiment_id)?;
             require_non_empty("baseline_variant_id", &baseline_variant_id)?;
+            if let Some(headroom) = &scientific_headroom {
+                validate_scientific_headroom(headroom).map_err(map_experimentation_error)?;
+            }
             let record = self
                 .store
-                .seal_experiment(&experiment_id, &baseline_variant_id, baseline_pass_rate)
+                .seal_experiment(
+                    &experiment_id,
+                    &baseline_variant_id,
+                    baseline_pass_rate,
+                    scientific_headroom.as_ref(),
+                )
                 .map_err(map_experimentation_error)?;
             Ok(crate::ontology::annotate(
                 "experiment_seal",
@@ -477,11 +518,28 @@ impl ExperimentationServer {
             selected_variant_id,
             reject_reasons,
             algedonic_reference,
+            scientific_outcome,
         }): Parameters<SelectionRecordRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "selection_record", async {
             require_non_empty("experiment_id", &experiment_id)?;
-            require_non_empty("verdict", &verdict)?;
+            // Exactly one resolution: the legacy binary verdict or the typed
+            // scientific outcome (task `f1a90cd2`). Never both, never
+            // neither — a silent default would fabricate a resolution. A
+            // scientific outcome is passed through as itself; the store
+            // validates it against the closed vocabulary.
+            let verdict = match (&verdict, &scientific_outcome) {
+                (Some(verdict), None) => verdict.clone(),
+                (None, Some(outcome)) => outcome.clone(),
+                _ => {
+                    return Err(map_experimentation_error(
+                        ExperimentationError::SelectionResolutionConflict(
+                            verdict,
+                            scientific_outcome,
+                        ),
+                    ));
+                }
+            };
             let (record, experiment) = self
                 .store
                 .record_selection(
@@ -490,6 +548,7 @@ impl ExperimentationServer {
                     selected_variant_id.as_deref(),
                     &reject_reasons,
                     algedonic_reference.as_deref(),
+                    scientific_outcome.as_deref(),
                 )
                 .map_err(map_experimentation_error)?;
             Ok(crate::ontology::annotate(
