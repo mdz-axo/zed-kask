@@ -14,7 +14,7 @@
 //!   Built-in functions: car, cdr, cons, list, length, nth, reverse,
 //!     +, -, *, /, =, !=, <, <=, >, >=, is_null, numberp, listp, stringp,
 //!     assoc, assoc!, append, string=, string-contains, starts-with,
-//!     ends-with, concat, abs, sqrt, max, min, eq, member
+//!     ends-with, concat, boundary-ok, abs, sqrt, max, min, eq, member
 //!
 //! Integer arithmetic is checked (overflow is a typed `Runtime` error, never
 //! a silent wrap), and all-Int comparisons are exact i64 (never coerced
@@ -896,6 +896,16 @@ fn default_builtins() -> Vec<(&'static str, NativeFn)> {
         // List membership. (member x list) returns true iff x is structurally
         // equal to an element of `list`. Nil list returns false.
         ("member", member_fn),
+        // Boundary admissibility. (boundary-ok prefix value) returns true iff
+        // value begins with prefix and the first character after the prefix is
+        // printable non-whitespace — the closed-allowlist character-class
+        // check the dialect lacked (nth 0 is a type error on a string).
+        // Replaces the per-form blocklist of space/tab/newline, which could
+        // not enumerate Unicode whitespace and passed CR, VT, FF, NBSP and
+        // ZWSP (lisp-repair L4, live 2026-10-18). An empty prefix checks the
+        // value's first character; a value equal to the prefix is false; a
+        // non-string is a type error.
+        ("boundary-ok", boundary_ok_fn),
     ]
 }
 
@@ -1615,6 +1625,88 @@ fn ends_with_fn(
         ));
     }
     Ok(LispValue::Bool(subject.ends_with(suffix)))
+}
+
+/// Boundary check: `(boundary-ok prefix value)` returns true iff `value` is a
+/// string beginning with `prefix` whose FIRST character AFTER the prefix is
+/// admissible. It is the character-access primitive the dialect previously
+/// lacked — `(nth 0 s)` is a type error on a string, so a form could not
+/// inspect a single character, and without one there is no way to say "the
+/// character that follows this label is real content".
+///
+/// The predicate is BOUNDARY-scoped on purpose. A value-wide "contains no
+/// whitespace" test would reject legitimate multi-word values (`boundary:a
+/// b`), and the invariant callers state is about what follows the label
+/// prefix, not about the whole value.
+///
+/// The admissible class is a CLOSED ALLOWLIST, not a blocklist. A blocklist
+/// of space/tab/newline is unfalsifiable by construction: it enumerates the
+/// characters an author thought of, so any character it omits — a carriage
+/// return, a vertical tab, a form feed, a no-break space, a zero-width
+/// space — passes and masquerades as content (live 2026-10-18: all five of
+/// those passed the VC-0 typed-reference predicate while the stated
+/// invariant was "no leading whitespace"). Unicode's own whitespace
+/// predicate is not a sufficient instrument either: `char::is_whitespace`
+/// is true for NBSP and the ideographic space but FALSE for ZWSP, which is
+/// invisible and therefore equally able to masquerade as content. The
+/// allowlist closes the class: a character is admissible iff it is printable
+/// non-whitespace (`!c.is_whitespace() && !c.is_control()`). `is_control()`
+/// covers the whole Cc class (CR, VT, FF, NUL, DEL …); `is_whitespace()`
+/// covers the Unicode White_Space set (LF, NBSP, ideographic space …).
+/// Format characters (Cf: ZWSP, BOM, ZWJ, soft hyphen) are excluded
+/// explicitly because a zero-width character is invisible — a value whose
+/// first character renders as nothing cannot be shown to a human reviewer,
+/// and evidence must be human-checkable.
+///
+/// An empty `prefix` is legitimate and checks the value's first character.
+/// A `value` that is exactly `prefix` (nothing after it) is FALSE, not an
+/// error — there is no character to inspect, and "no" is the real answer to
+/// "does usable content follow the label". A non-string argument is a
+/// `TypeError`. Unlike `string-contains` there is no reversal ambiguity
+/// worth a guard: `prefix` is a short constant label and `value` is the
+/// candidate, and a mismatched pair is a plain false.
+fn boundary_ok_fn(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
+    let (prefix, value) = string_pair("boundary-ok", args)?;
+    // Charging the prefix scan follows the L3 convention that traversal
+    // pays where it happens (cf. `length`): strip_prefix walks prefix
+    // bytes before the single-character inspection.
+    budget.charge(prefix.len())?;
+    Ok(LispValue::Bool(
+        value
+            .strip_prefix(prefix)
+            .and_then(|rest| rest.chars().next())
+            .is_some_and(admissible_leading_char),
+    ))
+}
+
+/// The admissible-character predicate shared by `boundary-ok` and any future
+/// character-class builtin. See `boundary_ok_fn` for why this is an
+/// allowlist and why `is_control`/`is_whitespace` alone are insufficient.
+fn admissible_leading_char(c: char) -> bool {
+    !c.is_whitespace() && !c.is_control() && !is_invisible_format(c)
+}
+
+/// Format characters (Unicode general category Cf) that occupy no visible
+/// width: zero-width space/joiner/non-joiner, BOM, soft hyphen, word
+/// joiner, and the bidi embedding controls. Named explicitly because the
+/// Rust standard library exposes no `is_format` predicate; the set is the
+/// Cf characters a leading-position check can plausibly meet.
+fn is_invisible_format(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00ad}'                  // soft hyphen
+        | '\u{061c}'                // Arabic letter mark
+        | '\u{180e}'                // Mongolian vowel separator
+        | '\u{200b}'..='\u{200f}'   // ZWSP, ZWNJ, ZWJ, LRM, RLM
+        | '\u{202a}'..='\u{202e}'   // bidi embedding/override
+        | '\u{2060}'..='\u{2064}'   // word joiner, invisible operators
+        | '\u{2066}'..='\u{2069}'   // bidi isolates
+        | '\u{feff}'                // BOM / zero-width no-break space
+    )
 }
 
 /// Absolute value: `(abs x)` returns the magnitude of a numeric arg.
@@ -2494,6 +2586,139 @@ mod tests {
         let result =
             eval_sandboxed(r#"(string-contains "abc" "xyz")"#, &serde_json::json!({})).unwrap();
         assert_eq!(result, serde_json::json!(false));
+    }
+
+    #[test]
+    fn boundary_ok_accepts_admissible_content() {
+        for form in [
+            r#"(boundary-ok "record:" "record:x")"#,
+            r#"(boundary-ok "record:" "record:hidden-not-leading")"#,
+            r#"(boundary-ok "artifact:" "artifact:skill/foo")"#,
+            // Legitimate multi-word values must pass: the check is
+            // boundary-scoped, not value-wide.
+            r#"(boundary-ok "boundary:" "boundary:a b c")"#,
+            r#"(boundary-ok "expectation:" "expectation:Two Words")"#,
+            // Empty prefix checks the value's own first character.
+            r#"(boundary-ok "" "ok")"#,
+        ] {
+            assert_eq!(
+                eval_sandboxed(form, &serde_json::json!({})).unwrap(),
+                serde_json::json!(true),
+                "form: {form}"
+            );
+        }
+    }
+
+    #[test]
+    fn boundary_ok_rejects_every_blocklist_bypass() {
+        // The forms that defeated the space/tab/newline blocklist in the VC-0
+        // typed predicate (live 2026-10-18). The Lisp reader unescapes only
+        // \n, \t, \r, \" and \\, so those are written literally; characters
+        // it does not unescape (VT, FF, NBSP, ZWSP, ideographic space, soft
+        // hyphen, BOM) enter as DATA via env — which is also how they reach a
+        // real form, carried in from a JSON step output.
+        for form in [
+            r#"(boundary-ok "record:" "record: hidden")"#,
+            r#"(boundary-ok "record:" "record:\thidden")"#,
+            r#"(boundary-ok "record:" "record:\nhidden")"#,
+            r#"(boundary-ok "record:" "record:\rhidden")"#,
+        ] {
+            assert_eq!(
+                eval_sandboxed(form, &serde_json::json!({})).unwrap(),
+                serde_json::json!(false),
+                "form: {form}"
+            );
+        }
+        // Known-positive control first, so a broken env binding cannot make
+        // the loop below pass vacuously.
+        assert_eq!(
+            eval_sandboxed(
+                r#"(boundary-ok "record:" v)"#,
+                &serde_json::json!({ "v": "record:x" })
+            )
+            .unwrap(),
+            serde_json::json!(true),
+            "control: env-delivered admissible value must pass"
+        );
+        for ch in [
+            '\u{000b}', // VT
+            '\u{000c}', // FF
+            '\u{00a0}', // NBSP
+            '\u{200b}', // ZWSP
+            '\u{3000}', // ideographic space
+            '\u{00ad}', // soft hyphen (Cf)
+            '\u{feff}', // BOM (Cf)
+        ] {
+            let value = format!("record:{ch}hidden");
+            assert_eq!(
+                eval_sandboxed(
+                    r#"(boundary-ok "record:" v)"#,
+                    &serde_json::json!({ "v": value })
+                )
+                .unwrap(),
+                serde_json::json!(false),
+                "value: {value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn boundary_ok_value_equal_to_prefix_is_false_not_error() {
+        // Nothing follows the label: there is no character to inspect, and
+        // "no usable content" is the real answer — not an error.
+        assert_eq!(
+            eval_sandboxed(
+                r#"(boundary-ok "record:" "record:")"#,
+                &serde_json::json!({})
+            )
+            .unwrap(),
+            serde_json::json!(false)
+        );
+    }
+
+    #[test]
+    fn boundary_ok_prefix_mismatch_is_false() {
+        assert_eq!(
+            eval_sandboxed(
+                r#"(boundary-ok "record:" "artifact:x")"#,
+                &serde_json::json!({})
+            )
+            .unwrap(),
+            serde_json::json!(false)
+        );
+    }
+
+    #[test]
+    fn boundary_ok_non_string_and_arity_error() {
+        assert!(matches!(
+            eval_sandboxed(r#"(boundary-ok "record:" 5)"#, &serde_json::json!({})).unwrap_err(),
+            LispError::TypeError { .. }
+        ));
+        assert!(matches!(
+            eval_sandboxed(r#"(boundary-ok "record:" nil)"#, &serde_json::json!({})).unwrap_err(),
+            LispError::TypeError { .. }
+        ));
+        assert!(matches!(
+            eval_sandboxed(r#"(boundary-ok "record:")"#, &serde_json::json!({})).unwrap_err(),
+            LispError::Arity(_)
+        ));
+    }
+
+    #[test]
+    fn boundary_ok_reads_the_character_after_the_prefix_not_the_value_start() {
+        // The reason the primitive takes the prefix: a form must ask about
+        // the character FOLLOWING the label. A leading space on the whole
+        // value is the caller's own concatenation and must not decide the
+        // boundary verdict.
+        assert_eq!(
+            eval_sandboxed(
+                r#"(boundary-ok "record:" "  record:x")"#,
+                &serde_json::json!({})
+            )
+            .unwrap(),
+            serde_json::json!(false),
+            "the prefix is not at position 0, so there is no post-prefix char"
+        );
     }
 
     #[test]

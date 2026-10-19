@@ -1068,6 +1068,74 @@ form: "(= (+ a b) 3)"
     }
 
     #[test]
+    fn vc0_typed_predicate_admits_content_and_rejects_invisible_leaders() {
+        // The VC-0 typed-reference predicate (verification-compression PLAN
+        // step 0). Its old form tested three literal prefixes (space, tab,
+        // newline) against a stated "no leading whitespace" invariant — a
+        // blocklist that CR, VT, FF, NBSP and ZWSP all passed (live
+        // 2026-10-18). This drives the live skill form end to end: admissible
+        // rows pass the gate, and every bypass form fails it.
+        let form = skill_candidate("verification-compression", "define typed");
+        let row_with = |artifact_id: &str| {
+            json!({
+                "artifact_id": artifact_id,
+                "status": "current_signal",
+                "expectation_id": "expectation:gate",
+                "expectation_authority": "authority:operator-2026-10-18",
+                "falsifier_id": "falsifier:bypass",
+                "observed_boundary": "boundary:a b c",
+                "live_disturbance_channel": "channel:test",
+                "corrective_action": "correction:reject",
+                "return_path": "return:plan",
+                "retirement_trigger": "trigger:channel-removed",
+                "retirement_trigger_status": "pending",
+                "decision_record": "",
+                "retirement_authority": ""
+            })
+        };
+        let run = |artifact_id: &str| {
+            let row = row_with(artifact_id);
+            let env = json!({
+                "artifact_inventory": [row],
+                "relevance_classification": [row]
+            });
+            let result = eval_sandboxed(&form, &env).expect("VC-0 form should evaluate");
+            result
+                .get("gate_passed")
+                .cloned()
+                .expect("VC-0 result must carry gate_passed")
+        };
+
+        assert_eq!(run("artifact:skill/foo"), json!(true));
+        assert_eq!(
+            run("artifact:value with inner spaces"),
+            json!(true),
+            "boundary-scoped: inner whitespace is legitimate content"
+        );
+        assert_eq!(
+            run("artifact:"),
+            json!(false),
+            "the prefix alone carries no content"
+        );
+        // Every form the space/tab/newline blocklist let through.
+        for (label, artifact_id) in [
+            ("space", "artifact: hidden"),
+            ("tab", "artifact:\thidden"),
+            ("newline", "artifact:\nhidden"),
+            ("carriage return", "artifact:\rhidden"),
+            ("vertical tab", "artifact:\u{000b}hidden"),
+            ("form feed", "artifact:\u{000c}hidden"),
+            ("no-break space", "artifact:\u{00a0}hidden"),
+            ("zero-width space", "artifact:\u{200b}hidden"),
+            ("ideographic space", "artifact:\u{3000}hidden"),
+            ("soft hyphen", "artifact:\u{00ad}hidden"),
+            ("BOM", "artifact:\u{feff}hidden"),
+        ] {
+            assert_eq!(run(artifact_id), json!(false), "{label} must fail the gate");
+        }
+    }
+
+    #[test]
     fn guarded_union_and_assoc_null_check_are_accepted() {
         let forms = parse(
             "(and (is_null (assoc \"optional\" row)) (or (and (stringp x) (string= x \"none\")) (and (numberp x) (> x 0.05))))",

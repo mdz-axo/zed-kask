@@ -154,13 +154,16 @@ verification code.
    inventory with VC-0. Every reference-bearing value uses a typed, machine-safe
    nonblank string (`artifact:`, `expectation:`, `authority:`, `falsifier:`,
    `boundary:`, `channel:`, `correction:`, `return:`, `trigger:`, `record:`).
-   The suffix starts immediately after the prefix (no leading whitespace) and
-   contains no template angle brackets, so an unfilled placeholder, whitespace,
-   or wrong JSON type cannot masquerade as evidence:
+   The suffix starts immediately after the prefix and its first character is
+   admissible (no leading whitespace or invisible character — the closed
+   allowlist enforced by the `boundary-ok` builtin, not a space/tab/newline
+   blocklist; the blocklist passed CR, VT, FF, NBSP and ZWSP, live 2026-10-18).
+   It contains no template angle brackets, so an unfilled placeholder,
+   whitespace, or wrong JSON type cannot masquerade as evidence:
 
    ```lisp
    (begin
-     (define typed (lambda (prefix value) (and (stringp value) (starts-with prefix value) (> (length value) (length prefix)) (not (starts-with (concat prefix " ") value)) (not (starts-with (concat prefix "\t") value)) (not (starts-with (concat prefix "\n") value)) (not (string-contains "<" value)) (not (string-contains ">" value)))))
+     (define typed (lambda (prefix value) (and (stringp value) (starts-with prefix value) (> (length value) (length prefix)) (boundary-ok prefix value) (not (string-contains "<" value)) (not (string-contains ">" value)))))
      (define blank (lambda (value) (or (is_null value) (and (stringp value) (= (length value) 0)))))
      (define status-is (lambda (row status) (and (stringp (assoc "status" row)) (string= (assoc "status" row) status))))
      (define current-row (lambda (row) (and (status-is row "current_signal") (typed "artifact:" (assoc "artifact_id" row)) (typed "expectation:" (assoc "expectation_id" row)) (typed "authority:" (assoc "expectation_authority" row)) (typed "falsifier:" (assoc "falsifier_id" row)) (typed "boundary:" (assoc "observed_boundary" row)) (typed "channel:" (assoc "live_disturbance_channel" row)) (typed "correction:" (assoc "corrective_action" row)) (typed "return:" (assoc "return_path" row)) (typed "trigger:" (assoc "retirement_trigger" row)) (string= (assoc "retirement_trigger_status" row) "pending") (blank (assoc "decision_record" row)) (blank (assoc "retirement_authority" row)))))

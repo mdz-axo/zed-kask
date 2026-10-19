@@ -461,6 +461,12 @@ fn every_registry_builtin_has_a_passing_specimen() {
         (
             "member",
             "(member 2 (list 1 2))".into(),
+            empty.clone(),
+            serde_json::json!(true),
+        ),
+        (
+            "boundary-ok",
+            "(boundary-ok \"record:\" \"record:x\")".into(),
             empty,
             serde_json::json!(true),
         ),

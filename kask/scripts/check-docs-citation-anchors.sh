@@ -67,6 +67,7 @@ SCOPED_BASENAMES=(
   hkask_mcp_corpus.rs
   local_tools.rs
   swarm_panel.rs
+  hkask_lisp.rs
 )
 
 is_scoped() {
