@@ -61,7 +61,7 @@ hkask_mcp_server::mcp_server!(
         /// scoring of forecast rationales. Resolved once in `run()` before
         /// the sync server-construction closure.
         pub inference_port: std::sync::Arc<dyn hkask_types::InferencePort>,
-    }
+    } = crate::ontology::annotate;
 );
 
 // ── Tool router ────────────────────────────────────────────────────────────
