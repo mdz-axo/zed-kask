@@ -17,14 +17,6 @@ pub struct BoardCreateRequest {
     /// `kask/docs/research/kanban-board-reference-models.md` §6.6).
     pub name: String,
     pub columns: Option<Vec<ColumnDefInput>>,
-    /// Opaque client-generated key making this create replay-safe.
-    ///
-    /// A caller that retries after a lost connection sends the *same* key, and
-    /// the server returns the original response instead of creating a second
-    /// board. Optional and `#[serde(default)]` so existing callers are
-    /// unaffected — they simply get no replay protection. See
-    /// `crate::idempotency`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<String>,
 }
 
@@ -32,10 +24,6 @@ pub struct BoardCreateRequest {
 pub struct ColumnDefInput {
     pub name: String,
     pub status: String,
-    /// Optional WIP (work-in-progress) limit for this column.
-    /// When set, task moves into this column will be rejected if the
-    /// column already has this many tasks in the target status.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wip_limit: Option<u32>,
 }
 
@@ -44,9 +32,6 @@ pub(crate) struct BoardCreateResponse {
     pub board_id: String,
     pub name: String,
     pub columns: Vec<ColumnInfo>,
-    /// Ontology concept: <https://w3id.org/pko#Procedure>
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ontology: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -54,9 +39,6 @@ pub struct ColumnInfo {
     pub id: String,
     pub name: String,
     pub status: String,
-    /// Optional WIP limit — maximum tasks allowed in this column.
-    /// None means no limit.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wip_limit: Option<u32>,
 }
 
@@ -112,12 +94,7 @@ pub struct GoalCreateRequest {
         deserialize_with = "hkask_types::maybe_string::deserialize_optional_f64_from_maybe_string"
     )]
     pub prediction: Option<f64>,
-    /// Optional link to the kanban task executing this goal.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_id: Option<String>,
-    /// Opaque client-generated key making this create replay-safe. See
-    /// [`BoardCreateRequest::idempotency_key`].
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<String>,
 }
 
@@ -127,17 +104,6 @@ pub(crate) struct GoalCreateResponse {
     pub goal_text: String,
     pub criteria_count: usize,
     pub prediction: Option<f64>,
-    /// Ontology concept emitted on the response: `pplan:Step` (P-Plan,
-    /// soft-reused by PKO) via `kanban_type_to_pko("Goal")`. Operator
-    /// decision 2026-08-30: goals anchor on the PKO family — boards =
-    /// `pko:Procedure`, tasks and goals = `pplan:Step`, verdicts =
-    /// `pko:StepVerification` — so the whole kanban graph is one linked
-    /// dataset in a published ontology. The goal's h_mem record anchors on
-    /// the same term, so the wire surface and the stored record agree.
-    /// (PKO publishes no Goal class — the former `pko:Goal` was fabricated;
-    /// the interim IAO:0000005 anchor was rejected as opaque.)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ontology: Option<String>,
 }
 
 /// One criterion judgment input for `kanban_goal_judge`.
@@ -171,10 +137,6 @@ pub(crate) struct GoalJudgeResponse {
     pub goal_id: String,
     pub verdict: String,
     pub verdict_count: usize,
-    /// Ontology concept: `pko:StepVerification` (judging a goal's criteria
-    /// against the realized outcome is a verification occurrence).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ontology: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -191,14 +153,7 @@ pub(crate) struct GoalScoreResponse {
     /// Brier score of the intake prediction against the realized outcome.
     /// `null` when no intake prediction was recorded — surfaced, never faked.
     pub brier: Option<f64>,
-    /// Names the missing-prediction case so the caller can distinguish
-    /// "not computable" from "perfectly calibrated".
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
-    /// Ontology concept: `pko:StepVerification` (scoring a goal's realized
-    /// outcome is a verification occurrence).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ontology: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -229,11 +184,7 @@ pub(crate) struct GoalInfo {
     pub criteria: Vec<String>,
     pub criteria_count: usize,
     pub prediction: Option<f64>,
-    /// Latest verdict ("done" | "continue" | "blocked"), if any.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_verdict: Option<String>,
-    /// Resolution state: "achieved" | "not-achieved" | null (unresolved).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolution: Option<String>,
     pub created_at: String,
 }
@@ -263,9 +214,6 @@ pub struct TaskCreateRequest {
     /// Each citation is validated against the cited goal at creation.
     #[serde(default)]
     pub advances: Vec<CriterionCitationInput>,
-    /// Opaque client-generated key making this create replay-safe. See
-    /// [`BoardCreateRequest::idempotency_key`].
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<String>,
 }
 
@@ -277,10 +225,6 @@ pub(crate) struct TaskCreateResponse {
     pub status: String,
     /// Number of goal-criterion citations recorded on the task.
     pub advances_count: usize,
-    /// Ontology concept: `pplan:Step` (P-Plan, soft-reused by PKO — PKO
-    /// publishes no Step class of its own).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ontology: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -329,14 +273,7 @@ pub struct TaskInfo {
     pub criteria_count: usize,
     /// Number of goal-criterion citations on the task.
     pub advances_count: usize,
-    /// The swarm this task belongs to, when coordinated via a local swarm.
-    /// Mirrors `Task.swarm_id` so the kanban widget can render a visible
-    /// swarm↔kanban link on the card (R1).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub swarm_id: Option<String>,
-    /// The latest recorded activity on this task (R3). `None` when the task
-    /// has no comments yet.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub activity: Option<TaskActivity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ontology: Option<String>,
@@ -353,15 +290,6 @@ pub(crate) struct TaskMoveResponse {
     pub task_id: String,
     pub previous_status: String,
     pub new_status: String,
-    /// Ontology concept: <https://w3id.org/pko#ChangeOfStatus>
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ontology: Option<String>,
-    /// The new status mapped to its PKO execution-status individual (the
-    /// execution axis: pko:InProgress|Completed|Paused — PKO v2.0.0's
-    /// published individuals). Statuses PKO publishes no individual for
-    /// (todo/backlog/ready/review) omit the field rather than force a
-    /// nonexistent status.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pko_execution_status: Option<String>,
 }
 
@@ -374,9 +302,6 @@ pub(crate) struct TaskAssignRequest {
 pub(crate) struct TaskAssignResponse {
     pub task_id: String,
     pub assignee: String,
-    /// Ontology concept: <https://www.w3.org/ns/prov#wasAssociatedWith>
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ontology: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -391,9 +316,6 @@ pub(crate) struct TaskVerifyResponse {
     pub passed: bool,
     pub reasoning: String,
     pub new_status: String,
-    /// Ontology concept: <https://w3id.org/pko#StepVerification>
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ontology: Option<String>,
 }
 
 // ── Comments ────────────────────────────────────────────────────────────────
@@ -411,9 +333,6 @@ pub(crate) struct TaskCommentResponse {
     pub author: String,
     pub body: String,
     pub created_at: String,
-    /// Ontology concept: <https://w3id.org/pko#UserFeedbackOccurrence>
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ontology: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -445,9 +364,6 @@ pub(crate) struct TaskAddDeliverableRequest {
 pub(crate) struct TaskAddDeliverableResponse {
     pub task_id: String,
     pub deliverable_count: usize,
-    /// Ontology concept: <https://www.w3.org/ns/prov#wasGeneratedBy>
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ontology: Option<String>,
 }
 
 // ── Reopen ──────────────────────────────────────────────────────────────────
@@ -461,9 +377,6 @@ pub(crate) struct TaskReopenRequest {
 pub(crate) struct TaskReopenResponse {
     pub task_id: String,
     pub new_status: String,
-    /// Ontology concept: <https://w3id.org/pko#ChangeOfStatus>
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ontology: Option<String>,
 }
 
 // ── Contract proposals ──────────────────────────────────────────────────────
@@ -497,9 +410,6 @@ pub(crate) struct TaskKataPromptRequest {
 pub(crate) struct TaskKataResponse {
     pub task_id: String,
     pub prompt: String,
-    /// Ontology concept: <https://w3id.org/pko#UserQuestionOccurrence>
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ontology: Option<String>,
 }
 
 // ── Spawn ───────────────────────────────────────────────────────────────
@@ -507,12 +417,6 @@ pub(crate) struct TaskKataResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TaskSpawnRequest {
     pub task_id: String,
-    /// Opaque client-generated key making this spawn replay-safe.
-    ///
-    /// Load-bearing here beyond duplicate rows: a spawn starts a second
-    /// subagent, so a blind retry duplicates work. See
-    /// [`BoardCreateRequest::idempotency_key`].
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<String>,
     /// Delegation level: "minimal", "standard", or "maximal".
     pub delegation_level: String,
@@ -522,11 +426,6 @@ pub struct TaskSpawnRequest {
     /// Memory scope: "none", "episodic", or "full".
     #[serde(default)]
     pub memory_scope: Option<String>,
-    /// The swarm this task belongs to, when the task is coordinated via a
-    /// local swarm. Written to `Task.swarm_id` by `KanbanService::spawn_task`
-    /// so `kanban_task_delegate_result` returns the durable link. `None` when
-    /// the spawn is not scoped to a swarm.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub swarm_id: Option<String>,
 }
 
@@ -534,17 +433,7 @@ pub struct TaskSpawnRequest {
 pub(crate) struct TaskSpawnResponse {
     pub task_id: String,
     pub message: String,
-    /// Set when the spawn itself succeeded but its reconciliation note
-    /// (the task comment) could not be recorded — the partial-outcome
-    /// signal: the agent exists, the note does not. Absent when the note
-    /// was recorded. Surfaced as a response field (not an error) so the
-    /// replay-protection reservation records the partial result and a
-    /// same-key retry replays it instead of spawning a second agent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result_note_error: Option<String>,
-    /// Ontology concept: <https://w3id.org/pko#StepExecution>
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ontology: Option<String>,
 }
 
 // ── Delegation result (kanban-as-swarm-coordination) ──────────────────────
@@ -559,18 +448,9 @@ pub(crate) struct TaskDelegateResultResponse {
     pub task_id: String,
     /// Whether the task has a recorded delegation result.
     pub has_result: bool,
-    /// The structured delegation result, when present.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delegate_result: Option<hkask_mcp_swarm::LocalDelegateResult>,
-    /// The deterministic task-success verdict, when present.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deterministic_verdict: Option<hkask_mcp_swarm::TaskSuccessVerdict>,
-    /// The swarm this task belongs to, when set.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub swarm_id: Option<String>,
-    /// Ontology concept: <https://w3id.org/pko#StepExecution>
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ontology: Option<String>,
 }
 
 // ── Board delete ────────────────────────────────────────────────────────
@@ -585,9 +465,6 @@ pub(crate) struct BoardDeleteResponse {
     pub board_id: String,
     /// Number of tasks deleted alongside the board.
     pub tasks_deleted: usize,
-    /// Ontology concept: <https://w3id.org/pko#Procedure>
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ontology: Option<String>,
 }
 
 // ── Board update (rename) ────────────────────────────────────────────────
@@ -607,9 +484,6 @@ pub struct BoardUpdateRequest {
 pub(crate) struct BoardUpdateResponse {
     pub board_id: String,
     pub name: String,
-    /// Ontology concept: <https://w3id.org/pko#Procedure>
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ontology: Option<String>,
 }
 
 // ── Task delete ────────────────────────────────────────────────────────────
@@ -622,10 +496,6 @@ pub(crate) struct TaskDeleteRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct TaskDeleteResponse {
     pub task_id: String,
-    /// Ontology concept: `pplan:Step` (P-Plan, soft-reused by PKO — PKO
-    /// publishes no Step class of its own).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ontology: Option<String>,
 }
 
 // ── Task unassign ──────────────────────────────────────────────────────────
@@ -638,10 +508,6 @@ pub(crate) struct TaskUnassignRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct TaskUnassignResponse {
     pub task_id: String,
-    /// Ontology concept: `pplan:Step` (P-Plan, soft-reused by PKO — PKO
-    /// publishes no Step class of its own).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ontology: Option<String>,
 }
 
 // ── Task update ────────────────────────────────────────────────────────────
@@ -649,19 +515,11 @@ pub(crate) struct TaskUnassignResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct TaskUpdateRequest {
     pub task_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub criteria: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub priority: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub labels: Option<Vec<String>>,
-    /// Goal criteria this task advances — replaces the existing citations
-    /// when present. Each citation is validated against the cited goal.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub advances: Option<Vec<CriterionCitationInput>>,
 }
 
@@ -671,10 +529,6 @@ pub(crate) struct TaskUpdateResponse {
     pub title: String,
     /// Number of goal-criterion citations on the task after the update.
     pub advances_count: usize,
-    /// Ontology concept: `pplan:Step` (P-Plan, soft-reused by PKO — PKO
-    /// publishes no Step class of its own).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ontology: Option<String>,
 }
 
 // ── Board export / import (mermaid) ─────────────────────────────────────────
@@ -699,9 +553,6 @@ pub(crate) struct BoardExportResponse {
     pub column_count: usize,
     /// Number of tasks rendered.
     pub task_count: usize,
-    /// Ontology concept: <https://w3id.org/pko#Procedure>
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ontology: Option<String>,
 }
 
 /// Request for `kanban_board_import` — parse mermaid kanban markdown and
@@ -712,16 +563,7 @@ pub struct BoardImportRequest {
     /// Every section must be preceded by
     /// `%% kanban column status: <wire-status>`; implicit legacy mappings are rejected.
     pub markdown: String,
-    /// Optional override for the board name. When `None`, the name parsed
-    /// from the `%% kanban board: <name>` comment is used; when the markdown
-    /// has no name comment either, the board is named `"Imported Board"`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub board_name: Option<String>,
-    /// Opaque client-generated key making this import replay-safe. A caller
-    /// that retries after a lost connection sends the *same* key, and the
-    /// server returns the original response instead of creating a second
-    /// board. See `crate::idempotency`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<String>,
 }
 
@@ -735,9 +577,6 @@ pub(crate) struct BoardImportResponse {
     pub column_count: usize,
     /// Number of tasks created across all columns.
     pub task_count: usize,
-    /// Ontology concept: <https://w3id.org/pko#Procedure>
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ontology: Option<String>,
 }
 
 #[cfg(test)]

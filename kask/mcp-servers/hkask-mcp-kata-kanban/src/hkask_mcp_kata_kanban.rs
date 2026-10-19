@@ -10,6 +10,7 @@
 
 pub mod idempotency;
 pub mod kanban;
+pub(crate) mod ontology;
 pub(crate) mod pko;
 /// Integration-test fixtures (the lib-crate test seam — `#[doc(hidden)]`
 /// keeps the public docs clean while the test binaries reach it through
@@ -73,7 +74,7 @@ hkask_mcp_server::mcp_server!(
         /// replayed create returns a live goal's id, not a ghost pointer whose
         /// next `kanban_goal_judge` fails NotFound.
         pub goal_idempotency: Arc<idempotency::IdempotencyStore>,
-    }
+    } = crate::ontology::annotate;
 );
 
 /// Run `work` under replay protection when the caller supplied a key.
@@ -311,7 +312,6 @@ impl KanbanServer {
                             board_id: board.id.to_string(),
                             name: board.name,
                             columns: column_infos(&board.columns),
-                            ontology: kanban_type_to_pko("Board").map(|s| s.to_string()),
                         },
                     )
                 },
@@ -381,7 +381,6 @@ impl KanbanServer {
             serde_json::to_value(BoardDeleteResponse {
                 board_id: bid.to_string(),
                 tasks_deleted,
-                ontology: kanban_type_to_pko("kanban_board_delete").map(|s| s.to_string()),
             })
             .map_err(|e| McpToolError::internal(e.to_string()))
         })
@@ -430,7 +429,6 @@ impl KanbanServer {
             serde_json::to_value(BoardUpdateResponse {
                 board_id: bid.to_string(),
                 name: board.name,
-                ontology: kanban_type_to_pko("Board").map(|s| s.to_string()),
             })
             .map_err(|e| McpToolError::internal(e.to_string()))
         })
@@ -482,7 +480,6 @@ impl KanbanServer {
                             goal_text: goal.goal_text,
                             criteria_count: goal.criteria.len(),
                             prediction: goal.prediction,
-                            ontology: kanban_type_to_pko("Goal").map(|s| s.to_string()),
                         },
                     )
                 },
@@ -532,7 +529,6 @@ impl KanbanServer {
                     goal_id: goal.id.to_string(),
                     verdict: verdict,
                     verdict_count: goal.verdicts.len(),
-                    ontology: kanban_type_to_pko("kanban_goal_judge").map(|s| s.to_string()),
                 },
             )
         })
@@ -570,7 +566,6 @@ impl KanbanServer {
                     achieved,
                     brier: resolution.brier,
                     note,
-                    ontology: kanban_type_to_pko("kanban_goal_score").map(|s| s.to_string()),
                 }
             })
         })
@@ -691,7 +686,6 @@ impl KanbanServer {
                             title: task.title,
                             status: task.status.to_string(),
                             advances_count: task.advances.len(),
-                            ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
                         },
                     )
                 },
@@ -767,7 +761,6 @@ impl KanbanServer {
                     task_id: task.id.to_string(),
                     title: task.title,
                     advances_count: task.advances.len(),
-                    ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
                 },
             )
         })
@@ -834,8 +827,6 @@ impl KanbanServer {
             target_status,
         }): Parameters<TaskMoveRequest>,
     ) -> Result<String, McpToolError> {
-        use pko::kanban_type_to_pko;
-
         execute_tool(self, "kanban_task_move", async {
             let tid = parse_task_id(&task_id)?;
             let previous_status = match self.service.task_get(tid) {
@@ -860,7 +851,6 @@ impl KanbanServer {
                     task_id: task.id.to_string(),
                     previous_status,
                     new_status: task.status.to_string(),
-                    ontology: kanban_type_to_pko("kanban_task_move").map(|s| s.to_string()),
                     // Execution axis: the new status as a PKO execution
                     // status (the shared vocabulary mapper — not a local
                     // re-implementation, so it cannot drift from the
@@ -887,7 +877,6 @@ impl KanbanServer {
                 TaskAssignResponse {
                     task_id: task.id.to_string(),
                     assignee: task.assignee.map(|a| a.to_string()).unwrap_or_default(),
-                    ontology: kanban_type_to_pko("kanban_task_assign").map(|s| s.to_string()),
                 }
             })
         })
@@ -906,7 +895,6 @@ impl KanbanServer {
             self.service.task_delete(tid).map_err(map_kanban_error)?;
             serde_json::to_value(TaskDeleteResponse {
                 task_id: tid.to_string(),
-                ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
             })
             .map_err(|e| McpToolError::internal(e.to_string()))
         })
@@ -925,7 +913,6 @@ impl KanbanServer {
             respond(self.service.task_unassign(tid, self.webid), |task| {
                 TaskUnassignResponse {
                     task_id: task.id.to_string(),
-                    ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
                 }
             })
         })
@@ -951,7 +938,6 @@ impl KanbanServer {
                     passed: verification.passed,
                     reasoning: verification.reasoning,
                     new_status: task.status.to_string(),
-                    ontology: kanban_type_to_pko("kanban_task_verify").map(|s| s.to_string()),
                 },
             )
         })
@@ -980,7 +966,6 @@ impl KanbanServer {
                     author: comment.author.to_string(),
                     body: comment.body,
                     created_at: comment.created_at.to_rfc3339(),
-                    ontology: kanban_type_to_pko("Comment").map(|s| s.to_string()),
                 },
             )
         })
@@ -1011,7 +996,6 @@ impl KanbanServer {
                             author: c.author.to_string(),
                             body: c.body,
                             created_at: c.created_at.to_rfc3339(),
-                            ontology: kanban_type_to_pko("Comment").map(|s| s.to_string()),
                         })
                         .collect();
                     TaskCommentsSinceResponse {
@@ -1042,8 +1026,6 @@ impl KanbanServer {
                 |task| TaskAddDeliverableResponse {
                     task_id: task.id.to_string(),
                     deliverable_count: task.deliverables.len(),
-                    ontology: kanban_type_to_pko("kanban_task_add_deliverable")
-                        .map(|s| s.to_string()),
                 },
             )
         })
@@ -1069,7 +1051,6 @@ impl KanbanServer {
             serde_json::to_value(TaskReopenResponse {
                 task_id: task.id.to_string(),
                 new_status: task.status.to_string(),
-                ontology: kanban_type_to_pko("kanban_task_reopen").map(|s| s.to_string()),
             })
             .map_err(|e| McpToolError::internal(e.to_string()))
         })
@@ -1119,7 +1100,6 @@ impl KanbanServer {
             serde_json::to_value(TaskKataResponse {
                 task_id: tid.to_string(),
                 prompt,
-                ontology: kanban_type_to_pko("kanban_task_kata_prompt").map(|s| s.to_string()),
             })
             .map_err(|e| McpToolError::internal(e.to_string()))
         })
@@ -1303,7 +1283,6 @@ impl KanbanServer {
                         task.title, tid
                     ),
                     result_note_error,
-                    ontology: kanban_type_to_pko("kanban_task_spawn").map(|s| s.to_string()),
                 })
             }
             Err(hkask_types::InferenceError::Auth(message)) => {
@@ -1345,7 +1324,6 @@ impl KanbanServer {
                 delegate_result: task.delegate_result.clone(),
                 deterministic_verdict: task.deterministic_verdict.clone(),
                 swarm_id: task.swarm_id,
-                ontology: kanban_type_to_pko("kanban_task_delegate_result").map(|s| s.to_string()),
             })
             .map_err(|e| McpToolError::internal(e.to_string()))
         })
@@ -1464,7 +1442,6 @@ impl KanbanServer {
                 board_name: board.name,
                 column_count,
                 task_count,
-                ontology: kanban_type_to_pko("kanban_board_export").map(|s| s.to_string()),
             })
             .map_err(|e| McpToolError::internal(e.to_string()))
         })
@@ -1522,7 +1499,6 @@ impl KanbanServer {
                         board_name: board.name,
                         column_count,
                         task_count,
-                        ontology: kanban_type_to_pko("kanban_board_import").map(|s| s.to_string()),
                     })
                     .map_err(|e| McpToolError::internal(e.to_string()))
                 },

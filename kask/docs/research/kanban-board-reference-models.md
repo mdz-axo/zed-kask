@@ -194,7 +194,7 @@ The **concept model and server implementation already satisfy** R1 (partially
   (`service_impl/service.rs`, `task_create`) — R5 is enforced at the service
   seam, not just the schema; `task_create_rejects_unknown_board` pins this.
 - `kanban_task_create` requires a `board_id`
-  (`kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:666`),
+  (`kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:639`),
   and the board index prefix `BOARD_TASKS_PREFIX`
   (`service_impl/service.rs:51`) ties tasks to their board.
 - The panel's create-board form is name-first (placeholder "Board name",
@@ -207,7 +207,7 @@ The **concept model and server implementation already satisfy** R1 (partially
   requires that metadata rather than inferring statuses from names or order;
   the panel preserves the exported board name when importing.
 - `kanban_board_delete` cascades to the board's tasks
-  (`hkask_mcp_kata_kanban.rs:361-395`) — R8.
+  (`hkask_mcp_kata_kanban.rs:358-393`) — R8.
 - The board h_mem is ontology-anchored as the PKO procedure root
   (`service_impl/service.rs:167-180`, `board_h_mem`), with tasks carrying step identifiers —
   the in-tree vocabulary for R5. (Note: `onto_anchor("kanban board")` itself
@@ -290,7 +290,7 @@ created date), the way the thread picker shows timestamps.
 - Service: `KanbanService::board_rename(board_id, new_name)` — trim and
   reject empty-after-trim (the single validation point, closing G9 for
   rename), ownership check mirroring `kanban_board_delete`
-  (`hkask_mcp_kata_kanban.rs:369-380`), update the board h_mem **value**
+  (`hkask_mcp_kata_kanban.rs:366-377`), update the board h_mem **value**
   preserving the PKO procedure ontology (the update path task moves already
   use, `service_impl/service.rs:887`), and emit a `board_renamed` REG span
   mirroring `board_created` (`service.rs:159-167`).

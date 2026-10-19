@@ -179,7 +179,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-FUNCTIONAL-001
 verified_date: 2026-09-28
-verified_against: crates/agent/src/templates/system_prompt.hbs:1-3,301-357; crates/agent/src/templates.rs (division-of-responsibilities pin tests); kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:461,517,564
+verified_against: crates/agent/src/templates/system_prompt.hbs:1-3,301-357; crates/agent/src/templates.rs (division-of-responsibilities pin tests); kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:447,499,544
 status: VERIFIED
 -->
 

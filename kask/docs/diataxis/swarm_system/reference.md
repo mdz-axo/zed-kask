@@ -181,7 +181,7 @@ body (`crates/swarm_panel/src/swarm_panel.rs:31-41`).
 
 The local-swarm public surface is also consumed by `hkask-mcp-kata-kanban`,
 which imports `LocalAgentCard`, `LocalAgentRegistry`, and the delegation
-result types (`kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:29`;
+result types (`kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:30`;
 `kask/mcp-servers/hkask-mcp-kata-kanban/src/types.rs:564-567`).
 
 ## Procedures
