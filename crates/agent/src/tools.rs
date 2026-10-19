@@ -131,11 +131,26 @@ fn describe_json_shape(raw: &serde_json::Value) -> String {
 /// maps (`lisp_eval.env`, `render_template.context`): object-typed outer (so
 /// the model sends a JSON object) with permissive value schemas (`{}` — so
 /// scalars stay scalars instead of being wrapped into `type: object` values).
+///
+/// `properties` is carried explicitly as an empty map. An object schema with
+/// no `properties` key reads as "no properties allowed" on schema-guided
+/// emission paths: live-observed 2026-10-19 (card 9262929a), every populated
+/// `env`/`context` object emission arrived at the tool body as `{}` while the
+/// raw provider stream itself carried the empty object (threads-db `raw_input`
+/// capture) — and the same session delivered populated objects fine through
+/// params whose schemas DO carry `properties: {}` (`AnyJsonValue` fields,
+/// the 2026-09-10 GLM/OpenRouter drop precedent's proven-binding shape). The
+/// explicit empty `properties` + permissive `additionalProperties: {}` is the
+/// shape that demonstrably binds.
 pub(crate) fn permissive_json_map_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
     let mut map = serde_json::Map::new();
     map.insert(
         "type".to_string(),
         serde_json::Value::String("object".to_string()),
+    );
+    map.insert(
+        "properties".to_string(),
+        serde_json::Value::Object(serde_json::Map::new()),
     );
     map.insert(
         "additionalProperties".to_string(),

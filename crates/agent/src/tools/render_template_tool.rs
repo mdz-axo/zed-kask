@@ -1008,7 +1008,14 @@ mod tests {
             schema["properties"]["context"]["additionalProperties"],
             serde_json::json!({})
         );
-        assert!(schema["properties"]["context"].get("properties").is_none());
+        // An explicit EMPTY `properties` map (the proven-binding shape), not
+        // an absent key — see `permissive_json_map_schema`'s doc comment: an
+        // object schema with no `properties` key reads as "no properties
+        // allowed" on schema-guided emission paths (card 9262929a).
+        assert_eq!(
+            schema["properties"]["context"]["properties"],
+            serde_json::json!({})
+        );
         assert!(hkask_types::find_boolean_schema_positions(&schema).is_empty());
     }
 
@@ -1051,9 +1058,13 @@ mod tests {
                 Some(&serde_json::json!({})),
                 "{tool_name}.{field} must stay permissive on the wire"
             );
-            assert!(
-                field_schema.get("properties").is_none(),
-                "{tool_name}.{field} must not gain a closed `properties` map on the wire"
+            assert_eq!(
+                field_schema.get("properties"),
+                Some(&serde_json::json!({})),
+                "{tool_name}.{field} must carry an explicit EMPTY `properties` map on the wire — \
+                 the proven-binding shape (card 9262929a): an object schema with no \
+                 `properties` key reads as \"no properties allowed\" on schema-guided emission \
+                 paths and the emitted object arrives at the tool body as `{{}}`"
             );
         }
         // The two fields share one declaration helper; their wire schemas must

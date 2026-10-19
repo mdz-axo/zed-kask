@@ -351,9 +351,16 @@ mod tests {
             schema["properties"]["env"]["additionalProperties"],
             json!({})
         );
-        // No `properties` key on the env schema: the map is open, not a
-        // closed struct.
-        assert!(schema["properties"]["env"].get("properties").is_none());
+        // An explicit EMPTY `properties` map, not an absent key. The map is
+        // open (permissive `additionalProperties: {}`), but schema-guided
+        // emission paths read an object schema with NO `properties` key as
+        // "no properties allowed" and coerce the emitted object to `{}` —
+        // live-observed 2026-10-19 (card 9262929a): every populated `env`
+        // emission arrived at the tool body as `{}` while params whose
+        // schemas carry `properties: {}` (the `AnyJsonValue` shape) bound
+        // populated objects in the same session. `properties: {}` +
+        // permissive `additionalProperties: {}` is the proven-binding shape.
+        assert_eq!(schema["properties"]["env"]["properties"], json!({}));
         // No bare boolean schema positions anywhere (Ollama/Gemini reject
         // them).
         assert!(hkask_types::find_boolean_schema_positions(&schema).is_empty());
