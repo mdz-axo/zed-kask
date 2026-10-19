@@ -403,10 +403,11 @@ pub(crate) fn emit_models_env(
     // Embedding model already emitted above via `effective_embedding_model`,
     // which encodes the `models`-over-`corpus` precedence. Do not emit it
     // again here — a second insert would be a silent duplicate.
-    if !models.classifier_model.is_empty() {
+    let classifier_model = models.classifier_model.trim();
+    if !classifier_model.is_empty() {
         env.insert(
             "HKASK_CLASSIFIER_MODEL".to_string(),
-            models.classifier_model.clone(),
+            classifier_model.to_string(),
         );
     }
     if !models.qa_generation_model.is_empty() {

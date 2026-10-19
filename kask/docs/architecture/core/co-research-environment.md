@@ -29,7 +29,7 @@ Map a research institution onto zed-kask and every seat is occupied:
 | Research institution | zed-kask |
 | --- | --- |
 | Instruments & labs | The MCP servers — research (evidence ledgers, verification states), corpus, scenarios, experimentation, prediction-markets |
-| Methods & protocols | The skills — superforecasting, falsifiability, grounding-verify, hypothesis-framer, co-scientist, program-manager |
+| Methods & protocols | The skills — superforecasting, hypothesis-framer, falsifiability, experimental-design, hypothesis-testing, grounding-verify, program-manager |
 | Lab notebook & pre-registration | The experimentation server (sealed eval contracts, grounded fitness records) and Brier-scored goals |
 | Library & institutional memory | The corpus and curator memory, with therapy for reorganization |
 | Peer review & governance | The algedonic review gemba walk, consent gates, skill-use issue reporting |
@@ -45,7 +45,7 @@ Map a research institution onto zed-kask and every seat is occupied:
 
 ## The Lineage
 
-The specific case came first. The co-scientist program translated Sakana's AI Scientist (v2, arXiv:2504.08066; v3, arXiv:2610.18933) into human-in-the-loop form: Sakana automates the researcher out of the loop and then needs mechanical policemen to keep the unattended loop honest; zed-kask seats the researcher in and needs instruments and accountability instead. That surface is landed — the experimentation server's rubric block, variant roles, sealed eval contracts, and final evaluations ([`experimentation.md`](../../reference/mcp-servers/experimentation.md)), the `co-scientist` skill, and the D1–D4 operator rulings in the derived ontology registry (commits `4b652e8eb9`, `cfe8ecb654`). This charter is the general case: that principle was never one feature's design constraint — it is the platform's identity.
+The specific case came first. The hypothesis-testing program translates Sakana's AI Scientist (v2, arXiv:2504.08066; v3, arXiv:2610.18933) into human-in-the-loop form: Sakana automates the researcher out of the loop and then needs mechanical policemen to keep the unattended loop honest; zed-kask seats the researcher in and needs instruments and accountability instead. The initial `co-scientist` name and direct framing-to-harness path were retired on 2026-10-18: the functional surface is now `hypothesis-testing`, which delegates study construction to the deep `experimental-design` method before preregistration. The landed instruments include the experimentation server's rubric block, variant roles, sealed eval contracts, and final evaluations ([`experimentation.md`](../../reference/mcp-servers/experimentation.md)), plus the D1–D4 operator rulings in the derived ontology registry (commits `4b652e8eb9`, `cfe8ecb654`). This charter is the general case: that principle was never one feature's design constraint — it is the platform's identity.
 
 ## The Collaboration Test
 
@@ -63,6 +63,6 @@ It has already been applied once, ad hoc, when the autonomous-scientist surface 
 
 ## Identity, Contract, Methods
 
-The Division of Responsibilities ([`functional-interaction-spec.md`](../functional-interaction-spec.md)) is the operating *contract* within this environment: functional decisions are the user's, technical decisions the agent's. The skills are the *methods* the contract selects among — `program-manager` for code-producing work, `co-scientist` for inquiry cycles, `superforecasting` for forecasts. The co-researcher is the *identity*; the program-manager is a method, not the identity.
+The Division of Responsibilities ([`functional-interaction-spec.md`](../functional-interaction-spec.md)) is the operating *contract* within this environment: functional decisions are the user's, technical decisions the agent's. The skills are the *methods* the contract selects among — `program-manager` for code-producing work, `hypothesis-testing` for inquiry cycles, `experimental-design` for the design deep module, `superforecasting` for forecasts. The co-researcher is the *identity*; the program-manager is a method, not the identity.
 
 The identity is wired where agents read it: the system-prompt opening (D40) and the Curator overlay's `## Identity` block (`CURATOR_STATIC_CONTEXT`); this charter is the authority both point at.

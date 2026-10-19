@@ -1888,17 +1888,15 @@ fn main() {
                         embedding_port_for_ipc = embedding_port.clone();
 
                         // The classifier model for write-time chunk
-                        // tagging. Empty/unset degrades tagging to
-                        // structural-only — surfaced here once at wiring
-                        // time, not per turn (no-hidden-models: no silent
-                        // default fallback).
-                        let classifier_model = std::env::var("HKASK_CLASSIFIER_MODEL")
-                            .ok()
-                            .filter(|model| !model.trim().is_empty())
-                            .or_else(|| {
-                                let model = kask_settings.models.classifier_model.trim();
-                                (!model.is_empty()).then(|| model.to_string())
-                            });
+                        // tagging. The saved Kask setting is authoritative for
+                        // this in-process consumer. `HKASK_CLASSIFIER_MODEL`
+                        // is the delivery mechanism for child/CLI processes;
+                        // reading an inherited value here let a stale startup
+                        // environment override a later Settings choice.
+                        // Empty/unset degrades tagging to structural-only —
+                        // surfaced here once at wiring time, not per turn.
+                        let classifier_model =
+                            kask_settings.models.classifier_model_for_host();
                         if classifier_model.is_none() {
                             log::warn!(
                                 "hKask classifier model not configured — memory chunk tagging degrades to structural-only. \
@@ -5273,6 +5271,26 @@ mod tests {
         assert!(
             install < start_refresh,
             "tool source must exist before its refresh task can notify registries"
+        );
+    }
+
+    // zed-kask: in-process memory tagging must obey the saved
+    // Settings → Kask → Models classifier. `HKASK_CLASSIFIER_MODEL` is the
+    // child/CLI delivery seam; reading it here let stale inherited startup
+    // state override a later operator choice. This source pin complements the
+    // behavioral resolver tests in kask_bridge.
+    #[test]
+    fn kask_host_classifier_uses_the_saved_setting_not_process_env() {
+        let source = include_str!("main.rs");
+        let helper_needle = concat!("classifier_model_", "for_host()");
+        assert!(
+            source.contains(helper_needle),
+            "the in-process memory port must resolve its classifier from Kask settings"
+        );
+        let env_override_needle = concat!("std::env::var(\"HKASK_", "CLASSIFIER_MODEL\")");
+        assert!(
+            !source.contains(env_override_needle),
+            "the host process must not let inherited HKASK_CLASSIFIER_MODEL override the saved setting"
         );
     }
 

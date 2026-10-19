@@ -1,0 +1,45 @@
+{# goal: Classify the evidence-bearing semantic preconditions for mapping a complete `DesignSpec` onto the current artifact-oriented experimentation contract; it emits HT-R inputs and schema-evolution evidence, never a compatibility verdict or declaration args. #}
+[inference]
+contract:
+  input:
+    hypothesis_spec: object
+    design_spec: object
+    feedback_partition: object|null
+    selection_partition: object|null
+    executor_report_schema: object
+    binary_resolution_mapping: object|null
+  output:
+    compatibility_inputs: object
+    incompatibilities: array
+    schema_evolution_evidence: object
+---
+
+Map a completed scientific design onto the current experimentation registry only when the mapping is semantically honest.
+
+## Inputs
+
+- hypothesis_spec: {{ hypothesis_spec | tojson }}
+- design_spec: {{ design_spec | tojson }}
+- feedback_partition: {{ feedback_partition | tojson }}
+- selection_partition: {{ selection_partition | tojson }}
+- executor_report_schema: {{ executor_report_schema | tojson }}
+- binary_resolution_mapping: {{ binary_resolution_mapping | tojson }}
+
+## Compatibility classification
+
+Classify these flat booleans with a short evidence basis for each:
+
+- `meaningful_baseline`: a scientifically meaningful control/baseline arm can be the one baseline variant;
+- `meaningful_binary_headroom`: a non-fabricated binary rubric pass-rate definition makes `baseline_pass_rate < 1.0` scientifically meaningful;
+- `genuinely_binary_claim`: the preregistered scientific resolution maps honestly to selected=1 / rejected=0;
+- `rubric_expressible`: every measurement routes through `report_ref` or deterministic `contains` / `not_contains` / `regex` verification;
+- `positive_max_runs`: the sealed design carries a positive run ceiling;
+- `partitions_valid`: real feedback and selection partitions exist, are disjoint by construction, and match the executor contract.
+
+A calibration study, single-arm measurement, observational estimate, non-binary corroboration, equivalence conclusion without a genuinely binary preregistered resolution, missing selection partition, or design lacking a meaningful pass rate is incompatible. Do not narrow the science to fit the tool.
+
+`incompatibilities` names every false input with its evidence. Always emit `schema_evolution_evidence` requesting first-class typed `design_spec`, a tagged scientific headroom criterion, typed scientific outcomes with explicit calibration rules, and preservation of existing artifact experiments/literal void markers. This evidence remains useful even when the current design happens to map compatibly.
+
+Do not emit a compatibility verdict, `eval_set`, registry arguments, a baseline mapping or a pass rate. The caller computes HT-R. Only an HT-R `compatible` result can reach the separate `registry-declaration` template.
+
+Return JSON only with exactly `compatibility_inputs`, `incompatibilities`, `schema_evolution_evidence`.

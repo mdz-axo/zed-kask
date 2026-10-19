@@ -1,0 +1,46 @@
+{# goal: Rank only candidates whose recorded ED-1 result is `execute`, producing the complete selected `design-spec-v1` and strongest rejected alternative for ED-1S validation. #}
+[inference]
+contract:
+  input:
+    hypothesis_spec: object
+    candidate_drafts: array
+    gate_results: array
+    design_constraints: object
+  output:
+    selected_design: object
+    strongest_rejected_alternative: object|null
+    ranking_justification: object
+---
+
+Select from an already-generated, already-gated candidate set. Do not regenerate, revise or add a candidate.
+
+## HypothesisSpec
+
+{{ hypothesis_spec | tojson }}
+
+## Immutable candidate drafts
+
+{{ candidate_drafts | tojson }}
+
+## Deterministic ED-1 receipts
+
+{{ gate_results | tojson }}
+
+## Design constraints
+
+{{ design_constraints | tojson }}
+
+## Selection rule
+
+1. Join candidates and gate receipts only by exact `candidate_id`.
+2. A candidate is eligible only when its recorded ED-1 result is exactly `execute`.
+3. If no candidate is eligible, do not use this template; the caller returns the typed no-executable-candidate stop with the full gate ledger.
+4. Among eligible candidates, compare discrimination/elimination power, expected information gain, measurement and identification strength, robustness to auxiliary-assumption failure, cost, time, risk and reversibility. Validity is non-compensatory; cost or speed can never rescue a failed gate.
+5. Preserve each draft verbatim as the source of its fields. The selected `design-spec-v1` may organize those fields into the canonical schema, but may not change their scientific content after observing gate results.
+6. Return the strongest non-selected candidate when more than one draft exists, including its exact ED-1 result and why the selected candidate is stronger. A rejected alternative may be scientifically credible but dominated, or invalid with a named gate failure.
+
+`selected_design` must carry `spec_version="design-spec-v1"`, a stable id/version, `hypothesis_spec_id`, the selected `candidate_id`, complete traceability/design/measurement/identification/information/analysis/stopping/executor/outcome/safety/reproducibility fields, and the complete candidate/gate ledger.
+
+`ranking_justification` names the eligible ids, comparison criteria, and evidence for the choice. The caller validates the selection through ED-1S; this template does not type that verdict.
+
+Return JSON only with exactly `selected_design`, `strongest_rejected_alternative`, `ranking_justification`.

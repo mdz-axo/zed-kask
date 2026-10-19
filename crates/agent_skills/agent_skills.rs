@@ -917,6 +917,7 @@ const RETIRED_SKILL_NAMES: &[&str] = &[
     "capabilities-reasoner",
     "caveman",
     "codegraph",
+    "co-scientist",
     "coherence-review",
     "company-research-deep",
     "company-research-flash",
@@ -3349,19 +3350,19 @@ description: A skill with no body content
         seed_shipped_skills(fs.as_ref(), Path::new("/skills")).await;
 
         // A known shipped USER (non-core) skill must be present on disk after
-        // seeding. `co-scientist` is non-core, so user edits to it are
+        // seeding. `hypothesis-testing` is non-core, so user edits to it are
         // sovereign and must survive re-seeding.
-        let user_skill = Path::new("/skills/co-scientist/SKILL.md");
+        let user_skill = Path::new("/skills/hypothesis-testing/SKILL.md");
         assert!(
             fs.is_file(user_skill).await,
-            "shipped skill 'co-scientist' should be seeded to disk"
+            "shipped skill 'hypothesis-testing' should be seeded to disk"
         );
 
         // Overwrite the seeded file with a user edit, then re-seed. The
         // user edit must survive — seeding never clobbers existing files.
         fs.write(
             user_skill,
-            b"---\nname: co-scientist\ndescription: My custom edit\n---\n",
+            b"---\nname: hypothesis-testing\ndescription: My custom edit\n---\n",
         )
         .await
         .unwrap();

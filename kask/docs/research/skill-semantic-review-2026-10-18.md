@@ -1,6 +1,16 @@
+---
+title: "Skill semantic review — 2026-10-18"
+audience: [developers, architects, operators, agents]
+last_updated: 2026-10-18
+version: "1.1.0"
+status: "Active"
+domain: "Cross-cutting"
+mds_categories: [composition, trust, lifecycle]
+---
+
 # Skill semantic review — 2026-10-18
 
-Live census: 58 skills, 216 templates.
+Live census: 59 skills, 220 templates.
 Set-equal to `/tmp/live-skills.txt` (see reconciliation note at the foot).
 
 Columns: **tpl** templates in the skill's registry dir; **gates** pinned `lisp_eval` gate ids;
@@ -16,7 +26,8 @@ composition edges that resolve to a live skill; **anch** `onto_anchor`→derived
 | build-corpus-pipeline | 0 | BCP-1 | 0 | 1 | 0 | 2 | y/y/y/y/y | aligned | clean | clean | Stage gates D; BCP-1 measured counts |
 | code-review | 5 | CR-0,CR-1,CR-2 | 0 | 0 | 1 | 0 | y/y/y/y/y | aligned | clean | clean | Fagan/PERFECT encoded; CR-0..2 D; applied_count is a runtime observation, correctly P |
 | coding-guidelines | 3 | CG-1,CG-2 | 0 | 1 | 0 | 0 | y/y/y/y/n | aligned | clean | clean | Karpathy four principles; CG-1/CG-2 D |
-| co-scientist | 2 | CS-1 | 0 | 4 | 0 | 1 | y/y/y/y/y | aligned | clean | clean | CS-1 D; experiment registry is the oracle |
+| hypothesis-testing | 3 | HT-1 | 0 | 6 | 0 | 1 | y/y/y/y/y | aligned | clean | clean | HT-1 D; delegates scientific design to experimental-design before registry use |
+| experimental-design | 3 | ED-0,ED-1,ED-2 | 0 | 4 | 6 | 1 | y/y/y/y/y | aligned | clean | clean | ED gates D over classified inputs; executor reports and operator are the scientific oracles |
 | create-skill | 2 | CS-1 | 1 | 4 | 0 | 0 | y/y/y/y/y | aligned | clean | clean | CS-1 D; my-skill/analyze.j2 is a documented placeholder in the scaffold example |
 | deep-module | 3 | DM-1,DM-2 | 0 | 0 | 0 | 0 | y/y/y/y/y | aligned | clean | clean | Ousterhout Ch.4/Ch.7.1 via derived deep_module + deletion_test (both verified present) |
 | diagnose | 4 | DIAG-1,DIAG-2 | 0 | 2 | 2 | 0 | y/y/y/y/y | aligned | clean | clean | Zeller/Agans encoded; DIAG-1/2 D |

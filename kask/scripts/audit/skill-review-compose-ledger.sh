@@ -20,7 +20,8 @@ bug-hunt|aligned|clean|clean|Bach & Bolton heuristic model encoded in BH-1
 build-corpus-pipeline|aligned|clean|clean|Stage gates D; BCP-1 measured counts
 code-review|aligned|clean|clean|Fagan/PERFECT encoded; CR-0..2 D; applied_count is a runtime observation, correctly P
 coding-guidelines|aligned|clean|clean|Karpathy four principles; CG-1/CG-2 D
-co-scientist|aligned|clean|clean|CS-1 D; experiment registry is the oracle
+hypothesis-testing|aligned|clean|clean|HT-1 D; experimental-design owns scientific validity; experiment registry is the lifecycle oracle
+experimental-design|aligned|clean|clean|ED-0..ED-2 D over classified inputs; executor reports and operator are the scientific oracles
 create-skill|aligned|clean|clean|CS-1 D; my-skill/analyze.j2 is a documented placeholder in the scaffold example
 deep-module|aligned|clean|clean|Ousterhout Ch.4/Ch.7.1 via derived deep_module + deletion_test (both verified present)
 diagnose|aligned|clean|clean|Zeller/Agans encoded; DIAG-1/2 D

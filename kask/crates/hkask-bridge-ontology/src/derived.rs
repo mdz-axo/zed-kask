@@ -501,6 +501,92 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         authority: "operator ruling 2026-09-25; Richardson, Wilson, Nishikawa & Hayward, The well-built clinical question, ACP Journal Club 123(3) (1995)",
     },
     DerivedConcept {
+        term: "experimental_design",
+        aliases: &[
+            "experimental design",
+            "study design",
+            "design of experiments",
+        ],
+        identity: "a preregistered plan that maps rival hypotheses and material auxiliary failures to discriminating observations, then specifies how those observations will be obtained with valid measurement, identification, adequate information, controlled error and reproducible execution",
+        definition: "The design-of-experiments sense joining Platt's strong inference to NIST/SEMATECH statistical engineering, JCGM measurement discipline and the Shadish–Cook–Campbell validity questions: generate materially different candidate designs, reject those that cannot distinguish rivals or localize important measurement/model failures, and select among valid survivors by information, cost, risk and reversibility. It is not form filling and not the execution itself.",
+        constituents: &[
+            "falsifiability",
+            "measurement",
+            "identification",
+            "information",
+            "reproducibility",
+        ],
+        authority: "operator ruling 2026-10-18 (experimental-design capability); Platt, Strong Inference, Science 146 (1964), doi:10.1126/science.146.3642.347; NIST/SEMATECH Engineering Statistics Handbook, Process Improvement; JCGM 100:2008, doi:10.59161/JCGM100-2008E",
+    },
+    DerivedConcept {
+        term: "hypothesis_testing",
+        aliases: &["hypothesis testing", "scientific hypothesis testing"],
+        identity: "a human-gated inquiry lifecycle that frames falsifiable rivals, designs a valid opportunity for refutation, preregisters the design, obtains measurements through a bound executor, interprets outcomes without binary-test fallacies, audits the findings and submits the conclusion to human review",
+        definition: "The functional lifecycle sense used by zed-kask: hypothesis-framer owns formulation, falsifiability owns admissibility and rivals, experimental-design owns the study design, domain executors measure, the experimentation registry seals the lab record, grounding-verify audits factual claims, and the operator owns review. It is broader than a null-hypothesis significance test and narrower than autonomous science.",
+        constituents: &[
+            "falsifiability",
+            "experimental design",
+            "preregistration",
+            "measurement",
+            "human review",
+        ],
+        authority: "operator ruling 2026-10-18 (rename co-scientist to the functional hypothesis-testing lifecycle); Popper, The Logic of Scientific Discovery (1959); Platt, Strong Inference (1964); Nosek et al., The preregistration revolution, doi:10.1073/pnas.1708274114",
+    },
+    DerivedConcept {
+        term: "measurement_uncertainty",
+        aliases: &["measurement uncertainty", "uncertainty of measurement"],
+        identity: "a non-negative parameter associated with a measurement result that characterizes the dispersion of quantity values reasonably attributable to the measurand",
+        definition: "The VIM/GUM metrological sense: uncertainty qualifies a measurement result and propagates contributions from the measurement model, calibration, reference data and repeatability. It is not ignorance in general and not a substitute for identifying the measurand or validating instrument scope.",
+        constituents: &["measurement", "measurand", "dispersion", "calibration"],
+        authority: "operator ruling 2026-10-18 (experimental-design capability); JCGM 100:2008, Evaluation of measurement data — Guide to the expression of uncertainty in measurement, doi:10.59161/JCGM100-2008E; JCGM 200:2012 VIM",
+    },
+    DerivedConcept {
+        term: "randomized_experiment",
+        aliases: &[
+            "randomized experiment",
+            "randomised experiment",
+            "random assignment",
+        ],
+        identity: "an experiment in which experimental units are assigned to treatments by a chance mechanism specified independently of their potential outcomes",
+        definition: "The design-of-experiments sense: random assignment protects the treatment contrast from systematic association with unit characteristics under the stated assignment mechanism. It does not by itself validate measurement, guarantee external validity, repair attrition or justify an underpowered analysis.",
+        constituents: &[
+            "experiment",
+            "experimental unit",
+            "treatment",
+            "random assignment",
+        ],
+        authority: "operator ruling 2026-10-18 (experimental-design capability); Fisher, The Design of Experiments (1935); NIST/SEMATECH Engineering Statistics Handbook, Completely Randomized Designs",
+    },
+    DerivedConcept {
+        term: "equivalence_testing",
+        aliases: &[
+            "equivalence testing",
+            "equivalence test",
+            "practical equivalence",
+        ],
+        identity: "a prespecified bounded-claim test whose evidence criterion requires an adequately precise interval to fall within a practically meaningful equivalence region",
+        definition: "The bounded-inference sense: equivalence is evidence that the effect lies inside a margin defined before confirmatory data inspection, commonly assessed by two one-sided tests or the corresponding confidence interval. Failure to reject a point null is not equivalence, and a post-hoc margin cannot convert imprecision into support.",
+        constituents: &[
+            "equivalence margin",
+            "confidence interval",
+            "precision",
+            "practical significance",
+        ],
+        authority: "operator ruling 2026-10-18 (experimental-design capability); Lakens, Scheel & Isager, Equivalence Testing for Psychological Research: A Tutorial (2018), doi:10.1177/2515245918770963",
+    },
+    DerivedConcept {
+        term: "preregistration",
+        aliases: &[
+            "preregistration",
+            "pre-registration",
+            "preregistered analysis",
+        ],
+        identity: "a time-stamped, immutable specification of confirmatory hypotheses, outcomes, analysis, exclusions, multiplicity and stopping decisions recorded before inspecting the confirmatory data",
+        definition: "The confirmatory-research sense: preregistration separates planned tests from exploratory adaptations and preserves every later deviation visibly. In zed-kask the scientific DesignSpec is complete at experiment_propose; the later experiment_seal fingerprints and attests the already-declared contract rather than authorizing design after baseline inspection.",
+        constituents: &["hypothesis", "analysis plan", "stopping rule", "provenance"],
+        authority: "operator ruling 2026-10-18 (experimental-design capability); Nosek et al., The preregistration revolution, PNAS 115(11):2600–2606 (2018), doi:10.1073/pnas.1708274114",
+    },
+    DerivedConcept {
         term: "rubric",
         aliases: &["rubrics", "evaluation rubric", "target rubrics"],
         identity: "a named, typed pass/fail criterion declared before measurement and verified by a deterministic check",
@@ -2198,6 +2284,29 @@ mod tests {
         ] {
             let resolved = crate::term_resolution::resolve_term(constituent);
             assert_eq!(resolved.concept, concept, "{constituent}: {resolved:?}");
+        }
+    }
+
+    #[test]
+    fn experimental_design_rulings_resolve_with_published_authority() {
+        for (term, marker) in [
+            ("experimental design", "NIST/SEMATECH"),
+            ("hypothesis testing", "Nosek"),
+            ("measurement uncertainty", "JCGM 100:2008"),
+            ("randomized experiment", "Fisher"),
+            ("equivalence testing", "Lakens"),
+            ("preregistration", "Nosek"),
+        ] {
+            let concept = resolve_derived(term).expect("experimental-design ruling must resolve");
+            assert!(
+                concept.authority.contains(marker),
+                "{term}: {}",
+                concept.authority
+            );
+            assert!(
+                concept.authority.starts_with("operator ruling 2026-10-18"),
+                "{term} cites the 2026-10-18 ruling"
+            );
         }
     }
 

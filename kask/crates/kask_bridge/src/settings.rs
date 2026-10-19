@@ -568,8 +568,10 @@ pub struct KaskModelsSettings {
     /// the curator's memory-distillation lesson extraction
     /// (provider-prefixed). Both are non-thinking workloads — output
     /// tokens, not reasoning tokens — so the model must accept
-    /// `reasoning_effort: "none"`. When empty, falls back to the kask
-    /// default.
+    /// `reasoning_effort: "none"`. An absent settings field is filled from
+    /// `Default`; an explicitly empty value leaves classifier routes
+    /// unconfigured so they degrade or refuse visibly rather than selecting a
+    /// hidden model.
     pub classifier_model: String,
 
     /// Dedicated non-thinking QA generator (provider-prefixed). Empty is
@@ -634,6 +636,20 @@ impl KaskModelsSettings {
     // `effective_*` methods below resolve settings → default; an empty
     // effective value remains possible for QA generation and verification.
     // `rerank_model` now has a configured default.
+
+    /// Resolve the classifier model for inference that runs inside the host
+    /// process. The saved Kask setting is authoritative: an inherited
+    /// `HKASK_CLASSIFIER_MODEL` belongs to child-process configuration and
+    /// must never override a later Settings → Kask → Models choice.
+    ///
+    /// MCP children receive this same setting through `emit_models_env`;
+    /// direct CLI processes may still intentionally set the env variable and
+    /// resolve it through `hkask_inference::model_constants`.
+    #[must_use]
+    pub fn classifier_model_for_host(&self) -> Option<String> {
+        let model = self.classifier_model.trim();
+        (!model.is_empty()).then(|| model.to_string())
+    }
 }
 
 /// Resolve a storage-root setting with the single priority chain shared by
@@ -1025,6 +1041,52 @@ impl From<KaskSettingsContent> for KaskSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_classifier_uses_saved_setting_and_normalizes_whitespace() {
+        let models = KaskModelsSettings {
+            classifier_model: "  openrouter/openai/gpt-6-sol  ".to_string(),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            models.classifier_model_for_host().as_deref(),
+            Some("openrouter/openai/gpt-6-sol")
+        );
+    }
+
+    #[test]
+    fn saved_classifier_reaches_host_and_mcp_children_without_fallback() {
+        let settings = KaskSettings::from(KaskSettingsContent {
+            models: Some(KaskModelsSettingsContent {
+                classifier_model: Some("  openrouter/openai/gpt-6-sol  ".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+
+        assert_eq!(
+            settings.models.classifier_model_for_host().as_deref(),
+            Some("openrouter/openai/gpt-6-sol")
+        );
+        assert_eq!(
+            settings
+                .mcp_env()
+                .get("HKASK_CLASSIFIER_MODEL")
+                .map(String::as_str),
+            Some("openrouter/openai/gpt-6-sol")
+        );
+    }
+
+    #[test]
+    fn host_classifier_treats_blank_setting_as_unconfigured() {
+        let models = KaskModelsSettings {
+            classifier_model: "   \n\t".to_string(),
+            ..Default::default()
+        };
+
+        assert_eq!(models.classifier_model_for_host(), None);
+    }
 
     // The media server has no in-server model fallback — the settings
     // default is the only thing that feeds HKASK_MEDIA_STT_MODEL /

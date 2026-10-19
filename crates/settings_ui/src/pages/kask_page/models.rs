@@ -146,7 +146,8 @@ pub(crate) fn render_models_page(
                 .child(
                     Label::new(format!(
                         "Provider-prefixed model for guard/regulation classification \
-                         tasks. Leave empty to use the kask default ({}).",
+                         tasks. When the field is absent, the kask default is {}; \
+                         an explicitly empty value disables classifier routes.",
                         code_defaults.classifier_model
                     ))
                     .size(LabelSize::Small)

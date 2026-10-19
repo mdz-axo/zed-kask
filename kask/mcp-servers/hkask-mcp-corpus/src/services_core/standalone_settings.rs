@@ -61,10 +61,6 @@ pub struct HkaskSettings {
     /// Override: `HKASK_EMBEDDING_MODEL` env var.
     pub embedding_model: String,
 
-    /// Primary classifier model for corpus pipeline classification.
-    /// Override: `HKASK_CLASSIFIER_MODEL` env var.
-    pub classifier_model: String,
-
     /// Default OCR model for scanned PDF fallback.
     /// Override: `HKASK_OCR_MODEL` env var.
     pub ocr_model: String,
@@ -90,15 +86,6 @@ fn default_embedding_model() -> String {
     hkask_inference::model_constants::DEFAULT_EMBEDDING_MODEL.to_string()
 }
 
-fn default_classifier_model() -> String {
-    // glm-5.2, not glm-5.3-flash: the classifier must be a non-thinking
-    // model (or one where thinking is disable-able via
-    // `reasoning_effort: "none"`) — classification and tagging need
-    // output tokens, not reasoning tokens. glm-5.3-flash is a thinking
-    // model that cannot disable it (operator ruling 2026-09-04).
-    "OpenRouter/z-ai/glm-5.2".to_string()
-}
-
 fn default_ocr_model() -> String {
     "ollama/glm-ocr:latest".to_string()
 }
@@ -111,7 +98,6 @@ impl Default for HkaskSettings {
     fn default() -> Self {
         Self {
             embedding_model: default_embedding_model(),
-            classifier_model: default_classifier_model(),
             ocr_model: default_ocr_model(),
             chunk_max_tokens: default_chunk_max_tokens(),
         }
@@ -126,7 +112,7 @@ impl HkaskSettings {
     /// commas. Kask model settings live under its
     /// `kask.models` section (`KaskModelsSettingsContent` in
     /// `settings_content.rs`). Fields absent from that section fall back to
-    /// `Default` — the file never needs to carry all four fields.
+    /// `Default` — the file never needs to carry both standalone model fields.
     ///
     /// \[P5\] Motivating: Essentialism — service-layer orchestration earns its existence; no raw domain logic.
     /// pre:  none (always succeeds)
@@ -148,7 +134,7 @@ impl HkaskSettings {
     /// 'embedding_model' at line 147`, every boot).
     ///
     /// \[P5\] pre:  none
-    /// post: defaults with `kask.models.{embedding_model, classifier_model, ocr_model}` overlaid when present and well-typed
+    /// post: defaults with `kask.models.{embedding_model, ocr_model}` overlaid when present and well-typed
     fn parse_over_defaults(json: &str, path: &std::path::Path) -> Self {
         let user: serde_json::Value = match serde_json_lenient::from_str(json) {
             Ok(value) => value,
@@ -171,7 +157,7 @@ impl HkaskSettings {
             .and_then(|models| models.as_object())
         {
             if let Some(merged_object) = merged.as_object_mut() {
-                for key in ["embedding_model", "classifier_model", "ocr_model"] {
+                for key in ["embedding_model", "ocr_model"] {
                     if let Some(value) = user_models.get(key) {
                         merged_object.insert(key.to_string(), value.clone());
                     }
@@ -285,8 +271,6 @@ mod tests {
             "kask": {
                 "models": {
                     "embedding_model": "test/embedding",
-                    /* Comments must not consume comment markers inside strings. */
-                    "classifier_model": "https://example.test/model//classifier",
                     "ocr_model": "test/ocr",
                 },
             },
@@ -294,10 +278,6 @@ mod tests {
         let settings =
             HkaskSettings::parse_over_defaults(json, std::path::Path::new("/test/settings.json"));
         assert_eq!(settings.embedding_model, "test/embedding");
-        assert_eq!(
-            settings.classifier_model,
-            "https://example.test/model//classifier"
-        );
         assert_eq!(settings.ocr_model, "test/ocr");
         assert_eq!(
             settings.chunk_max_tokens,
@@ -333,7 +313,6 @@ mod tests {
             settings.embedding_model,
             "OpenRouter/qwen/qwen3-embedding-8b"
         );
-        assert_eq!(settings.classifier_model, "OpenRouter/z-ai/glm-5.2");
     }
 
     /// A file with no `kask` section at all (pure zed settings) yields pure

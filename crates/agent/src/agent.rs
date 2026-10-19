@@ -7740,10 +7740,10 @@ mod internal_tests {
             .await
             .expect("session");
         cx.run_until_parked();
-        let skill_dir = dir.join("co-scientist");
+        let skill_dir = dir.join("hypothesis-testing");
         fs.pause_events();
         fs.create_dir(&skill_dir).await.expect("new skill dir");
-        let content = "---\nname: co-scientist\ndescription: Later shipped skill\n---\nbody";
+        let content = "---\nname: hypothesis-testing\ndescription: Later shipped skill\n---\nbody";
         fs.insert_file(skill_dir.join("SKILL.md"), content.as_bytes().to_vec())
             .await;
         let skill = agent_skills::parse_skill_frontmatter(
@@ -7763,7 +7763,7 @@ mod internal_tests {
                 state
                     .skills
                     .iter()
-                    .any(|skill| skill.name == "co-scientist")
+                    .any(|skill| skill.name == "hypothesis-testing")
             );
             assert!(state.skills.iter().any(|skill| skill.name == "user-skill"));
         });
