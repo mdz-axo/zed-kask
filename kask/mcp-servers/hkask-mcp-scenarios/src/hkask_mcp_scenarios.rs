@@ -36,7 +36,6 @@
 
 use std::collections::HashSet;
 
-use hkask_bridge_ontology::dc_bibo;
 use hkask_mcp_server::server::{McpToolError, execute_tool};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
@@ -44,6 +43,7 @@ pub mod equity_forecast;
 // `#[tool_router(..., vis = "pub")]` in equity_forecast.rs makes
 // `equity_forecast_router()` an inherent method on ScenariosServer — no
 // re-export needed; `combined_router()` below merges it.
+pub(crate) mod ontology;
 #[cfg(test)]
 mod property_tests;
 pub(crate) mod superforecast;
@@ -115,23 +115,10 @@ hkask_mcp_server::mcp_server!(
         pub tree_cache: std::sync::Mutex<Option<types::EventTree>>,
         pub called_tools: std::sync::Mutex<HashSet<String>>,
         pub project_store: std::sync::Mutex<superforecast::ProjectStore>,
-    }
+    } = crate::ontology::annotate;
 );
 
 impl ScenariosServer {
-    /// Map a tool name to its ontology concept URI for the `"ontology"` field
-    /// in the tool output JSON (read by the scenario widget).
-    ///
-    /// PKO = Procedural Knowledge Ontology (process/experience — agent's actions)
-    /// Dublin Core = factual/computed outputs (probabilities, scores, trees)
-    fn ontology_anchor(tool: &str) -> Option<&'static str> {
-        use hkask_bridge_ontology::pko;
-        match tool {
-            "scenario_frame" | "scenario_brainstorm" | "scenario_build" => Some(pko::PROCEDURE),
-            _ => Some(dc_bibo::DATASET),
-        }
-    }
-
     /// Expected predecessor for each pipeline-stage tool.
     /// Returns None for tools that can be called independently.
     ///
@@ -257,7 +244,6 @@ fn build_status_response(
         "calibration": calibration,
         "event_tree": tree,
         "provenance": provenance("scenario_status", prov_extra),
-        "ontology": dc_bibo::DATASET
     })
 }
 
@@ -485,7 +471,6 @@ impl ScenariosServer {
                     m
                 }),
                 "bridge_note": "Dependency edges and their conditionals are caller-authored; the server validates structure and computes marginals/joints but never invents conditional probabilities. base_rate is None on records refused by the per-market gates.",
-                "ontology": dc_bibo::DATASET
             });
 
             Ok(output)
@@ -551,7 +536,6 @@ impl ScenariosServer {
                     "1. Feed the aggregated estimate into scenario_synthesize for dragonfly-eye integration. 2. Use scenario_quantify for downstream computation. 3. Track via scenario_score."
                 },
                 "methodology": {
-                    "ontology": dc_bibo::DATASET,
                     "framework": "Cross-validation between LLM reasoning (superforecasting skill) and computational verification (scenarios server)",
                     "threshold_rationale": "0.15 divergence threshold based on Tetlock's incremental belief updating (Commandment 4): superforecasters typically move probabilities in 0.05-0.10 increments. A 0.15 divergence suggests fundamentally different assumptions, not just calibration noise.",
                     "reference": "Tetlock & Gardner, Superforecasting (2015), Ch. 5-6"
@@ -589,15 +573,6 @@ impl ScenariosServer {
                         serde_json::json!("Prior answers from a previous framing session. Use these to skip turns already covered. If a prior answer seems stale or incomplete, revisit that turn naturally. Don't reference the prior answer directly — just ask the turn's opening question again."),
                     );
                 }
-            // Emit the ontology anchor at the top level (consistent with
-            // scenario_status and scenario_build). scenario_frame classifies
-            // as "pko" (it's a procedural coaching protocol).
-            if let Some(obj) = output.as_object_mut() {
-                obj.insert(
-                    "ontology".to_string(),
-                    serde_json::json!(Self::ontology_anchor("scenario_frame").unwrap_or(dc_bibo::DATASET)),
-                );
-            }
 
             Ok(Self::with_sequence_note(
                 output,
@@ -774,7 +749,6 @@ impl ScenariosServer {
                     "step_8": "Use scenario_calibrate for Fermi decomposition per event, scenario_synthesize for multi-analyst aggregation, and scenario_assess for project evaluation."
                 },
                 "methodology": {
-                    "ontology": dc_bibo::DATASET,
                     "framework": "Cognitive Process Model for Scenario Construction",
                     "divergent_phase": "High-temperature ideation from multiple personas (Schwartz: imagination + Chermack: stakeholder diversity)",
                     "grounding_phase": "Evidence anchoring and base rate calibration (Tetlock Commandments 2-3: Fermi-ize + outside view)",
@@ -891,7 +865,6 @@ impl ScenariosServer {
                     "possible": {"range": "0-32%", "description": "Could happen but unlikely"}
                 },
                 "methodology": {
-                    "ontology": Self::ontology_anchor("scenario_build").unwrap_or(dc_bibo::DATASET),
                     "framework": "MAIA event-based scenario planning (Tetlock Superforecasting + Schwartz imagination)",
                     "research_pipeline": "1. Web search (brave/firecrawl/tavily) → 2. scenario_build (this tool) → 3. scenario_quantify (resolve tree) → 4. scenario_calibrate (Fermi probabilities)",
                     "tetlock_commandments": [
@@ -907,8 +880,7 @@ impl ScenariosServer {
                         "10. Master error-balancing"
                     ],
                     "reference": "Tetlock & Gardner, Superforecasting (2015); Schwartz, The Art of the Long View (1991)"
-                },
-                "ontology": Self::ontology_anchor("scenario_build").unwrap_or(dc_bibo::DATASET)
+                }
             });
 
             Ok(Self::with_sequence_note(
@@ -1038,7 +1010,6 @@ impl ScenariosServer {
                     m
                 }),
                 "framework": "Tree-level Bayesian propagation: the named event's prior is revised; every descendant marginal is recomputed via CPT marginalization under parent independence; the journal records each changed node (one tâtonnement round, Bhattacharya Prop. 6, arXiv:2211.03244).",
-                "ontology": dc_bibo::DATASET
             });
 
             Ok(output)
@@ -1822,7 +1793,6 @@ impl ScenariosServer {
                     "interpretation": c.interpretation,
                 })),
                 "methodology": {
-                    "ontology": dc_bibo::DATASET,
                     "framework": "Chermack's Performance-Based Scenario System (2011)",
                     "five_phases": [
                         "Phase 1: Project Preparation — scope, stakeholders, resources (Chermack, Ch. 5)",
