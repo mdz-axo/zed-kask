@@ -474,7 +474,7 @@ impl ThreadsDatabase {
             if let Some(parent) = kask_path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            Connection::open_file(&kask_path.to_string_lossy())
+            Self::open_threads_file_connection(&kask_path)?
         };
 
         connection.exec(indoc! {"
@@ -572,6 +572,44 @@ impl ThreadsDatabase {
         Ok((messages, DataType::Zstd, data))
     }
 
+    /// zed-kask: D28 — open the file-backed threads database connection
+    /// with WAL journal mode. In legacy rollback-journal mode, COMMIT must
+    /// upgrade to an EXCLUSIVE file lock; when another process holds a
+    /// read, SQLite returns SQLITE_BUSY immediately WITHOUT invoking the
+    /// busy handler, so busy_timeout cannot retry it (the same
+    /// SQLITE_BUSY-immediacy class documented at
+    /// hkask-storage/src/database/sqlite.rs). That was the COMMIT failure
+    /// that wedged the shared connection (2026-10-19). WAL commits write to
+    /// the WAL file instead — readers never block a writer. The pragma
+    /// persists in the database header, so this is a one-time conversion
+    /// for pre-existing databases and a no-op afterwards.
+    ///
+    /// A separate helper (not inline in `new`) so tests exercise the real
+    /// production open path over a temp file without the process-global
+    /// override (which the test-build branch of `new` bypasses).
+    fn open_threads_file_connection(path: &std::path::Path) -> Result<Connection> {
+        let connection = Connection::open_file(&path.to_string_lossy());
+        connection.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?()
+            .with_context(|| format!("Failed to set WAL journal mode on {}", path.display()))?;
+        // Fail-visible read-back: upstream `Connection::open_file` silently
+        // falls back to an in-memory database when the file cannot be opened,
+        // and the WAL pragma is a no-op there (journal_mode stays `memory`).
+        // Surface that degradation instead of silently running a
+        // non-persistent database under a file path.
+        let mode = {
+            let mut select = connection.select_bound::<(), String>("PRAGMA journal_mode;")?;
+            select(())?.into_iter().next().unwrap_or_default()
+        };
+        if !mode.eq_ignore_ascii_case("wal") {
+            log::warn!(
+                "threads database at {} is not in WAL journal mode (read back \"{mode}\") \
+                 — the file-backed open may have fallen back to an in-memory database",
+                path.display()
+            );
+        }
+        Ok(connection)
+    }
+
     fn save_thread_sync(
         connection: &Arc<Mutex<Connection>>,
         id: acp_v2::SessionId,
@@ -643,10 +681,15 @@ impl ThreadsDatabase {
 
     /// zed-kask: D28 — run one unit of thread-storage work in a single
     /// transaction: BEGIN IMMEDIATE, the unit, then COMMIT — or ROLLBACK
-    /// with the original error propagated (a rollback failure is logged,
-    /// never silently discarded). Shared by saves, the lazy first-open
-    /// migration, and the legacy backfill so a crash can never leave a
-    /// format marker pointing at partially-written rows.
+    /// with the original error propagated. ROLLBACK runs on BOTH failure
+    /// arms: a unit failure, and a failed COMMIT (a failed COMMIT leaves
+    /// the transaction OPEN on the connection, so skipping the rollback
+    /// wedges it — every later BEGIN fails with "cannot start a transaction
+    /// within a transaction"; observed live 2026-10-19: one COMMIT
+    /// SQLITE_BUSY, then 370+ consecutive save failures). A rollback
+    /// failure is logged, never silently discarded. Shared by saves, the
+    /// legacy first-open migration, and the legacy backfill so a crash can
+    /// never leave a format marker pointing at partially-written rows.
     fn in_transaction(
         connection: &Connection,
         operation: &str,
@@ -655,8 +698,14 @@ impl ThreadsDatabase {
         connection.exec("BEGIN IMMEDIATE")?()
             .map_err(|e| e.context(format!("Failed to begin {operation} transaction")))?;
         match unit() {
-            Ok(()) => connection.exec("COMMIT")?()
-                .map_err(|e| e.context(format!("Failed to commit {operation} transaction"))),
+            Ok(()) => match connection.exec("COMMIT")?() {
+                Ok(()) => Ok(()),
+                Err(error) => {
+                    let error = error.context(format!("Failed to commit {operation} transaction"));
+                    Self::rollback(connection, operation);
+                    Err(error)
+                }
+            },
             Err(error) => {
                 Self::rollback(connection, operation);
                 Err(error)
@@ -2138,5 +2187,91 @@ mod tests {
             baseline,
             "dropping the scoped override must restore prior state"
         );
+    }
+
+    /// zed-kask: D28 — a failed COMMIT rolls its transaction back so the
+    /// shared connection stays reusable. Before the fix, a COMMIT failure
+    /// (the observed SQLITE_BUSY on 2026-10-19) propagated without rolling
+    /// back, leaving the transaction OPEN on the connection — every later
+    /// BEGIN failed with "cannot start a transaction within a transaction"
+    /// (370+ consecutive save failures, permanent until restart). The pin
+    /// forces the COMMIT failure deterministically with a DEFERRABLE
+    /// INITIALLY DEFERRED foreign-key violation: the unit's INSERT succeeds
+    /// (deferred check), and the violation fires at COMMIT — exactly the
+    /// commit-failure arm `rollback` was missing.
+    #[gpui::test]
+    async fn test_commit_failure_rolls_back_and_leaves_connection_reusable(
+        cx: &mut TestAppContext,
+    ) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+        let connection = database.connection.lock();
+        connection.exec("PRAGMA foreign_keys = ON;").unwrap()().unwrap();
+        connection
+            .exec(indoc! {"
+            CREATE TABLE commit_pin_parent (id INTEGER PRIMARY KEY);
+            CREATE TABLE commit_pin_child (
+                id INTEGER PRIMARY KEY,
+                parent_id INTEGER NOT NULL REFERENCES commit_pin_parent(id)
+                DEFERRABLE INITIALLY DEFERRED
+            );
+        "})
+            .unwrap()()
+        .unwrap();
+
+        // The unit succeeds (the FK check is deferred); COMMIT fails on the
+        // dangling reference — the commit-failure arm.
+        let insert_violating_child = || {
+            let mut insert = connection
+                .exec_bound::<i64>("INSERT INTO commit_pin_child (id, parent_id) VALUES (1, ?1)")
+                .unwrap();
+            insert(99)
+        };
+        let error = ThreadsDatabase::in_transaction(
+            &connection,
+            "commit-failure pin",
+            insert_violating_child,
+        )
+        .unwrap_err();
+        assert!(
+            format!("{error:#}").to_lowercase().contains("foreign key"),
+            "the pin must fail at COMMIT on the deferred FK, got: {error:#}"
+        );
+
+        // The pin: a subsequent transaction on the same shared connection
+        // must succeed. Pre-fix behavior: "cannot start a transaction within
+        // a transaction".
+        ThreadsDatabase::in_transaction(&connection, "post-failure reuse", || {
+            let mut insert = connection
+                .exec_bound::<i64>("INSERT INTO commit_pin_parent (id) VALUES (?1)")
+                .unwrap();
+            insert(1)?;
+            Ok(())
+        })
+        .expect("the connection must stay reusable after a failed COMMIT");
+        let mut select = connection
+            .select_bound::<(), i64>("SELECT COUNT(*) FROM commit_pin_parent")
+            .unwrap();
+        assert_eq!(
+            select(()).unwrap().first().copied(),
+            Some(1),
+            "the reuse transaction committed"
+        );
+    }
+
+    /// zed-kask: D28 — the file-backed open path puts the threads database in
+    /// WAL journal mode (a temp file, exercising the real production helper).
+    #[test]
+    fn test_file_backed_open_uses_wal_journal_mode() {
+        let temp = tempfile::Builder::new()
+            .prefix("zed-agent-threads-wal-")
+            .tempdir()
+            .unwrap();
+        let path = temp.path().join("threads.db");
+        let connection = ThreadsDatabase::open_threads_file_connection(&path).unwrap();
+        let mut select = connection
+            .select_bound::<(), String>("PRAGMA journal_mode;")
+            .unwrap();
+        let mode = select(()).unwrap().into_iter().next().unwrap();
+        assert_eq!(mode, "wal", "the production open path must set WAL");
     }
 }
