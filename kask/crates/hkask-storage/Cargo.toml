@@ -9,6 +9,10 @@ description = "SQLite + SQLCipher storage for hKask"
 [lib]
 path = "src/hkask_storage.rs"
 
+[[bin]]
+name = "purge-orphaned-vectors"
+path = "src/bin/purge_orphaned_vectors.rs"
+
 [dependencies]
 
 hkask-types = { workspace = true, features = ["sql"] }
