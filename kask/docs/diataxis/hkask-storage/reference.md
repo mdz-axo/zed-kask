@@ -258,7 +258,7 @@ it or issue separate BEGIN/write/COMMIT driver calls. Connection ownership and
 rollback-on-drop are supplied by rusqlite's concrete transaction type.[^rusqlite-transaction]
 
 `atomic_batch_commit_failure_is_rolled_back_before_reuse_and_reopen` in
-`kask/crates/hkask-storage/src/hmem.rs:1321`
+`kask/crates/hkask-storage/src/hmem.rs::tests::atomic_batch_commit_failure_is_rolled_back_before_reuse_and_reopen`
 uses a real file, a two-connection pool, and a deferred foreign-key failure to
 check rollback at COMMIT, subsequent successful reuse, and reopen visibility.
 This is transaction/reopen evidence, not power-loss or multi-resource atomicity.

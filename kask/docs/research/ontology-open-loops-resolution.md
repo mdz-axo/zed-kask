@@ -37,7 +37,7 @@ the deferral triggers in §2 are sensing mechanisms, not calendar items.
 **Finding (corrected 2026-10-13, commit `c46efc5769`):** the axis selector
 has one production consumer — the condenser calls
 `select_ontology_anchor(tool_name)` on every tool-result compression
-(`kask/crates/hkask-condenser/src/engine.rs:58-71`), feeding telemetry and
+(`kask/crates/hkask-condenser/src/engine.rs`, `CondenserEngine::compress`), feeding telemetry and
 compression density expectations. `OntologyNamespace`
 (`kask/crates/hkask-bridge-ontology/src/axis.rs:49-68`) predates the
 DPV/CSO pins.
@@ -231,7 +231,8 @@ core or resolved (`skill`, `training`, `task`, `behavior`, `narrative`,
 `personal knowledge`, `knowledge asset` — 2026-10-13, post-rung-2 rebuild);
 grep of CSO 3.5 for a training topic (0); grep of `kask/` for Skillware-term
 usage (0); the full keyword-arm reading of `axis.rs:207-392`; the condenser
-consumer at `engine.rs:58-71`; the goal chain (judge h_mem only); the
+consumer at `kask/crates/hkask-condenser/src/engine.rs`,
+`CondenserEngine::compress`; the goal chain (judge h_mem only); the
 Skillware paper pp. 1–6 extracted verbatim from the vendored pin.
 
 **Not checked:** the Skillware paper beyond p. 6 (the definitions used are

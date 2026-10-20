@@ -234,7 +234,7 @@ There is no `KaskGuardSettings` struct. Direct chat is unguarded (provider-side 
 | `memory_life_days` | `f64` | `90` | Memory life S in days (Wozniak-Gorzelanczyk forgetting curve `R(t) = exp(-t/S)`). Half-life is `S·ln(2)`. Applied when the bridge curator store is constructed/reopened; emitted as `HKASK_MEMORY_LIFE_DAYS` for the curator MCP server, which applies it on both embedding-capable and degraded store paths |
 | `distillation_cadence_secs` | `u64` | `600` | ALWAYS-mode distillation cadence in seconds (0 = disabled); the curator server's background pass distills finished threads into additive candidate lesson h_mems at the 0.5 confidence floor |
 | `distillation_idle_secs` | `u64` | `300` | A thread counts as finished when its newest turn is at least this many seconds old |
-| `forgetting_days` | `u64` | `7` | Distillation-gated forgetting age in days (0 = disabled); time-based and distillation-gated, never count-based. Default matches the curator server's `DEFAULT_FORGETTING_DAYS` |
+| `forgetting_days` | `u64` | `7` | Distillation-gated forgetting age in days (0 = disabled). Default matches the curator server's `DEFAULT_FORGETTING_DAYS` |
 
 These are the only `KaskMemorySettings` fields (`kask/crates/kask_bridge/src/settings.rs:233-300`).
 

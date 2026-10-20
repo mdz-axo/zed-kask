@@ -80,11 +80,13 @@ has a common mapping regardless of domain
 consumer: the condenser.** An earlier draft of this review claimed zero
 consumers, read from a paginated grep whose first page happened to contain
 only `axis.rs` matches — the truncated-sweep trap. The full count finds
-`hkask-condenser/src/engine.rs:60` calling `select_ontology_anchor(tool_name)`
-on every tool-result compression (the anchor's tier label feeds telemetry
-and its density expectation feeds the algorithm selection,
-`engine.rs:58-71`), with its test at `algorithms.rs:896-901` and type
-imports at `types.rs:20`. The portfolio widget remains a second,
+`CondenserEngine::compress` in `kask/crates/hkask-condenser/src/engine.rs`
+calling `select_ontology_anchor(tool_name)` on every tool-result compression
+(the anchor's tier label feeds telemetry and its density expectation feeds
+saliency within the selected algorithm, not category-to-algorithm dispatch),
+with its test at `kask/crates/hkask-condenser/src/algorithms.rs`,
+`tests::derive_and_compress_with_correct_anchor`, and type imports at
+`types.rs:20`. The portfolio widget remains a second,
 independent anchoring path — its own per-metric ladder walk (D54) — that
 does not go through the selector. The error is recorded here, not smoothed
 over.
@@ -153,7 +155,7 @@ Downstream, the multi-namespace map is read where domains matter:
 `read_ontology_namespaces` lists the touched domains per chunk
 (`kask/mcp-servers/hkask-mcp-corpus/src/tools/semantic/ontology_io.rs:27-60`).
 Consolidation merges cluster members' concepts and re-canonicalizes
-(`kask/mcp-servers/hkask-mcp-corpus/src/services/consolidation.rs:317-322`).
+(`kask/mcp-servers/hkask-mcp-corpus/src/services/consolidation.rs:305-312`).
 Salience deliberately uses the **raw** `candidate_terms`, not the canonical
 concepts, because canonical anchors are too coarse for the graph when exact
 resolution correctly reaches the shared 5W1H core

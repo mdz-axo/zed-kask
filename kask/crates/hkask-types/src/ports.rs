@@ -20,4 +20,4 @@ pub use inference_types::{
     InferenceStreamChunk, InferenceUsage, StructuredToolCall,
 };
 pub use memory_port::{GoalEvent, MemoryError, MemoryPort, MemorySnippet, TurnRecord};
-pub use regulation::{ConsolidationOutcome, ConsolidationRequest};
+pub use regulation::ConsolidationOutcome;

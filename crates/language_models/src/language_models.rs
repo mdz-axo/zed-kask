@@ -375,6 +375,49 @@ mod tests {
     use std::pin::Pin;
     use ui::IconName;
 
+    #[test]
+    fn provider_tool_serializers_preserve_json_text_parameters() {
+        fn round_trip<T: serde::de::DeserializeOwned + serde::Serialize>(
+            fixture: &serde_json::Value,
+        ) -> serde_json::Value {
+            let definition: T =
+                serde_json::from_value(fixture.clone()).expect("provider tool input");
+            serde_json::to_value(definition).expect("provider tool wire JSON")
+        }
+
+        let parameters = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "payload": {"type": "string", "description": "Complete JSON text"},
+                "name": {"type": "string"}
+            },
+            "required": ["payload", "name"]
+        });
+        let function = serde_json::json!({
+            "type": "function",
+            "function": {"name": "probe", "description": "JSON text tool", "parameters": parameters}
+        });
+        for wire in [
+            round_trip::<open_ai::ToolDefinition>(&function),
+            round_trip::<open_router::ToolDefinition>(&function),
+            round_trip::<deepseek::ToolDefinition>(&function),
+            round_trip::<mistral::ToolDefinition>(&function),
+            round_trip::<llama_cpp::ToolDefinition>(&function),
+            round_trip::<lmstudio::ToolDefinition>(&function),
+            round_trip::<ollama::OllamaTool>(&function),
+        ] {
+            assert_eq!(wire["function"]["parameters"], parameters);
+        }
+        let anthropic = round_trip::<anthropic::Tool>(&serde_json::json!({
+            "name": "probe", "description": "JSON text tool", "input_schema": parameters
+        }));
+        assert_eq!(anthropic["input_schema"], parameters);
+        let google = round_trip::<google_ai::FunctionDeclaration>(&serde_json::json!({
+            "name": "probe", "description": "JSON text tool", "parametersJsonSchema": parameters
+        }));
+        assert_eq!(google["parametersJsonSchema"], parameters);
+    }
+
     struct FakeCredentialsProvider;
 
     impl CredentialsProvider for FakeCredentialsProvider {

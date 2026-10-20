@@ -72,7 +72,7 @@ Defined at `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:19-35`.
 | `validate_tool_url_permissive`, `validate_tool_url_with_dns` | `kask/crates/hkask-mcp-server/src/security.rs:339-366` |
 | `MAX_READ_BYTES`, `contain_for_read`, `contain_for_write`, `read_capped` | `kask/crates/hkask-mcp-server/src/server/validation.rs:165-169`, `kask/crates/hkask-mcp-server/src/server/validation.rs:368-381`, `kask/crates/hkask-mcp-server/src/server/validation.rs:590-611` |
 | `map_infra_error`, `map_io_error`, `map_join_error`, `map_memory_store_error` | `kask/crates/hkask-mcp-server/src/server/validation.rs:71-163` |
-| `AnyJsonValue`, `find_boolean_schema_positions` | `kask/crates/hkask-types/src/tool_schema.rs:55-59`, `kask/crates/hkask-types/src/tool_schema.rs:135-139` |
+| `AnyJsonValue`, `find_boolean_schema_positions` | `kask/crates/hkask-types/src/tool_schema.rs` (`AnyJsonValue`, `find_boolean_schema_positions`) |
 
 `McpToolError` and additional helpers remain available through the public `server` module (`kask/crates/hkask-mcp-server/src/server.rs:32-48`).
 
@@ -255,7 +255,9 @@ The strict policy rejects non-HTTP(S) schemes, embedded credentials, loopback, p
 
 ## Tool-schema helpers
 
-`AnyJsonValue` and `find_boolean_schema_positions` are re-exported from `hkask_types::tool_schema` at the crate root (`kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:29-35`). Use `AnyJsonValue` for tool inputs that intentionally accept arbitrary JSON.
+`AnyJsonValue` and `find_boolean_schema_positions` are re-exported from `hkask_types::tool_schema` at the crate root (`kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:29-35`). Use `AnyJsonValue` for tool inputs that intentionally accept arbitrary JSON. Its model-facing schema is a string containing complete JSON text; serde decodes it to the inner `serde_json::Value` before the handler runs. This replaces the open-object wire format across providers, without provider-specific parsers.
+
+For an object, send `"value": "{\"text\":\"lesson\",\"count\":7}"`; for a literal string, send `"value": "\"plain text\""`; for an array, send `"value": "[1,true]"`. JSON text `"null"` is a null value, distinct from omitting an optional argument. Bare unencoded objects and malformed JSON text are rejected. Native `render_template.context`, `lisp_eval.env`, and their delegated host forms use the same JSON-text contract but require an object document. Skill/template context examples describe semantic values: encode the outer argument once, not each nested value separately.
 
 ## Procedures
 

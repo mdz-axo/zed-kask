@@ -11,7 +11,7 @@ no HTTP, no async.
 | `algorithms` | Three compression algorithms (`rtk_style`, `word_rank`, `flashrank`) with domain-aware scoring |
 | `ontology_graph` | Cross-domain concept relationship index (SUMO, GOLEM, ML-Schema, PKO, DC+BIBO) |
 | `types` | `OntologyAnchor`, `Profile`, `ContextCategory`, `CompressedOutput`, health signals |
-| `engine` | `CondenserEngine` — compression dispatch and profile management |
+| `engine` | `CondenserEngine` — exhaustive category dispatch; active profile is its only stored state |
 | `saliency` | Word-frequency computation shared with `WordRankAlgorithm` |
 
 ## Compression Profiles
@@ -30,17 +30,26 @@ eliding the payload entirely (`algorithms.rs::compute_budget`).
 
 ## Algorithms
 
+`engine.rs`, `CondenserEngine::compress`, matches every `ContextCategory` to a
+borrowed stateless algorithm (`&dyn CondenserAlgorithm`) and invokes compression
+through that trait object. `Unknown` is an explicit match alternative, not an
+algorithm-selection fallback. An explicit category overrides tool-name
+classification. The retained `CondenserAlgorithm::compress`
+default body in `algorithms.rs` shares line collection, profile budgeting, and
+unchanged-input passthrough before calling `compress_budgeted`. Algorithm
+behavior, profile values, and output metrics are unchanged.
+
 ### rtk_style
 Head/tail ellipsis truncation. Keeps the first N% and last M% of lines with
-a `...` separator. Default for ShellCommand, TestOutput, BuildOutput.
+a `...` separator. Selected for `ShellCommand`, `TestOutput`, `BuildOutput`.
 Uses ontology density factor to adjust head/tail ratio (denser anchors get more tail).
 The head always retains at least one real line: a budget too small to yield a
 non-zero head would otherwise replace the whole beginning with an ellipsis.
 
 ### word_rank
 TF-IDF bag-of-words compression with structural bonus and ontology anchoring.
-Scores every line, keeps the highest-scoring budget lines. Default for
-ConversationHistory, LogOutput.
+Scores every line, keeps the highest-scoring budget lines. Selected for
+`ConversationHistory`, `LogOutput`.
 
 Scoring formula:
 ```
@@ -53,7 +62,7 @@ score = TF-IDF_average + structural_bonus + domain_saliency
 
 ### flashrank
 Greedy marginal-utility selection under the profile's retained-line limit. Balances relevance,
-novelty, and brevity. Default for FileContents, StructuredData, Unknown.
+novelty, and brevity. Selected for `FileContents`, `StructuredData`, `Unknown`.
 
 ## Ontology Anchoring (P5.4/P8.1)
 

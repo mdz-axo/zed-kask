@@ -62,7 +62,7 @@ fn budgeted_lines(input: &str, profile: Profile) -> Option<(Vec<&str>, usize)> {
 
 pub(crate) trait CondenserAlgorithm: Send + Sync {
     fn name(&self) -> &str;
-    fn default_for(&self) -> &[ContextCategory];
+
     /// Compress the input and return (compressed_content, health_signals).
     /// `ontology_anchor` provides domain context for saliency weighting (P8.1).
     /// Health signals are empty when the algorithm performed within expected bounds.
@@ -103,13 +103,7 @@ impl CondenserAlgorithm for RtkStyleAlgorithm {
     fn name(&self) -> &str {
         "rtk_style"
     }
-    fn default_for(&self) -> &[ContextCategory] {
-        &[
-            ContextCategory::ShellCommand,
-            ContextCategory::TestOutput,
-            ContextCategory::BuildOutput,
-        ]
-    }
+
     fn compress_budgeted(
         &self,
         input: &str,
@@ -211,12 +205,7 @@ impl CondenserAlgorithm for WordRankAlgorithm {
     fn name(&self) -> &str {
         "word_rank"
     }
-    fn default_for(&self) -> &[ContextCategory] {
-        &[
-            ContextCategory::ConversationHistory,
-            ContextCategory::LogOutput,
-        ]
-    }
+
     fn compress_budgeted(
         &self,
         _input: &str,
@@ -397,13 +386,7 @@ impl CondenserAlgorithm for FlashrankAlgorithm {
     fn name(&self) -> &str {
         "flashrank"
     }
-    fn default_for(&self) -> &[ContextCategory] {
-        &[
-            ContextCategory::FileContents,
-            ContextCategory::StructuredData,
-            ContextCategory::Unknown,
-        ]
-    }
+
     fn compress_budgeted(
         &self,
         _input: &str,
@@ -480,39 +463,6 @@ impl CondenserAlgorithm for FlashrankAlgorithm {
             vec![]
         };
         (result, health)
-    }
-}
-
-pub(crate) struct AlgorithmRegistry {
-    algorithms: Vec<Box<dyn CondenserAlgorithm>>,
-}
-
-impl Default for AlgorithmRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl AlgorithmRegistry {
-    pub fn new() -> Self {
-        let algorithms: Vec<Box<dyn CondenserAlgorithm>> = vec![
-            Box::new(RtkStyleAlgorithm),
-            Box::new(WordRankAlgorithm),
-            Box::new(FlashrankAlgorithm),
-        ];
-        Self { algorithms }
-    }
-
-    pub fn select(&self, category: ContextCategory) -> &dyn CondenserAlgorithm {
-        for algo in &self.algorithms {
-            if algo.default_for().contains(&category) {
-                return algo.as_ref();
-            }
-        }
-        self.algorithms
-            .last()
-            .expect("at least one algorithm")
-            .as_ref()
     }
 }
 
@@ -801,39 +751,6 @@ mod tests {
         assert!(
             health.is_empty(),
             "expected no budget_shortfall with budget=1 from 3 lines"
-        );
-    }
-
-    #[test]
-    fn algorithm_registry_selects_by_category() {
-        let registry = AlgorithmRegistry::new();
-        assert_eq!(
-            registry.select(ContextCategory::ShellCommand).name(),
-            "rtk_style"
-        );
-        assert_eq!(
-            registry.select(ContextCategory::ConversationHistory).name(),
-            "word_rank"
-        );
-        assert_eq!(
-            registry.select(ContextCategory::FileContents).name(),
-            "flashrank"
-        );
-        // LogOutput → word_rank
-        assert_eq!(
-            registry.select(ContextCategory::LogOutput).name(),
-            "word_rank"
-        );
-    }
-
-    // Flashrank is the universal fallback — its greedy marginal-utility selection works on
-    // any text type without needing category-specific structural markers.
-    #[test]
-    fn algorithm_registry_fallback_for_unknown() {
-        let registry = AlgorithmRegistry::new();
-        assert_eq!(
-            registry.select(ContextCategory::Unknown).name(),
-            "flashrank"
         );
     }
 

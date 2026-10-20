@@ -504,6 +504,95 @@ fn request_digest_is_canonical_sha256_not_raw_payload() {
     assert!(!request_sha256(&a).expect("digest").contains("sensitive"));
 }
 
+#[test]
+fn request_digest_matches_nested_unicode_canonical_json() {
+    use hkask_mcp_kata_kanban::idempotency::request_sha256;
+    let canonical = r#"{"a":{"é":"雪","😀":[{"a":"café","z":"水"},"🚀"]},"z":"naïve"}"#;
+    let reordered = r#"{"z":"naïve","a":{"😀":[{"z":"水","a":"café"},"🚀"],"é":"雪"}}"#;
+    let reversed = r#"{"a":{"é":"雪","😀":["🚀",{"a":"café","z":"水"}]},"z":"naïve"}"#;
+    // Independent oracle: printf %s of each canonical UTF-8 literal | sha256sum.
+    let expected = "ca140eebb0f7f40afa83458bea26bf5f748dd8a539097c87cd25f52fabbbcbdc";
+    for input in [canonical, reordered] {
+        let request: serde_json::Value = serde_json::from_str(input).expect("valid Unicode JSON");
+        assert_eq!(request_sha256(&request).expect("digest"), expected);
+    }
+    let request: serde_json::Value = serde_json::from_str(reversed).expect("valid reversed JSON");
+    let reversed_digest = request_sha256(&request).expect("digest");
+    assert_eq!(
+        reversed_digest,
+        "085879e1681c6c0356a52e83d1a79fa199d0d477492ae07b52339da3c52fc8b1"
+    );
+    assert_ne!(
+        reversed_digest, expected,
+        "array order must remain significant"
+    );
+}
+
+#[test]
+fn request_digest_matches_sha256_padding_and_block_boundaries() {
+    use hkask_mcp_kata_kanban::idempotency::request_sha256;
+    // sha256sum oracle: double quote, n-2 ASCII a bytes, double quote; no newline.
+    for (byte_length, expected) in [
+        (
+            55,
+            "2ae89a8121a3f9d2709899b414da4c60234316951093ce35f41ce954a09533f4",
+        ),
+        (
+            56,
+            "9b68496ab8c784a9ed22d25a7e3aada1736d7097061bb3149f3d66f1e22ceeef",
+        ),
+        (
+            63,
+            "813662a26c997431c1990ca2424fad200f23983afe7b5543e2daf2748da424a2",
+        ),
+        (
+            64,
+            "1cd1b6277a35426076612315059afa72e6903b84575ebdd1507d73697be9dbd3",
+        ),
+        (
+            65,
+            "e7d55ca10614618e5755859f93ac280712a04f76466e7bc65e4f488f1153ec70",
+        ),
+        (
+            119,
+            "9b40e0ad78bc52a3b16ada42ba7bb8f00e1ba071356abbcc1a159715b57f7ff8",
+        ),
+        (
+            120,
+            "decf5e51fc0969aa2a06512dde0d3521a7ecd297ea81212ca626a65d2d4a1716",
+        ),
+        (
+            127,
+            "8af8654acacbc631d4761b34fc3a906e44d57e74694e51932487c1b385c34eb3",
+        ),
+        (
+            128,
+            "00cdc781d3e84e6c2894efdf9b8bee5cf598bc9e14523bc0b172ae0b983f85cd",
+        ),
+        (
+            129,
+            "361badde49b367483c6172fbef26a09598f3814fe1509cac8231f9fa97d1c30a",
+        ),
+        (
+            1025,
+            "fc3474f967ea27589330a5d542c6f2d0bc35796cb7279ddf7f0d5ab09a1cb348",
+        ),
+    ] {
+        let request = serde_json::Value::String("a".repeat(byte_length - 2));
+        let payload = serde_json::to_vec(&request).expect("serialized JSON string");
+        assert_eq!(
+            payload.len(),
+            byte_length,
+            "serialized bytes include both quotes"
+        );
+        assert_eq!(
+            request_sha256(&request).expect("digest"),
+            expected,
+            "SHA-256 mismatch for {byte_length} serialized bytes"
+        );
+    }
+}
+
 #[tokio::test]
 async fn task_list_exposes_description_for_edit_prefill() {
     let server = make_server();

@@ -38,10 +38,8 @@ pub struct BrainstormRequest {
 pub(crate) struct FrameRequest {
     /// Subject: company ticker, industry, country, or technology domain
     pub subject: String,
-    /// Optional: pre-populated answers from a previous framing session, as a
-    /// JSON object. Typed as [`AnyJsonValue`] so the generated tool input
-    /// schema is the empty object `{}` rather than the bare boolean `true`
-    /// schemars emits for `serde_json::Value`.
+    /// Optional: complete JSON text encoding the pre-populated answer object
+    /// from a previous framing session. It is decoded before framing.
     pub prior_answers: Option<AnyJsonValue>,
 }
 
@@ -58,9 +56,8 @@ pub struct FrameDocumentRequest {
     /// action_deadline, in_scope, out_of_scope, stakeholders, use_case,
     /// success_criteria, constraints, surfaced_assumptions, exploration_prompts.
     ///
-    /// Typed as [`AnyJsonValue`] so the generated tool input schema is the
-    /// empty object `{}` rather than the bare boolean `true` schemars emits
-    /// for `serde_json::Value`.
+    /// Supply the answer object as complete JSON text; the shared argument
+    /// decoder preserves the object's nested values before processing.
     pub answers: AnyJsonValue,
 }
 

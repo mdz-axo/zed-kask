@@ -309,10 +309,8 @@ pub struct ExtractRequest {
     pub json_prompt: Option<String>,
     /// Optional JSON Schema describing the structured output to extract.
     ///
-    /// Accepts arbitrary JSON. Typed as [`AnyJsonValue`] (not `serde_json::Value`)
-    /// so the generated tool input schema is the empty object `{}` rather than the
-    /// bare boolean `true` schemars emits for `Value` — Ollama rejects boolean
-    /// property schemas with `400 cannot unmarshal bool into ... api.ToolProperty`.
+    /// Supply the JSON Schema document as complete JSON text. It is decoded
+    /// before extraction; no provider-specific open-map schema is required.
     pub json_schema: Option<AnyJsonValue>,
     pub main_content_only: Option<bool>,
     pub wait_for_ms: Option<u64>,

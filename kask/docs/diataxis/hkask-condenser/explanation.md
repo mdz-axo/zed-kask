@@ -1,8 +1,8 @@
 ---
 title: "hkask-condenser — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-09-28
-version: "1.4.2"
+last_updated: 2026-10-20
+version: "1.4.3"
 status: "Active"
 domain: "Condensation"
 mds_categories: [trust, curation]
@@ -50,17 +50,22 @@ writes; there is no second request-copy path through this package.
 
 ## Compression dispatch
 
-`CondenserEngine::compress` derives a `ContextCategory`, selects a registered
-algorithm, derives an ontology anchor, runs the algorithm, and calculates line
-and byte reductions (`kask/crates/hkask-condenser/src/engine.rs:48-98`). The
-selection is static rather than learned.
+`CondenserEngine::compress` uses an explicit `ContextCategory` when supplied,
+otherwise derives it with `classify_tool`. An exhaustive match borrows one of
+three stateless algorithms as `&dyn CondenserAlgorithm`
+(`kask/crates/hkask-condenser/src/engine.rs`, `CondenserEngine::compress`):
 
-- `RtkStyleAlgorithm` handles shell, test, and build output
-  (`kask/crates/hkask-condenser/src/algorithms.rs:46-60`).
-- `WordRankAlgorithm` handles conversation history and logs
-  (`kask/crates/hkask-condenser/src/algorithms.rs:156-166`).
-- `FlashrankAlgorithm` handles files, structured data, and unknown categories
-  (`kask/crates/hkask-condenser/src/algorithms.rs:365-375`).
+- `ShellCommand`, `TestOutput`, `BuildOutput` → `&RtkStyleAlgorithm`.
+- `ConversationHistory`, `LogOutput` → `&WordRankAlgorithm`.
+- `FileContents`, `StructuredData`, `Unknown` → `&FlashrankAlgorithm`.
+
+The active `Profile` is the engine's only stored state. `Unknown` is an explicit
+match alternative, not an algorithm-selection fallback. The engine derives an
+ontology anchor, invokes compression through the borrowed trait object, and
+calculates the same line and byte metrics. The retained `CondenserAlgorithm::compress` default body owns the
+shared line-budget and passthrough prologue before delegating to each
+`compress_budgeted` implementation
+(`kask/crates/hkask-condenser/src/algorithms.rs`, `CondenserAlgorithm`).
 
 Profiles set retention and maximum-line budgets: heavy 10%/30, normal 20%/80,
 soft 60%/200, and light 95%/unbounded

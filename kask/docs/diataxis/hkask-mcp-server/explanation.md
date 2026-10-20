@@ -91,7 +91,7 @@ These controls address path traversal, arbitrary file access, resource exhaustio
 
 ## Why arbitrary JSON has a dedicated type
 
-The root re-exports `AnyJsonValue` and `find_boolean_schema_positions` from `hkask_types::tool_schema` (`kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:29-35`). `AnyJsonValue` gives schema-generating tool inputs an explicit open JSON shape instead of relying on a bare `serde_json::Value` schema. Keeping the type in `hkask-types` lets non-MCP domain crates use it without depending on the server framework.
+The root re-exports `AnyJsonValue` and `find_boolean_schema_positions` from `hkask_types::tool_schema` (`kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:29-35`). Arbitrary values cross the model boundary as JSON text in a declared string, then decode to structured JSON before handler validation and execution. An unconstrained or open-object schema depends on provider decoding behavior; JSON text removes that dependency without adding provider-specific routing exceptions. Literal strings are encoded as quoted JSON text too, so they cannot be confused with JSON-looking object documents. Native context/environment maps share the codec and retain their object-only requirement. Keeping the codec in `hkask-types` gives native and MCP tools one implementation without depending on the server framework.
 
 ## See also
 

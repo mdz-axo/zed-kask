@@ -5326,6 +5326,70 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_native_command_submission_respects_declared_input(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        for (name, takes_input, prompt, expected_prompt, queued_count) in [
+            (
+                "trace",
+                true,
+                "/trace inspect this",
+                "/trace inspect this",
+                0,
+            ),
+            (
+                "trace",
+                true,
+                "/trace\ninspect this",
+                "/trace\ninspect this",
+                0,
+            ),
+            ("trace", true, "/trace", "/trace", 0),
+            ("inspect", true, "/inspect payload", "/inspect payload", 0),
+            ("compact", false, "/compact inspect this", "/compact", 1),
+        ] {
+            let connection = StubAgentConnection::new().with_receipt_submissions(true);
+            let (conversation_view, cx) =
+                setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+            add_to_workspace(conversation_view.clone(), cx);
+            let thread_view = active_thread(&conversation_view, cx);
+            let message_editor = message_editor(&conversation_view, cx);
+            let mut command = acp_v2::AvailableCommand::new(name, "").meta(
+                acp_thread::meta_with_command_category(acp_thread::CommandCategory::Native),
+            );
+            if takes_input {
+                command = command.input(acp_v2::AvailableCommandInput::Text(
+                    acp_v2::TextCommandInput::new("<prompt>"),
+                ));
+            }
+            thread_view.update(cx, |view, _cx| {
+                view.session_capabilities
+                    .write()
+                    .set_available_commands(vec![command]);
+            });
+            let finish = connection.defer_next_receipt_response();
+            message_editor.update_in(cx, |editor, window, cx| {
+                editor.set_text(prompt, window, cx);
+            });
+            thread_view.update_in(cx, |view, window, cx| view.send(window, cx));
+            cx.run_until_parked();
+
+            assert_eq!(
+                connection.take_receipt_prompt(),
+                Some(vec![expected_prompt.into()]),
+                "the first submission must preserve the declared input of {name}"
+            );
+            thread_view.read_with(cx, |view, _cx| {
+                assert_eq!(view.message_queue.len(), queued_count, "{prompt:?}");
+            });
+            finish
+                .send(Ok(acp_v2::PromptResponse::new("command-receipt")))
+                .expect("command receipt receiver remains active");
+            cx.run_until_parked();
+        }
+    }
+
+    #[gpui::test]
     async fn test_stale_send_result_preserves_new_prompt(cx: &mut TestAppContext) {
         init_test(cx);
 

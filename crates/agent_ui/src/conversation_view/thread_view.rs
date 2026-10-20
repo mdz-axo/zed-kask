@@ -1919,9 +1919,9 @@ impl ThreadView {
             }
         }
 
-        // A built-in command (e.g. `/compact`): run the bare command without
-        // echoing it as a user message, and queue any trailing text the user
-        // typed so it isn't silently dropped.
+        // A native command with no declared input (e.g. `/compact`) runs alone,
+        // with trailing text queued as a follow-up. Input-taking native commands
+        // (e.g. `/trace`) must receive the complete prompt in the same turn.
         let native_command =
             leading_native_command(text, self.session_capabilities.read().available_commands());
         if let Some(command_name) = native_command {
@@ -13845,16 +13845,11 @@ fn file_link_candidates(
     candidates
 }
 
-/// Returns the name of the leading built-in (native-category) slash command —
-/// e.g. `compact` for `/compact` or `/compact summarize the API work` — whether
-/// or not the user typed any trailing text after it. Built-in commands ignore
-/// trailing arguments, so the caller sends the bare command and queues any
-/// remainder rather than discarding it. Commands from MCP servers and ACP
-/// agents are excluded: their trailing text is a real argument the agent
-/// consumes.
-///
-/// Native commands run a turn that produces its own thread entry, so the typed
-/// command is never echoed as a user message (see `send_command_queueing_remainder`).
+/// Returns the leading native command only when it declares no input.
+/// Such commands (e.g. `/compact`) run alone and queue trailing text as a
+/// follow-up without echoing the command. Input-taking native commands (e.g.
+/// `/trace`), MCP prompts and external ACP commands consume their own arguments
+/// and must travel through the normal, complete-prompt submission path.
 fn leading_native_command(
     text: &str,
     available_commands: &[acp_v2::AvailableCommand],
@@ -13864,6 +13859,7 @@ fn leading_native_command(
     let name = &rest[..name_end];
     let is_native = available_commands.iter().any(|command| {
         command.name == name
+            && command.input.is_none()
             && acp_thread::command_category_from_meta(&command.meta)
                 == Some(acp_thread::CommandCategory::Native)
     });

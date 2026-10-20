@@ -19,14 +19,6 @@ use crate::tools::semantic::configured_qa_model;
 const CONSOLIDATED_PREFIX: &str = "corpus:researcher:consolidated:";
 
 /// Input for [`ConsolidationService::consolidate`].
-///
-/// Renamed from `ConsolidationRequest` to `ChunkConsolidationRequest` to
-/// avoid the name collision with `hkask_types::ConsolidationRequest` (the
-/// memory-consolidation actuator parameter). The two types are functionally
-/// unrelated: this one parameterizes an LLM chunk-synthesis pipeline, the
-/// other parameterizes the memory cybernetic loop. The shared name was a
-/// false friend — a semantic graph audit found no shared code path, data
-/// flow, or ontology axis between them.
 pub(crate) struct ChunkConsolidationRequest {
     pub tagged_jsonl: String,
     pub output: String,

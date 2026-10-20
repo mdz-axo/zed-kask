@@ -244,15 +244,17 @@ fn seed_aged_h_mem(
 /// insert-path tests make this call identically — their assertions (the
 /// confidence floor vs the semantic-recall embedding) are each test's own.
 async fn insert_citing_seed(server: &CuratorServer, seed_id: String) -> serde_json::Value {
+    let request: MemoryInsertRequest = serde_json::from_value(serde_json::json!({
+        "entity": "zed-kask",
+        "attribute": "default_agent_model",
+        "value": serde_json::to_string("qwen3").expect("JSON text for a literal string"),
+        "evidence_h_mem_id": seed_id,
+        "note": null
+    }))
+    .expect("decode the model-facing tool request");
     parse(
         &server
-            .memory_insert(Parameters(MemoryInsertRequest {
-                entity: "zed-kask".to_string(),
-                attribute: "default_agent_model".to_string(),
-                value: serde_json::json!("qwen3").into(),
-                evidence_h_mem_id: seed_id,
-                note: None,
-            }))
+            .memory_insert(Parameters(request))
             .await
             .expect("tool ok"),
     )
@@ -2349,20 +2351,9 @@ async fn memory_update_embedding_failure_preserves_previous_memory() {
     );
 }
 
-// ── Memory edit tool schemas — strict-provider schema pins ────────────────
-//
-// schemars renders `serde_json::Value` as the bare boolean `true` in
-// schema-valued positions. One boolean property schema gets the whole
-// chat-completion rejected by strict-schema-decoding providers (Ollama:
-// `400 cannot unmarshal bool into ... api.ToolProperty`; Gemini's protobuf
-// `Schema` is the same failure class). The arbitrary-JSON params of the
-// memory-edit tools must therefore be `AnyJsonValue`, rendering as the
-// object-typed permissive schema tool-call parsers can bind.
-
-/// `memory_insert`'s `value` param must render as the object-typed
-/// permissive schema — never the bare boolean `true`.
+// Memory payloads use the shared JSON-text wire contract, not open schemas.
 #[test]
-fn memory_insert_request_value_schema_is_object_typed_not_boolean() {
+fn memory_insert_request_value_schema_requires_json_text() {
     let schema = serde_json::to_value(schemars::schema_for!(MemoryInsertRequest))
         .expect("schema serializes");
     let value = &schema["properties"]["value"];
@@ -2370,31 +2361,17 @@ fn memory_insert_request_value_schema_is_object_typed_not_boolean() {
         !value.is_boolean(),
         "value must not render as the bare boolean true (Schema::Bool(true)) — got: {value}",
     );
-    // Key-level pin (schemars merges the field's doc comment as a
-    // `description` key, so exact equality would over-constrain): the
-    // property must be the object-typed permissive schema — `type: object`
-    // with permissive `properties`/`additionalProperties` — never the
-    // permissive-any form (bare `true` / `{}`) schemars emits for
-    // `serde_json::Value`, which strict providers reject or drop from
-    // tool-call arguments.
-    assert_eq!(
-        value["type"],
-        serde_json::json!("object"),
-        "value must be object-typed — got: {value}",
-    );
-    assert_eq!(value["properties"], serde_json::json!({}));
-    assert_eq!(value["additionalProperties"], serde_json::json!({}));
+    assert_eq!(value["type"], "string");
+    assert!(value.get("properties").is_none());
+    assert!(value.get("additionalProperties").is_none());
     assert!(
         hkask_types::find_boolean_schema_positions(&schema).is_empty(),
         "MemoryInsertRequest must carry no bare-boolean schema positions",
     );
 }
 
-/// `memory_update`'s `new_value` param must render as the null-extended
-/// object-typed permissive schema (`Option<AnyJsonValue>` →
-/// `type: ["object", "null"]`) — never the bare boolean `true`.
 #[test]
-fn memory_update_request_new_value_schema_is_object_typed_not_boolean() {
+fn memory_update_request_new_value_schema_is_optional_json_text() {
     let schema = serde_json::to_value(schemars::schema_for!(MemoryUpdateRequest))
         .expect("schema serializes");
     let new_value = &schema["properties"]["new_value"];
@@ -2402,17 +2379,9 @@ fn memory_update_request_new_value_schema_is_object_typed_not_boolean() {
         !new_value.is_boolean(),
         "new_value must not render as the bare boolean true (Schema::Bool(true)) — got: {new_value}",
     );
-    // Key-level pin (the doc-comment `description` merge makes exact
-    // equality over-constrained): `Option<AnyJsonValue>` must render as
-    // the object-typed permissive schema null-extended to
-    // `type: ["object", "null"]` — never the permissive-any form.
-    assert_eq!(
-        new_value["type"],
-        serde_json::json!(["object", "null"]),
-        "new_value must be null-extended object-typed — got: {new_value}",
-    );
-    assert_eq!(new_value["properties"], serde_json::json!({}));
-    assert_eq!(new_value["additionalProperties"], serde_json::json!({}));
+    assert_eq!(new_value["type"], serde_json::json!(["string", "null"]));
+    assert!(new_value.get("properties").is_none());
+    assert!(new_value.get("additionalProperties").is_none());
     assert!(
         hkask_types::find_boolean_schema_positions(&schema).is_empty(),
         "MemoryUpdateRequest must carry no bare-boolean schema positions",

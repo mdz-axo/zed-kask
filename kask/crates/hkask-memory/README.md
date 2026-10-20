@@ -78,10 +78,19 @@ sweep; it is not a cross-store transaction.
 
 ## Consolidation
 
-`MemoryConsolidator::consolidate` deletes rows at or below a supplied confidence
-floor, then prunes lowest-confidence rows to the requested storage budget when
-needed. It does not promote, re-tag, or change visibility. Memory rows are
-unified; distillation and age-gated forgetting live in the curator server.
+`MemoryConsolidator::consolidate(&WebID, confidence_floor: f64)` deletes rows
+at or below the supplied confidence floor. Its `ConsolidationOutcome` reports
+successful row deletions in `deleted_count` and failed row deletions in
+`failed_count`; a failed deletion is logged without stopping other candidates.
+It does not promote, re-tag, or change visibility. Memory rows are unified;
+distillation and age-gated forgetting live in the curator server.
+
+Deletion goes through `MemoryStore::delete_h_mem`: an emptied entity loses its
+embeddings and memory links; for a surviving entity, only the deleted row's
+passage embedding is removed unless a surviving sibling shares that passage.
+Reference-cleanup failures are logged for the periodic orphan sweep rather than
+counted as failed row deletions (`src/memory_store.rs::MemoryStore::delete_h_mem`
+and `MemoryStore::cleanup_orphaned_references_for_entity`).
 
 Normalized-value dedup likewise physically deletes lower-confidence duplicates.
 There is no expired-memory state or compatibility alias; results report

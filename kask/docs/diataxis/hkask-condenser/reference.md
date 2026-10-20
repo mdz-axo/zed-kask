@@ -1,8 +1,8 @@
 ---
 title: "hkask-condenser — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-28
-version: "1.5.1"
+last_updated: 2026-10-20
+version: "1.5.2"
 status: "Active"
 domain: "Condensation"
 mds_categories: [domain, lifecycle]
@@ -18,9 +18,9 @@ crate-private (`kask/crates/hkask-condenser/src/hkask_condenser.rs:40-44`).
 
 | Surface | Purpose | Evidence |
 | --- | --- | --- |
-| `CondenserEngine::new` | create a normal-profile engine | `kask/crates/hkask-condenser/src/engine.rs:40-46` |
-| `CondenserEngine::compress` | classify, select, compress, and report metrics | `kask/crates/hkask-condenser/src/engine.rs:48-98` |
-| `CondenserEngine::set_profile` / `profile` | mutate/read the active profile | `kask/crates/hkask-condenser/src/engine.rs:100-107` |
+| `CondenserEngine::new` / `Default::default` | create an engine storing only `Profile::Normal`; `default` delegates to `new` | `kask/crates/hkask-condenser/src/engine.rs`, `CondenserEngine::new` and `impl Default for CondenserEngine` |
+| `CondenserEngine::compress` | classify, select, compress, and report metrics | `kask/crates/hkask-condenser/src/engine.rs`, `CondenserEngine::compress` |
+| `CondenserEngine::set_profile` / `profile` | mutate/read the active profile | `kask/crates/hkask-condenser/src/engine.rs`, `CondenserEngine::{set_profile, profile}` |
 | `Profile` | heavy, normal, soft, light budgets | `kask/crates/hkask-condenser/src/types.rs:27-82` |
 | `ContextCategory` | eight dispatch categories | `kask/crates/hkask-condenser/src/types.rs:84-96` |
 | `CompressedOutput` | content, route, profile, size, reduction, signals | `kask/crates/hkask-condenser/src/types.rs:129-145` |
@@ -31,15 +31,17 @@ crate-private (`kask/crates/hkask-condenser/src/hkask_condenser.rs:40-44`).
 ```mermaid
 classDiagram
     class CondenserEngine {
-        -registry: AlgorithmRegistry
         -profile: Profile
         +new()
         +compress(tool, output, category) CompressedOutput
         +set_profile(profile)
         +profile() Profile
     }
-    class AlgorithmRegistry {
-        +select(category) CondenserAlgorithm
+    class CondenserAlgorithm {
+        <<interface>>
+        +name()
+        +compress(input, profile, category, anchor)
+        +compress_budgeted(input, lines, budget, anchor)
     }
     class RtkStyleAlgorithm
     class WordRankAlgorithm
@@ -50,17 +52,20 @@ classDiagram
     class NativeCompaction {
         +stream_compaction()
     }
-    CondenserEngine --> AlgorithmRegistry
-    AlgorithmRegistry --> RtkStyleAlgorithm
-    AlgorithmRegistry --> WordRankAlgorithm
-    AlgorithmRegistry --> FlashrankAlgorithm
+    CondenserEngine ..> RtkStyleAlgorithm : selects
+    CondenserEngine ..> WordRankAlgorithm : selects
+    CondenserEngine ..> FlashrankAlgorithm : selects
+    CondenserEngine ..> CondenserAlgorithm : invokes via borrowed trait object
+    RtkStyleAlgorithm ..|> CondenserAlgorithm
+    WordRankAlgorithm ..|> CondenserAlgorithm
+    FlashrankAlgorithm ..|> CondenserAlgorithm
     BridgeThreadCondenser --> CondenserEngine
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COND-003
-verified_date: 2026-09-28
-verified_against: kask/crates/hkask-condenser/src/engine.rs:20-108; kask/crates/hkask-condenser/src/algorithms.rs:33-45; kask/crates/hkask-condenser/src/algorithms.rs:463-492; kask/crates/kask_bridge/src/condenser_bridge.rs:19-125; crates/agent/src/thread.rs:3687-3715
+verified_date: 2026-10-20
+verified_against: kask/crates/hkask-condenser/src/engine.rs (CondenserEngine, impl Default for CondenserEngine, CondenserEngine::{new, compress, set_profile, profile}); kask/crates/hkask-condenser/src/algorithms.rs (CondenserAlgorithm and its three implementations)
 status: VERIFIED
 -->
 
@@ -78,16 +83,26 @@ every profile (`kask/crates/hkask-condenser/src/algorithms.rs`).
 
 ## Algorithm routes
 
-| Algorithm | Default categories | Evidence |
+The engine stores only the active profile. Its exhaustive category match
+borrows the selected stateless algorithm as `&dyn CondenserAlgorithm`, through
+which it invokes compression. `Unknown` is an explicit match alternative, not
+an algorithm-selection fallback:
+
+| Algorithm | Categories | Evidence |
 | --- | --- | --- |
-| `RtkStyleAlgorithm` | shell command, test output, build output | `kask/crates/hkask-condenser/src/algorithms.rs:46-60` |
-| `WordRankAlgorithm` | conversation history, log output | `kask/crates/hkask-condenser/src/algorithms.rs:156-166` |
-| `FlashrankAlgorithm` | file contents, structured data, unknown | `kask/crates/hkask-condenser/src/algorithms.rs:365-375` |
+| `&RtkStyleAlgorithm` | `ShellCommand`, `TestOutput`, `BuildOutput` | `kask/crates/hkask-condenser/src/engine.rs`, `CondenserEngine::compress` |
+| `&WordRankAlgorithm` | `ConversationHistory`, `LogOutput` | `kask/crates/hkask-condenser/src/engine.rs`, `CondenserEngine::compress` |
+| `&FlashrankAlgorithm` | `FileContents`, `StructuredData`, `Unknown` | `kask/crates/hkask-condenser/src/engine.rs`, `CondenserEngine::compress` |
 
 `classify_tool` performs exact token matching before substring fallback
-(`kask/crates/hkask-condenser/src/algorithms.rs:516-546`). The engine derives
-an ontology anchor from the tool name before invoking the selected algorithm
-(`kask/crates/hkask-condenser/src/engine.rs:54-71`).
+(`kask/crates/hkask-condenser/src/algorithms.rs`, `classify_tool`). An explicit
+category overrides tool-name classification. The engine derives an ontology
+anchor from the tool name before invoking the selected algorithm
+(`kask/crates/hkask-condenser/src/engine.rs`, `CondenserEngine::compress`).
+The retained `CondenserAlgorithm::compress` default body shares line collection,
+profile budgeting, and unchanged-input passthrough before calling the selected
+implementation's `compress_budgeted`
+(`kask/crates/hkask-condenser/src/algorithms.rs`, `CondenserAlgorithm`).
 
 ## Runtime bridge contract
 
@@ -117,7 +132,8 @@ installs the bridge for ingestion only
 
 The engine emits diagnostic `hkask.condenser` events for routing and reduction;
 these are not `reg.*` feedback signals
-(`kask/crates/hkask-condenser/src/engine.rs:8-14,63-97`). Health signals are
+(`kask/crates/hkask-condenser/src/engine.rs`, module telemetry documentation
+and `CondenserEngine::compress`). Health signals are
 returned with content and describe anomalies rather than turning them into
 compression failures (`kask/crates/hkask-condenser/src/types.rs:141-169`).
 
@@ -139,7 +155,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COND-002
 verified_date: 2026-09-28
-verified_against: kask/crates/hkask-condenser/src/types.rs:27-78; kask/crates/hkask-condenser/src/engine.rs:40-108; kask/crates/kask_bridge/src/condenser_bridge.rs:42-125; crates/agent/src/thread.rs:3687-3715
+verified_against: kask/crates/hkask-condenser/src/types.rs:27-78; kask/crates/hkask-condenser/src/engine.rs (CondenserEngine::{new, compress, set_profile, profile}); kask/crates/kask_bridge/src/condenser_bridge.rs:42-125; crates/agent/src/thread.rs:3687-3715
 status: VERIFIED
 -->
 
@@ -167,17 +183,18 @@ no restart beyond the settings observer
 
 #### 2. Verify algorithm selection
 
-Run a representative output through `CondenserEngine::compress`. Tool names are
-classified by `classify_tool`, and the registry selects the category's static
-default (`kask/crates/hkask-condenser/src/engine.rs:48-71`;
-`kask/crates/hkask-condenser/src/algorithms.rs:516-546`). Expected routes are:
+Run a representative output through `CondenserEngine::compress`. Without an
+explicit category, `classify_tool` classifies the tool name; the engine's
+exhaustive match selects the algorithm
+(`kask/crates/hkask-condenser/src/engine.rs`, `CondenserEngine::compress`;
+`kask/crates/hkask-condenser/src/algorithms.rs`, `classify_tool`). Expected routes are:
 
 - shell/test/build → `rtk_style`;
 - conversation/log → `word_rank`;
 - file/structured/unknown → `flashrank`.
 
-The mappings are declared at
-`kask/crates/hkask-condenser/src/algorithms.rs:46-60,156-166,365-375`.
+The mappings are declared in `CondenserEngine::compress`
+(`kask/crates/hkask-condenser/src/engine.rs`).
 
 #### 3. Test incoming tool-result compression
 

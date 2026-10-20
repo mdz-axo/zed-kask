@@ -965,15 +965,7 @@ impl HMemStore {
         )?;
         Ok(())
     }
-    /// Query h_mems with lowest confidence, ordered ASC. Used by consolidation.
-    pub fn query_lowest_confidence(&self, limit: usize) -> Result<Vec<HMem>, HMemError> {
-        self.query_rows(
-            &format!(
-                "SELECT {HMEM_COLUMNS} FROM hmems ORDER BY confidence ASC, valid_from ASC LIMIT ?1"
-            ),
-            &[DbValue::Integer(limit as i64)],
-        )
-    }
+
     /// Count h_mems below confidence threshold. Used by consolidation.
     pub fn count_below_confidence(&self, threshold: f64) -> Result<usize, HMemError> {
         self.count_rows(

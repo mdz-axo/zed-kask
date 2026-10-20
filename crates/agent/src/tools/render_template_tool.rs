@@ -30,23 +30,17 @@ pub struct RenderTemplateToolInput {
     /// ref as-is, then with `.j2` appended.
     #[serde(deserialize_with = "deserialize_template_ref_field")]
     pub template_ref: String,
-    /// Context variables for Jinja2 interpolation. Keys become template
-    /// variables (e.g., `{{ task }}`, `{{ artifact }}`). Values must be
-    /// JSON-serializable.
-    ///
-    /// Uses `AnyJsonValue` for values (not `serde_json::Value`) with
-    /// `permissive_json_map_schema` so the outer schema is `type: object`
-    /// while `additionalProperties` is `{}` (scalars stay unwrapped and no
-    /// bare boolean schema is emitted).
-    ///
-    /// `deserialize_context_field` tolerates models that emit `context` as a
-    /// stringified JSON string instead of a bare object, and teaches on every
-    /// rejection: the error names the field, the received shape, and the
-    /// accepted shape (lisp-repair L1 — an error that does not teach produces
-    /// identical retries).
-    #[serde(default, deserialize_with = "deserialize_context_field")]
-    #[schemars(schema_with = "super::permissive_json_map_schema")]
-    pub context: std::collections::HashMap<String, hkask_types::AnyJsonValue>,
+    /// JSON text encoding an object of template variables, for example
+    /// `"{\"task\":\"simplify\",\"items\":[1,2]}"`. Keys become Jinja2
+    /// variables; nested arrays, objects and scalar values retain their types.
+    /// Malformed JSON or a non-object document is rejected before rendering.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_context_field",
+        serialize_with = "hkask_types::tool_schema::serialize_json_text"
+    )]
+    #[schemars(schema_with = "hkask_types::tool_schema::json_text_schema")]
+    pub context: std::collections::HashMap<String, serde_json::Value>,
 }
 
 fn deserialize_template_ref_field<'de, D>(deserializer: D) -> Result<String, D::Error>
@@ -63,16 +57,11 @@ where
 
 fn deserialize_context_field<'de, D>(
     deserializer: D,
-) -> Result<std::collections::HashMap<String, hkask_types::AnyJsonValue>, D::Error>
+) -> Result<std::collections::HashMap<String, serde_json::Value>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    deserialize_teaching_field(
-        deserializer,
-        "context",
-        "a JSON object of template variables like {\"task\": \"...\"} (a stringified JSON object is also accepted)",
-        true,
-    )
+    hkask_types::tool_schema::deserialize_json_text_object(deserializer, "context")
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -214,7 +203,7 @@ fn resolve_template_path(
 
 fn validate_contract_inputs(
     content: &str,
-    context: &std::collections::HashMap<String, hkask_types::AnyJsonValue>,
+    context: &std::collections::HashMap<String, serde_json::Value>,
 ) -> Result<(), String> {
     let Some(header) = template_metadata_header(content) else {
         return Ok(());
@@ -426,7 +415,7 @@ mod tests {
     ) -> Result<String, String> {
         let base = registry_template_base();
         let content = read_template_file(&base, template_ref)?;
-        let context: std::collections::HashMap<String, hkask_types::AnyJsonValue> =
+        let context: std::collections::HashMap<String, serde_json::Value> =
             serde_json::from_value(context).map_err(|error| error.to_string())?;
         validate_contract_inputs(&content, &context)?;
         let body = strip_frontmatter(&content);
@@ -676,10 +665,10 @@ mod tests {
         let input = "[inference]\ncontract:\n  input:\n    grill_ratings:\n      type: array\n    grill_verdict:\n      type: string\n---\n{{ grill_verdict }}";
         let context = std::collections::HashMap::from([(
             "verification".to_string(),
-            hkask_types::AnyJsonValue::from(serde_json::json!({
+            serde_json::json!({
                 "verdict": "rewrite_needed",
                 "ratings": []
-            })),
+            }),
         )]);
 
         let error = validate_contract_inputs(input, &context).expect_err("missing flat inputs");
@@ -688,14 +677,8 @@ mod tests {
         assert!(error.contains("grill_verdict"), "got: {error}");
 
         let present_but_blank = std::collections::HashMap::from([
-            (
-                "grill_ratings".to_string(),
-                hkask_types::AnyJsonValue::from(serde_json::json!([])),
-            ),
-            (
-                "grill_verdict".to_string(),
-                hkask_types::AnyJsonValue::from(serde_json::json!("")),
-            ),
+            ("grill_ratings".to_string(), serde_json::json!([])),
+            ("grill_verdict".to_string(), serde_json::json!("")),
         ]);
         validate_contract_inputs(input, &present_but_blank)
             .expect("required strings without non_blank retain presence-only validation");
@@ -708,16 +691,13 @@ mod tests {
         let mut context = std::collections::HashMap::from([
             (
                 "expectation".to_string(),
-                hkask_types::AnyJsonValue::from(serde_json::json!({"statement": "expected"})),
+                serde_json::json!({"statement": "expected"}),
             ),
             (
                 "observation".to_string(),
-                hkask_types::AnyJsonValue::from(serde_json::json!({"statement": "observed"})),
+                serde_json::json!({"statement": "observed"}),
             ),
-            (
-                "probe_results".to_string(),
-                hkask_types::AnyJsonValue::from(serde_json::json!([])),
-            ),
+            ("probe_results".to_string(), serde_json::json!([])),
         ]);
         let error = validate_contract_inputs(&template, &context)
             .expect_err("an inquiry without the user's goal cannot pass admission");
@@ -729,10 +709,7 @@ mod tests {
             serde_json::json!(null),
             serde_json::json!(42),
         ] {
-            context.insert(
-                "active_goal".to_string(),
-                hkask_types::AnyJsonValue::from(invalid_goal),
-            );
+            context.insert("active_goal".to_string(), invalid_goal);
             let error = validate_contract_inputs(&template, &context)
                 .expect_err("an inquiry with a blank or non-string goal cannot render");
             assert!(error.contains("active_goal"), "got: {error}");
@@ -741,7 +718,7 @@ mod tests {
 
         context.insert(
             "active_goal".to_string(),
-            hkask_types::AnyJsonValue::from(serde_json::json!("Investigate meaningful surprises")),
+            serde_json::json!("Investigate meaningful surprises"),
         );
         validate_contract_inputs(&template, &context).expect("goal-carrying inquiry admits");
     }
@@ -751,7 +728,7 @@ mod tests {
         let input = "[inference]\ncontract:\n  input:\n    required_value: string\n    nullable_value: string|null\n    defaulted_value:\n      type: string\n      default: fallback\n    explicitly_optional:\n      type: string\n      required: false\n---\n{{ required_value }}";
         let context = std::collections::HashMap::from([(
             "required_value".to_string(),
-            hkask_types::AnyJsonValue::from(serde_json::json!("present")),
+            serde_json::json!("present"),
         )]);
 
         validate_contract_inputs(input, &context).expect("optional inputs may be absent");
@@ -971,11 +948,8 @@ mod tests {
         );
     }
 
-    // Regression: when the model emits `context` as a stringified JSON string
-    // instead of a bare object, `deserialize_context_field` parses the
-    // string and the tool succeeds. Same pattern as `edit_file.edits`.
     #[test]
-    fn test_context_accepts_stringified_json() {
+    fn test_context_decodes_json_text() {
         let input =
             serde_json::json!({"template_ref": "essentialist/essentialist-flow", "context": "{}"});
         let result: RenderTemplateToolInput =
@@ -986,53 +960,51 @@ mod tests {
         );
     }
 
-    // Positive path: a bare object must still work.
     #[test]
-    fn test_context_accepts_bare_object() {
-        let input = serde_json::json!({"template_ref": "essentialist/essentialist-flow", "context": {"task": "simplify"}});
-        let result: RenderTemplateToolInput =
-            serde_json::from_value(input).expect("bare object must parse");
-        assert_eq!(result.context.len(), 1);
-        assert!(result.context.contains_key("task"));
+    fn context_json_text_preserves_nested_values_and_required_input_validation() {
+        let variables = serde_json::json!({
+            "task": "simplify", "items": [1, 2], "literal": "{\"not\":\"an object\"}"
+        });
+        let input: RenderTemplateToolInput = serde_json::from_value(serde_json::json!({
+            "template_ref": "essentialist/essentialist-flow",
+            "context": variables.to_string()
+        }))
+        .expect("JSON-text context");
+        assert_eq!(input.context["items"], serde_json::json!([1, 2]));
+        assert!(input.context["literal"].is_string());
+        let wire = serde_json::to_value(&input).expect("native input serialization");
+        assert!(wire["context"].is_string());
+        let required = "[inference]\ncontract:\n  input:\n    missing: string\n---\nbody";
+        assert!(validate_contract_inputs(required, &input.context).is_err());
+        for invalid in [
+            serde_json::json!({}),
+            serde_json::json!("{\"cut\":"),
+            serde_json::json!("[]"),
+        ] {
+            let error = serde_json::from_value::<RenderTemplateToolInput>(serde_json::json!({
+                "template_ref": "probe", "context": invalid
+            }))
+            .expect_err("invalid context must be rejected");
+            assert!(error.to_string().contains("context"));
+        }
     }
 
     #[test]
-    fn context_schema_advertises_permissive_values() {
+    fn context_schema_advertises_json_text() {
         let schema =
             serde_json::to_value(schemars::schema_for!(RenderTemplateToolInput)).expect("schema");
-        assert_eq!(
-            schema["properties"]["context"]["type"],
-            serde_json::json!("object")
-        );
-        assert_eq!(
-            schema["properties"]["context"]["additionalProperties"],
-            serde_json::json!({})
-        );
-        // An explicit EMPTY `properties` map (the proven-binding shape), not
-        // an absent key — see `permissive_json_map_schema`'s doc comment: an
-        // object schema with no `properties` key reads as "no properties
-        // allowed" on schema-guided emission paths (card 9262929a).
-        assert_eq!(
-            schema["properties"]["context"]["properties"],
-            serde_json::json!({})
+        assert_eq!(schema["properties"]["context"]["type"], "string");
+        assert!(
+            schema["properties"]["context"]
+                .get("additionalProperties")
+                .is_none()
         );
         assert!(hkask_types::find_boolean_schema_positions(&schema).is_empty());
     }
 
-    // Wire-path pin (2026-10-19): `render_template.context` and `lisp_eval.env`
-    // are declared with the SAME `permissive_json_map_schema` helper and must
-    // advertise the identical permissive shape on the wire — through the full
-    // `normalize_tool_schema` pipeline, not only at raw `schema_for!` time. A
-    // live session observed the two advertised differently (`context` arrived
-    // at the model closed: `properties:{}, additionalProperties:false`, while
-    // `env` arrived permissive), with no in-tree transform producing that
-    // split (binary was current; `normalize_tool_schema` only injects
-    // `properties` at the root). The raw-schema pins above cannot catch a
-    // transform that acts between generation and the wire, so this pin asserts
-    // the normalized wire form of BOTH params and their equality: if any layer
-    // tightens `context` (or `env`) into a closed object, this fails.
+    // Exercise the shared normalized wire schema, not only raw schema generation.
     #[test]
-    fn context_and_env_advertise_the_same_permissive_wire_schema() {
+    fn context_and_env_advertise_the_same_json_text_wire_schema() {
         fn normalized_tool_schema<T: crate::AgentTool>() -> serde_json::Value {
             let mut schema = T::input_schema().to_value();
             language_model::tool_schema::normalize_tool_schema(&mut schema);
@@ -1050,22 +1022,21 @@ mod tests {
                 .unwrap_or_else(|| panic!("{tool_name}.{field} missing from wire schema"));
             assert_eq!(
                 field_schema.get("type"),
-                Some(&serde_json::json!("object")),
-                "{tool_name}.{field} must stay object-typed on the wire"
+                Some(&serde_json::json!("string")),
+                "{tool_name}.{field} must carry JSON text on the wire"
             );
-            assert_eq!(
-                field_schema.get("additionalProperties"),
-                Some(&serde_json::json!({})),
-                "{tool_name}.{field} must stay permissive on the wire"
-            );
-            assert_eq!(
-                field_schema.get("properties"),
-                Some(&serde_json::json!({})),
-                "{tool_name}.{field} must carry an explicit EMPTY `properties` map on the wire — \
-                 the proven-binding shape (card 9262929a): an object schema with no \
-                 `properties` key reads as \"no properties allowed\" on schema-guided emission \
-                 paths and the emitted object arrives at the tool body as `{{}}`"
-            );
+            assert!(field_schema.get("properties").is_none());
+            assert!(field_schema.get("additionalProperties").is_none());
+            if let Some(default) = field_schema.get("default") {
+                assert!(
+                    default.is_string(),
+                    "{tool_name}.{field} default must match its wire type"
+                );
+                let decoded: serde_json::Value =
+                    serde_json::from_str(default.as_str().expect("checked JSON-text default"))
+                        .expect("default is valid JSON text");
+                assert!(decoded.is_object());
+            }
         }
         // The two fields share one declaration helper; their wire schemas must
         // be structurally identical (modulo each field's own doc-comment

@@ -464,11 +464,7 @@ fn fire_curator_consolidation_pass(
     confidence_floor: f64,
     log_label: &str,
 ) {
-    let request = hkask_types::ConsolidationRequest {
-        confidence_floor: Some(confidence_floor),
-        ..Default::default()
-    };
-    match curator_consolidation.consolidate(&curator_webid, request) {
+    match curator_consolidation.consolidate(&curator_webid, confidence_floor) {
         Ok(outcome) => {
             tracing::info!(
                 target: "reg.memory",

@@ -158,6 +158,14 @@ mod tests {
             let info = port.get_tool_info(SERVER, tool).await.expect("host tool");
             assert!(info.input_schema.is_object(), "{tool}");
             assert!(!info.description.is_empty(), "{tool}");
+            let json_field = match tool {
+                "render_template" => Some("context"),
+                "lisp_eval" => Some("env"),
+                _ => None,
+            };
+            if let Some(field) = json_field {
+                assert_eq!(info.input_schema["properties"][field]["type"], "string");
+            }
         }
         assert!(port.get_tool_info(SERVER, "terminal").await.is_none());
     }
@@ -215,7 +223,7 @@ mod tests {
                 "walker",
                 serde_json::json!({
                     "form": "(define count (lambda (lst) (if (is_null lst) 0 (+ 1 (count (cdr lst)))))) (count items)",
-                    "env": {"items": [1, 2, 3, 4, 5]}
+                    "env": serde_json::json!({"items": [1, 2, 3, 4, 5]}).to_string()
                 }),
                 "5",
             ),
@@ -223,13 +231,13 @@ mod tests {
                 "assoc over object",
                 serde_json::json!({
                     "form": "(assoc \"b\" data)",
-                    "env": {"data": {"a": 1, "b": "x"}}
+                    "env": serde_json::json!({"data": {"a": 1, "b": "x"}}).to_string()
                 }),
                 "\"x\"",
             ),
             (
                 "bare infix",
-                serde_json::json!({"form": "z + 1", "env": {"z": 41}}),
+                serde_json::json!({"form": "z + 1", "env": serde_json::json!({"z": 41}).to_string()}),
                 "42",
             ),
             (

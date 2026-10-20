@@ -281,11 +281,9 @@ pub struct MemoryInsertRequest {
     pub attribute: String,
     /// The value (object) of the memory, as an arbitrary JSON value.
     ///
-    /// Accepts arbitrary JSON. Typed as [`AnyJsonValue`] (not
-    /// `serde_json::Value`) so the generated tool input schema is an
-    /// object-typed permissive schema rather than the permissive-any form
-    /// schemars emits for `Value` — which strict-schema-decoding providers
-    /// reject or drop from tool-call arguments.
+    /// Supply complete JSON text. The shared [`AnyJsonValue`] contract decodes
+    /// it before storage; objects, arrays, scalars and literal strings retain
+    /// their types. For example, an object is `"{\"text\":\"lesson\"}"`.
     pub value: AnyJsonValue,
     /// The episodic h_mem ID that supports this memory (evidence-grounding
     /// requirement). The tool rejects inserts without a citation.
@@ -317,10 +315,8 @@ pub struct MemoryUpdateRequest {
     /// failure preserves the old memory. Use the returned replacement h_mem_id
     /// for subsequent updates.
     ///
-    /// Accepts arbitrary JSON. Typed as [`AnyJsonValue`] (not
-    /// `serde_json::Value`) so the generated tool input schema is an
-    /// object-typed permissive schema rather than the permissive-any form
-    /// schemars emits for `Value`.
+    /// Supply complete JSON text for the replacement value. Omit this field
+    /// to change confidence only; JSON text `"null"` represents a null value.
     pub new_value: Option<AnyJsonValue>,
     /// Optional: reason for the confidence update (e.g. "Brier score 0.12 on
     /// resolved forecast", "contradicted by newer observation").

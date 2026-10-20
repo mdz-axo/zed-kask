@@ -29,8 +29,12 @@ use super::lisp_eval_tool::{LispEvalToolInput, evaluate_lisp};
 /// The real tool path: deserialize the tool arguments (the teaching
 /// deserialization), evaluate (env canonicalization + engine), serialize.
 fn tool_path(args: &Value) -> Result<String, String> {
+    let mut wire = args.clone();
+    if let Some(env) = wire.get_mut("env") {
+        *env = Value::String(serde_json::to_string(env).expect("encode semantic fixture bindings"));
+    }
     let input: LispEvalToolInput =
-        serde_json::from_value(args.clone()).map_err(|e| format!("deserialize: {e}"))?;
+        serde_json::from_value(wire).map_err(|e| format!("deserialize: {e}"))?;
     evaluate_lisp(input).map(|v| serde_json::to_string(&v).expect("serialize"))
 }
 

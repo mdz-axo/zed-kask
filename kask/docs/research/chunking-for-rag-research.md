@@ -311,7 +311,7 @@ behind the retrieval-side fix:
 3. **Query-side conditioning (L3)** — define the query instruction for the
    instruction-tuned embedding model on both federated paths (explicit tool
    and per-turn injection); today both embed the raw prompt
-   (`kask/crates/kask_bridge/src/memory.rs:617`). Any prefix change shifts the
+   (`kask/crates/kask_bridge/src/memory.rs::RealMemoryPort::search_external_passages_at`). Any prefix change shifts the
    geometry — re-calibrate the recall metrics with it. The evaluation must
    also gain real-prompt cases: the sealed run's 377 regenerated cloze
    queries ("Which source passage connects <verbatim chunk quote>?" —

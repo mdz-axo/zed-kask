@@ -28,9 +28,8 @@
 //!   `OntologyAxis` (Pko/DcBibo), `OntologyNamespace` (Sepio/Golem/Sumo/
 //!   MlSchema), compression profiles, health signals.
 //! - **`engine`** — `CondenserEngine` owns profile state and compression
-//!   dispatch. Selects an algorithm per compression via the static
-//!   `default_for()` mapping. Derives ontology anchors from tool names
-//!   internally.
+//!   dispatch. Exhaustively maps context categories to algorithms and derives
+//!   ontology anchors from tool names internally.
 //!
 //! This crate provides the domain primitives consumed by:
 //! - `kask_bridge` (`BridgeThreadCondenser` — the runtime tool-result

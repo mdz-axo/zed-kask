@@ -118,7 +118,7 @@ items are re-exported; `sql_impls` is feature-gated
 | `template` | `LLMParameters` | `kask/crates/hkask-types/src/template.rs:14-85` |
 | `time` | RFC 3339 timestamp helpers | `kask/crates/hkask-types/src/time.rs:18-44` |
 | `tool_response` | tool envelopes, parsing, error classification, display hints | `kask/crates/hkask-types/src/tool_response.rs:30-196` |
-| `tool_schema` | `AnyJsonValue` and boolean-schema inspection | `kask/crates/hkask-types/src/tool_schema.rs:46-147` |
+| `tool_schema` | `AnyJsonValue` JSON-text wire codec, native object-map codec and boolean-schema inspection | `kask/crates/hkask-types/src/tool_schema.rs` (`AnyJsonValue`, `json_text_schema`, `deserialize_json_text_object`) |
 | `url_utils` | YouTube ID extraction | `kask/crates/hkask-types/src/url_utils.rs:13-35` |
 | `visibility` | visibility, access control, confidence, and 5W1H dimension | `kask/crates/hkask-types/src/visibility.rs:34-269` |
 | `voice` | `VoiceDesign` | `kask/crates/hkask-types/src/voice.rs:15-63` |
@@ -195,7 +195,7 @@ status: VERIFIED
 | Tool/worktree ports | `ToolDispatchPort`, `WorktreeSpawnPort` | `kask/crates/hkask-types/src/ports/inference_port.rs:115-183` |
 | Memory | `TurnRecord`, `GoalEvent`, `MemorySnippet`, `MemoryError`, `MemoryPort` | `kask/crates/hkask-types/src/ports/memory_port.rs:19-180` |
 | Embedding | `EmbeddingBatch`, `EmbeddingGenerationError` | `kask/crates/hkask-types/src/ports/embedding.rs:3-26` |
-| Consolidation | `ConsolidationRequest`, `ConsolidationOutcome` | `kask/crates/hkask-types/src/ports/regulation.rs:3-27` |
+| Consolidation | `ConsolidationOutcome` (`deleted_count`, `failed_count`) | `kask/crates/hkask-types/src/ports/regulation.rs::ConsolidationOutcome` |
 
 ## Event and Regulation surface
 

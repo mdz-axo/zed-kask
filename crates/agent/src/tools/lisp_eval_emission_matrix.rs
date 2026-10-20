@@ -37,17 +37,13 @@ fn run(args: Value) -> Result<Value, String> {
 // ── env: tolerated variants ──────────────────────────────────────────────────
 
 #[test]
-fn env_bare_object_is_tolerated() {
-    assert_eq!(
-        run(json!({"form": "(+ a 1)", "env": {"a": 1}})),
-        Ok(json!(2))
-    );
+fn env_bare_object_is_refused() {
+    let out = run(json!({"form": "(+ a 1)", "env": {"a": 1}}));
+    assert!(matches!(out, Err(e) if e.contains("env:") && e.contains("JSON text")));
 }
 
 #[test]
-fn env_stringified_object_is_tolerated() {
-    // deserialize_env_field: models that emit env as a stringified
-    // JSON string get the parsed object.
+fn env_json_text_is_decoded() {
     assert_eq!(
         run(json!({"form": "(+ a 1)", "env": "{\"a\": 1}"})),
         Ok(json!(2))
@@ -55,7 +51,7 @@ fn env_stringified_object_is_tolerated() {
 }
 
 #[test]
-fn env_stringified_with_surrounding_whitespace_is_tolerated() {
+fn env_json_text_with_surrounding_whitespace_is_decoded() {
     assert_eq!(
         run(json!({"form": "(+ a 1)", "env": "  {\"a\": 1}  "})),
         Ok(json!(2))
@@ -77,7 +73,7 @@ fn env_null_is_refused() {
     let out = run(json!({"form": "(+ 1 2)", "env": null}));
     assert_eq!(
         out,
-        Err("deserialize: env: received null, expected a JSON object like {\"binding\": value} (a stringified JSON object is also accepted)".to_string())
+        Err("deserialize: env: expected JSON text encoding an object: invalid type: null, expected a string".to_string())
     );
 }
 
@@ -87,7 +83,7 @@ fn env_array_is_refused() {
     let out = run(json!({"form": "(+ 1 2)", "env": [["a", 1]]}));
     assert_eq!(
         out,
-        Err("deserialize: env: received an array, expected a JSON object like {\"binding\": value} (a stringified JSON object is also accepted)".to_string())
+        Err("deserialize: env: expected JSON text encoding an object: invalid type: sequence, expected a string".to_string())
     );
 }
 
@@ -97,7 +93,7 @@ fn env_number_is_refused() {
     let out = run(json!({"form": "(+ 1 2)", "env": 5}));
     assert_eq!(
         out,
-        Err("deserialize: env: received number 5, expected a JSON object like {\"binding\": value} (a stringified JSON object is also accepted)".to_string())
+        Err("deserialize: env: expected JSON text encoding an object: invalid type: integer `5`, expected a string".to_string())
     );
 }
 
@@ -108,7 +104,7 @@ fn env_double_stringified_is_refused() {
     // message shows the received string — no position noise.
     let out = run(json!({"form": "(+ a 1)", "env": "\"{\\\"a\\\": 1}\""}));
     assert!(
-        matches!(out, Err(e) if e.contains("env: received string") && e.contains("expected a JSON object"))
+        matches!(out, Err(e) if e.contains("env:") && e.contains("JSON text encoding an object") && e.contains("expected a map"))
     );
 }
 
@@ -118,9 +114,8 @@ fn env_invalid_json_string_is_refused() {
     // (position noise, no field name). After L1: the teaching message shows
     // the model its own bytes.
     let out = run(json!({"form": "(+ a 1)", "env": "{a: 1}"}));
-    assert_eq!(
-        out,
-        Err("deserialize: env: received string \"{a: 1}\", expected a JSON object like {\"binding\": value} (a stringified JSON object is also accepted)".to_string())
+    assert!(
+        matches!(out, Err(e) if e.contains("env:") && e.contains("expected complete JSON text"))
     );
 }
 
@@ -130,9 +125,8 @@ fn env_python_repr_string_is_refused() {
     // emission class for models trained on repr() output.
     // before L1: "deserialize: key must be a string at line 1 column 1"
     let out = run(json!({"form": "(+ a 1)", "env": "{'a': 1}"}));
-    assert_eq!(
-        out,
-        Err("deserialize: env: received string \"{'a': 1}\", expected a JSON object like {\"binding\": value} (a stringified JSON object is also accepted)".to_string())
+    assert!(
+        matches!(out, Err(e) if e.contains("env:") && e.contains("expected complete JSON text"))
     );
 }
 
@@ -141,10 +135,7 @@ fn env_stringified_array_is_refused() {
     // Parses to a JSON array, not a map.
     // before L1: "deserialize: invalid type: sequence, expected a map at line 1 column 0"
     let out = run(json!({"form": "(+ 1 2)", "env": "[1, 2]"}));
-    assert_eq!(
-        out,
-        Err("deserialize: env: received string \"[1, 2]\", expected a JSON object like {\"binding\": value} (a stringified JSON object is also accepted)".to_string())
-    );
+    assert!(matches!(out, Err(e) if e.contains("env:") && e.contains("expected a map")));
 }
 
 // ── env: the formerly-unteachable class (L1 closed it) ─────────────────────
@@ -158,7 +149,7 @@ fn env_nested_under_env_key_error_teaches_the_flatten_fix() {
     // of the 2026-09-28 audit lockout (5 identical retries). L1: the
     // unbound-symbol error names the available bindings and the flatten fix,
     // so the first error changes the next emission.
-    let out = run(json!({"form": "(+ a 1)", "env": {"env": {"a": 1}}}));
+    let out = run(json!({"form": "(+ a 1)", "env": json!({"env": {"a": 1}}).to_string()}));
     assert_eq!(
         out,
         Err("unbound symbol: a — env bindings: [\"env\"] (an env binding named \"env\" was received — if env was nested one level too deep, flatten it: {\"a\": 1}, not {\"env\": {\"a\": 1}})".to_string())
@@ -170,7 +161,7 @@ fn unbound_symbol_with_empty_env_names_the_empty_binding_list() {
     // The teaching generalizes: any unbound symbol names the available
     // bindings (sorted — byte-identical across processes), so an empty env
     // is visibly empty.
-    let out = run(json!({"form": "(+ a 1)", "env": {}}));
+    let out = run(json!({"form": "(+ a 1)", "env": "{}"}));
     assert_eq!(out, Err("unbound symbol: a — env bindings: []".to_string()));
 }
 
@@ -188,7 +179,7 @@ fn env_wrapped_scalar_type_error_teaches_the_flatten_fix() {
     // skill_use_issue:region-routing) — the wrapping is deterministic for
     // this emitter, so the error must teach on the FIRST failure. L3: the
     // type error names the object-carrying bindings and the flatten fix.
-    let out = run(json!({"form": "(+ a 1)", "env": {"a": {"n": 1}}}));
+    let out = run(json!({"form": "(+ a 1)", "env": json!({"a": {"n": 1}}).to_string()}));
     assert_eq!(
         out,
         Err("type error: expected number, got list — env bindings carrying objects (objects become association lists): [\"a\"]. If you wrapped a scalar in an object, pass the scalar directly: {\"a\": 1}, not {\"a\": {\"n\": 1}}".to_string())
@@ -200,7 +191,7 @@ fn type_error_from_an_array_binding_keeps_the_plain_message() {
     // An array binding also reaches arithmetic as a list, but the fix is
     // different (do not pass an array to arithmetic) — no object bindings,
     // no wrapped-scalar teaching. The plain message stays.
-    let out = run(json!({"form": "(+ a 1)", "env": {"a": [1]}}));
+    let out = run(json!({"form": "(+ a 1)", "env": json!({"a": [1]}).to_string()}));
     assert_eq!(
         out,
         Err("type error: expected number, got list".to_string())
@@ -213,7 +204,7 @@ fn type_error_with_object_bindings_but_non_list_actual_keeps_the_plain_message()
     // a list — the objects are not the culprit, so the enrichment stays off
     // (no false teaching: the hint fires only on the wrapped-scalar
     // signature, actual == "list").
-    let out = run(json!({"form": "(+ \"x\" 1)", "env": {"a": {"n": 1}}}));
+    let out = run(json!({"form": "(+ \"x\" 1)", "env": json!({"a": {"n": 1}}).to_string()}));
     assert_eq!(
         out,
         Err("type error: expected number, got string".to_string())
@@ -227,7 +218,7 @@ fn form_non_string_is_refused() {
     // before L1: "deserialize: invalid type: integer `5`, expected a string"
     // — no field name (a model that got both form and env wrong could not
     // tell which). After L1: the teaching message.
-    let out = run(json!({"form": 5, "env": {}}));
+    let out = run(json!({"form": 5, "env": "{}"}));
     assert_eq!(
         out,
         Err("deserialize: form: received number 5, expected a string containing the Lisp form, e.g. \"(+ 1 2)\"".to_string())
@@ -238,17 +229,17 @@ fn form_non_string_is_refused() {
 fn form_empty_evaluates_to_null() {
     // Documented behavior (hkask_lisp.rs:1746-1748): an empty program
     // returns JSON null, not an error.
-    assert_eq!(run(json!({"form": "", "env": {}})), Ok(Value::Null));
+    assert_eq!(run(json!({"form": "", "env": "{}"})), Ok(Value::Null));
 }
 
 #[test]
 fn form_whitespace_only_evaluates_to_null() {
-    assert_eq!(run(json!({"form": "   ", "env": {}})), Ok(Value::Null));
+    assert_eq!(run(json!({"form": "   ", "env": "{}"})), Ok(Value::Null));
 }
 
 #[test]
 fn form_unbalanced_parens_is_refused() {
-    let out = run(json!({"form": "(+ 1 2", "env": {}}));
+    let out = run(json!({"form": "(+ 1 2", "env": "{}"}));
     assert!(matches!(out, Err(e) if e.contains("parse error")));
 }
 
@@ -273,7 +264,7 @@ fn budget_camelcase_max_depth_alias_is_tolerated() {
     // control below pins the canonical path.
     let out = run(json!({
         "form": nested_add_form(4000),
-        "env": {},
+        "env": "{}",
         "maxDepth": 8192
     }));
     assert_eq!(out, Ok(json!(4001)));
@@ -285,7 +276,7 @@ fn unknown_junk_fields_are_tolerated() {
     // deny_unknown_fields), so a model adding junk (e.g. a "reasoning" field)
     // is not hard-refused — the camelCase aliases cover exactly the fields
     // with semantic effect.
-    let out = run(json!({"form": "(+ 1 2)", "env": {}, "reasoning": "just checking"}));
+    let out = run(json!({"form": "(+ 1 2)", "env": "{}", "reasoning": "just checking"}));
     assert_eq!(out, Ok(json!(3)));
 }
 
@@ -295,7 +286,7 @@ fn budget_snake_case_max_depth_is_applied() {
     // the same 4000-deep form evaluates to 4001 under max_depth 8192.
     let out = run(json!({
         "form": nested_add_form(4000),
-        "env": {},
+        "env": "{}",
         "max_depth": 8192
     }));
     assert_eq!(out, Ok(json!(4001)));
@@ -305,7 +296,7 @@ fn budget_snake_case_max_depth_is_applied() {
 fn budget_string_value_is_refused() {
     // before L1: "deserialize: invalid type: string \"100000\", expected u64"
     // — no field name. After L1: the teaching message.
-    let out = run(json!({"form": "(+ 1 2)", "env": {}, "max_steps": "100000"}));
+    let out = run(json!({"form": "(+ 1 2)", "env": "{}", "max_steps": "100000"}));
     assert_eq!(
         out,
         Err("deserialize: max_steps: received string \"100000\", expected a non-negative integer (default 100000)".to_string())
@@ -326,7 +317,8 @@ fn walker_600_element_list_completes_at_default_budget() {
     let form =
         "(define count (lambda (lst) (if (is_null lst) 0 (+ 1 (count (cdr lst)))))) (count items)";
     let items: Vec<i32> = (0..600).collect();
-    let out = run(json!({"form": form, "env": {"items": items}, "max_depth": 8192}));
+    let out =
+        run(json!({"form": form, "env": json!({"items": items}).to_string(), "max_depth": 8192}));
     assert_eq!(out, Ok(json!(600)));
 }
 
@@ -345,7 +337,7 @@ fn lie_fix_integer_overflow_errors_typed() {
     // wrap. Before: (+ 9223372036854775807 1) → -9223372036854775808
     // (wrapping_add hkask_lisp.rs; also wrapping_sub/wrapping_mul/wrapping_abs,
     // the unary-negation f64 round-trip, and checked_neg/checked_abs for MIN).
-    let out = run(json!({"form": "(+ 9223372036854775807 1)", "env": {}}));
+    let out = run(json!({"form": "(+ 9223372036854775807 1)", "env": "{}"}));
     assert_eq!(
         out,
         Err(
@@ -356,19 +348,19 @@ fn lie_fix_integer_overflow_errors_typed() {
     // (A bare 9223372036854775808 literal would parse as a Float and miss the
     // int path — the forms below stay in Int space.)
     assert!(matches!(
-        run(json!({"form": "(- 0 9223372036854775807 9223372036854775807)", "env": {}})),
+        run(json!({"form": "(- 0 9223372036854775807 9223372036854775807)", "env": "{}"})),
         Err(e) if e.contains("integer overflow in -")
     ));
     assert!(matches!(
-        run(json!({"form": "(* 9223372036854775807 2)", "env": {}})),
+        run(json!({"form": "(* 9223372036854775807 2)", "env": "{}"})),
         Err(e) if e.contains("integer overflow in *")
     ));
     assert!(matches!(
-        run(json!({"form": "(abs -9223372036854775808)", "env": {}})),
+        run(json!({"form": "(abs -9223372036854775808)", "env": "{}"})),
         Err(e) if e.contains("integer overflow in abs")
     ));
     assert!(matches!(
-        run(json!({"form": "(- -9223372036854775808)", "env": {}})),
+        run(json!({"form": "(- -9223372036854775808)", "env": "{}"})),
         Err(e) if e.contains("integer overflow in -")
     ));
 }
@@ -380,18 +372,18 @@ fn lie_fix_f64_comparison_is_integer_exact() {
     // (< 2^53 2^53+1) → false — every integer above 2^53 miscompared
     // silently. Also covers num_eq's former `.ok()` swallow:
     // (= 1 "x") was silent false; now a type error (= is numeric-only).
-    let eq = run(json!({"form": "(= 9007199254740993 9007199254740992)", "env": {}}));
+    let eq = run(json!({"form": "(= 9007199254740993 9007199254740992)", "env": "{}"}));
     assert_eq!(eq, Ok(json!(false)));
-    let lt = run(json!({"form": "(< 9007199254740992 9007199254740993)", "env": {}}));
+    let lt = run(json!({"form": "(< 9007199254740992 9007199254740993)", "env": "{}"}));
     assert_eq!(lt, Ok(json!(true)));
     // max/min select the correct argument above 2^53 (extremum previously
     // compared through f64 and could return the wrong arg).
-    let max = run(json!({"form": "(max 9007199254740993 9007199254740992)", "env": {}}));
+    let max = run(json!({"form": "(max 9007199254740993 9007199254740992)", "env": "{}"}));
     assert_eq!(max, Ok(json!(9007199254740993i64)));
-    let min = run(json!({"form": "(min 9007199254740992 9007199254740993)", "env": {}}));
+    let min = run(json!({"form": "(min 9007199254740992 9007199254740993)", "env": "{}"}));
     assert_eq!(min, Ok(json!(9007199254740992i64)));
     // Type errors propagate: (= 1 "x") is a type error, never silent false.
-    let typed = run(json!({"form": "(= 1 \"x\")", "env": {}}));
+    let typed = run(json!({"form": "(= 1 \"x\")", "env": "{}"}));
     assert!(matches!(typed, Err(e) if e.contains("type error") && e.contains("expected number")));
 }
 
@@ -401,26 +393,26 @@ fn lie_fix_string_equals_errors_on_non_string_and_allows_nil() {
     // non-string scalars/lists (matching `=`'s L2 lie-fix), while keeping
     // Nil -> false so nullable JSON fields and absent-key `(assoc k obj)`
     // in counting walkers (`d-without-oracle`, `count-sev`) evaluate to false.
-    let int_err = run(json!({"form": "(string= 1 \"1\")", "env": {}}));
+    let int_err = run(json!({"form": "(string= 1 \"1\")", "env": "{}"}));
     assert_eq!(
         int_err,
         Err("type error: expected string, got int".to_string())
     );
-    let bool_err = run(json!({"form": "(string= \"true\" true)", "env": {}}));
+    let bool_err = run(json!({"form": "(string= \"true\" true)", "env": "{}"}));
     assert_eq!(
         bool_err,
         Err("type error: expected string, got boolean".to_string())
     );
     assert_eq!(
-        run(json!({"form": "(string= nil \"D\")", "env": {}})),
+        run(json!({"form": "(string= nil \"D\")", "env": "{}"})),
         Ok(json!(false))
     );
     assert_eq!(
-        run(json!({"form": "(string= \"D\" nil)", "env": {}})),
+        run(json!({"form": "(string= \"D\" nil)", "env": "{}"})),
         Ok(json!(false))
     );
     assert_eq!(
-        run(json!({"form": "(string= nil nil)", "env": {}})),
+        run(json!({"form": "(string= nil nil)", "env": "{}"})),
         Ok(json!(false))
     );
 }
@@ -431,13 +423,13 @@ fn lie_fix_nth_negative_index_errors_typed() {
     // Runtime error teaching 0-based indexing, never a wrap to usize::MAX
     // that walks the spine and returns null silently. Out-of-bounds
     // non-negative indices continue to return null.
-    let neg = run(json!({"form": "(nth -1 (list 1 2 3))", "env": {}}));
+    let neg = run(json!({"form": "(nth -1 (list 1 2 3))", "env": "{}"}));
     assert!(
         matches!(neg, Err(ref e) if e.contains("nth: negative index -1") && e.contains("0-based")),
         "got: {neg:?}"
     );
     assert_eq!(
-        run(json!({"form": "(nth 5 (list 1 2 3))", "env": {}})),
+        run(json!({"form": "(nth 5 (list 1 2 3))", "env": "{}"})),
         Ok(Value::Null)
     );
 }
@@ -450,20 +442,20 @@ fn assoc_strict_and_absent_key_teaching_close_vacuity_and_cdr_traps() {
     assert_eq!(
         run(json!({
             "form": "(assoc! \"verdict\" row)",
-            "env": {"row": {"verdict": "BUG", "contract": "P8.4"}}
+            "env": json!({"row": {"verdict": "BUG", "contract": "P8.4"}}).to_string()
         })),
         Ok(json!("BUG"))
     );
     let missing = run(json!({
         "form": "(assoc! \"tier\" row)",
-        "env": {"row": {"verdict": "BUG", "contract": "P8.4", "location": "a.rs:1"}}
+        "env": json!({"row": {"verdict": "BUG", "contract": "P8.4", "location": "a.rs:1"}}).to_string()
     }));
     assert_eq!(
         missing,
         Err("runtime error: assoc!: key \"tier\" not found — available keys: [\"contract\", \"location\", \"verdict\"]".to_string())
     );
     // 2. `(assoc key 42)` rejects non-string primitive scalars as the alist.
-    let bad_alist = run(json!({"form": "(assoc \"k\" 42)", "env": {}}));
+    let bad_alist = run(json!({"form": "(assoc \"k\" 42)", "env": "{}"}));
     assert!(
         matches!(bad_alist, Err(ref e) if e.contains("type error: expected list, got int")),
         "got: {bad_alist:?}"
@@ -471,7 +463,7 @@ fn assoc_strict_and_absent_key_teaching_close_vacuity_and_cdr_traps() {
     // 3. Numeric comparator on nil teaches the missing-key / assoc! recovery.
     let num_nil = run(json!({
         "form": "(> (assoc \"cnt\" row) 0)",
-        "env": {"row": {"count": 5}}
+        "env": json!({"row": {"count": 5}}).to_string()
     }));
     assert!(
         matches!(num_nil, Err(ref e) if e.contains("expected number, got nil") && e.contains("assoc!")),
@@ -480,7 +472,7 @@ fn assoc_strict_and_absent_key_teaching_close_vacuity_and_cdr_traps() {
     // 4. Common-Lisp `(cdr (assoc ...))` teaches that assoc returns the value directly.
     let cdr_assoc = run(json!({
         "form": "(cdr (assoc \"count\" row))",
-        "env": {"row": {"count": 5}}
+        "env": json!({"row": {"count": 5}}).to_string()
     }));
     assert!(
         matches!(cdr_assoc, Err(ref e) if e.contains("expected list, got int") && e.contains("returns the value directly")),
@@ -497,8 +489,9 @@ fn l2_repeated_evaluation_is_byte_identical_at_the_tool_boundary() {
     // input — success or typed error — is byte-identical across calls.
     let input = json!({
         "form": "(begin (define total (+ a b c)) (if (> total 5) (assoc \"k\" obj) absent))",
-        "env": {"c": 3, "a": 1, "b": 2, "obj": {"k": "hit", "j": 9}}
+        "env": json!({"c": 3, "a": 1, "b": 2, "obj": {"k": "hit", "j": 9}}).to_string()
     });
+    assert_eq!(run(input.clone()), Ok(json!("hit")));
     let mut seen: Option<String> = None;
     for _ in 0..20 {
         let out = run(input.clone());
@@ -519,7 +512,8 @@ fn l2_unbound_symbol_error_lists_bindings_sorted_and_stable() {
     // Error-path determinism: the G3 message names the env bindings in
     // sorted order and repeats byte-identically — the multi-key companion
     // to `unbound_symbol_with_empty_env_names_the_empty_binding_list`.
-    let input = json!({"form": "(+ a missing)", "env": {"b": 2, "a": 1, "c": 3}});
+    let input =
+        json!({"form": "(+ a missing)", "env": json!({"b": 2, "a": 1, "c": 3}).to_string()});
     let mut seen: Option<String> = None;
     for _ in 0..20 {
         let out = run(input.clone());

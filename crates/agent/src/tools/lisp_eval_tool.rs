@@ -26,7 +26,7 @@ use ui::SharedString;
 /// Example: count open threats from a prior step's output:
 /// ```text
 /// form: "(+ (assoc \"confirmed_bugs\" (assoc \"summary\" step_5_result)) (assoc \"potential_bugs\" (assoc \"summary\" step_5_result)))"
-/// env: { "step_5_result": { "summary": { "confirmed_bugs": 3, "potential_bugs": 2 } } }
+/// env: "{\"step_5_result\":{\"summary\":{\"confirmed_bugs\":3,\"potential_bugs\":2}}}"
 /// ```
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct LispEvalToolInput {
@@ -46,34 +46,18 @@ pub struct LispEvalToolInput {
     /// is NOT equivalent — it errors).
     #[serde(deserialize_with = "deserialize_form_field")]
     form: String,
-    /// JSON object whose keys become top-level Lisp bindings. Values are
-    /// converted to Lisp values: objects become association lists, arrays
-    /// become lists, numbers stay numbers, strings stay strings.
-    ///
-    /// Pass scalars directly: `{"a": 1, "b": true}`, not `{"a": {"n": 1}}` —
-    /// an object value becomes an association list, so a wrapped scalar
-    /// reaches arithmetic as a list and fails with a type error.
-    ///
-    /// The advertised schema is `{"type":"object","additionalProperties":{}}`
-    /// (the `schema_with` override below): object-typed outer — a clear
-    /// signal to send a JSON object — with permissive value schemas, so
-    /// scalars pass unwrapped. The default `HashMap<String, AnyJsonValue>`
-    /// schema would advertise each VALUE as `type: object` (AnyJsonValue's
-    /// own shape), pressuring schema-following providers into wrapping
-    /// scalars, which arrive as association lists and fail numeric forms
-    /// (live-observed 2026-10-01: the gpui-bench audit critic's 8/8 wrapped
-    /// emissions, "type error: expected number, got list"). A bare
-    /// `serde_json::Value` emits `true`, which strict-schema providers
-    /// reject outright.
-    ///
-    /// `deserialize_env_field` tolerates models that emit `env` as a stringified
-    /// JSON string (e.g. `"{}"`) instead of a bare object, and teaches on every
-    /// rejection: the error names the field, the received shape, and the
-    /// accepted shape (an error that does not teach produces identical
-    /// retries — the 2026-09-28 audit lockout anatomy).
-    #[serde(default, deserialize_with = "deserialize_env_field")]
-    #[schemars(schema_with = "super::permissive_json_map_schema")]
-    env: std::collections::HashMap<String, hkask_types::AnyJsonValue>,
+    /// JSON text encoding an object whose keys become Lisp bindings, for
+    /// example `"{\"a\":1,\"b\":true}"`. Values retain their JSON types:
+    /// objects become association lists, arrays become lists, numbers stay
+    /// numbers and strings stay strings. Do not wrap scalars in objects.
+    /// Malformed JSON or a non-object document is rejected before evaluation.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_env_field",
+        serialize_with = "hkask_types::tool_schema::serialize_json_text"
+    )]
+    #[schemars(schema_with = "hkask_types::tool_schema::json_text_schema")]
+    env: std::collections::HashMap<String, serde_json::Value>,
     /// Maximum evaluation steps (default 100000). Prevents infinite loops.
     /// The `maxSteps` alias tolerates camelCase emissions so an explicit budget
     /// is applied rather than silently dropped (a silently-dropped budget was
@@ -120,16 +104,11 @@ where
 
 fn deserialize_env_field<'de, D>(
     deserializer: D,
-) -> Result<std::collections::HashMap<String, hkask_types::AnyJsonValue>, D::Error>
+) -> Result<std::collections::HashMap<String, serde_json::Value>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    super::deserialize_teaching_field(
-        deserializer,
-        "env",
-        "a JSON object like {\"binding\": value} (a stringified JSON object is also accepted)",
-        true,
-    )
+    hkask_types::tool_schema::deserialize_json_text_object(deserializer, "env")
 }
 
 fn deserialize_max_steps_field<'de, D>(deserializer: D) -> Result<u64, D::Error>
@@ -264,8 +243,7 @@ pub fn evaluate_lisp(input: LispEvalToolInput) -> Result<Value, String> {
         // (each key becomes an individual binding — proven lisp-repair L0), so
         // this is defense-in-depth for any future env-introspection surface;
         // the error path sorts independently (bindings list).
-        let mut pairs: Vec<(String, serde_json::Value)> =
-            input.env.into_iter().map(|(k, v)| (k, v.into())).collect();
+        let mut pairs: Vec<(String, serde_json::Value)> = input.env.into_iter().collect();
         pairs.sort_by(|a, b| a.0.cmp(&b.0));
         serde_json::Value::Object(pairs.into_iter().collect())
     };
@@ -335,72 +313,29 @@ mod tests {
     use super::LispEvalToolInput;
     use serde_json::json;
 
-    /// The env property's advertised schema must be object-typed with
-    /// PERMISSIVE value schemas: the default `HashMap<String, AnyJsonValue>`
-    /// schema advertises each value as `type: object`, and schema-following
-    /// providers wrap scalars accordingly — the wrapped values arrive as
-    /// association lists and fail numeric forms (live-observed 2026-10-01:
-    /// the gpui-bench audit critic's 8/8 wrapped emissions, "type error:
-    /// expected number, got list").
     #[test]
-    fn env_schema_advertises_permissive_values() {
+    fn env_wire_schema_and_decoder_preserve_scalar_bindings() {
         let schema =
             serde_json::to_value(schemars::schema_for!(LispEvalToolInput)).expect("schema");
-        assert_eq!(schema["properties"]["env"]["type"], json!("object"));
-        assert_eq!(
-            schema["properties"]["env"]["additionalProperties"],
-            json!({})
-        );
-        // An explicit EMPTY `properties` map, not an absent key. The map is
-        // open (permissive `additionalProperties: {}`), but schema-guided
-        // emission paths read an object schema with NO `properties` key as
-        // "no properties allowed" and coerce the emitted object to `{}` —
-        // live-observed 2026-10-19 (card 9262929a): every populated `env`
-        // emission arrived at the tool body as `{}` while params whose
-        // schemas carry `properties: {}` (the `AnyJsonValue` shape) bound
-        // populated objects in the same session. `properties: {}` +
-        // permissive `additionalProperties: {}` is the proven-binding shape.
-        assert_eq!(schema["properties"]["env"]["properties"], json!({}));
-        // No bare boolean schema positions anywhere (Ollama/Gemini reject
-        // them).
+        assert_eq!(schema["properties"]["env"]["type"], "string");
         assert!(hkask_types::find_boolean_schema_positions(&schema).is_empty());
-    }
-
-    // The tool dispatches to `hkask_lisp::eval_sandboxed_with_budget` — these
-    // tests exercise the interpreter directly along the exact code path the
-    // tool uses (same function, same arguments). They verify the skill
-    // convergence patterns that `lisp_eval` is designed to support.
-    //
-    // NOTE: The `env` field went through three iterations:
-    //   1. `serde_json::Value` — schemars renders as bare `true`, which
-    //      strict-schema providers (Ollama, Gemini) reject outright.
-    //   2. `AnyJsonValue` — schema emits `{}` (any value). This avoided the
-    //      boolean rejection but the model still didn't populate the parameter
-    //      (no `type` signal → env arrives as null → "unbound symbol").
-    //   3. `HashMap<String, AnyJsonValue>` with `permissive_json_map_schema` —
-    //      schema emits `{"type":"object","additionalProperties":{}}`, giving
-    //      the model a clear object signal while keeping value schemas
-    //      permissive (shared with `render_template.context`).
-    // These tests verify the interpreter itself is correct (they call
-    // `eval_sandboxed_with_budget` directly). The tool wrapper fix (schema
-    // shape) needs a process rebuild to take effect live.
-
-    #[test]
-    fn test_env_schema_has_type_object() {
-        // The env parameter must generate a schema with "type": "object" so the
-        // model populates it. This is the root-cause regression test for the
-        // "unbound symbol" bug: a bare `AnyJsonValue` emits `{}` (no type) and
-        // the model doesn't send the parameter; a bare `serde_json::Value`
-        // emits `true` (boolean schema) which strict-schema providers reject.
-        // `HashMap<String, AnyJsonValue>` emits `{"type":"object",...}`.
-        let schema = schemars::schema_for!(super::LispEvalToolInput);
-        let schema_json = serde_json::to_value(&schema).expect("schema is serializable");
-        let env_schema = &schema_json["properties"]["env"];
+        let input: LispEvalToolInput = serde_json::from_value(json!({
+            "form": "(+ count 1)",
+            "env": json!({"count": 7, "literal": "{\"not\":\"an object\"}"}).to_string()
+        }))
+        .expect("JSON-text environment");
+        assert_eq!(input.env["count"], json!(7));
+        assert!(input.env["literal"].is_string());
+        let wire = serde_json::to_value(&input).expect("serialize native input");
+        assert!(wire["env"].is_string());
         assert_eq!(
-            env_schema["type"], "object",
-            "env schema must have type:object so the model populates it, got: {env_schema}"
+            super::evaluate_lisp(input).expect("evaluate decoded bindings"),
+            json!(8)
         );
     }
+
+    // The following interpreter tests cover evaluation independently of the
+    // model-facing JSON-text transport; the wire round-trip is tested above.
 
     #[test]
     fn default_max_depth_covers_real_scale_lists() {
@@ -486,11 +421,7 @@ mod tests {
         assert_eq!(result.expect("checked is_ok above"), json!(6));
     }
 
-    // Regression: when the model emits `env` as a stringified JSON string
-    // (e.g. `"{}"`) instead of a bare object, `deserialize_env_field` parses
-    // the string and the tool succeeds. Without it, the deserializer rejects
-    // with "invalid type: string, expected a map" and the tool errors out.
-    // This is the same pattern `edit_file.edits` uses.
+    // JSON text is the wire representation, including for an empty environment.
     #[test]
     fn test_env_accepts_stringified_json() {
         let input = json!({"form": "(+ 1 2)", "env": "{}"});
@@ -512,13 +443,12 @@ mod tests {
         assert!(result.env.contains_key("step_5_result"));
     }
 
-    // Positive path: a bare object must still work.
     #[test]
-    fn test_env_accepts_bare_object() {
+    fn test_env_rejects_unencoded_object() {
         let input = json!({"form": "(+ 1 2)", "env": {"step_5_result": {"count": 3}}});
-        let result: LispEvalToolInput =
-            serde_json::from_value(input).expect("bare object must parse");
-        assert_eq!(result.env.len(), 1);
-        assert!(result.env.contains_key("step_5_result"));
+        let error = serde_json::from_value::<LispEvalToolInput>(input)
+            .expect_err("unencoded map is not the wire contract");
+        assert!(error.to_string().contains("env:"));
+        assert!(error.to_string().contains("JSON text"));
     }
 }
