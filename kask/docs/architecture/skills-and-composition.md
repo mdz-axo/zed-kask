@@ -847,7 +847,7 @@ constructor and `ToolContext` implementation. Put tool methods in one or more
 `#[tool_router(router = ..., vis = "pub")]` impl blocks, and combine every
 sub-router into the server router. Missing a router compiles but silently removes
 its tools, so each server should pin `combined_router().list_all()` against its
-intended surface (corpus example: `hkask_mcp_corpus.rs:269-279`).
+intended surface (corpus example: `hkask_mcp_corpus.rs:321-326`).
 
 Every tool boundary returns a typed MCP result and wraps its future with
 `execute_tool(self, "tool_name", ...)`. The shared boundary isolates per-call
@@ -878,7 +878,7 @@ hkask_mcp_server::run_server(
 The framework signature is at
 `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:42-52`; the corpus server
 shows async inference-port resolution followed by factory construction at
-`kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:398-411`. The binary
+`kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:441-449`. The binary
 entry point is intentionally thin:
 
 ```rust

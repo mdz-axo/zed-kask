@@ -33,7 +33,7 @@ pub(crate) mod compose;
 pub(crate) mod convert;
 mod helpers;
 mod index;
-pub(crate) mod inference_svc;
+
 pub(crate) mod ocr;
 pub(crate) mod ontology;
 pub(crate) mod path_safety;

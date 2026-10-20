@@ -107,15 +107,10 @@ pub enum ServiceError {
 /// Top-level domain for error routing and observability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DomainKind {
-    Inference,
     Infrastructure,
     Memory,
     Storage,
     User,
-    // Wallet removed 2026-08-30 — residual of the deleted wallet module
-    // (219c74b180). Its two remaining call sites were mislabels: an
-    // inference-port error (now Inference) and a template-render error
-    // (now Infrastructure).
 }
 
 impl ServiceError {

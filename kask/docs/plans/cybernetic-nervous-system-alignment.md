@@ -338,7 +338,7 @@ an actual displacement; CU-7 independent, smallest first.
   (`standalone_settings.rs:391`) — REJECTED: a test fixture inside
   `malformed_settings_surface_fallback`, in a live module with cited
   consumers (the corpus server's settings load,
-  `compose_tools.rs:23`, `hkask_mcp_corpus.rs:67`); (b)
+  `compose_tools.rs:23`, `hkask_mcp_corpus.rs:224`); (b)
   `HKASK_USE_*` opt-ins — one in the tree, `HKASK_USE_FAL_DOCRES`, and
   it is a removal guard pin (`mcp_servers.rs:1464-1471@training_server_is_not_registered`), not an
   opt-in — REJECTED; (c) settings knobs — the pub settings fields
@@ -365,7 +365,7 @@ not verdict (operator calibration, 2026-09-30).
   (`hkask-storage/src/core/connection.rs:250`, `rotation.rs:125`,
   claimed at `hkask-keystore/src/passphrase.rs:14`); the legacy
   `declared_method.threshold` rejection
-  (`hkask-mcp-corpus/src/compose.rs:214-224`, a typed BadRequest naming
+  (`hkask-mcp-corpus/src/compose.rs:225-239`, a typed BadRequest naming
   the remediation, claimed at `salience.rs:438`); the never-untagged
   ladder (the total rung chain, `axis.rs:184-196`); the `busy_timeout`
   ordering (enforced by the `WAL_PRAGMA_BATCH` constant itself,

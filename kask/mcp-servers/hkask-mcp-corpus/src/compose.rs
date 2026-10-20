@@ -1,14 +1,14 @@
 //! Style composition — exemplar retrieval, prose generation, centroid validation.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use hkask_memory::MemoryStore;
-use hkask_types::template::LLMParameters;
+use hkask_types::{InferencePort, template::LLMParameters};
 use serde::Deserialize;
 
 use tracing::debug;
 
-use crate::inference_svc::InferenceContext;
 use crate::services_core::{DomainKind, ErrorKind, ServiceError};
 
 // ── Cognition configuration ──────────────────────────────────────────────
@@ -116,8 +116,9 @@ pub(crate) struct ComposeRequest {
     pub db_passphrase: String,
     /// Parsed cognition configuration.
     pub cognition: CognitionConfig,
-    /// Inference context for model resolution.
-    pub inference_ctx: InferenceContext,
+    pub inference: Arc<dyn InferencePort>,
+    /// Operator-selected generation model, independent of the embedding model.
+    pub generation_model: String,
     /// Skip centroid distance validation.
     pub no_validate: bool,
 }
@@ -256,14 +257,9 @@ impl ComposeService {
             request.cognition.embedding.dim,
         )?;
 
-        // 2. Resolve the inference port and embed prompt. The same port is
-        // reused for prose generation below — both embedding and generation
-        // route through zed's LanguageModelRegistry via the IPC bridge.
-        let gen_model = request.inference_ctx.default_model.clone();
-        let inference = crate::inference_svc::InferenceService::resolve_port(
-            &request.inference_ctx,
-            &gen_model,
-        )?;
+        // 2. Embed the prompt through the injected port, reused for generation
+        // and centroid validation below.
+        let inference = &request.inference;
         let prompt_batch = inference
             .embed_with_dimensions(
                 &request.cognition.embedding.model,
@@ -462,11 +458,8 @@ impl ComposeService {
             )
         };
 
-        // 6. Generate prose — model comes from InferenceContext (operational concern),
-        // not from CognitionConfig (pipeline/corpus concern). The embedding model
-        // is tied to stored vector dimensions; the generation model is deployment-specific.
-        // Pass `gen_model` as the model_override so the operator's configured
-        // generation model is actually used, not silently replaced by the bridge default.
+        // 6. Keep the operator's generation model separate from the stored
+        // vectors' embedding model and forward it as the port's model override.
         let params = LLMParameters {
             temperature: 0.7,
             top_p: 0.9,
@@ -481,7 +474,12 @@ impl ComposeService {
             timeout_hint_secs: None,
         };
         let result = inference
-            .generate_with_model(&system_prompt, &params, Some(&gen_model), None)
+            .generate_with_model(
+                &system_prompt,
+                &params,
+                Some(&request.generation_model),
+                None,
+            )
             .await?;
         crate::helpers::record_usage(&result);
         let generated_prose = result.text.trim().to_string();

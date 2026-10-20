@@ -55,4 +55,63 @@ if [[ "$output" != *'undeclared: tone'* ]]; then
   exit 1
 fi
 
-echo 'OK: consistent contracts pass; absent outputs and undeclared second-term condition operands fail the gate.'
+# Raw server-rendered templates keep their documented inference contract
+# inside a Jinja comment rather than using the stripped-header separator.
+# A preceding comment must not be mistaken for the contract terminator.
+printf '%s\n' \
+  '{# goal: fixture.' '#}' '{#' '[inference]' 'contract:' \
+  '  input:' '    topic: string' '    tone: string' \
+  '  output:' '    summary: string' '#}' \
+  'Summarize {{ topic }}.' \
+  '{% if topic and tone %} Use {{ tone }}.{% endif %}' \
+  'Return JSON: {"summary": "..."}' > "$good"
+if ! output="$(REPO_ROOT="$fixture" bash "$fixture/kask/scripts/check-template-contracts.sh" 2>&1)"; then
+  echo "A body-consistent commented contract was rejected: $output" >&2
+  exit 1
+fi
+
+# The header itself must not count as consumption of an unused input.
+printf '%s\n' \
+  '{# goal: fixture.' '#}' '{#' '[inference]' 'contract:' \
+  '  input:' '    topic: string' '    phantom_input: string' \
+  '  output:' '    summary: string' '#}' \
+  'Summarize {{ topic }}.' 'Return JSON: {"summary": "..."}' > "$good"
+if output="$(REPO_ROOT="$fixture" bash "$fixture/kask/scripts/check-template-contracts.sh" 2>&1)"; then
+  echo "An unused commented-contract input was not rejected: $output" >&2
+  exit 1
+fi
+if [[ "$output" != *'unused-input: phantom_input'* ]]; then
+  echo "An unused commented-contract input was not identified: $output" >&2
+  exit 1
+fi
+
+printf '%s\n' \
+  '{# goal: fixture. #}' '{#' '[inference]' 'contract:' \
+  '  input:' '    topic: string' \
+  '  output:' '    summary: string' '    phantom_output: string' '#}' \
+  'Summarize {{ topic }}.' 'Return JSON: {"summary": "..."}' > "$good"
+if output="$(REPO_ROOT="$fixture" bash "$fixture/kask/scripts/check-template-contracts.sh" 2>&1)"; then
+  echo "An absent commented-contract output was not rejected: $output" >&2
+  exit 1
+fi
+if [[ "$output" != *'absent-output: phantom_output'* ]]; then
+  echo "An absent commented-contract output was not identified: $output" >&2
+  exit 1
+fi
+
+# Nor may an earlier comment make a normal contract count its own header.
+printf '%s\n' \
+  '{# goal: fixture.' '#}' '[inference]' 'contract:' \
+  '  input:' '    topic: string' '    phantom_input: string' \
+  '  output:' '    summary: string' '---' \
+  'Summarize {{ topic }}.' 'Return JSON: {"summary": "..."}' > "$good"
+if output="$(REPO_ROOT="$fixture" bash "$fixture/kask/scripts/check-template-contracts.sh" 2>&1)"; then
+  echo "A normal contract counted its header as input consumption: $output" >&2
+  exit 1
+fi
+if [[ "$output" != *'unused-input: phantom_input'* ]]; then
+  echo "A normal contract's unused input was not identified: $output" >&2
+  exit 1
+fi
+
+echo 'OK: normal and commented contracts pass; unused inputs, absent outputs and undeclared condition operands fail the gate.'

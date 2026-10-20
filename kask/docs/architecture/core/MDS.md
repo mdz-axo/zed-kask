@@ -83,7 +83,7 @@ Surviving subcrates (kept temporarily while MCP servers depend on them; dissolve
 | ~~`hkask-services-kata-kanban`~~ (folded) | Toyota Kata + Kanban board coordination — folded into `hkask-mcp-kata-kanban` | `P{N}-svc-kata-*` / `KAN-SVC-*` | 61 | ✅ Folded |
 | ~~`hkask-services-runtime`~~ (folded) | Runtime services: classify + guard + provider_intel — folded into `hkask-mcp-corpus` (internal `runtime` module) | `P{N}-svc-runtime-*` | 13 | ✅ Folded |
 | ~~`hkask-services-self-heal`~~ (deleted) | Cross-domain self-healing coordination — deleted in 2026-07-25 cleanup | — | — | ✅ Deleted |
-| ~~`hkask-services-inference`~~ (folded) | Inference orchestration scaffolding — folded into `hkask-mcp-corpus` (internal `inference_svc` + `model_cache` modules) | `P{N}-svc-inference-*` | 7 | ✅ Folded |
+| ~~`hkask-services-inference`~~ (deleted) | Scaffolding removed; corpus composition requires an injected `Arc<dyn InferencePort>` and explicit `generation_model` (`kask/mcp-servers/hkask-mcp-corpus/src/compose.rs:110-123`) | — | — | ✅ Deleted |
 | `hkask-inference` | Inference routing primitives (`MediaRouter`, `InferenceIpcClient`, `ProviderId`). `InferenceConfig::from_env` reads provider configuration from the child process environment only (`kask/crates/hkask-inference/src/config.rs:109-129,218-228`). Chat, vision, embedding, and model listing can use IPC; media generation is child-local (`hkask_inference.rs:190-390`). | `P{N}-svc-inference-*` | 7 | ✅ Current |
 
 ---

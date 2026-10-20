@@ -14,7 +14,7 @@ The editor-managed MCP server processes documents into retrievable passages,
 classified chunks, evidence-carrying QA and style centroids. There is one current
 schema contract and **25 registered tools**, pinned by
 `tool_surface_is_exactly_25_registered_tools` at
-`kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:321-327` (the
+`kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:321-326` (the
 `corpus_prepare_training_dataset` tool was removed 2026-10-17 with the training
 capability).
 Parameter additions do not add tools.
@@ -77,7 +77,7 @@ the current `ocr_protocol` do not resume; no plain-text compatibility route exis
 
 Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:994-1097`,
 `kask/mcp-servers/hkask-mcp-corpus/src/tools/tagging/ops.rs:578-594`, `kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus.rs:560-698`,
-`kask/mcp-servers/hkask-mcp-corpus/src/tools/compose_tools.rs:109-154`, `kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs:444-470`, and
+`kask/mcp-servers/hkask-mcp-corpus/src/tools/compose_tools.rs:110-154`, `kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs:444-470`, and
 `kask/mcp-servers/hkask-mcp-corpus/src/tools/gather.rs:46-81`.
 
 | Tool | Inputs and defaults |

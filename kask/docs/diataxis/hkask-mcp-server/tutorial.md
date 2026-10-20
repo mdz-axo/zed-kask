@@ -154,7 +154,7 @@ If `HKASK_WEBID` is missing or invalid, startup uses the anonymous persona and w
 
 - `mcp_server!` generates the standard WebID-bearing server shape.
 - `execute_tool` preserves typed errors and serializes successful content.
-- `run_server` performs credential, identity, capability, and stdio setup.
+- `run_server` performs credential, identity, and stdio setup.
 - `reg.tool` reports the actual execution outcome fields listed above.
 
 ## Next steps

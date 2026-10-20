@@ -72,7 +72,7 @@ including the read-write curator store — not just the corpus path.
 - `hkask-mcp-corpus/src/services/prompt_builder.rs:356` —
   `SELECT entity_ref, vector, passage_text FROM embeddings`
 - `hkask-mcp-corpus/src/index.rs` — vector-length validation
-- `hkask-mcp-corpus/src/retrieval_tests.rs:102` — a test that `UPDATE`s the
+- `hkask-mcp-corpus/src/retrieval_tests.rs:102-106` — a test that `UPDATE`s the
   column (must be re-expressed against vec0)
 
 ### The admission contract

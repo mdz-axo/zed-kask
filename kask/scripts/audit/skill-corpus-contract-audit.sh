@@ -79,11 +79,15 @@ contract_fields() {
     ' "$1"
 }
 
-# The template body: everything after the first lone --- (the contract
-# terminator). Consumption checks run against this, so contract lines
-# never count as body usage.
+# Plain contracts end at ---. Raw server-rendered templates instead
+# comment the contract and end it at #}. Ignore comments before the
+# inference marker so the header itself never counts as body usage.
 body_after_contract() {
-    awk 'seen { print } /^---$/ { seen = 1 }' "$1"
+    awk '
+        seen { print; next }
+        /^\[inference\]$/ { inheader = 1; next }
+        inheader && (/^---$/ || /^[[:space:]]*#}[[:space:]]*$/) { seen = 1 }
+    ' "$1"
 }
 
 # Top-level keys of the body's output example: 2-space-indent quoted

@@ -15,7 +15,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::helpers::map_service_error;
-use crate::inference_svc::InferenceContext;
+
 use crate::{McpToolError, Parameters, execute_tool, tool, tool_router};
 
 /// Resolve the embedding model from HkaskSettings.
@@ -200,15 +200,13 @@ impl crate::CorpusServer {
             let gen_model = generation_model();
             let config = resolve_cognition_config(params.config_path.as_deref(), &params.author)?;
 
-            let inference_ctx =
-                InferenceContext::from_parts(Some(self.inference_router.clone()), &gen_model);
-
             let request = crate::compose::ComposeRequest {
                 prompt: params.prompt,
                 db_path: PathBuf::from(&params.db_path),
                 db_passphrase,
                 cognition: config,
-                inference_ctx,
+                inference: self.inference_router.clone(),
+                generation_model: gen_model,
                 no_validate: params.no_validate,
             };
 
@@ -306,15 +304,13 @@ impl crate::CorpusServer {
                 crate::compose::style_centroid_ref(&params.author, Some(&dimension));
             let centroid_entity_ref = config.embedding.centroid_entity_ref.clone();
 
-            let inference_ctx =
-                InferenceContext::from_parts(Some(self.inference_router.clone()), &gen_model);
-
             let request = crate::compose::ComposeRequest {
                 prompt,
                 db_path: PathBuf::from(&params.db_path),
                 db_passphrase,
                 cognition: config,
-                inference_ctx,
+                inference: self.inference_router.clone(),
+                generation_model: gen_model,
                 no_validate: false,
             };
 

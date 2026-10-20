@@ -73,6 +73,9 @@ impl InferencePort for IdentityPort {
 #[derive(Default)]
 struct RecordingPort {
     prompts: Mutex<Vec<String>>,
+    generation_models: Mutex<Vec<Option<String>>>,
+    embedding_requests: Mutex<Vec<(String, Option<u32>)>>,
+    generation_error: bool,
     inputs: Mutex<Vec<String>>,
     pause: Option<(tokio::sync::Notify, tokio::sync::Notify)>,
     short: bool,
@@ -103,6 +106,11 @@ impl InferencePort for RecordingPort {
                 .expect("corrupt centroid vector");
         }
         Box::pin(async move {
+            if self.generation_error {
+                return Err(InferenceError::Generation(
+                    "offline generation rejected".into(),
+                ));
+            }
             Ok(InferenceResult {
                 text: response,
                 model: "offline".into(),
@@ -118,6 +126,20 @@ impl InferencePort for RecordingPort {
                 cost_usd: None,
             })
         })
+    }
+
+    fn generate_with_model(
+        &self,
+        prompt: &str,
+        parameters: &LLMParameters,
+        model_override: Option<&str>,
+        tools: Option<&[ChatToolDefinition]>,
+    ) -> hkask_types::InferenceFuture<'_> {
+        self.generation_models
+            .lock()
+            .expect("generation models")
+            .push(model_override.map(str::to_owned));
+        self.generate(prompt, parameters, tools)
     }
 
     fn embed(&self, model: &str, texts: &[String]) -> hkask_types::EmbedFuture<'_> {
@@ -160,6 +182,10 @@ impl InferencePort for RecordingPort {
         texts: &[String],
         dimensions: Option<u32>,
     ) -> hkask_types::EmbedWithIdentityFuture<'a> {
+        self.embedding_requests
+            .lock()
+            .expect("embedding requests")
+            .push((model.to_owned(), dimensions));
         // Explicit width routing (not the trait default): corpus_embed and
         // corpus_query pass the store's width, and this stub embeds at the
         // same resolver (its wrong_dimension knob perturbs the response, not
@@ -487,6 +513,59 @@ async fn composition_filters_durable_passages_by_declared_method() {
     );
 }
 
+/// expect: "Compose uses the injected port for configured embedding and exact generation selection, and surfaces generation failures." [P3]
+#[tokio::test]
+async fn composition_routes_models_through_injected_port_and_surfaces_generation_error() {
+    let directory = fixture();
+    let database = directory.path().join("compose.db");
+    let _store = crate::helpers::open_memory_store(&database.to_string_lossy(), PASSPHRASE)
+        .expect("empty style database");
+    let selected_model = "offline/selected-non-default-generation";
+    for generation_error in [false, true] {
+        let port = Arc::new(RecordingPort {
+            generation_error,
+            ..Default::default()
+        });
+        let mut request = composition_request(&database, Arc::clone(&port), Value::Null);
+        request.cognition.embedding.model = "offline/selected-embedding".into();
+        request.cognition.jinja2_template = Some("{{ author }}: {{ prompt }}".into());
+        request.generation_model = selected_model.into();
+        let result = crate::compose::ComposeService::compose(request).await;
+        if generation_error {
+            let error = result.err().expect("generation failure must surface");
+            assert!(
+                error
+                    .to_string()
+                    .contains("Generation error: offline generation rejected"),
+                "{error}"
+            );
+        } else {
+            let composed = result.expect("compose through injected port");
+            assert_eq!(composed.generated_prose, SYNTHESIZED);
+            assert_eq!(composed.exemplar_count, 0);
+        }
+        assert_eq!(
+            *port.embedding_requests.lock().expect("embedding requests"),
+            vec![(
+                "offline/selected-embedding".into(),
+                Some(crate::embedding_dim() as u32)
+            )]
+        );
+        assert_eq!(
+            *port.inputs.lock().expect("inputs"),
+            vec!["Write about a river."]
+        );
+        assert_eq!(
+            *port.generation_models.lock().expect("generation models"),
+            vec![Some(selected_model.to_owned())]
+        );
+        assert_eq!(
+            *port.prompts.lock().expect("prompts"),
+            vec!["test: Write about a river."]
+        );
+    }
+}
+
 /// expect: "A stored style centroid makes corpus_compose's validation run
 /// for real — compose never silently runs unvalidated." [P3]
 #[tokio::test]
@@ -567,7 +646,8 @@ async fn centroid_tool_stores_style_centroid_and_unblocks_compose_validation() {
         db_path: database.clone(),
         db_passphrase: PASSPHRASE.into(),
         cognition: config,
-        inference_ctx: crate::inference_svc::InferenceContext::from_parts(Some(port), "offline"),
+        inference: port,
+        generation_model: "offline".into(),
         no_validate: false,
     })
     .await
@@ -828,7 +908,8 @@ fn composition_request(
         db_path: database.into(),
         db_passphrase: PASSPHRASE.into(),
         cognition: config,
-        inference_ctx: crate::inference_svc::InferenceContext::from_parts(Some(port), "offline"),
+        inference: port,
+        generation_model: "offline".into(),
         no_validate: true,
     }
 }
