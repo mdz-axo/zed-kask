@@ -12,7 +12,7 @@ mds_categories: [domain, lifecycle]
 
 `hkask-condenser` exposes synchronous compression domain logic. Public modules
 are `engine` and `types`; algorithms, ontology graph, and saliency remain
-crate-private (`kask/crates/hkask-condenser/src/hkask_condenser.rs:40-44`).
+crate-private (`kask/crates/hkask-condenser/src/hkask_condenser.rs:39-43`).
 
 ## Public types and methods
 

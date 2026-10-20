@@ -13,7 +13,7 @@ mds_categories: [trust, curation]
 `hkask-condenser` is a synchronous domain crate: it classifies tool output,
 selects one of three line-oriented algorithms, applies a profile budget and
 ontology-aware saliency, and returns a `CompressedOutput`. It has no MCP, HTTP,
-or async dependency (`kask/crates/hkask-condenser/src/hkask_condenser.rs:3-7,40-44`).
+or async dependency (`kask/crates/hkask-condenser/src/hkask_condenser.rs:3-7,39-43`).
 
 ## One engine, one integration path
 
