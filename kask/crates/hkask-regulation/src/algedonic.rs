@@ -219,12 +219,7 @@ impl RuntimeAlert {
     /// \[P4\] Constraining: Clear Boundaries — severity boundary check
     /// post: returns true iff severity == Critical
     pub fn is_critical(&self) -> bool {
-        let result = self.severity == AlertSeverity::Critical;
-        debug_assert!(
-            result == (self.severity == AlertSeverity::Critical),
-            "result must match critical severity"
-        );
-        result
+        self.severity == AlertSeverity::Critical
     }
 
     /// Check if alert is warning severity.
@@ -234,12 +229,7 @@ impl RuntimeAlert {
     /// \[P4\] Constraining: Clear Boundaries — mid-range boundary check
     /// post: returns true iff severity == Warning
     pub fn is_warning(&self) -> bool {
-        let result = self.severity == AlertSeverity::Warning;
-        debug_assert!(
-            result == (self.severity == AlertSeverity::Warning),
-            "result must match warning severity"
-        );
-        result
+        self.severity == AlertSeverity::Warning
     }
 }
 

@@ -73,19 +73,17 @@ gate scanning `kask/crates/` and `kask/mcp-servers/`).
 
 ## 3. Actual MCP tool outcome paths
 
-### 3.1 Child-server tracing: `reg.tool` with an outcome field
+### 3.1 Child-server response measurements
 
-Every server using the framework-level `execute_tool` wrapper creates a `ToolSpanGuard`, awaits the business future, and finishes the guard (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:162-180`). The guard emits one tracing event at target `reg.tool` with these fields:
+Every server using the framework-level `execute_tool` wrapper gets one shared success boundary (`kask/crates/hkask-mcp-server/src/server/tool_execution.rs:77-149`). It:
 
-- `tool`
-- `outcome`: `ok`, `error`, or `dropped`
-- `duration_ms`
-- `error_kind`
-- `caller`
+- records elapsed `duration_ms`;
+- aggregates inference `usage` inside a per-call task-local scope;
+- applies the server's optional response annotation;
+- returns the canonical `content` envelope;
+- propagates `McpToolError` unchanged on failure.
 
-The exact emission is `tracing::info!(target: "reg.tool", ..., "REG")` (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:92-118`). It does not call an ontology-tagging wrapper and does not emit a separate invocation subpath.
-
-This child-process trace goes to stderr. It is an observability signal, not the Regulation loop's durable outcome input; the framework documents that separation at `kask/crates/hkask-mcp-server/src/server/tool_span.rs:123-139`.
+The wrapper emits no child-side outcome event. This removes a formerly duplicated `reg.tool` stderr trace that the host did not ingest. Durable reliability and variety evidence remains on the two host dispatch paths below.
 
 ### 3.2 Governed runtime dispatch: `reg.mcp` path with `ToolCompleted`
 
@@ -97,7 +95,7 @@ The same dispatch then records the result in `CyberneticsLoop::record_outcome` a
 
 Agent-initiated context-server tools do not pass through `McpRuntime::invoke`. `ContextServerTool::run` therefore wraps `run_inner`, classifies the result, and calls `agent::record_mcp_tool_outcome(server, tool, success, error_kind)` (`crates/agent/src/tools/context_server_registry.rs:927-955`).
 
-The composition root installs the recorder. Its closure logs a trace at `reg.tool.agent`, then asynchronously forwards the outcome and tool-name variety state into the shared Regulation ledger (`crates/zed/src/main.rs:930-953`). This makes agent-path and governed-runtime calls converge on the same per-server reliability domain without pretending that the child stderr trace is the durable input.
+The composition root installs the recorder. Its closure logs a trace at `reg.tool.agent`, then asynchronously forwards the outcome and tool-name variety state into the shared Regulation ledger (`crates/zed/src/main.rs:930-953`). This makes agent-path and governed-runtime calls converge on the same per-server reliability domain without relying on a child-process trace.
 
 ## 4. Other live span families
 

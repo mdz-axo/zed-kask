@@ -19,11 +19,28 @@ fn join_with_ellipsis(lines: &[&str], indices: &[usize]) -> String {
     result.trim_end().to_string()
 }
 
+/// Inputs shorter than this are passed through uncompressed.
+///
+/// Terminal output arrives fenced (` ```\n<payload>\n``` `), so even a
+/// one-line command is three lines. At the `normal` profile the line budget
+/// for such an input rounds to a single line, and the head/tail split then
+/// elides the payload in favour of an ellipsis — the agent reads `...` where
+/// the command's output should be. An output this short is already minimal:
+/// compressing it saves no meaningful tokens while risking the loss of
+/// everything the tool reported.
+const MIN_COMPRESSIBLE_LINES: usize = 8;
+
 /// Compute the line budget for compression given the input size and profile.
 ///
 /// Returns `(budget, is_passthrough)` — if `is_passthrough`, the algorithm
 /// should return the input unchanged.
 pub(crate) fn compute_budget(lines: usize, profile: Profile) -> (usize, bool) {
+    if lines < MIN_COMPRESSIBLE_LINES {
+        // Report the input's own line count as the budget so the caller's
+        // invariants (`budget <= lines`, `passthrough == budget >= lines`)
+        // hold without a special case.
+        return (lines, true);
+    }
     let max_lines = profile.max_lines().unwrap_or(usize::MAX);
     let target_lines = ((lines as f64) * profile.retention_pct()).max(1.0).round() as usize;
     let budget = target_lines.min(max_lines).min(lines);
@@ -104,7 +121,12 @@ impl CondenserAlgorithm for RtkStyleAlgorithm {
         // tail (summary/conclusion often carries the key measured values)
         let density_factor = ontology_anchor.map(|a| a.density_factor()).unwrap_or(1.0);
         let head_ratio = (0.3 / density_factor).clamp(0.15, 0.5);
-        let head_count = (budget as f64 * head_ratio) as usize;
+        // Retain at least one head line. `(budget as f64 * head_ratio) as usize`
+        // truncates to zero for any budget below 1/head_ratio (≈4 at the 0.3
+        // nominal ratio, ≈7 at the 0.15 clamp floor), and a zero head replaces
+        // the beginning of the output with an ellipsis — the whole payload is
+        // dropped whenever the budget is small relative to the line count.
+        let head_count = ((budget as f64 * head_ratio) as usize).max(1).min(budget);
         let tail_count = budget.saturating_sub(head_count);
 
         let mut filtered: Vec<&str> = Vec::new();
@@ -112,8 +134,11 @@ impl CondenserAlgorithm for RtkStyleAlgorithm {
             filtered.push(*line);
         }
 
+        // Emit the separator only when tail lines actually follow it — a
+        // zero-line tail would otherwise leave a trailing, meaningless
+        // ellipsis after the head.
         let tail_start = lines.len().saturating_sub(tail_count);
-        if tail_start > head_count {
+        if tail_start > head_count && tail_start < lines.len() {
             filtered.push("...");
             for line in lines.iter().skip(tail_start) {
                 filtered.push(*line);
@@ -555,11 +580,21 @@ mod tests {
         assert_eq!(budget, 30);
     }
 
-    // Note: retention_pct is applied first, then capped. 5 lines * 20% = 1, so budget = 1.
+    // Note: retention_pct is applied first, then capped. Below the
+    // compressible floor the input passes through with its own line count.
     #[test]
     fn compute_budget_never_exceeds_input() {
-        let (budget, _) = compute_budget(5, Profile::Normal);
-        assert_eq!(budget, 1);
+        let (budget, passthrough) = compute_budget(5, Profile::Normal);
+        assert_eq!(budget, 5);
+        assert!(passthrough, "below the floor the input is not compressed");
+    }
+
+    // Above the floor, the retention budget applies as before.
+    #[test]
+    fn compute_budget_applies_retention_above_the_floor() {
+        let (budget, passthrough) = compute_budget(20, Profile::Normal);
+        assert_eq!(budget, 4);
+        assert!(!passthrough);
     }
 
     #[test]
@@ -660,6 +695,59 @@ mod tests {
             algo.compress(input, Profile::Light, ContextCategory::ShellCommand, None);
         assert_eq!(result, input);
         assert!(health.is_empty());
+    }
+
+    // Regression: a short terminal result must reach the agent intact.
+    //
+    // Terminal output arrives fenced, so a one-line command is three lines
+    // (` ``` `, payload, ` ``` `). At the `normal` profile this once produced a
+    // one-line budget whose head/tail split elided the payload, so the agent
+    // read a bare `...` instead of the command's output. Observed live: every
+    // short command (`echo`, `ls`, `git status`) returned `...` to the agent.
+    #[test]
+    fn rtk_style_preserves_short_fenced_terminal_output() {
+        let input = "```\nhello\n```";
+        let algo = RtkStyleAlgorithm;
+        for profile in [
+            Profile::Heavy,
+            Profile::Normal,
+            Profile::Soft,
+            Profile::Light,
+        ] {
+            let (result, _) = algo.compress(input, profile, ContextCategory::ShellCommand, None);
+            assert_eq!(
+                result, input,
+                "{profile:?}: short terminal output must pass through verbatim"
+            );
+            assert!(
+                result.contains("hello"),
+                "{profile:?}: payload lost — agent would read only the ellipsis"
+            );
+        }
+    }
+
+    // Regression: a small budget must never elide the whole head.
+    //
+    // `(budget as f64 * head_ratio) as usize` truncates to 0 for any budget
+    // below 1/head_ratio, and a zero head replaces the beginning of the output
+    // with an ellipsis. Above the passthrough floor the head must still carry
+    // at least one real line.
+    #[test]
+    fn rtk_style_small_budget_keeps_a_head_line() {
+        let input = (0..8)
+            .map(|i| format!("line{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let algo = RtkStyleAlgorithm;
+        let (result, _) =
+            algo.compress(&input, Profile::Heavy, ContextCategory::ShellCommand, None);
+        let first = result.lines().next().unwrap_or_default();
+        assert_ne!(first, "...", "head was elided entirely: {result}");
+        assert_eq!(first, "line0", "head line not preserved: {result}");
+        assert!(
+            !result.starts_with("..."),
+            "output opens with an ellipsis: {result}"
+        );
     }
 
     #[test]

@@ -732,7 +732,7 @@ Skill execution is bounded by the **per-agent call cap** (System A): every gover
 
 Tool-call bounding is the per-agent `CallCap`.
 
-Tool use is observable after dispatch through two concrete records: server-side execution emits one `reg.tool` tracing event with `tool`, `outcome`, `duration_ms`, `error_kind`, and `caller` (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:111-119`); governed client dispatch persists `SpanKind::ToolCompleted` after the invocation returns (`kask/crates/hkask-mcp/src/runtime.rs:1598-1612`). There is no separate pre-invocation `reg.tool.invoked` event.
+Tool use is observable after dispatch through the authoritative host paths: governed client dispatch persists `SpanKind::ToolCompleted` after the invocation returns (`kask/crates/hkask-mcp/src/runtime.rs:1598-1612`), and agent context-server dispatch forwards outcomes through `record_mcp_tool_outcome`. Successful server responses carry `duration_ms` and aggregate inference `usage` in-band (`kask/crates/hkask-mcp-server/src/server/tool_execution.rs:77-149`). The child wrapper emits no duplicate `reg.tool` stderr event.
 
 ### Error Handling
 
@@ -850,12 +850,13 @@ its tools, so each server should pin `combined_router().list_all()` against its
 intended surface (corpus example: `hkask_mcp_corpus.rs:269-279`).
 
 Every tool boundary returns a typed MCP result and wraps its future with
-`execute_tool(self, "tool_name", ...)`. `ToolSpanGuard` then emits one child
-tracing event at target `reg.tool`, including outcome and duration
-(`kask/crates/hkask-mcp-server/src/server/tool_span.rs:10-27,92-119,163-170`).
-That stderr event is observability only; the editor-side managed runtime records
-completed governed calls separately through the injected Regulation sink
-(`kask/crates/hkask-mcp/src/runtime.rs:1598-1612`).
+`execute_tool(self, "tool_name", ...)`. The shared boundary isolates per-call
+inference usage, applies optional ontology annotation, and returns successful
+`content` with `duration_ms` and `usage` while preserving typed errors
+(`kask/crates/hkask-mcp-server/src/server/tool_execution.rs:77-149`). The
+editor-side managed runtime records completed governed calls through the
+injected Regulation sink (`kask/crates/hkask-mcp/src/runtime.rs:1598-1612`); the
+child wrapper does not duplicate that outcome on stderr.
 
 ### Bootstrap and child binary
 

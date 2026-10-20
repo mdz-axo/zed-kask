@@ -1,8 +1,8 @@
 ---
 title: "hkask-mcp-server — Reference: API Surface"
 audience: [developers building or extending hKask MCP servers]
-last_updated: 2026-09-28
-version: "2.2.0"
+last_updated: 2026-10-19
+version: "3.0.0"
 status: "Active"
 domain: "MCP"
 mds_categories: [trust, curation]
@@ -22,8 +22,6 @@ classDiagram
         +run_server()
         +execute_tool()
         +mcp_server!()
-        +impl_tool_context!()
-        +validate_field!()
     }
     class server_context {
         +credentials: HashMap
@@ -33,30 +31,29 @@ classDiagram
     class tool_execution {
         +ToolContext
         +execute_tool()
+        +record_tool_usage()
     }
     class tool_error {
         +kind: McpErrorKind
         +message: String
         +to_json_string()
     }
-    class reg_tool_event {
-        +tool
-        +outcome
+    class tool_result_envelope {
+        +content
         +duration_ms
-        +error_kind
-        +caller
+        +usage
     }
 
     crate_root --> server_context
     crate_root --> tool_execution
     tool_execution --> tool_error
-    tool_execution --> reg_tool_event
+    tool_execution --> tool_result_envelope
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MCPSRV-020
-verified_date: 2026-09-28
-verified_against: kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:10-39,41-165; kask/crates/hkask-mcp-server/src/server.rs:22-49; kask/crates/hkask-mcp-server/src/server/tool_span.rs:108-170; kask/crates/hkask-mcp-server/src/server/error.rs:44-155
+verified_date: 2026-10-19
+verified_against: kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:1-28,364-464; kask/crates/hkask-mcp-server/src/server.rs:22-50; kask/crates/hkask-mcp-server/src/server/tool_execution.rs:1-149; kask/crates/hkask-mcp-server/src/server/error.rs:44-203
 status: VERIFIED
 -->
 
@@ -68,7 +65,7 @@ Defined at `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:19-35`.
 |---|---|
 | `CapabilityTier`, `CredentialRequirement`, `ServerContext` | `kask/crates/hkask-mcp-server/src/server/context.rs:9-163` |
 | `McpError` | `kask/crates/hkask-mcp-server/src/server/error.rs:11-42` |
-| `ToolContext`, `execute_tool` | `kask/crates/hkask-mcp-server/src/server/tool_span.rs:123-170` |
+| `ToolContext`, `execute_tool` | `kask/crates/hkask-mcp-server/src/server/tool_execution.rs:97-149` |
 | `parse_env_warn`, `resolve_credential`, `resolve_db_passphrase` | `kask/crates/hkask-mcp-server/src/server/credentials.rs:8-144` |
 | `run_stdio_server` | `kask/crates/hkask-mcp-server/src/server/transport.rs:9-130` |
 | `validate_identifier`, `validate_path` | `kask/crates/hkask-mcp-server/src/server/validation.rs:5-69` |
@@ -108,17 +105,9 @@ pub async fn run_server<S, F>(
 
 Delegates to `run_stdio_server`; generic bounds require an rmcp server service and a one-shot `ServerContext` factory (`kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:41-54`).
 
-### `validate_field!`
-
-Expands to `validate_identifier`; on error it returns `Err($span.error(e))` (`kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:56-76`). It is intended only where the caller owns a compatible span/guard expression.
-
-### `impl_tool_context!`
-
-Implements `ToolContext` for a type containing `webid: WebID` (`kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:78-96`).
-
 ### `mcp_server!`
 
-Generates a WebID-bearing server struct, constructor, and `ToolContext` implementation. The custom-field expansion is at `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:115-145`; the fieldless expansion is at `:147-165`.
+Generates a WebID-bearing server struct, constructor, and `ToolContext` implementation. With an annotate path, the generated implementation overrides `annotate_response`; without one, it uses the identity default. There is no separate context-implementation macro or compatibility layer (`kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:364-464`).
 
 ## Server construction types
 
@@ -174,11 +163,13 @@ Definition: `kask/crates/hkask-mcp-server/src/server/context.rs:126-132`.
 
 ```rust
 pub trait ToolContext {
-    fn webid(&self) -> &hkask_types::WebID;
+    fn annotate_response(&self, tool_name: &str, body: Value) -> Value {
+        body
+    }
 }
 ```
 
-Definition: `kask/crates/hkask-mcp-server/src/server/tool_span.rs:123-143`.
+Definition: `kask/crates/hkask-mcp-server/src/server/tool_execution.rs:93-102`. The default is an identity transform; ontology-enabled servers override it through `mcp_server!`.
 
 ### `execute_tool`
 
@@ -190,23 +181,9 @@ pub async fn execute_tool<C: ToolContext>(
 ) -> Result<String, McpToolError>
 ```
 
-Creates a private `ToolSpanGuard`, awaits the future, and finishes the guard with the typed result (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:145-170`).
+Records the start time, scopes inference-usage collection to this call, awaits the business future, and applies the server annotation only to success (`kask/crates/hkask-mcp-server/src/server/tool_execution.rs:104-149`).
 
-Success is a JSON string containing the MCP `{"content": value}` envelope (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:62-74`). Failure remains `Err(McpToolError)`.
-
-### `reg.tool` event
-
-`emit_tool_span` emits an info event at target `reg.tool`, message `REG` (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:108-119`).
-
-| Field | Type/values |
-|---|---|
-| `tool` | string |
-| `outcome` | `ok`, `error`, `dropped` |
-| `duration_ms` | `u64` |
-| `error_kind` | `McpErrorKind` display string or empty string |
-| `caller` | WebID display string or empty string |
-
-`ok` and `error` emission paths are at `kask/crates/hkask-mcp-server/src/server/tool_span.rs:32-60`; the `dropped` path is at `:92-106`. The child event is stderr observability, while production outcome recording occurs in client dispatch paths (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:123-139`).
+Success is a JSON string containing `content`, numeric `duration_ms`, and either aggregate `usage` or explicit `null`. Failure remains the original `Err(McpToolError)` so rmcp carries native error semantics. The framework emits no duplicate child-side outcome event; governed and agent-path dispatch record outcomes at the host boundary.
 
 ## Error types
 

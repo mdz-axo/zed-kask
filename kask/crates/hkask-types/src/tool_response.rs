@@ -1,6 +1,6 @@
 //! MCP tool-response envelope unwrapping — the single seam for the
 //! `{"content": <value>}` envelope produced by `execute_tool`
-//! (`hkask-mcp-server`) and serialized by `ToolSpanGuard::ok_json`.
+//! (`hkask-mcp-server`) and serialized by `execute_tool`.
 //!
 //! Extracted so every consumer — the zed panel's `invoke_tool` path, corpus
 //! tool responses, and MCP server test helpers — unwraps the envelope the
@@ -181,7 +181,7 @@ pub fn is_not_tool_fault_kind(kind: &str) -> bool {
 }
 
 /// Extract fenced media-block display hints from a tool output text (the
-/// `{"content": ...}` envelope serialized by `ToolSpanGuard::ok_json`).
+/// `{"content": ...}` envelope serialized by `execute_tool`).
 /// `display_hint` is a single fenced ```media block; `display_hints` is an
 /// array (gallery_search, generate_image). Returns an empty vec for
 /// non-JSON or hint-free outputs — ordinary tool results carry nothing.

@@ -89,7 +89,7 @@ impl EchoServer {
 
 `validate_identifier` rejects empty, overlong, or disallowed identifier text with `McpToolError::invalid_argument` (`kask/crates/hkask-mcp-server/src/server/validation.rs:5-34`). For free-form text, use validation appropriate to that content rather than this identifier-specific helper.
 
-`execute_tool` creates a private `ToolSpanGuard`, awaits the business future, and returns `Result<String, McpToolError>` (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:145-170`). On success, the string contains `{"content": <value>}` (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:62-74`). On failure, the original typed error is returned so rmcp marks the response as an error and places `{"error", "kind"}` in `structured_content` (`kask/crates/hkask-mcp-server/src/server/error.rs:130-155`).
+`execute_tool` scopes inference usage to one call, applies any server-specific response annotation, and returns `Result<String, McpToolError>` (`kask/crates/hkask-mcp-server/src/server/tool_execution.rs:104-149`). On success, the string contains `content`, numeric `duration_ms`, and aggregate `usage`. On failure, the original typed error is returned so rmcp marks the response as an error and places `{"error", "kind"}` in `structured_content` (`kask/crates/hkask-mcp-server/src/server/error.rs:178-203`).
 
 ## Step 4: Start the server
 

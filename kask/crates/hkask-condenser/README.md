@@ -16,12 +16,17 @@ no HTTP, no async.
 
 ## Compression Profiles
 
-| Profile | Retention | Max Lines | Action Threshold | Use Case |
-|---------|-----------|-----------|-----------------|----------|
-| `heavy` | 10% | 30 | 0.10 | Aggressive compression — minimal representation |
-| `normal` | 20% | 80 | 0.25 | Default — balanced |
-| `soft` | 60% | 200 | 0.50 | Moderate — preserves more context |
-| `light` | 95% | — | 0.90 | Minimal compression — user sovereignty |
+| Profile | Retention | Max Lines | Use Case |
+|---------|-----------|-----------|----------|
+| `heavy` | 10% | 30 | Aggressive compression — minimal representation |
+| `normal` | 20% | 80 | Default — balanced |
+| `soft` | 60% | 200 | Moderate — preserves more context |
+| `light` | 95% | — | Minimal compression — user sovereignty |
+
+Inputs shorter than `MIN_COMPRESSIBLE_LINES` (8 lines) pass through
+uncompressed at every profile. Terminal output arrives fenced, so a one-line
+command is three lines; compressing that far saved no meaningful tokens while
+eliding the payload entirely (`algorithms.rs::compute_budget`).
 
 ## Algorithms
 
@@ -29,6 +34,8 @@ no HTTP, no async.
 Head/tail ellipsis truncation. Keeps the first N% and last M% of lines with
 a `...` separator. Default for ShellCommand, TestOutput, BuildOutput.
 Uses ontology density factor to adjust head/tail ratio (denser anchors get more tail).
+The head always retains at least one real line: a budget too small to yield a
+non-zero head would otherwise replace the whole beginning with an ellipsis.
 
 ### word_rank
 TF-IDF bag-of-words compression with structural bonus and ontology anchoring.

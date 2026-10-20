@@ -204,7 +204,7 @@ Skill outcomes and operator feedback both have live writers. `SkillTool::run` re
 
 | Event surface | Actual emission | Regulation consumption |
 |---|---|---|
-| MCP tool body | `ToolSpanGuard` emits tracing target `reg.tool` with `tool`, `outcome`, `duration_ms`, `error_kind`, and caller (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:10-27,92-119`) | None directly: child stderr is observability and is not ingested by the Regulation loop (`tool_span.rs:128-131`) |
+| MCP tool body | `execute_tool` scopes inference usage, stamps optional ontology metadata, and returns a success envelope with `duration_ms` and `usage`; typed failures remain native errors (`kask/crates/hkask-mcp-server/src/server/tool_execution.rs:104-149`) | None directly: the child wrapper emits no duplicate outcome record |
 | Governed MCP dispatch | `McpRuntime::invoke` charges the per-agent call cap and emits cap diagnostics at `reg.mcp.cap` (`kask/crates/hkask-mcp/src/runtime.rs:1545-1590`) | It persists one `RegulationRecord` with `SpanKind::ToolCompleted`; `reg.mcp` is the warning target if persistence fails (`runtime.rs:1598-1612`) |
 | Agent-path MCP outcome | Process-global recorder forwards server/tool success and error kind into the shared ledger (`crates/zed/src/main.rs:943-971`) | `ToolReliabilitySensor` reads the ledger outcome breakdown |
 | Skill activation | Process-global skill outcome recorder writes `reg.skill.<id>.outcome` payloads (`crates/zed/src/main.rs:976-1015, 1692`) | Metacognition senses per-skill activation reliability |

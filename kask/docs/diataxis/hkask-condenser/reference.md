@@ -73,6 +73,9 @@ status: VERIFIED
 | `Soft` | 0.60 | 200 | `kask/crates/hkask-condenser/src/types.rs:39-55` |
 | `Light` | 0.95 | none | `kask/crates/hkask-condenser/src/types.rs:39-55` |
 
+Inputs below `MIN_COMPRESSIBLE_LINES` (8 lines) pass through uncompressed at
+every profile (`kask/crates/hkask-condenser/src/algorithms.rs`).
+
 ## Algorithm routes
 
 | Algorithm | Default categories | Evidence |
@@ -152,6 +155,10 @@ Set `kask.condenser.profile` to one of the four values parsed by `Profile`
 | `soft` | 60% | 200 |
 | `light` | 95% | none |
 
+Inputs below `MIN_COMPRESSIBLE_LINES` (8 lines) pass through uncompressed at
+every profile — a fenced one-line terminal result is three lines and must
+reach the agent intact (`kask/crates/hkask-condenser/src/algorithms.rs`).
+
 The bridge defaults to `normal`; incoming-result compression defaults off
 (`kask/crates/kask_bridge/src/settings.rs:301-327`). The composition root
 installs the condenser even when that flag is false so enabling it later needs
@@ -176,7 +183,9 @@ The mappings are declared at
 
 With `auto_compress_tool_results = false`, verify
 `compress_tool_result(tool, output)` returns the original. Enable it and verify
-the result is no larger than the source. The gate and dispatch are at
+the result is no larger than the source. Short inputs (below
+`MIN_COMPRESSIBLE_LINES`) must return the original at every profile. The gate
+and dispatch are at
 `kask/crates/kask_bridge/src/condenser_bridge.rs:42-73`; focused tests are at
 `kask/crates/kask_bridge/src/condenser_bridge.rs:75-126`.
 

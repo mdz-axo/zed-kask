@@ -65,7 +65,11 @@ selection is static rather than learned.
 Profiles set retention and maximum-line budgets: heavy 10%/30, normal 20%/80,
 soft 60%/200, and light 95%/unbounded
 (`kask/crates/hkask-condenser/src/types.rs:27-78`). These are line budgets, not
-a guarantee that a provider token limit will be met.
+a guarantee that a provider token limit will be met. Inputs below
+`MIN_COMPRESSIBLE_LINES` (8 lines) pass through uncompressed at every profile:
+terminal output arrives fenced, so a one-line command is three lines, and a
+retention budget that small elides the payload entirely
+(`kask/crates/hkask-condenser/src/algorithms.rs`).
 
 ## Native compaction remains native
 
@@ -96,6 +100,10 @@ The call site bypasses line elision for source code, searches, listings,
 diagnostics, references, code actions, and edits. The exact list is
 `NO_COMPRESS_TOOLS` (`crates/agent/src/thread.rs:160-185`). Terminal output is
 intentionally eligible because build and test logs are a primary condenser use.
+The short-input floor (`MIN_COMPRESSIBLE_LINES`) is the complement of that
+decision: eligible output is compressed only when there is enough of it to
+tolerate line selection, so a brief command result is never reduced to an
+ellipsis.
 
 ## Further reading
 

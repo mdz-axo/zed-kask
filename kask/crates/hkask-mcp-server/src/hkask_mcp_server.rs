@@ -5,7 +5,7 @@
 //! Provides the lightweight layer that all hKask MCP servers depend on:
 //! - Server scaffolding (McpToolError, ServerContext, CredentialRequirement, run_stdio_server)
 //! - URL validation, identifier validation, HTTP helpers
-//! - Macros: validate_field!, impl_tool_context!, mcp_server!
+//! - Macros for tool-surface pins, ontology annotation, and server construction
 
 pub(crate) mod security;
 pub mod server;
@@ -44,77 +44,6 @@ where
     F: FnOnce(ServerContext) -> Result<S, McpError>,
 {
     run_stdio_server(name, version, factory, credentials).await
-}
-
-/// Macro to validate an identifier field and return early on error.
-///
-/// Eliminates the repeated 3-line pattern:
-/// ```ignore
-/// if let Err(e) = validate_identifier("field", &value, 256) {
-///     return Err(span.error(e));
-/// }
-/// ```
-///
-/// Usage (inside a tool returning `Result<String, McpToolError>`):
-/// ```ignore
-/// validate_field!(span, "session_id", &session_id, 256);
-/// ```
-#[macro_export]
-macro_rules! validate_field {
-    ($span:expr, $name:expr, $value:expr, $max_len:expr) => {
-        if let Err(e) = $crate::validate_identifier($name, $value, $max_len) {
-            return Err($span.error(e));
-        }
-    };
-}
-
-/// Generate a `ToolContext` impl for an MCP server struct.
-///
-/// Assumes the struct has a `webid: WebID` field — the standard pattern
-/// for all hKask MCP servers. The default impl carries no ontology
-/// stamp; a server with a dual-axis mapping (P5.4, operator ruling B.2
-/// 2026-10-18) passes its annotate function's PATH to override the
-/// default identity `annotate_response` — a path, never an expression,
-/// because macro hygiene hides the fn parameters from caller-site tokens
-/// while a path resolves at the expansion site.
-///
-/// Usage:
-/// ```ignore
-/// impl_tool_context!(CommunicationServer);
-/// impl_tool_context!(SwarmServer, crate::ontology::annotate);
-/// ```
-#[macro_export]
-macro_rules! impl_tool_context {
-    // Default: no ontology stamp — the response body passes through
-    // unchanged (servers without a mapping are untouched by P5.4).
-    ($type:ty) => {
-        impl $crate::server::ToolContext for $type {
-            fn webid(&self) -> &hkask_types::WebID {
-                &self.webid
-            }
-        }
-    };
-    // With an annotate override: the server-local dual-axis mapping
-    // stamps every response at the single point every tool already
-    // routes through (execute_tool), instead of a per-site wrap at each
-    // tool's return. The stamp is a function path — the macro calls it
-    // with the fn parameters (tool_name, body) at the expansion site,
-    // where hygiene keeps them visible to this expansion's own tokens.
-    ($type:ty, $annotate:path) => {
-        impl $crate::server::ToolContext for $type {
-            fn webid(&self) -> &hkask_types::WebID {
-                &self.webid
-            }
-
-            fn annotate_response(
-                &self,
-                tool_name: &str,
-                body: serde_json::Value,
-            ) -> serde_json::Value {
-                $annotate(tool_name, body)
-            }
-        }
-    };
 }
 
 /// Pin a server's registered tool surface with one macro call: the exact
@@ -216,7 +145,7 @@ macro_rules! tool_surface_pin {
 /// chunk from this file) and returning `bool` — e.g. a closure-like
 /// helper or a plain `fn(&str) -> bool` defined in the invoking
 /// module. A path, never an expression — the same macro-hygiene rule
-/// as the annotate override (`impl_tool_context!`'s `$annotate:path`).
+/// as `mcp_server!`'s annotate override.
 ///
 /// `$pko_ty` and `$dc_ty` are the concept types (`PkoConcept`,
 /// `DcConcept` — both `&'static str` aliases from
@@ -420,8 +349,7 @@ macro_rules! dual_axis_annotate {
 /// Define an MCP server struct with standard fields + constructor.
 ///
 /// Generates the struct with a mandatory `webid` field plus any
-/// domain-specific fields, a `new()` constructor, and a `ToolContext` impl
-/// via `impl_tool_context!`.
+/// domain-specific fields, a `new()` constructor, and a `ToolContext` impl.
 ///
 /// # Example
 /// ```ignore
@@ -446,7 +374,7 @@ macro_rules! mcp_server {
     ) => {
         $(#[$meta])*
         $vis struct $name {
-            /// Agent identity for capability tokens and ownership.
+            /// Process identity for ownership and server-domain operations.
             pub webid: hkask_types::WebID,
             $(
                 $(#[$field_meta])*
@@ -463,7 +391,7 @@ macro_rules! mcp_server {
             }
         }
 
-        $crate::impl_tool_context!($name);
+        impl $crate::server::ToolContext for $name {}
     };
 
     // Variant with custom fields AND a dual-axis annotate override
@@ -479,7 +407,7 @@ macro_rules! mcp_server {
     ) => {
         $(#[$meta])*
         $vis struct $name {
-            /// Agent identity for capability tokens and ownership.
+            /// Process identity for ownership and server-domain operations.
             pub webid: hkask_types::WebID,
             $(
                 $(#[$field_meta])*
@@ -496,7 +424,15 @@ macro_rules! mcp_server {
             }
         }
 
-        $crate::impl_tool_context!($name, $annotate);
+        impl $crate::server::ToolContext for $name {
+            fn annotate_response(
+                &self,
+                tool_name: &str,
+                body: serde_json::Value,
+            ) -> serde_json::Value {
+                $annotate(tool_name, body)
+            }
+        }
     };
 
     // Variant with no custom fields AND an annotate override (P5.4).
@@ -506,7 +442,7 @@ macro_rules! mcp_server {
     ) => {
         $(#[$meta])*
         $vis struct $name {
-            /// Agent identity for capability tokens and ownership.
+            /// Process identity for ownership and server-domain operations.
             pub webid: hkask_types::WebID,
         }
 
@@ -516,6 +452,14 @@ macro_rules! mcp_server {
             }
         }
 
-        $crate::impl_tool_context!($name, $annotate);
+        impl $crate::server::ToolContext for $name {
+            fn annotate_response(
+                &self,
+                tool_name: &str,
+                body: serde_json::Value,
+            ) -> serde_json::Value {
+                $annotate(tool_name, body)
+            }
+        }
     };
 }

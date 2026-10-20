@@ -1,8 +1,8 @@
 ---
 title: "hkask-mcp-server — Explanation: Why the Framework Is Narrow"
 audience: [developers who want the design rationale, not just the API]
-last_updated: 2026-09-28
-version: "2.1.0"
+last_updated: 2026-10-19
+version: "3.0.0"
 status: "Active"
 domain: "MCP"
 mds_categories: [trust, curation]
@@ -56,45 +56,21 @@ Persistence detection uses the shared database passphrase, not a database-path v
 
 ## Why `mcp_server!` is a macro
 
-Every server needs a WebID field, a constructor, and `ToolContext::webid`. `mcp_server!` emits those pieces together, while `impl_tool_context!` remains available for an existing struct (`kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:78-96`, `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:98-165`). A `macro_rules!` expansion avoids a proc-macro crate and makes the generated shape uniform.
+Every server needs a WebID field, a constructor, and a `ToolContext` implementation. `mcp_server!` emits those pieces together, including the optional response-annotation override, so there is no second public macro whose only purpose is to generate one trait impl (`kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:350-468`). A `macro_rules!` expansion avoids a proc-macro crate and makes the generated shape uniform.
 
 The macro does not register tools or a server globally. Tool discovery remains rmcp's responsibility, and the canonical built-in server registry remains in `kask_bridge` (`kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:13-17`).
 
 ## Why `execute_tool` preserves typed errors
 
-`execute_tool` accepts business logic returning `Result<Value, McpToolError>` and itself returns `Result<String, McpToolError>` (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:145-170`). Successful values are serialized as `{"content": value}` (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:62-74`). Errors remain `Err`, so rmcp sets `is_error: true`, emits the human message as text, and puts `{"error", "kind"}` in structured content (`kask/crates/hkask-mcp-server/src/server/error.rs:130-155`).
+`execute_tool` accepts business logic returning `Result<Value, McpToolError>` and itself returns `Result<String, McpToolError>` (`kask/crates/hkask-mcp-server/src/server/tool_execution.rs:104-149`). Successful values are serialized with `content`, `duration_ms`, and aggregate inference `usage`; errors remain `Err`, so rmcp sets `is_error: true`, emits the human message as text, and puts `{"error", "kind"}` in structured content (`kask/crates/hkask-mcp-server/src/server/error.rs:178-203`).
 
 This avoids in-band error sniffing. A client can use protocol error state and the `McpErrorKind` value rather than parse prose. The Model Context Protocol explicitly distinguishes error tool results from successful content.[^mcp]
 
-## Why `ToolSpanGuard` uses RAII
+## Why tool execution has one measured boundary
 
-The private guard records start time and caller identity. `ok` and `error` mark it emitted; `Drop` emits `dropped` when neither completion method ran (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:9-30`, `kask/crates/hkask-mcp-server/src/server/tool_span.rs:32-60`, `kask/crates/hkask-mcp-server/src/server/tool_span.rs:92-106`). RAII ensures abnormal control flow still leaves an observability signal, following Rust's scope-bound cleanup model.[^drop]
+`execute_tool` owns the work that every successful tool response needs: start-time capture, per-call inference-usage collection, optional server response annotation, and canonical envelope serialization (`kask/crates/hkask-mcp-server/src/server/tool_execution.rs:77-149`). The task-local accumulator is scoped to one invocation, so interleaved calls cannot mix usage. Typed errors bypass success annotation and framing unchanged.
 
-```mermaid
-stateDiagram-v2
-    [*] --> Created: ToolSpanGuard::new
-    Created --> Ok: finish(Ok(value))
-    Created --> Error: finish(Err(error))
-    Created --> Dropped: Drop before finish
-    Ok --> [*]: outcome=ok
-    Error --> [*]: outcome=error, error_kind set
-    Dropped --> [*]: outcome=dropped
-```
-
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-MCPSRV-031
-verified_date: 2026-09-28
-verified_against: kask/crates/hkask-mcp-server/src/server/tool_span.rs:9-119,145-170
-status: VERIFIED
--->
-
-The emitted `reg.tool` event has exactly five structured fields: `tool`, `outcome`, `duration_ms`, `error_kind`, and `caller` (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:108-119`).
-
-## Why child telemetry and production recording are separate
-
-The `reg.tool` event is written to child stderr for observability. The framework states that zed's context-server client does not feed that event into the Regulation loop; production outcomes are recorded at client-side dispatch by `McpRuntime::invoke` and `ContextServerTool::run` (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:123-139`).
-
-That separation gives each side the information it actually owns. The server knows duration, typed local failure, and caller identity. The client knows whether dispatch was admitted and how the invocation participates in the host's regulation cycle.
+The framework deliberately does not emit a second child-process outcome event. The previous RAII guard wrote `reg.tool` records only to child stderr, which the host logged at debug level and did not ingest into Regulation. Removing it leaves one authoritative feedback path: governed dispatch records `SpanKind::ToolCompleted`, while agent context-server dispatch forwards outcomes through `record_mcp_tool_outcome`. Duration and inference usage remain inspectable in successful result envelopes.
 
 ## Why there are two error layers
 
@@ -130,6 +106,6 @@ The root re-exports `AnyJsonValue` and `find_boolean_schema_positions` from `hka
 ---
 
 [^mcp]: Model Context Protocol. (2025). *Tools.* <https://modelcontextprotocol.io/specification/2025-06-18/server/tools>.
-[^drop]: The Rust Project Developers. (n.d.). *std::ops::Drop.* <https://doc.rust-lang.org/std/ops/trait.Drop.html>.
+
 [^cwe22]: MITRE. (n.d.). *CWE-22: Improper Limitation of a Pathname to a Restricted Directory.* <https://cwe.mitre.org/data/definitions/22.html>.
 [^cwe918]: MITRE. (n.d.). *CWE-918: Server-Side Request Forgery.* <https://cwe.mitre.org/data/definitions/918.html>.

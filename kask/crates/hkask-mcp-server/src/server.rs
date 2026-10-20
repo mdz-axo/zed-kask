@@ -25,7 +25,7 @@ mod error;
 mod http_helpers;
 #[doc(hidden)]
 pub mod test_support;
-mod tool_span;
+mod tool_execution;
 mod transport;
 mod validation;
 
@@ -39,7 +39,7 @@ pub use context::{CapabilityTier, CredentialRequirement, ServerContext};
 pub use credentials::{parse_env_warn, resolve_credential, resolve_db_passphrase};
 pub use error::{McpError, McpToolError};
 pub use http_helpers::{classify_http_error, serpapi_get_json, url_encode_query_value};
-pub use tool_span::{ToolContext, execute_tool, record_tool_usage};
+pub use tool_execution::{ToolContext, execute_tool, record_tool_usage};
 pub use transport::run_stdio_server;
 pub use validation::{
     MAX_READ_BYTES, contain_for_read, contain_for_write, ensure_existing_dir, ensure_existing_file,

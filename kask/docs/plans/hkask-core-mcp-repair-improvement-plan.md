@@ -191,7 +191,7 @@ and are retained in prose form as the historical record):**
 **Evidence:**
 - `kask/crates/hkask-mcp-server/src/server/transport.rs:91–117` falls back to anonymous identity.
 - `kask/crates/kask_bridge/src/mcp_env.rs:46–54` maps curator identity only.
-- `kask/crates/hkask-mcp-server/src/server/tool_span.rs:140–168` attributes from server context.
+- `kask/crates/hkask-mcp-server/src/server/transport.rs:91–104` derives one process identity from launch context; each generated server struct retains that WebID as `self.webid`.
 - `kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:873–883` claims tasks as the “authenticated caller” using `self.webid`.
 
 **Mechanism/impact:** distinct initiating agents can be indistinguishable in server actions and ownership checks. A process-scoped WebID is not evidence of the caller's authenticated identity.
@@ -726,7 +726,7 @@ Source citations below are relative to ``; they record execution-time inspection
 | F3 | Upheld at baseline, repaired below. Both providers use the repaired shared generator. Prior TRL removal was retained; only Axolotl/Ludwig are in scope. |
 | F4 | Upheld: `kask/mcp-servers/hkask-mcp-corpus/src/tools/gather.rs:199–210` validates the directory then writes a leaf; shared `validation.rs:289–312` reconstructs missing suffixes before `tools/document.rs:72–89` writes. Existing relative-basename and QA-specific link fixes are not race-resistant publication and were not recreated. |
 | F5 | Reproduced and repaired below. Existing transcript-detachment and unlink-failure identity preservation were retained. |
-| F6 | Upheld: `kask/crates/hkask-mcp-server/src/server/transport.rs:91–104` retains anonymous startup fallback; `server/tool_span.rs:140–169` attributes process context; kanban task claim at `kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:873–883` still uses `self.webid`. No cross-user compromise demonstrated. |
+| F6 | Upheld: `kask/crates/hkask-mcp-server/src/server/transport.rs:91–104` retains anonymous startup fallback; generated MCP server structs retain that process identity as `self.webid`; kanban task claim at `kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:873–883` still uses it. No cross-user compromise demonstrated. |
 | F7 | Upheld at baseline; subsequently repaired. The ContextServerStore path now retries only a request proven never delivered — `is_provably_not_delivered` (`crates/agent/src/tools/context_server_registry.rs:849–851`) gates the restart-and-retry at `:1126–1160`, replacing the "retry unless proven timeout" denylist; pinned by `timeout_and_transport_death_classify_into_distinct_retry_verdicts` (`crates/agent/src/tools/context_server_registry.rs:2085`) and `test_mcp_tool_timeout_does_not_retry` (`crates/agent/src/tests/mod.rs:5737`). Managed typed non-delivery behavior remains intact. |
 | F8 | Reproduced inventory failure; repaired inventory and CI wiring below. Fixture process tests remain permission-gated and unexecuted. |
 | R1 | Upheld by source-only inspection of the provisioning policy at `kask/crates/hkask-keystore/src/passphrase.rs:1–17` and `keychain.rs:402–424`; no keychain or deployed database inspected, no secret rotated. Onboarding/recovery decision remains open. |
