@@ -1441,9 +1441,8 @@ impl McpRuntime {
             cancel.cancel();
         }
         self.stop_children(Some(server_id)).await;
-        // Drop the registration so stale tool names do not resolve to a dead
-        // connection. Only a registered server surfaces the stop (former
-        // servers-map semantics).
+        // Drop discovered metadata so tools stop resolving; notify only if
+        // metadata had been published.
         if let Some(server) = entry.metadata {
             info!(
                 target: "hkask.mcp",
@@ -1802,18 +1801,11 @@ impl McpRuntime {
                 id: format!("Tool '{tool}' is not registered on server '{server}'"),
             });
         }
-        let known_launch = entry.is_some_and(|e| e.spec.is_some());
-        if known_launch {
-            hkask_tool_port::ToolPortError::Unavailable(format!(
-                "Server '{server}' is not connected and could not be restarted — check that the \
-                 hkask-mcp-{server} binary runs (set HKASK_MCP_{}_BIN to override the path)",
-                server.to_uppercase()
-            ))
-        } else {
-            hkask_tool_port::ToolPortError::Unavailable(format!(
-                "Server '{server}' registered but never started — call start_server_with_env() first"
-            ))
-        }
+        hkask_tool_port::ToolPortError::Unavailable(format!(
+            "Server '{server}' is not connected and could not be restarted — check that the \
+             hkask-mcp-{server} binary runs (set HKASK_MCP_{}_BIN to override the path)",
+            server.to_uppercase()
+        ))
     }
 }
 
@@ -2423,10 +2415,8 @@ mod metering_tests {
     #[tokio::test]
     async fn unregistered_agent_is_auto_registered_not_denied() {
         let runtime = governed_runtime();
-        // Register a server with the tool so the server-scoped registration
-        // check passes and the dispatch path reaches `Unavailable` (registered
-        // but never started) rather than `NotFound` (unknown tool). The
-        // metering decision is what's under test, not the tool lookup.
+        // Known tool metadata without a transport reaches Unavailable rather
+        // than NotFound; only the metering decision varies in this test.
         seed_ping_metadata(&runtime).await;
         let agent = WebID::new();
 
