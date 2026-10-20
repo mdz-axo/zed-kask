@@ -88,4 +88,4 @@ Respond with a JSON object containing `forecast_record` and `tracking_id`, where
 }
 ```
 
-After recording, preserve the tracking ID and resolved outcome so the forecast can be scored later with the scenarios server's `scenario_score` tool.
+Preserve the actual `scenario_declare` receipt, frozen events and resolver. Only later sourced outcomes may be passed to `scenario_score` for that declared identity; this render is not admission or an outcome observation.

@@ -105,7 +105,7 @@ The registry is already an expectation-carriage machine in CNS terms ([`research
 | `experiment_propose` / `variant_register` / `fitness_record` / `selection_record` from sessions | B (L1 tool dispatch → L4 server) | efferent (in-thread actuation) | wired (Phases 1–3) |
 | Headroom pre-check (§5, Q6) | B | INV2/INV3 gate | wired (first live operation in the E3 cycle) |
 | Algedonic review card → operator verdict → `selection_record` | C (L16) | efferent (authority down) | wired (Q4) |
-| Registry prediction loss on eligible binary experiments; linked goals track verification separately, with no automatic probability adjustment | C (L9 + L10) | afferent outcome up, efferent calibration down | wired |
+| Registry prediction loss on eligible binary experiments; linked goals track verification separately, with no automatic probability adjustment | C (L9 + L10) | source-backed registry outcome up; human-reviewed practice changes only | registry readback; no automatic correction |
 | Regulation loop sensing of the experimentation server's experiment health | A (L2) | afferent | wired (2026-09-30, D87 — `ExperimentationStuckExperiments` sensor + bridge source over `ExperimentationStore::health_snapshot()`) |
 | The declared budget as a Layer-A set point with local actuation | A (L2) | efferent | wired (D-1: `budget.max_runs` required at declaration, server-enforced at `fitness_record` with typed `BudgetExhausted`) |
 | Discarded-signal persistence and recurring-discard escalation | C (L16) | INV4 | wired (skill text step 5: every discard persists in the cycle card; a two-cycle recurring discard escalates as its own algedonic card) |

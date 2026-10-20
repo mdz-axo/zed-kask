@@ -273,8 +273,8 @@ classDiagram
         +criteria: Vec~VerificationCriterion~
         +source: GoalSource
         +forecast: Option~GoalForecast~
-        +closure: Option~HumanClosure~
-        +assessments: Vec~GoalAssessmentAttempt~
+        +closure: Option~GoalClosure~
+        +assessments: Vec~AssessmentAttempt~
         +verdicts: Vec~GoalVerdict~
     }
     class Board {

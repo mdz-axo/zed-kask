@@ -92,8 +92,8 @@ functional goal.** In an agent system with a frozen base model, the
 effective reward function is the *feedback structure*: what is measured,
 assessed, remembered, and fed back at each cycle. Anchoring those
 structures on the local functional goal creates a mechanical gradient —
-work that serves the goal is reinforced (progress recorded, prediction
-validated, lesson ingested); work that does not is corrected by the
+work that serves the goal receives criterion evidence and human feedback
+(progress recorded, findings distinguished, lesson retained); work that does not is corrected by the
 loop's own feedback.
 
 **P3 — Local anchors, not global specs.** One specific functional goal

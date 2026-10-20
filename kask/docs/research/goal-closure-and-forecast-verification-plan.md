@@ -289,3 +289,12 @@ closure, actual independently fetched evidence, deployment/restart acceptance an
 any prospective benefit study remain owner acceptance work, not a fabricated human
 outcome or task-completion claim. Learning: freshness of assessor context does not
 supply evidence access, and arithmetic correctness does not establish calibration.
+
+### Final docs/prompt verification receipt
+
+- Wrapped command: `bash kask/scripts/cargo-test-nonzero.sh -p agent --lib templates::tests -- --nocapture` — **31 passed**, 0 failed; wrapper confirmed 31 executed. The corpus pin walks live skills/templates rather than a handpicked file list. No broad build was run for this docs/prompt scope.
+- `bash kask/scripts/check-skill-crossrefs.sh` — passed. `bash kask/scripts/audit/skill-corpus-prescreen.sh` — 222 templates / 59 skills; only the unchanged 22% overlap advisory described above. `git --no-pager diff --check` — passed.
+- Live renders of `metacognition/meta-predict` and `superforecasting/stage_7_record` preserve the measured input, optional/null routine confidence and prospective-declaration/resolver instructions. These are prompt renders with fixture inputs, not live forecast or human-outcome records.
+- Full exact-symbol sweep: 285 live skill/template/system-prompt files have zero retired score-route, receipt-ack route, interpretation-helper or calibration-note tokens. The 80 owned doc/map files retain one occurrence of each retired goal route on the same explicitly historical L9 audit line; no helper or note-field occurrences remain there. Whole-repository residuals additionally comprise negative/provenance fixtures, the out-of-scope historical `kask/docs-alignment-run.md`, and unchanged root `.rules:73`.
+- Warning routing receipt: parent task comment `21b8455a-0ee8-43f2-a3f8-042a23b56d94` assigns the prescreen advisory to skill-maintenance review, ontology gloss to its implementation owner, and the contradictory root rule to the principal/host for a dedicated rules-only disposition. None was suppressed or silently called fixed.
+- Shared-tree checkpoint: the owner captured earlier slices in `05a9ffbe73` and `0b40eca775`. This agent issued no commit, stash or reset. Later reference-map/wording/receipt edits remain uncommitted for the owner. The type map explicitly marks the still-exported `GoalEvent` as historical-only with no host-ingestion consumer; removing that out-of-scope wire type remains the code owner's work, not a deletion claimed by this docs pass.
