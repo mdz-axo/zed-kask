@@ -38,31 +38,52 @@ Board/WIP counts and goal-citation lookups remain outside that task transaction
 to avoid nested store acquisition; this is not atomic WIP admission across
 separate tasks or a transaction spanning task and goal records.
 
-### Goals (functional target conditions)
+### Goals
 
-Native goal-setting and verification for the four-moves interaction loop
-(`kask/docs/architecture/functional-interaction-spec.md`). A goal is the
-kata target condition: the user's functional requirement in the user's
-words, with observable criteria and a Brier-scored intake prediction.
-
-**Goals persist through resolution until curator-memory acknowledgment**
-(operator ruling 2026-09-16, extending the 2026-09-09 persistence ruling):
-the goal store is the same DB-backed HMemStore that persists boards and tasks,
-so the Brier closure (`kanban_goal_score`) survives server restarts as a
-retryable outbox entry. The production turn-ingestion path stores the score as
-a first-class goal h_mem in curator memory, then invokes
-`kanban_goal_memory_acknowledge` to prune the retained row. Failed ingestion or
-acknowledgment leaves the resolved goal retryable; conflicting outcomes are
-rejected. Every goal event uses the same shared `curator:goal:{goal_id}` copy;
-there is no curator-perspective duplicate.
+Goals are verification-primary canonical records: original explicit criteria,
+stable criterion IDs, a specification digest, and append-only histories. Work
+closure (accomplished/stop) and human outcome (achieved/not achieved/unknown)
+are distinct from worker progress and independent criterion assessment.
 
 | Tool | Description |
 |------|-------------|
-| `kanban_goal_create` | Create a functional goal with 1–4 observable criteria and an optional intake prediction |
-| `kanban_goal_judge` | Record a done/continue/blocked verdict with confidence and a result for every criterion (history preserved) |
-| `kanban_goal_score` | Resolve a goal (achieved/not-achieved) and Brier-score the intake prediction; retain the resolved row until memory acknowledgment |
-| `kanban_goal_memory_acknowledge` | Internal lifecycle operation: confirm the scored outcome reached curator memory, then prune the retained row |
-| `kanban_goal_list` | List the caller's goals, including resolved goals awaiting memory acknowledgment, newest first |
+| `kanban_goal_create` | Declare 1–4 explicit criteria and their source; optionally freeze a prospective forecast |
+| `kanban_goal_judge` | Append worker progress with exact criterion coverage; done requires every criterion passed |
+| `kanban_goal_get` | Get the complete caller-owned specification and lifecycle history |
+| `kanban_goal_list` | List complete caller-owned goals, including delivered and archived records |
+
+Human closure, assessor leases/results, observed forecast outcomes and memory
+receipts are **not MCP tools**. Authenticated native host code constructs typed
+inputs and calls `KanbanService` directly; a worker-supplied actor string never
+grants human authority. See [the exact bridge pact](GOAL_INTERFACE.md).
+
+Closure atomically persists a pending assessment and a revision/digest-bound
+projection. Claims preserve the original evidence manifest and a structurally
+blinded input (no worker verdict, human label, probability or score). Assessment
+failure/expired leases remain visible and retryable after restart. Evidence
+strings are untrusted content, not proof of independent ground truth.
+
+Forecasts are optional, frozen at declaration, and use only the declared human
+acceptance or machine source/oracle. Horizon is the evaluation-window start;
+resolution deadline is its end. Source observations outside that window are
+not eligible outcomes. Binary Brier uses `(p-y)^2`, matched baseline loss and
+undefined skill when baseline loss is zero; it is not a calibration certificate.
+Scoring waits for an assessor attempt, not assessor agreement. Unknown/disputed
+cases stay visible; source corrections append superseding score versions. A
+human correction corrects the original outcome, not its evaluation time.
+Only `forecast_status = resolved` identifies a current score; earlier score
+versions remain history when a later correction is unknown or disputed.
+
+The service stores complete projection payloads with stable event IDs, revision
+and SHA-256 digest. The host drains pending work independently of model turns.
+An exact delivery receipt marks a projection delivered and **never deletes the
+canonical goal**. Transport is at-least-once, requiring idempotent effects at
+the destination. Retrieval/indexing remains host-owned and may fail separately.
+
+Historical rows migrate to `legacy.raw` with their exact historical data and an
+explicit provenance limitation. Old predictions/scores are archived, not
+retroactively admitted or reconstructed. Changed requirements declare a new
+goal with `supersedes`; they never rewrite an earlier specification.
 
 ### Communication
 | Tool | Description |

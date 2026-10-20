@@ -2,11 +2,11 @@ use crate::{
     ApplyCodeActionTool, AskUserTool, CodeActionStore, ContextServerRegistry, CopyPathTool,
     CreateDirectoryTool, CreateThreadTool, DbLanguageModel, DbThread, DeletePathTool,
     DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, FindReferencesTool, GetCodeActionsTool,
-    GoToDefinitionTool, GrepTool, LeanCheckTool, LispEvalTool, ListAgentsAndModelsTool,
-    ListDirectoryTool, ListMcpToolsTool, MovePathTool, OntoAnchorTool, ProjectSnapshot,
-    ReadFileTool, RenameTool, RenderTemplateTool, SandboxedTerminalTool, SpawnAgentTool,
-    SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision, WebSearchTool,
-    WriteFileTool, decide_permission_from_settings,
+    GoToDefinitionTool, GoalCloseTool, GoalCorrectTool, GrepTool, LeanCheckTool, LispEvalTool,
+    ListAgentsAndModelsTool, ListDirectoryTool, ListMcpToolsTool, MovePathTool, OntoAnchorTool,
+    ProjectSnapshot, ReadFileTool, RenameTool, RenderTemplateTool, SandboxedTerminalTool,
+    SpawnAgentTool, SystemPromptTemplate, Template, Templates, TerminalTool,
+    ToolPermissionDecision, WebSearchTool, WriteFileTool, decide_permission_from_settings,
 };
 use acp_thread::{AgentModelId, ClientUserMessageId, MentionUri};
 use action_log::ActionLog;
@@ -284,79 +284,6 @@ pub enum Message {
     Agent(AgentMessage),
     Resume,
     Compaction(CompactionInfo),
-}
-
-/// Extract `kanban_goal_*` tool results from an agent message as first-class
-/// goal events for curator memory. Resolved goals remain in the kanban store
-/// until the score event is stored here and the thread path acknowledges that
-/// handoff. These events become structured goal h_mems, so therapy and
-/// algedonic review find
-/// goal entities (text, criteria, verdicts, Brier scores), not prose
-/// archaeology.
-///
-/// Non-goal tools are ignored. A goal tool with no recorded result (the
-/// turn ended mid-call) is skipped — an unobserved result is not a goal
-/// event. The result's raw `output` JSON is preferred; when absent, the
-/// text content is stored verbatim (parsed as JSON when it parses, as a
-/// string otherwise — the value is preserved either way, never dropped).
-/// Build the durable goal event from one completed `kanban_goal_*` tool
-/// result — the single conversion shared by the turn-scoped buffer's
-/// population sites (D6). Raw output JSON is preferred; a missing output
-/// falls back to the text contents (parsed as JSON when possible, else
-/// preserved as a string — never dropped). Non-goal tools return `None`.
-pub(crate) fn goal_event_from_tool_result(
-    tool_name: &str,
-    result: &LanguageModelToolResult,
-) -> Option<hkask_types::GoalEvent> {
-    if !tool_name.starts_with("kanban_goal_") {
-        return None;
-    }
-    let output = match result.output.clone() {
-        Some(output) => output,
-        None => {
-            let text = result.text_contents();
-            serde_json::from_str(&text).unwrap_or(serde_json::Value::String(text))
-        }
-    };
-    Some(hkask_types::GoalEvent {
-        tool_name: tool_name.to_string(),
-        output,
-    })
-}
-
-async fn ingest_turn_and_acknowledge_goal_scores(
-    port: Arc<dyn crate::ThreadMemoryPort>,
-    record: crate::ThreadTurnRecord,
-    tool_source: Option<Arc<dyn crate::KaskToolSource>>,
-) -> Result<(), String> {
-    // Only the goals whose score events were actually published are
-    // acknowledged (D58): a score event that failed per-goal stays out of
-    // the publication set and its goal remains retryable in the outbox —
-    // one failing score never blocks a sibling's acknowledgment.
-    let scored_goal_ids = port.ingest_turn(record).await?;
-    if scored_goal_ids.is_empty() {
-        return Ok(());
-    }
-    let source = tool_source.ok_or_else(|| {
-        "goal score stored in curator memory but kata-kanban acknowledgment is unavailable"
-            .to_string()
-    })?;
-    for goal_id in scored_goal_ids {
-        source
-            .invoke(
-                "kata-kanban",
-                // zed-kask: D-seam — F6/P2. This is a background
-                // acknowledgment callback, not dispatched on behalf of any
-                // specific calling thread — `None` falls back to the
-                // pre-existing shared identity, honestly, rather than
-                // attributing it to whichever thread happened to be running.
-                None,
-                "kanban_goal_memory_acknowledge",
-                serde_json::json!({ "goal_id": goal_id }),
-            )
-            .await?;
-    }
-    Ok(())
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -1939,7 +1866,7 @@ impl Thread {
         if let Some(output) = output.clone() {
             // For replay, we use a dummy cancellation receiver since the tool already completed
             let (_cancellation_tx, cancellation_rx) = watch::channel(false);
-            let tool_event_stream = ToolCallEventStream::new(
+            let mut tool_event_stream = ToolCallEventStream::new(
                 tool_use.id.clone(),
                 tool_call_id.clone(),
                 owning_message_ix,
@@ -1950,6 +1877,7 @@ impl Thread {
                 Some(cx.weak_entity()),
                 Some(native_thread_calling_actor(self.id())),
             );
+            tool_event_stream.calling_session_id = Some(self.id().to_string());
             if let Err(error) = tool.replay(input, output, tool_event_stream, cx) {
                 // Replay deserialization can fail when the persisted model output
                 // violates the tool's current input schema (e.g. a model emitted
@@ -2578,6 +2506,8 @@ impl Thread {
         self.add_tool(RenderTemplateTool);
 
         self.add_tool(AskUserTool);
+        self.add_tool(GoalCloseTool);
+        self.add_tool(GoalCorrectTool);
 
         self.add_tool(DiagnosticsTool::new(self.project.clone()));
 
@@ -2702,15 +2632,6 @@ impl Thread {
             log::debug!("Cancelled {deferred_count} deferred tool results");
         }
 
-        // zed-kask: D6 — a cancelled turn's goal events still ingest. The
-        // turn-scoped buffer (populated at tool-result time) is taken here —
-        // before the new turn can populate it — and handed to the memory
-        // ingestion; the former message-boundary collection could not see
-        // these events, because run_turn flushes the next user message
-        // before cancelling the old turn (observed live 2026-10-02/03,
-        // card b04a2ad7).
-        self.ingest_severed_goal_events(cx);
-
         let Some(running_turn) = self.running_turn.take() else {
             self.flush_pending_message(cx);
             return Task::ready(());
@@ -2725,46 +2646,6 @@ impl Thread {
             })
             .ok();
         })
-    }
-
-    /// zed-kask: D6 — take the current turn's buffered goal events and hand
-    /// them to the memory ingestion. Called from `cancel` and the
-    /// turn-completion error arm — the paths where the turn never reaches
-    /// the Ok arm's ingestion. The minimal record's empty text fields make
-    /// the chunk leg no-op (the empty-turn path), so goal events and their
-    /// acknowledgments land without the severed turn's partial content.
-    fn ingest_severed_goal_events(&mut self, cx: &mut Context<Self>) {
-        let goal_events = self.kask.take_turn_goal_events();
-        if goal_events.is_empty() {
-            return;
-        }
-        let Some(port) = crate::memory_port() else {
-            log::warn!(
-                target: "reg.memory",
-                "severed-turn goal events skipped — memory port not yet wired (pre-login); this turn's goal events are lost"
-            );
-            return;
-        };
-        let record = crate::ThreadTurnRecord {
-            thread_id: self.id().to_string(),
-            user_input: String::new(),
-            agent_response: String::new(),
-            model: self
-                .model()
-                .map(|m| m.name().0.to_string())
-                .unwrap_or_default(),
-            thread_title: self.title().map(|t| t.to_string()),
-            goal_events,
-            agent_id: Some(self.agent_id().clone()),
-        };
-        let tool_source = crate::kask_tool_source();
-        cx.background_spawn(async move {
-            if let Err(e) = ingest_turn_and_acknowledge_goal_scores(port, record, tool_source).await
-            {
-                log::warn!("Memory ingestion or goal acknowledgment failed: {e}");
-            }
-        })
-        .detach();
     }
 
     pub fn set_end_turn_at_next_boundary(&mut self, end_at_boundary: bool) {
@@ -3214,23 +3095,14 @@ impl Thread {
                                     .map(|m| m.name().0.to_string())
                                     .unwrap_or_default(),
                                 thread_title: thread.title().map(|t| t.to_string()),
-                                goal_events: thread.kask.take_turn_goal_events(),
                                 agent_id: Some(thread.agent_id().clone()),
                             });
                             if let Ok(record) = record {
                                 let port = port.clone();
-                                let tool_source = crate::kask_tool_source();
+
                                 cx.background_spawn(async move {
-                                    if let Err(e) = ingest_turn_and_acknowledge_goal_scores(
-                                        port,
-                                        record,
-                                        tool_source,
-                                    )
-                                    .await
-                                    {
-                                        log::warn!(
-                                            "Memory ingestion or goal acknowledgment failed: {e}"
-                                        );
+                                    if let Err(e) = port.ingest_turn(record).await {
+                                        log::warn!("Memory ingestion failed: {e}");
                                     }
                                 })
                                 .detach();
@@ -3269,15 +3141,7 @@ impl Thread {
                                 "[thread {thread_id}] {rejection_detail}"
                             );
                         }
-                        // zed-kask: D6 — a failed turn's goal events still
-                        // ingest: the turn-scoped buffer (populated at
-                        // tool-result time) survives the failure, and the
-                        // minimal record's empty text fields make the chunk
-                        // leg no-op, so goal events and acknowledgments
-                        // land. A provider failure mid-turn must not lose
-                        // completed goal tool calls (observed live
-                        // 2026-10-02/03, card b04a2ad7).
-                        _ = this.update(cx, |this, cx| this.ingest_severed_goal_events(cx));
+
                         match error.downcast::<CompletionError>() {
                             Ok(CompletionError::Refusal) => {
                                 event_stream.send_stop(acp_v2::StopReason::Refusal);
@@ -4361,15 +4225,6 @@ impl Thread {
                 }
             };
 
-            // zed-kask: D6 — a deferred goal-tool result feeds the same
-            // turn-scoped buffer (card b04a2ad7); it drains at the next
-            // turn end.
-            if let Some(goal_event) =
-                goal_event_from_tool_result(&tool_result.tool_name, &tool_result)
-            {
-                self.kask.record_turn_goal_event(goal_event);
-            }
-
             log::debug!(
                 "Injecting deferred tool result for {} into message {}",
                 result.tool_use_id,
@@ -4464,14 +4319,6 @@ impl Thread {
         );
         this.update(cx, |this, _cx| {
             this.kask.trace_tool_finished(&tool_result.tool_use_id);
-            // zed-kask: D6 — capture the durable goal event at result time
-            // into the turn-scoped buffer every turn-end path drains, so a
-            // severed turn (cancel or error) never loses it (card b04a2ad7).
-            if let Some(goal_event) =
-                goal_event_from_tool_result(&tool_result.tool_name, &tool_result)
-            {
-                this.kask.record_turn_goal_event(goal_event);
-            }
             this.pending_message()
                 .tool_results
                 .insert(tool_result.tool_use_id.clone(), tool_result)
@@ -4950,7 +4797,7 @@ impl Thread {
 
         let fs = self.project.read(cx).fs().clone();
         let tool_call_id = scoped_tool_call_id(owning_message_ix, &tool_use_id);
-        let tool_event_stream = ToolCallEventStream::new(
+        let mut tool_event_stream = ToolCallEventStream::new(
             tool_use_id.clone(),
             tool_call_id,
             owning_message_ix,
@@ -4961,6 +4808,7 @@ impl Thread {
             Some(cx.weak_entity()),
             Some(native_thread_calling_actor(self.id())),
         );
+        tool_event_stream.calling_session_id = Some(self.id().to_string());
         tool_event_stream.update_fields(|update| update.status(acp_v2::ToolCallStatus::InProgress));
         let supports_images = self.model().is_some_and(|model| model.supports_images());
         let tool_result = tool.run(tool_input, tool_event_stream, cx);
@@ -7718,6 +7566,7 @@ pub(crate) enum SandboxFallbackDecision {
 
 #[derive(Clone)]
 pub struct ToolCallEventStream {
+    calling_session_id: Option<String>,
     tool_use_id: LanguageModelToolUseId,
     /// The ACP-facing id for this tool call (see [`scoped_tool_call_id`]).
     /// Distinct from `tool_use_id`, which is the raw, provider-issued id.
@@ -7803,6 +7652,15 @@ impl ToolCallEventStream {
         (stream, receiver)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_for_actor(actor: hkask_types::WebID) -> (Self, ToolCallEventStreamReceiver) {
+        let (mut stream, receiver) = Self::test();
+        stream.calling_actor = Some(actor);
+        stream.calling_session_id = Some(format!("test-session:{actor}"));
+        stream.tool_call_id = acp_v2::ToolCallId::new(format!("test:{}", uuid::Uuid::new_v4()));
+        (stream, receiver)
+    }
+
     /// Like [`Self::test`], but the returned stream shares the provided
     /// thread-scoped sandbox grants. This mirrors how a real [`Thread`] builds a
     /// distinct event stream per tool call while sharing one set of grants, so
@@ -7877,6 +7735,7 @@ impl ToolCallEventStream {
         calling_actor: Option<hkask_types::WebID>,
     ) -> Self {
         Self {
+            calling_session_id: None,
             tool_use_id,
             tool_call_id,
             owning_message_ix,
@@ -7936,6 +7795,10 @@ impl ToolCallEventStream {
     /// thread (tests, `ToolCallEventStream::test()`); callers fall back to a
     /// documented process-level identity in that case, matching the
     /// pre-existing behavior for non-thread-tied dispatch.
+    pub fn calling_session_id(&self) -> Option<&str> {
+        self.calling_session_id.as_deref()
+    }
+
     pub fn calling_actor(&self) -> Option<hkask_types::WebID> {
         self.calling_actor
     }
@@ -9272,282 +9135,6 @@ mod tests {
             is_input_complete: true,
             thought_signature: None,
         })
-    }
-
-    fn tool_result(
-        id: &str,
-        name: &str,
-        output: Option<serde_json::Value>,
-    ) -> language_model::LanguageModelToolResult {
-        language_model::LanguageModelToolResult {
-            tool_use_id: LanguageModelToolUseId::from(id),
-            tool_name: Arc::from(name),
-            is_error: false,
-            content: vec![],
-            output,
-        }
-    }
-
-    struct GoalAckMemoryPort {
-        fail: bool,
-        /// Simulates a turn where no score event published (per-goal
-        /// failure): ingestion succeeds but the publication set is empty.
-        partial: bool,
-    }
-
-    impl crate::ThreadMemoryPort for GoalAckMemoryPort {
-        fn ingest_turn(
-            &self,
-            record: crate::ThreadTurnRecord,
-        ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
-            Box::pin(async move {
-                if self.fail {
-                    Err("injected memory failure".to_string())
-                } else if self.partial {
-                    // Per-goal publication failure: no score event landed,
-                    // so nothing may be acknowledged.
-                    Ok(Vec::new())
-                } else {
-                    // Simulates full publication: every score event landed.
-                    Ok(record
-                        .goal_events
-                        .iter()
-                        .filter(|event| event.tool_name == "kanban_goal_score")
-                        .filter_map(|event| event.goal_id().map(str::to_string))
-                        .collect())
-                }
-            })
-        }
-    }
-
-    struct RecordingGoalAckSource {
-        calls: Arc<std::sync::Mutex<Vec<(String, String, serde_json::Value)>>>,
-    }
-
-    impl crate::KaskToolSource for RecordingGoalAckSource {
-        fn tools(&self) -> Vec<crate::KaskToolDescriptor> {
-            Vec::new()
-        }
-
-        fn running_server_ids_now(&self) -> Option<Vec<String>> {
-            Some(Vec::new())
-        }
-
-        fn invoke(
-            &self,
-            server_id: &str,
-            _caller: Option<hkask_types::WebID>,
-            tool: &str,
-            args: serde_json::Value,
-        ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, String>> + Send>> {
-            self.calls.lock().expect("calls lock").push((
-                server_id.to_string(),
-                tool.to_string(),
-                args,
-            ));
-            Box::pin(async { Ok(json!({"acknowledged": true})) })
-        }
-    }
-
-    fn goal_score_turn_record() -> crate::ThreadTurnRecord {
-        crate::ThreadTurnRecord {
-            thread_id: "goal-ack-thread".to_string(),
-            user_input: "confirm outcome".to_string(),
-            agent_response: "outcome scored".to_string(),
-            model: "fake".to_string(),
-            thread_title: None,
-            agent_id: None,
-            goal_events: vec![hkask_types::GoalEvent {
-                tool_name: "kanban_goal_score".to_string(),
-                output: json!({"content": {"goal_id": "g-ack", "achieved": true}}),
-            }],
-        }
-    }
-
-    #[gpui::test]
-    async fn goal_memory_acknowledgment_runs_only_after_successful_ingestion(
-        _cx: &mut TestAppContext,
-    ) {
-        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let source: Arc<dyn crate::KaskToolSource> = Arc::new(RecordingGoalAckSource {
-            calls: Arc::clone(&calls),
-        });
-
-        let failed = ingest_turn_and_acknowledge_goal_scores(
-            Arc::new(GoalAckMemoryPort {
-                fail: true,
-                partial: false,
-            }),
-            goal_score_turn_record(),
-            Some(Arc::clone(&source)),
-        )
-        .await;
-        assert!(failed.is_err());
-        assert!(calls.lock().expect("calls lock").is_empty());
-
-        ingest_turn_and_acknowledge_goal_scores(
-            Arc::new(GoalAckMemoryPort {
-                fail: false,
-                partial: false,
-            }),
-            goal_score_turn_record(),
-            Some(source),
-        )
-        .await
-        .expect("successful ingestion acknowledges the retained goal");
-        assert_eq!(
-            *calls.lock().expect("calls lock"),
-            vec![(
-                "kata-kanban".to_string(),
-                "kanban_goal_memory_acknowledge".to_string(),
-                json!({"goal_id": "g-ack"}),
-            )]
-        );
-
-        // Per-goal publication failure (D58): ingestion succeeds but the
-        // publication set is empty, so no acknowledgment may fire — the
-        // scored goal stays retryable in the kanban outbox.
-        let partial_calls = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let partial_source: Arc<dyn crate::KaskToolSource> = Arc::new(RecordingGoalAckSource {
-            calls: Arc::clone(&partial_calls),
-        });
-        ingest_turn_and_acknowledge_goal_scores(
-            Arc::new(GoalAckMemoryPort {
-                fail: false,
-                partial: true,
-            }),
-            goal_score_turn_record(),
-            Some(partial_source),
-        )
-        .await
-        .expect("ingestion succeeds with an empty publication set");
-        assert!(
-            partial_calls.lock().expect("partial calls lock").is_empty(),
-            "an unpublished score must never be acknowledged"
-        );
-    }
-
-    #[test]
-    fn goal_event_from_tool_result_filters_and_preserves_output() {
-        // The conversion shared by the turn-scoped buffer's population
-        // sites (D6): only kanban_goal_* tools convert; raw output JSON is
-        // preferred; a missing output falls back to the text contents
-        // (parsed as JSON when possible, else preserved as a string —
-        // never dropped).
-        let goal = tool_result(
-            "g1",
-            "kanban_goal_create",
-            Some(json!({"goal_id": "g-1", "goal_text": "user can filter"})),
-        );
-        let event =
-            goal_event_from_tool_result("kanban_goal_create", &goal).expect("goal tools convert");
-        assert_eq!(event.tool_name, "kanban_goal_create");
-        assert_eq!(
-            event.output.get("goal_text").and_then(|v| v.as_str()),
-            Some("user can filter")
-        );
-
-        let non_goal = tool_result("t1", "read_file", Some(json!({"ok": true})));
-        assert!(
-            goal_event_from_tool_result("read_file", &non_goal).is_none(),
-            "non-goal tools never convert"
-        );
-
-        let no_output = tool_result("g2", "kanban_goal_judge", None);
-        let event = goal_event_from_tool_result("kanban_goal_judge", &no_output).expect("converts");
-        assert!(
-            event.output.is_string(),
-            "the empty-text fallback preserves the event rather than dropping it"
-        );
-    }
-
-    /// zed-kask: D6 — a cancelled turn's goal events still ingest. The
-    /// live severed-turn shape (card b04a2ad7): the turn is cancelled
-    /// (connection drop or new-turn interrupt) before reaching the Ok
-    /// arm's ingestion; the turn-scoped buffer survives and drains here.
-    #[gpui::test]
-    async fn cancelled_turn_goal_events_still_ingest(cx: &mut TestAppContext) {
-        let (thread, _event_stream, _fake) = setup_thread_for_test(cx).await;
-        cx.update(|cx| {
-            thread.update(cx, |thread, _cx| {
-                // Populate the turn buffer as process_tool_result would
-                // for a completed kanban_goal_score call.
-                thread.kask.record_turn_goal_event(hkask_types::GoalEvent {
-                    tool_name: "kanban_goal_score".to_string(),
-                    output: json!({"content": {"goal_id": "g-severed", "achieved": true}}),
-                });
-            });
-        });
-
-        struct RecordingSeveredMemoryPort {
-            records: Arc<std::sync::Mutex<Vec<Vec<(String, Option<String>)>>>>,
-        }
-        impl crate::ThreadMemoryPort for RecordingSeveredMemoryPort {
-            fn ingest_turn(
-                &self,
-                record: crate::ThreadTurnRecord,
-            ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>>
-            {
-                let records = self.records.clone();
-                Box::pin(async move {
-                    // Only goal-event-bearing records count: parallel tests'
-                    // empty-event ingestions must not pollute the assertion.
-                    if !record.goal_events.is_empty() {
-                        let summary = record
-                            .goal_events
-                            .iter()
-                            .map(|e| (e.tool_name.clone(), e.goal_id().map(str::to_string)))
-                            .collect();
-                        records.lock().expect("records lock").push(summary);
-                    }
-                    Ok(record
-                        .goal_events
-                        .iter()
-                        .filter(|e| e.tool_name == "kanban_goal_score")
-                        .filter_map(|e| e.goal_id().map(str::to_string))
-                        .collect())
-                })
-            }
-        }
-        struct MemoryPortGuard(Option<Arc<dyn crate::ThreadMemoryPort>>);
-        impl Drop for MemoryPortGuard {
-            fn drop(&mut self) {
-                crate::set_memory_port(self.0.take());
-            }
-        }
-
-        let records = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let port: Arc<dyn crate::ThreadMemoryPort> = Arc::new(RecordingSeveredMemoryPort {
-            records: Arc::clone(&records),
-        });
-        let _guard = MemoryPortGuard(crate::memory_port());
-        crate::set_memory_port(Some(port));
-
-        cx.update(|cx| thread.update(cx, |thread, cx| thread.cancel(cx)))
-            .await;
-        cx.run_until_parked();
-
-        {
-            let locked = records.lock().expect("records lock");
-            assert_eq!(
-                locked.len(),
-                1,
-                "the cancelled turn's goal events must still ingest"
-            );
-            assert_eq!(locked[0][0].0, "kanban_goal_score");
-            assert_eq!(locked[0][0].1.as_deref(), Some("g-severed"));
-        }
-
-        // The buffer was taken: a second cancel ingests nothing (no
-        // cross-turn leakage, no double ingestion).
-        cx.update(|cx| thread.update(cx, |thread, cx| thread.cancel(cx)))
-            .await;
-        cx.run_until_parked();
-        assert_eq!(
-            records.lock().expect("records lock").len(),
-            1,
-            "the drained buffer does not re-ingest"
-        );
     }
 
     #[gpui::test]

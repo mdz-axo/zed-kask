@@ -90,8 +90,8 @@ fn validate_entity_key(entity: &str) -> Result<(), MemoryStoreError> {
 /// Reconstruct the exact semantic passage a supported h_mem writer embeds.
 ///
 /// Plain chunks use their string value. Distilled mutable state requires its
-/// provenance-bearing `recall_text`; durable lessons use `text`. Goal events
-/// remove the private calibration receipt before reconstructing tool + JSON.
+/// provenance-bearing `recall_text`; durable lessons use `text`. Goal projections
+/// preserve their complete canonical payload, without score-based redaction.
 pub fn semantic_passage_for_h_mem(h_mem: &HMem) -> Option<String> {
     semantic_passage_for_value(&h_mem.entity, &h_mem.attribute, &h_mem.value)
 }
@@ -130,22 +130,9 @@ fn semantic_passage_for_value(
         return Some(text.to_string());
     }
     if entity.starts_with("curator:goal:") {
-        return Some(format!(
-            "goal event {attribute}: {}",
-            public_value(entity, value)
-        ));
+        return Some(format!("goal event {attribute}: {}", value));
     }
     None
-}
-
-fn public_value(entity: &str, value: &serde_json::Value) -> serde_json::Value {
-    let mut value = value.clone();
-    if entity.starts_with("curator:goal:") {
-        if let Some(object) = value.as_object_mut() {
-            object.remove("_memory_calibration");
-        }
-    }
-    value
 }
 
 /// A semantic write cannot publish its row without the vector for its passage.
@@ -264,11 +251,6 @@ pub(crate) const DEFAULT_MEMORY_LIFE_DAYS: f64 = crate::bayesian::DEFAULT_MEMORY
 
 /// Entity prefixes holding conversation-turn storage, not knowledge facts.
 const TURN_STORAGE_PREFIX: &str = "curator:thread:";
-
-/// Entity prefix holding kanban goal events (create/judge/score/acknowledge) —
-/// the acknowledge-triggered forgetting valve's tier (card 4cb70cec). Sheddable
-/// like turn storage, unlike the additive-by-design knowledge layer.
-const GOAL_EVENT_PREFIX: &str = "curator:goal:";
 
 /// Unified memory store — one store for all h_mems.
 ///
@@ -461,12 +443,7 @@ impl MemoryStore {
         replacing: Option<(hkask_storage::HMemId, Option<String>)>,
     ) -> SemanticWrite<'a> {
         let passage = semantic_passage_for_h_mem(&h_mem).unwrap_or_else(|| {
-            let passage = format!(
-                "{} {}: {}",
-                h_mem.entity,
-                h_mem.attribute,
-                public_value(&h_mem.entity, &h_mem.value)
-            );
+            let passage = format!("{} {}: {}", h_mem.entity, h_mem.attribute, h_mem.value);
             if let Some(object) = h_mem.value.as_object_mut() {
                 object.insert(
                     "recall_text".into(),
@@ -1116,10 +1093,9 @@ impl MemoryStore {
         Ok(self.h_mem_store.count()?)
     }
 
-    /// Count of h_mems in the sheddable tiers — turn storage
-    /// (`curator:thread:`) plus goal events (`curator:goal:`) — the two tiers
-    /// with forgetting valves (the distillation-gated turn pass and the
-    /// acknowledge-triggered goal valve). The knowledge layer is
+    /// Count of h_mems with a live forgetting valve: conversation-turn storage
+    /// (`curator:thread:`), handled by the distillation-gated turn pass.
+    /// Goal acknowledgment no longer deletes records. The knowledge layer is
     /// deliberately excluded: it is additive-by-design (distillation
     /// appends candidate lessons and nothing deletes them; recall quality is
     /// protected by confidence decay, not deletion — operator ruling on
@@ -1130,15 +1106,13 @@ impl MemoryStore {
     /// declined; option (C), a recall-visibility floor, is a recall-behavior
     /// change and would not stop the size alarm without (A)).
     ///
-    /// Sized against the measured 2026-10-18 steady state: 2,691 turn rows +
-    /// 724 goal rows = 3,415 sheddable vs 1,861 additive knowledge rows — the
-    /// 4,000 ceiling now sits on the tier that grows when a valve stalls.
+    /// Goal projections are excluded now that acknowledgment is a retained
+    /// receipt rather than a forgetting valve. Canonical goals live separately.
     pub fn sheddable_h_mem_count(&self) -> Result<usize, MemoryStoreError> {
         let turns = self
             .h_mem_store
             .count_by_entity_prefix(TURN_STORAGE_PREFIX)?;
-        let goals = self.h_mem_store.count_by_entity_prefix(GOAL_EVENT_PREFIX)?;
-        Ok(turns + goals)
+        Ok(turns)
     }
 
     /// Delete an h_mem and, when this was the entity's last row, the
@@ -1625,28 +1599,6 @@ mod tests {
         assert_eq!(repaired.value["resolution"], row.value["resolution"]);
         assert!(store.has_embedding_for_passage("semantic:legacy", &passage)?);
         assert!(store.get_by_id(&old_id)?.is_none());
-        Ok(())
-    }
-
-    #[test]
-    fn semantic_goal_passage_does_not_embed_private_calibration_receipt() -> anyhow::Result<()> {
-        let store = test_store();
-        let write = store.prepare_semantic_write(HMem::new(
-            "curator:goal:fixture",
-            "kanban_goal_create",
-            serde_json::json!({
-                "text": "", "mutable_state": true, "goal": "public goal", "_memory_calibration": "private receipt",
-            }),
-            WebID::new(),
-        ))?;
-        assert!(write.passage().contains("public goal"));
-        assert!(!write.passage().contains("private receipt"));
-        let passage = write.passage().to_string();
-        let id = write.publish(&vec![1.0; hkask_storage::embedding_dim()], "test-model")?;
-        assert_eq!(
-            semantic_passage_for_h_mem(&store.get_by_id(&id)?.expect("goal row")).as_deref(),
-            Some(passage.as_str())
-        );
         Ok(())
     }
 

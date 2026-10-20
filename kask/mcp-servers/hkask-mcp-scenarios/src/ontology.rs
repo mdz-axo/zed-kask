@@ -62,7 +62,7 @@ pub(crate) fn tool_to_pko(tool_name: &str) -> Option<PkoConcept> {
         // steps; quantify resolves the tree (a step execution);
         // build scaffolds the event tree (a step).
         "scenario_build" | "scenario_from_markets_set" => Some(PROCEDURE),
-        "scenario_quantify" => Some(STEP_EXECUTION),
+        "scenario_quantify" | "scenario_declare" => Some(STEP_EXECUTION),
         // Calibration, cross-validation, and synthesis execute the
         // Tetlock quantification stages.
         "scenario_calibrate" | "scenario_cross_validate" | "scenario_synthesize" => {
@@ -113,6 +113,7 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
         | "scenario_brainstorm"
         | "scenario_build"
         | "scenario_from_markets_set"
+        | "scenario_declare"
         | "scenario_quantify"
         | "scenario_calibrate"
         | "scenario_cross_validate"

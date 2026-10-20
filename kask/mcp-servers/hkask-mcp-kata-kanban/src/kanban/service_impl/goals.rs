@@ -1,1002 +1,859 @@
-//! Goal operations — the native goal-setting and verification system.
-//!
-//! Thin vertical slice per `kask/docs/architecture/functional-interaction-spec.md`
-//! Phase B: the functional goal (kata target condition) as a first-class
-//! object with verifiable criteria, recorded verdicts, and Brier-scored
-//! intake predictions. These tools are the canonical goal lifecycle (the
-//! former `goal-analysis` skill was removed in their favor).
-//!
-//! **Persistent through memory acknowledgment (operator ruling 2026-09-16):**
-//! the goal store is the same DB-backed `HMemStore` that persists boards and
-//! tasks. `kanban_goal_score` records resolution but retains the row until the
-//! production turn-ingestion path confirms that the score outcome was stored
-//! in curator memory. Only `goal_acknowledge_memory` prunes it. Same-outcome
-//! scoring is retryable; a conflicting outcome is rejected.
-//!
-//! HMem scheme (kanban DB store):
-//!   kanban:goal → {goal_id} → JSON Goal
-
+//! Atomic canonical goal transitions. In-process host authority is deliberately
+//! absent from the MCP router. Retrieval projections never own canonical data.
+use super::{service::KanbanService, types::KanbanError};
+use crate::kanban::VerificationCriterion;
+use crate::kanban::types::goal::*;
+use chrono::Utc;
 use hkask_storage::HMem;
-use hkask_types::WebID;
-use hkask_types::id::{GoalID, TaskId};
-
-use super::service::KanbanService;
-use super::types::KanbanError;
-use crate::kanban::{Goal, GoalResolution, GoalVerdict, VerificationCriterion};
+use hkask_types::{WebID, id::GoalID};
+use serde::Serialize;
+use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 
 const GOAL_ENTITY: &str = "kanban:goal";
-
 impl From<hkask_storage::HMemError> for KanbanError {
     fn from(error: hkask_storage::HMemError) -> Self {
         KanbanError::Internal(format!("atomic goal transition failed: {error}"))
     }
 }
+fn invalid(message: impl Into<String>) -> KanbanError {
+    KanbanError::InvalidInput(message.into())
+}
+fn nonempty(value: &str, field: &str) -> Result<(), KanbanError> {
+    if value.trim().is_empty() {
+        return Err(invalid(format!("{field} must be non-empty")));
+    }
+    Ok(())
+}
+fn digest(value: &impl Serialize) -> Result<String, KanbanError> {
+    let bytes = serde_json::to_vec(value).map_err(|e| KanbanError::Internal(e.to_string()))?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+fn validate_source(source: &GoalSource) -> Result<(), KanbanError> {
+    nonempty(&source.interaction_id, "interaction_id")?;
+    nonempty(&source.session_id, "session_id")?;
+    nonempty(&source.source, "source")
+}
+fn require_owner(goal: &Goal, owner: WebID) -> Result<(), KanbanError> {
+    if goal.owner != owner {
+        return Err(KanbanError::PermissionDenied(
+            "goal is not owned by caller".into(),
+        ));
+    }
+    Ok(())
+}
+fn evidence_ids(goal: &Goal) -> HashSet<&str> {
+    goal.closure
+        .iter()
+        .flat_map(|c| &c.input.evidence_manifest)
+        .map(|e| e.id.as_str())
+        .collect()
+}
+fn validate_refs(ids: &[String], known: &HashSet<&str>) -> Result<(), KanbanError> {
+    let mut unique = HashSet::new();
+    for id in ids {
+        if !unique.insert(id) || !known.contains(id.as_str()) {
+            return Err(invalid(format!("duplicate or unknown evidence id {id}")));
+        }
+    }
+    Ok(())
+}
 
-/// Bounds on goal criteria — "2–4 observable semantic conditions",
-/// relaxed to allow a single
-/// criterion for trivially verifiable goals while keeping verification
-/// tractable.
-const MIN_CRITERIA: usize = 1;
-const MAX_CRITERIA: usize = 4;
-
-impl KanbanService {
-    // ── Goal operations ───────────────────────────────────────────────────
-
-    /// Create a functional goal with observable criteria.
-    ///
-    /// pre:  goal_text non-empty; 1–4 criteria; prediction in 0.0..=1.0 if
-    ///       given; task_id refers to an existing task if given
-    /// post: goal persisted as a h_mem; returns the created Goal
-    #[must_use = "result must be used"]
-    pub(crate) fn goal_create(
-        &self,
+/// Read old records into a typed archive without reconstructing lost authority,
+/// timing or probabilities. Raw historical fields (including scores) survive.
+fn decode_goal(value: serde_json::Value) -> Result<Goal, KanbanError> {
+    if let Some(version) = value.get("schema_version") {
+        if version.as_u64() != Some(2) {
+            return Err(invalid("unsupported canonical goal schema version"));
+        }
+        return serde_json::from_value(value)
+            .map_err(|e| KanbanError::Internal(format!("goal decode: {e}")));
+    }
+    #[derive(serde::Deserialize)]
+    struct HistoricalGoal {
+        id: GoalID,
         goal_text: String,
         criteria: Vec<VerificationCriterion>,
-        prediction: Option<f64>,
-        task_id: Option<TaskId>,
+        task_id: Option<hkask_types::id::TaskId>,
+        verdicts: Vec<GoalVerdict>,
+        owner: WebID,
+        created_at: chrono::DateTime<Utc>,
+        updated_at: chrono::DateTime<Utc>,
+    }
+    let old: HistoricalGoal = serde_json::from_value(value.clone())
+        .map_err(|e| KanbanError::Internal(format!("legacy goal decode: {e}")))?;
+    let spec_digest = digest(&(&old.goal_text, &old.criteria, old.task_id))?;
+    Ok(Goal {
+        schema_version: 2, id: old.id, goal_text: old.goal_text,
+        criterion_ids: (1..=old.criteria.len()).map(|n| format!("criterion-{n}")).collect(),
+        criteria: old.criteria, task_id: old.task_id, source: None, supersedes: None,
+        spec_digest, verdicts: old.verdicts, closure: None, human_corrections: vec![], assessment_pending: false,
+        assessments: vec![], forecast: None, observations: vec![],
+        forecast_status: ForecastStatus::LegacyUnscored, scores: vec![], projections: vec![], revision: 0,
+        legacy: Some(LegacyGoalArchive { raw: value, limitation: "Historical provenance-limited archive; original human receipt and prospective forecast eligibility not established. Unscored; no reconstructed outcomes.".into() }),
+        owner: old.owner, created_at: old.created_at, updated_at: old.updated_at,
+    })
+}
+fn publish(goal: &mut Goal) -> Result<(), KanbanError> {
+    goal.revision = goal
+        .revision
+        .checked_add(1)
+        .ok_or_else(|| invalid("goal revision overflow"))?;
+    goal.updated_at = Utc::now();
+    let mut snapshot = goal.clone();
+    snapshot.projections.clear();
+    let payload =
+        serde_json::to_value(snapshot).map_err(|e| KanbanError::Internal(e.to_string()))?;
+    goal.projections.push(GoalProjection {
+        event_id: format!("{}:{}", goal.id, goal.revision),
+        revision: goal.revision,
+        payload_digest: digest(&payload)?,
+        payload,
+        delivered_receipt: None,
+    });
+    Ok(())
+}
+fn validate_forecast(forecast: &GoalForecast) -> Result<(), KanbanError> {
+    for (value, field) in [
+        (&forecast.proposition, "proposition"),
+        (&forecast.execution_policy, "execution_policy"),
+        (&forecast.resources, "resources"),
+        (&forecast.cohort, "cohort"),
+    ] {
+        nonempty(value, field)?;
+    }
+    if !(0.0..=1.0).contains(&forecast.probability)
+        || !(0.0..=1.0).contains(&forecast.baseline_probability)
+    {
+        return Err(invalid(
+            "forecast and baseline probabilities must be finite and in [0,1]",
+        ));
+    }
+    if forecast.horizon <= Utc::now() || forecast.resolution_deadline < forecast.horizon {
+        return Err(invalid(
+            "forecast must be declared before horizon; resolution_deadline must not precede horizon",
+        ));
+    }
+    if let GoalForecastResolver::MachineEvidence { source, oracle } = &forecast.resolver {
+        nonempty(source, "resolver source")?;
+        nonempty(oracle, "resolver oracle")?;
+    }
+    Ok(())
+}
+
+/// Resolve only the frozen target, after an assessor attempt. Unknown and
+/// disputed records never synthesize y. Prior score versions remain auditable.
+fn resolve_forecast(goal: &mut Goal) -> Result<(), KanbanError> {
+    let Some(forecast) = &goal.forecast else {
+        return Ok(());
+    };
+    if !goal
+        .assessments
+        .iter()
+        .any(|a| a.completion.is_some() || a.failure.is_some())
+    {
+        goal.forecast_status = ForecastStatus::PendingAssessment;
+        return Ok(());
+    }
+    let outcome = match &forecast.resolver {
+        GoalForecastResolver::HumanAcceptance => {
+            goal.closure.as_ref().and_then(|closure| {
+                // Corrections change the label of the original event, not its
+                // horizon. A later receipt cannot move an early outcome into
+                // the scoring window or invalidate a timely original outcome.
+                let time = closure.input.occurred_at;
+                let (event_id, outcome) = goal
+                    .human_corrections
+                    .last()
+                    .map(|c| (c.event_id.clone(), c.outcome))
+                    .unwrap_or_else(|| {
+                        (
+                            closure.input.event_id.clone(),
+                            closure.input.choice.outcome(),
+                        )
+                    });
+                (time >= forecast.horizon && time <= forecast.resolution_deadline)
+                    .then_some((event_id, outcome))
+            })
+        }
+        GoalForecastResolver::MachineEvidence { .. } => {
+            let superseded: HashSet<_> = goal
+                .observations
+                .iter()
+                .filter_map(|o| o.correction_of.as_ref())
+                .collect();
+            let active: Vec<_> = goal
+                .observations
+                .iter()
+                .filter(|o| !superseded.contains(&o.event_id))
+                .collect();
+            let known: HashSet<_> = active.iter().filter_map(|o| o.outcome).collect();
+            if known.len() > 1 {
+                goal.forecast_status = ForecastStatus::Disputed;
+                return Ok(());
+            }
+            // A later unknown does not erase an unresolved disagreement.
+            if active.iter().any(|o| o.outcome.is_none()) {
+                active
+                    .iter()
+                    .find(|o| o.outcome.is_none())
+                    .map(|o| (o.event_id.clone(), None))
+            } else {
+                active.last().map(|o| (o.event_id.clone(), o.outcome))
+            }
+        }
+    };
+    let Some((event_id, outcome)) = outcome else {
+        goal.forecast_status = if Utc::now() > forecast.resolution_deadline {
+            ForecastStatus::DeadlineElapsed
+        } else {
+            ForecastStatus::PendingOutcome
+        };
+        return Ok(());
+    };
+    let Some(outcome) = outcome else {
+        goal.forecast_status = ForecastStatus::Unknown;
+        return Ok(());
+    };
+    goal.forecast_status = ForecastStatus::Resolved;
+    if goal
+        .scores
+        .last()
+        .is_some_and(|s| s.outcome_event_id == event_id)
+    {
+        return Ok(());
+    }
+    let brier = hkask_forecast::brier_score(forecast.probability, outcome);
+    let baseline_brier = hkask_forecast::brier_score(forecast.baseline_probability, outcome);
+    let previous = goal.scores.last().map(|s| s.version);
+    let version = previous
+        .unwrap_or(0)
+        .checked_add(1)
+        .ok_or_else(|| invalid("score version overflow"))?;
+    goal.scores.push(GoalForecastScore {
+        version,
+        outcome_event_id: event_id,
+        outcome,
+        brier,
+        baseline_brier,
+        skill: (baseline_brier > 0.0).then(|| 1.0 - brier / baseline_brier),
+        supersedes_version: previous,
+        recorded_at: Utc::now(),
+    });
+    Ok(())
+}
+
+impl KanbanService {
+    pub fn goal_create(
+        &self,
+        declaration: GoalDeclaration,
         owner: WebID,
     ) -> Result<Goal, KanbanError> {
-        if goal_text.trim().is_empty() {
-            return Err(KanbanError::InvalidInput(
-                "goal_text must be non-empty — the functional goal in the user's words".into(),
-            ));
+        nonempty(&declaration.goal_text, "goal_text")?;
+        if !(1..=4).contains(&declaration.criteria.len()) {
+            return Err(invalid("goal requires 1–4 explicit criteria"));
         }
-        if criteria.len() < MIN_CRITERIA || criteria.len() > MAX_CRITERIA {
-            return Err(KanbanError::InvalidInput(format!(
-                "goal requires {MIN_CRITERIA}–{MAX_CRITERIA} observable criteria (got {})",
-                criteria.len()
-            )));
+        for criterion in &declaration.criteria {
+            nonempty(&criterion.description, "criterion description")?;
         }
-        if let Some(p) = prediction
-            && !(0.0..=1.0).contains(&p)
-        {
-            return Err(KanbanError::InvalidInput(format!(
-                "prediction must be in 0.0..=1.0 (got {p})"
-            )));
+        validate_source(&declaration.source)?;
+        if let Some(forecast) = &declaration.forecast {
+            validate_forecast(forecast)?;
         }
-        if let Some(tid) = task_id
-            && self.task_get(tid)?.is_none()
-        {
-            return Err(KanbanError::InvalidInput(format!(
-                "task {tid} not found — cannot link goal to a nonexistent task"
-            )));
+        if let Some(id) = declaration.supersedes {
+            self.goal_get(id, owner)?
+                .ok_or_else(|| Self::goal_not_found(id))?;
         }
-
-        let mut goal = Goal::new(GoalID::new(), goal_text, criteria, owner);
-        goal.prediction = prediction;
-        goal.task_id = task_id;
-
-        // Process-family anchor: `pplan:Step` (P-Plan, soft-reused by PKO) —
-        // the same term the goal responses emit via `kanban_type_to_pko`,
-        // so the goal's record and its wire surface agree. Later updates use
-        // update_value_atomic, which changes only the value under the write lock.
+        if let Some(id) = declaration.task_id {
+            let task = self.task_get(id)?.ok_or_else(|| {
+                KanbanError::NotFound(hkask_types::NotFound {
+                    entity_type: "task".into(),
+                    id: id.to_string(),
+                })
+            })?;
+            if task.owner != owner {
+                return Err(KanbanError::PermissionDenied(
+                    "linked task is not owned by caller".into(),
+                ));
+            }
+        }
+        let spec_digest = digest(&(
+            &declaration.goal_text,
+            &declaration.criteria,
+            &declaration.source,
+            declaration.supersedes,
+        ))?;
+        let now = Utc::now();
+        let mut goal = Goal {
+            schema_version: 2,
+            id: GoalID::new(),
+            goal_text: declaration.goal_text,
+            criterion_ids: (1..=declaration.criteria.len())
+                .map(|n| format!("criterion-{n}"))
+                .collect(),
+            criteria: declaration.criteria,
+            task_id: declaration.task_id,
+            source: Some(declaration.source),
+            supersedes: declaration.supersedes,
+            spec_digest,
+            verdicts: vec![],
+            closure: None,
+            human_corrections: vec![],
+            assessment_pending: false,
+            assessments: vec![],
+            forecast_status: if declaration.forecast.is_some() {
+                ForecastStatus::PendingAssessment
+            } else {
+                ForecastStatus::NotDeclared
+            },
+            forecast: declaration.forecast,
+            observations: vec![],
+            scores: vec![],
+            projections: vec![],
+            revision: 0,
+            legacy: None,
+            owner,
+            created_at: now,
+            updated_at: now,
+        };
+        publish(&mut goal)?;
+        let value =
+            serde_json::to_value(&goal).map_err(|e| KanbanError::Internal(e.to_string()))?;
         let ontology = hkask_types::HMemOntology {
-            dimensions: vec![hkask_types::Dimension::Why.as_str().to_string()],
-            dc_type: hkask_bridge_ontology::pko::STEP.to_string(),
-            dc_source: "kanban".to_string(),
+            dimensions: vec![hkask_types::Dimension::Why.as_str().into()],
+            dc_type: hkask_bridge_ontology::pko::STEP.into(),
+            dc_source: "kanban".into(),
             pko_procedure: Some(goal.id.to_string()),
             ..Default::default()
         };
-        let value = serde_json::to_value(&goal).map_err(|error| {
-            KanbanError::Internal(format!("goal serialization failed: {error}"))
-        })?;
-        let h_mem =
-            HMem::new(GOAL_ENTITY, &goal.id.to_string(), value, owner).with_ontology(ontology);
-        self.store
-            .insert(&h_mem)
-            .map_err(|error| KanbanError::Internal(format!("h_mem insert failed: {error}")))?;
-
-        tracing::info!(
-            target: "hkask.kanban",
-            operation = "goal_created",
-            goal_id = %goal.id,
-            owner = %owner,
-            "REG"
-        );
-
+        self.store.insert(
+            &HMem::new(GOAL_ENTITY, &goal.id.to_string(), value, owner).with_ontology(ontology),
+        )?;
         Ok(goal)
     }
 
-    /// Get a goal by ID.
-    ///
-    /// pre:  goal_id is valid
-    /// post: returns Some(Goal) if found, None otherwise
-    #[must_use = "result must be used"]
-    pub(crate) fn goal_get(&self, goal_id: GoalID) -> Result<Option<Goal>, KanbanError> {
-        Ok(self.goal_row(goal_id)?.map(|(_, goal)| goal))
-    }
-
-    /// Resolve one goal's durable row by the goal's identity — enumerating
-    /// the goal entity and matching the parsed `Goal`'s id, the same read
-    /// shape `goal_list` uses. The row's attribute is a storage key, not
-    /// the identity: a row whose attribute drifted from its goal id still
-    /// resolves here, and duplicate rows error instead of silently picking
-    /// one. The identity read is also the robustness defense observed live
-    /// 2026-10-04/05: three goals were list-visible while every keyed
-    /// (by-attribute) lookup returned not-found, so
-    /// `goal_acknowledge_memory` reported `acknowledged:true` while pruning
-    /// nothing. A raw-column dump later showed the rows healthy and
-    /// canonical — the keyed misses were a server-process DB-view
-    /// divergence (a fresh process read the same rows correctly), not data
-    /// corruption — but resolving by identity works regardless of which
-    /// layer loses the storage-key invariant.
-    fn goal_row(&self, goal_id: GoalID) -> Result<Option<(HMem, Goal)>, KanbanError> {
-        let h_mems = self
-            .store
-            .query_by_entity(GOAL_ENTITY)
-            .map_err(|error| KanbanError::Internal(format!("h_mem query failed: {error}")))?;
-        let mut matching: Vec<(HMem, Goal)> = Vec::new();
-        for row in h_mems {
-            let goal = serde_json::from_value::<Goal>(row.value.clone()).map_err(|error| {
-                KanbanError::Internal(format!("goal deserialization failed: {error}"))
-            })?;
-            if goal.id == goal_id {
-                matching.push((row, goal));
-            }
-        }
-        if matching.len() > 1 {
-            return Err(KanbanError::Internal(format!(
-                "goal {goal_id} has {} durable rows; expected exactly one",
-                matching.len()
-            )));
-        }
-        Ok(matching.into_iter().next())
-    }
-
-    /// The typed not-found for a goal lifecycle lookup — one construction
-    /// for every row-absent arm (`transition_goal`'s resolve and its
-    /// atomic-update tail).
-    fn goal_not_found(goal_id: GoalID) -> KanbanError {
+    fn goal_not_found(id: GoalID) -> KanbanError {
         KanbanError::NotFound(hkask_types::NotFound {
-            entity_type: "goal".to_string(),
-            id: goal_id.to_string(),
+            entity_type: "goal".into(),
+            id: id.to_string(),
         })
     }
 
-    /// List all goals for a given owner, newest first.
-    ///
-    /// pre:  owner is a valid WebID
-    /// post: returns all goals owned by this agent
-    #[must_use = "result must be used"]
-    pub(crate) fn goal_list(&self, owner: &WebID) -> Result<Vec<Goal>, KanbanError> {
-        let h_mems = self
-            .store
-            .query_by_entity(GOAL_ENTITY)
-            .map_err(|error| KanbanError::Internal(format!("h_mem query failed: {error}")))?;
-
-        let mut goals: Vec<Goal> = Vec::new();
-        let mut goal_ids = std::collections::HashSet::new();
-        for h_mem in h_mems {
-            if h_mem.access.owner_webid != *owner {
+    /// Resolve by semantic identity, not a potentially drifted storage key.
+    /// Duplicate identities and row/payload ownership disagreement are errors.
+    fn goal_rows(&self, owner: WebID) -> Result<Vec<(HMem, Goal)>, KanbanError> {
+        let mut ids = HashSet::new();
+        let mut rows = vec![];
+        for row in self.store.query_by_entity(GOAL_ENTITY)? {
+            if row.access.owner_webid != owner {
                 continue;
             }
-            let goal = serde_json::from_value::<Goal>(h_mem.value).map_err(|error| {
-                KanbanError::Internal(format!("goal deserialization failed: {error}"))
-            })?;
-            if !goal_ids.insert(goal.id) {
+            let goal = decode_goal(row.value.clone())?;
+            require_owner(&goal, owner)?;
+            if !ids.insert(goal.id) {
                 return Err(KanbanError::Internal(format!(
-                    "goal {} has duplicate durable rows",
+                    "duplicate durable goal {}",
                     goal.id
                 )));
             }
-            goals.push(goal);
+            rows.push((row, goal));
         }
-
-        goals.sort_by_key(|goal| std::cmp::Reverse(goal.created_at));
+        Ok(rows)
+    }
+    pub fn goal_get(&self, id: GoalID, owner: WebID) -> Result<Option<Goal>, KanbanError> {
+        Ok(self
+            .goal_rows(owner)?
+            .into_iter()
+            .find(|(_, g)| g.id == id)
+            .map(|(_, g)| g))
+    }
+    pub fn goal_list(&self, owner: &WebID) -> Result<Vec<Goal>, KanbanError> {
+        let mut goals: Vec<_> = self
+            .goal_rows(*owner)?
+            .into_iter()
+            .map(|(_, g)| g)
+            .collect();
+        goals.sort_by_key(|g| std::cmp::Reverse(g.created_at));
         Ok(goals)
     }
+    /// Re-encode original legacy rows as explicit typed archives atomically.
+    /// No old prediction or result is admitted to the new scoring population.
+    pub fn goal_archive_legacy(&self, owner: WebID) -> Result<usize, KanbanError> {
+        let mut count = 0;
+        for (row, _) in self.goal_rows(owner)? {
+            let changed = self
+                .store
+                .update_value_atomic(GOAL_ENTITY, &row.attribute, |value| {
+                    if value.get("schema_version").is_some() {
+                        return Ok::<_, KanbanError>((None, false));
+                    }
+                    let goal = decode_goal(value)?;
+                    require_owner(&goal, owner)?;
+                    let value = serde_json::to_value(goal)
+                        .map_err(|e| KanbanError::Internal(e.to_string()))?;
+                    Ok((Some(value), true))
+                })?;
+            if changed == Some(true) {
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
 
-    /// Record a judge verdict against the goal's criteria.
-    ///
-    /// Appends to the verdict history — the history IS the learning. Only
-    /// the goal owner may judge (P12).
-    ///
-    /// pre:  goal exists and is owned by caller; confidence in 0.0..=1.0;
-    ///       criterion results cover every criterion exactly once (indices
-    ///       in range, no duplicates, none missing)
-    /// post: verdict appended and persisted; returns the updated Goal
-    #[must_use = "result must be used"]
-    pub(crate) fn goal_judge(
+    fn transition_goal(
         &self,
-        goal_id: GoalID,
-        verdict: GoalVerdict,
-        judge: WebID,
+        id: GoalID,
+        owner: WebID,
+        project: bool,
+        change: impl FnOnce(&mut Goal) -> Result<bool, KanbanError>,
     ) -> Result<Goal, KanbanError> {
-        self.transition_goal(goal_id, |mut goal| {
-        if goal.owner != judge {
-            return Err(KanbanError::PermissionDenied(format!(
-                "goal {goal_id} is not owned by caller — cannot judge"
-            )));
-        }
-        if goal.resolution.is_some() {
-            return Err(KanbanError::InvalidInput(format!(
-                "goal {goal_id} is already resolved — open a new goal to continue work"
-            )));
-        }
-        if !(0.0..=1.0).contains(&verdict.confidence) {
-            return Err(KanbanError::InvalidInput(format!(
-                "confidence must be in 0.0..=1.0 (got {})",
-                verdict.confidence
-            )));
-        }
-        // A verdict must judge EVERY criterion: the per-criterion results are
-        // the explicit obligation the Brier score later discharges. A verdict
-        // with missing or duplicated criterion results is an unanchored
-        // claim — reject it with an error naming what is missing.
-        let criterion_count = goal.criteria.len();
-        if let Some(cj) = verdict
-            .criterion_results
-            .iter()
-            .find(|cj| cj.index >= criterion_count)
-        {
-            return Err(KanbanError::InvalidInput(format!(
-                "criterion index {} out of range (goal has {} criteria)",
-                cj.index, criterion_count
-            )));
-        }
-        let mut judged: Vec<usize> = verdict
-            .criterion_results
-            .iter()
-            .map(|cj| cj.index)
-            .collect();
-        judged.sort_unstable();
-        judged.dedup();
-        if judged.len() != verdict.criterion_results.len() {
-            return Err(KanbanError::InvalidInput(
-                "criterion results contain duplicate indices — judge each criterion exactly once"
-                    .to_string(),
-            ));
-        }
-        let missing: Vec<usize> = (0..criterion_count)
-            .filter(|index| !judged.contains(index))
-            .collect();
-        if !missing.is_empty() {
-            return Err(KanbanError::InvalidInput(format!(
-                "verdict must judge every criterion — missing indices {missing:?} (goal has {criterion_count} criteria)"
-            )));
-        }
+        let (row, _) = self
+            .goal_rows(owner)?
+            .into_iter()
+            .find(|(_, g)| g.id == id)
+            .ok_or_else(|| Self::goal_not_found(id))?;
+        self.store
+            .update_value_atomic(GOAL_ENTITY, &row.attribute, |value| {
+                let mut goal = decode_goal(value)?;
+                if goal.id != id {
+                    return Err(invalid("goal identity changed during update"));
+                }
+                require_owner(&goal, owner)?;
+                if goal.legacy.is_some() {
+                    return Err(invalid(
+                        "legacy goal is archived and unscored; declare a successor instead",
+                    ));
+                }
+                let changed = change(&mut goal)?;
+                if changed && project {
+                    publish(&mut goal)?;
+                }
+                let value = if changed {
+                    Some(
+                        serde_json::to_value(&goal)
+                            .map_err(|e| KanbanError::Internal(e.to_string()))?,
+                    )
+                } else {
+                    None
+                };
+                Ok::<_, KanbanError>((value, goal))
+            })?
+            .ok_or_else(|| Self::goal_not_found(id))
+    }
 
-        goal.verdicts.push(verdict);
-        goal.updated_at = chrono::Utc::now();
-        Ok((true, goal))
+    pub fn goal_judge(
+        &self,
+        id: GoalID,
+        verdict: GoalVerdict,
+        owner: WebID,
+    ) -> Result<Goal, KanbanError> {
+        self.transition_goal(id, owner, true, |goal| {
+            if goal.closure.is_some() {
+                return Err(invalid(
+                    "work is closed; declare a successor for changed requirements",
+                ));
+            }
+            if !(0.0..=1.0).contains(&verdict.confidence) {
+                return Err(invalid("confidence must be finite and in [0,1]"));
+            }
+            let indices: HashSet<_> = verdict.criterion_results.iter().map(|c| c.index).collect();
+            if indices.len() != goal.criteria.len()
+                || indices.len() != verdict.criterion_results.len()
+                || indices.iter().any(|i| *i >= goal.criteria.len())
+            {
+                return Err(invalid("verdict must cover every criterion exactly once"));
+            }
+            if verdict.verdict == GoalVerdictValue::Done
+                && verdict.criterion_results.iter().any(|c| !c.passed)
+            {
+                return Err(invalid("done contradicts failed criteria"));
+            }
+            nonempty(&verdict.reasoning, "reasoning")?;
+            for result in &verdict.criterion_results {
+                nonempty(&result.note, "criterion evidence note")?;
+            }
+            goal.verdicts.push(verdict);
+            Ok(true)
         })
     }
 
-    /// Resolve a goal: record the realized outcome and Brier-score the
-    /// intake prediction.
-    ///
-    /// pre:  goal exists and is owned by caller; not already resolved
-    /// post: resolution recorded; `brier` is `None` (surfaced, never faked)
-    ///       when no intake prediction was recorded
-    #[must_use = "result must be used"]
-    pub(crate) fn goal_score(
+    /// Trusted host ingress. No actor string grants authority and no MCP route
+    /// can reach this method. Authentication occurs in the native host adapter.
+    pub fn goal_close_native(
         &self,
-        goal_id: GoalID,
-        achieved: bool,
-        judge: WebID,
-    ) -> Result<Goal, KanbanError> {
-        let goal = self.transition_goal(goal_id, |mut goal| {
-        if goal.owner != judge {
-            return Err(KanbanError::PermissionDenied(format!(
-                "goal {goal_id} is not owned by caller — cannot score"
-            )));
-        }
-        if let Some(resolution) = &goal.resolution {
-            if resolution.achieved == achieved {
-                return Ok((false, goal));
-            }
-            return Err(KanbanError::InvalidInput(format!(
-                "goal {goal_id} is already resolved with achieved={} — conflicting outcome {achieved} rejected",
-                resolution.achieved
-            )));
-        }
-
-        // Brier of the intake prediction against the realized outcome.
-        // No prediction → None, surfaced by the caller — a synthetic 0
-        // would read as "perfectly calibrated" (the calibration.rs lesson).
-        let brier = goal
-            .prediction
-            .map(|p| hkask_forecast::brier_score(p, achieved));
-
-        goal.resolution = Some(GoalResolution {
-            achieved,
-            brier,
-            resolved_at: chrono::Utc::now(),
-        });
-        goal.updated_at = chrono::Utc::now();
-
-        // The resolved row is the durable outbox entry. It remains retryable
-        // until the production turn-ingestion path confirms the score outcome
-        // was stored in curator memory and explicitly acknowledges it.
-        Ok((true, goal))
-        })?;
-
-        let brier = goal
-            .resolution
-            .as_ref()
-            .and_then(|resolution| resolution.brier);
-        tracing::info!(
-            target: "hkask.kanban",
-            operation = "goal_resolved",
-            goal_id = %goal.id,
-            achieved,
-            brier = ?brier,
-            "REG"
-        );
-
-        Ok(goal)
-    }
-
-    /// Confirm that a resolved goal's score outcome is present in curator
-    /// memory, then prune the kanban outbox row. Missing rows are already
-    /// acknowledged, making retries idempotent.
-    pub(crate) fn goal_acknowledge_memory(
-        &self,
-        goal_id: GoalID,
+        id: GoalID,
         owner: WebID,
-    ) -> Result<(), KanbanError> {
-        let Some(goal) = self.goal_get(goal_id)? else {
-            return Ok(());
-        };
-        if goal.owner != owner {
-            return Err(KanbanError::PermissionDenied(format!(
-                "goal {goal_id} is not owned by caller — cannot acknowledge memory"
-            )));
-        }
-        if goal.resolution.is_none() {
-            return Err(KanbanError::InvalidInput(format!(
-                "goal {goal_id} is not resolved — no scored outcome can be acknowledged"
-            )));
-        }
-        self.goal_prune(goal_id)
-    }
-
-    /// Read, validate, and commit a goal transition under one storage write lock.
-    fn transition_goal(
-        &self,
-        goal_id: GoalID,
-        change: impl FnOnce(Goal) -> Result<(bool, Goal), KanbanError>,
+        input: NativeGoalClosure,
     ) -> Result<Goal, KanbanError> {
-        // The durable row's actual storage key — which may have drifted
-        // from the goal id (see `goal_row`) — locates the atomic update;
-        // the update itself re-reads and validates under the write lock.
-        let attribute = self
-            .goal_row(goal_id)?
-            .map(|(row, _)| row.attribute)
-            .ok_or_else(|| Self::goal_not_found(goal_id))?;
-        self.store
-            .update_value_atomic(GOAL_ENTITY, &attribute, |value| {
-                let current: Goal = serde_json::from_value(value).map_err(|error| {
-                    KanbanError::Internal(format!("goal deserialization failed: {error}"))
-                })?;
-                let (changed, goal) = change(current)?;
-                let value = changed
-                    .then(|| serde_json::to_value(&goal))
-                    .transpose()
-                    .map_err(|error| {
-                        KanbanError::Internal(format!("goal serialization failed: {error}"))
-                    })?;
-                Ok::<_, KanbanError>((value, goal))
-            })?
-            .ok_or_else(|| Self::goal_not_found(goal_id))
-    }
-
-    /// Delete the one durable goal row. A missing row is already acknowledged.
-    fn goal_prune(&self, goal_id: GoalID) -> Result<(), KanbanError> {
-        match self.goal_row(goal_id)? {
-            None => Ok(()),
-            Some((row, _)) => self
-                .store
-                .delete_by_id(&row.id)
-                .map_err(|error| KanbanError::Internal(format!("h_mem delete failed: {error}"))),
-        }
-    }
-}
-
-#[cfg(test)]
-mod goal_tests {
-    use super::*;
-    use crate::kanban::{CriterionJudgment, GoalVerdictValue};
-    use hkask_storage::HMemStore;
-
-    fn make_service() -> KanbanService {
-        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
-        KanbanService::new(HMemStore::from_driver(driver).expect("hmem store init"))
-    }
-
-    fn criteria(n: usize) -> Vec<VerificationCriterion> {
-        (0..n)
-            .map(|i| VerificationCriterion::new(format!("criterion {i} is observable")))
-            .collect()
-    }
-
-    fn one_criterion_verdict() -> GoalVerdict {
-        GoalVerdict {
-            verdict: GoalVerdictValue::Continue,
-            confidence: 0.7,
-            criterion_results: vec![CriterionJudgment {
-                index: 0,
-                passed: false,
-                note: "not yet observable".into(),
-            }],
-            reasoning: "work in progress".into(),
-            judged_at: chrono::Utc::now(),
-        }
-    }
-
-    /// expect: "Every successful concurrent verdict is retained in the learning history."
-    /// [P2] Motivating: Transparent Imperfection — a successful write must not hide another verdict.
-    /// pre: two judges start on the same open goal
-    /// post: both distinct verdicts survive in the durable row
-    #[test]
-    fn concurrent_goal_judges_preserve_both_verdicts() -> anyhow::Result<()> {
-        let svc = make_service();
-        let owner = WebID::new();
-        let goal = svc.goal_create("goal".into(), criteria(1), None, None, owner)?;
-        let start = std::sync::Barrier::new(3);
-        std::thread::scope(|scope| -> anyhow::Result<()> {
-            let threads: Vec<_> = (0..2)
-                .map(|index| {
-                    let start = &start;
-                    let svc = &svc;
-                    scope.spawn(move || {
-                        let mut verdict = one_criterion_verdict();
-                        verdict.reasoning = format!("judge {index}");
-                        start.wait();
-                        svc.goal_judge(goal.id, verdict, owner)
-                    })
-                })
-                .collect();
-            start.wait();
-            for thread in threads {
-                thread.join().expect("judge thread panicked")?;
+        self.transition_goal(id, owner, true, |goal| {
+            let payload_digest = digest(&input)?;
+            if let Some(existing) = &goal.closure {
+                return if existing.payload_digest == payload_digest && existing.input == input {
+                    Ok(false)
+                } else {
+                    Err(invalid("conflicting closure replay"))
+                };
             }
-            Ok(())
+            nonempty(&input.event_id, "closure event_id")?;
+            validate_source(&input.source)?;
+            if input.expected_spec_digest != goal.spec_digest {
+                return Err(invalid("closure specification digest mismatch"));
+            }
+            if input.occurred_at < goal.created_at || input.occurred_at > Utc::now() {
+                return Err(invalid(
+                    "closure occurred_at must be between declaration and receipt",
+                ));
+            }
+            let mut ids = HashSet::new();
+            for evidence in &input.evidence_manifest {
+                for (value, field) in [
+                    (&evidence.id, "evidence id"),
+                    (&evidence.source, "evidence source"),
+                    (&evidence.locator, "evidence locator"),
+                    (&evidence.digest, "evidence digest"),
+                    (&evidence.reliability, "evidence reliability"),
+                    (&evidence.oracle, "evidence oracle"),
+                ] {
+                    nonempty(value, field)?;
+                }
+                if !ids.insert(&evidence.id) {
+                    return Err(invalid("duplicate evidence id"));
+                }
+            }
+            goal.closure = Some(GoalClosure {
+                input,
+                payload_digest,
+                recorded_at: Utc::now(),
+            });
+            goal.assessment_pending = true;
+            Ok(true)
+        })
+    }
+    /// Append a source-backed human correction without rewriting work closure.
+    pub fn goal_correct_human_outcome(
+        &self,
+        id: GoalID,
+        owner: WebID,
+        correction: NativeGoalOutcomeCorrection,
+    ) -> Result<Goal, KanbanError> {
+        self.transition_goal(id, owner, true, |goal| {
+            if let Some(old) = goal.human_corrections.iter().find(|c| c.event_id == correction.event_id) {
+                return if old == &correction { Ok(false) } else { Err(invalid("conflicting human correction replay")) };
+            }
+            let closure = goal.closure.as_ref().ok_or_else(|| invalid("correction requires original closure"))?;
+            let previous = goal.human_corrections.last().map(|c| (&c.event_id, c.occurred_at))
+                .unwrap_or((&closure.input.event_id, closure.input.occurred_at));
+            nonempty(&correction.event_id, "correction event_id")?;
+            nonempty(&correction.reason, "correction reason")?;
+            validate_source(&correction.source)?;
+            if correction.event_id == closure.input.event_id || correction.supersedes_event_id != *previous.0 || correction.occurred_at < previous.1 || correction.occurred_at > Utc::now() || correction.expected_spec_digest != goal.spec_digest {
+                return Err(invalid("correction must reference latest outcome and original specification with valid source time"));
+            }
+            goal.human_corrections.push(correction);
+            resolve_forecast(goal)?;
+            Ok(true)
+        })
+    }
+    pub fn goal_pending_work(&self, owner: &WebID) -> Result<Vec<Goal>, KanbanError> {
+        Ok(self
+            .goal_list(owner)?
+            .into_iter()
+            .filter(|g| {
+                g.assessment_pending
+                    || g.projections.iter().any(|p| p.delivered_receipt.is_none())
+                    || matches!(
+                        g.forecast_status,
+                        ForecastStatus::PendingAssessment
+                            | ForecastStatus::PendingOutcome
+                            | ForecastStatus::Unknown
+                            | ForecastStatus::Disputed
+                    )
+            })
+            .collect())
+    }
+    /// Reconcile deadlines without a model turn; elapsed is not a false outcome.
+    pub fn goal_refresh_forecast(&self, id: GoalID, owner: WebID) -> Result<Goal, KanbanError> {
+        self.transition_goal(id, owner, true, |goal| {
+            let old = goal.forecast_status.clone();
+            resolve_forecast(goal)?;
+            Ok(old != goal.forecast_status)
+        })
+    }
+    pub fn goal_claim_assessment(
+        &self,
+        id: GoalID,
+        owner: WebID,
+        lease: AssessmentLeaseRequest,
+    ) -> Result<GoalAssessmentInput, KanbanError> {
+        let goal = self.transition_goal(id, owner, true, |goal| {
+            if let Some(attempt) = goal
+                .assessments
+                .iter()
+                .find(|a| a.lease.attempt_id == lease.attempt_id)
+            {
+                return if attempt.lease == lease {
+                    Ok(false)
+                } else {
+                    Err(invalid("conflicting assessment claim replay"))
+                };
+            }
+            if !goal.assessment_pending {
+                return Err(invalid("no pending assessment"));
+            }
+            nonempty(&lease.attempt_id, "attempt_id")?;
+            nonempty(&lease.assessor_id, "assessor_id")?;
+            nonempty(&lease.model_version, "model_version")?;
+            nonempty(&lease.tool_version, "tool_version")?;
+            if lease.lease_until <= Utc::now() {
+                return Err(invalid("assessment lease must expire in the future"));
+            }
+            if let Some(active) = goal
+                .assessments
+                .last_mut()
+                .filter(|a| a.completion.is_none() && a.failure.is_none())
+            {
+                if active.lease.lease_until > Utc::now() {
+                    return Err(invalid("assessment lease is already held"));
+                }
+                active.failure = Some(AssessmentFailure {
+                    attempt_id: active.lease.attempt_id.clone(),
+                    input_digest: active.input_digest.clone(),
+                    reason: "assessment lease expired".into(),
+                });
+            }
+            let closure = goal
+                .closure
+                .as_ref()
+                .ok_or_else(|| invalid("assessment requires closure"))?;
+            let input = GoalAssessmentInput {
+                goal_id: id,
+                spec_digest: goal.spec_digest.clone(),
+                goal_text: goal.goal_text.clone(),
+                criteria: goal
+                    .criterion_ids
+                    .iter()
+                    .zip(&goal.criteria)
+                    .map(|(id, c)| AssessmentCriterion {
+                        id: id.clone(),
+                        description: c.description.clone(),
+                    })
+                    .collect(),
+                evidence_manifest: closure.input.evidence_manifest.clone(),
+            };
+            let input_digest = digest(&input)?;
+            goal.assessments.push(AssessmentAttempt {
+                lease,
+                input,
+                input_digest,
+                started_at: Utc::now(),
+                completion: None,
+                failure: None,
+            });
+            resolve_forecast(goal)?;
+            Ok(true)
         })?;
-        let retained = svc.goal_get(goal.id)?.expect("goal remains in outbox");
-        assert_eq!(retained.verdicts.len(), 2);
-        assert!(retained.verdicts.iter().any(|v| v.reasoning == "judge 0"));
-        assert!(retained.verdicts.iter().any(|v| v.reasoning == "judge 1"));
-        Ok(())
+        goal.assessments
+            .last()
+            .map(|a| a.input.clone())
+            .ok_or_else(|| invalid("assessment input absent"))
     }
 
-    /// The concurrent-scored-goal fixture: a service, owner, one-criterion goal
-    /// with a 0.7 intake prediction, and a 3-party barrier (two workers + main)
-    /// — shared by the two concurrent score/judge races.
-    fn concurrent_scored_goal() -> anyhow::Result<(KanbanService, WebID, Goal, std::sync::Barrier)>
-    {
-        let svc = make_service();
-        let owner = WebID::new();
-        let goal = svc.goal_create("goal".into(), criteria(1), Some(0.7), None, owner)?;
-        let start = std::sync::Barrier::new(3);
-        Ok((svc, owner, goal, start))
-    }
-
-    /// The store-level fixture: an in-memory HMemStore (returned for direct
-    /// row queries) with its service, owner, and one-criterion goal — shared
-    /// by the tests that read the durable rows behind the service.
-    fn store_level_goal() -> anyhow::Result<(HMemStore, KanbanService, WebID, Goal)> {
-        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
-        let store = HMemStore::from_driver(driver)?;
-        let svc = KanbanService::new(store.clone());
-        let owner = WebID::new();
-        let goal = svc.goal_create("goal".into(), criteria(1), None, None, owner)?;
-        Ok((store, svc, owner, goal))
-    }
-
-    /// expect: "Two conflicting resolutions cannot both report success."
-    /// [P2] Motivating: Transparent Imperfection — the stored outcome remains retryable.
-    /// pre: opposing score requests start together
-    /// post: exactly one succeeds, and the retained outbox outcome matches it
-    #[test]
-    fn concurrent_conflicting_goal_scores_have_one_winner() -> anyhow::Result<()> {
-        let (svc, owner, goal, start) = concurrent_scored_goal()?;
-        let outcomes = std::thread::scope(|scope| {
-            let workers: Vec<_> = [true, false]
-                .into_iter()
-                .map(|achieved| {
-                    let start = &start;
-                    let svc = &svc;
-                    scope.spawn(move || {
-                        start.wait();
-                        svc.goal_score(goal.id, achieved, owner)
-                    })
-                })
-                .collect();
-            start.wait();
-            workers
-                .into_iter()
-                .map(|worker| worker.join().expect("score thread panicked"))
-                .collect::<Vec<_>>()
-        });
-        assert_eq!(outcomes.iter().filter(|outcome| outcome.is_ok()).count(), 1);
-        let winner = outcomes.into_iter().find_map(Result::ok).expect("winner");
-        let retained = svc
-            .goal_get(goal.id)?
-            .expect("resolved outbox row retained");
-        assert_eq!(
-            retained.resolution.as_ref().map(|r| r.achieved),
-            winner.resolution.as_ref().map(|r| r.achieved)
-        );
-        Ok(())
-    }
-
-    /// expect: "A score never erases a verdict that reported success."
-    /// [P2] Motivating: Transparent Imperfection — the learning record and resolution stay coherent.
-    /// pre: judge and score start together on one goal
-    /// post: the resolved outbox row contains every successful verdict
-    #[test]
-    fn concurrent_goal_judge_and_score_preserve_successful_verdict() -> anyhow::Result<()> {
-        let (svc, owner, goal, start) = concurrent_scored_goal()?;
-        let (judge, score) = std::thread::scope(|scope| {
-            let judge = scope.spawn(|| {
-                start.wait();
-                svc.goal_judge(goal.id, one_criterion_verdict(), owner)
-            });
-            let score = scope.spawn(|| {
-                start.wait();
-                svc.goal_score(goal.id, true, owner)
-            });
-            start.wait();
-            (
-                judge.join().expect("judge thread panicked"),
-                score.join().expect("score thread panicked"),
-            )
-        });
-        score?;
-        let retained = svc.goal_get(goal.id)?.expect("outbox row retained");
-        assert!(retained.resolution.is_some());
-        assert_eq!(retained.verdicts.len(), usize::from(judge.is_ok()));
-        Ok(())
-    }
-
-    #[test]
-    fn goal_create_round_trip() {
-        let svc = make_service();
-        let owner = WebID::new();
-        let goal = svc
-            .goal_create(
-                "The user can filter search results by date".into(),
-                criteria(2),
-                Some(0.8),
-                None,
-                owner,
-            )
-            .unwrap();
-        assert_eq!(goal.prediction, Some(0.8));
-        assert!(goal.verdicts.is_empty());
-
-        let fetched = svc.goal_get(goal.id).unwrap().expect("goal persisted");
-        assert_eq!(
-            fetched.goal_text,
-            "The user can filter search results by date"
-        );
-        assert_eq!(fetched.criteria.len(), 2);
-    }
-
-    #[test]
-    fn goal_create_rejects_empty_text_and_bad_criteria_counts() {
-        let svc = make_service();
-        let owner = WebID::new();
-        assert!(
-            svc.goal_create("".into(), criteria(2), None, None, owner)
-                .is_err()
-        );
-        assert!(
-            svc.goal_create("goal".into(), vec![], None, None, owner)
-                .is_err()
-        );
-        assert!(
-            svc.goal_create("goal".into(), criteria(5), None, None, owner)
-                .is_err()
-        );
-        assert!(
-            svc.goal_create("goal".into(), criteria(2), Some(1.5), None, owner)
-                .is_err()
-        );
-    }
-
-    /// expect: "A failed goal update leaves the prior durable outbox row available for retry."
-    /// [P3] Motivating: Generative Space — goal learning survives transient storage failure.
-    /// [P2] Constraining: Transparent Imperfection — failure preserves the last durable state.
-    /// pre: one goal exists and its update is forced to fail
-    /// post: judging returns an error and the original unjudged goal remains readable
-    #[test]
-    fn goal_update_failure_preserves_prior_outbox_row() -> anyhow::Result<()> {
-        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
-        let store = HMemStore::from_driver(driver.clone())?;
-        let svc = KanbanService::new(store);
-        let owner = WebID::new();
-        let goal = svc.goal_create("goal".into(), criteria(1), None, None, owner)?;
-        let trigger = format!(
-            "CREATE TRIGGER reject_goal_update BEFORE UPDATE ON hmems
-             WHEN NEW.entity = '{GOAL_ENTITY}' AND NEW.attribute = '{}'
-             BEGIN SELECT RAISE(FAIL, 'forced goal update failure'); END;",
-            goal.id
-        );
-        driver.execute_batch(&trigger)?;
-
-        assert!(
-            svc.goal_judge(goal.id, one_criterion_verdict(), owner)
-                .is_err()
-        );
-        let retained = svc
-            .goal_get(goal.id)?
-            .ok_or_else(|| anyhow::anyhow!("failed update removed the prior goal"))?;
-        assert!(retained.verdicts.is_empty());
-        assert_eq!(retained.goal_text, goal.goal_text);
-        Ok(())
-    }
-
-    /// expect: "A failed score leaves the open goal available for a successful retry."
-    /// [P2] Motivating: Transparent Imperfection — failed outbox publication does not resolve the goal.
-    /// pre: storage rejects the first score update
-    /// post: open row remains; retry after fault removal retains the scored outcome until acknowledgment
-    #[test]
-    fn goal_score_failure_preserves_open_outbox_for_retry() -> anyhow::Result<()> {
-        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
-        let svc = KanbanService::new(HMemStore::from_driver(driver.clone())?);
-        let owner = WebID::new();
-        let goal = svc.goal_create("goal".into(), criteria(1), Some(0.8), None, owner)?;
-        driver.execute_batch(
-            "CREATE TRIGGER reject_goal_score BEFORE UPDATE ON hmems
-             WHEN NEW.entity = 'kanban:goal'
-             BEGIN SELECT RAISE(FAIL, 'forced score failure'); END;",
-        )?;
-        assert!(svc.goal_score(goal.id, true, owner).is_err());
-        assert!(
-            svc.goal_get(goal.id)?
-                .expect("open outbox row")
-                .resolution
-                .is_none()
-        );
-        driver.execute_batch("DROP TRIGGER reject_goal_score;")?;
-        assert!(svc.goal_score(goal.id, true, owner)?.resolution.is_some());
-        assert!(
-            svc.goal_get(goal.id)?
-                .expect("scored outbox row retained")
-                .resolution
-                .is_some()
-        );
-        Ok(())
-    }
-
-    /// A goal row whose storage attribute drifted from its goal id still
-    /// resolves through the identity read: get finds it, transitions land,
-    /// and acknowledgment prunes it. (The 2026-10-04 live incident that
-    /// motivated the identity read was later shown to be a server-process
-    /// DB-view divergence, not attribute drift — the rows were healthy —
-    /// but this robustness case stands on its own: the lifecycle must not
-    /// depend on the storage-key invariant.)
-    #[test]
-    fn drifted_attribute_goal_row_still_resolves_transitions_and_prunes() -> anyhow::Result<()> {
-        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
-        let svc = KanbanService::new(HMemStore::from_driver(driver.clone())?);
-        let owner = WebID::new();
-        let goal = svc.goal_create("goal".into(), criteria(1), Some(0.7), None, owner)?;
-        // Simulate a drifted storage key: the attribute no longer equals
-        // the goal id, while the value still carries the goal.
-        driver.execute_batch(&format!(
-            "UPDATE hmems SET attribute = 'drifted-key'
-             WHERE entity = 'kanban:goal' AND attribute = '{goal_id}';",
-            goal_id = goal.id
-        ))?;
-
-        let fetched = svc.goal_get(goal.id)?.expect("drifted row still resolves");
-        assert_eq!(fetched.goal_text, "goal");
-        svc.goal_judge(goal.id, one_criterion_verdict(), owner)?;
-        assert!(svc.goal_score(goal.id, true, owner)?.resolution.is_some());
-        svc.goal_acknowledge_memory(goal.id, owner)?;
-        assert!(svc.goal_get(goal.id)?.is_none());
-        assert!(svc.goal_list(&owner)?.is_empty());
-        Ok(())
-    }
-
-    /// Two durable rows carrying the same goal id error the identity read
-    /// instead of silently picking one — the duplicate-row guard travels
-    /// with the identity read shape.
-    #[test]
-    fn duplicate_goal_rows_error_the_identity_read() -> anyhow::Result<()> {
-        let (store, svc, _owner, goal) = store_level_goal()?;
-        let row = store
-            .query_by_entity_attribute(GOAL_ENTITY, &goal.id.to_string())?
-            .into_iter()
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("created goal has no h_mem row"))?;
-        let duplicate = HMem::new(
-            GOAL_ENTITY,
-            "duplicate-key",
-            row.value.clone(),
-            row.access.owner_webid,
-        );
-        store.insert(&duplicate)?;
-
-        assert!(svc.goal_get(goal.id).is_err());
-        Ok(())
-    }
-
-    /// expect: "Updating a goal preserves the ontology anchor assigned when the goal was created."
-    /// [P3] Motivating: Generative Space — goal records remain part of the published process graph.
-    /// [P8] Constraining: Semantic Grounding — updating cannot erase the goal's ontology identity.
-    /// pre: one ontology-anchored goal exists
-    /// post: judging changes only the value while retaining the identical ontology payload
-    #[test]
-    fn goal_update_preserves_ontology() -> anyhow::Result<()> {
-        let (store, svc, owner, goal) = store_level_goal()?;
-        let before = store
-            .query_by_entity_attribute(GOAL_ENTITY, &goal.id.to_string())?
-            .into_iter()
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("created goal has no h_mem row"))?;
-        let before_ontology = before
-            .ontology
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("created goal has no ontology"))?
-            .to_json_string()?;
-
-        svc.goal_judge(goal.id, one_criterion_verdict(), owner)?;
-
-        let after_rows = store.query_by_entity_attribute(GOAL_ENTITY, &goal.id.to_string())?;
-        assert_eq!(after_rows.len(), 1, "a goal has exactly one durable row");
-        let after = after_rows
-            .into_iter()
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("updated goal has no h_mem row"))?;
-        let reloaded: Goal = serde_json::from_value(after.value.clone())?;
-        assert_eq!(reloaded.verdicts.len(), 1, "the updated value must land");
-        let after_ontology = after
-            .ontology
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("updated goal lost its ontology"))?
-            .to_json_string()?;
-        assert_eq!(after_ontology, before_ontology);
-        Ok(())
-    }
-
-    #[test]
-    fn goal_judge_appends_history_and_enforces_ownership() {
-        let svc = make_service();
-        let owner = WebID::new();
-        let intruder = WebID::new();
-        let goal = svc
-            .goal_create("goal".into(), criteria(2), None, None, owner)
-            .unwrap();
-
-        let verdict = GoalVerdict {
-            verdict: GoalVerdictValue::Continue,
-            confidence: 0.7,
-            criterion_results: vec![
-                CriterionJudgment {
-                    index: 0,
-                    passed: false,
-                    note: "not yet observable".into(),
-                },
-                CriterionJudgment {
-                    index: 1,
-                    passed: false,
-                    note: "not yet observable".into(),
-                },
-            ],
-            reasoning: "work in progress".into(),
-            judged_at: chrono::Utc::now(),
-        };
-        let updated = svc.goal_judge(goal.id, verdict, owner).unwrap();
-        assert_eq!(updated.verdicts.len(), 1);
-
-        // Non-owner cannot judge (P12). Full criterion coverage so the ONLY
-        // rejection reason is ownership.
-        let verdict2 = GoalVerdict {
-            verdict: GoalVerdictValue::Done,
-            confidence: 0.9,
-            criterion_results: vec![
-                CriterionJudgment {
-                    index: 0,
-                    passed: true,
-                    note: "observable".into(),
-                },
-                CriterionJudgment {
-                    index: 1,
-                    passed: true,
-                    note: "observable".into(),
-                },
-            ],
-            reasoning: "done".into(),
-            judged_at: chrono::Utc::now(),
-        };
-        assert!(svc.goal_judge(goal.id, verdict2, intruder).is_err());
-
-        // Out-of-range criterion index is rejected.
-        let bad = GoalVerdict {
-            verdict: GoalVerdictValue::Done,
-            confidence: 0.9,
-            criterion_results: vec![CriterionJudgment {
-                index: 5,
-                passed: true,
-                note: "out of range".into(),
-            }],
-            reasoning: "bad index".into(),
-            judged_at: chrono::Utc::now(),
-        };
-        assert!(svc.goal_judge(goal.id, bad, owner).is_err());
-    }
-
-    #[test]
-    fn goal_judge_requires_every_criterion_judged_exactly_once() {
-        // A verdict with missing or duplicate criterion results is an
-        // unanchored claim — the per-criterion results are the explicit
-        // obligation the Brier score discharges, so they must cover every
-        // criterion exactly once.
-        let svc = make_service();
-        let owner = WebID::new();
-        let goal = svc
-            .goal_create("goal".into(), criteria(3), None, None, owner)
-            .unwrap();
-
-        let missing = GoalVerdict {
-            verdict: GoalVerdictValue::Done,
-            confidence: 0.9,
-            criterion_results: vec![
-                CriterionJudgment {
-                    index: 0,
-                    passed: true,
-                    note: "observable".into(),
-                },
-                CriterionJudgment {
-                    index: 2,
-                    passed: true,
-                    note: "observable".into(),
-                },
-            ],
-            reasoning: "skipped criterion 1".into(),
-            judged_at: chrono::Utc::now(),
-        };
-        match svc.goal_judge(goal.id, missing, owner) {
-            Err(KanbanError::InvalidInput(message)) => {
-                assert!(message.contains("missing indices [1]"), "{message}");
+    pub fn goal_complete_assessment(
+        &self,
+        id: GoalID,
+        owner: WebID,
+        completion: AssessmentCompletion,
+    ) -> Result<Goal, KanbanError> {
+        self.transition_goal(id, owner, true, |goal| {
+            let attempt = goal
+                .assessments
+                .iter()
+                .find(|a| a.lease.attempt_id == completion.attempt_id)
+                .ok_or_else(|| invalid("unknown assessment attempt"))?;
+            if let Some(existing) = &attempt.completion {
+                return if existing == &completion {
+                    Ok(false)
+                } else {
+                    Err(invalid("conflicting completion replay"))
+                };
             }
-            other => panic!("expected InvalidInput, got {other:?}"),
-        }
-
-        let duplicate = GoalVerdict {
-            verdict: GoalVerdictValue::Done,
-            confidence: 0.9,
-            criterion_results: vec![
-                CriterionJudgment {
-                    index: 0,
-                    passed: true,
-                    note: "observable".into(),
-                },
-                CriterionJudgment {
-                    index: 0,
-                    passed: true,
-                    note: "judged twice".into(),
-                },
-                CriterionJudgment {
-                    index: 1,
-                    passed: true,
-                    note: "observable".into(),
-                },
-                CriterionJudgment {
-                    index: 2,
-                    passed: true,
-                    note: "observable".into(),
-                },
-            ],
-            reasoning: "double-judged criterion 0".into(),
-            judged_at: chrono::Utc::now(),
-        };
-        assert!(svc.goal_judge(goal.id, duplicate, owner).is_err());
+            if attempt.failure.is_some()
+                || attempt.lease.lease_until <= Utc::now()
+                || attempt.input_digest != completion.input_digest
+            {
+                return Err(invalid(
+                    "failed/expired assessment lease or input digest mismatch",
+                ));
+            }
+            let ids: HashSet<_> = completion
+                .findings
+                .iter()
+                .map(|f| f.criterion_id.as_str())
+                .collect();
+            if ids.len() != goal.criterion_ids.len()
+                || ids.len() != completion.findings.len()
+                || goal
+                    .criterion_ids
+                    .iter()
+                    .any(|id| !ids.contains(id.as_str()))
+            {
+                return Err(invalid(
+                    "assessment must cover every original criterion exactly once",
+                ));
+            }
+            let known = evidence_ids(goal);
+            for finding in &completion.findings {
+                nonempty(&finding.note, "finding note")?;
+                validate_refs(&finding.evidence_ids, &known)?;
+                if finding.status != CriterionEvidenceStatus::Unknown
+                    && finding.evidence_ids.is_empty()
+                {
+                    return Err(invalid("supported/contradicted finding requires evidence"));
+                }
+            }
+            let attempt = goal
+                .assessments
+                .iter_mut()
+                .find(|a| a.lease.attempt_id == completion.attempt_id)
+                .ok_or_else(|| invalid("assessment disappeared"))?;
+            attempt.completion = Some(completion);
+            goal.assessment_pending = false;
+            resolve_forecast(goal)?;
+            Ok(true)
+        })
+    }
+    pub fn goal_fail_assessment(
+        &self,
+        id: GoalID,
+        owner: WebID,
+        failure: AssessmentFailure,
+    ) -> Result<Goal, KanbanError> {
+        self.transition_goal(id, owner, true, |goal| {
+            let attempt = goal
+                .assessments
+                .iter_mut()
+                .find(|a| a.lease.attempt_id == failure.attempt_id)
+                .ok_or_else(|| invalid("unknown assessment attempt"))?;
+            if let Some(existing) = &attempt.failure {
+                return if existing == &failure {
+                    Ok(false)
+                } else {
+                    Err(invalid("conflicting failure replay"))
+                };
+            }
+            if attempt.completion.is_some() || attempt.input_digest != failure.input_digest {
+                return Err(invalid("assessment completed or input digest mismatch"));
+            }
+            nonempty(&failure.reason, "assessment failure reason")?;
+            attempt.failure = Some(failure);
+            goal.assessment_pending = true;
+            resolve_forecast(goal)?;
+            Ok(true)
+        })
     }
 
-    #[test]
-    fn goal_score_brier_and_surfaced_missing_prediction() {
-        let svc = make_service();
-        let owner = WebID::new();
-
-        // With a prediction: Brier = (p - o)^2.
-        let with_pred = svc
-            .goal_create("goal a".into(), criteria(2), Some(0.8), None, owner)
-            .unwrap();
-        let resolved = svc.goal_score(with_pred.id, true, owner).unwrap();
-        let resolution = resolved.resolution.expect("resolution recorded");
-        assert!(resolution.achieved);
-        // (0.8 - 1.0)^2 = 0.04
-        assert!((resolution.brier.expect("brier computed") - 0.04).abs() < 1e-9);
-
-        // Without a prediction: brier is None — surfaced, never a fake 0.
-        let no_pred = svc
-            .goal_create("goal b".into(), criteria(1), None, None, owner)
-            .unwrap();
-        let resolved2 = svc.goal_score(no_pred.id, false, owner).unwrap();
-        let resolution2 = resolved2.resolution.expect("resolution recorded");
-        assert!(!resolution2.achieved);
-        assert!(
-            resolution2.brier.is_none(),
-            "no intake prediction → brier must be None, not a synthetic 0"
-        );
-
-        // Double-resolution is rejected.
-        assert!(svc.goal_score(no_pred.id, true, owner).is_err());
+    pub fn goal_record_forecast_observation(
+        &self,
+        id: GoalID,
+        owner: WebID,
+        observation: ForecastObservation,
+    ) -> Result<Goal, KanbanError> {
+        self.transition_goal(id, owner, true, |goal| {
+            if let Some(existing) = goal
+                .observations
+                .iter()
+                .find(|o| o.event_id == observation.event_id)
+            {
+                return if existing == &observation {
+                    Ok(false)
+                } else {
+                    Err(invalid("conflicting forecast observation replay"))
+                };
+            }
+            let forecast = goal
+                .forecast
+                .as_ref()
+                .ok_or_else(|| invalid("no declared forecast"))?;
+            let GoalForecastResolver::MachineEvidence { source, oracle } = &forecast.resolver
+            else {
+                return Err(invalid(
+                    "human acceptance resolver cannot use machine observations",
+                ));
+            };
+            if source != &observation.source || oracle != &observation.oracle {
+                return Err(invalid("observation does not match frozen resolver"));
+            }
+            nonempty(&observation.event_id, "observation event_id")?;
+            nonempty(&observation.reason, "observation reason")?;
+            if observation.occurred_at < forecast.horizon
+                || observation.occurred_at > forecast.resolution_deadline
+                || observation.occurred_at > Utc::now()
+            {
+                return Err(invalid(
+                    "observation outside declared horizon/deadline or in future",
+                ));
+            }
+            if observation.evidence_ids.is_empty() {
+                return Err(invalid("machine observation requires actual evidence"));
+            }
+            validate_refs(&observation.evidence_ids, &evidence_ids(goal))?;
+            for evidence in goal
+                .closure
+                .iter()
+                .flat_map(|c| &c.input.evidence_manifest)
+                .filter(|e| observation.evidence_ids.contains(&e.id))
+            {
+                if evidence.source != *source || evidence.oracle != *oracle {
+                    return Err(invalid("evidence does not match frozen source/oracle"));
+                }
+            }
+            if let Some(previous) = &observation.correction_of {
+                if !goal.observations.iter().any(|o| &o.event_id == previous)
+                    || goal
+                        .observations
+                        .iter()
+                        .any(|o| o.correction_of.as_ref() == Some(previous))
+                {
+                    return Err(invalid(
+                        "correction must supersede one existing unsuperseded observation",
+                    ));
+                }
+            }
+            goal.observations.push(observation);
+            resolve_forecast(goal)?;
+            Ok(true)
+        })
     }
 
-    #[test]
-    fn resolved_goal_survives_service_restart_until_memory_acknowledgment() {
-        let svc = make_service();
-        let owner = WebID::new();
-        let goal = svc
-            .goal_create(
-                "retain outcome until memory confirms".into(),
-                criteria(1),
-                Some(0.8),
-                None,
-                owner,
-            )
-            .unwrap();
-
-        let scored = svc.goal_score(goal.id, true, owner).unwrap();
-        assert!(scored.resolution.is_some());
-        assert!(svc.goal_get(goal.id).unwrap().is_some());
-
-        let restarted = KanbanService::new(svc.store);
-        let retained = restarted
-            .goal_get(goal.id)
-            .unwrap()
-            .expect("resolved goal survives reconstructed service");
-        assert!(retained.resolution.as_ref().is_some_and(|r| r.achieved));
-
-        let retry = restarted.goal_score(goal.id, true, owner).unwrap();
-        assert!(retry.resolution.as_ref().is_some_and(|r| r.achieved));
-        assert!(restarted.goal_score(goal.id, false, owner).is_err());
-
-        restarted
-            .goal_acknowledge_memory(goal.id, owner)
-            .expect("memory acknowledgment prunes resolved goal");
-        assert!(restarted.goal_get(goal.id).unwrap().is_none());
-        restarted
-            .goal_acknowledge_memory(goal.id, owner)
-            .expect("acknowledgment is idempotent");
-    }
-
-    #[test]
-    fn goal_list_returns_owner_goals_newest_first() {
-        let svc = make_service();
-        let owner = WebID::new();
-        let other = WebID::new();
-        let g1 = svc
-            .goal_create("first".into(), criteria(1), None, None, owner)
-            .unwrap();
-        let _g2 = svc
-            .goal_create("second".into(), criteria(1), None, None, owner)
-            .unwrap();
-        let _g3 = svc
-            .goal_create("someone else's".into(), criteria(1), None, None, other)
-            .unwrap();
-
-        let goals = svc.goal_list(&owner).unwrap();
-        assert_eq!(goals.len(), 2);
-        assert_eq!(goals[0].goal_text, "second");
-        // Newest first: the second entry is the first-created goal.
-        assert_eq!(goals[1].id, g1.id);
-        assert!(goals.iter().all(|g| g.owner == owner));
+    /// Mark an exact stored projection delivered. Never delete canonical data,
+    /// and never publish a receipt-about-a-receipt (an infinite outbox loop).
+    pub fn goal_mark_projection_delivered(
+        &self,
+        id: GoalID,
+        owner: WebID,
+        receipt: GoalProjectionReceipt,
+    ) -> Result<Goal, KanbanError> {
+        self.transition_goal(id, owner, false, |goal| {
+            nonempty(&receipt.receipt_id, "receipt_id")?;
+            let projection = goal
+                .projections
+                .iter_mut()
+                .find(|p| p.event_id == receipt.event_id)
+                .ok_or_else(|| invalid("unknown projection event"))?;
+            if projection.revision != receipt.revision
+                || projection.payload_digest != receipt.payload_digest
+            {
+                return Err(invalid("projection revision/digest mismatch"));
+            }
+            if let Some(existing) = &projection.delivered_receipt {
+                return if existing == &receipt.receipt_id {
+                    Ok(false)
+                } else {
+                    Err(invalid("conflicting projection receipt"))
+                };
+            }
+            projection.delivered_receipt = Some(receipt.receipt_id);
+            Ok(true)
+        })
     }
 }

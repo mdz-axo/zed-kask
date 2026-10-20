@@ -52,7 +52,7 @@ pub fn classify_base_object_from_catalog(
 /// Non-base markets fall back to the series prefix of the event ticker
 /// (lowercased) — a per-SERIES bucket, never a per-event one; a per-event key
 /// like "kxfeddecision-26oct" shards one family across its meetings and the
-/// bucket can never reach a demotion threshold.
+/// descriptive history is unnecessarily fragmented.
 pub fn calibration_bucket_for_kalshi(event_ticker: &str, title: &str) -> String {
     if let Some(family) = classify_base_object_from_catalog("kalshi", event_ticker, title) {
         return family.label().to_string();

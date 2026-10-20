@@ -12,17 +12,14 @@
 use hkask_forecast as forecast;
 
 // ── Re-exports from hkask-forecast (pure pass-throughs eliminated) ───────
-pub(crate) use forecast::{
-    bayesian_update, brier_interpretation, brier_score, brier_score_multi, outside_view_adjustment,
-};
+pub(crate) use forecast::{bayesian_update, brier_score, outside_view_adjustment};
 // ── Forecast math (pure deterministic functions) ───────────────────────────
 // Extracted to `superforecast/math.rs` (deep-module split: the pure math — Fermi
 // decomposition, event-tree propagation, Brier scoring, sensitivity ranking — is
 // independent of the stateful orchestration that remains in this file).
 mod math;
 pub(crate) use math::{
-    auto_update_suggestions, build_event_tree, calibrate_from_fermi, score_forecast,
-    sensitivity_ranking, structure_framing_document,
+    build_event_tree, calibrate_from_fermi, sensitivity_ranking, structure_framing_document,
 };
 
 // ── Assessment (Chermack + Dragonfly-Eye + Calibration + Triage) ────────────

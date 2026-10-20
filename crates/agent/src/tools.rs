@@ -17,6 +17,7 @@ mod find_references_tool;
 mod get_code_actions_tool;
 mod go_to_definition_tool;
 mod grep_tool;
+mod goal_tools;
 mod lean_check_tool;
 #[cfg(test)]
 mod lisp_eval_conformance;
@@ -230,6 +231,7 @@ pub use find_references_tool::*;
 pub use get_code_actions_tool::*;
 pub use go_to_definition_tool::*;
 pub use grep_tool::*;
+pub use goal_tools::*;
 pub use lean_check_tool::*;
 pub use lisp_eval_tool::*;
 pub use list_agents_and_models_tool::*;
@@ -350,6 +352,8 @@ macro_rules! tools {
 tools! {
     ApplyCodeActionTool,
     AskUserTool,
+    GoalCloseTool,
+    GoalCorrectTool,
     CopyPathTool,
     CreateDirectoryTool,
     CreateThreadTool,

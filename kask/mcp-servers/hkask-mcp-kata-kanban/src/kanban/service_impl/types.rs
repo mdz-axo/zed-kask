@@ -7,7 +7,7 @@ use crate::TaskStatus;
 
 /// Errors specific to kanban operations.
 #[derive(Debug, Clone, thiserror::Error)]
-pub(crate) enum KanbanError {
+pub enum KanbanError {
     #[error("invalid input: {0}")]
     InvalidInput(String),
 

@@ -216,8 +216,6 @@ mod tests {
             "resolution_source": "test",
             "calibration": {
                 "brier": null,
-                "domain_bias": null,
-                "bias_source": "test",
                 "sample_size": 0,
                 "stale": true
             },

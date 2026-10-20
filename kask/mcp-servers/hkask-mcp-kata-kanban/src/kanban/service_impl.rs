@@ -35,4 +35,4 @@ mod types;
 mod tests;
 
 pub use service::KanbanService;
-pub(crate) use types::KanbanError;
+pub use types::KanbanError;

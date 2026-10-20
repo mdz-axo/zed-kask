@@ -9411,7 +9411,9 @@ dependencies = [
 name = "kask_bridge"
 version = "0.40.2"
 dependencies = [
+ "acp_thread",
  "agent",
+ "agent-client-protocol",
  "anyhow",
  "async-trait",
  "chrono",
@@ -9455,6 +9457,7 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+ "workspace",
  "zed_credentials_provider",
 ]
 

@@ -182,12 +182,24 @@ pub struct OutcomeEntry {
     pub occurred: bool,
 }
 
+/// Prospective declaration; probability and proposition cannot be rewritten at resolution.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DeclareRequest {
+    pub forecast_id: String,
+    pub events: Vec<ScenarioEvent>,
+    /// Named source responsible for the caller-reported boolean outcomes.
+    /// This records a rule, not authentication of that source.
+    pub resolver: String,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ScoreRequest {
     /// Forecast record ID
     pub forecast_id: String,
-    /// Events to score
+    /// Exact declared events; changed propositions require a new forecast identity.
     pub events: Vec<ScenarioEvent>,
+    /// Must match the source rule frozen by scenario_declare.
+    pub resolver: String,
     /// Outcomes: which events occurred.
     pub outcomes: Vec<OutcomeEntry>,
 }
@@ -215,7 +227,7 @@ pub struct SynthesizeRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct CalibrationRequest {
+pub struct CalibrationRequest {
     /// Optional: filter to a specific subject
     pub subject: Option<String>,
 }

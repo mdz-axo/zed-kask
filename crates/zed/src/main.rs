@@ -2171,6 +2171,33 @@ fn main() {
                                 );
                             }
                         }
+                        // zed-kask: trusted native goal ingress is independent of turn
+                        // ingestion, model readiness, and semantic-store availability.
+                        let projection_store = memory_for_status.as_ref().and_then(|memory| {
+                            match memory.goal_projection_store() {
+                                Ok(store) => Some(store),
+                                Err(error) => { log::warn!("Goal projection unavailable: {error}"); None }
+                            }
+                        });
+                        let goal_inference = std::sync::Arc::new(kask_bridge::GoalInference {
+                            embedding: embedding_port_for_ipc.clone(),
+                        });
+                        match kask_bridge::GoalHost::open(
+                            &passphrase, projection_store, goal_inference,
+                            kask_settings.models.classifier_model_for_host().unwrap_or_default(),
+                            kask_settings.effective_embedding_model(), embedding_dim as u32,
+                        ) {
+                            Ok(host) => {
+                                let host = std::sync::Arc::new(host);
+                                agent::set_native_goal_host(Some(host.clone()));
+                                if kask_settings.curator.always_on {
+                                    gpui_tokio::Tokio::spawn(cx, async move { host.run().await; }).detach();
+                                } else {
+                                    log::warn!("Goal drainer disabled by kask.curator.always_on=false; native closure remains available and pending work is retained");
+                                }
+                            }
+                            Err(error) => log::warn!("Native goal host not configured: {error}"),
+                        }
                     }
                     Err(e) => {
                         log::warn!(

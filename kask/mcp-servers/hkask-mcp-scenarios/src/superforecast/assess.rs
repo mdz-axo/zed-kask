@@ -472,9 +472,8 @@ pub(crate) fn assess_project(input: &AssessInput) -> ProjectAssessment {
 /// Synthesize multiple independent perspectives on an event into one
 /// aggregated probability with disagreement scoring.
 ///
-/// Uses empirical-Bayes weighting: perspectives with lower historical Brier
-/// scores get higher weight. If no historical scores are available, all
-/// perspectives are weighted equally.
+/// Uses explicit equal weights. Raw historical loss from unmatched populations
+/// does not establish a defensible weighting policy.
 ///
 /// Returns an error if fewer than 2 perspectives are provided.
 pub(crate) fn synthesize_perspectives(
@@ -485,23 +484,15 @@ pub(crate) fn synthesize_perspectives(
         return Err(ScenarioError::InsufficientPerspectives);
     }
 
-    // Compute weights: inverse-Brier if available, else uniform
-    let has_historical = perspectives.iter().any(|p| p.historical_brier.is_some());
-
-    let weights: Vec<f64> = if has_historical {
-        let raw: Vec<f64> = perspectives
-            .iter()
-            .map(|p| {
-                let brier = p.historical_brier.unwrap_or(0.25);
-                1.0 / (brier + 0.01)
-            })
-            .collect();
-        let total: f64 = raw.iter().sum();
-        raw.iter().map(|w| w / total).collect()
-    } else {
-        let w = 1.0 / perspectives.len() as f64;
-        vec![w; perspectives.len()]
-    };
+    if perspectives
+        .iter()
+        .any(|p| !(0.0..=1.0).contains(&p.probability))
+    {
+        return Err(ScenarioError::EmptyInput(
+            "perspective probability must be finite and in [0,1]".into(),
+        ));
+    }
+    let weights = vec![1.0 / perspectives.len() as f64; perspectives.len()];
 
     // Weighted average probability
     let aggregated: f64 = perspectives
@@ -572,13 +563,13 @@ pub(crate) fn synthesize_perspectives(
 // ── Calibration Tracking ────────────────────────────────────────────────────
 
 /// Compute a calibration curve from stored forecasts.
-pub(crate) fn accumulate_calibration_bins(
-    resolved: &[&StoredForecastRecord],
-) -> (Vec<(u64, u64, f64)>, f64) {
+fn accumulate_calibration_bins(resolved: &[&StoredForecastRecord]) -> (Vec<(u64, u64, f64)>, f64) {
     let mut bins: Vec<(u64, u64, f64)> = vec![(0, 0, 0.0); 10];
     let mut total_brier = 0.0;
     for record in resolved {
-        let occurred = record.outcome.unwrap_or(false);
+        let Some(occurred) = record.outcome else {
+            continue;
+        };
         let bin_idx = ((record.probability * 10.0) as usize).min(9);
         bins[bin_idx].0 += 1;
         if occurred {
@@ -591,7 +582,7 @@ pub(crate) fn accumulate_calibration_bins(
 }
 
 pub fn compute_calibration_curve(store: &ForecastStore) -> Result<CalibrationCurve, ScenarioError> {
-    let resolved: Vec<&StoredForecastRecord> = store.resolved();
+    let resolved: Vec<&StoredForecastRecord> = store.eligible_resolved();
 
     if resolved.is_empty() {
         return Err(ScenarioError::NoForecastData);
@@ -608,22 +599,16 @@ pub fn compute_calibration_curve(store: &ForecastStore) -> Result<CalibrationCur
         .map(|(i, &(count, hits, probability_sum))| {
             let low = i as f64 * 0.1;
             let high = (i + 1) as f64 * 0.1;
-            let hit_rate = if count > 0 {
-                hits as f64 / count as f64
-            } else {
-                f64::NAN
-            };
-            let expected = if count > 0 {
-                probability_sum / count as f64
-            } else {
-                (low + high) / 2.0
-            };
+            let hit_rate = (count > 0).then_some(hits as f64 / count as f64);
+            let expected = (count > 0).then_some(probability_sum / count as f64);
             CalibrationBin {
                 probability_range: format!("{:.0}–{:.0}%", low * 100.0, high * 100.0),
                 forecast_count: count,
                 hit_rate,
                 expected_rate: expected,
-                bias: if count > 0 { expected - hit_rate } else { 0.0 },
+                bias: expected
+                    .zip(hit_rate)
+                    .map(|(expected, actual)| expected - actual),
             }
         })
         .collect();
@@ -631,34 +616,23 @@ pub fn compute_calibration_curve(store: &ForecastStore) -> Result<CalibrationCur
     let mut weighted_bias = 0.0;
     let mut bias_weight = 0.0;
     for bin in &calibration_bins {
-        if bin.forecast_count >= 5 {
-            weighted_bias += bin.bias * bin.forecast_count as f64;
+        if bin.forecast_count >= 5
+            && let Some(bias) = bin.bias
+        {
+            weighted_bias += bias * bin.forecast_count as f64;
             bias_weight += bin.forecast_count as f64;
         }
     }
-    let overconfidence = if bias_weight > 0.0 {
-        weighted_bias / bias_weight
-    } else {
-        0.0
-    };
-
-    let interpretation = if overconfidence > 0.10 {
-        "systematically_overconfident"
-    } else if overconfidence < -0.10 {
-        "systematically_underconfident"
-    } else if overconfidence.abs() < 0.05 {
-        "well_calibrated"
-    } else {
-        "moderately_calibrated"
-    };
+    // Signed errors can cancel; this descriptive mean is not reliability.
+    let overconfidence = (bias_weight > 0.0).then_some(weighted_bias / bias_weight);
 
     Ok(CalibrationCurve {
         bins: calibration_bins,
         total_forecasts: store.len() as u64,
         resolved_forecasts: resolved.len() as u64,
+        unscored_resolved_forecasts: (store.resolved().len() - resolved.len()) as u64,
         overall_brier,
         overconfidence_score: overconfidence,
-        interpretation: interpretation.to_string(),
     })
 }
 

@@ -60,17 +60,11 @@ pub enum ReliabilityTier {
     Low,
 }
 
-/// Calibration metadata for the market's domain/series. Computed from data
-/// by T5; until then `domain_bias` is seeded from arXiv:2602.19520 and
-/// `stale` is true (no measured Brier yet — never a synthetic 0).
+/// Descriptive raw loss and sample count for the market domain/series.
+/// No universal quality band, bias prior or score-based tier adjustment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Calibration {
     pub brier: Option<f64>,
-    pub domain_bias: Option<Cow<'static, str>>,
-    /// Provenance of the bias estimate: seeded from arXiv:2602.19520 until
-    /// the calibration loop measures it from resolved outcomes. Consumers
-    /// must be able to distinguish a paper-seeded prior from a measurement.
-    pub bias_source: Cow<'static, str>,
     pub sample_size: u64,
     /// True when the calibration signal is unavailable (not measured, read
     /// failure, thin sample). Distinct from brier: 0 — a 0 would read as
@@ -179,28 +173,16 @@ pub struct MarketRecord {
     pub ontology: OntologyBlock,
 }
 
-/// Build the calibration block for a record: store reading (Brier, sample
-/// size, staleness) + the static-or-measured domain bias for the category.
-/// The server (which owns the store) calls this; the builders stay pure.
-pub fn calibration_for(store_reading: Option<&CalibrationReading>, category: &str) -> Calibration {
-    let bias = domain_bias_for(category);
-    let bias_source = if bias.is_some() {
-        Cow::Borrowed("static_2602_19520")
-    } else {
-        Cow::Borrowed("none")
-    };
+/// Build descriptive loss metadata without manufacturing history or bias.
+pub fn calibration_for(store_reading: Option<&CalibrationReading>) -> Calibration {
     match store_reading {
         Some(reading) if !reading.stale => Calibration {
             brier: reading.brier,
-            domain_bias: bias.map(Cow::Borrowed),
-            bias_source,
             sample_size: reading.sample_size,
             stale: false,
         },
         _ => Calibration {
             brier: None,
-            domain_bias: bias.map(Cow::Borrowed),
-            bias_source,
             sample_size: store_reading.map_or(0, |r| r.sample_size),
             stale: true,
         },
@@ -210,7 +192,7 @@ pub fn calibration_for(store_reading: Option<&CalibrationReading>, category: &st
 /// Canonical calibration bucket for a category/tag. The calibration loop closes
 /// through this key — if Kalshi's "Elections" and Polymarket's "Politics"
 /// accrue under different buckets, the same domain never reaches the
-/// demotion threshold on either side. Normalization is lowercase synonym
+/// descriptive history on either side. Normalization is lowercase synonym
 /// mapping; unknown categories pass through lowercased (deterministic, no
 /// fabrication — an unmapped category still forms a coherent bucket).
 pub fn canonical_bucket(category: &str) -> String {
@@ -228,50 +210,16 @@ pub fn canonical_bucket(category: &str) -> String {
     }
 }
 
-/// Static per-domain bias table seeded from arXiv:2602.19520 (politics
-/// chronically underconfident on both exchanges). Measured calibration replaces this with
-/// data-derived estimates.
-pub fn domain_bias_for(category: &str) -> Option<&'static str> {
-    if canonical_bucket(category) == "politics" {
-        Some("underconfident")
-    } else {
-        None
-    }
-}
-
-/// Reliability gate from observable covariates, modulated by the bucket's
-/// measured calibration. Thresholds are initial
-/// placeholders (Q3 in the plan — recalibrate per-domain after data accrues).
-///
-/// The feedback is negative (corrective): a poorly-calibrated bucket
-/// (Brier > 0.25 over ≥5 resolved markets — worse than a well-informed
-/// forecaster's baseline) demotes the covariate-derived tier by one step.
-/// A stale/unmeasured calibration signal changes nothing — absence of
-/// evidence never demotes (and never promotes either).
-pub fn reliability_tier(
-    volume: f64,
-    spread: Option<f64>,
-    calibration: &Calibration,
-) -> ReliabilityTier {
+/// Liquidity/spread tier only; historical raw loss is not a reliability certificate.
+pub fn reliability_tier(volume: f64, spread: Option<f64>) -> ReliabilityTier {
     let wide_spread = spread.is_some_and(|s| s > 0.10);
     let thin_volume = volume < 1_000.0;
-    let base = if thin_volume || wide_spread {
+    if thin_volume || wide_spread {
         ReliabilityTier::Low
     } else if volume < 50_000.0 || spread.is_none_or(|s| s > 0.04) {
         ReliabilityTier::Medium
     } else {
         ReliabilityTier::High
-    };
-    let poorly_calibrated = !calibration.stale
-        && calibration.sample_size >= 5
-        && calibration.brier.is_some_and(|b| b > 0.25);
-    if poorly_calibrated {
-        match base {
-            ReliabilityTier::High => ReliabilityTier::Medium,
-            lower => lower,
-        }
-    } else {
-        base
     }
 }
 
@@ -430,7 +378,7 @@ fn assemble(parts: RecordParts, calibration: Calibration) -> MarketRecord {
     let days_to_deadline = time_to_maturity.map(|years| years * DAYS_PER_YEAR);
     let flag = structural_flag(parts.probability, days_to_deadline);
     let volume = parts.volume;
-    let tier = reliability_tier(volume, parts.spread, &calibration);
+    let tier = reliability_tier(volume, parts.spread);
     MarketRecord {
         source: parts.source,
         event_id: parts.event_id,
@@ -574,8 +522,7 @@ impl MarketRecord {
                 question: market.question.clone(),
                 description: market.description.clone(),
                 // Gamma has no category field; derive from event tags
-                // (T0-verified). Without this the politics-bias guardrail
-                // never fires on Polymarket.
+                // (T0-verified), preserving descriptive domain grouping.
                 category: event_tags.first().cloned().unwrap_or_default(),
                 series: event_slug.to_string(),
                 deadline: market.end_date.clone(),
@@ -612,6 +559,45 @@ mod tests {
     }
 
     #[test]
+    fn raw_loss_history_does_not_demote_liquidity_tier_or_correct_price() {
+        let mut store = crate::calibration::CalibrationStore::new();
+        for i in 0..5 {
+            store.record(
+                "politics",
+                crate::calibration::ResolvedObservation {
+                    probability: 0.9,
+                    outcome: false,
+                    market_key: Some(format!("market-{i}")),
+                },
+            );
+        }
+        let reading = crate::calibration::read_calibration(&store, "politics");
+        let market = KalshiMarket {
+            ticker: "TEST".into(),
+            event_ticker: "TEST".into(),
+            title: "Political outcome".into(),
+            status: "active".into(),
+            yes_bid_dollars: "0.89".into(),
+            yes_ask_dollars: "0.91".into(),
+            volume_fp: "60000".into(),
+            close_time: "2026-12-31T00:00:00Z".into(),
+            ..Default::default()
+        };
+        let record = MarketRecord::from_kalshi(
+            &market,
+            None,
+            calibration_for(Some(&reading)),
+            &utc("2026-10-20T00:00:00Z"),
+        )
+        .expect("market");
+        assert_eq!(record.reliability_tier, ReliabilityTier::High);
+        assert!((record.probability - 0.9).abs() < 1e-12);
+        assert_eq!(record.calibration.sample_size, 5);
+        assert!((record.calibration.brier.expect("raw loss") - 0.81).abs() < 1e-12);
+        assert_eq!(reliability_tier(10.0, Some(0.02)), ReliabilityTier::Low);
+    }
+
+    #[test]
     fn maturity_is_measured_from_observation_not_quote_vintage() {
         // Run-2 §8 followup: a stale Kalshi `updated_time` (2026-04-09)
         // previously anchored time_to_maturity, turning a 38-day ladder
@@ -629,7 +615,7 @@ mod tests {
             updated_time: "2026-04-09T12:00:00Z".into(),
             ..Default::default()
         };
-        let record = MarketRecord::from_kalshi(&market, None, calibration_for(None, ""), &now)
+        let record = MarketRecord::from_kalshi(&market, None, calibration_for(None), &now)
             .expect("record assembles");
         let expected = years_between("2026-10-28T16:00:00Z", &now).expect("parses");
         assert_eq!(record.time_to_maturity, Some(expected));
@@ -662,7 +648,7 @@ mod tests {
             100.0,
             50.0,
             &[],
-            calibration_for(None, ""),
+            calibration_for(None),
             &now,
         )
         .expect("record assembles");
@@ -693,7 +679,7 @@ mod tests {
             100.0,
             50.0,
             &[],
-            calibration_for(None, ""),
+            calibration_for(None),
             &now,
         )
         .expect("record assembles");

@@ -42,56 +42,14 @@ pub struct TurnRecord {
     /// turns are written to the curator's sovereign DB with the curator's
     /// WebID, not the user's.
     pub agent_id: Option<String>,
-    /// Goal-tool events observed in this turn (every `kanban_goal_*` tool
-    /// result from the current turn). The memory path turns individual goal
-    /// changes into first-class goal h_mems and deliberately ignores whole-list
-    /// snapshots; a resolved goal remains retained until its score event is
-    /// stored with a semantic embedding and explicitly acknowledged.
-    pub goal_events: Vec<GoalEvent>,
 }
 
-/// A goal-tool event observed in a turn — the durable record of goal
-/// activity, extracted from the turn's `kanban_goal_*` tool results.
-///
-/// Persistence is enforced by `kask_bridge::memory::ingest::write_turn`: a
-/// non-snapshot event becomes visible as an h_mem only after its passage
-/// embedding is durable under the same `curator:goal:{goal_id}` entity.
+/// Historical wire type retained only until the parent removes the out-of-scope
+/// ports.rs re-export. No host ingestion path consumes this type.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct GoalEvent {
-    /// The goal tool that produced this event (e.g. `kanban_goal_create`).
     pub tool_name: String,
-    /// The tool result's JSON output (goal text, criteria, verdicts, Brier
-    /// scores — the structured record the curator's memory stores).
     pub output: serde_json::Value,
-}
-
-impl GoalEvent {
-    /// expect: "A goal event uses the same durable identity on exact and semantic recall paths."
-    /// [P8] Motivating: Semantic Grounding — the entity_ref join needs one canonical goal ID.
-    /// pre: output is either the MCP content envelope or the direct result shape
-    /// post: returns the goal_id from either supported shape, or None
-    pub fn goal_id(&self) -> Option<&str> {
-        self.output
-            .get("goal_id")
-            .or_else(|| self.output.pointer("/content/goal_id"))
-            .and_then(serde_json::Value::as_str)
-    }
-
-    /// expect: "Whole-list goal snapshots do not become duplicate durable memories."
-    /// [P5] Motivating: Organic Growth — the event stream grows per change, not per whole-list snapshot.
-    /// pre: tool_name is the observed goal tool name
-    /// post: true only for kanban_goal_list
-    pub fn is_list_snapshot(&self) -> bool {
-        self.tool_name == "kanban_goal_list"
-    }
-
-    /// expect: "Semantic recall preserves both the goal operation and its structured result."
-    /// [P8] Motivating: Semantic Grounding — passage text must carry the searchable goal meaning.
-    /// pre: event contains JSON output
-    /// post: returns deterministic text containing the tool name and complete JSON output
-    pub fn semantic_text(&self) -> String {
-        format!("goal event {}: {}", self.tool_name, self.output)
-    }
 }
 
 /// A recalled memory snippet for context injection.
@@ -141,15 +99,10 @@ pub trait MemoryPort: Send + Sync {
     /// This is fire-and-forget from the caller's perspective — the memory system
     /// handles classification, confidence scoring, and consolidation asynchronously.
     ///
-    /// Returns the goal ids whose `kanban_goal_score` events were published
-    /// this ingestion. The turn-completion path acknowledges exactly these
-    /// (D58): a scored goal absent from the set was not published — its score
-    /// event failed per-goal — and stays retryable in the kanban outbox; its
-    /// failure never blocks a sibling's publication.
     fn ingest_turn<'a>(
         &'a self,
         record: TurnRecord,
-    ) -> MemoryFuture<'a, Result<Vec<String>, MemoryError>>;
+    ) -> MemoryFuture<'a, Result<(), MemoryError>>;
 
     /// Recall memory snippets relevant to a query for context injection.
     ///

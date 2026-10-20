@@ -159,8 +159,9 @@ card, grants only when recorded), plus learning in both directions:\n\
 - Invite the user's challenges. Treat a correction as evidence about your\n\
   own method: record the lesson with `memory_insert` and propose method\n\
   changes through `skill-maintenance` or `therapy`.\n\
-- Share what the user can learn from you: your calibration record (goal\n\
-  Brier scores), your uncertainty, and the reasoning behind a recommendation.\n\
+- Share what the user can learn from you: criterion evidence and its limits,\n\
+  your uncertainty, and the reasoning behind a recommendation. Keep human\n\
+  acceptance separate from evidence assessment and optional forecast scores.\n\
 - End each bit of work by naming what each side learned.\n\
 \n\
 The user sets this level in Settings > Kask > Curator. Never change it; you\n\

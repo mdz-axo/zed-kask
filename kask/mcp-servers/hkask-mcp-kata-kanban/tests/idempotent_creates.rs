@@ -841,7 +841,7 @@ async fn listed_goal_ids(server: &KanbanServer) -> Vec<String> {
         .as_array()
         .expect("goals array")
         .iter()
-        .filter_map(|g| g["goal_id"].as_str().map(str::to_string))
+        .filter_map(|g| g["id"].as_str().map(str::to_string))
         .collect()
 }
 
@@ -858,7 +858,13 @@ async fn create_goal(
             criteria: vec![GoalCriterionInput {
                 description: "observable criterion".to_string(),
             }],
-            prediction: None,
+            source: hkask_mcp_kata_kanban::GoalSource {
+                interaction_id: "turn-1".into(),
+                session_id: "session-1".into(),
+                source: "explicit-spec".into(),
+            },
+            forecast: None,
+            supersedes: None,
             task_id: None,
             idempotency_key: key.map(str::to_string),
         }))
@@ -867,28 +873,23 @@ async fn create_goal(
     parse(&out)
 }
 
-/// Goal replay protection survives a restart, and the replayed goal is live.
-///
-/// Goals persist in the kanban DB through resolution until curator-memory
-/// acknowledgment (operator ruling 2026-09-16): the goal store shares the
-/// kanban driver, so a re-create with the same idempotency key on a new process
-/// over the same DB returns the SAME goal — listable, scoreable, and retained
-/// as a retryable outbox entry until explicitly acknowledged.
+/// Replay protection across two handles to the same store. True file-backed
+/// reopen and canonical delivery are covered in goal_lifecycle.rs.
 #[tokio::test]
-async fn goal_replay_protection_survives_a_restart_and_replays_the_live_goal() {
+async fn goal_replay_across_handles_preserves_the_live_goal() {
     let webid = WebID::new();
     let driver = SqliteDriver::in_memory_driver();
     let make_process = || make_server_over_driver(driver.clone(), webid);
     let process_a = make_process();
     let first = create_goal(&process_a, "Goal", Some("goal-key")).await;
-    let first_id = first["goal_id"].as_str().expect("goal_id").to_string();
+    let first_id = first["id"].as_str().expect("goal_id").to_string();
 
     // A second server over the same durable kanban DB — the restart shape.
     // Both the idempotency store and the goal store are intact.
     let process_b = make_process();
 
     let second = create_goal(&process_b, "Goal", Some("goal-key")).await;
-    let second_id = second["goal_id"].as_str().expect("goal_id").to_string();
+    let second_id = second["id"].as_str().expect("goal_id").to_string();
     assert_eq!(
         second_id, first_id,
         "a re-create after restart must replay the persisted goal, not mint a duplicate"
@@ -901,43 +902,15 @@ async fn goal_replay_protection_survives_a_restart_and_replays_the_live_goal() {
         "the persisted goal must survive the restart in the store, got: {ids:?}"
     );
 
-    // And scoreable — the Brier closure survives the restart. Scoring retains
-    // the resolved row as a retryable outbox entry until memory acknowledgment.
-    let out = process_b
-        .kanban_goal_score(Parameters(GoalScoreRequest {
-            goal_id: first_id.clone(),
-            achieved: true,
-        }))
-        .await
-        .expect("score must succeed on the replayed live goal");
-    let scored = parse(&out);
-    assert_eq!(scored["goal_id"].as_str(), Some(first_id.as_str()));
-
-    let ids = listed_goal_ids(&process_b).await;
-    assert!(
-        ids.contains(&first_id),
-        "the resolved goal must remain retryable until memory acknowledgment, got: {ids:?}"
-    );
-
-    process_b
-        .kanban_goal_memory_acknowledge(Parameters(GoalMemoryAcknowledgeRequest {
+    let full = process_b
+        .kanban_goal_get(Parameters(GoalGetRequest {
             goal_id: first_id.clone(),
         }))
         .await
-        .expect("memory acknowledgment must prune the retained goal");
-
-    let ids = listed_goal_ids(&process_b).await;
-    assert!(
-        !ids.contains(&first_id),
-        "memory acknowledgment must prune the retained goal, got: {ids:?}"
-    );
-
-    process_b
-        .kanban_goal_memory_acknowledge(Parameters(GoalMemoryAcknowledgeRequest {
-            goal_id: first_id,
-        }))
-        .await
-        .expect("repeated memory acknowledgment must be idempotent");
+        .expect("full goal");
+    let full = parse(&full);
+    assert_eq!(full["criteria"][0]["description"], "observable criterion");
+    assert_eq!(full["id"], first_id);
 }
 
 #[test]
@@ -969,8 +942,8 @@ async fn goal_replay_is_absorbed_within_the_process() {
 
     let replay = create_goal(&server, "Goal", Some("goal-key")).await;
     assert_eq!(
-        replay["goal_id"].as_str(),
-        first["goal_id"].as_str(),
+        replay["id"].as_str(),
+        first["id"].as_str(),
         "an in-process retry must return the original goal"
     );
     assert_eq!(

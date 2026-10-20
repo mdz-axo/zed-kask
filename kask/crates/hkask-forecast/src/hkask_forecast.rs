@@ -211,7 +211,9 @@ pub fn certainty_tier(probability: f64) -> &'static str {
 
 // ── Brier scoring ──────────────────────────────────────────────────────────
 
-/// Brier score for a single binary forecast: (prediction - outcome)².
+/// Brier loss for a single binary forecast: (prediction - outcome)².
+/// The caller must supply finite p in [0,1]; `brier_score_multi` validates it.
+/// Raw loss alone does not establish calibration, skill or usefulness.
 #[must_use = "score should be used or recorded"]
 pub fn brier_score(probability: f64, outcome_occurred: bool) -> f64 {
     (probability - if outcome_occurred { 1.0 } else { 0.0 }).powi(2)
@@ -229,28 +231,20 @@ pub fn brier_score_multi(probabilities: &[f64], outcomes: &[bool]) -> Result<f64
             outcomes.len(),
         ));
     }
+    for (index, probability) in probabilities.iter().copied().enumerate() {
+        if !(0.0..=1.0).contains(&probability) {
+            return Err(ForecastError::InvalidProbability(
+                probability,
+                format!("forecast {index}"),
+            ));
+        }
+    }
     Ok(probabilities
         .iter()
         .zip(outcomes.iter())
         .map(|(p, o)| brier_score(*p, *o))
         .sum::<f64>()
         / probabilities.len() as f64)
-}
-
-/// Human-readable Brier score interpretation.
-#[must_use]
-pub fn brier_interpretation(score: f64) -> &'static str {
-    if score < 0.05 {
-        "excellent"
-    } else if score < 0.10 {
-        "good"
-    } else if score < 0.20 {
-        "fair"
-    } else if score < 0.33 {
-        "poor"
-    } else {
-        "worse_than_climatology"
-    }
 }
 
 // ── Hit-rate intervals ──────────────────────────────────────────────────────
@@ -283,29 +277,6 @@ pub fn wilson_bounds(hits: usize, trials: usize) -> Option<(f64, f64)> {
         ((centre - spread) / denominator).max(0.0),
         ((centre + spread) / denominator).min(1.0),
     ))
-}
-
-// ── Calibration feedback ─────────────────────────────────────────────────────
-
-/// Adjust a prior probability using a calibration bias signal from a
-/// historical Brier-scored calibration curve. Closes the Tetlock feedback
-/// loop: record → Brier score → calibration curve → adjust next prior.
-///
-/// `overconfidence_bias` is the signed mean (expected_rate − hit_rate) across
-/// calibration bins (positive = systematically overconfident, negative =
-/// underconfident), typically from
-/// `hkask-mcp-scenarios::compute_calibration_curve.overconfidence_score`.
-///
-/// The adjustment regresses the prior toward the uninformative 0.5 anchor
-/// proportionally to the bias: an overconfident forecaster's extreme
-/// predictions are pulled toward 0.5; an underconfident forecaster's are
-/// pushed slightly away. The bias influence is clamped to ±0.5 so a single
-/// unreliable curve cannot invert a forecast.
-#[must_use = "calibrated prior should be used for the next forecast"]
-pub fn apply_calibration_adjustment(prior: f64, overconfidence_bias: f64) -> f64 {
-    let influence = overconfidence_bias.clamp(-0.5, 0.5);
-    let adjusted = prior - influence * (prior - 0.5);
-    adjusted.clamp(0.01, 0.99)
 }
 
 /// Natural log-odds (logit) of a probability. Interpolation and regression
@@ -423,29 +394,6 @@ pub fn volatility_regime(prices: &[f64]) -> VolatilityRegime {
     } else {
         VolatilityRegime::Smooth
     }
-}
-
-/// Domain-bias correction for market-implied probabilities (arXiv:2602.19520).
-///
-/// Prediction-market prices are not face-value probabilities: politics
-/// markets on both Kalshi and Polymarket are chronically *underconfident* —
-/// prices compressed toward 0.5, so extreme outcomes are underpriced. The
-/// correction de-compresses: `p' = 0.5 + (p - 0.5)(1 + δ)`, clamped to
-/// [0.01, 0.99]. A δ of 0 applies to already-calibrated domains (sports —
-/// arXiv:2604.20421 §6.1 found isotonic recalibration adds nothing on NBA
-/// markets).
-///
-/// `delta` is the signed de-compression strength in [0, 0.5]; values beyond
-/// are clamped (a correction must never invert or saturate a probability).
-/// Callers source δ from measured per-domain calibration (the
-/// `superforecast::domain_bias_delta` function reads the calibration loop's
-/// resolved forecasts for the domain; when there is insufficient data, δ=0.0
-/// — no correction — the honest default per Tetlock's discipline: corrections
-/// come from measured calibration, not hardcoded magic numbers).
-#[must_use = "corrected probability should replace the face-value price"]
-pub fn domain_bias_correction(probability: f64, delta: f64) -> f64 {
-    let delta = delta.clamp(0.0, 0.5);
-    (0.5 + (probability - 0.5) * (1.0 + delta)).clamp(0.01, 0.99)
 }
 
 // ── Scenario risk core ────────────────────────────────────────────────
@@ -632,6 +580,16 @@ mod tests {
     // ── Brier scoring ───────────────────────────────────────────────
 
     #[test]
+    fn brier_multi_rejects_nonfinite_and_out_of_range_probabilities() {
+        for probability in [f64::NAN, f64::INFINITY, -0.1, 1.1] {
+            assert!(
+                brier_score_multi(&[probability], &[true]).is_err(),
+                "invalid p: {probability}"
+            );
+        }
+    }
+
+    #[test]
     fn brier_perfect_and_worst() {
         assert_eq!(brier_score(1.0, true), 0.0);
         assert_eq!(brier_score(0.0, false), 0.0);
@@ -666,15 +624,6 @@ mod tests {
             brier_score_multi(&[0.5], &[]),
             Err(ForecastError::BrierLengthMismatch(1, 0))
         ));
-    }
-
-    #[test]
-    fn brier_interpretation_thresholds() {
-        assert_eq!(brier_interpretation(0.0), "excellent");
-        assert_eq!(brier_interpretation(0.08), "good");
-        assert_eq!(brier_interpretation(0.15), "fair");
-        assert_eq!(brier_interpretation(0.30), "poor");
-        assert_eq!(brier_interpretation(0.90), "worse_than_climatology");
     }
 
     // ── Bayesian update ─────────────────────────────────────────────
@@ -799,28 +748,6 @@ mod tests {
         assert_eq!(certainty_tier(0.66), "probable");
         assert_eq!(certainty_tier(0.33), "probable");
         assert_eq!(certainty_tier(0.32), "possible");
-    }
-
-    // ── Calibration adjustment ──────────────────────────────────────
-
-    #[test]
-    fn calibration_overconfidence_pulls_extreme_prior_toward_half() {
-        // Overconfident forecaster (positive bias): extreme 0.9 regresses down.
-        let adjusted = apply_calibration_adjustment(0.9, 0.4);
-        assert!(adjusted < 0.9 && adjusted > 0.5);
-    }
-
-    #[test]
-    fn calibration_underconfidence_pushes_prior_away_from_half() {
-        let adjusted = apply_calibration_adjustment(0.9, -0.4);
-        assert!(adjusted > 0.9);
-    }
-
-    #[test]
-    fn calibration_bias_influence_is_clamped() {
-        // A wild bias must not invert the forecast past the clamp bounds.
-        let adjusted = apply_calibration_adjustment(0.9, 50.0);
-        assert!((0.01..=0.99).contains(&adjusted));
     }
 
     // ── Isotonic recalibration (PAVA) ─────────────────────────────
@@ -977,5 +904,4 @@ mod tests {
             (0.09f64 + 0.16).sqrt()
         ));
     }
-
 }

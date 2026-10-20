@@ -16,11 +16,10 @@ pub(crate) mod types;
 
 // Re-export the public API from types
 pub(crate) use types::{
-    Board, ColumnDef, Comment, CriterionCitation, CriterionJudgment, Goal, GoalResolution,
-    GoalVerdict, GoalVerdictValue, KanbanPhase, Priority, SpawnSpec, Task, TaskFilter, TaskSpec,
-    TaskStatus, Verification, VerificationCriterion,
+    Board, ColumnDef, Comment, CriterionCitation, KanbanPhase, Priority, SpawnSpec, Task,
+    TaskFilter, TaskSpec, TaskStatus, Verification, VerificationCriterion,
 };
 
 // Re-export the service and errors from service_impl
-pub(crate) use service_impl::KanbanError;
+pub use service_impl::KanbanError;
 pub use service_impl::KanbanService;

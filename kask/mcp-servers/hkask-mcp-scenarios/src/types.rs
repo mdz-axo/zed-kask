@@ -174,7 +174,7 @@ pub enum ScenarioType {
 impl ScenarioType {
     /// Snake-case category label matching the serde serialization, used as
     /// the `category` on `StoredForecastRecord` so per-domain calibration
-    /// (`domain_bias_delta`) can group resolved forecasts by scenario type.
+    /// can group resolved history by scenario type.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::CompanyUpdate => "company_update",
@@ -313,7 +313,7 @@ pub struct Perspective {
     pub reference_class: Option<String>,
     /// Free-text rationale for this estimate
     pub rationale: Option<String>,
-    /// Historical Brier score (for empirical weighting, if available)
+    /// Historical raw loss retained as context only; never used as a weight.
     pub historical_brier: Option<f64>,
 }
 
@@ -325,7 +325,7 @@ pub(crate) struct DragonflySynthesis {
     pub event_id: String,
     /// All perspectives considered
     pub perspectives: Vec<Perspective>,
-    /// Aggregated probability (empirical-Bayes weighted average)
+    /// Aggregated probability (explicit equal-weight average)
     pub aggregated_probability: f64,
     /// 0 = perfect consensus, 1 = maximum divergence among perspectives
     pub disagreement_score: f64,
@@ -342,7 +342,7 @@ pub(crate) struct DragonflySynthesis {
 /// A single stored forecast awaiting or having received an outcome.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredForecastRecord {
-    /// Schema version for forward-compatible deserialization (current: 3).
+    /// Schema version for deserialization (current: 4).
     /// Old files without this field default to 0.
     /// v2 adds `category` for per-domain calibration.
     /// v3 scores the tree MARGINAL (PR-02): `probability` is the node's
@@ -365,10 +365,20 @@ pub struct StoredForecastRecord {
     pub resolved_at: Option<NaiveDate>,
     /// Domain category (e.g. "Politics", "Sports") for per-domain calibration.
     /// `None` for records that predate the field (schema v0/v1) or for
-    /// forecasts with no natural category. Per-domain bias correction
-    /// only applies when enough resolved forecasts share a category.
+    /// forecasts with no natural category. Does not authorize bias correction.
     #[serde(default)]
     pub category: Option<String>,
+    /// Frozen prospective declaration. Missing on provenance-limited history.
+    #[serde(default)]
+    pub declaration: Option<ScenarioDeclaration>,
+}
+
+/// Immutable event, marginal probability and resolver frozen before resolution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScenarioDeclaration {
+    pub event: ScenarioEvent,
+    pub resolver: String,
+    pub declared_at: String,
 }
 
 /// One bin in a calibration curve — forecasts in a probability range
@@ -380,11 +390,11 @@ pub(crate) struct CalibrationBin {
     /// How many forecasts fall in this bin
     pub forecast_count: u64,
     /// Actual frequency of occurrence (should match bin midpoint if calibrated)
-    pub hit_rate: f64,
-    /// Expected rate (bin midpoint)
-    pub expected_rate: f64,
+    pub hit_rate: Option<f64>,
+    /// Mean declared probability; absent for an empty bin.
+    pub expected_rate: Option<f64>,
     /// expected_rate - hit_rate: positive = overconfident, negative = underconfident
-    pub bias: f64,
+    pub bias: Option<f64>,
 }
 
 /// Full calibration curve across all stored forecasts.
@@ -392,11 +402,13 @@ pub(crate) struct CalibrationBin {
 pub(crate) struct CalibrationCurve {
     pub bins: Vec<CalibrationBin>,
     pub total_forecasts: u64,
+    /// Eligible resolved declarations only; legacy outcomes are reported separately.
     pub resolved_forecasts: u64,
+    pub unscored_resolved_forecasts: u64,
     pub overall_brier: f64,
-    /// + = systematically overconfident, - = underconfident, 0 = well calibrated
-    pub overconfidence_score: f64,
-    pub interpretation: String,
+    /// Signed mean error over bins with at least five observations.
+    /// Missing means insufficient qualifying data; zero may reflect cancellation.
+    pub overconfidence_score: Option<f64>,
 }
 
 // ── Triage (P4) ────────────────────────────────────────────────────────────
@@ -628,29 +640,6 @@ pub(crate) struct AssessmentRecord {
     pub overall_score: Option<f64>,
 }
 
-// ── Forecast outcome and Brier scoring ─────────────────────────────────────
-
-/// Recorded outcome of a forecast.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct ForecastOutcome {
-    /// Forecast record ID
-    pub forecast_id: String,
-    /// Subject identifier
-    pub subject: String,
-    /// When the forecast was made
-    pub forecast_date: NaiveDate,
-    /// When the outcome was recorded
-    pub outcome_date: NaiveDate,
-    /// Per-event outcomes: event_id → occurred (true/false)
-    pub event_outcomes: Vec<(String, bool)>,
-    /// Brier score across all events. `None` when scoring failed (empty input,
-    /// length mismatch) — never a fabricated number. Matches the `stale` pattern
-    /// in `hkask-mcp-prediction-markets::calibration::CalibrationReading`.
-    pub brier_score: Option<f64>,
-    /// Interpretation: excellent, good, fair, poor, worse_than_climatology.
-    /// Empty string when `brier_score` is `None`.
-    pub brier_interpretation: String,
-}
 // ── Cross-Validation ────────────────────────────────────────────────────
 
 /// Result of cross-validating two probability estimates — typically

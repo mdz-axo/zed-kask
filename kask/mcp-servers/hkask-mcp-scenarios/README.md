@@ -1,6 +1,6 @@
 # hkask-mcp-scenarios
 
-Scenario-planning MCP server. It turns a framed decision into candidate events, calibrated probabilities, sensitivity rankings, and learning signals. The server is a thin MCP surface over `hkask-forecast` calculations and follows the standard hKask bootstrap and tool-outcome recording path.
+Scenario-planning MCP server. It turns a framed decision into candidate events, explicit probability estimates, sensitivity rankings, and descriptive forecast history. The server is a thin MCP surface over `hkask-forecast` calculations and follows the standard hKask bootstrap and tool-outcome recording path.
 
 ## Configuration
 
@@ -10,8 +10,8 @@ Scenario-planning MCP server. It turns a framed decision into candidate events, 
 
 ## Tools
 
-Nineteen registered tools (pinned against the live `scenario_router()` by
-`tool_surface_is_exactly_19_registered_tools` in the crate's tests).
+Twenty-two registered tools (pinned against the live `combined_router()` by
+`tool_surface_is_exactly_22_registered_tools` in the crate's tests).
 
 ### Frame and explore
 
@@ -31,14 +31,15 @@ Nineteen registered tools (pinned against the live `scenario_router()` by
 | `scenario_propagate` | Update one event's prior and recompute the tree, with a per-node journal. |
 | `scenario_recompute_posteriors` | Recompute posteriors under evidence, in both directions (shared engine with the graph widget). |
 | `scenario_update` | Apply a one-off Bayesian update (stateless — returns the posterior). |
-| `scenario_calibrate` | Calibrate a forecast with Fermi and outside/inside views. |
-| `scenario_synthesize` | Combine independent perspectives into one forecast (dragonfly-eye). |
+| `scenario_calibrate` | Estimate probability with Fermi and outside/inside views; no automatic historical correction. |
+| `scenario_synthesize` | Combine perspectives with explicit equal weights (dragonfly-eye); raw historical loss is context only. |
 
 ### Resolve and learn
 
 | Tool | Description |
 |---|---|
-| `scenario_score` | Score resolved forecasts with Brier scoring on the tree's resolved marginals (the only journal writer). |
+| `scenario_declare` | Freeze prospective events, marginal probabilities, deadlines, and a named caller-reported resolver before outcomes. |
+| `scenario_score` | Resolve an existing declaration, scoring its frozen marginals. Reject duplicate outcomes, changed targets/resolvers, early resolution, and conflicting replays. |
 | `scenario_calibration` | Calculate a calibration curve from stored forecasts. |
 | `scenario_triage` | Classify a question as well_specified, goldilocks, or needs_refinement. |
 | `scenario_cross_validate` | Compare independent probability estimates. |
@@ -49,6 +50,15 @@ Nineteen registered tools (pinned against the live `scenario_router()` by
 | Tool | Description |
 |---|---|
 | `scenario_from_markets_set` | Compose prediction-market records into a validated event tree. |
+
+## Forecast eligibility and interpretation
+
+- Declaration freezes one event/version per identity. Revisions use a new `forecast_id`; `scenario_update` remains a stateless calculation, not a rewrite of a declared forecast.
+- Scenario resolution reads stored probabilities. Nonmatching outcomes are listed explicitly, not scored. Legacy records without declarations remain readable and unscored; no retrospective declaration is invented.
+- Equity `forecast_persist` admits scoring only with a declared probability on the forecast date. The return-accuracy proposition uses a frozen 20% relative tolerance (absolute return band for a zero target), calendar-month horizon, and caller-reported return at that horizon. Resolution must occur after that horizon and match the frozen target/date. No-id `forecast_record` still reports observed gaps, unscored.
+- Resolver names document source rules; caller tools do not authenticate independent evidence. Eligibility is not proof the outcome is true, probabilities are calibrated, or forecasting is useful.
+- Loss uses the binary convention `mean((p-y)^2)` on eligible resolved declarations, one weight per event/version. No matched reference is declared, so no skill comparison is claimed. History counts remain distinct from eligible sample counts.
+- Calibration bins retain counts, mean probabilities and observed frequencies. Empty bins and absent qualifying signed means are explicitly insufficient. A signed mean can cancel; it is not a calibration certificate. No universal raw-loss quality labels or automatic historical correction is deployed.
 
 ## Operational boundaries
 

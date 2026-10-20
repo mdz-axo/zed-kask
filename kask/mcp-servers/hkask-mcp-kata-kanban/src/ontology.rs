@@ -60,15 +60,11 @@ pub(crate) fn tool_to_pko(tool_name: &str) -> Option<PkoConcept> {
         | "kanban_board_export"
         | "kanban_board_list"
         | "kanban_board_update" => Some(STEP_EXECUTION),
-        // The goal loop: create/judge/score/acknowledge are the
-        // verification stages of a goal's lifecycle — judging verifies
-        // criteria against outcomes, scoring records the resolution,
-        // acknowledging closes the curator-memory retention.
-        "kanban_goal_create"
-        | "kanban_goal_judge"
-        | "kanban_goal_score"
-        | "kanban_goal_list"
-        | "kanban_goal_memory_acknowledge" => Some(STEP_VERIFICATION),
+        // Worker declaration/progress are verification steps; native closure
+        // and delivery receipts are intentionally outside the tool surface.
+        "kanban_goal_create" | "kanban_goal_judge" | "kanban_goal_list" | "kanban_goal_get" => {
+            Some(STEP_VERIFICATION)
+        }
         // Task state changes: create/move/reopen/assign/unassign/delete/
         // comment/add-deliverable/update each change a task's state.
         "kanban_task_create"
@@ -114,6 +110,7 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
         // compiled readings over stored records.
         "kanban_board_list"
         | "kanban_goal_list"
+        | "kanban_goal_get"
         | "kanban_task_list"
         | "kanban_task_comments_since"
         | "kanban_task_delegate_result" => Some(REPORT),
@@ -125,8 +122,6 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
         | "kanban_board_update"
         | "kanban_goal_create"
         | "kanban_goal_judge"
-        | "kanban_goal_score"
-        | "kanban_goal_memory_acknowledge"
         | "kanban_task_create"
         | "kanban_task_move"
         | "kanban_task_reopen"

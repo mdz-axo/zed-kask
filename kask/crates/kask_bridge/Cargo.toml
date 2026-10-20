@@ -18,6 +18,7 @@ hkask-bridge-ontology.workspace = true
 hkask-memory.workspace = true
 hkask-storage.workspace = true
 hkask-mcp-experimentation.workspace = true
+hkask-mcp-kata-kanban = { path = "../../mcp-servers/hkask-mcp-kata-kanban" }
 hkask-event-store.workspace = true
 r2d2.workspace = true
 
@@ -58,9 +59,12 @@ tokio = { workspace = true, features = ["sync"] }
 tracing.workspace = true
 
 [dev-dependencies]
+agent = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }
+agent-client-protocol.workspace = true
+acp_thread = { workspace = true, features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }
 hkask-mcp-curator = { path = "../../mcp-servers/hkask-mcp-curator" }
-hkask-mcp-kata-kanban = { path = "../../mcp-servers/hkask-mcp-kata-kanban" }
 hkask-mcp-swarm.workspace = true
 hkask-mcp-server.workspace = true
 rmcp = { workspace = true, features = ["server", "macros"] }

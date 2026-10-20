@@ -11,8 +11,8 @@ use std::collections::{HashMap, HashSet};
 use hkask_forecast as forecast;
 
 use crate::types::{
-    EventTree, EventTreeNode, ForecastOutcome, FramingDocument, ScenarioError, ScenarioEvent,
-    ScenarioType, StakeholderConfig, SubQuestion, TimeHorizon, UseCase,
+    EventTree, EventTreeNode, FramingDocument, ScenarioError, ScenarioEvent, ScenarioType,
+    StakeholderConfig, SubQuestion, TimeHorizon, UseCase,
 };
 // ── Fermi decomposition ────────────────────────────────────────────────────
 
@@ -338,99 +338,6 @@ pub(crate) fn sensitivity_ranking(tree: &EventTree) -> Vec<(String, f64)> {
 }
 
 // ── Forecast record helpers ────────────────────────────────────────────────
-
-/// Score a forecast against known outcomes and produce a ForecastOutcome.
-/// Also computes per-event update suggestions for closing the feedback loop.
-///
-/// Scores the tree's resolved MARGINAL probabilities (PR-02): for a
-/// dependent event the belief actually forecast is the marginal the tree
-/// propagates, not the caller-supplied prior field — and the calibration
-/// loop must learn from the belief that was forecast.
-pub(crate) fn score_forecast(
-    forecast_id: &str,
-    tree: &EventTree,
-    outcomes: &[(String, bool)],
-    forecast_date: chrono::NaiveDate,
-) -> ForecastOutcome {
-    let node_map: HashMap<&str, &EventTreeNode> = tree
-        .nodes
-        .iter()
-        .map(|n| (n.event.id.as_str(), n))
-        .collect();
-
-    let mut probs = Vec::new();
-    let mut outs = Vec::new();
-    let mut event_outcomes = Vec::new();
-
-    for (event_id, occurred) in outcomes {
-        if let Some(node) = node_map.get(event_id.as_str()) {
-            probs.push(node.marginal_probability);
-            outs.push(*occurred);
-            event_outcomes.push((event_id.clone(), *occurred));
-        } else {
-            tracing::warn!(
-                target: "hkask.mcp.scenarios",
-                event_id = %event_id,
-                "outcome has no matching event, skipped"
-            );
-        }
-    }
-
-    let (bs, interpretation) = match forecast::brier_score_multi(&probs, &outs) {
-        Ok(bs) => (Some(bs), forecast::brier_interpretation(bs).to_string()),
-        Err(error) => {
-            tracing::warn!(
-                target: "hkask.mcp.scenarios",
-                %error,
-                "Brier multi-score failed; recording brier_score: null"
-            );
-            (None, String::new())
-        }
-    };
-
-    ForecastOutcome {
-        forecast_id: forecast_id.to_string(),
-        subject: tree.subject.clone(),
-        forecast_date,
-        outcome_date: chrono::Utc::now().date_naive(),
-        event_outcomes,
-        brier_score: bs,
-        brier_interpretation: interpretation,
-    }
-}
-
-/// Compute per-event Bayesian update suggestions based on forecast error
-/// direction, against the tree's resolved marginals (PR-02 — the scored
-/// belief is the marginal). Positive delta means probability should be
-/// raised; negative means lowered.
-pub(crate) fn auto_update_suggestions(
-    nodes: &[EventTreeNode],
-    outcomes: &[(String, bool)],
-) -> Vec<serde_json::Value> {
-    let node_map: HashMap<&str, &EventTreeNode> =
-        nodes.iter().map(|n| (n.event.id.as_str(), n)).collect();
-
-    outcomes
-        .iter()
-        .filter_map(|(event_id, occurred)| {
-            let node = node_map.get(event_id.as_str())?;
-            let marginal = node.marginal_probability;
-            let error = marginal - if *occurred { 1.0 } else { 0.0 };
-            // Suggest a modest correction in the error's direction
-            let adjustment = (-error * 0.25).clamp(-0.15, 0.15);
-            let suggested = (marginal + adjustment).clamp(0.01, 0.99);
-            Some(serde_json::json!({
-                "event_id": event_id,
-                "event_name": node.event.name,
-                "forecast_probability": marginal,
-                "outcome": occurred,
-                "error": error,
-                "suggested_adjustment": adjustment,
-                "suggested_probability": suggested,
-            }))
-        })
-        .collect()
-}
 
 // Brainstorming and framing templates moved to `templates` module.
 

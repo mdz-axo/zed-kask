@@ -68,7 +68,7 @@ pub fn mapping_document() -> serde_json::Value {
             }
         },
         "domain_supplement": {
-            "note": "calibration vocabulary (brier, domain_bias, reliability_tier) is kask domain-supplement tier — no standard ontology covers forecast scoring (Q-O2 resolution 2026-08-05)"
+            "note": "calibration vocabulary (brier, sample_size, liquidity/spread tier) is kask domain-supplement tier — no standard ontology covers forecast scoring (Q-O2 resolution 2026-08-05)"
         }
     })
 }

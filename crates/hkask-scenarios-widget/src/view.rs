@@ -20,6 +20,13 @@ use crate::block::{
     ScenariosBlockBody,
 };
 
+fn probability_text(probability: Option<f64>) -> String {
+    probability
+        .filter(|p| p.is_finite())
+        .map(|p| format!("{:.0}%", p * 100.0))
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 /// Server that hosts the scenario pipeline tools. Used as the fallback dispatch
 /// target when a block carries no dispatchable provenance.
 const DEFAULT_SERVER: &str = "hkask-mcp-scenarios";
@@ -214,7 +221,7 @@ impl ScenariosWidget {
             .overconfidence_score
             .map(|o| format!("{o:+.3}"))
             .unwrap_or_else(|| "—".to_string());
-        let interp = cal.interpretation.as_deref().unwrap_or("unknown");
+        let interp = cal.evidence_status.as_deref().unwrap_or("insufficient");
 
         v_flex()
             .gap_1()
@@ -271,20 +278,17 @@ impl ScenariosWidget {
         let dots: Vec<AnyElement> = nodes
             .iter()
             .map(|node| {
-                let prob = node
-                    .probability
-                    .or(node.marginal_probability)
-                    .unwrap_or(0.5);
-                let uncertainty = (prob - 0.5).abs();
-                let color = if uncertainty > 0.3 {
+                let prob = node.marginal_probability.or(node.probability);
+                let uncertainty = prob.map(|p| (p - 0.5).abs());
+                let color = if uncertainty.is_some_and(|u| u > 0.3) {
                     Color::Warning
-                } else if prob > 0.5 {
+                } else if prob.is_some_and(|p| p > 0.5) {
                     Color::Created
                 } else {
                     Color::Muted
                 };
-                let prob_pct = format!("{:.0}%", prob * 100.0);
-                let unc_pct = format!("{:.0}%", uncertainty * 100.0);
+                let prob_pct = probability_text(prob);
+                let unc_pct = probability_text(uncertainty);
 
                 h_flex()
                     .gap_2()
@@ -345,11 +349,7 @@ impl ScenariosWidget {
             .nodes
             .iter()
             .map(|node| {
-                let prob = node
-                    .probability
-                    .or(node.marginal_probability)
-                    .unwrap_or(0.0);
-                let prob_pct = format!("{:.0}%", prob * 100.0);
+                let prob_pct = probability_text(node.marginal_probability.or(node.probability));
                 let tier = node
                     .certainty_tier
                     .as_ref()
@@ -440,7 +440,7 @@ impl ScenariosWidget {
         let rows: Vec<AnyElement> = recent
             .iter()
             .map(|f| {
-                let prob_pct = format!("{:.0}%", f.probability * 100.0);
+                let prob_pct = probability_text(f.probability);
                 let outcome_text = f
                     .outcome
                     .map(|o| if o { "✓ occurred" } else { "✗ didn't" })
@@ -658,7 +658,7 @@ fn scaffolding_for_state(body: &ScenariosBlockBody) -> ScaffoldingPrompt {
         .unwrap_or_else(|| "No Brier score yet".to_string());
 
     if let Some(ref cal) = body.calibration {
-        let interp = cal.interpretation.as_deref().unwrap_or("unknown");
+        let interp = cal.evidence_status.as_deref().unwrap_or("insufficient");
         return ScaffoldingPrompt {
             stage: "Learn",
             prompt: format!(
@@ -704,15 +704,20 @@ const PIPELINE_STAGES: &[(&str, &str, &str)] = &[
     (
         "5. Calibrate",
         "scenario_calibrate",
-        "Fermi decomposition + outside/inside view + bias correction",
+        "Fermi decomposition + outside/inside estimate; no automatic correction",
     ),
     (
-        "6. Score",
+        "6. Declare",
+        "scenario_declare",
+        "Freeze events, probabilities, deadlines and resolver before outcomes",
+    ),
+    (
+        "7. Score",
         "scenario_score",
-        "Brier scoring against known outcomes",
+        "Resolve declared identities; legacy observations remain unscored",
     ),
     (
-        "7. Assess",
+        "8. Assess",
         "scenario_assess",
         "Chermack 5-phase project assessment",
     ),
@@ -759,6 +764,13 @@ mod tests {
     }
 
     #[test]
+    fn absent_probability_renders_unknown_and_present_zero_remains_zero() {
+        assert_eq!(probability_text(None), "unknown");
+        assert_eq!(probability_text(Some(0.0)), "0%");
+        assert_eq!(probability_text(Some(0.5)), "50%");
+    }
+
+    #[test]
     fn scaffolding_pending_forecasts_suggests_quantify() {
         let body = ScenariosBlockBody {
             viz: Some("scenarios".into()),
@@ -791,7 +803,7 @@ mod tests {
                 resolved_forecasts: 3,
                 overall_brier: Some(0.12),
                 overconfidence_score: Some(0.05),
-                interpretation: Some("good".to_string()),
+                evidence_status: Some("descriptive_only".to_string()),
             }),
             ..Default::default()
         };

@@ -128,8 +128,7 @@ pub(crate) fn snapshot_open_markets(
 /// with no snapshot is counted in `resolved_without_snapshot` and NEVER
 /// recorded — scoring its post-resolution `last_price_dollars` would be
 /// self-fulfilling (the outcome is derived from the same terminal price,
-/// so Brier ≈ 0 by construction and the reliability-tier demotion gate
-/// could never fire from scan data).
+/// so Brier ≈ 0 by construction).
 pub(crate) fn resolved_observations_from_snapshots(
     markets: &[KalshiMarket],
     store: &mut crate::calibration::CalibrationStore,

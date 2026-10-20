@@ -32,7 +32,7 @@ pub struct ResolvedObservation {
 /// market is the honest probability-at-observation for the Brier loop —
 /// scoring a market's post-resolution price instead is self-fulfilling
 /// (the outcome is derived from that same terminal price, so Brier ≈ 0 by
-/// construction and the reliability-tier demotion gate can never fire).
+/// construction). Raw loss is not a calibration certificate.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PendingSnapshot {
     pub bucket: String,

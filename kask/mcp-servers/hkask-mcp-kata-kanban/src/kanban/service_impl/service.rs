@@ -383,13 +383,15 @@ impl KanbanService {
 
     /// Validate goal citations against the live goal store: the cited goal
     /// must exist, the index must be in range, and the captured text must
-    /// match the goal's criterion verbatim. After resolution the goal row
-    /// is pruned and the citation survives as captured
-    /// documentation — validation happens once, at the write that carries
-    /// the citation (create or update).
-    fn validate_goal_citations(&self, citations: &[CriterionCitation]) -> Result<(), KanbanError> {
+    /// match the immutable criterion verbatim. Canonical goals are retained
+    /// after closure and memory delivery.
+    fn validate_goal_citations(
+        &self,
+        citations: &[CriterionCitation],
+        actor: WebID,
+    ) -> Result<(), KanbanError> {
         for citation in citations {
-            let goal = self.goal_get(citation.goal_id)?.ok_or_else(|| {
+            let goal = self.goal_get(citation.goal_id, actor)?.ok_or_else(|| {
                 KanbanError::NotFound(NotFound {
                     entity_type: "goal".to_string(),
                     id: citation.goal_id.to_string(),
@@ -447,7 +449,7 @@ impl KanbanService {
         spec: TaskSpec,
         owner: WebID,
     ) -> Result<Task, KanbanError> {
-        self.validate_goal_citations(&spec.advances)?;
+        self.validate_goal_citations(&spec.advances, owner)?;
         let task = Task::new(board_id, spec, owner);
         let records = Self::task_h_mems(&task)?;
         let board_id_text = board_id.to_string();
@@ -855,7 +857,7 @@ impl KanbanService {
         // Validate cross-record citations before taking the task write lock.
         if let Some(new_advances) = &advances {
             Self::require_task_owner(&self.require_task(task_id)?, actor)?;
-            self.validate_goal_citations(new_advances)?;
+            self.validate_goal_citations(new_advances, actor)?;
         }
         let (task, ()) = self.mutate_task(task_id, |task| {
             Self::require_task_owner(task, actor)?;

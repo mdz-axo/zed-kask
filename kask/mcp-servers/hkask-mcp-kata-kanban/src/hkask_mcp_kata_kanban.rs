@@ -2,7 +2,7 @@
 #![warn(clippy::let_underscore_future)]
 //! hkask-mcp-kata-kanban — Kata-Kanban workflow coordination MCP server.
 //!
-//! Provides 25 MCP tools for kanban board, task, and goal management.
+//! Provides 26 MCP tools for kanban board, task, and goal management.
 //! All tools carry the caller's WebID for P12 compliance.
 //!
 //! The KanbanServer struct and tool methods are exported from the library
@@ -23,11 +23,11 @@ pub mod types;
 // `KanbanService` is `pub` so external tool-behavior contract tests (tests/) can construct
 // a service over an in-memory driver and drive the real `Parameters<T>` tool seam — the
 // testing standard (docs/reference/mcp-servers/README.md §Testing standard) requires this.
+pub use kanban::KanbanError;
 pub use kanban::KanbanService;
-pub(crate) use kanban::{
-    ColumnDef, CriterionCitation, CriterionJudgment, GoalVerdict, GoalVerdictValue, KanbanError,
-    Priority, SpawnSpec, Task, TaskFilter, TaskSpec, TaskStatus, VerificationCriterion,
-};
+pub use kanban::types::goal::*;
+pub use kanban::types::verification::VerificationCriterion;
+pub(crate) use kanban::{ColumnDef, Priority, SpawnSpec, Task, TaskFilter, TaskSpec, TaskStatus};
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
@@ -69,10 +69,8 @@ hkask_mcp_server::mcp_server!(
         /// the writes it guards. See `crate::idempotency`.
         pub idempotency: Arc<idempotency::IdempotencyStore>,
         /// Replay protection for `kanban_goal_create` — the same durable
-        /// store as task creates. Goals persist through resolution until
-        /// curator-memory acknowledgment (operator ruling 2026-09-16), so a
-        /// replayed create returns a live goal's id, not a ghost pointer whose
-        /// next `kanban_goal_judge` fails NotFound.
+        /// store as task creates. Canonical goals survive closure and memory
+        /// delivery, so a replayed create always refers to retained history.
         pub goal_idempotency: Arc<idempotency::IdempotencyStore>,
     } = crate::ontology::annotate;
 );
@@ -435,24 +433,13 @@ impl KanbanServer {
         .await
     }
 
-    /// Create a functional goal — the kata target condition for a bit of
-    /// work. The goal is the user's functional requirement in the user's
-    /// words, with 1–4 observable criteria and an optional intake
-    /// prediction (Brier-scored at `kanban_goal_score`). Native persistence
-    /// for the four-moves interaction loop
-    /// (`kask/docs/architecture/functional-interaction-spec.md`).
+    /// Declare an immutable verification goal with optional eligible forecast.
     #[tool(
-        description = "Create a functional goal (kata target condition) with observable criteria and an optional intake prediction. Goals persist through resolution until curator-memory ingestion acknowledges the scored outcome, so failed ingestion remains retryable across restarts."
+        description = "Create a canonical goal with original explicit criteria, a specification source and an optional prospectively frozen forecast. No implied forecast or human closure authority."
     )]
     pub async fn kanban_goal_create(
         &self,
-        Parameters(GoalCreateRequest {
-            goal_text,
-            criteria,
-            prediction,
-            task_id,
-            idempotency_key,
-        }): Parameters<GoalCreateRequest>,
+        Parameters(request): Parameters<GoalCreateRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(
             self,
@@ -460,28 +447,30 @@ impl KanbanServer {
             with_idempotency(
                 &self.goal_idempotency,
                 "kanban_goal_create",
-                idempotency_key.as_deref(),
+                request.idempotency_key.as_deref(),
                 &self.webid,
-                serde_json::json!({ "goal_text": goal_text, "criteria": criteria, "prediction": prediction, "task_id": task_id }),
+                serde_json::to_value(&request)
+                    .map_err(|e| McpToolError::internal(e.to_string()))?,
                 async {
-                    let tid = match task_id {
-                        Some(t) => Some(parse_task_id(&t)?),
-                        None => None,
+                    let declaration = GoalDeclaration {
+                        goal_text: request.goal_text.clone(),
+                        criteria: request
+                            .criteria
+                            .iter()
+                            .map(|c| VerificationCriterion::new(c.description.clone()))
+                            .collect(),
+                        task_id: request.task_id.as_deref().map(parse_task_id).transpose()?,
+                        source: request.source.clone(),
+                        forecast: request.forecast.clone(),
+                        supersedes: request
+                            .supersedes
+                            .as_deref()
+                            .map(parse_goal_id)
+                            .transpose()?,
                     };
-                    let criteria = criteria
-                        .into_iter()
-                        .map(|c| VerificationCriterion::new(c.description))
-                        .collect();
-                    respond(
-                        self.service
-                            .goal_create(goal_text, criteria, prediction, tid, self.webid),
-                        |goal| GoalCreateResponse {
-                            goal_id: goal.id.to_string(),
-                            goal_text: goal.goal_text,
-                            criteria_count: goal.criteria.len(),
-                            prediction: goal.prediction,
-                        },
-                    )
+                    respond(self.service.goal_create(declaration, self.webid), |goal| {
+                        goal
+                    })
                 },
             ),
         )
@@ -535,102 +524,38 @@ impl KanbanServer {
         .await
     }
 
-    /// Resolve a goal: record the realized outcome (the user's ground
-    /// truth) and Brier-score the intake prediction. `brier` is `null`
-    /// with a note when no prediction was recorded — surfaced, never faked.
+    /// Read the complete canonical specification and history, including archives.
     #[tool(
-        description = "Resolve a goal: record achieved/not-achieved and Brier-score the intake prediction."
+        description = "Get a caller-owned canonical goal with full original criteria, progress, closure, assessment, forecast and delivery history."
     )]
-    pub async fn kanban_goal_score(
+    pub async fn kanban_goal_get(
         &self,
-        Parameters(GoalScoreRequest { goal_id, achieved }): Parameters<GoalScoreRequest>,
+        Parameters(GoalGetRequest { goal_id }): Parameters<GoalGetRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(self, "kanban_goal_score", async {
-            let gid = parse_goal_id(&goal_id)?;
-            respond(self.service.goal_score(gid, achieved, self.webid), |goal| {
-                let resolution = goal
-                    .resolution
-                    .as_ref()
-                    .expect("goal_score records a resolution");
-                let note = if resolution.brier.is_none() {
-                    Some(
-                        "no intake prediction was recorded — Brier not computable \
-                             (this is not a score of 0)"
-                            .to_string(),
-                    )
-                } else {
-                    None
-                };
-                GoalScoreResponse {
-                    goal_id: goal.id.to_string(),
-                    achieved,
-                    brier: resolution.brier,
-                    note,
-                }
-            })
+        execute_tool(self, "kanban_goal_get", async {
+            let id = parse_goal_id(&goal_id)?;
+            let goal = self
+                .service
+                .goal_get(id, self.webid)
+                .map_err(map_kanban_error)?
+                .ok_or_else(|| McpToolError::not_found(format!("goal {id} not found")))?;
+            serde_json::to_value(goal).map_err(|e| McpToolError::internal(e.to_string()))
         })
         .await
     }
 
-    /// Internal completion of the goal-memory handoff. The production agent
-    /// calls this only after the scored outcome is stored in curator memory.
     #[tool(
-        description = "Acknowledge that a resolved goal outcome was stored in curator memory, then remove the retained goal. Internal lifecycle operation; call only with a confirmed memory-ingestion receipt."
-    )]
-    pub async fn kanban_goal_memory_acknowledge(
-        &self,
-        Parameters(GoalMemoryAcknowledgeRequest { goal_id }): Parameters<
-            GoalMemoryAcknowledgeRequest,
-        >,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "kanban_goal_memory_acknowledge", async {
-            let gid = parse_goal_id(&goal_id)?;
-            self.service
-                .goal_acknowledge_memory(gid, self.webid)
-                .map_err(map_kanban_error)?;
-            serde_json::to_value(GoalMemoryAcknowledgeResponse {
-                goal_id,
-                acknowledged: true,
-            })
-            .map_err(|e| McpToolError::internal(e.to_string()))
-        })
-        .await
-    }
-
-    /// List the caller's goals, newest first — the cross-session recall
-    /// for Move 4 (bank the learning): the next bit of work starts from
-    /// these.
-    #[tool(
-        description = "List the caller's functional goals, including resolved goals retained until curator-memory ingestion is acknowledged, newest first."
+        description = "List all caller-owned canonical goals with complete original criteria and history. Delivered and archived goals remain visible."
     )]
     pub async fn kanban_goal_list(
         &self,
         Parameters(GoalListRequest {}): Parameters<GoalListRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "kanban_goal_list", async {
-            respond(self.service.goal_list(&self.webid), |goals| {
-                GoalListResponse {
-                    goals: goals
-                        .into_iter()
-                        .map(|g| GoalInfo {
-                            goal_id: g.id.to_string(),
-                            goal_text: g.goal_text,
-                            criteria: g.criteria.iter().map(|c| c.description.clone()).collect(),
-                            criteria_count: g.criteria.len(),
-                            prediction: g.prediction,
-                            latest_verdict: g.verdicts.last().map(|v| v.verdict.to_string()),
-                            resolution: g.resolution.as_ref().map(|r| {
-                                if r.achieved {
-                                    "achieved".to_string()
-                                } else {
-                                    "not-achieved".to_string()
-                                }
-                            }),
-                            created_at: g.created_at.to_rfc3339(),
-                        })
-                        .collect(),
-                }
-            })
+            respond(
+                self.service.goal_list(&self.webid),
+                |goals| serde_json::json!({ "goals": goals }),
+            )
         })
         .await
     }
@@ -1655,6 +1580,8 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 let store = HMemStore::from_driver(driver)
                     .map_err(|e| anyhow::anyhow!("hmem store init: {e}"))?;
                 let service = KanbanService::new(store);
+                service.goal_archive_legacy(ctx.webid)
+                    .map_err(|error| anyhow::anyhow!("goal legacy archival failed: {error}"))?;
 
                 // Local swarm delegation surface (kanban_task_spawn). No
                 // ledger: local agents run on the operator's own substrate
@@ -1706,10 +1633,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     "replay-protection schema initialization failed: {error}"
                 ))?;
 
-                // Goals persist through resolution until curator-memory
-                // acknowledgment (operator ruling 2026-09-16), so their replay
-                // protection shares the durable store — a replayed create
-                // returns a live goal's id.
+                // Goal replay protection shares the canonical durable store.
                 let idempotency = Arc::new(idempotency);
                 let goal_idempotency = Arc::clone(&idempotency);
 
@@ -1730,7 +1654,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     .await
 }
 
-// Pins the registered tool surface end-to-end: the exact count (27) plus
+// Pins the registered tool surface end-to-end: the exact count (26) plus
 // the generated TOOL_NAMES const against the live rmcp surface — a tool
 // added/removed/renamed without regenerating (or a `name =` override the
 // build script can't see) fails here instead of degrading to "tool not
@@ -1738,8 +1662,8 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 hkask_mcp_server::tool_surface_pin!(
     KanbanServer::tool_router(),
     "tool_router",
-    27,
-    tool_surface_is_exactly_27_registered_tools,
+    26,
+    tool_surface_is_exactly_26_registered_tools,
 );
 
 /// expect: "Kanban refuses startup rather than accepting mutations without durable encrypted state."
@@ -1772,5 +1696,31 @@ fn default_db_path_follows_standardized_layout() {
             .join("kata-kanban")
             .join("kanban.db"),
         "kata-kanban default DB path must follow mcp/kata-kanban/kanban.db"
+    );
+}
+
+#[test]
+fn mcp_goal_authority_is_only_declare_progress_and_full_reads() {
+    let router = KanbanServer::tool_router();
+    let mut names: Vec<_> = router
+        .list_all()
+        .into_iter()
+        .map(|t| t.name.to_string())
+        .filter(|n| n.starts_with("kanban_goal_"))
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            "kanban_goal_create",
+            "kanban_goal_get",
+            "kanban_goal_judge",
+            "kanban_goal_list"
+        ]
+    );
+    let forged = serde_json::json!({ "goal_text":"forged human", "criteria":[{"description":"observable"}], "source":{"interaction_id":"worker","session_id":"worker","source":"human"}, "actor":"human", "achieved":true });
+    assert!(
+        serde_json::from_value::<types::GoalCreateRequest>(forged).is_err(),
+        "actor string is not a human receipt"
     );
 }

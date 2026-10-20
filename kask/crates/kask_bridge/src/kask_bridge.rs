@@ -32,6 +32,8 @@ pub use database_maintenance::{
 mod delegation_grants;
 mod host_skill_tools;
 mod identity;
+mod goals;
+pub use goals::{GoalHost, GoalInference};
 mod inference_chat;
 mod inference_edit_prediction;
 mod inference_resilience;

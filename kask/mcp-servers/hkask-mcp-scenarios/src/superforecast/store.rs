@@ -12,7 +12,7 @@
 //! journal+snapshot machinery — the equity forecast store (from the retired
 //! companies server) is the second instantiation, not a copied module.
 //! `ForecastStore` stays as the `StoredForecastRecord`-typed instantiation
-//! with its record-specific accessors (`resolved`, `resolved_by_category`,
+//! with its record-specific accessors (`resolved`,
 //! `filtered_by_subject`) so the calibration and composition callers keep
 //! their exact shapes.
 use std::collections::HashMap;
@@ -217,20 +217,10 @@ mod forecast_accessors {
                 .filter(|r| r.outcome.is_some())
                 .collect()
         }
-        /// Resolved forecasts matching a domain category (case-insensitive
-        /// substring match, mirroring the old `domain_bias_delta` matcher).
-        /// Used by per-domain calibration: the bias for a category is computed
-        /// only from resolved forecasts in that category.
-        pub(crate) fn resolved_by_category(&self, category: &str) -> Vec<&StoredForecastRecord> {
-            let normalized = category.to_ascii_lowercase();
-            self.records
-                .values()
-                .filter(|r| r.outcome.is_some())
-                .filter(|r| {
-                    r.category
-                        .as_deref()
-                        .is_some_and(|c| c.to_ascii_lowercase().contains(&normalized))
-                })
+        pub(crate) fn eligible_resolved(&self) -> Vec<&StoredForecastRecord> {
+            self.resolved()
+                .into_iter()
+                .filter(|r| r.declaration.is_some())
                 .collect()
         }
         pub(crate) fn filtered_by_subject(&self, subject: &str) -> Self {

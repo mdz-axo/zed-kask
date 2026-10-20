@@ -76,6 +76,7 @@ pub struct GoalCriterionInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GoalCreateRequest {
     /// The functional goal in the user's words — what the user will be able
     /// to do, or what stops being a problem. The agent interprets this; it
@@ -83,27 +84,13 @@ pub struct GoalCreateRequest {
     pub goal_text: String,
     /// 1–4 observable criteria (Fermi-decomposed from the goal).
     pub criteria: Vec<GoalCriterionInput>,
-    /// The agent's intake prediction: probability (0.0–1.0) the goal will be
-    /// achieved. Brier-scored at `kanban_goal_score`. Form-tolerant: a
-    /// string-encoded number ("0.8") is coerced (the live 2026-09-27
-    /// incident — three rmcp rejections of a string prediction); the
-    /// 0.0–1.0 range check stays in the service.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "hkask_types::maybe_string::deserialize_optional_f64_from_maybe_string"
-    )]
-    pub prediction: Option<f64>,
+    /// Source locator for the immutable specification, not a human receipt.
+    pub source: crate::GoalSource,
+    /// Optional prospectively frozen forecast. No forecast is synthesized.
+    pub forecast: Option<crate::GoalForecast>,
+    pub supersedes: Option<String>,
     pub task_id: Option<String>,
     pub idempotency_key: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct GoalCreateResponse {
-    pub goal_id: String,
-    pub goal_text: String,
-    pub criteria_count: usize,
-    pub prediction: Option<f64>,
 }
 
 /// One criterion judgment input for `kanban_goal_judge`.
@@ -140,54 +127,13 @@ pub(crate) struct GoalJudgeResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct GoalScoreRequest {
+#[serde(deny_unknown_fields)]
+pub struct GoalGetRequest {
     pub goal_id: String,
-    /// Whether the goal was achieved (the user's ground truth).
-    pub achieved: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct GoalScoreResponse {
-    pub goal_id: String,
-    pub achieved: bool,
-    /// Brier score of the intake prediction against the realized outcome.
-    /// `null` when no intake prediction was recorded — surfaced, never faked.
-    pub brier: Option<f64>,
-    pub note: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct GoalMemoryAcknowledgeRequest {
-    pub goal_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct GoalMemoryAcknowledgeResponse {
-    pub goal_id: String,
-    pub acknowledged: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct GoalListRequest {}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct GoalListResponse {
-    pub goals: Vec<GoalInfo>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct GoalInfo {
-    pub goal_id: String,
-    pub goal_text: String,
-    /// The criteria text in index order — a judge reads what each criterion
-    /// says, not just how many exist.
-    pub criteria: Vec<String>,
-    pub criteria_count: usize,
-    pub prediction: Option<f64>,
-    pub latest_verdict: Option<String>,
-    pub resolution: Option<String>,
-    pub created_at: String,
-}
 
 // ── Task tools ─────────────────────────────────────────────────────────────
 
@@ -198,9 +144,8 @@ pub struct CriterionCitationInput {
     pub goal_id: String,
     /// Index into the goal's criteria (0-based).
     pub criterion_index: usize,
-    /// The criterion's description, verbatim — validated against the goal
-    /// at creation and captured so the citation stays readable after the
-    /// goal is resolved and pruned.
+    /// The criterion's description, verbatim — validated against the immutable
+    /// specification. Canonical history remains available after closure.
     pub criterion_text: String,
 }
 
@@ -577,58 +522,4 @@ pub(crate) struct BoardImportResponse {
     pub column_count: usize,
     /// Number of tasks created across all columns.
     pub task_count: usize,
-}
-
-#[cfg(test)]
-mod goal_wire_form_tests {
-    use super::GoalCreateRequest;
-
-    /// The live 2026-09-27 incident: the agent emitted the intake prediction
-    /// as a string three times and rmcp's macro layer rejected the whole call
-    /// ("invalid type: string \"0.8\", expected f64"). The wire form is now
-    /// tolerant; the 0.0–1.0 range validation stays in the service.
-    #[test]
-    fn goal_create_prediction_accepts_a_string_encoded_number() {
-        let request: GoalCreateRequest = serde_json::from_value(serde_json::json!({
-            "goal_text": "test goal",
-            "criteria": [{ "description": "criterion" }],
-            "prediction": "0.8"
-        }))
-        .expect("string-encoded prediction deserializes");
-        assert_eq!(request.prediction, Some(0.8));
-    }
-
-    #[test]
-    fn goal_create_prediction_accepts_a_number_unchanged() {
-        let request: GoalCreateRequest = serde_json::from_value(serde_json::json!({
-            "goal_text": "test goal",
-            "criteria": [{ "description": "criterion" }],
-            "prediction": 0.75
-        }))
-        .expect("numeric prediction deserializes");
-        assert_eq!(request.prediction, Some(0.75));
-    }
-
-    #[test]
-    fn goal_create_prediction_absent_yields_none() {
-        let request: GoalCreateRequest = serde_json::from_value(serde_json::json!({
-            "goal_text": "test goal",
-            "criteria": [{ "description": "criterion" }]
-        }))
-        .expect("absent prediction deserializes");
-        assert_eq!(request.prediction, None);
-    }
-
-    #[test]
-    fn goal_create_prediction_non_numeric_string_is_rejected() {
-        let result: Result<GoalCreateRequest, _> = serde_json::from_value(serde_json::json!({
-            "goal_text": "test goal",
-            "criteria": [{ "description": "criterion" }],
-            "prediction": "high"
-        }));
-        assert!(
-            result.is_err(),
-            "form tolerance must not admit non-numeric strings"
-        );
-    }
 }

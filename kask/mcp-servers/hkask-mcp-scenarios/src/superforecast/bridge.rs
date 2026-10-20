@@ -4,8 +4,6 @@
 //!
 //! Extracted from `superforecast.rs` (deep-module split).
 
-use super::ForecastStore;
-
 use crate::types::{
     CrossValidation, ScenarioError, ScenarioEvent, ScenarioType, SubQuestion,
     SubQuestionDivergence, TimeHorizon,
@@ -125,88 +123,13 @@ pub(crate) fn cross_validate(
     }
 }
 
-// ── Domain Bias Correction ────────────────────────────────────────────────
-///
-/// Returns the weighted bias (expected_rate − hit_rate) over resolved
-/// forecasts in `store` matching `category` (case-insensitive substring
-/// match). A bias of 0.0 means the domain is well-calibrated (or there is
-/// insufficient data — fewer than `MIN_DOMAIN_SAMPLE` resolved forecasts —
-/// in which case no correction is applied, the honest default per Tetlock's
-/// superforecasting discipline: corrections must come from measured
-/// calibration, not hardcoded magic numbers).
-///
-/// Positive δ de-compresses probabilities away from 0.5 (corrects
-/// underconfidence — forecasts cluster too close to 50/50). Negative δ is
-/// clamped to 0.0 by `domain_bias_correction` (overconfidence is corrected
-/// by a different mechanism — the calibration feedback loop, not a static
-/// de-compression).
-pub fn domain_bias_delta(store: Option<&ForecastStore>, category: &str) -> f64 {
-    /// Minimum resolved forecasts in a domain before a data-derived bias
-    /// correction is applied. Below this, the sample is too small for a
-    /// reliable bias estimate (Tetlock: calibration requires "enough
-    /// forecasts to make the statistics work").
-    const MIN_DOMAIN_SAMPLE: usize = 5;
-
-    let Some(store) = store else {
-        return 0.0;
-    };
-    let resolved = store.resolved_by_category(category);
-    if resolved.len() < MIN_DOMAIN_SAMPLE {
-        return 0.0;
-    }
-
-    // Reuse the calibration-curve binning from `assess::accumulate_calibration_bins`,
-    // filtered to the domain category.
-    let (bins, _) = super::assess::accumulate_calibration_bins(&resolved);
-
-    let mut weighted_bias = 0.0;
-    let mut bias_weight = 0.0;
-    for &(count, hits, probability_sum) in &bins {
-        if count >= 5 {
-            let hit_rate = hits as f64 / count as f64;
-            let expected = probability_sum / count as f64;
-            // bias = expected − hit_rate: positive = overconfident (forecasts
-            // say X% but reality is lower), negative = underconfident.
-            // For de-compression δ we want the magnitude of underconfidence
-            // (forecasts compressed toward 0.5). A negative bias (underconfident)
-            // maps to a positive δ; a positive bias (overconfident) maps to δ=0
-            // (de-compression would make it worse).
-            let bias = expected - hit_rate;
-            if bias < 0.0 {
-                weighted_bias += (-bias) * count as f64;
-                bias_weight += count as f64;
-            }
-        }
-    }
-    if bias_weight > 0.0 {
-        (weighted_bias / bias_weight).clamp(0.0, 0.5)
-    } else {
-        0.0
-    }
-}
-
-/// Convert an annotated prediction-market record (from
-/// hkask-mcp-prediction-markets `market_lookup`/`market_match`, pasted by
-/// the caller via the caller-mediated bridge pattern) into a ScenarioEvent
-/// anchored on the market-implied base rate.
-///
-/// Gates (deliberate refusals, mirroring the contract's epistemic posture):
-/// - `reliability_tier` low ⇒ no anchor (`base_rate: None` + warning)
-/// - `match_confidence` below high/medium ⇒ no anchor (wrong-event risk)
-/// - resolved/closed markets ⇒ rejected (a resolved market is not a forecast)
-///
-/// The domain-bias correction (hkask_forecast::domain_bias_correction) is
-/// applied deterministically here — the LLM consumer never sees an
-/// uncorrected politics price as the default anchor. The correction δ is
-/// derived from measured per-domain calibration in `store` (when provided);
-/// when `store` is `None` or has insufficient resolved forecasts for the
-/// domain, δ=0.0 (no correction — the honest default per Tetlock's
-/// discipline: corrections come from measured calibration, not hardcoded
-/// magic numbers).
+// ── Market conversion ──────────────────────────────────────────────
+/// Convert an open market without altering its observed probability.
+/// Liquidity and event-match gates withhold the base rate; the 0.5 scaffold
+/// is not eligible for forecast declaration.
 pub(crate) fn convert_market_record(
     record: &hkask_mcp_prediction_markets::types::MarketRecord,
     match_confidence: Option<&str>,
-    store: Option<&ForecastStore>,
 ) -> Result<(ScenarioEvent, Vec<String>), ScenarioError> {
     let mut warnings = Vec::new();
 
@@ -218,16 +141,6 @@ pub(crate) fn convert_market_record(
             "market '{}' is not open (status: {:?}) — a resolved or closed market is not a forecast",
             record.market_id, record.status
         )));
-    }
-
-    let raw = record.probability;
-    let delta = domain_bias_delta(store, &record.category);
-    let corrected = hkask_forecast::domain_bias_correction(raw, delta);
-    if delta > 0.0 {
-        warnings.push(format!(
-            "domain-bias correction applied ({}, δ={delta}): {raw:.3} → {corrected:.3}",
-            record.category
-        ));
     }
 
     let low_reliability = matches!(
@@ -254,7 +167,7 @@ pub(crate) fn convert_market_record(
         }
         None
     } else {
-        Some(corrected)
+        Some(record.probability)
     };
 
     let deadline = chrono::NaiveDate::parse_from_str(

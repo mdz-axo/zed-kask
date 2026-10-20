@@ -1,169 +1,292 @@
+//! Canonical verification ledger. Human closure, assessment, forecasts and
+//! retrieval delivery are distinct records; none erases the original goal.
 use super::*;
+use schemars::JsonSchema;
 
-// ── Goal (functional target condition) ────────────────────────────────────
-
-/// Goal — a functional goal with observable verification criteria.
-///
-/// The native persistence for the four-moves interaction loop
-/// (`kask/docs/architecture/functional-interaction-spec.md`): the goal is
-/// the kata *target condition* — the user's functional requirement, in the
-/// user's words, with Fermi-decomposed observable criteria. The agent's
-/// intake prediction (`probability the goal is achieved`) is Brier-scored
-/// at resolution, so the agent's functional understanding becomes a
-/// calibrated, measurable signal across sessions.
-///
-/// Schema:
-/// `goal_text` + observable `criteria` + verdict semantics
-/// `done` / `continue` / `blocked` with confidence.
-#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Goal {
-    /// Unique goal identifier.
+    pub schema_version: u32,
     pub id: GoalID,
-    /// The functional goal in the user's words — what the user will be able
-    /// to do, or what stops being a problem. The agent interprets this; it
-    /// never revises it.
     pub goal_text: String,
-    /// Observable criteria (Fermi-decomposed from the goal): 2–4 conditions
-    /// phrased functionally ("the user can do X", "Y no longer breaks").
     pub criteria: Vec<VerificationCriterion>,
-    /// Optional link to the kanban task executing this goal.
+    pub criterion_ids: Vec<String>,
     pub task_id: Option<TaskId>,
-    /// The agent's intake prediction: probability (0.0–1.0) that the goal
-    /// will be achieved. `None` when no prediction was recorded — then
-    /// `goal_score` reports `brier: null` with a note, never a synthetic 0.
-    pub prediction: Option<f64>,
-    /// Judge history — every recorded verdict, newest last. The history IS
-    /// the learning: drift shows up as repeated `continue` verdicts.
+    pub source: Option<GoalSource>,
+    pub supersedes: Option<GoalID>,
+    pub spec_digest: String,
     pub verdicts: Vec<GoalVerdict>,
-    /// Resolution, once scored.
-    pub resolution: Option<GoalResolution>,
-    /// The agent who created this goal (P12).
+    pub closure: Option<GoalClosure>,
+    pub human_corrections: Vec<NativeGoalOutcomeCorrection>,
+    pub assessment_pending: bool,
+    pub assessments: Vec<AssessmentAttempt>,
+    pub forecast: Option<GoalForecast>,
+    pub observations: Vec<ForecastObservation>,
+    pub forecast_status: ForecastStatus,
+    pub scores: Vec<GoalForecastScore>,
+    pub projections: Vec<GoalProjection>,
+    pub revision: u64,
+    pub legacy: Option<LegacyGoalArchive>,
     pub owner: WebID,
-    /// When the goal was created.
     pub created_at: DateTime<Utc>,
-    /// When the goal was last updated.
     pub updated_at: DateTime<Utc>,
 }
 
-impl Goal {
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  id assigned by the service; goal_text non-empty; 1–4 criteria
-    /// post: returns a Goal with empty verdicts and no resolution
-    pub fn new(
-        id: GoalID,
-        goal_text: String,
-        criteria: Vec<VerificationCriterion>,
-        owner: WebID,
-    ) -> Self {
-        let now = Utc::now();
-        Self {
-            id,
-            goal_text,
-            criteria,
-            task_id: None,
-            prediction: None,
-            verdicts: Vec::new(),
-            resolution: None,
-            owner,
-            created_at: now,
-            updated_at: now,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GoalSource {
+    pub interaction_id: String,
+    pub session_id: String,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GoalDeclaration {
+    pub goal_text: String,
+    pub criteria: Vec<VerificationCriterion>,
+    pub task_id: Option<TaskId>,
+    pub source: GoalSource,
+    pub forecast: Option<GoalForecast>,
+    pub supersedes: Option<GoalID>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HumanClosureChoice {
+    AccomplishedAchieved,
+    AccomplishedNotAchieved,
+    AccomplishedUnknown,
+    StopAchieved,
+    StopNotAchieved,
+    StopUnknown,
+}
+impl HumanClosureChoice {
+    pub fn outcome(self) -> Option<bool> {
+        match self {
+            Self::AccomplishedAchieved | Self::StopAchieved => Some(true),
+            Self::AccomplishedNotAchieved | Self::StopNotAchieved => Some(false),
+            Self::AccomplishedUnknown | Self::StopUnknown => None,
         }
     }
 }
 
-// ── Goal Verdict ──────────────────────────────────────────────────────────
+/// Constructed by authenticated host interaction, never accepted by MCP.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativeGoalClosure {
+    pub event_id: String,
+    pub expected_spec_digest: String,
+    pub source: GoalSource,
+    pub occurred_at: DateTime<Utc>,
+    pub choice: HumanClosureChoice,
+    pub evidence_manifest: Vec<GoalEvidence>,
+}
+/// Trusted native correction; original closure remains unchanged.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativeGoalOutcomeCorrection {
+    pub event_id: String,
+    pub expected_spec_digest: String,
+    pub source: GoalSource,
+    pub occurred_at: DateTime<Utc>,
+    pub supersedes_event_id: String,
+    pub outcome: Option<bool>,
+    pub reason: String,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GoalClosure {
+    pub input: NativeGoalClosure,
+    pub payload_digest: String,
+    pub recorded_at: DateTime<Utc>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GoalEvidence {
+    pub id: String,
+    pub source: String,
+    pub locator: String,
+    pub digest: String,
+    pub reliability: String,
+    pub oracle: String,
+    pub limitation: String,
+}
 
-/// GoalVerdictValue — the judge verdict (`done` / `continue` / `blocked`).
-#[non_exhaustive]
+/// Deliberately contains no progress verdict, closure choice, forecast or score.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GoalAssessmentInput {
+    pub goal_id: GoalID,
+    pub spec_digest: String,
+    pub goal_text: String,
+    pub criteria: Vec<AssessmentCriterion>,
+    pub evidence_manifest: Vec<GoalEvidence>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssessmentCriterion {
+    pub id: String,
+    pub description: String,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AssessmentLeaseRequest {
+    pub attempt_id: String,
+    pub assessor_id: String,
+    pub model_version: String,
+    pub tool_version: String,
+    pub lease_until: DateTime<Utc>,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AssessmentAttempt {
+    pub lease: AssessmentLeaseRequest,
+    pub input: GoalAssessmentInput,
+    pub input_digest: String,
+    pub started_at: DateTime<Utc>,
+    pub completion: Option<AssessmentCompletion>,
+    pub failure: Option<AssessmentFailure>,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AssessmentCompletion {
+    pub attempt_id: String,
+    pub input_digest: String,
+    pub findings: Vec<CriterionFinding>,
+    pub limitations: Vec<String>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CriterionEvidenceStatus {
+    Supported,
+    Contradicted,
+    Unknown,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CriterionFinding {
+    pub criterion_id: String,
+    pub status: CriterionEvidenceStatus,
+    pub evidence_ids: Vec<String>,
+    pub note: String,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AssessmentFailure {
+    pub attempt_id: String,
+    pub input_digest: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GoalForecast {
+    pub proposition: String,
+    pub probability: f64,
+    pub horizon: DateTime<Utc>,
+    pub resolution_deadline: DateTime<Utc>,
+    pub execution_policy: String,
+    pub resources: String,
+    pub resolver: GoalForecastResolver,
+    pub baseline_probability: f64,
+    pub cohort: String,
+    pub update_policy: ForecastUpdatePolicy,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum GoalForecastResolver {
+    HumanAcceptance,
+    MachineEvidence { source: String, oracle: String },
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ForecastUpdatePolicy {
+    FixedAtDeclaration,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ForecastObservation {
+    pub event_id: String,
+    pub source: String,
+    pub oracle: String,
+    pub occurred_at: DateTime<Utc>,
+    pub outcome: Option<bool>,
+    pub evidence_ids: Vec<String>,
+    pub correction_of: Option<String>,
+    pub reason: String,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ForecastStatus {
+    NotDeclared,
+    PendingAssessment,
+    PendingOutcome,
+    Unknown,
+    Disputed,
+    Resolved,
+    DeadlineElapsed,
+    LegacyUnscored,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GoalForecastScore {
+    pub version: u64,
+    pub outcome_event_id: String,
+    pub outcome: bool,
+    pub brier: f64,
+    pub baseline_brier: f64,
+    pub skill: Option<f64>,
+    pub supersedes_version: Option<u64>,
+    pub recorded_at: DateTime<Utc>,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GoalProjection {
+    pub event_id: String,
+    pub revision: u64,
+    pub payload_digest: String,
+    pub payload: serde_json::Value,
+    pub delivered_receipt: Option<String>,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GoalProjectionReceipt {
+    pub event_id: String,
+    pub revision: u64,
+    pub payload_digest: String,
+    pub receipt_id: String,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LegacyGoalArchive {
+    pub raw: serde_json::Value,
+    pub limitation: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum GoalVerdictValue {
-    /// All criteria satisfied — the goal is achieved.
     Done,
-    /// Criteria not yet satisfied — work continues.
     Continue,
-    /// The goal is unachievable as stated or needs user input.
     Blocked,
 }
-
 impl GoalVerdictValue {
-    /// Wire-format name (matches the serde lowercase rename).
     pub fn as_str(&self) -> &'static str {
         match self {
-            GoalVerdictValue::Done => "done",
-            GoalVerdictValue::Continue => "continue",
-            GoalVerdictValue::Blocked => "blocked",
+            Self::Done => "done",
+            Self::Continue => "continue",
+            Self::Blocked => "blocked",
         }
     }
 }
-
 impl std::fmt::Display for GoalVerdictValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
     }
 }
-
-/// CriterionJudgment — the judge's result for one criterion.
-#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CriterionJudgment {
-    /// Index into `Goal::criteria` this judgment refers to.
     pub index: usize,
-    /// Whether the criterion is satisfied by the observed outcome.
     pub passed: bool,
-    /// Evidence-grounded note for this criterion.
     pub note: String,
 }
-
-/// CriterionCitation — a task's declaration that it advances one criterion
-/// of a goal. The functional–technical join.
-///
-/// Documentation-grade by the ephemerality ruling (2026-08-30): the goal
-/// store is in-memory, so the citation captures the criterion text verbatim
-/// at task-creation time and stays readable after the goal is gone. The
-/// `(goal_id, criterion_index)` pair is the join key while the goal lives;
-/// `criterion_text` is the self-contained record that survives it.
+/// Task-to-goal citation. Indices and verbatim text remain valid because the
+/// canonical specification is immutable and survives retrieval receipts.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CriterionCitation {
-    /// The cited goal.
     pub goal_id: GoalID,
-    /// Index into the goal's criteria at citation time. Criteria are
-    /// immutable after `goal_create`, so the index is stable for the
-    /// goal's lifetime.
     pub criterion_index: usize,
-    /// The criterion's description, captured verbatim at citation time.
     pub criterion_text: String,
 }
-
-/// GoalVerdict — one recorded judgment of the goal against its criteria.
-#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GoalVerdict {
-    /// The verdict.
     pub verdict: GoalVerdictValue,
-    /// Confidence in the verdict (0.0–1.0).
     pub confidence: f64,
-    /// Per-criterion results.
     pub criterion_results: Vec<CriterionJudgment>,
-    /// Overall reasoning, grounded in the observed outcome.
     pub reasoning: String,
-    /// When the verdict was recorded.
     pub judged_at: DateTime<Utc>,
-}
-
-// ── Goal Resolution ────────────────────────────────────────────────────────
-
-/// GoalResolution — the scored outcome of a goal.
-#[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct GoalResolution {
-    /// Whether the goal was achieved (the user's ground truth).
-    pub achieved: bool,
-    /// Brier score of the intake prediction against the realized outcome.
-    /// `None` when no prediction was recorded — surfaced, never faked.
-    pub brier: Option<f64>,
-    /// When the resolution was recorded.
-    pub resolved_at: DateTime<Utc>,
 }

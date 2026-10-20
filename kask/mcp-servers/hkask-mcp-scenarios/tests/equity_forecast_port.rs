@@ -24,10 +24,16 @@ use serde_json::Value;
 use std::sync::{Arc, Mutex};
 
 fn server() -> ScenariosServer {
+    server_using(equity_forecast_store())
+}
+
+fn server_using(
+    forecasts: Arc<Mutex<JournalStore<hkask_mcp_scenarios::equity_forecast::StoredEquityForecast>>>,
+) -> ScenariosServer {
     ScenariosServer::new(
         WebID::new(),
         Arc::new(Mutex::new(ForecastStore::new(None))),
-        equity_forecast_store(),
+        forecasts,
         Mutex::new(None),
         Mutex::new(ProjectStore::new(None)),
     )
@@ -48,8 +54,9 @@ fn content(output: &str) -> Value {
 }
 
 #[tokio::test]
-async fn forecast_persist_stores_and_forecast_record_scores_the_brier_loop() {
-    let server = server();
+async fn matured_prospective_forecast_scores_the_frozen_probability() {
+    let forecasts = equity_forecast_store();
+    let server = server_using(Arc::clone(&forecasts));
     let persisted = server
         .forecast_persist(Parameters(EquityForecastPersistRequest {
             symbol: "TEST".to_string(),
@@ -74,8 +81,24 @@ async fn forecast_persist_stores_and_forecast_record_scores_the_brier_loop() {
     assert_eq!(body["forecast_id"], "pf-1");
     assert_eq!(body["forecast_price_change"], 0.10);
 
-    // The record step scores against the persisted prior (0.6), not a
-    // hardcoded fallback — the plan's P1 contract.
+    // Filesystem/store boundary fixture: a declaration originally admitted
+    // on 2026-01-15, now matured. Admission at today's real clock is tested
+    // separately; no test sleeps three months or fabricates outcome timing.
+    {
+        let mut store = forecasts.lock().expect("store");
+        let mut record = store.get("pf-1").expect("persisted").clone();
+        record.schema_version = 2;
+        record.created_at = "2026-01-15T00:00:00Z".into();
+        record.declaration = Some(hkask_mcp_scenarios::equity_forecast::EquityDeclaration {
+            deadline: chrono::NaiveDate::from_ymd_opt(2026, 4, 15).expect("deadline"),
+            resolver: "caller_reported_price_return_at_horizon".into(),
+            tolerance: 0.20,
+        });
+        store
+            .insert("pf-1".into(), record)
+            .expect("fixture journal");
+    }
+    // Resolution reads the frozen prior (0.6), not a submitted prior.
     let recorded = server
         .forecast_record(Parameters(EquityForecastRecordRequest {
             symbol: "TEST".to_string(),
@@ -114,7 +137,7 @@ async fn forecast_persist_stores_and_forecast_record_scores_the_brier_loop() {
 }
 
 #[tokio::test]
-async fn forecast_record_without_a_persisted_probability_surfaces_the_fallback_note() {
+async fn forecast_record_without_a_persisted_probability_is_explicitly_unscored() {
     let server = server();
     server
         .forecast_persist(Parameters(EquityForecastPersistRequest {
@@ -150,15 +173,9 @@ async fn forecast_record_without_a_persisted_probability_surfaces_the_fallback_n
         .await
         .expect("record answers");
     let body = content(&recorded);
-    // 0.5 actual vs 0.0 forecast: |0.5/0.0| — forecast == 0 uses the
-    // actual-magnitude band (0.5 < 0.2 false) → inaccurate → Brier on the
-    // 0.7 fallback prior = (0.7)^2 = 0.49, and the fallback is NAMED.
-    assert!(
-        body["brier_prior_note"]
-            .as_str()
-            .is_some_and(|n| n.contains("0.7")),
-        "the 0.7 fallback prior is surfaced as a note: {body}"
-    );
+    assert!(body["brier"]["combined"].is_null(), "no declared p: {body}");
+    assert_eq!(body["scoring_status"], "unscored");
+    assert!(body["unscored_reason"].as_str().is_some(), "reason: {body}");
 }
 
 #[tokio::test]
@@ -277,5 +294,116 @@ async fn scenario_risk_measure_never_fabricates_a_measure_over_zero_mass() {
     assert!(
         err.to_string().contains("never fabricated"),
         "the zero-mass degradation names itself: {err}"
+    );
+}
+
+fn persist_request(id: &str, date: &str, probability: Option<f64>) -> EquityForecastPersistRequest {
+    serde_json::from_value(serde_json::json!({"symbol":"TEST", "forecast_id":id, "forecast_date":date, "horizon":"3mo", "forecast_multiple":15.0, "forecast_price_change":0.1, "forecast_probability":probability})).expect("persist request")
+}
+
+fn record_request(id: Option<&str>, date: &str, outcome_date: &str) -> EquityForecastRecordRequest {
+    serde_json::from_value(serde_json::json!({"symbol":"TEST", "forecast_id":id, "forecast_date":date, "horizon":"3mo", "forecast_multiple":15.0, "forecast_price_change":0.1, "outcome_date":outcome_date, "actual_multiple":14.0, "actual_price_change":0.12})).expect("record request")
+}
+
+#[tokio::test]
+async fn equity_admission_freezes_horizon_and_early_resolution_is_rejected() {
+    let server = server();
+    let today = chrono::Utc::now().date_naive();
+    let date = today.to_string();
+    let deadline = today
+        .checked_add_months(chrono::Months::new(3))
+        .expect("deadline")
+        .to_string();
+    let persisted = content(
+        &server
+            .forecast_persist(Parameters(persist_request("future", &date, Some(0.8))))
+            .await
+            .expect("declare"),
+    );
+    assert_eq!(persisted["scoring_eligible"], true);
+    assert_eq!(persisted["deadline"], deadline);
+    let error = server
+        .forecast_record(Parameters(record_request(Some("future"), &date, &deadline)))
+        .await
+        .expect_err("early outcome");
+    assert!(error.to_string().contains("horizon"));
+    let mut request = record_request(Some("future"), &date, &deadline);
+    request.forecast_price_change = 0.5;
+    assert!(
+        server
+            .forecast_record(Parameters(request))
+            .await
+            .expect_err("target frozen")
+            .to_string()
+            .contains("frozen")
+    );
+    let mut request = record_request(Some("future"), &date, &deadline);
+    request.horizon = "1yr".into();
+    assert!(server.forecast_record(Parameters(request)).await.is_err());
+    let listed = content(
+        &server
+            .forecast_list(Parameters(EquityForecastListRequest {
+                symbol: "TEST".into(),
+            }))
+            .await
+            .expect("history"),
+    );
+    assert!(listed["forecasts"][0]["outcome"].is_null());
+    assert_eq!(listed["forecasts"][0]["forecast_probability"], 0.8);
+}
+
+#[tokio::test]
+async fn equity_backdated_and_identityless_observations_are_unscored() {
+    let server = server();
+    let admitted = content(
+        &server
+            .forecast_persist(Parameters(persist_request(
+                "legacy",
+                "2020-01-15",
+                Some(0.8),
+            )))
+            .await
+            .expect("history"),
+    );
+    assert_eq!(admitted["scoring_eligible"], false);
+    for id in [Some("legacy"), None] {
+        let body = content(
+            &server
+                .forecast_record(Parameters(record_request(id, "2020-01-15", "2020-04-15")))
+                .await
+                .expect("observation"),
+        );
+        assert_eq!(body["scoring_status"], "unscored");
+        assert!(body["brier"]["combined"].is_null());
+        assert!(body["unscored_reason"].is_string());
+        assert!(body["gaps"]["return_gap"].is_number());
+    }
+    // An identityless observation does not manufacture a declared forecast.
+    let history = content(
+        &server
+            .forecast_list(Parameters(EquityForecastListRequest {
+                symbol: "TEST".into(),
+            }))
+            .await
+            .expect("list"),
+    );
+    assert_eq!(history["forecasts"].as_array().expect("history").len(), 1);
+    server
+        .forecast_record(Parameters(record_request(
+            Some("legacy"),
+            "2020-01-15",
+            "2020-04-15",
+        )))
+        .await
+        .expect("idempotent replay");
+    let mut conflicting = record_request(Some("legacy"), "2020-01-15", "2020-04-15");
+    conflicting.actual_price_change = -0.4;
+    assert!(
+        server
+            .forecast_record(Parameters(conflicting))
+            .await
+            .expect_err("conflicting replay")
+            .to_string()
+            .contains("conflicting")
     );
 }

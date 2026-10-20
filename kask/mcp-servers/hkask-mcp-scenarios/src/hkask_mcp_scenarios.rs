@@ -11,7 +11,7 @@
 //! Shared engine: Fermi decomposition, outside/inside view, Bayesian updating,
 //! Brier scoring, dragonfly-eye synthesis, calibration tracking, cross-validation.
 //!
-//! ## Tools (21) — pinned by `tool_surface_is_exactly_21_registered_tools`
+//! ## Tools (22) — pinned by `tool_surface_is_exactly_22_registered_tools`
 //! - `scenario_status` — Server state: pipeline overview, calibration curve, cached tree
 //! - `scenario_frame_document` — Structure framing answers into FramingDocument, persisted under the project record
 //! - `scenario_frame` — 7-turn conversational framing interview
@@ -24,7 +24,8 @@
 //! - `scenario_calibrate` — Fermi decomposition + outside/inside view
 //! - `scenario_update` — Bayesian evidence revision
 //! - `scenario_synthesize` — Dragonfly-eye multi-perspective aggregation
-//! - `scenario_score` — Brier scoring on tree marginals + forecast store + auto-update
+//! - `scenario_declare` — Freeze prospective event/probability/horizon/resolver identity
+//! - `scenario_score` — Record outcomes against frozen declarations; legacy history stays unscored
 //! - `scenario_calibration` — Calibration curve + overconfidence detection
 //! - `scenario_cross_validate` — LLM vs computation cross-validation
 //! - `scenario_assess` — Chermack five-phase project evaluation, anchored on the project record
@@ -248,45 +249,22 @@ impl ScenariosServer {
             let resolved_count = resolved.len();
             let pending_count = total - resolved_count;
 
-            let overall_brier = if !resolved.is_empty() {
-                // A "resolved" forecast should carry an outcome. `None` would
-                // be treated as `false` (event did not occur), inflating the
-                // Brier score. Filter to forecasts with a known outcome and
-                // warn on any `None` so the data-integrity issue is visible.
-                let scored: Vec<_> = resolved
-                    .iter()
-                    .filter(|r| {
-                        if r.outcome.is_none() {
-                            tracing::warn!(
-                                target: "hkask.mcp.scenarios",
-                                forecast_id = r.forecast_id,
-                                event_id = r.event_id,
-                                "resolved forecast has no outcome — excluding from Brier"
-                            );
-                            false
-                        } else {
-                            true
-                        }
-                    })
-                    .collect();
-                if scored.is_empty() {
-                    None
-                } else {
-                    let probs: Vec<f64> = scored.iter().map(|r| r.probability).collect();
-                    let outs: Vec<bool> =
-                        scored.iter().map(|r| r.outcome.unwrap_or(false)).collect();
-                    superforecast::brier_score_multi(&probs, &outs).ok()
-                }
-            } else {
-                None
+            let curve = match superforecast::compute_calibration_curve(&store) {
+                Ok(curve) => Some(curve),
+                Err(ScenarioError::NoForecastData) => None,
+                Err(error) => return Err(map_scenario_error(error)),
             };
-
-            let calibration = superforecast::compute_calibration_curve(&store).ok().map(|c| serde_json::json!({
+            let overall_brier = curve.as_ref().map(|c| c.overall_brier);
+            let eligible_resolved_count = store.eligible_resolved().len();
+            let calibration = curve.map(|c| serde_json::json!({
                 "total_forecasts": c.total_forecasts,
                 "resolved_forecasts": c.resolved_forecasts,
+                "unscored_resolved_forecasts": c.unscored_resolved_forecasts,
                 "overall_brier": c.overall_brier,
                 "overconfidence_score": c.overconfidence_score,
-                "interpretation": c.interpretation
+                "evidence_status": if c.overconfidence_score.is_some() { "descriptive_only" } else { "insufficient" },
+                "score_convention": "binary_mean_squared_error",
+                "baseline": null,
             }));
 
             let recent: Vec<_> = store.values().take(20).map(|r| serde_json::json!({
@@ -296,6 +274,8 @@ impl ScenariosServer {
                 "subject": r.subject,
                 "probability": r.probability,
                 "created_at": r.created_at.to_string(),
+                "scoring_eligible": r.declaration.is_some(),
+                "eligibility_note": if r.declaration.is_some() { "prospective declaration" } else { "legacy: no prospective declaration" },
                 "outcome": r.outcome,
             })).collect();
 
@@ -321,7 +301,7 @@ impl ScenariosServer {
                 })).collect::<Vec<_>>()
             }));
 
-            let output = build_status_response(
+            let mut output = build_status_response(
                 total,
                 resolved_count,
                 pending_count,
@@ -330,6 +310,9 @@ impl ScenariosServer {
                 recent,
                 tree,
             );
+            output["pipeline"]["eligible_resolved_count"] = serde_json::json!(eligible_resolved_count);
+            output["pipeline"]["unscored_resolved_count"] = serde_json::json!(resolved_count - eligible_resolved_count);
+            output["pipeline"]["evidence_status"] = serde_json::json!(if eligible_resolved_count == 0 { "insufficient" } else { "descriptive_only" });
 
             Ok(output)
         }).await
@@ -373,10 +356,7 @@ impl ScenariosServer {
                 })
                 .collect();
 
-            let (tree, warnings) = {
-                let store = self.forecast_store.lock().unwrap_or_else(|e| e.into_inner());
-                superforecast::compose_market_tree(&records, &confidences, &specs, Some(&store))
-            }
+            let (tree, warnings) = superforecast::compose_market_tree(&records, &confidences, &specs)
             .map_err(map_scenario_error)?;
 
             let nodes = tree_nodes_json(&tree);
@@ -578,7 +558,9 @@ impl ScenariosServer {
                     "scenario_brainstorm → multi-persona protocol",
                     "scenario_quantify → resolve conditional probability tree",
                     "scenario_calibrate → Fermi decomposition + outside view",
-                    "scenario_synthesize → dragonfly-eye aggregation",
+                    "scenario_synthesize → equal-weight dragonfly-eye aggregation",
+                    "scenario_declare → freeze prospective forecast and resolver",
+                    "scenario_score → record outcomes against the frozen declaration",
                     "scenario_assess → Chermack project evaluation"
                 ]
             });
@@ -1124,137 +1106,131 @@ impl ScenariosServer {
         .await
     }
 
-    /// Score a forecast against known outcomes using Brier scoring.
+    /// Freeze a prospective scenario forecast in the existing journal.
     #[tool(
-        description = "Score a scenario forecast against known outcomes using Brier scoring. Takes an array of ScenarioEvent objects (the same valid tree scenario_quantify accepts) and an array of outcomes (each with event_id and occurred boolean). Resolves the tree and Brier-scores each event's MARGINAL probability — for a dependent event the marginal is the belief actually forecast, not the raw prior field. Computes Brier score per event and aggregate. Provides human-readable interpretation: excellent (<0.05), good (<0.10), fair (<0.20), poor (<0.33), worse_than_climatology (≥0.33). The journal records the marginal (schema v3, scored_from_marginal marker). Calibration tracking closes the superforecasting loop."
+        description = "Declare a prospective scenario forecast before resolution. Freezes each full event, resolved tree marginal, deadline and named outcome-source rule. Scaffold probabilities with withheld market base rates are ineligible. New probabilities or propositions require a new forecast_id. The resolver is a declared caller-reported source, not authenticated evidence."
+    )]
+    pub async fn scenario_declare(
+        &self,
+        Parameters(req): Parameters<DeclareRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "scenario_declare", async {
+            if req.forecast_id.trim().is_empty() || req.resolver.trim().is_empty() {
+                return Err(McpToolError::invalid_argument("forecast_id and resolver must be nonempty"));
+            }
+            let tree = superforecast::build_event_tree(&req.events).map_err(map_scenario_error)?;
+            let today = chrono::Utc::now().date_naive();
+            for node in &tree.nodes {
+                let event = &node.event;
+                if event.id.trim().is_empty() || event.question.trim().is_empty() || event.deadline < today || event.brier_score.is_some()
+                    || (event.basis.as_deref().is_some_and(|b| b.starts_with("prediction_market:")) && event.base_rate.is_none())
+                {
+                    return Err(McpToolError::invalid_argument("declaration requires an unresolved prospective proposition, deadline and declared probability; withheld market scaffolds are ineligible"));
+                }
+            }
+            let mut store = self.forecast_store.lock().unwrap_or_else(|e| e.into_inner());
+            if store.values().any(|r| r.forecast_id == req.forecast_id) {
+                return Err(McpToolError::invalid_argument("forecast_id already exists; declare a new version"));
+            }
+            if tree.nodes.iter().any(|n| store.get(&format!("{}:{}", req.forecast_id, n.event.id)).is_some()) {
+                return Err(McpToolError::invalid_argument("composite forecast identity conflicts with existing history"));
+            }
+            for node in &tree.nodes {
+                let event = &node.event;
+                store.insert(format!("{}:{}", req.forecast_id, event.id), types::StoredForecastRecord {
+                    schema_version: 4,
+                    forecast_id: req.forecast_id.clone(),
+                    event_id: event.id.clone(),
+                    event_name: event.name.clone(),
+                    subject: event.subject.clone(),
+                    probability: node.marginal_probability,
+                    scored_from_marginal: true,
+                    created_at: today,
+                    outcome: None,
+                    resolved_at: None,
+                    category: Some(event.scenario_type.as_str().to_string()),
+                    declaration: Some(types::ScenarioDeclaration {
+                        event: event.clone(),
+                        resolver: req.resolver.clone(),
+                        declared_at: hkask_types::time::now_rfc3339(),
+                    }),
+                }).map_err(|e| McpToolError::internal(format!("declaration journal failed; earlier records may be durable: {e}")))?;
+            }
+            Ok(serde_json::json!({"forecast_id": req.forecast_id, "status": "declared", "event_count": tree.nodes.len(), "resolver": req.resolver, "score_convention": "binary_mean_squared_error"}))
+        }).await
+    }
+
+    /// Resolve only a previously declared identity; never create a forecast here.
+    #[tool(
+        description = "Record outcomes for an existing scenario forecast. Requires exact frozen events and resolver; scores stored marginal probabilities, never resolution-time submissions. Duplicate outcomes and conflicting replays are invalid. Nonmatching outcomes are explicitly listed and ignored. Legacy records lacking declarations remain unscored history. Raw loss does not certify calibration."
     )]
     pub async fn scenario_score(
         &self,
         Parameters(req): Parameters<ScoreRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "scenario_score", async {
-            let events = &req.events;
-            let outcome_pairs: Vec<(String, bool)> = req.outcomes
-                .into_iter()
-                .map(|o| (o.event_id, o.occurred))
-                .collect();
-
-            // Resolve the tree first (PR-02): the scored belief is each
-            // node's marginal, not the caller-supplied prior field. The
-            // events must form the same valid tree scenario_quantify
-            // accepts — a rejected tree is fixed at the input, never
-            // scored around.
-            let tree = superforecast::build_event_tree(events)
-                .map_err(map_scenario_error)?;
-
-            let forecast_date = chrono::Utc::now().date_naive();
-            let result = superforecast::score_forecast(
-                &req.forecast_id,
-                &tree,
-                &outcome_pairs,
-                forecast_date,
-            );
-
-            let per_event: Vec<_> = result.event_outcomes.iter().map(|(eid, occurred)| {
-                let node = tree.nodes.iter().find(|n| &n.event.id == eid);
-                let prob = node.map(|n| n.marginal_probability).unwrap_or(0.0);
-                let bs = superforecast::brier_score(prob, *occurred);
-                serde_json::json!({
-                    "event_id": eid,
-                    "forecast_probability": prob,
-                    "forecast_pct": format!("{:.1}%", prob * 100.0),
-                    "outcome": occurred,
-                    "brier_score": bs,
-                    "interpretation": superforecast::brier_interpretation(bs),
-                })
-            }).collect();
-
-            let output = serde_json::json!({
-                "forecast_id": result.forecast_id,
-                "subject": result.subject,
-                "forecast_date": result.forecast_date.to_string(),
-                "outcome_date": result.outcome_date.to_string(),
-                "event_count": result.event_outcomes.len(),
-                "per_event": per_event,
-                "aggregate": {
-                    "brier_score": result.brier_score,
-                    "interpretation": result.brier_interpretation,
-                },
-                "calibration_note": match result.brier_score {
-                    Some(bs) if bs < 0.10 => {
-                        "Well calibrated — keep tracking. Your forecasts are meaningfully better than climatology."
+            superforecast::build_event_tree(&req.events).map_err(map_scenario_error)?;
+            let mut seen = std::collections::HashSet::new();
+            for outcome in &req.outcomes {
+                if !seen.insert(&outcome.event_id) {
+                    return Err(McpToolError::invalid_argument(format!("duplicate outcome event_id '{}'", outcome.event_id)));
+                }
+            }
+            let mut store = self.forecast_store.lock().unwrap_or_else(|e| e.into_inner());
+            let records: Vec<_> = store.values().filter(|r| r.forecast_id == req.forecast_id).cloned().collect();
+            if records.is_empty() {
+                return Err(McpToolError::not_found(format!("forecast '{}' was not declared", req.forecast_id)));
+            }
+            if records.len() != req.events.len() {
+                return Err(McpToolError::invalid_argument("events must exactly match the frozen declaration"));
+            }
+            let today = chrono::Utc::now().date_naive();
+            // Validate the complete request before any mutation, including replay conflicts.
+            for record in &records {
+                let event = req.events.iter().find(|e| e.id == record.event_id)
+                    .ok_or_else(|| McpToolError::invalid_argument("event identity differs from declaration"))?;
+                if let Some(declaration) = &record.declaration {
+                    if serde_json::to_value(event).map_err(|e| McpToolError::internal(e.to_string()))?
+                        != serde_json::to_value(&declaration.event).map_err(|e| McpToolError::internal(e.to_string()))?
+                        || declaration.resolver != req.resolver
+                    {
+                        return Err(McpToolError::invalid_argument("proposition, horizon, probability or resolver differs from declaration"));
                     }
-                    Some(bs) if bs < 0.20 => {
-                        "Moderately calibrated — review your Fermi decompositions and base rates. There is room for improvement."
-                    }
-                    Some(_) => {
-                        "Poorly calibrated — your forecasts are not beating a coin flip. Revisit your outside-view base rates and inside-view adjustments."
-                    }
-                    None => {
-                        "No Brier score available — scoring failed (empty input or length mismatch). Record resolved outcomes and re-score."
-                    }
-                },
-                "scored_quantity": "tree_marginal",
-                "auto_update_suggestions": superforecast::auto_update_suggestions(&tree.nodes, &outcome_pairs),
-                "update_guidance": "The auto_update_suggestions above show suggested probability adjustments based on forecast error direction. Apply them via scenario_update to close the feedback loop. Each adjustment is clamped to ±15% and respects [0.01, 0.99] bounds.",
-                "reference": "Brier (1950). Score = (p - o)² where p = forecast probability, o = outcome (1 if occurred, 0 if not). Lower is better."
-            });
-
-            // Outcome updates must be journaled too, not just changed in memory.
-            // A later compaction error may leave already-journaled records; report
-            // that uncertainty rather than claiming the entire request rolled back.
-            {
-                let mut store = self.forecast_store.lock().unwrap_or_else(|e| e.into_inner());
-                let now = chrono::Utc::now().date_naive();
-                for node in &tree.nodes {
-                    let event = &node.event;
-                    let key = format!("{}:{}", req.forecast_id, event.id);
-                    let event_outcome = outcome_pairs.iter().find(|(eid, _)| eid == &event.id);
-                    if store.get(&key).is_none() {
-                        store.insert(key.clone(), types::StoredForecastRecord {
-                            schema_version: 3,
-                            forecast_id: req.forecast_id.clone(),
-                            event_id: event.id.clone(),
-                            event_name: event.name.clone(),
-                            subject: event.subject.clone(),
-                            probability: node.marginal_probability,
-                            scored_from_marginal: true,
-                            created_at: now,
-                            outcome: None,
-                            resolved_at: None,
-                            category: Some(event.scenario_type.as_str().to_string()),
-                        }).map_err(|error| McpToolError::internal(format!(
-                            "Forecast persistence failed; earlier records may already be journaled: {error}"
-                        )))?;
-                    }
-                    if let Some((_, occurred)) = event_outcome {
-                        // Re-insert the record with the outcome set — this
-                        // appends to the journal (durable), unlike `get_mut`
-                        // which only mutates in-memory. The recorded
-                        // probability stays the FIRST score's marginal — a
-                        // re-score never rewrites the historical forecast.
-                        if let Some(mut record) = store.get(&key).cloned() {
-                            record.outcome = Some(*occurred);
-                            record.resolved_at = Some(now);
-                            store.insert(key.clone(), record).map_err(|error| McpToolError::internal(format!(
-                                "Forecast outcome persistence failed; earlier records may already be journaled: {error}"
-                            )))?;
-                        }
+                    if req.outcomes.iter().any(|o| o.event_id == record.event_id) && today < declaration.event.deadline {
+                        return Err(McpToolError::invalid_argument("outcome cannot resolve before the declared deadline"));
                     }
                 }
-                store.persist().map_err(|error| McpToolError::internal(format!(
-                    "Forecast snapshot publication or journal cleanup failed; scored records remain recoverable: {error}"
-                )))?;
+                if let Some(outcome) = req.outcomes.iter().find(|o| o.event_id == record.event_id)
+                    && record.outcome.is_some_and(|old| old != outcome.occurred)
+                {
+                    return Err(McpToolError::invalid_argument("conflicting outcome replay; corrections require a separately sourced version"));
+                }
             }
-
-            Ok(output)
-        })
-        .await
+            let unmatched: Vec<_> = req.outcomes.iter().filter(|o| !records.iter().any(|r| r.event_id == o.event_id)).map(|o| &o.event_id).collect();
+            let mut per_event = Vec::new();
+            let mut scores = Vec::new();
+            for mut record in records {
+                if let Some(outcome) = req.outcomes.iter().find(|o| o.event_id == record.event_id) {
+                    let score = record.declaration.as_ref().map(|_| superforecast::brier_score(record.probability, outcome.occurred));
+                    if let Some(score) = score { scores.push(score); }
+                    per_event.push(serde_json::json!({"event_id": record.event_id, "forecast_probability": record.probability, "outcome": outcome.occurred, "brier_score": score, "scoring_status": if score.is_some() { "scored" } else { "unscored" }, "unscored_reason": if score.is_none() { Some("legacy record lacks prospective declaration") } else { None }}));
+                    if record.outcome.is_none() {
+                        record.outcome = Some(outcome.occurred);
+                        record.resolved_at = Some(today);
+                        store.insert(format!("{}:{}", record.forecast_id, record.event_id), record)
+                            .map_err(|e| McpToolError::internal(format!("outcome journal failed; earlier records may be durable: {e}")))?;
+                    }
+                }
+            }
+            store.persist().map_err(|e| McpToolError::internal(format!("snapshot failed; journal remains recoverable: {e}")))?;
+            let aggregate = (!scores.is_empty()).then(|| scores.iter().sum::<f64>() / scores.len() as f64);
+            Ok(serde_json::json!({"forecast_id": req.forecast_id, "event_count": per_event.len(), "scored_count": scores.len(), "per_event": per_event, "aggregate": {"brier_score": aggregate}, "unmatched_outcome_ids": unmatched, "scored_quantity": "frozen_tree_marginal", "score_convention": "binary_mean_squared_error", "weighting": "one_per_declared_event_version", "baseline": null, "baseline_note": "No matched reference declared; no skill or calibration certification."}))
+        }).await
     }
 
     /// Calibrate a forecast using Fermi decomposition and outside/inside view.
     #[tool(
-        description = "Calibrate a forecast probability using Tetlock's methodology. Four-stage: (1) Fermi decomposition — confidence-weighted average of sub-question estimates, (2) Outside view — blend with base rate from reference class using shrinkage estimator, (3) Inside view — adjust with case-specific evidence, (4) Calibration feedback — when ≥5 resolved forecasts exist in the store, apply the learned overconfidence bias to adjust the estimate (closes the Brier learning loop), plus the isotonic baseline (PAVA step function over resolved pairs, arXiv:2604.20421 §6.1) as a non-parametric second channel. Returns calibrated probability, calibration-adjusted probability, isotonic-calibrated probability (with the fit knots), confidence bounds, and certainty tier."
+        description = "Calibrate a forecast probability using Tetlock's methodology. Combines Fermi decomposition and an optional outside view. Returns a model estimate, not an empirically calibrated probability. Historical correction is withheld until a prospective evaluation policy is approved."
     )]
     pub async fn scenario_calibrate(
         &self,
@@ -1284,43 +1260,7 @@ impl ScenariosServer {
                 (fermi_estimate, 0.5)
             };
 
-            // Close the Brier feedback loop: if enough historical resolved
-            // forecasts exist, apply the learned calibration bias to adjust
-            // this estimate (overconfident forecasters regress toward 0.5).
-            // The isotonic baseline (arXiv:2604.20421 §6.1) fits a PAVA step
-            // function over the resolved (probability, outcome) pairs and
-            // maps the calibrated estimate through it — a second, non-parametric
-            // calibration channel alongside the parametric bias adjustment.
-            let (calibration_adjusted, overconfidence_bias, isotonic) = {
-                let store = self.forecast_store.lock().unwrap_or_else(|e| e.into_inner());
-                let (adjusted, bias) = match superforecast::compute_calibration_curve(&store) {
-                    Ok(curve) if curve.resolved_forecasts >= 5 => {
-                        let bias = curve.overconfidence_score;
-                        (hkask_forecast::apply_calibration_adjustment(calibrated, bias), Some(bias))
-                    }
-                    _ => (calibrated, None),
-                };
-                let pairs: Vec<(f64, bool)> = store
-                    .resolved()
-                    .into_iter()
-                    .map(|r| (r.probability, r.outcome.unwrap_or(false)))
-                    .collect();
-                let isotonic = hkask_forecast::isotonic_fit(&pairs).map(|fit| {
-                    let calibrated_probability = hkask_forecast::isotonic_apply(&fit, calibrated);
-                    (
-                        calibrated_probability,
-                        fit.iter()
-                            .map(|(threshold, value)| serde_json::json!({
-                                "threshold": threshold,
-                                "calibrated_value": value,
-                            }))
-                            .collect::<Vec<_>>(),
-                        pairs.len(),
-                    )
-                });
-                (adjusted, bias, isotonic)
-            };
-
+            // No historical correction is deployed without a prospective evaluation policy.
             let output = serde_json::json!({
                 "question": req.question,
                 "fermi_estimate": fermi_estimate,
@@ -1333,26 +1273,7 @@ impl ScenariosServer {
                 "confidence": confidence,
                 "confidence_pct": format!("{:.1}%", confidence * 100.0),
                 "certainty_tier": serde_json::to_value(CertaintyTier::from_probability(calibrated)).unwrap_or_default(),
-                "calibration_adjusted_probability": calibration_adjusted,
-                "calibration_adjusted_pct": format!("{:.1}%", calibration_adjusted * 100.0),
-                "overconfidence_bias": overconfidence_bias,
-                // Isotonic baseline (arXiv:2604.20421 §6.1): PAVA step function
-                // over the resolved (probability, outcome) pairs, applied to
-                // the calibrated estimate. Emitted with the fit knots so the
-                // mapping is inspectable, never a black box.
-                "isotonic_calibrated_probability": isotonic.as_ref().map(|(p, _, _)| *p),
-                "isotonic_fit_knots": isotonic.as_ref().map(|(_, knots, _)| knots.clone()),
-                "isotonic_fit_size": isotonic.as_ref().map(|(_, _, n)| *n),
-                "isotonic_note": if isotonic.is_some() {
-                    "Isotonic recalibration available: the PAVA fit over resolved forecasts mapped this estimate to isotonic_calibrated_probability."
-                } else {
-                    "No isotonic fit: fewer than 2 resolved (probability, outcome) pairs — the non-parametric channel is withheld rather than fabricated."
-                },
-                "feedback_loop": if overconfidence_bias.is_some() {
-                    "Closed: historical Brier-scored outcomes adjusted this estimate. Positive bias (overconfident) regresses toward 0.5; negative (underconfident) pushes outward."
-                } else {
-                    "Open: fewer than 5 resolved forecasts — no calibration adjustment applied yet. Record outcomes via scenario_score to close the loop."
-                },
+                "adjustment_status": "withheld: no validated prospective correction policy",
                 "sub_questions": req.sub_questions.iter().map(|sq| serde_json::json!({
                     "question": sq.question,
                     "estimate": sq.estimate,
@@ -1370,7 +1291,6 @@ impl ScenariosServer {
                     "stage_2": "Outside view: blend base rate with shrinkage estimator (regression toward 0.5 based on reference count)",
                     "stage_3": "Inside view: apply case-specific evidence through the forecasting workflow, then use scenario_update for explicit Bayesian revisions",
                     "stage_4": "Bayesian updating: use scenario_update tool to revise with new evidence",
-                    "stage_5": "Calibration feedback: when >=5 resolved forecasts exist, apply the learned overconfidence bias (hkask_forecast::apply_calibration_adjustment) to close the Brier learning loop; the isotonic baseline (hkask_forecast::isotonic_fit/apply, arXiv:2604.20421 §6.1) provides a non-parametric second channel over the same resolved pairs",
                 },
                 "reference": "Tetlock & Gardner, Superforecasting (2015), Ch. 4-6"
             });
@@ -1382,7 +1302,7 @@ impl ScenariosServer {
 
     /// Synthesize multiple perspectives into one aggregated forecast (dragonfly-eye).
     #[tool(
-        description = "Dragonfly-eye synthesis (Tetlock Stage 5). Aggregates multiple independent perspectives on a single event into one calibrated probability. Uses empirical-Bayes weighting: perspectives with better historical Brier scores get higher weight. Computes disagreement score (0=consensus, 1=polarized) and identifies the strongest dissenting view. Requires at least 2 perspectives. Returns the aggregated probability, weight distribution, dissent summary, and synthesis quality assessment."
+        description = "Dragonfly-eye synthesis (Tetlock Stage 5). Aggregates multiple independent perspectives on a single event into one calibrated probability. Uses explicit equal weights; historical raw loss is context only. Computes disagreement score (0=consensus, 1=polarized) and identifies the strongest dissenting view. Requires at least 2 perspectives. Returns the aggregated probability, weight distribution, dissent summary, and synthesis quality assessment."
     )]
     pub async fn scenario_synthesize(
         &self,
@@ -1414,11 +1334,7 @@ impl ScenariosServer {
                     })
                 }).collect::<Vec<_>>(),
                 "methodology": {
-                    "weighting": if synthesis.perspectives.iter().any(|p| p.historical_brier.is_some()) {
-                        "empirical_bayes: inverse Brier score weighting"
-                    } else {
-                        "uniform: no historical Brier data available, all perspectives weighted equally"
-                    },
+                    "weighting": "equal: historical raw losses do not determine weights",
                     "disagreement": "normalized standard deviation of probabilities (0=perfect consensus, 1=maximum polarization)",
                 },
                 "reference": "Tetlock & Gardner, Superforecasting (2015), Ch. 7 — Dragonfly-Eye"
@@ -1453,22 +1369,21 @@ impl ScenariosServer {
                 "subject": req.subject,
                 "total_forecasts": curve.total_forecasts,
                 "resolved_forecasts": curve.resolved_forecasts,
-                "pending_forecasts": curve.total_forecasts - curve.resolved_forecasts,
+                "pending_forecasts": curve.total_forecasts - curve.resolved_forecasts - curve.unscored_resolved_forecasts,
+                "unscored_resolved_forecasts": curve.unscored_resolved_forecasts,
                 "overall_brier": curve.overall_brier,
-                "brier_interpretation": superforecast::brier_interpretation(curve.overall_brier),
                 "overconfidence_score": curve.overconfidence_score,
-                "interpretation": curve.interpretation,
+                "evidence_status": if curve.overconfidence_score.is_some() { "descriptive_only" } else { "insufficient" },
+                "score_convention": "binary_mean_squared_error",
+                "weighting": "one_per_declared_event_version",
+                "baseline": null,
                 "bins": curve.bins.iter().map(|b| {
                     // The hit-rate percentage is withheld below
                     // MIN_N_FOR_HEADLINE and the Wilson interval is served
                     // whenever there is a sample: a bare "67%" from three
                     // forecasts is noise wearing a number, and the interval is
                     // what makes a small bin quotable at all.
-                    let hits = if b.hit_rate.is_finite() && b.forecast_count > 0 {
-                        Some((b.hit_rate * b.forecast_count as f64).round() as usize)
-                    } else {
-                        None
-                    };
+                    let hits = b.hit_rate.map(|rate| (rate * b.forecast_count as f64).round() as usize);
                     let hit_rate_ci = hits
                         .and_then(|h| hkask_forecast::wilson_bounds(h, b.forecast_count as usize))
                         .map(|(lo, hi)| serde_json::json!({
@@ -1480,34 +1395,20 @@ impl ScenariosServer {
                     serde_json::json!({
                         "range": b.probability_range,
                         "count": b.forecast_count,
-                        "hit_rate": if b.hit_rate.is_finite() { Some(b.hit_rate) } else { None },
-                        "hit_rate_pct": if b.hit_rate.is_finite()
-                            && b.forecast_count >= hkask_forecast::MIN_N_FOR_HEADLINE as u64 {
-                            Some(format!("{:.0}%", b.hit_rate * 100.0))
-                        } else {
-                            None
-                        },
+                        "hit_rate": b.hit_rate,
+                        "hit_rate_pct": b.hit_rate.filter(|_| b.forecast_count >= hkask_forecast::MIN_N_FOR_HEADLINE as u64).map(|rate| format!("{:.0}%", rate * 100.0)),
                         "hit_rate_ci": hit_rate_ci,
                         "expected_rate": b.expected_rate,
                         "bias": b.bias,
-                        "bias_interpretation": if b.forecast_count == 0 {
-                            "no_data"
-                        } else if b.bias > 0.05 {
-                            "overconfident"
-                        } else if b.bias < -0.05 {
-                            "underconfident"
-                        } else {
-                            "calibrated"
-                        },
+                        "evidence_status": if b.forecast_count == 0 { "insufficient" } else { "descriptive_only" },
                     })
                 }).collect::<Vec<_>>(),
-                "guidance": if curve.resolved_forecasts < 10 {
-                    "Insufficient data for reliable calibration — at least 10 resolved forecasts recommended. Bins with fewer than 5 forecasts are excluded from overconfidence scoring."
-                } else if curve.resolved_forecasts < hkask_forecast::MIN_N_FOR_HEADLINE as u64 {
-                    "Calibration curve shows your forecasting accuracy across probability ranges, but per-bin hit-rate percentages are withheld below 30 forecasts per bin — quote the hit_rate_ci interval, not a point estimate. Use this to identify systematic biases: if your 80% forecasts only come true 60% of the time, you're overconfident in that range."
-                } else {
-                    "Calibration curve shows your forecasting accuracy across probability ranges. Use this to identify systematic biases: if your 80% forecasts only come true 60% of the time, you're overconfident in that range. Bins with fewer than 30 forecasts have their hit_rate_pct withheld — quote the hit_rate_ci interval instead."
-                },
+                "guidance": "Descriptive frequencies and raw loss only. Signed errors can cancel; neither zero signed bias nor a sample-count threshold certifies calibration. Compare methods on matched events, lead times and weights against a declared reference. No automatic correction is applied.",
+                "sample_unit": "declared_event_version; independent outcome count is not established",
+                "binning": "ten equal-width probability bins; expected_rate is the observed mean declared p",
+                "signed_bias_min_bin_count": 5,
+                "headline_min_bin_count": hkask_forecast::MIN_N_FOR_HEADLINE,
+                "interval_note": "Wilson binomial intervals assume independent trials; these intervals do not adjust for dependent events or repeated forecast versions.",
                 "reference": "Brier (1950); Murphy (1973) — decomposition of Brier score into reliability, resolution, and uncertainty components"
             });
 
@@ -1677,7 +1578,7 @@ impl ScenariosServer {
                 "calibration": curve.map(|c| serde_json::json!({
                     "resolved_forecasts": c.resolved_forecasts,
                     "overall_brier": c.overall_brier,
-                    "interpretation": c.interpretation,
+                    "evidence_status": "descriptive_only",
                 })),
                 "methodology": {
                     "framework": "Chermack's Performance-Based Scenario System (2011)",
@@ -1760,7 +1661,7 @@ fn parse_scenario_type(s: Option<&str>) -> ScenarioType {
 mod tests {
     use super::*;
 
-    // The scenarios server registers exactly 21 tools. Adding, removing,
+    // The scenarios server registers exactly 22 tools. Adding, removing,
     // or renaming a tool is an intentional surface change — the pin catches
     // accidental drift. One macro call: the count test plus the
     // build.rs-generated TOOL_NAMES set against the live router.
@@ -1768,8 +1669,8 @@ mod tests {
     hkask_mcp_server::tool_surface_pin!(
         ScenariosServer::combined_router(),
         "combined_router",
-        21,
-        tool_surface_is_exactly_21_registered_tools,
+        22,
+        tool_surface_is_exactly_22_registered_tools,
     );
 
     /// Supplied framing answers are independent of process call history.

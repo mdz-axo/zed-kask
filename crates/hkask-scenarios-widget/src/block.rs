@@ -75,7 +75,7 @@ pub struct RecentForecast {
     #[serde(default)]
     pub subject: Option<String>,
     #[serde(default)]
-    pub probability: f64,
+    pub probability: Option<f64>,
     #[serde(default)]
     pub outcome: Option<bool>,
 }
@@ -91,7 +91,7 @@ pub struct CalibrationSummary {
     #[serde(default)]
     pub overconfidence_score: Option<f64>,
     #[serde(default)]
-    pub interpretation: Option<String>,
+    pub evidence_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -156,7 +156,7 @@ mod tests {
             "calibration": {
                 "total_forecasts": 5, "resolved_forecasts": 2,
                 "overall_brier": 0.15, "overconfidence_score": 0.03,
-                "interpretation": "good"
+                "evidence_status": "insufficient"
             },
             "event_tree": {
                 "subject": "AAPL", "event_count": 2, "joint_probability": 0.12,
@@ -173,6 +173,14 @@ mod tests {
         assert!(body.calibration.is_some());
         let tree = body.event_tree.unwrap();
         assert_eq!(tree.nodes.len(), 2);
+    }
+
+    #[test]
+    fn missing_forecast_probability_is_unknown_not_zero() {
+        let body = parse_scenarios_body(r#"{"viz":"scenarios","pipeline":{"recent_forecasts":[{"event_id":"missing"},{"event_id":"zero","probability":0.0}]},"event_tree":{"nodes":[{"id":"missing"}]}}"#).expect("sparse body");
+        assert_eq!(body.pipeline.recent_forecasts[0].probability, None);
+        assert_eq!(body.pipeline.recent_forecasts[1].probability, Some(0.0));
+        assert_eq!(body.event_tree.expect("tree").nodes[0].probability, None);
     }
 
     #[test]

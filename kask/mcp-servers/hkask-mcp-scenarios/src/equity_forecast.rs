@@ -17,7 +17,7 @@
 //! `forecast_record` reports `"decomposition": "unavailable — the
 //! projected-model decomposition required provider statements, which the
 //! companies server owned"` as a named note, never a silent skip. Brier
-//! scoring on the recorded multiple and price change is unaffected.
+//! arithmetic on an eligible declared return target is retained.
 //!
 //! The scenario-join fields (PR-09) survive: `scenario_project_id`,
 //! `scenario_tree`, `impact_mappings_ref`, and `fused_volatility` are
@@ -40,7 +40,7 @@ use hkask_mcp_server::server::{McpToolError, execute_tool};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
 /// A stored equity forecast awaiting or having received its outcome.
-/// Schema version 1 (this port); future field additions bump it.
+/// Schema version 2 freezes prospective eligibility; v1 remains unscored history.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredEquityForecast {
     /// Schema version for forward-compatible deserialization.
@@ -66,30 +66,17 @@ pub struct StoredEquityForecast {
     #[serde(default)]
     pub outcome: Option<serde_json::Value>,
     pub created_at: String,
+    /// Only new prospective declarations qualify; legacy records remain history.
+    #[serde(default)]
+    pub declaration: Option<EquityDeclaration>,
 }
 
-impl StoredEquityForecast {
-    /// The stored probability used as the Brier prior. Falls back to a
-    /// fixed 0.7 prior with a surfaced note when the forecast was
-    /// persisted without its own probability — a degradation the caller
-    /// sees, never a silent substitution (per plan P1: drop the
-    /// DCF-model decomposition fields, keep visible degradation).
-    fn brier_prior(&self) -> f64 {
-        self.forecast_probability.unwrap_or(0.7)
-    }
-
-    fn brier_prior_note(&self) -> Option<&'static str> {
-        if self.forecast_probability.is_none() {
-            Some(
-                "no forecast_probability on the stored forecast — the Brier \
-                 score below uses a hardcoded 0.7 prior and therefore does NOT \
-                 measure this forecast's own calibration; pass \
-                 forecast_probability on the next persist",
-            )
-        } else {
-            None
-        }
-    }
+/// Frozen return-accuracy proposition and caller-reported resolver rule.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EquityDeclaration {
+    pub deadline: chrono::NaiveDate,
+    pub resolver: String,
+    pub tolerance: f64,
 }
 
 // ── Request types ──────────────────────────────────────────────────────
@@ -112,8 +99,7 @@ pub struct EquityForecastPersistRequest {
     /// Current market price at forecast date.
     pub current_price: Option<f64>,
     /// The forecast's own probability (0.0-1.0) that the price change
-    /// lands within the tolerance band. Consumed as the Brier prior;
-    /// without it, forecast_record scores a hardcoded 0.7 prior.
+    /// lands within the tolerance band. Missing probability remains unscored.
     pub forecast_probability: Option<f64>,
     /// Optional parent forecast ID for a same-symbol revision.
     pub revision_of: Option<String>,
@@ -237,7 +223,7 @@ impl ScenariosServer {
     /// (plan §3 P1); the stored snapshot is a minimal pre-computed
     /// price-target record.
     #[tool(
-        description = "Persist a pre-computed equity price target for later Brier scoring. Unlike forecast_record (which requires the actual outcome), this tool stores a pending price target without an outcome. The stored forecast can later be resolved by forecast_record when the horizon passes — Brier scoring runs on the recorded multiple and price change; the 11-line-item gap decomposition is unavailable (its inputs were provider statements, which the companies server owned — the note is surfaced, never silent). Pass forecast_probability (the forecast's own confidence that the price change lands within the tolerance band) so Brier scoring measures the forecast's calibration — without it, forecast_record falls back to a hardcoded 0.7 prior. Optional scenario join fields record the price target's scenario provenance: scenario_project_id (the scenarios server's project record id), scenario_tree (the scenario_quantify tree snapshot), impact_mappings_ref (the per-node impact mappings used), and fused_volatility (from a scenario volatility fusion) — so the equity forecast carries the scenario join instead of leaving it agent-mediated."
+        description = "Persist a pre-computed equity price target for later Brier scoring. Unlike forecast_record (which requires the actual outcome), this tool stores a pending price target without an outcome. The stored forecast can later be resolved by forecast_record when the horizon passes — Brier loss uses the frozen declared return-accuracy proposition (multiple-direction probability is not modeled); the 11-line-item gap decomposition is unavailable (its inputs were provider statements, which the companies server owned — the note is surfaced, never silent). Pass forecast_probability (the forecast's own confidence that the price change lands within the tolerance band) for prospective scoring. Missing probabilities and backdated records remain unscored; raw loss does not establish calibration. Optional scenario join fields record the price target's scenario provenance: scenario_project_id (the scenarios server's project record id), scenario_tree (the scenario_quantify tree snapshot), impact_mappings_ref (the per-node impact mappings used), and fused_volatility (from a scenario volatility fusion) — so the equity forecast carries the scenario join instead of leaving it agent-mediated."
     )]
     pub async fn forecast_persist(
         &self,
@@ -310,8 +296,22 @@ impl ScenariosServer {
                 .clone()
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
+            let forecast_date = chrono::NaiveDate::parse_from_str(&req.forecast_date, "%Y-%m-%d")
+                .map_err(|e| McpToolError::invalid_argument(format!("invalid forecast_date: {e}")))?;
+            let months = match req.horizon.as_str() {
+                "3mo" => 3, "6mo" => 6, "1yr" => 12, "2yr" => 24, "3yr" => 36,
+                _ => return Err(McpToolError::invalid_argument("unsupported horizon")),
+            };
+            let deadline = forecast_date.checked_add_months(chrono::Months::new(months))
+                .ok_or_else(|| McpToolError::invalid_argument("forecast horizon overflows date"))?;
+            let prospective = forecast_date == chrono::Utc::now().date_naive();
+            let declaration = (prospective && req.forecast_probability.is_some()).then(|| EquityDeclaration {
+                deadline,
+                resolver: "caller_reported_price_return_at_horizon".to_string(),
+                tolerance: 0.20,
+            });
             let record = StoredEquityForecast {
-                schema_version: 1,
+                schema_version: 2,
                 forecast_id: forecast_id.clone(),
                 symbol: req.symbol.clone(),
                 forecast_date: req.forecast_date.clone(),
@@ -330,6 +330,7 @@ impl ScenariosServer {
                 fused_volatility: req.fused_volatility,
                 outcome: None,
                 created_at: now_rfc3339_string(),
+                declaration,
             };
             {
                 let mut store = self
@@ -363,10 +364,15 @@ impl ScenariosServer {
                 "current_price": req.current_price,
                 "forecast_price_change": forecast_price_change,
                 "forecast_probability": req.forecast_probability,
-                "note": if req.forecast_probability.is_some() {
+                "scoring_eligible": prospective && req.forecast_probability.is_some(),
+                "eligibility_note": "Only a probability persisted on its forecast_date is prospective. Backdated and missing-probability records remain unscored history; source is caller-reported, not authenticated.",
+                "deadline": deadline,
+                "note": if prospective && req.forecast_probability.is_some() {
                     "Pre-computed price target persisted without a decomposition model. Call forecast_record with this forecast_id when the horizon passes to close the Brier loop. Gap decomposition is unavailable (no provider-backed projected model)."
+                } else if req.forecast_probability.is_none() {
+                    "Persisted without forecast_probability; outcomes remain unscored."
                 } else {
-                    "Persisted WITHOUT forecast_probability — forecast_record will fall back to a hardcoded 0.7 Brier prior, so the score will not measure this forecast's own calibration. Pass forecast_probability on the next persist."
+                    "Persisted as non-prospective history; outcomes remain unscored."
                 },
             })
             )
@@ -379,7 +385,7 @@ impl ScenariosServer {
     /// from the shared `hkask_forecast` crate; the provider-backed gap
     /// decomposition dropped with the companies server).
     #[tool(
-        description = "Record a forecast outcome to close the superforecasting loop. Forecast a valuation multiple and price change over a horizon (3mo/6mo/1yr/2yr/3yr), then record what actually happened. Computes Brier scores on price return vs a 20% tolerance band. When forecast_id names a prior forecast_persist record, the outcome is recorded on it and its stored forecast_probability is the Brier prior (a stored record without one scores a hardcoded 0.7 prior, surfaced as a note — never silently). The 11-line-item gap decomposition from the companies server is unavailable here: its inputs were provider statements. Multiple-direction Brier is reported as null (the multiple probability is not modeled)."
+        description = "Record a forecast outcome to close the superforecasting loop. Forecast a valuation multiple and price change over a horizon (3mo/6mo/1yr/2yr/3yr), then record what actually happened. Computes Brier scores on price return vs a 20% tolerance band. When forecast_id names a prior forecast_persist record, the outcome is recorded on it and its stored forecast_probability is the Brier prior only for a frozen prospective declaration; missing probability and legacy records remain unscored. The 11-line-item gap decomposition from the companies server is unavailable here: its inputs were provider statements. Multiple-direction Brier is reported as null (the multiple probability is not modeled)."
     )]
     pub async fn forecast_record(
         &self,
@@ -397,14 +403,11 @@ impl ScenariosServer {
                 validate_finite(name, value)?;
             }
 
-            // Look up the persisted forecast once — reused for the Brier
-            // prior and the outcome recording.
+            // Keep validation and journal mutation under one lock so concurrent
+            // conflicting resolutions cannot overwrite each other.
+            let mut store = self.equity_forecast_store.lock().unwrap_or_else(|e| e.into_inner());
             let mut stored: Option<StoredEquityForecast> = None;
             if let Some(ref forecast_id) = req.forecast_id {
-                let store = self
-                    .equity_forecast_store
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner());
                 let found = store.get(forecast_id).ok_or_else(|| {
                     McpToolError::not_found(format!(
                         "forecast '{forecast_id}' not found for this owner"
@@ -416,13 +419,30 @@ impl ScenariosServer {
                         forecast_id, found.symbol, req.symbol
                     )));
                 }
+                if found.forecast_date != req.forecast_date || found.horizon != req.horizon
+                    || found.forecast_price_change != req.forecast_price_change
+                    || found.forecast_multiple.is_some_and(|m| m != req.forecast_multiple)
+                {
+                    return Err(McpToolError::invalid_argument("resolution differs from frozen forecast date, horizon or target"));
+                }
+                if let Some(declaration) = &found.declaration {
+                    let outcome_date = chrono::NaiveDate::parse_from_str(&req.outcome_date, "%Y-%m-%d")
+                        .map_err(|e| McpToolError::invalid_argument(format!("invalid outcome_date: {e}")))?;
+                    let today = chrono::Utc::now().date_naive();
+                    if outcome_date != declaration.deadline || today < declaration.deadline {
+                        return Err(McpToolError::invalid_argument("outcome must resolve at the frozen horizon after it has elapsed"));
+                    }
+                }
+                if let Some(outcome) = &found.outcome {
+                    for (key, value) in [("outcome_date", serde_json::json!(req.outcome_date)), ("actual_multiple", serde_json::json!(req.actual_multiple)), ("actual_price_change", serde_json::json!(req.actual_price_change))] {
+                        if outcome.get(key) != Some(&value) {
+                            return Err(McpToolError::invalid_argument("conflicting outcome replay; corrections require a separately sourced version"));
+                        }
+                    }
+                }
                 stored = Some(found.clone());
             }
-            let brier_prior = stored
-                .as_ref()
-                .map(|s| s.brier_prior())
-                .unwrap_or(0.7);
-            let prior_note = stored.as_ref().and_then(|s| s.brier_prior_note());
+            let brier_prior = stored.as_ref().filter(|s| s.declaration.is_some()).and_then(|s| s.forecast_probability);
 
             // Price change: was actual return within 20% tolerance of forecast?
             // Same tolerance-band definition the companies server used (its
@@ -432,14 +452,14 @@ impl ScenariosServer {
             let return_accurate = {
                 let forecast = req.forecast_price_change;
                 let actual = req.actual_price_change;
-                let tolerance = 0.20_f64;
+                let tolerance = stored.as_ref().and_then(|s| s.declaration.as_ref()).map_or(0.20, |d| d.tolerance);
                 if forecast == 0.0 {
                     actual.abs() < tolerance
                 } else {
                     ((actual - forecast) / forecast).abs() <= tolerance
                 }
             };
-            let return_brier = hkask_forecast::brier_score(brier_prior, return_accurate);
+            let return_brier = brier_prior.map(|p| hkask_forecast::brier_score(p, return_accurate));
             let combined = return_brier;
 
             let multiple_gap = req.actual_multiple - req.forecast_multiple;
@@ -457,6 +477,7 @@ impl ScenariosServer {
             // Record the outcome on the stored forecast (journal append).
             if let (Some(ref forecast_id), Some(mut record)) =
                 (req.forecast_id.as_ref(), stored.clone())
+                && record.outcome.is_none()
             {
                 record.outcome = Some(serde_json::json!({
                     "forecast_date": req.forecast_date,
@@ -471,10 +492,6 @@ impl ScenariosServer {
                     "combined_brier": combined,
                     "recorded_at": now_rfc3339_string(),
                 }));
-                let mut store = self
-                    .equity_forecast_store
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner());
                 store
                     .insert(forecast_id.to_string(), record)
                     .map_err(|error| {
@@ -505,14 +522,18 @@ impl ScenariosServer {
                     "multiple_direction": serde_json::Value::Null,
                     "return_accuracy": return_brier,
                     "combined": combined,
-                    "interpretation": hkask_forecast::brier_interpretation(combined),
+                    "sample_count": usize::from(combined.is_some()),
+                    "weighting": "one_per_declared_equity_forecast_version",
                 },
                 "decomposition": "unavailable — the projected-model decomposition required provider statements, which the companies server owned",
-                "framework": "Forecast-Record-Score (Tetlock GJP). Brier score on return accuracy within 20% tolerance. Ported from the companies server without the provider-backed gap decomposition.",
+                "score_convention": "binary_mean_squared_error",
+                "resolver": stored.as_ref().and_then(|s| s.declaration.as_ref()).map(|d| &d.resolver),
+                "baseline": null,
+                "baseline_note": "No matched reference declared; raw loss does not certify calibration.",
             });
-            if let Some(note) = prior_note {
-                output["brier_prior_note"] =
-                    serde_json::Value::String(note.to_string());
+            output["scoring_status"] = serde_json::json!(if combined.is_some() { "scored" } else { "unscored" });
+            if combined.is_none() {
+                output["unscored_reason"] = serde_json::json!("no prospectively stored probability");
             }
             if let Some(ref fid) = req.forecast_id {
                 output["forecast_id"] = serde_json::Value::String(fid.clone());

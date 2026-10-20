@@ -640,7 +640,6 @@ mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
-            goal_events: Vec::new(),
         })
         .await
         .expect("ingest succeeds");

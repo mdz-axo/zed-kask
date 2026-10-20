@@ -8,7 +8,7 @@ use super::*;
 /// plus an optional LLM evaluation prompt for automated verification.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct VerificationCriterion {
+pub struct VerificationCriterion {
     /// Human-readable acceptance spec.
     pub description: String,
     /// Optional prompt for LLM-mediated evaluation.

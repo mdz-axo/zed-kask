@@ -6,7 +6,6 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::ForecastStore;
 use super::build_event_tree;
 use super::convert_market_record;
 
@@ -63,7 +62,6 @@ pub(crate) fn compose_market_tree(
     records: &[hkask_mcp_prediction_markets::types::MarketRecord],
     match_confidences: &[Option<String>],
     dependency_specs: &[DependencySpec],
-    store: Option<&ForecastStore>,
 ) -> Result<(EventTree, Vec<CompositionWarning>), ScenarioError> {
     if records.is_empty() {
         return Err(ScenarioError::EmptyInput(
@@ -84,7 +82,7 @@ pub(crate) fn compose_market_tree(
     let mut events: Vec<ScenarioEvent> = Vec::with_capacity(records.len());
     let mut seen_ids: HashSet<String> = HashSet::new();
     for (record, confidence) in records.iter().zip(match_confidences.iter()) {
-        let (event, record_warnings) = convert_market_record(record, confidence.as_deref(), store)?;
+        let (event, record_warnings) = convert_market_record(record, confidence.as_deref())?;
         for warning in record_warnings {
             warnings.push(CompositionWarning {
                 kind: "bridge_gate",

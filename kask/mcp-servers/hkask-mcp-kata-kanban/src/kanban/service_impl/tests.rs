@@ -1031,18 +1031,26 @@ fn task_create_validates_goal_citations() {
     // The functional–technical join: a task may cite the goal criteria it
     // advances. Citations are validated at creation — the goal must exist,
     // the index must be in range, and the text must match verbatim — and
-    // captured on the task as documentation that outlives the ephemeral
+    // captured on the task as documentation of the immutable
     // goal.
     let (svc, board, owner) = make_service_with_board();
     let goal = svc
         .goal_create(
-            "The user can see which work serves which goal".into(),
-            vec![
-                VerificationCriterion::new("criterion 0 is observable".into()),
-                VerificationCriterion::new("criterion 1 is observable".into()),
-            ],
-            None,
-            None,
+            crate::GoalDeclaration {
+                goal_text: "The user can see which work serves which goal".into(),
+                criteria: vec![
+                    VerificationCriterion::new("criterion 0 is observable".into()),
+                    VerificationCriterion::new("criterion 1 is observable".into()),
+                ],
+                task_id: None,
+                source: crate::GoalSource {
+                    interaction_id: "source-turn".into(),
+                    session_id: "test-session".into(),
+                    source: "explicit-spec".into(),
+                },
+                forecast: None,
+                supersedes: None,
+            },
             owner,
         )
         .unwrap();
@@ -1099,13 +1107,21 @@ fn task_update_replaces_and_validates_goal_citations() {
     let (svc, board, owner) = make_service_with_board();
     let goal = svc
         .goal_create(
-            "The user can see which work serves which goal".into(),
-            vec![
-                VerificationCriterion::new("criterion 0 is observable".into()),
-                VerificationCriterion::new("criterion 1 is observable".into()),
-            ],
-            None,
-            None,
+            crate::GoalDeclaration {
+                goal_text: "The user can see which work serves which goal".into(),
+                criteria: vec![
+                    VerificationCriterion::new("criterion 0 is observable".into()),
+                    VerificationCriterion::new("criterion 1 is observable".into()),
+                ],
+                task_id: None,
+                source: crate::GoalSource {
+                    interaction_id: "source-turn".into(),
+                    session_id: "test-session".into(),
+                    source: "explicit-spec".into(),
+                },
+                forecast: None,
+                supersedes: None,
+            },
             owner,
         )
         .unwrap();

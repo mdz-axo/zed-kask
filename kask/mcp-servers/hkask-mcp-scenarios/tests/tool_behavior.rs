@@ -12,9 +12,9 @@
 
 use hkask_mcp_scenarios::equity_forecast::StoredEquityForecast;
 use hkask_mcp_scenarios::requests::{
-    AssessRequest, BrainstormRequest, CalibrateRequest, FrameDocumentRequest, OutcomeEntry,
-    PosteriorEvidenceEntry, PosteriorsRequest, QuantifyRequest, ScoreRequest, StatusRequest,
-    TriageRequest,
+    AssessRequest, BrainstormRequest, CalibrateRequest, DeclareRequest, FrameDocumentRequest,
+    OutcomeEntry, PosteriorEvidenceEntry, PosteriorsRequest, QuantifyRequest, ScoreRequest,
+    StatusRequest, TriageRequest,
 };
 use hkask_mcp_scenarios::types::{
     EventDependency, ScenarioEvent, ScenarioType, SubQuestion, TimeHorizon,
@@ -73,8 +73,20 @@ fn project_backed_server(path: &std::path::Path) -> ScenariosServer {
 /// (`"{forecast_id}:{event_id}"`).
 const REGRESSION_KEY: &str = "persistence-regression:event";
 
+async fn declare(server: &ScenariosServer, forecast_id: &str, events: Vec<ScenarioEvent>) {
+    server
+        .scenario_declare(Parameters(DeclareRequest {
+            forecast_id: forecast_id.into(),
+            events,
+            resolver: "test-source".into(),
+        }))
+        .await
+        .expect("prospective declaration");
+}
+
 fn persistence_score_request(probability: f64, occurred: bool) -> ScoreRequest {
     ScoreRequest {
+        resolver: "test-source".into(),
         forecast_id: "persistence-regression".to_string(),
         events: vec![independent_event("event", "durable event", probability)],
         outcomes: vec![OutcomeEntry {
@@ -154,6 +166,12 @@ async fn snapshot_failure_preserves_journal_for_recovery() -> Result<(), Box<dyn
     let snapshot_path = directory.path().join("forecasts.json");
     let journal_path = snapshot_path.with_extension("json.journal");
     let server = file_backed_server(&snapshot_path);
+    declare(
+        &server,
+        "persistence-regression",
+        vec![independent_event("event", "durable event", 0.9)],
+    )
+    .await;
     // A directory at the destination rejects both direct writes and atomic
     // replacement, independently of the test runner's filesystem privileges.
     std::fs::create_dir(&snapshot_path)?;
@@ -236,6 +254,12 @@ async fn snapshot_with_uncleared_journal_recovers_exactly_once()
     // entries (probability 0.9, resolved false) that truncation would
     // otherwise discard.
     let server = file_backed_server(&snapshot_path);
+    declare(
+        &server,
+        "persistence-regression",
+        vec![independent_event("event", "durable event", 0.9)],
+    )
+    .await;
     std::fs::create_dir(&snapshot_path)?;
     assert!(
         server
@@ -252,6 +276,12 @@ async fn snapshot_with_uncleared_journal_recovers_exactly_once()
     // the probability of a record it already holds.
     std::fs::remove_file(&journal_path)?;
     let publisher = file_backed_server(&snapshot_path);
+    declare(
+        &publisher,
+        "persistence-regression",
+        vec![independent_event("event", "durable event", 0.3)],
+    )
+    .await;
     publisher
         .scenario_score(Parameters(persistence_score_request(0.3, true)))
         .await?;
@@ -289,7 +319,11 @@ async fn journal_failure_is_surfaced_before_memory_changes()
     let server = file_backed_server(&snapshot_path);
     std::fs::create_dir(snapshot_path.with_extension("json.journal"))?;
     let result = server
-        .scenario_score(Parameters(persistence_score_request(0.9, false)))
+        .scenario_declare(Parameters(DeclareRequest {
+            forecast_id: "persistence-regression".into(),
+            events: vec![independent_event("event", "durable event", 0.9)],
+            resolver: "test-source".into(),
+        }))
         .await;
     assert!(result.is_err(), "journal failure must reach the caller");
     let status = parse(&server.scenario_status(Parameters(StatusRequest {})).await?);
@@ -313,7 +347,7 @@ fn independent_event(identifier: &str, name: &str, probability: f64) -> Scenario
         id: identifier.to_string(),
         name: name.to_string(),
         question: format!("Will {name} occur by 2027-12-31?"),
-        deadline: chrono::NaiveDate::from_ymd_opt(2027, 12, 31).expect("valid deadline date"),
+        deadline: chrono::Utc::now().date_naive(),
         time_horizon: TimeHorizon::Strategic,
         scenario_type: ScenarioType::CompanyAnalysis,
         subject: "ACME".to_string(),
@@ -508,8 +542,10 @@ async fn scenario_assess_calibration_curve_is_subject_scoped() {
         let mut event = independent_event("evt", "durable event", 0.9);
         event.subject = subject.to_string();
         let occurred = subject == "alpha";
+        declare(&server, &format!("scope-{subject}"), vec![event.clone()]).await;
         server
             .scenario_score(Parameters(ScoreRequest {
+                resolver: "test-source".into(),
                 forecast_id: format!("scope-{subject}"),
                 events: vec![event],
                 outcomes: vec![OutcomeEntry {
@@ -679,100 +715,37 @@ async fn scenario_quantify_rejects_out_of_range_probability_as_invalid_argument(
     );
 }
 
-// ── scenario_calibrate isotonic channel (arXiv:2604.20421 §6.1) ───────────────
-
-/// Seed the store with resolved forecasts via the real `scenario_score` path
-/// (pending insert + outcome resolution), then run `scenario_calibrate` and
-/// assert the isotonic channel is emitted with an inspectable fit.
+// Historical fitting remains available in the pure math crate, but is not
+// automatically applied to later forecasts without prospective evidence.
 #[tokio::test]
-async fn scenario_calibrate_emits_isotonic_channel_after_resolved_forecasts() {
+async fn scenario_calibrate_withholds_unsupported_historical_correction() {
     let server = make_server();
-    // Four resolved pairs with a monotone mapping: higher probability →
-    // occurred. The PAVA fit over these is a usable step function.
-    let events = vec![
-        independent_event("iso-a", "low prob event", 0.2),
-        independent_event("iso-b", "mid prob event", 0.5),
-        independent_event("iso-c", "high prob event", 0.8),
-        independent_event("iso-d", "very high prob event", 0.9),
-    ];
-    let outcomes = vec![
-        OutcomeEntry {
-            event_id: "iso-a".into(),
-            occurred: false,
-        },
-        OutcomeEntry {
-            event_id: "iso-b".into(),
-            occurred: false,
-        },
-        OutcomeEntry {
-            event_id: "iso-c".into(),
+    let events: Vec<_> = (0..5)
+        .map(|i| independent_event(&format!("history-{i}"), "history", 0.8))
+        .collect();
+    let outcomes = events
+        .iter()
+        .map(|event| OutcomeEntry {
+            event_id: event.id.clone(),
             occurred: true,
-        },
-        OutcomeEntry {
-            event_id: "iso-d".into(),
-            occurred: true,
-        },
-    ];
+        })
+        .collect();
+    declare(&server, "history", events.clone()).await;
     server
         .scenario_score(Parameters(ScoreRequest {
-            forecast_id: "iso-fit-test".into(),
+            forecast_id: "history".into(),
             events,
             outcomes,
+            resolver: "test-source".into(),
         }))
         .await
-        .expect("score ok");
-
+        .expect("resolved history");
     let output = server
         .scenario_calibrate(Parameters(CalibrateRequest {
-            question: "Will the isotonic channel fire?".into(),
+            question: "Model estimate".into(),
             sub_questions: vec![SubQuestion {
-                question: "Does the fit exist?".into(),
-                estimate: 0.7,
-                confidence: 0.8,
-            }],
-            reference_class: None,
-            base_rate: None,
-            reference_count: None,
-        }))
-        .await
-        .expect("calibrate ok");
-    let parsed = parse(&output);
-
-    let knots = parsed["isotonic_fit_knots"]
-        .as_array()
-        .expect("fit knots must be an array when resolved pairs exist");
-    assert!(
-        !knots.is_empty(),
-        "the PAVA fit over 4 resolved pairs must have at least one knot"
-    );
-    assert_eq!(parsed["isotonic_fit_size"].as_u64(), Some(4));
-    let isotonic_probability = parsed["isotonic_calibrated_probability"]
-        .as_f64()
-        .expect("isotonic probability must be present with a fit");
-    assert!(
-        (0.0..=1.0).contains(&isotonic_probability),
-        "isotonic probability must stay in [0, 1], got {isotonic_probability}"
-    );
-    // The fit is monotone non-decreasing: each knot's calibrated value must
-    // not exceed the next's.
-    for window in knots.windows(2) {
-        let a = window[0]["calibrated_value"].as_f64().unwrap_or(f64::NAN);
-        let b = window[1]["calibrated_value"].as_f64().unwrap_or(f64::NAN);
-        assert!(a <= b + 1e-9, "fit must be non-decreasing: {knots:?}");
-    }
-}
-
-/// With an empty store (no resolved pairs), the isotonic channel is withheld
-/// with a note — never a fabricated fit.
-#[tokio::test]
-async fn scenario_calibrate_withholds_isotonic_without_resolved_pairs() {
-    let server = make_server();
-    let output = server
-        .scenario_calibrate(Parameters(CalibrateRequest {
-            question: "Will the isotonic channel be withheld?".into(),
-            sub_questions: vec![SubQuestion {
-                question: "Is the store empty?".into(),
-                estimate: 0.9,
+                question: "Evidence".into(),
+                estimate: 0.8,
                 confidence: 0.9,
             }],
             reference_class: None,
@@ -780,18 +753,19 @@ async fn scenario_calibrate_withholds_isotonic_without_resolved_pairs() {
             reference_count: None,
         }))
         .await
-        .expect("calibrate ok");
-    let parsed = parse(&output);
+        .expect("estimate");
+    let body = parse(&output);
     assert!(
-        parsed["isotonic_calibrated_probability"].is_null(),
-        "no resolved pairs must yield no isotonic probability, got: {parsed}"
+        body["adjustment_status"]
+            .as_str()
+            .expect("withheld reason")
+            .contains("withheld")
     );
-    let note = parsed["isotonic_note"]
-        .as_str()
-        .expect("isotonic note is a string");
-    assert!(
-        note.contains("fewer than 2 resolved"),
-        "the note must name the reason, got: {note}"
+    assert!(body.get("isotonic_calibrated_probability").is_none());
+    assert!(body.get("calibration_adjusted_probability").is_none());
+    assert_eq!(
+        body["calibrated_probability"], 0.8,
+        "history does not correct the estimate"
     );
 }
 
@@ -1122,9 +1096,16 @@ async fn scenario_score_scores_the_tree_marginal_not_the_prior() {
         parent_event_ids: vec!["evt-root".to_string()],
         conditionals: vec![0.2, 0.8],
     }];
+    declare(
+        &server,
+        "marginal-scoring",
+        vec![root.clone(), dependent.clone()],
+    )
+    .await;
     // marginal(evt-dep) = 0.4·0.2 + 0.6·0.8 = 0.56 ≠ prior 0.5
     let output = server
         .scenario_score(Parameters(ScoreRequest {
+            resolver: "test-source".into(),
             forecast_id: "marginal-scoring".to_string(),
             events: vec![root, dependent],
             outcomes: vec![OutcomeEntry {
@@ -1153,7 +1134,7 @@ async fn scenario_score_scores_the_tree_marginal_not_the_prior() {
     );
     assert_eq!(
         parsed["scored_quantity"].as_str(),
-        Some("tree_marginal"),
+        Some("frozen_tree_marginal"),
         "the output names what was scored, got: {parsed}"
     );
 
@@ -1186,8 +1167,8 @@ async fn scenario_score_scores_the_tree_marginal_not_the_prior() {
     );
     assert_eq!(
         resolved["schema_version"].as_u64(),
-        Some(3),
-        "schema v3, got: {resolved}"
+        Some(4),
+        "schema v4, got: {resolved}"
     );
 }
 
@@ -1307,5 +1288,295 @@ async fn quantified_tree_survives_a_server_restart() {
         (tree.joint_probability - 0.30).abs() < 1e-9,
         "the persisted tree's joint (0.6 × 0.5 = 0.30) survives the restart, got {}",
         tree.joint_probability
+    );
+}
+
+// Approved forecast cutover: public tools must not manufacture a declaration
+// from resolution-time input, and replay cannot change the proposition.
+#[tokio::test]
+async fn scenario_resolution_requires_frozen_identity_and_unique_outcomes() {
+    let server = make_server();
+    let event = independent_event("event", "durable event", 0.8);
+    let mut req = persistence_score_request(0.8, true);
+    assert!(
+        server
+            .scenario_score(Parameters(req))
+            .await
+            .expect_err("no declaration")
+            .to_string()
+            .contains("not declared")
+    );
+    declare(&server, "persistence-regression", vec![event]).await;
+    req = persistence_score_request(0.2, true);
+    assert!(
+        server
+            .scenario_score(Parameters(req))
+            .await
+            .expect_err("p is frozen")
+            .to_string()
+            .contains("differs")
+    );
+    req = persistence_score_request(0.8, true);
+    req.resolver = "different-source".into();
+    assert!(server.scenario_score(Parameters(req)).await.is_err());
+    req = persistence_score_request(0.8, true);
+    req.events[0].question = "A different proposition".into();
+    assert!(server.scenario_score(Parameters(req)).await.is_err());
+    req = persistence_score_request(0.8, true);
+    req.outcomes.push(OutcomeEntry {
+        event_id: "event".into(),
+        occurred: true,
+    });
+    assert!(
+        server
+            .scenario_score(Parameters(req))
+            .await
+            .expect_err("duplicate same outcome")
+            .to_string()
+            .contains("duplicate")
+    );
+    let first = parse(
+        &server
+            .scenario_score(Parameters(persistence_score_request(0.8, true)))
+            .await
+            .expect("resolve"),
+    );
+    assert!((first["aggregate"]["brier_score"].as_f64().expect("score") - 0.04).abs() < 1e-12);
+    assert!(first.get("calibration_note").is_none());
+    assert!(first["aggregate"].get("interpretation").is_none());
+    server
+        .scenario_score(Parameters(persistence_score_request(0.8, true)))
+        .await
+        .expect("same replay");
+    assert!(
+        server
+            .scenario_score(Parameters(persistence_score_request(0.8, false)))
+            .await
+            .expect_err("conflict")
+            .to_string()
+            .contains("conflicting")
+    );
+    let status = parse(
+        &server
+            .scenario_status(Parameters(StatusRequest {}))
+            .await
+            .expect("status"),
+    );
+    assert_eq!(
+        status["pipeline"]["resolved_count"], 1,
+        "replays do not add event weight"
+    );
+}
+
+#[tokio::test]
+async fn scenario_declaration_rejects_late_scaffolds_and_early_outcomes() {
+    let server = make_server();
+    let mut event = independent_event("evt", "future", 0.5);
+    event.deadline = chrono::Utc::now().date_naive() - chrono::Duration::days(1);
+    assert!(
+        server
+            .scenario_declare(Parameters(DeclareRequest {
+                forecast_id: "late".into(),
+                events: vec![event.clone()],
+                resolver: "source".into()
+            }))
+            .await
+            .is_err()
+    );
+    event.deadline = chrono::Utc::now().date_naive() + chrono::Duration::days(1);
+    event.basis = Some("prediction_market:kalshi".into());
+    assert!(
+        server
+            .scenario_declare(Parameters(DeclareRequest {
+                forecast_id: "scaffold".into(),
+                events: vec![event.clone()],
+                resolver: "source".into()
+            }))
+            .await
+            .is_err()
+    );
+    event.basis = None;
+    declare(&server, "future", vec![event.clone()]).await;
+    assert!(
+        server
+            .scenario_score(Parameters(ScoreRequest {
+                forecast_id: "future".into(),
+                events: vec![event],
+                resolver: "test-source".into(),
+                outcomes: vec![OutcomeEntry {
+                    event_id: "evt".into(),
+                    occurred: true
+                }]
+            }))
+            .await
+            .expect_err("early outcome")
+            .to_string()
+            .contains("deadline")
+    );
+}
+
+#[tokio::test]
+async fn unmatched_outcomes_are_explicit_and_empty_bins_are_insufficient() {
+    use hkask_mcp_scenarios::requests::CalibrationRequest;
+    let server = make_server();
+    declare(
+        &server,
+        "persistence-regression",
+        vec![independent_event("event", "durable event", 0.8)],
+    )
+    .await;
+    let mut req = persistence_score_request(0.8, true);
+    req.outcomes.push(OutcomeEntry {
+        event_id: "unrelated".into(),
+        occurred: false,
+    });
+    let scored = parse(
+        &server
+            .scenario_score(Parameters(req))
+            .await
+            .expect("matching and unmatched"),
+    );
+    assert_eq!(
+        scored["unmatched_outcome_ids"],
+        serde_json::json!(["unrelated"])
+    );
+    assert_eq!(scored["scored_count"], 1);
+    let curve = parse(
+        &server
+            .scenario_calibration(Parameters(CalibrationRequest { subject: None }))
+            .await
+            .expect("curve"),
+    );
+    assert_eq!(
+        curve["evidence_status"], "insufficient",
+        "no bin has five observations"
+    );
+    assert!(curve["overconfidence_score"].is_null());
+    let bins = curve["bins"].as_array().expect("bins");
+    let empty = bins.iter().find(|b| b["count"] == 0).expect("empty bin");
+    assert_eq!(empty["evidence_status"], "insufficient");
+    for field in ["hit_rate", "expected_rate", "bias"] {
+        assert!(empty[field].is_null(), "empty {field}: {empty}");
+    }
+    let occupied = bins.iter().find(|b| b["count"] == 1).expect("occupied bin");
+    assert_eq!(occupied["hit_rate"], 1.0);
+    assert_eq!(occupied["expected_rate"], 0.8);
+}
+
+#[tokio::test]
+async fn synthesis_equal_weights_do_not_invent_or_reward_historical_loss() {
+    use hkask_mcp_scenarios::requests::SynthesizeRequest;
+    let req: SynthesizeRequest = serde_json::from_value(serde_json::json!({
+        "event_id":"event", "perspectives":[
+            {"source":"a", "probability":0.2, "fermi_sub_questions":[], "historical_brier":0.001},
+            {"source":"b", "probability":0.8, "fermi_sub_questions":[]}
+        ]
+    }))
+    .expect("request");
+    let body = parse(
+        &make_server()
+            .scenario_synthesize(Parameters(req))
+            .await
+            .expect("synthesis"),
+    );
+    assert_eq!(body["aggregated_probability"], 0.5);
+    assert!(
+        body["perspective_weights"]
+            .as_array()
+            .expect("weights")
+            .iter()
+            .all(|w| w["weight"] == 0.5)
+    );
+    assert!(body["individual_perspectives"][1]["historical_brier"].is_null());
+    assert!(
+        body["methodology"]["weighting"]
+            .as_str()
+            .expect("policy")
+            .starts_with("equal")
+    );
+}
+
+#[tokio::test]
+async fn signed_cancellation_is_descriptive_not_calibration_certification() {
+    use hkask_mcp_scenarios::requests::CalibrationRequest;
+    let server = make_server();
+    let mut events = Vec::new();
+    let mut outcomes = Vec::new();
+    for i in 0..10 {
+        let id = format!("evt-{i}");
+        events.push(independent_event(
+            &id,
+            "cancel",
+            if i < 5 { 0.2 } else { 0.8 },
+        ));
+        outcomes.push(OutcomeEntry {
+            event_id: id,
+            occurred: i < 5,
+        });
+    }
+    declare(&server, "cancellation", events.clone()).await;
+    server
+        .scenario_score(Parameters(ScoreRequest {
+            forecast_id: "cancellation".into(),
+            events,
+            outcomes,
+            resolver: "test-source".into(),
+        }))
+        .await
+        .expect("resolve");
+    let curve = parse(
+        &server
+            .scenario_calibration(Parameters(CalibrationRequest { subject: None }))
+            .await
+            .expect("curve"),
+    );
+    assert!(
+        curve["overconfidence_score"]
+            .as_f64()
+            .expect("signed bias")
+            .abs()
+            < 1e-12
+    );
+    assert_eq!(curve["evidence_status"], "descriptive_only");
+    assert!(curve.get("interpretation").is_none());
+    assert!((curve["overall_brier"].as_f64().expect("raw loss") - 0.64).abs() < 1e-12);
+}
+
+#[tokio::test]
+async fn legacy_scenario_history_survives_without_becoming_score_eligible() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("history.json");
+    std::fs::write(&path, serde_json::to_vec(&serde_json::json!({
+        "legacy:event": {"schema_version":3,"forecast_id":"legacy","event_id":"event", "event_name":"durable event", "subject":"ACME", "probability":0.8, "scored_from_marginal":true, "created_at":"2020-01-01", "outcome":null,"resolved_at":null,"category":"company_analysis"}
+    })).expect("fixture json")).expect("historical fixture");
+    let server = file_backed_server(&path);
+    let mut request = persistence_score_request(0.8, true);
+    request.forecast_id = "legacy".into();
+    let body = parse(
+        &server
+            .scenario_score(Parameters(request))
+            .await
+            .expect("record legacy outcome"),
+    );
+    assert_eq!(body["scored_count"], 0);
+    assert!(body["aggregate"]["brier_score"].is_null());
+    assert_eq!(body["per_event"][0]["scoring_status"], "unscored");
+    let reopened = file_backed_server(&path);
+    let status = parse(
+        &reopened
+            .scenario_status(Parameters(StatusRequest {}))
+            .await
+            .expect("history after restart"),
+    );
+    assert_eq!(status["pipeline"]["forecast_count"], 1);
+    assert_eq!(status["pipeline"]["resolved_count"], 1);
+    assert!(status["pipeline"]["overall_brier"].is_null());
+    assert_eq!(
+        status["pipeline"]["recent_forecasts"][0]["probability"],
+        0.8
+    );
+    assert_eq!(
+        status["pipeline"]["recent_forecasts"][0]["scoring_eligible"],
+        false
     );
 }

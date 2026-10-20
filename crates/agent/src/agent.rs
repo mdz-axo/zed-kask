@@ -3136,12 +3136,7 @@ pub struct ThreadTurnRecord {
     /// The memory port uses this to route ingestion to the correct
     /// perspective-scoped store — Curator turns go to the curator's sovereign DB.
     pub agent_id: Option<AgentId>,
-    /// Goal-tool events from this turn's last agent message (every
-    /// `kanban_goal_*` tool result). The goal store is ephemeral; these
-    /// events are the durable record — the bridge's memory write path
-    /// turns them into first-class goal h_mems in the curator's memory
-    /// (functional-interaction-spec: curator memory is the vehicle).
-    pub goal_events: Vec<hkask_types::GoalEvent>,
+
 }
 
 /// Port for ingesting completed thread turns into memory (D6).
@@ -3152,15 +3147,10 @@ pub trait ThreadMemoryPort: Send + Sync {
     /// Ingest a completed turn into memory. Fire-and-forget from the caller's
     /// perspective — the memory system handles classification and consolidation.
     ///
-    /// Returns the goal ids whose `kanban_goal_score` events were published
-    /// this ingestion. The turn-completion path acknowledges exactly these
-    /// (D58): a scored goal absent from the set was not published — its score
-    /// event failed per-goal — and stays retryable in the kanban outbox; its
-    /// failure never blocks a sibling's publication.
     fn ingest_turn(
         &self,
         record: ThreadTurnRecord,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<String>, String>> + Send + '_>>;
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>>;
 }
 
 /// Global hook for the thread memory port (D6).

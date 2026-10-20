@@ -240,7 +240,7 @@ impl PredictionMarketsServer {
 
     /// Record a resolved market outcome into the calibration store.
     #[tool(
-        description = "Record a resolved market outcome (bucket, probability-at-observation, outcome) into the calibration store. This is the sense arm of the calibration feedback loop: accrued resolutions drive per-bucket Brier scores, which demote poorly-calibrated buckets' reliability tiers on subsequent lookups."
+        description = "Record a resolved market outcome (bucket, probability-at-observation, outcome) into the calibration store. These caller-reported observations are descriptive history, not prospective source-authenticated forecasts or calibration certificates. Raw loss never changes liquidity/spread tiers."
     )]
     pub async fn market_record_resolution(
         &self,
@@ -382,7 +382,7 @@ impl PredictionMarketsServer {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let reading = calibration::read_calibration(&guard, bucket);
-        types::calibration_for(Some(&reading), bucket)
+        types::calibration_for(Some(&reading))
     }
 
     /// Build the Polymarket market record with its calibration block — the
@@ -431,7 +431,7 @@ impl PredictionMarketsServer {
                         if let Some(record) = types::MarketRecord::from_kalshi(
                             market,
                             None,
-                            types::calibration_for(None, ""),
+                            types::calibration_for(None),
                             &now,
                         ) {
                             rungs.push(serde_json::json!({
@@ -600,8 +600,7 @@ impl PredictionMarketsServer {
             // (Kalshi last_price_dollars of a settled market; a resolved
             // Polymarket market's terminal price with the outcome derived
             // from that same price), which guaranteed Brier ≈ 0 for every
-            // scan observation and made the reliability-tier demotion gate
-            // unreachable from scan data.
+            // scan observation. Earliest open-market snapshots preserve the forecast instead.
             match provider_kalshi::fetch_markets_by_status(
                 &self.http,
                 req.series.as_deref(),
@@ -918,8 +917,7 @@ impl PredictionMarketsServer {
                 .find(|e| e.event_ticker == market.event_ticker);
             // Same family-first bucket derivation as the snapshot writers —
             // the calibration block a lookup record carries must read the
-            // bucket the scanner writes, or the tier-demotion loop never
-            // closes (§7 followup root cause).
+            // bucket the scanner writes, or the descriptive history is fragmented (§7 followup root cause).
             let bucket = semantic_mapping::calibration_bucket_for_kalshi(
                 &market.event_ticker,
                 &market.title,
@@ -1269,7 +1267,7 @@ mod smoke {
     /// The manual calibration sense arm through the tool seam:
     /// `market_record_resolution` writes an observation and
     /// `market_calibration` reads it back non-stale with the right sample
-    /// size — the loop the reliability-tier demotion consumes. A bucket
+    /// size; raw loss never changes liquidity/spread tiers. A bucket
     /// with no observations must read stale, never a synthetic Brier 0.
     #[tokio::test]
     async fn record_resolution_feeds_calibration_read() {
