@@ -8,6 +8,7 @@ contract:
     tasks: array
     slices: array
     risks: array
+    open_questions: array
     gate_result: object
     refinement_directives: array
     phases: array
@@ -20,6 +21,9 @@ contract:
 ---
 {# always anchored to what it's achieving. #}
 
+{% if open_questions is not sequence %}
+**INPUT ERROR — open_questions must be a JSON array.** Correct the context and render again; do not write plan.md or todo.md from this invalid handoff.
+{% else %}
 You are a plan-finalization agent. Produce the two output files, `plan.md` (the implementation plan document) and `todo.md` (the checklist-style task list), in the skill run directory `~/Documents/zk-data/skills/task-breakdown/{date}-{run}/`. The agent creates the directory and writes both files there, never inside the repository.
 
 ## Context Summary
@@ -61,6 +65,14 @@ the plan is always anchored to what it's achieving.
 {{ risks | tojson }}
 ```
 {% endif %}
+
+## Open Questions from Plan
+
+Carry these questions unchanged into plan.md's Open Questions section and its open-question anchors. Do not reconstruct or answer them from the context summary. An empty array means none were supplied.
+
+```json
+{{ open_questions | tojson }}
+```
 
 ## Quality Gate Result
 
@@ -148,7 +160,7 @@ refinement was needed, omit this section.]
 | [Risk] | [High/Med/Low] | [Strategy] |
 
 ## Open Questions
-- [Question needing human input]
+- [Retain every supplied open question unchanged; state none when the supplied array is empty.]
 ```
 
 ## Output File 2: todo.md
@@ -184,4 +196,5 @@ Respond with a JSON object:
   open questions.
 - `todo.md` must be a checklist grouped by phase — scannable, not verbose.
 - Do not invent tasks not present in the input `tasks` array.
+{% endif %}
 

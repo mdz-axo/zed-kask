@@ -19,6 +19,9 @@ contract:
     grill_ratings:
       type: array
       description: Verify-step ratings per area (empty if verify skipped)
+    grill_findings:
+      type: array
+      description: Final critic findings unchanged from verification; empty when verification is skipped
     grill_verdict:
       type: string
       description: Verify-step verdict (pass, rewrite_needed, fail, or skipped)
@@ -55,7 +58,7 @@ contract:
       type: object
 ---
 {# ACT phase: Deterministic format and deliver the enhanced prompt. #}
-{# goal: Deliver the enhanced prompt per output_format with a change log. #}
+{# goal: Deliver the enhanced prompt per output_format with specific critic findings preserved in the change log. #}
 {# Deterministic formatting consumes structured findings and ratings directly;
    an extra inference call cannot improve their presentation contract. #}
 
@@ -67,6 +70,12 @@ contract:
    loud, machine-readable input error instead — the change log must never
    fabricate plausible-looking rows from a malformed input. #}
 {%- set input_errors = [] -%}
+{%- if grill_findings is sequence -%}
+{%- set grill_findings_list = grill_findings -%}
+{%- else -%}
+{%- set grill_findings_list = [] -%}
+{% set input_errors = input_errors + ["grill_findings: expected a JSON array of critic findings, not a string, object, scalar, or null"] %}
+{%- endif -%}
 {%- if audit_findings is string -%}{% set input_errors = input_errors + ["audit_findings: expected a JSON array of finding objects, got a string — pass plain arrays, never stringified JSON"] %}{%- endif -%}
 {%- if grill_ratings is string -%}{% set input_errors = input_errors + ["grill_ratings: expected a JSON array of rating objects, got a string — pass plain arrays, never stringified JSON"] %}{%- endif -%}
 {%- if mutations_applied is string -%}{% set input_errors = input_errors + ["mutations_applied: expected a JSON array of mutation objects, got a string — pass plain arrays, never stringified JSON"] %}{%- endif -%}
@@ -197,6 +206,16 @@ type={{ prompt_type }} effort={{ effort_tier }} unfold_mode={{ unfold_mode_displ
 
 {{ grill_ratings_text }}
 
+### Specific critic findings
+
+{% if grill_findings is not sequence %}
+**INPUT ERROR — grill_findings must be a JSON array.** The critic findings were not rendered; correct the input and render again.
+{% else %}
+```json
+{{ grill_findings_list | tojson }}
+```
+{% endif %}
+
 ### Mutations applied
 
 {{ mutations_text }}
@@ -228,6 +247,7 @@ type={{ prompt_type }} effort={{ effort_tier }} unfold_mode={{ unfold_mode_displ
     "summary": {{ summary_line | tojson }},
     "audit_findings_table": {{ findings_table | tojson }},
     "grill_verdict": {{ grill_verdict | tojson }},
+    "grill_findings": {{ grill_findings_list | tojson }},
     "grill_ratings": {{ grill_ratings_text | tojson }},
     "mutations_applied": {{ mutations_applied_list | map(attribute="mutation") | list | tojson }},
     "deferred_findings": {{ mutations_deferred_list | map(attribute="finding") | list | tojson }},

@@ -199,7 +199,7 @@ architecture-beta
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ARCH-SKILL-MCP-LISP-001
 verified_date: 2026-10-19
-verified_against: crates/agent/src/tools/skill_tool.rs (SkillTool L127, run L194, render_skill_envelope L48, with_invoker L162); crates/agent_skills/agent_skills.rs (read_skill_body L841); crates/agent/src/tools/lisp_eval_tool.rs (LispEvalTool L190); crates/agent/src/tools/render_template_tool.rs (RenderTemplateTool L94); crates/agent/src/thread.rs (enabled_tools L5156); crates/agent/src/tools/list_mcp_tools_tool.rs (ListMcpToolsTool L58, enumerate_tool_listing L119); kask/crates/hkask-lisp/src/hkask_lisp.rs (eval_sandboxed_with_budget L2008); kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort L89); kask/crates/hkask-mcp/src/runtime.rs (impl ToolPort for McpRuntime L1530); kask/crates/hkask-regulation/src/energy.rs (CallCapManager, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/mcp_servers.rs (BUILT_IN_MCP_SERVERS — 9 servers); crates/hkask-tool-invoker/src/hkask_tool_invoker.rs (ToolInvoker trait L121, shared_tool_invoker L148)
+verified_against: crates/agent/src/tools/skill_tool.rs (SkillTool L127, run L194, render_skill_envelope L48, with_invoker L162); crates/agent_skills/agent_skills.rs (read_skill_body L841); crates/agent/src/tools/lisp_eval_tool.rs (LispEvalTool L190); crates/agent/src/tools/render_template_tool.rs (RenderTemplateTool L94); crates/agent/src/thread.rs (enabled_tools L5156); crates/agent/src/tools/list_mcp_tools_tool.rs (ListMcpToolsTool L58, enumerate_tool_listing L119); kask/crates/hkask-lisp/src/hkask_lisp.rs (eval_sandboxed_with_budget L2008); kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort L89); kask/crates/hkask-mcp/src/runtime.rs (McpRuntime, impl ToolPort for McpRuntime, start_server_with_env, stop_server, tool_surface_changes); kask/crates/hkask-regulation/src/energy.rs (CallCapManager, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/mcp_servers.rs (BUILT_IN_MCP_SERVERS — 9 servers); crates/hkask-tool-invoker/src/hkask_tool_invoker.rs (ToolInvoker trait L121, shared_tool_invoker L148)
 status: VERIFIED
 -->
 
@@ -353,11 +353,12 @@ classDiagram
     }
 
     class McpRuntime {
-        -servers: HashMap
-        -connections: HashMap
+        -entries: HashMap
         -governance: Option
         +with_governance(cybernetics, sink) McpRuntime
-        +register_server(server)
+        +start_server_with_env(server, command, env)
+        +stop_server(server)
+        +tool_surface_changes()
         +get_tool_info(server, tool) Option~ToolInfo~
     }
 
@@ -382,7 +383,7 @@ classDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CAP-001
 verified_date: 2026-09-28
-verified_against: kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort trait L89-116, ToolInfo L121, ToolPortError variants L8-38, is_retryable L50-51); kask/crates/hkask-tool-port/src/hkask_tool_port.rs; kask/crates/hkask-mcp/src/runtime.rs (impl ToolPort for McpRuntime L1530, McpRuntime struct L484, governance L501); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26)
+verified_against: kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort trait L89-116, ToolInfo L121, ToolPortError variants L8-38, is_retryable L50-51); kask/crates/hkask-tool-port/src/hkask_tool_port.rs; kask/crates/hkask-mcp/src/runtime.rs (McpRuntime, impl ToolPort for McpRuntime, start_server_with_env, stop_server, tool_surface_changes); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26)
 status: VERIFIED
 -->
 

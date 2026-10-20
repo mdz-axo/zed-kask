@@ -37,7 +37,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CAP-002
 verified_date: 2026-09-28
-verified_against: kask/crates/hkask-mcp/src/runtime.rs (impl ToolPort for McpRuntime L1530, invoke L1531, charge_call_metered L1560, EnergyBudgetExceeded L1582, call_tool_inner L1593/L1668, call-settled span persist L1595-1607, no-governance unmetered dispatch L1642, inline pin no_governance_dispatches_unmetered L2576); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-mcp/tests/invoke_gate.rs deleted — the unmetered-dispatch pin now lives inline in runtime.rs
+verified_against: kask/crates/hkask-mcp/src/runtime.rs (McpRuntime, impl ToolPort for McpRuntime, start_server_with_env, stop_server, tool_surface_changes); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-mcp/tests/invoke_gate.rs deleted — the unmetered-dispatch pin now lives inline in runtime.rs
 status: VERIFIED
 -->
 
@@ -114,7 +114,7 @@ sequenceDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-SEQ-MCP-TOOL-CALL-001
 verified_date: 2026-09-28
-verified_against: crates/agent/src/thread.rs (enabled_tools L5156, count_hidden_mcp_tools L6074); crates/agent/src/tools/list_mcp_tools_tool.rs (ListMcpToolsTool L58, enumerate_tool_listing L119); crates/agent/src/templates/system_prompt.hbs (D44 visibility marker L62-63); kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort L89, ToolPortError::EnergyBudgetExceeded L12); kask/crates/hkask-mcp/src/runtime.rs (impl ToolPort L1530, charge_call_metered L1560, call-settled span L1595-1607); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/inference_ipc_server.rs (tool_allowlist L843, L918); kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs (mcp_tools allowlist L262-274); kask/crates/kask_bridge/src/mcp_servers.rs (BuiltinMcpServer credentials L40-54)
+verified_against: crates/agent/src/thread.rs (enabled_tools L5156, count_hidden_mcp_tools L6074); crates/agent/src/tools/list_mcp_tools_tool.rs (ListMcpToolsTool L58, enumerate_tool_listing L119); crates/agent/src/templates/system_prompt.hbs (D44 visibility marker L62-63); kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort L89, ToolPortError::EnergyBudgetExceeded L12); kask/crates/hkask-mcp/src/runtime.rs (McpRuntime, impl ToolPort for McpRuntime, start_server_with_env, stop_server, tool_surface_changes); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/inference_ipc_server.rs (tool_allowlist L843, L918); kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs (mcp_tools allowlist L262-274); kask/crates/kask_bridge/src/mcp_servers.rs (BuiltinMcpServer credentials L40-54)
 status: VERIFIED
 -->
 

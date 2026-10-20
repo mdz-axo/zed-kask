@@ -73,7 +73,7 @@ PID-bound. See the settings reference for provisioning and revocation behavior.
 | Parent-held delegated-tool grant intersected with the request allowlist | `kask_bridge/src/delegation_grants.rs` + `inference_ipc_server.rs` `tool_invoke` dispatch | Refuses `server/tool` outside either set before tool dispatch; missing/invalid grants deny. Settings unload revokes before child stop. |
 | Per-agent `mcp_tools` allowlist | `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:262-274` (declared set), `:541-547` (refusal) | Restricts which tools a swarm agent may call at all |
 | Per-server MCP env / credential allowlists | `kask_bridge/src/mcp_servers.rs` | Scopes credentials per server |
-| Call meter / runaway-loop breaker | `hkask-regulation::CallCapManager` (`kask/crates/hkask-regulation/src/energy.rs:131`), charged in `McpRuntime::invoke` (`kask/crates/hkask-mcp/src/runtime.rs:1531`, charge at `:1560`) | Bounds non-terminating loops and meters usage. **Fail-open** on an unseeded agent — not an authorization gate |
+| Call meter / runaway-loop breaker | `hkask-regulation::CallCapManager` (`kask/crates/hkask-regulation/src/energy.rs:131`), charged in `McpRuntime::invoke` (`kask/crates/hkask-mcp/src/runtime.rs`, `ToolPort::invoke`) | Bounds non-terminating loops and meters usage. **Fail-open** on an unseeded agent — not an authorization gate |
 
 > There is no longer a single "enforcement membrane." Authority is the allowlist
 > boundaries whose list the checked caller cannot choose. IPC requests can
@@ -486,7 +486,7 @@ When an assertion fails, the verification report is escalated to the Curator. Th
 > gate is the delegated-tool allowlist on the inference IPC `tool_invoke` dispatch
 > (`kask/crates/kask_bridge/src/inference_ipc_server.rs:918-940`), with the
 > runaway-loop call breaker charged in `McpRuntime::invoke`
-> (`kask/crates/hkask-mcp/src/runtime.rs:1531`, breaker at `:1575-1585`). Treat
+> (`kask/crates/hkask-mcp/src/runtime.rs`, `ToolPort::invoke`). Treat
 > every block below as OUGHT, not IS.
 
 ### Sovereignty State Tracking

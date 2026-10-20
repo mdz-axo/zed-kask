@@ -413,7 +413,7 @@ mod tests {
         base
     }
 
-    fn render_template_for_test(
+    pub(super) fn render_template_for_test(
         template_ref: &str,
         context: serde_json::Value,
     ) -> Result<String, String> {
@@ -1328,5 +1328,171 @@ mod corpus_sweep_tests {
             }
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod finalizer_handoff_tests {
+    use super::tests::render_template_for_test;
+    use serde_json::{Value, json};
+
+    fn critic_context(findings: Value) -> Value {
+        json!({
+            "enhanced_prompt": "Preserve the supplied evidence.",
+            "prompt_type": "agent-task",
+            "effort_tier": "medium",
+            "output_format_resolved": "inline",
+            "output_path_resolved": "handoff-fixture.md",
+            "audit_findings": [],
+            "grill_ratings": [],
+            "grill_findings": findings,
+            "grill_verdict": "rewrite_needed",
+            "mutations_applied": [],
+            "mutations_deferred": [],
+            "unfold_mode_resolved": "rewrite_only",
+            "reference_models": [],
+            "unfolded_plan": []
+        })
+    }
+
+    fn section_json(rendered: &str, heading: &str) -> Value {
+        let section = rendered.split_once(heading).expect("handoff section").1;
+        let block = section.split_once("```json\n").expect("JSON block").1;
+        let payload = block.split_once("\n```").expect("closed JSON block").0;
+        serde_json::from_str(payload).expect("handoff data remains valid JSON")
+    }
+
+    #[test]
+    fn prompt_enhance_preserves_critic_findings_at_delivery() {
+        let findings = json!([{
+            "area": "Mechanism",
+            "gap": "Keep this exact critic finding, including \"quotes\".\nSecond line.",
+            "severity": "Guardrail",
+            "suggested_fix_direction": "Do not reconstruct the finding from its rating.",
+            "evidence": {"source": "independent fixture"}
+        }]);
+        for verdict in ["rewrite_needed", "fail", "pass"] {
+            let mut context = critic_context(findings.clone());
+            context["grill_verdict"] = json!(verdict);
+            let rendered =
+                render_template_for_test("prompt-enhance/enhance-output-render", context)
+                    .expect("complete finalizer context renders");
+            let result: Value = serde_json::from_str(&rendered).expect("structured delivery");
+            assert_eq!(result["change_log"]["grill_findings"], findings);
+            assert_eq!(result["change_log"]["grill_verdict"], verdict);
+            assert_eq!(
+                section_json(
+                    result["delivered_output"].as_str().expect("human delivery"),
+                    "### Specific critic findings",
+                ),
+                findings,
+            );
+        }
+
+        for mode in ["inline", "file", "both"] {
+            let mut context = critic_context(json!([]));
+            context["effort_tier"] = json!("low");
+            context["grill_verdict"] = json!("skipped");
+            context["output_format_resolved"] = json!(mode);
+            let rendered =
+                render_template_for_test("prompt-enhance/enhance-output-render", context)
+                    .expect("explicit empty findings render in every delivery mode");
+            let result: Value = serde_json::from_str(&rendered).expect("structured empty delivery");
+            assert_eq!(result["change_log"]["grill_findings"], json!([]));
+            assert_eq!(result["change_log"]["grill_verdict"], "skipped");
+            assert_eq!(result["change_log"]["input_errors"], json!([]));
+            assert_eq!(result["output_path_written"], "");
+        }
+
+        let mut missing = critic_context(json!([]));
+        missing
+            .as_object_mut()
+            .expect("context object")
+            .remove("grill_findings");
+        let error = render_template_for_test("prompt-enhance/enhance-output-render", missing)
+            .expect_err("omitted critic handoff must not look like an empty review");
+        assert!(error.contains("grill_findings"), "{error}");
+
+        for malformed in [json!("[]"), json!({}), json!(7), Value::Null] {
+            let rendered = render_template_for_test(
+                "prompt-enhance/enhance-output-render",
+                critic_context(malformed),
+            )
+            .expect("invalid handoff shape is surfaced in the delivery");
+            let result: Value =
+                serde_json::from_str(&rendered).expect("error delivery is valid JSON");
+            assert_eq!(result["change_log"]["grill_findings"], json!([]));
+            assert!(
+                result["change_log"]["input_errors"]
+                    .as_array()
+                    .expect("errors")
+                    .iter()
+                    .any(|error| error
+                        .as_str()
+                        .is_some_and(|text| text.contains("grill_findings")))
+            );
+            assert!(
+                result["delivered_output"]
+                    .as_str()
+                    .expect("delivery")
+                    .contains("INPUT ERROR")
+            );
+        }
+    }
+
+    fn planner_context(questions: Value) -> Value {
+        json!({
+            "context_summary": "Question handoff fixture, not an approved implementation plan.",
+            "target_condition": "Retain the operator's supplied questions at finalization.",
+            "dependency_graph": [],
+            "tasks": [],
+            "slices": [],
+            "risks": [],
+            "open_questions": questions,
+            "gate_result": {"fixture_only": true},
+            "refinement_directives": [],
+            "phases": [],
+            "checkpoints": []
+        })
+    }
+
+    #[test]
+    fn task_breakdown_preserves_open_questions_at_finalization() {
+        let questions = json!([
+            "Which source license permits redistribution?",
+            "Retain this \"quoted\" question.\nAnd its second line.",
+            {"question": "Does the operator accept the source limitation?", "source": "operator"}
+        ]);
+        for supplied in [questions, json!([])] {
+            let rendered = render_template_for_test(
+                "task-breakdown/task-breakdown-write-plan",
+                planner_context(supplied.clone()),
+            )
+            .expect("an explicit question array renders");
+            assert_eq!(
+                section_json(&rendered, "## Open Questions from Plan"),
+                supplied
+            );
+        }
+
+        let mut missing = planner_context(json!([]));
+        missing
+            .as_object_mut()
+            .expect("context object")
+            .remove("open_questions");
+        let error = render_template_for_test("task-breakdown/task-breakdown-write-plan", missing)
+            .expect_err("omitted questions must not look like an empty plan stage");
+        assert!(error.contains("open_questions"), "{error}");
+
+        for malformed in [json!("[]"), json!({}), json!(7), Value::Null] {
+            let rendered = render_template_for_test(
+                "task-breakdown/task-breakdown-write-plan",
+                planner_context(malformed),
+            )
+            .expect("invalid question shape is surfaced");
+            assert!(rendered.contains("INPUT ERROR") && rendered.contains("open_questions"));
+            assert!(!rendered.contains("You are a plan-finalization agent"));
+            assert!(!rendered.contains("Full markdown content of plan.md"));
+        }
     }
 }

@@ -76,14 +76,23 @@ Decomposition, dependency mapping, and the raw criterion scores (`gate_scores`) 
 
 ### task-breakdown-write-plan
 
-1. Create the run directory `~/Documents/zk-data/skills/task-breakdown/{date}-{run}/` (via `terminal`; built-in file tools cannot write under `~/Documents/zk-data`). Plans are skill artifacts, never repository files.
-2. Write `plan.md` there with: overview, architecture decisions, phased task list with checkpoints, risks table, and open questions.
-3. Include a Refinement History section in `plan.md` (PDCA loop visibility): when `refinement_directives` were applied across PDCA iterations, document what criterion scored above threshold, what was wrong, and what fix was applied. Omit the section if no refinement was needed.
-4. Write `todo.md` there as a flat checklist grouped by phase with checkboxes for each task and its acceptance criteria — scannable, not verbose.
-5. Emit `pko_anchors`: map the plan to `pko:Procedure` with `pko:StepVerification`; each task to `pplan:Step` with `pko:StepVerification`; phases to `pplan:MultiStep`; risks to `pko:IssueOccurrence`; open questions to `pko:UserQuestionOccurrence`; checkpoints to `pko:UserFeedbackOccurrence`. (The `pplan:` namespace terms resolve at the derived tier; the former `pko:ProcedureTarget`, `pko:Step`, and `pko:MultiStep` did not resolve and are replaced.)
-6. Attach DC+BIBO state metadata (title/creator/date, `bibo:Document`) to the `plan.md` document itself — PKO grounds the structure, DC+BIBO grounds the document.
-7. Do not invent tasks not present in the input `tasks` array.
-8. Produce a JSON object with `plan_md`, `todo_md`, `output_paths`, and `pko_anchors`.
+1. Render `task-breakdown/task-breakdown-write-plan` with this complete context shape; encode the whole object once as JSON text for `render_template.context`, keeping its arrays and objects structured inside it:
+   ```json
+   { "context_summary": "<from PLAN>", "target_condition": "<confirmed target>",
+     "dependency_graph": <from PLAN>, "tasks": <from DECOMPOSE>, "slices": <from DECOMPOSE>,
+     "risks": <from PLAN>, "open_questions": <from PLAN unchanged, or [] if none>,
+     "gate_result": <checked quality-gate result>, "refinement_directives": <latest directives>,
+     "phases": <from DECOMPOSE>, "checkpoints": <from DECOMPOSE> }
+   ```
+   Pass `open_questions` unchanged from PLAN; do not reconstruct or answer them from `context_summary`. The field is required even when empty. Stop on an input error, correct the context and render again before writing either document.
+2. Create the run directory `~/Documents/zk-data/skills/task-breakdown/{date}-{run}/` (via `terminal`; built-in file tools cannot write under `~/Documents/zk-data`). Plans are skill artifacts, never repository files.
+3. Write `plan.md` there with: overview, architecture decisions, phased task list with checkpoints, risks table, and the supplied open questions unchanged (or explicitly none for `[]`).
+4. Include a Refinement History section in `plan.md` (PDCA loop visibility): when `refinement_directives` were applied across PDCA iterations, document what criterion scored above threshold, what was wrong, and what fix was applied. Omit the section if no refinement was needed.
+5. Write `todo.md` there as a flat checklist grouped by phase with checkboxes for each task and its acceptance criteria — scannable, not verbose.
+6. Emit `pko_anchors`: map the plan to `pko:Procedure` with `pko:StepVerification`; each task to `pplan:Step` with `pko:StepVerification`; phases to `pplan:MultiStep`; risks to `pko:IssueOccurrence`; the supplied open questions to `pko:UserQuestionOccurrence`; checkpoints to `pko:UserFeedbackOccurrence`. (The `pplan:` namespace terms resolve at the derived tier; the former `pko:ProcedureTarget`, `pko:Step`, and `pko:MultiStep` did not resolve and are replaced.)
+7. Attach DC+BIBO state metadata (title/creator/date, `bibo:Document`) to the `plan.md` document itself — PKO grounds the structure, DC+BIBO grounds the document.
+8. Do not invent tasks not present in the input `tasks` array.
+9. Produce a JSON object with `plan_md`, `todo_md`, `output_paths`, and `pko_anchors`.
 
 ### Convergence loop
 
@@ -109,7 +118,7 @@ Template context variables (from each template's [inference] contract):
 - `task-breakdown-plan.j2`: `target_condition`, `crate_scope`, `code_context`, `task`
 - `task-breakdown-decompose.j2`: `context_summary`, `dependency_graph`, `risks`, `refinement_directives`, `parallelization_hint`, `skill_catalog`
 - `task-breakdown-quality-gate.j2`: `tasks`, `slices`, `dependency_graph`, `context_summary`, `target_condition`, `phases`, `checkpoints`
-- `task-breakdown-write-plan.j2`: `context_summary`, `target_condition`, `dependency_graph`, `tasks`, `slices`, `risks`, `gate_result`, `refinement_directives`, `phases`, `checkpoints`
+- `task-breakdown-write-plan.j2`: `context_summary`, `target_condition`, `dependency_graph`, `tasks`, `slices`, `risks`, `open_questions` (unchanged from PLAN), `gate_result`, `refinement_directives`, `phases`, `checkpoints`
 
 ## Regression case
 

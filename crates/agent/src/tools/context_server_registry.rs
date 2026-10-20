@@ -137,8 +137,8 @@ pub fn kask_tool_source() -> Option<Arc<dyn KaskToolSource>> {
 // ── zed-kask: kask tool-surface change signal ──────────────────────
 //
 // The process-global messenger that replaced the former 2s poll
-// (2026-09-22): registration on the governed `McpRuntime` is an event
-// (`register_server` / `stop_server` / `shutdown_all` signal the runtime),
+// (2026-09-22): discovery, connection loss, stop and shutdown on the
+// governed `McpRuntime` signal surface and liveness changes,
 // and events are forwarded instead of discarded. main.rs's source-refresh
 // loop fires this after every cache rebuild (and once at wiring); tests
 // fire it after mutating their scoped source. Every live

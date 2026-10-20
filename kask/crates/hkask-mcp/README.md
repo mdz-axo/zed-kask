@@ -7,6 +7,11 @@ Core MCP (Model Context Protocol) implementation — server dispatch, tool routi
 ## Lifecycle guarantees
 
 Start, publication, and stop are coordinated by a desired launch generation.
+Startup records the launch specification before connecting; tool discovery
+publishes metadata and the live connection together. There is no empty
+preregistration step. Repeating a start for a live connection preserves its tools
+without another surface-change event. Connection loss retains discovered
+metadata for recovery, while liveness reads report the disconnection.
 Stop/replacement cancels that generation; an older discovery result cannot
 publish tools or replace the new configuration. Discovery failures and cancelled
 starts retain a cleanup guard, including before a child is registered.

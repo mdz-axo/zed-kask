@@ -1017,7 +1017,7 @@ fn main() {
                 cache: std::sync::Arc::new(std::sync::RwLock::new(Vec::new())),
             });
             // Event-driven refresh: the runtime signals tool membership and
-            // connection changes (`register_server`, discovery, unexpected
+            // connection changes (discovery, unexpected
             // disconnect, stop, shutdown). The settings view uses the same
             // signal to redraw its liveness-backed status; the cache
             // rebuilds on the signal instead of on a timer — and each rebuild
@@ -2588,8 +2588,8 @@ fn main() {
                 if !servers_to_start_clone.is_empty() {
                     // Build env + record baseline on the foreground
                     // (`kask_server_env` needs `AsyncApp`, not `Send`). The
-                    // tokio-dependent `register_server` / `start_server_with_env`
-                    // are dispatched through `Tokio::spawn` below — the reactor
+                    // tokio-dependent `start_server_with_env` is dispatched
+                    // through `Tokio::spawn` below — the reactor
                     // is entered on the worker thread, so no foreground `enter()`
                     // guard is held across awaits. The earlier `let _tokio_guard
                     // = ...enter()` held-across-awaits form was the `.rules`
@@ -2616,13 +2616,7 @@ fn main() {
                         let restart_env = kask_mcp_restart_env_for_deferred.clone();
                         let server_id_owned = server_id.to_string();
                         gpui_tokio::Tokio::spawn(cx, async move {
-                            runtime
-                                .register_server(hkask_mcp::McpServer {
-                                    id: server_id_owned.clone(),
-                                    name: server_id_owned.clone(),
-                                    tools: vec![],
-                                })
-                                .await;
+
                             match runtime
                                 .start_server_with_env(&server_id_owned, &binary, mcp_env)
                                 .await
@@ -3840,18 +3834,9 @@ fn sync_kask_mcp_runtime_servers(
                 );
             }
             for (server_id, binary, env) in to_start {
-                // Mirror the deferred launch loop: register metadata, then
-                // start. `register_server` is an idempotent insert;
-                // `start_server_with_env` is idempotent per live connection,
-                // so a concurrent duplicate start (two observer passes racing)
-                // collapses to one live connection.
-                runtime
-                    .register_server(hkask_mcp::McpServer {
-                        id: server_id.to_string(),
-                        name: server_id.to_string(),
-                        tools: vec![],
-                    })
-                    .await;
+                // Discovery publishes metadata. Starting an already-live server
+                // is a no-op; concurrent starts converge on one connection.
+
                 match runtime
                     .start_server_with_env(server_id, &binary, env.clone())
                     .await

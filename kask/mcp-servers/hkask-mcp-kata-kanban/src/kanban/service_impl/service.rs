@@ -43,6 +43,10 @@ pub struct KanbanService {
     /// arm the fault on the service it keeps while the server holds a
     /// clone. Zero in production — nothing reads it except `task_comment`.
     pub(crate) comment_faults: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// One-shot scheduling boundary for deterministic mutation interleavings.
+    #[cfg(test)]
+    pub(super) before_task_write:
+        std::sync::Arc<std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>>,
 }
 
 // HMem entity prefixes
@@ -60,6 +64,8 @@ impl KanbanService {
         Self {
             store,
             comment_faults: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            #[cfg(test)]
+            before_task_write: Default::default(),
         }
     }
 
@@ -581,7 +587,7 @@ impl KanbanService {
         target: TaskStatus,
         actor: WebID,
     ) -> Result<Task, KanbanError> {
-        let mut task = self.require_task(task_id)?;
+        let task = self.require_task(task_id)?;
 
         Self::require_task_actor(&task, actor)?;
 
@@ -591,38 +597,43 @@ impl KanbanService {
                 id: task.board_id.to_string(),
             })
         })?;
-        // The review board's Done status is a verification outcome, never
-        // an ordinary column move. Other boards keep their existing policy.
-        if (board.name == ALGEDONIC_BOARD_NAME && target == TaskStatus::Done)
-            || !board.can_transition(task.status, target)
-        {
-            return Err(KanbanError::InvalidTransition {
-                task: task_id,
-                from: task.status,
-                to: target,
-            });
-        }
-
-        let from_status = task.status;
-
-        // WIP limit enforcement (Anderson §4: "limit WIP to expose problems")
-        if let Some(col) = board.column_for_status(target)
-            && let Some(wip_limit) = col.wip_limit
-        {
-            let current_count = self.count_tasks_in_status(task.board_id, target)?;
-            if current_count >= wip_limit as usize {
-                return Err(KanbanError::WipLimitExceeded {
-                    column: col.name.clone(),
-                    limit: wip_limit,
-                    current: current_count as u32,
+        // Cross-task WIP counting stays outside the task transaction: a nested
+        // store read would deadlock a single-connection pool. This does not
+        // provide atomic WIP admission across different tasks.
+        let wip = board
+            .column_for_status(target)
+            .and_then(|col| col.wip_limit.map(|limit| (col, limit)))
+            .map(|(col, limit)| {
+                self.count_tasks_in_status(task.board_id, target)
+                    .map(|count| (col, limit, count))
+            })
+            .transpose()?;
+        let (task, from_status) = self.mutate_task(task_id, |task| {
+            Self::require_task_actor(task, actor)?;
+            // The review board's Done status is a verification outcome,
+            // never an ordinary column move.
+            if (board.name == ALGEDONIC_BOARD_NAME && target == TaskStatus::Done)
+                || !board.can_transition(task.status, target)
+            {
+                return Err(KanbanError::InvalidTransition {
+                    task: task_id,
+                    from: task.status,
+                    to: target,
                 });
             }
-        }
-
-        task.status = target;
-        task.updated_at = chrono::Utc::now();
-
-        self.update_task_triple(&task)?;
+            if let Some((col, limit, count)) = wip
+                && count >= limit as usize
+            {
+                return Err(KanbanError::WipLimitExceeded {
+                    column: col.name.clone(),
+                    limit,
+                    current: count as u32,
+                });
+            }
+            let from_status = task.status;
+            task.status = target;
+            Ok(from_status)
+        })?;
 
         // P9: Regulation span
         tracing::info!(
@@ -647,28 +658,26 @@ impl KanbanService {
     /// \[P12\] Constraining: No anonymous agency — the accepted assignment has an actor WebID.
     #[must_use = "result must be used"]
     pub(crate) fn task_claim(&self, task_id: TaskId, actor: WebID) -> Result<Task, KanbanError> {
-        let mut task = self.require_task(task_id)?;
+        let (task, ()) = self.mutate_task(task_id, |task| {
+            if task.assignee.is_some() {
+                return Err(KanbanError::PermissionDenied(
+                    "task is already assigned".into(),
+                ));
+            }
 
-        if task.assignee.is_some() {
-            return Err(KanbanError::PermissionDenied(
-                "task is already assigned".into(),
-            ));
-        }
+            // P4: Clear Boundaries — only tasks in Backlog or Ready can be claimed.
+            // InProgress/Review/Done tasks are not claimable.
+            if !matches!(task.status, TaskStatus::Backlog | TaskStatus::Ready) {
+                return Err(KanbanError::InvalidTransition {
+                    task: task_id,
+                    from: task.status,
+                    to: task.status,
+                });
+            }
 
-        // P4: Clear Boundaries — only tasks in Backlog or Ready can be claimed.
-        // InProgress/Review/Done tasks are not claimable.
-        if !matches!(task.status, TaskStatus::Backlog | TaskStatus::Ready) {
-            return Err(KanbanError::InvalidTransition {
-                task: task_id,
-                from: task.status,
-                to: task.status,
-            });
-        }
-
-        task.assignee = Some(actor);
-        task.updated_at = chrono::Utc::now();
-
-        self.update_task_triple(&task)?;
+            task.assignee = Some(actor);
+            Ok(())
+        })?;
 
         // P9: Regulation span
         tracing::info!(
@@ -694,58 +703,56 @@ impl KanbanService {
         evidence: &str,
         verifier: WebID,
     ) -> Result<(Task, Verification), KanbanError> {
-        let mut task = self.require_task(task_id)?;
+        let (task, verification) = self.mutate_task(task_id, |task| {
+            Self::require_task_owner(task, verifier)?;
 
-        Self::require_task_owner(&task, verifier)?;
+            if task.status != TaskStatus::Review {
+                return Err(KanbanError::InvalidTransition {
+                    task: task_id,
+                    from: task.status,
+                    to: TaskStatus::Done,
+                });
+            }
 
-        if task.status != TaskStatus::Review {
-            return Err(KanbanError::InvalidTransition {
-                task: task_id,
-                from: task.status,
-                to: TaskStatus::Done,
-            });
-        }
-
-        // Task completion is user-feedback-driven.
-        // Evidence (the user's confirmation text) IS the completion signal.
-        // Criteria are informational — they guide work but don't gate completion.
-        let passed = !evidence.trim().is_empty();
-        let reasoning = if passed {
-            let criteria_list: Vec<String> = task
-                .criteria
-                .iter()
-                .map(|c| format!("  - {}", c.description))
-                .collect();
-            let criteria_block = if criteria_list.is_empty() {
-                String::new()
+            // Task completion is user-feedback-driven.
+            // Evidence (the user's confirmation text) IS the completion signal.
+            // Criteria are informational — they guide work but don't gate completion.
+            let passed = !evidence.trim().is_empty();
+            let reasoning = if passed {
+                let criteria_list: Vec<String> = task
+                    .criteria
+                    .iter()
+                    .map(|c| format!("  - {}", c.description))
+                    .collect();
+                let criteria_block = if criteria_list.is_empty() {
+                    String::new()
+                } else {
+                    format!("\nCriteria:\n{}", criteria_list.join("\n"))
+                };
+                format!(
+                    "User feedback received.{} Evidence length: {} chars.",
+                    criteria_block,
+                    evidence.len()
+                )
             } else {
-                format!("\nCriteria:\n{}", criteria_list.join("\n"))
+                "No evidence provided — task not verified.".into()
             };
-            format!(
-                "User feedback received.{} Evidence length: {} chars.",
-                criteria_block,
-                evidence.len()
-            )
-        } else {
-            "No evidence provided — task not verified.".into()
-        };
 
-        let verification = Verification::new(passed, reasoning, verifier);
-        task.verification = Some(verification.clone());
+            let verification = Verification::new(passed, reasoning, verifier);
+            task.verification = Some(verification.clone());
 
-        if passed {
-            task.status = TaskStatus::Done;
-        }
-        task.updated_at = chrono::Utc::now();
-
-        self.update_task_triple(&task)?;
+            if passed {
+                task.status = TaskStatus::Done;
+            }
+            Ok(verification)
+        })?;
 
         // P9: Regulation span
         tracing::info!(
             target: "hkask.kanban",
             operation = "task_verified",
             task_id = %task_id,
-            passed = passed,
+            passed = verification.passed,
             verifier = %verifier,
             "REG"
         );
@@ -812,11 +819,11 @@ impl KanbanService {
     /// post: task.assignee is set to None; task.updated_at refreshed
     #[must_use = "result must be used"]
     pub(crate) fn task_unassign(&self, task_id: TaskId, actor: WebID) -> Result<Task, KanbanError> {
-        let mut task = self.require_task(task_id)?;
-        Self::require_task_owner(&task, actor)?;
-        task.assignee = None;
-        task.updated_at = chrono::Utc::now();
-        self.update_task_triple(&task)?;
+        let (task, ()) = self.mutate_task(task_id, |task| {
+            Self::require_task_owner(task, actor)?;
+            task.assignee = None;
+            Ok(())
+        })?;
         Ok(task)
     }
 
@@ -845,31 +852,33 @@ impl KanbanService {
         labels: Option<Vec<String>>,
         advances: Option<Vec<CriterionCitation>>,
     ) -> Result<Task, KanbanError> {
-        let mut task = self.require_task(task_id)?;
-        Self::require_task_owner(&task, actor)?;
-        if let Some(new_title) = title {
-            task.title = new_title;
+        // Validate cross-record citations before taking the task write lock.
+        if let Some(new_advances) = &advances {
+            Self::require_task_owner(&self.require_task(task_id)?, actor)?;
+            self.validate_goal_citations(new_advances)?;
         }
-        if let Some(description_update) = description {
-            task.description = description_update;
-        }
-        if let Some(new_criteria) = criteria {
-            task.criteria = new_criteria;
-        }
-        if let Some(priority_update) = priority {
-            task.priority = priority_update;
-        }
-        if let Some(new_labels) = labels {
-            task.labels = new_labels;
-        }
-        if let Some(new_advances) = advances {
-            // Same validation as creation: the citation is re-anchored against
-            // the live goal store at every write that carries it.
-            self.validate_goal_citations(&new_advances)?;
-            task.advances = new_advances;
-        }
-        task.updated_at = chrono::Utc::now();
-        self.update_task_triple(&task)?;
+        let (task, ()) = self.mutate_task(task_id, |task| {
+            Self::require_task_owner(task, actor)?;
+            if let Some(new_title) = title {
+                task.title = new_title;
+            }
+            if let Some(description_update) = description {
+                task.description = description_update;
+            }
+            if let Some(new_criteria) = criteria {
+                task.criteria = new_criteria;
+            }
+            if let Some(priority_update) = priority {
+                task.priority = priority_update;
+            }
+            if let Some(new_labels) = labels {
+                task.labels = new_labels;
+            }
+            if let Some(new_advances) = advances {
+                task.advances = new_advances;
+            }
+            Ok(())
+        })?;
         Ok(task)
     }
 
@@ -879,22 +888,21 @@ impl KanbanService {
     /// post: task moves to InProgress, verification cleared
     #[must_use = "result must be used"]
     pub(crate) fn task_reopen(&self, task_id: TaskId, actor: WebID) -> Result<Task, KanbanError> {
-        let mut task = self.require_task(task_id)?;
+        let (task, ()) = self.mutate_task(task_id, |task| {
+            Self::require_task_owner(task, actor)?;
 
-        Self::require_task_owner(&task, actor)?;
+            if task.status != TaskStatus::Done {
+                return Err(KanbanError::InvalidTransition {
+                    task: task_id,
+                    from: task.status,
+                    to: TaskStatus::InProgress,
+                });
+            }
 
-        if task.status != TaskStatus::Done {
-            return Err(KanbanError::InvalidTransition {
-                task: task_id,
-                from: task.status,
-                to: TaskStatus::InProgress,
-            });
-        }
-
-        task.status = TaskStatus::InProgress;
-        task.verification = None;
-        task.updated_at = chrono::Utc::now();
-        self.update_task_triple(&task)?;
+            task.status = TaskStatus::InProgress;
+            task.verification = None;
+            Ok(())
+        })?;
         Ok(task)
     }
 
@@ -938,43 +946,74 @@ impl KanbanService {
 
     // ── Helpers ───────────────────────────────────────────────────────
 
-    pub(crate) fn update_task_triple(&self, task: &Task) -> Result<(), KanbanError> {
-        let new_value = serde_json::to_value(task)
-            .map_err(|e| KanbanError::Internal(format!("serialization failed: {e}")))?;
-        // Atomic stable-key write: one IMMEDIATE transaction keyed by the
-        // stable (entity, attribute) pair — the row's h_mem ID and
-        // confidence are preserved, and the write lock spans the whole
-        // read-modify-write so concurrent writers serialize. The prior form
-        // resolved the row's h_mem ID and wrote through `HMemStore::update`,
-        // which re-keys the row (delete + reinsert under a new ID): a
-        // sibling commit in the resolve→write window left the old ID
-        // targeting a deleted row — the live "[internal] h_mem update
-        // failed: ... Query returned no rows" lost-update race under
-        // parallel card writes (card 84c7e7b8).
-        self.store.update_value_atomic::<(), TaskWriteError>(
-            TASK_ENTITY,
-            &task.id.to_string(),
-            |_| Ok((Some(new_value), ())),
-        )?;
-        Ok(())
+    #[cfg(test)]
+    fn pause_before_task_write(&self) {
+        let pause = self
+            .before_task_write
+            .lock()
+            .expect("task scheduling hook lock")
+            .take();
+        if let Some(pause) = pause {
+            pause();
+        }
+    }
+
+    /// Transform the latest task under the existing storage write lock. Callers
+    /// must validate task-dependent authority/state here, not on a snapshot.
+    /// Do not query the store in `change`: it already holds a pooled connection.
+    pub(super) fn mutate_task<T>(
+        &self,
+        task_id: TaskId,
+        change: impl FnOnce(&mut Task) -> Result<T, KanbanError>,
+    ) -> Result<(Task, T), KanbanError> {
+        #[cfg(test)]
+        self.pause_before_task_write();
+        self.store
+            .update_value_atomic::<_, TaskWriteError>(
+                TASK_ENTITY,
+                &task_id.to_string(),
+                |current| {
+                    let mut task: Task = serde_json::from_value(current).map_err(|error| {
+                        TaskWriteError(KanbanError::Internal(format!(
+                            "deserialization failed: {error}"
+                        )))
+                    })?;
+                    let result = change(&mut task).map_err(TaskWriteError)?;
+                    task.updated_at = chrono::Utc::now();
+                    let value = serde_json::to_value(&task).map_err(|error| {
+                        TaskWriteError(KanbanError::Internal(format!(
+                            "serialization failed: {error}"
+                        )))
+                    })?;
+                    Ok((Some(value), (task, result)))
+                },
+            )?
+            .ok_or_else(|| {
+                KanbanError::NotFound(NotFound {
+                    entity_type: "task".to_string(),
+                    id: task_id.to_string(),
+                })
+            })
     }
 }
 
 /// The task/board write path's `HMemError` mapping. The crate-wide
 /// `From<HMemError> for KanbanError` (goals.rs) carries the goal path's
 /// "atomic goal transition failed" text; task and board writes keep their
-/// operator-facing "h_mem update failed" error — the string the live
-/// incidents and the concurrent-write pin match on.
-struct TaskWriteError(HMemError);
+/// operator-facing "h_mem update failed" storage error. Domain validation
+/// errors pass through unchanged so callers retain their typed classification.
+struct TaskWriteError(KanbanError);
 
 impl From<HMemError> for TaskWriteError {
     fn from(error: HMemError) -> Self {
-        TaskWriteError(error)
+        TaskWriteError(KanbanError::Internal(format!(
+            "h_mem update failed: {error}"
+        )))
     }
 }
 
 impl From<TaskWriteError> for KanbanError {
     fn from(error: TaskWriteError) -> Self {
-        KanbanError::Internal(format!("h_mem update failed: {}", error.0))
+        error.0
     }
 }

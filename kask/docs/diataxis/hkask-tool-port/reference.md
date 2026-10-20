@@ -27,7 +27,7 @@ at invoke time, and the check was worthless — every production mint site deriv
 the token's `resource_id` from the same tool name it passed to `invoke`, so the
 comparison was a value against itself
 (`kask/crates/hkask-tool-port/src/tool_port.rs:68-83`;
-`kask/crates/hkask-mcp/src/runtime.rs:1520-1528`).
+`kask/crates/hkask-mcp/src/runtime.rs`).
 
 ## Source citations
 
@@ -39,9 +39,9 @@ comparison was a value against itself
 | `ToolFuture` type alias      | `kask/crates/hkask-tool-port/src/tool_port.rs:62`                                             |
 | `ToolInfo` struct            | `kask/crates/hkask-tool-port/src/tool_port.rs:118-125`                                        |
 | Crate lib root               | `kask/crates/hkask-tool-port/src/hkask_tool_port.rs:1-23`                                     |
-| `ToolPort` implementor      | `kask/crates/hkask-mcp/src/runtime.rs:1530` (`impl hkask_tool_port::ToolPort for McpRuntime`) |
-| `McpRuntime::invoke` body    | `kask/crates/hkask-mcp/src/runtime.rs:1531-1651`                                               |
-| `McpRuntime::with_governance`| `kask/crates/hkask-mcp/src/runtime.rs:529`                                                     |
+| `ToolPort` implementor      | `kask/crates/hkask-mcp/src/runtime.rs` (`impl hkask_tool_port::ToolPort for McpRuntime`) |
+| `McpRuntime::invoke` body    | `kask/crates/hkask-mcp/src/runtime.rs`                                               |
+| `McpRuntime::with_governance`| `kask/crates/hkask-mcp/src/runtime.rs`                                                     |
 | `CallMeterOutcome` enum      | `kask/crates/hkask-regulation/src/energy.rs:30-40`                                             |
 | `CallCapManager::charge_metered` | `kask/crates/hkask-regulation/src/energy.rs:176`                                           |
 | `DEFAULT_RUNAWAY_CALL_CEILING` | `kask/crates/hkask-regulation/src/energy.rs:26`                                              |
@@ -96,7 +96,7 @@ classDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CAP-006
 verified_date: 2026-09-28
-verified_against: kask/crates/hkask-tool-port/src/tool_port.rs:62,89-116,118-125; kask/crates/hkask-tool-port/src/tool_port.rs:8-53; kask/crates/hkask-mcp/src/runtime.rs:1530
+verified_against: kask/crates/hkask-tool-port/src/tool_port.rs:62,89-116,118-125; kask/crates/hkask-tool-port/src/tool_port.rs:8-53; kask/crates/hkask-mcp/src/runtime.rs
 status: VERIFIED
 -->
 
@@ -153,26 +153,26 @@ pub struct ToolInfo {
 
 ## What `invoke` does
 
-`McpRuntime::invoke` (`runtime.rs:1531-1651`) performs, in order:
+`McpRuntime::invoke` (`kask/crates/hkask-mcp/src/runtime.rs`) performs, in order:
 
 1. **Call metering** — when governance is wired (`with_governance`,
-   `runtime.rs:529`), charge one call against the agent's per-tick ceiling
+   `kask/crates/hkask-mcp/src/runtime.rs`), charge one call against the agent's per-tick ceiling
    via `CyberneticsLoop::charge_call_metered`
    (`cybernetics_loop.rs:653`), which delegates to
    `CallCapManager::charge_metered` (`energy.rs:176`). Without governance,
-   dispatch unmetered (`runtime.rs:1641-1651`).
-2. **Dispatch** — `call_tool_inner` (`runtime.rs:1668`) checks for a live
+   dispatch unmetered (`kask/crates/hkask-mcp/src/runtime.rs`).
+2. **Dispatch** — `call_tool_inner` (`kask/crates/hkask-mcp/src/runtime.rs`) checks for a live
    connection, reconnects once if the transport closed, and issues the
    JSON-RPC call.
 3. **Span emission** — persist a `SpanKind::ToolCompleted`
    `RegulationRecord` at `CyclePhase::Act` carrying server, tool, call
    count, and success/failure status, through the wired `RegulationSink`
-   (`runtime.rs:1595-1606`), then record the outcome in the
+   (`kask/crates/hkask-mcp/src/runtime.rs`), then record the outcome in the
    `RegulationLedger` per-server so the `ToolReliabilitySensor` can sense
-   aggregate success rates (`runtime.rs:1608-1639`).
+   aggregate success rates (`kask/crates/hkask-mcp/src/runtime.rs`).
 
 There is no authorization step. The only way `invoke` returns an error
-before dispatch is `EnergyBudgetExceeded` (`runtime.rs:1571-1590`).
+before dispatch is `EnergyBudgetExceeded` (`kask/crates/hkask-mcp/src/runtime.rs`).
 
 ```mermaid
 stateDiagram-v2
@@ -189,7 +189,7 @@ stateDiagram-v2
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CAP-004
 verified_date: 2026-09-28
-verified_against: kask/crates/hkask-mcp/src/runtime.rs:1530-1651 (impl ToolPort for McpRuntime, charge_call_metered branch L1559-1590 + no-governance branch L1641-1651); kask/crates/hkask-regulation/src/energy.rs:30-40 (CallMeterOutcome)
+verified_against: kask/crates/hkask-mcp/src/runtime.rs (McpRuntime, impl ToolPort for McpRuntime, start_server_with_env, stop_server, tool_surface_changes); kask/crates/hkask-regulation/src/energy.rs:30-40 (CallMeterOutcome)
 status: VERIFIED
 -->
 
@@ -230,7 +230,7 @@ check. `CallCapManager::charge_metered` (`energy.rs:176`) returns a
 
 Fail-open on an unregistered agent is deliberate: a missing registration is a
 composition-root wiring omission, and refusing it fails live paths without
-protecting anything (`runtime.rs:1546-1558` records the incident: the
+protecting anything (`kask/crates/hkask-mcp/src/runtime.rs` records the incident: the
 `kask-panel` and skill execution personas were never seeded, so every IPC and
 cascade tool call died at the gate).
 

@@ -290,15 +290,11 @@ pub struct McpTool {
     pub server_id: String,
 }
 
-/// MCP server registration
+/// Discovered server metadata retained for lookup and connection recovery.
 #[derive(Debug, Clone)]
-pub struct McpServer {
-    /// Server ID
-    pub id: String,
-    /// Server name
-    pub name: String,
-    /// Tools provided by this server
-    pub tools: Vec<McpTool>,
+struct McpServer {
+    id: String,
+    tools: Vec<McpTool>,
 }
 
 /// Non-secret process plumbing forwarded to every MCP child process after
@@ -464,8 +460,7 @@ enum ConnectionState {
 /// structural (one lock, one entry) instead of cross-map protocol.
 #[derive(Default)]
 struct ServerEntry {
-    /// Registered metadata with discovered tools; `None` until registered
-    /// or discovery completes.
+    /// Discovered metadata; retained across connection loss, absent until discovery.
     metadata: Option<McpServer>,
     /// Live connection + its generation; `None` when not connected.
     connection: Option<Connection>,
@@ -613,7 +608,7 @@ impl McpRuntime {
             .collect()
     }
 
-    /// A receiver that fires on tool registration or connection liveness
+    /// A receiver that fires on tool discovery/removal or connection liveness
     /// changes (including an unexpected disconnect). Executor-agnostic —
     /// `tokio::sync::watch` registers no timers, so it is awaitable from any
     /// executor (the GPUI traps in `.rules` concern the timer wheel, not
@@ -621,48 +616,6 @@ impl McpRuntime {
     #[must_use]
     pub fn tool_surface_changes(&self) -> tokio::sync::watch::Receiver<()> {
         self.tool_surface_tx.subscribe()
-    }
-
-    /// Register an MCP server (metadata only, no live connection).
-    /// Register an MCP server (metadata only, no live connection).
-    ///
-    /// Registration is surface-preserving: a placeholder registration
-    /// (`tools: vec![]` — the pre-start shape every production caller
-    /// uses) never erases an already-discovered tool surface. The start
-    /// that follows a placeholder is a live-peer no-op for a running
-    /// server, so discovery does not re-run — a clobbering placeholder
-    /// left servers running with a zero-tool surface for the rest of the
-    /// session (live 2026-10-05: the settings-observer load path
-    /// re-registered the already-running research, curator, and
-    /// kata-kanban servers with `tools=0` two minutes after their tools
-    /// were discovered; companies recovered only because its process
-    /// had died, so the observer's start re-discovered). A registration
-    /// that carries tools still replaces the surface (the explicit
-    /// surface-update path).
-    pub async fn register_server(&self, server: McpServer) {
-        let mut entries = self.entries.write().await;
-
-        info!(
-            target: "hkask.mcp",
-            server_id = %server.id,
-            server_name = %server.name,
-            tools = server.tools.len(),
-            "Registering MCP server"
-        );
-
-        let entry = entries.entry(server.id.clone()).or_default();
-        let preserves_discovered = server.tools.is_empty()
-            && entry
-                .metadata
-                .as_ref()
-                .is_some_and(|existing| !existing.tools.is_empty());
-        if !preserves_discovered {
-            entry.metadata = Some(server);
-        }
-        // Registration is an event, not something consumers must poll for.
-        // `send_replace` is infallible and wakes subscribers without running
-        // them inline, so it is safe while the `entries` write guard is held.
-        self.tool_surface_tx.send_replace(());
     }
 
     /// Start an MCP server process and connect via rmcp stdio transport with
@@ -1031,7 +984,6 @@ impl McpRuntime {
             // one event.
             let server = McpServer {
                 id: server_id.to_string(),
-                name: server_id.to_string(),
                 tools: tools
                     .into_iter()
                     .map(|t| McpTool {
@@ -1050,8 +1002,8 @@ impl McpRuntime {
                 "MCP server started and tools discovered"
             );
             entry.metadata = Some(server);
-            // `send_replace` is safe under the write guard (see
-            // `register_server`).
+            // `send_replace` wakes subscribers without running them inline,
+            // so publication is safe under the entries write guard.
             self.tool_surface_tx.send_replace(());
         }
 
@@ -1324,9 +1276,8 @@ impl McpRuntime {
     /// (`config.reconnect_cooldown`).
     ///
     /// Returns `true` when a live connection exists afterwards. Requires a launch
-    /// spec recorded by a prior `start_server_with_env` — a server that was only
-    /// ever `register_server`'d (metadata, no process) cannot be reconnected, and
-    /// reports `false` rather than pretending to recover.
+    /// spec recorded by a prior `start_server_with_env`; an unknown or stopped
+    /// server cannot be reconnected.
     async fn try_reconnect(&self, server_id: &str) -> bool {
         // Spec lookup, cooldown check, and stamp under one write lock so
         // concurrent callers cannot both pass the gate and spawn duplicate
@@ -2103,153 +2054,15 @@ mod env_isolation_tests {
 }
 
 #[cfg(test)]
-mod registration_surface_tests {
-    use super::*;
-
-    /// Phase-1 pin (registry-sync resilience): a placeholder
-    /// re-registration — the settings-observer load path registers
-    /// `tools: vec![]` for a server that is already running — must not
-    /// erase the discovered tool surface. The follow-up start is a
-    /// live-peer no-op, so discovery never re-runs (live 2026-10-05:
-    /// research, curator, and kata-kanban ran with zero tools for a
-    /// session after their surfaces were clobbered two minutes after
-    /// discovery).
-    #[tokio::test]
-    async fn placeholder_registration_preserves_a_discovered_surface() {
-        let runtime = McpRuntime::new();
-        runtime
-            .register_server(McpServer {
-                id: "srv".to_string(),
-                name: "srv".to_string(),
-                tools: vec![McpTool {
-                    server_id: "srv".to_string(),
-                    name: "web_ping".to_string(),
-                    description: "liveness probe".to_string(),
-                    input_schema: serde_json::json!({"type": "object"}),
-                }],
-            })
-            .await;
-        // The load-path placeholder: same id, empty tools.
-        runtime
-            .register_server(McpServer {
-                id: "srv".to_string(),
-                name: "srv".to_string(),
-                tools: vec![],
-            })
-            .await;
-        let tools = runtime
-            .registered_servers()
-            .await
-            .into_iter()
-            .find(|(id, _)| id == "srv")
-            .map(|(_, tools)| tools)
-            .unwrap_or_default();
-        assert_eq!(
-            tools.len(),
-            1,
-            "the discovered surface survives the placeholder: {tools:?}"
-        );
-        assert_eq!(tools[0].name, "web_ping");
-    }
-
-    /// The explicit-update path is unchanged: a registration carrying
-    /// tools replaces the surface (the settings-UI fixture pattern).
-    #[tokio::test]
-    async fn registration_with_tools_still_replaces_the_surface() {
-        let runtime = McpRuntime::new();
-        let tool = |name: &str| McpTool {
-            server_id: "srv".to_string(),
-            name: name.to_string(),
-            description: String::new(),
-            input_schema: serde_json::json!({"type": "object"}),
-        };
-        runtime
-            .register_server(McpServer {
-                id: "srv".to_string(),
-                name: "srv".to_string(),
-                tools: vec![tool("first")],
-            })
-            .await;
-        runtime
-            .register_server(McpServer {
-                id: "srv".to_string(),
-                name: "srv".to_string(),
-                tools: vec![tool("second")],
-            })
-            .await;
-        let tools = runtime
-            .registered_servers()
-            .await
-            .into_iter()
-            .find(|(id, _)| id == "srv")
-            .map(|(_, tools)| tools)
-            .unwrap_or_default();
-        assert_eq!(tools.len(), 1, "replacement, not accumulation: {tools:?}");
-        assert_eq!(tools[0].name, "second");
-    }
-
-    /// A placeholder registration for a server with NO discovered
-    /// surface still lands (the pre-start placeholder pattern — the
-    /// launch path registers empty before starting, and discovery fills
-    /// the surface in).
-    #[tokio::test]
-    async fn placeholder_registration_lands_when_no_surface_exists() {
-        let runtime = McpRuntime::new();
-        runtime
-            .register_server(McpServer {
-                id: "srv".to_string(),
-                name: "srv".to_string(),
-                tools: vec![],
-            })
-            .await;
-        let servers = runtime.registered_servers().await;
-        assert!(
-            servers
-                .iter()
-                .any(|(id, tools)| id == "srv" && tools.is_empty()),
-            "the placeholder registers: {servers:?}"
-        );
-    }
-}
-
-#[cfg(test)]
 mod reconnect_path_tests {
     use super::*;
 
-    /// A runtime with a registered-but-not-started server has no launch spec,
-    /// so `try_reconnect` reports `false` rather than pretending to recover.
-    ///
-    /// This is the metadata-only-server case: `register_server` populates
-    /// the entry's metadata but records no launch spec, so a reconnect has
-    /// nothing to rebuild from.
+    /// Reconnect cannot invent a launch specification for an unknown server.
     #[tokio::test]
-    async fn metadata_only_server_cannot_be_reconnected() {
+    async fn unknown_server_cannot_be_reconnected() {
         let runtime = McpRuntime::new();
-        runtime
-            .register_server(McpServer {
-                id: "metadata-only".to_string(),
-                name: "metadata-only".to_string(),
-                tools: vec![],
-            })
-            .await;
-
-        // No launch spec was ever recorded.
-        assert!(
-            runtime
-                .entries
-                .read()
-                .await
-                .values()
-                .all(|entry| entry.spec.is_none()),
-            "a metadata-only server must not record a launch spec"
-        );
-
-        // try_reconnect returns false — there is nothing to reconnect from.
-        let reconnected = runtime.try_reconnect("metadata-only").await;
-        assert!(
-            !reconnected,
-            "try_reconnect must report false for a server with no launch spec"
-        );
+        assert!(!runtime.try_reconnect("unknown").await);
+        assert!(runtime.entries.read().await.is_empty());
     }
 
     /// `stop_server` clears the launch spec, so a deliberate stop is not
@@ -2455,17 +2268,19 @@ mod tool_identity_tests {
         }
     }
 
-    /// Register alpha and beta, each exposing its own same-named `lookup`
-    /// tool — the two-server setup the tool-identity tests share.
-    async fn register_lookup_servers(runtime: &McpRuntime) {
+    /// Seed retained metadata for alpha and beta's same-named lookup tools.
+    async fn seed_lookup_metadata(runtime: &McpRuntime) {
         for server in ["alpha", "beta"] {
             runtime
-                .register_server(McpServer {
-                    id: server.to_string(),
-                    name: server.to_string(),
-                    tools: vec![tool_on(server, "lookup")],
-                })
-                .await;
+                .entries
+                .write()
+                .await
+                .entry(server.to_string())
+                .or_default()
+                .metadata = Some(McpServer {
+                id: server.to_string(),
+                tools: vec![tool_on(server, "lookup")],
+            });
         }
     }
 
@@ -2474,7 +2289,7 @@ mod tool_identity_tests {
     #[tokio::test]
     async fn same_named_tools_on_two_servers_keep_their_own_schemas() {
         let runtime = McpRuntime::new();
-        register_lookup_servers(&runtime).await;
+        seed_lookup_metadata(&runtime).await;
 
         let alpha = runtime
             .get_tool_info("alpha", "lookup")
@@ -2494,7 +2309,7 @@ mod tool_identity_tests {
     #[tokio::test]
     async fn stopping_one_server_leaves_the_others_same_named_tool_lookup() {
         let runtime = McpRuntime::new();
-        register_lookup_servers(&runtime).await;
+        seed_lookup_metadata(&runtime).await;
 
         runtime.stop_server("alpha").await;
 
@@ -2514,20 +2329,18 @@ mod tool_identity_tests {
     #[tokio::test]
     async fn get_tool_info_scopes_to_the_named_server() {
         let runtime = McpRuntime::new();
-        runtime
-            .register_server(McpServer {
-                id: "alpha".to_string(),
-                name: "alpha".to_string(),
-                tools: vec![tool_on("alpha", "only_on_alpha")],
-            })
-            .await;
-        runtime
-            .register_server(McpServer {
-                id: "beta".to_string(),
-                name: "beta".to_string(),
-                tools: vec![],
-            })
-            .await;
+        {
+            let mut entries = runtime.entries.write().await;
+            for (server, tools) in [
+                ("alpha", vec![tool_on("alpha", "only_on_alpha")]),
+                ("beta", vec![]),
+            ] {
+                entries.entry(server.to_string()).or_default().metadata = Some(McpServer {
+                    id: server.to_string(),
+                    tools,
+                });
+            }
+        }
 
         assert!(
             runtime
@@ -2580,23 +2393,24 @@ mod metering_tests {
         McpRuntime::new().with_governance(cyber, Arc::new(NoopEventSink))
     }
 
-    /// Register a fixture server exposing one `ping` tool — the setup the
-    /// metering tests share so each call reaches `Unavailable` (registered
-    /// but never started), not `NotFound`; the metering decision, not the
-    /// tool lookup, is what each test varies.
-    async fn register_ping_server(runtime: &McpRuntime) {
+    /// Seed tool metadata without a transport so dispatch is unavailable;
+    /// these tests vary metering, not child-process discovery.
+    async fn seed_ping_metadata(runtime: &McpRuntime) {
         runtime
-            .register_server(McpServer {
-                id: "fixture".to_string(),
-                name: "fixture".to_string(),
-                tools: vec![McpTool {
-                    name: "ping".to_string(),
-                    description: String::new(),
-                    input_schema: Value::Null,
-                    server_id: "fixture".to_string(),
-                }],
-            })
-            .await;
+            .entries
+            .write()
+            .await
+            .entry("fixture".to_string())
+            .or_default()
+            .metadata = Some(McpServer {
+            id: "fixture".to_string(),
+            tools: vec![McpTool {
+                name: "ping".to_string(),
+                description: String::new(),
+                input_schema: Value::Null,
+                server_id: "fixture".to_string(),
+            }],
+        });
     }
 
     /// An agent the composition root never registered is auto-registered at
@@ -2613,7 +2427,7 @@ mod metering_tests {
         // check passes and the dispatch path reaches `Unavailable` (registered
         // but never started) rather than `NotFound` (unknown tool). The
         // metering decision is what's under test, not the tool lookup.
-        register_ping_server(&runtime).await;
+        seed_ping_metadata(&runtime).await;
         let agent = WebID::new();
 
         // The agent has no registered cap. invoke must NOT return
@@ -2649,7 +2463,7 @@ mod metering_tests {
         let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
         let cyber = Arc::new(RwLock::new(CyberneticsLoop::new(ledger.clone())));
         let runtime = McpRuntime::new().with_governance(cyber, Arc::new(NoopEventSink));
-        register_ping_server(&runtime).await;
+        seed_ping_metadata(&runtime).await;
         let agent = WebID::new();
 
         // Dispatch fails (no live connection) but the feed fires after the
@@ -2725,16 +2539,19 @@ mod metering_tests {
             server_id: "kata-kanban".to_string(),
         };
         runtime
-            .register_server(McpServer {
-                id: "kata-kanban".to_string(),
-                name: "kata-kanban".to_string(),
-                tools: vec![
-                    kanban_tool("kanban_board_list"),
-                    kanban_tool("kanban_task_list"),
-                    kanban_tool("kanban_task_create"),
-                ],
-            })
-            .await;
+            .entries
+            .write()
+            .await
+            .entry("kata-kanban".to_string())
+            .or_default()
+            .metadata = Some(McpServer {
+            id: "kata-kanban".to_string(),
+            tools: vec![
+                kanban_tool("kanban_board_list"),
+                kanban_tool("kanban_task_list"),
+                kanban_tool("kanban_task_create"),
+            ],
+        });
 
         let panel = WebID::for_agent_name(hkask_types::event::SWARM_PANEL_PERSONA);
         // The loop's sensing polls. Dispatch reports Unavailable (no live
@@ -2798,7 +2615,7 @@ mod metering_tests {
         // Register a server+tool so the first call reaches `Unavailable`
         // (not `NotFound`) — the cap exhaustion, not the tool lookup, is
         // what's under test.
-        register_ping_server(&runtime).await;
+        seed_ping_metadata(&runtime).await;
         let agent = WebID::new();
         // Register a ceiling of 1 — the first call charges it, the second
         // trips the breaker.
@@ -2845,7 +2662,7 @@ mod metering_tests {
         // Register a server+tool so the call reaches `Unavailable` (not
         // `NotFound`) — the absence of metering, not the tool lookup, is
         // what's under test.
-        register_ping_server(&runtime).await;
+        seed_ping_metadata(&runtime).await;
 
         let agent = WebID::new();
         let result = runtime.invoke("fixture", "ping", Value::Null, agent).await;

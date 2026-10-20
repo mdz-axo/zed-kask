@@ -20,12 +20,12 @@ impl KanbanService {
                 "injected task_comment fault (test seam)".to_string(),
             ));
         }
-        let mut task = self.require_task(task_id)?;
-        Self::require_task_actor(&task, author)?;
-        let comment = Comment::new(task_id, author, body.to_string());
-        task.comments.push(comment.clone());
-        task.updated_at = chrono::Utc::now();
-        self.update_task_triple(&task)?;
+        let (_, comment) = self.mutate_task(task_id, |task| {
+            Self::require_task_actor(task, author)?;
+            let comment = Comment::new(task_id, author, body.to_string());
+            task.comments.push(comment.clone());
+            Ok(comment)
+        })?;
         Ok(comment)
     }
 
@@ -45,11 +45,11 @@ impl KanbanService {
         path: &str,
         actor: WebID,
     ) -> Result<Task, KanbanError> {
-        let mut task = self.require_task(task_id)?;
-        Self::require_task_actor(&task, actor)?;
-        task.deliverables.push(path.to_string());
-        task.updated_at = chrono::Utc::now();
-        self.update_task_triple(&task)?;
+        let (task, ()) = self.mutate_task(task_id, |task| {
+            Self::require_task_actor(task, actor)?;
+            task.deliverables.push(path.to_string());
+            Ok(())
+        })?;
         Ok(task)
     }
 }

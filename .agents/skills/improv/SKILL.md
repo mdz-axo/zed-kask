@@ -15,7 +15,7 @@ Johnstone, *Impro: Improvisation and the Theatre* (1979) — accepting and build
 
 - **Initial condition:** the current contribution, prior contributions, the active mode (if any), and any kata question in play.
 - **Target condition:** the reply follows the selected mode's constraints (see Constraints) as judged by the human participant.
-- **PDCA exemption:** each mode is single-pass per contribution; the conversation continues with the human, who judges every reply. The only bounds are the modes' own: Freestyling's declared time bound and Riffing's `max_steps`.
+- **Per-contribution Check/Act:** select the mode and draft one reply; check it against that mode's named Constraints and `IMP-2`/`IMP-3` where applicable. On a passing Check, deliver for the human participant's judgment. On a named failure, revise that reply once and recheck; if it still fails, report the unmet constraint and stop. Freestyling's time bound and Riffing's `max_steps` remain additional bounds. This adapts PDCA (Lean Enterprise Institute's Plan, Do, Check, Act); it checks the contribution, never evaluates or accepts the skill itself.
 
 ## Step types (D/P labelling)
 
@@ -26,6 +26,7 @@ Johnstone, *Impro: Improvisation and the Theatre* (1979) — accepting and build
 | Yes But literal forbidden words (`IMP-2`, partial) | D | `lisp_eval` check below; catches literal words only, not contradiction |
 | Plussing seed confidence ranking | P | a model estimate used only to rank seeds — never reported as a finding |
 | Freestyling & Riffing bounds (`IMP-3`: `time_remaining`, `next_speaker`, `steps_remaining`) | D | `lisp_eval` arithmetic over `time_bound`, `elapsed_secs`, `participants`, `turn_index`, `max_steps`, and `steps_taken` |
+| Per-contribution Check/Act | D + P | `IMP-2`/`IMP-3` supply partial mechanical evidence; mode adherence is a semantic assessment, with the human participant retaining judgment |
 
 ## When to Use
 
@@ -55,6 +56,12 @@ Johnstone, *Impro: Improvisation and the Theatre* (1979) — accepting and build
 6. Default to `plussing` when no rule fires.
 7. Return `{mode, rationale}`.
 
+### Per-contribution Check/Act (all selected modes)
+1. **Plan/Do:** select the mode above, render its template with the complete context below, and draft one reply using that mode's instructions. For Freestyling, run `IMP-3` before another turn; at zero time remaining, end and summarize instead. For `ReturnAfterSteps`, run `IMP-3` before exploring; at zero steps remaining, return with synthesis instead.
+2. **Check:** name any unmet constraint from that mode's Constraints and instructions. Check mode adherence semantically; run `IMP-2` for Yes But and `IMP-3` for the applicable time/step bounds. The passing threshold is zero named unmet constraints and no failed mechanical check. An empty `IMP-2` list is only a literal-word pass, not proof of semantic adherence.
+3. **Act:** if the first Check passes, deliver for human judgment without a gratuitous second run. Otherwise re-enter that mode's draft step once, revising the reply against the named failure, then repeat Check. If the second Check fails, report the unmet constraint and stop; do not silently deliver the failed draft. Never restart the revision budget by reselecting the mode. The human may identify a semantic failure even after a mechanical pass.
+4. An invalid-input result or tool error is a visible blocked Check, never a passing reply: report its reason and stop pending corrected inputs. Do not fabricate a speaker, remaining bound, thread identifier, or successful check. Revision cannot extend the declared time/step limits.
+
 ### Plussing (`improv-plussing`)
 1. Extract agreeable components from the prior contribution; give each an agreeableness `confidence` (0.0–1.0). This is a model estimate used only to rank seeds.
 2. Silently discard components judged not agreeable — do not mention or explain them.
@@ -81,8 +88,10 @@ Johnstone, *Impro: Improvisation and the Theatre* (1979) — accepting and build
 1. Initiate the session with a declared time bound and participant list.
 2. Cycle through participants in round-robin order; each turn is short (1–3 sentences), associative, and builds on the prior turn's energy.
 3. Compute `time_remaining` and `next_speaker` deterministically via `lisp_eval` `IMP-3` (when time expires, signal session end and summarize emergent themes):
-   - form: `(list (max 0 (- time_bound elapsed_secs)) (nth next_idx participants))`
-   - env: `{ "time_bound": <secs>, "elapsed_secs": <secs>, "participants": <participant array>, "next_idx": <(turn_index + 1) mod length(participants)> }`
+   - form: `(begin (define names-ok (lambda (xs) (if (= (length xs) 0) true (and (stringp (car xs)) (not (string= (car xs) "")) (names-ok (cdr xs)))))) (define wrap-index (lambda (i n) (if (< i n) i (if (< (- i n) n) (- i n) (let ((r (wrap-index i (+ n n)))) (if (>= r n) (- r n) r)))))) (cond ((not (listp participants)) "invalid_participants") ((or (= (length participants) 0) (not (names-ok participants))) "invalid_participants") ((not (numberp turn_index)) "invalid_turn_index") ((or (not (eq (- turn_index turn_index) 0)) (< turn_index 0)) "invalid_turn_index") ((not (and (numberp time_bound) (numberp elapsed_secs))) "invalid_time") ((or (< time_bound 0) (< elapsed_secs 0)) "invalid_time") (true (let ((n (length participants)) (r (wrap-index turn_index (length participants)))) (list (max 0 (- time_bound elapsed_secs)) (nth (if (= r (- n 1)) 0 (+ r 1)) participants))))))`
+   - env: `{ "time_bound": 60, "elapsed_secs": 10, "participants": ["a", "b", "c"], "turn_index": 0 }`. Pass as JSON text to `lisp_eval`, substituting the raw session values.
+   - `turn_index` is the zero-based ordinal of the turn just completed, not a precomputed participant index. The result is `[time_remaining, next_speaker]`, equivalent to advancing one participant after that completed turn. Participants must be a nonempty array of nonempty strings; `turn_index` must be a nonnegative JSON integer (even `1.0` is rejected); times must be nonnegative numbers. Invalid values return the named string above and block the contribution; missing bindings or exhausted interpreter budgets surface as tool errors, never success.
+   - Integer admission uses type-sensitive `eq`: subtracting an integer from itself yields integer zero, while a float yields float zero. The remainder helper doubles only when `2*n <= i`, avoiding integer overflow; reduction precedes the increment so even the maximum signed 64-bit index is supported. Recursion is logarithmic in the index; participant validation traverses the list and remains subject to the interpreter's finite budgets. At zero time remaining the speaker is bookkeeping only: do not emit another turn.
 4. Mark each turn `[freestyle turn N by AGENT] content`.
 5. Return `{turn, session_summary}` from the template plus `IMP-3`'s `{time_remaining, next_speaker}`.
 
@@ -97,7 +106,22 @@ Johnstone, *Impro: Improvisation and the Theatre* (1979) — accepting and build
 
 ## Regression case
 
-Render `improv/improv-select` with `context`, `contribution`, `active_mode` (null or a mode), and `previous_contributions` — it returns `{mode, rationale}`. Render `improv/improv-yes-but` with `context` and a `contribution`, then run the forbidden-words check both ways with `lisp_eval`: a reply containing " no " returns a non-empty list naming it; a clean reply ("Yes — and let's also account for the deployment constraint") returns an empty list, which does NOT prove the reply avoids contradiction (that stays the human's judgment). The check is needle-first — `(string-contains (car ws) reply)`, the word is the needle — and is verified by the receipts above (executed live through `lisp_eval`). Also render `improv/improv-freestyling` with `participants`, `session`, `time_bound`, and `improv/improv-riffing` with `seed`, `steps_taken`, `return_policy`.
+1. Render `improv/improv-select` with the complete context below, select Yes But for scope narrowing, then render `improv/improv-yes-but` with its complete context. The renderer returns a guide, not the generated `{mode, rationale}` or reply: the agent produces those outputs by following the guide.
+2. Execute Check/Act on a clean draft, `Yes — and let's also account for the deployment constraint`: `IMP-2` with JSON-text env `{"reply":"Yes — and let's also account for the deployment constraint"}` must return `[]`; deliver for human judgment without revision. For `Yes, no deployment before the checklist is ready`, it must return `[" no "]`; name the failure, revise once to the clean draft, and recheck to `[]`. Reusing the failing draft on the recheck must instead report the unmet constraint and stop. These are literal-word controls, not human semantic acceptance. A tool error (including a needle longer than the reply) blocks Check visibly.
+3. Run the exact Freestyling `IMP-3` form against each row below, merging overrides into the example env. Compare actual results to the fixed expectations; do not supply a model-computed index. Also run Riffing's unchanged form with `{"max_steps":2,"steps_taken":["a","b"]}` → `0` and with one step → `1`. Render both bounded modes using the contexts below; verify that zero remaining time/steps routes to summary/return, not more exploration.
+
+| Freestyling env override | Expected result |
+|---|---|
+| none | `[50,"b"]` |
+| `turn_index: 2` | `[50,"a"]` |
+| `participants: ["a"], elapsed_secs: 80` | `[0,"a"]` (end session) |
+| `elapsed_secs: 60` | `[0,"b"]` (end session) |
+| `turn_index: 1000000` | `[50,"c"]` |
+| `turn_index: 9223372036854775807` | `[50,"c"]` |
+| `turn_index: -1`, `1.5`, `1.0`, `"1"`, `true`, `null`, `[]`, or `{}` (each separately) | `"invalid_turn_index"` |
+| `participants: []`, `null`, `"a"`, `{ "a": 1 }`, `[1]`, or `[""]` (each separately) | `"invalid_participants"` |
+| `time_bound: "60"`, `elapsed_secs: true`, or `elapsed_secs: -1` (each separately) | `"invalid_time"` |
+| `time_bound: 0.5, elapsed_secs: 0.25` | `[0.25,"b"]` |
 
 ## Registry Templates
 
@@ -110,7 +134,24 @@ Render `improv/improv-select` with `context`, `contribution`, `active_mode` (nul
 | `improv-freestyling.j2` | Freestyling — Rapid collaborative short-response cycling among participants. Time-bounded, no single owner, round-robin turns. | `participants`, `session`, `time_bound` |
 | `improv-riffing.j2` | Riffing — Solo divergent exploration from a seed contribution. May return to group with synthesis or spawn a new thread. | `seed`, `steps_taken`, `return_policy` |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `improv/improv-select`) and a context object with the required variables.
+Call `render_template` with the selected `template_ref` and `context` as complete JSON text. Substitute actual context values into these copyable shapes; template rendering supplies instructions, not a generated contribution or a Check verdict. Keep computed bounds in the caller's handoff; the mode templates do not compute them.
+
+`improv/improv-select` (`active_mode` is a string; use `""` when unset):
+```json
+{"context":{"intent":"scope narrowing"},"contribution":"Deploy the pilot","active_mode":"","previous_contributions":[]}
+```
+`improv/improv-plussing`, `improv/improv-yes-and`, or `improv/improv-yes-but`:
+```json
+{"context":{"intent":"scope narrowing"},"contribution":"Deploy the pilot"}
+```
+`improv/improv-freestyling` (`session` is a string):
+```json
+{"participants":["a","b","c"],"session":"Turn 0 by a completed; 10 seconds elapsed of 60. IMP-3 returned [50, b]; b speaks next.","time_bound":60}
+```
+`improv/improv-riffing` (supply `max_steps` separately to `IMP-3` for `ReturnAfterSteps`):
+```json
+{"seed":{"contribution":"Deploy the pilot"},"steps_taken":["Check deployment constraints"],"return_policy":"ReturnAfterSteps { max_steps: 2 }"}
+```
 
 ## Constraints
 

@@ -2,7 +2,7 @@ use super::service::KanbanService;
 use crate::VerificationCriterion;
 use crate::kanban::mermaid::{export_board_to_mermaid, parse_mermaid_kanban};
 use crate::kanban::{
-    Board, ColumnDef, Comment, CriterionCitation, SpawnSpec, Task, TaskFilter, TaskSpec, TaskStatus,
+    Board, ColumnDef, CriterionCitation, SpawnSpec, Task, TaskFilter, TaskSpec, TaskStatus,
 };
 use hkask_storage::HMemStore;
 use hkask_types::WebID;
@@ -319,19 +319,12 @@ fn task_create_defaults_to_backlog() {
     assert_eq!(task.board_id, board.id);
 }
 
-/// Card 84c7e7b8 second-order pin (live 2026-10-01 and 2026-10-09): the
-/// task row's h_mem ID must be stable across `update_task_triple`. The
-/// prior implementation wrote through `HMemStore::update`, which re-keys
-/// the row (delete + reinsert, new ID) — and a re-keying write is what
-/// makes a concurrent read-then-write raceable: the sibling reads the old
-/// ID, this write commits a new one, and the sibling's write targets a
-/// deleted row ("[internal] h_mem update failed: database(other): Query
-/// returned no rows"). The atomic stable-key update preserves the row's
-/// identity, so no read can go stale.
+/// Stable row identity prevents the earlier deleted-row write failure;
+/// content preservation is a separate obligation tested below.
 #[test]
-fn update_task_triple_preserves_the_task_row_h_mem_id() {
+fn task_comment_preserves_the_task_row_h_mem_id() {
     let (svc, board, owner) = make_service_with_board();
-    let mut task = svc
+    let task = svc
         .task_create(board.id, TaskSpec::new("Stable".into()), owner)
         .unwrap();
     let before = svc
@@ -342,10 +335,8 @@ fn update_task_triple_preserves_the_task_row_h_mem_id() {
         .next()
         .expect("the task row exists")
         .id;
-    task.comments
-        .push(Comment::new(task.id, owner, "a write".into()));
-    task.updated_at = chrono::Utc::now();
-    svc.update_task_triple(&task).unwrap();
+    svc.task_comment(task.id, owner, "a write")
+        .expect("comment lands");
     let after = svc
         .store
         .query_by_entity_attribute("kanban:task", &task.id.to_string())
@@ -366,19 +357,10 @@ fn update_task_triple_preserves_the_task_row_h_mem_id() {
     );
 }
 
-/// Card 84c7e7b8 second-order pin (live 2026-10-01 and 2026-10-09):
-/// concurrent task writes must not fail. The prior read-then-write
-/// (`query_by_entity_attribute` for the h_mem ID, then `HMemStore::update`
-/// — which re-keys) raced a sibling commit between the read and the
-/// write, failing the whole call with "[internal] h_mem update failed:
-/// database(other): Query returned no rows" under parallel card writes
-/// (observed live three times in one evening). The atomic stable-key
-/// read-modify-write holds the write lock across read+write, so
-/// concurrent writers serialize. Real WAL semantics across pooled
-/// connections are required — the in-memory driver is max_size(1) and
-/// cannot interleave.
+/// Exercise real WAL contention as well as the deterministic schedules below:
+/// successful comment appends must all survive, not just keep a valid row.
 #[test]
-fn concurrent_task_writes_do_not_fail_with_stale_row_ids() -> anyhow::Result<()> {
+fn concurrent_comments_preserve_all_successful_appends() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("concurrent-task-writes.sqlite");
     let pool = hkask_storage::SqliteDriver::file_pool_with_schema(
@@ -401,14 +383,9 @@ fn concurrent_task_writes_do_not_fail_with_stale_row_ids() -> anyhow::Result<()>
             handles.push(scope.spawn(move || {
                 let mut failures = Vec::new();
                 for round in 0..ROUNDS {
-                    let mut candidate = task.clone();
-                    candidate.comments.push(Comment::new(
-                        task.id,
-                        owner,
-                        format!("writer {writer} round {round}"),
-                    ));
-                    candidate.updated_at = chrono::Utc::now();
-                    if let Err(error) = svc.update_task_triple(&candidate) {
+                    if let Err(error) =
+                        svc.task_comment(task.id, owner, &format!("writer {writer} round {round}"))
+                    {
                         failures.push(format!("update {writer}/{round}: {error}"));
                     }
                 }
@@ -424,15 +401,550 @@ fn concurrent_task_writes_do_not_fail_with_stale_row_ids() -> anyhow::Result<()>
         failures.is_empty(),
         "concurrent task writes must not fail under WAL contention: {failures:#?}"
     );
-    // The row survives and carries a valid task (the last committed writer).
+    // Every acknowledged append survives with its own identity.
     let stored = svc.task_get(task.id)?.expect("the task row survives");
     assert_eq!(stored.id, task.id);
     assert_eq!(
         stored.comments.len(),
-        1,
-        "whole-value overwrite: the last committed writer's single comment lands"
+        WRITERS * ROUNDS,
+        "every successful comment must survive concurrent writes"
     );
+    for writer in 0..WRITERS {
+        for round in 0..ROUNDS {
+            let body = format!("writer {writer} round {round}");
+            assert_eq!(
+                stored
+                    .comments
+                    .iter()
+                    .filter(|comment| comment.body == body)
+                    .count(),
+                1,
+                "exactly one acknowledged append: {body}"
+            );
+        }
+    }
     Ok(())
+}
+
+/// Pause exactly one operation before its write, commit a competing operation,
+/// then release it. On the old path the paused operation has read a stale Task;
+/// on the repaired path its transformation receives the competing commit.
+fn interleave_task_writes<T: Send>(
+    svc: &KanbanService,
+    paused: impl FnOnce() -> T + Send,
+    competing: impl FnOnce(),
+) -> T {
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let timeout = std::time::Duration::from_secs(10);
+    *svc.before_task_write.lock().expect("scheduling hook lock") = Some(Box::new(move || {
+        entered_tx.send(()).expect("announce write boundary");
+        release_rx
+            .recv_timeout(timeout)
+            .expect("release paused writer");
+    }));
+    std::thread::scope(|scope| {
+        let writer = scope.spawn(paused);
+        entered_rx
+            .recv_timeout(timeout)
+            .expect("writer reached boundary");
+        competing();
+        release_tx.send(()).expect("release writer");
+        writer.join().expect("writer thread completed")
+    })
+}
+
+#[test]
+fn interleaved_comments_moves_and_deliverables_preserve_each_other() {
+    // Both write orders for comment/move and comment/deliverable, plus two
+    // independent appends of each kind. Each case uses the real service API.
+    for pair in [
+        (0, 1),
+        (1, 0),
+        (0, 2),
+        (2, 0),
+        (0, 0),
+        (2, 2),
+        (1, 2),
+        (2, 1),
+    ] {
+        let (svc, board, owner) = make_service_with_board();
+        let task = svc
+            .task_create(board.id, TaskSpec::new("Unchanged title".into()), owner)
+            .expect("task create");
+        let apply = |operation, body: &str| match operation {
+            0 => svc.task_comment(task.id, owner, body).map(|_| ()),
+            1 => svc.task_move(task.id, TaskStatus::Ready, owner).map(|_| ()),
+            2 => svc.task_add_deliverable(task.id, body, owner).map(|_| ()),
+            _ => unreachable!("fixture operation"),
+        };
+        interleave_task_writes(
+            &svc,
+            || apply(pair.0, "paused"),
+            || {
+                apply(pair.1, "competing").expect("competing operation");
+            },
+        )
+        .expect("paused operation");
+        let stored = svc
+            .task_get(task.id)
+            .expect("task read")
+            .expect("task survives");
+        let bodies: Vec<_> = stored.comments.iter().map(|c| c.body.as_str()).collect();
+        let expected_comments: Vec<_> = [(pair.1, "competing"), (pair.0, "paused")]
+            .into_iter()
+            .filter_map(|(op, body)| (op == 0).then_some(body))
+            .collect();
+        let expected_deliverables: Vec<_> = [(pair.1, "competing"), (pair.0, "paused")]
+            .into_iter()
+            .filter_map(|(op, body)| (op == 2).then_some(body))
+            .collect();
+        assert_eq!(bodies, expected_comments, "comment preservation: {pair:?}");
+        assert_eq!(
+            stored.deliverables, expected_deliverables,
+            "deliverables: {pair:?}"
+        );
+        assert_eq!(
+            stored.status,
+            if pair.0 == 1 || pair.1 == 1 {
+                TaskStatus::Ready
+            } else {
+                TaskStatus::Backlog
+            },
+            "status: {pair:?}"
+        );
+
+        let mut expected = task.clone();
+        expected.status = stored.status;
+        expected.comments = stored.comments.clone();
+        expected.deliverables = stored.deliverables.clone();
+        expected.updated_at = stored.updated_at;
+        assert_eq!(stored, expected, "all unrelated fields: {pair:?}");
+        assert_eq!(
+            svc.task_list(board.id, TaskFilter::default())
+                .expect("indexed read")
+                .len(),
+            1
+        );
+    }
+}
+
+#[test]
+fn remaining_task_mutations_preserve_interleaved_comments_in_both_orders() {
+    for operation in ["claim", "unassign", "update", "verify", "reopen", "spawn"] {
+        for comment_first in [false, true] {
+            let (svc, board, owner) = make_service_with_board();
+            let spec = TaskSpec::new("Original".into())
+                .with_description("Keep description".into())
+                .with_criteria(vec![VerificationCriterion::new("Keep criterion".into())]);
+            let task = svc.task_create(board.id, spec, owner).expect("task create");
+            if operation == "unassign" {
+                svc.task_claim(task.id, owner).expect("claim fixture");
+            }
+            if matches!(operation, "verify" | "reopen") {
+                for status in [
+                    TaskStatus::Ready,
+                    TaskStatus::InProgress,
+                    TaskStatus::Review,
+                ] {
+                    svc.task_move(task.id, status, owner)
+                        .expect("review fixture");
+                }
+            }
+            if operation == "reopen" {
+                svc.task_verify(task.id, "Confirmed", owner)
+                    .expect("done fixture");
+            }
+            let before = svc.require_task(task.id).expect("fixture read");
+            let mutate = || match operation {
+                "claim" => svc.task_claim(task.id, owner).map(|_| ()),
+                "unassign" => svc.task_unassign(task.id, owner).map(|_| ()),
+                "update" => svc
+                    .task_update(
+                        task.id,
+                        owner,
+                        Some("Edited".into()),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                    .map(|_| ()),
+                "verify" => svc.task_verify(task.id, "Confirmed", owner).map(|_| ()),
+                "reopen" => svc.task_reopen(task.id, owner).map(|_| ()),
+                "spawn" => svc
+                    .spawn_task(
+                        task.id,
+                        SpawnSpec::new(task.id).with_swarm(Some("fixture-swarm".into())),
+                        owner,
+                    )
+                    .map(|_| ()),
+                _ => unreachable!("fixture operation"),
+            };
+            let comment = || svc.task_comment(task.id, owner, "Keep comment").map(|_| ());
+            if comment_first {
+                interleave_task_writes(&svc, mutate, || {
+                    comment().expect("competing comment");
+                })
+                .expect("paused mutation");
+            } else {
+                interleave_task_writes(&svc, comment, || {
+                    mutate().expect("competing mutation");
+                })
+                .expect("paused comment");
+            }
+            let stored = svc.require_task(task.id).expect("read committed task");
+            let mut expected = before;
+            match operation {
+                "claim" => expected.assignee = Some(owner),
+                "unassign" => expected.assignee = None,
+                "update" => expected.title = "Edited".into(),
+                "verify" => {
+                    expected.status = TaskStatus::Done;
+                    let verification = stored.verification.clone().expect("verification survives");
+                    assert!(verification.passed);
+                    assert_eq!(verification.verifier, owner);
+                    assert!(verification.reasoning.contains("Keep criterion"));
+                    expected.verification = Some(verification);
+                }
+                "reopen" => {
+                    expected.status = TaskStatus::InProgress;
+                    expected.verification = None;
+                }
+                "spawn" => expected.swarm_id = Some("fixture-swarm".into()),
+                _ => unreachable!("fixture operation"),
+            }
+            let comments = svc
+                .task_comments_since(task.id, 0)
+                .expect("comment readback");
+            assert_eq!(
+                comments.iter().filter(|c| c.body == "Keep comment").count(),
+                1
+            );
+            assert_eq!(comments.len(), if operation == "spawn" { 2 } else { 1 });
+            assert!(
+                comments
+                    .iter()
+                    .all(|c| c.task_id == task.id && c.author == owner)
+            );
+            expected.comments = comments;
+            expected.updated_at = stored.updated_at;
+            assert_eq!(
+                stored, expected,
+                "{operation}, comment_first={comment_first}"
+            );
+        }
+    }
+}
+
+#[test]
+fn interleaved_moves_validate_current_status_and_leave_failed_changes_unwritten() {
+    let (svc, board, owner) = make_service_with_board();
+    let task = svc
+        .task_create(board.id, TaskSpec::new("Move".into()), owner)
+        .expect("create");
+    let result = interleave_task_writes(
+        &svc,
+        || svc.task_move(task.id, TaskStatus::Ready, owner),
+        || {
+            svc.task_move(task.id, TaskStatus::Ready, owner)
+                .expect("competing move");
+        },
+    );
+    assert!(matches!(
+        result,
+        Err(KanbanError::InvalidTransition {
+            from: TaskStatus::Ready,
+            to: TaskStatus::Ready,
+            ..
+        })
+    ));
+    let committed = svc.require_task(task.id).expect("task survives");
+    // A legitimate forward move still works; a skipped column still fails.
+    assert!(matches!(
+        svc.task_move(task.id, TaskStatus::Done, owner),
+        Err(KanbanError::InvalidTransition {
+            from: TaskStatus::Ready,
+            to: TaskStatus::Done,
+            ..
+        })
+    ));
+    assert_eq!(
+        svc.require_task(task.id).expect("unchanged on failure"),
+        committed
+    );
+    svc.task_move(task.id, TaskStatus::InProgress, owner)
+        .expect("legitimate next move");
+}
+
+#[test]
+fn interleaved_mutations_recheck_revoked_assignee_authority() {
+    for operation in ["comment", "move", "deliverable"] {
+        let (svc, board, owner) = make_service_with_board();
+        let task = svc
+            .task_create(board.id, TaskSpec::new("Authority".into()), owner)
+            .expect("create");
+        let assignee = WebID::new();
+        svc.task_claim(task.id, assignee).expect("claim");
+        let result = interleave_task_writes(
+            &svc,
+            || match operation {
+                "comment" => svc
+                    .task_comment(task.id, assignee, "Not authorized")
+                    .map(|_| ()),
+                "move" => svc
+                    .task_move(task.id, TaskStatus::Ready, assignee)
+                    .map(|_| ()),
+                "deliverable" => svc
+                    .task_add_deliverable(task.id, "Not authorized", assignee)
+                    .map(|_| ()),
+                _ => unreachable!("fixture operation"),
+            },
+            || {
+                svc.task_unassign(task.id, owner).expect("revoke authority");
+            },
+        );
+        assert!(
+            matches!(result, Err(KanbanError::PermissionDenied(_))),
+            "{operation}"
+        );
+        let stored = svc.require_task(task.id).expect("task survives");
+        assert_eq!(stored.assignee, None);
+        assert_eq!(stored.status, TaskStatus::Backlog);
+        assert!(stored.comments.is_empty() && stored.deliverables.is_empty());
+        svc.task_comment(task.id, owner, "Owner still authorized")
+            .expect("owner remains authorized");
+    }
+}
+
+#[test]
+fn interleaved_lifecycle_changes_validate_the_current_status() {
+    for operation in ["claim", "verify", "reopen"] {
+        let (svc, board, owner) = make_service_with_board();
+        let task = svc
+            .task_create(board.id, TaskSpec::new("Lifecycle".into()), owner)
+            .expect("create");
+        let initial_status = match operation {
+            "claim" => TaskStatus::Ready,
+            "verify" => TaskStatus::Review,
+            "reopen" => TaskStatus::Done,
+            _ => unreachable!("fixture operation"),
+        };
+        for status in [
+            TaskStatus::Ready,
+            TaskStatus::InProgress,
+            TaskStatus::Review,
+            TaskStatus::Done,
+        ] {
+            svc.task_move(task.id, status, owner)
+                .expect("initial lifecycle");
+            if status == initial_status {
+                break;
+            }
+        }
+        let result = interleave_task_writes(
+            &svc,
+            || match operation {
+                "claim" => svc.task_claim(task.id, owner),
+                "verify" => svc
+                    .task_verify(task.id, "Confirmed", owner)
+                    .map(|(task, _)| task),
+                "reopen" => svc.task_reopen(task.id, owner),
+                _ => unreachable!("fixture operation"),
+            },
+            || {
+                let target = if operation == "reopen" {
+                    TaskStatus::Review
+                } else {
+                    TaskStatus::InProgress
+                };
+                svc.task_move(task.id, target, owner)
+                    .expect("competing lifecycle change");
+            },
+        );
+        assert!(
+            matches!(result, Err(KanbanError::InvalidTransition { .. })),
+            "{operation}"
+        );
+        let stored = svc.require_task(task.id).expect("task survives");
+        assert_eq!(
+            stored.status,
+            if operation == "reopen" {
+                TaskStatus::Review
+            } else {
+                TaskStatus::InProgress
+            }
+        );
+        assert_eq!(stored.assignee, None);
+        assert_eq!(stored.verification, None);
+    }
+}
+
+#[test]
+fn interleaved_disjoint_edits_preserve_current_fields_and_explicit_clears() {
+    let (svc, board, owner) = make_service_with_board();
+    let task = svc
+        .task_create(
+            board.id,
+            TaskSpec::new("Original".into()).with_description("Clear me".into()),
+            owner,
+        )
+        .expect("create");
+    interleave_task_writes(
+        &svc,
+        || {
+            svc.task_update(
+                task.id,
+                owner,
+                Some("Edited".into()),
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+        },
+        || {
+            svc.task_update(
+                task.id,
+                owner,
+                None,
+                Some(None),
+                None,
+                None,
+                Some(vec!["Kept label".into()]),
+                None,
+            )
+            .expect("competing edit");
+        },
+    )
+    .expect("paused edit");
+    let stored = svc.require_task(task.id).expect("task survives");
+    assert_eq!(stored.title, "Edited");
+    assert_eq!(stored.description, None);
+    assert_eq!(stored.labels, ["Kept label"]);
+}
+
+#[test]
+fn interleaved_claims_do_not_replace_the_successful_assignee() {
+    let (svc, board, owner) = make_service_with_board();
+    let task = svc
+        .task_create(board.id, TaskSpec::new("Claim".into()), owner)
+        .expect("create");
+    let winner = WebID::new();
+    let result = interleave_task_writes(
+        &svc,
+        || svc.task_claim(task.id, owner),
+        || {
+            svc.task_claim(task.id, winner).expect("competing claim");
+        },
+    );
+    assert!(matches!(result, Err(KanbanError::PermissionDenied(_))));
+    assert_eq!(
+        svc.require_task(task.id).expect("task survives").assignee,
+        Some(winner)
+    );
+}
+
+#[test]
+fn task_mutations_preserve_typed_missing_task_and_authorization_errors() {
+    for operation in [
+        "move",
+        "claim",
+        "verify",
+        "unassign",
+        "update",
+        "reopen",
+        "comment",
+        "deliverable",
+        "spawn",
+    ] {
+        let (svc, board, owner) = make_service_with_board();
+        let task = svc
+            .task_create(board.id, TaskSpec::new("Protected".into()), owner)
+            .expect("create");
+        let stranger = WebID::new();
+        let apply = |id, actor| match operation {
+            "move" => svc.task_move(id, TaskStatus::Ready, actor).map(|_| ()),
+            "claim" => svc.task_claim(id, actor).map(|_| ()),
+            "verify" => svc.task_verify(id, "Confirmed", actor).map(|_| ()),
+            "unassign" => svc.task_unassign(id, actor).map(|_| ()),
+            "update" => svc
+                .task_update(
+                    id,
+                    actor,
+                    Some("Unauthorized".into()),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .map(|_| ()),
+            "reopen" => svc.task_reopen(id, actor).map(|_| ()),
+            "comment" => svc.task_comment(id, actor, "Unauthorized").map(|_| ()),
+            "deliverable" => svc
+                .task_add_deliverable(id, "Unauthorized", actor)
+                .map(|_| ()),
+            "spawn" => svc.spawn_task(id, SpawnSpec::new(id), actor).map(|_| ()),
+            _ => unreachable!("fixture operation"),
+        };
+        let missing = hkask_types::id::TaskId::new();
+        assert!(
+            matches!(apply(missing, owner), Err(KanbanError::NotFound(ref error))
+            if error.id == missing.to_string() && error.entity_type == "task"),
+            "{operation}"
+        );
+        if operation == "claim" {
+            // Self-claim is deliberately open to a new actor, but cannot
+            // replace an existing assignment.
+            svc.task_claim(task.id, owner).expect("claim fixture");
+        }
+        let before = svc
+            .require_task(task.id)
+            .expect("before unauthorized mutation");
+        assert!(
+            matches!(
+                apply(task.id, stranger),
+                Err(KanbanError::PermissionDenied(_))
+            ),
+            "{operation}"
+        );
+        assert_eq!(svc.require_task(task.id).expect("after refusal"), before);
+    }
+}
+
+#[test]
+fn interleaved_deletion_returns_not_found_without_resurrecting_task_or_index() {
+    for delete_board in [false, true] {
+        let (svc, board, owner) = make_service_with_board();
+        let task = svc
+            .task_create(board.id, TaskSpec::new("Delete".into()), owner)
+            .expect("create");
+        let result = interleave_task_writes(
+            &svc,
+            || svc.task_comment(task.id, owner, "Too late"),
+            || {
+                if delete_board {
+                    svc.board_delete(board.id).expect("delete board");
+                } else {
+                    svc.task_delete(task.id).expect("delete task");
+                }
+            },
+        );
+        assert!(
+            matches!(result, Err(KanbanError::NotFound(ref missing)) if missing.id == task.id.to_string())
+        );
+        assert!(svc.task_get(task.id).expect("read missing task").is_none());
+        if !delete_board {
+            assert!(
+                svc.task_list(board.id, TaskFilter::default())
+                    .expect("empty index")
+                    .is_empty()
+            );
+        }
+    }
 }
 
 /// Card 84c7e7b8 class pin: `board_rename`'s contract promises the board

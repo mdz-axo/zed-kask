@@ -25,6 +25,19 @@ Kata-Kanban workflow coordination MCP server — task management with WIP limits
 | `kanban_task_verify` | Record verification evidence for a Review task — the user's confirmation text is the pass signal (criteria guide work but do not gate completion; only the operator's relayed confirmation moves Review to Done) |
 | `kanban_task_reopen` | Reopen a completed task (Done → InProgress) |
 
+Task mutations transform the current stored task inside the existing
+`HMemStore::update_value_atomic` transaction, rather than replacing an earlier
+snapshot. Independent changes (including comments, status, deliverables,
+assignment, editable fields, verification, reopening and spawn configuration)
+preserve one another. Task authorization and lifecycle checks use the current
+value; a deleted task returns not-found instead of being recreated. Conflicting
+scalar edits follow commit order, and transitions invalidated by an earlier
+commit are rejected. Task/index identity is unchanged.
+
+Board/WIP counts and goal-citation lookups remain outside that task transaction
+to avoid nested store acquisition; this is not atomic WIP admission across
+separate tasks or a transaction spanning task and goal records.
+
 ### Goals (functional target conditions)
 
 Native goal-setting and verification for the four-moves interaction loop

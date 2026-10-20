@@ -1629,46 +1629,6 @@ mod tests {
         );
     }
 
-    /// expect: "A managed server with discovered tools but no connection cannot be shown as Running."
-    #[tokio::test]
-    async fn discovered_tools_without_a_live_connection_are_not_running() {
-        let runtime = hkask_mcp::McpRuntime::new();
-        runtime
-            .register_server(hkask_mcp::McpServer {
-                id: "fixture".into(),
-                name: "fixture".into(),
-                tools: vec![hkask_mcp::McpTool {
-                    server_id: "fixture".into(),
-                    name: "ping".into(),
-                    description: "fixture tool".into(),
-                    input_schema: serde_json::json!({"type": "object"}),
-                }],
-            })
-            .await;
-        let discovered = runtime.registered_servers().await;
-        let tool_count = discovered
-            .iter()
-            .find(|(id, _)| id == "fixture")
-            .map(|(_, tools)| tools.len())
-            .expect("fixture registered its tool");
-        assert_eq!(tool_count, 1);
-        assert!(
-            !runtime
-                .running_server_ids()
-                .await
-                .contains(&"fixture".to_string())
-        );
-        let connected = runtime
-            .try_running_server_ids()
-            .map(|ids| ids.contains(&"fixture".to_string()));
-        assert_ne!(
-            kask_managed_server_status(true, tool_count, connected),
-            AiSettingItemStatus::Running,
-            "registered tool metadata must not claim the disconnected service can answer"
-        );
-        runtime.shutdown_all().await;
-    }
-
     /// The live tool surface groups by server id — the per-row "N tools"
     /// label depends on every descriptor landing in its own server's bucket.
     #[test]

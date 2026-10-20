@@ -732,7 +732,7 @@ Skill execution is bounded by the **per-agent call cap** (System A): every gover
 
 Tool-call bounding is the per-agent `CallCap`.
 
-Tool use is observable after dispatch through the authoritative host paths: governed client dispatch persists `SpanKind::ToolCompleted` after the invocation returns (`kask/crates/hkask-mcp/src/runtime.rs:1598-1612`), and agent context-server dispatch forwards outcomes through `record_mcp_tool_outcome`. Successful server responses carry `duration_ms` and aggregate inference `usage` in-band (`kask/crates/hkask-mcp-server/src/server/tool_execution.rs:77-149`). The child wrapper emits no duplicate `reg.tool` stderr event.
+Tool use is observable after dispatch through the authoritative host paths: governed client dispatch persists `SpanKind::ToolCompleted` after the invocation returns (`kask/crates/hkask-mcp/src/runtime.rs`), and agent context-server dispatch forwards outcomes through `record_mcp_tool_outcome`. Successful server responses carry `duration_ms` and aggregate inference `usage` in-band (`kask/crates/hkask-mcp-server/src/server/tool_execution.rs:77-149`). The child wrapper emits no duplicate `reg.tool` stderr event.
 
 ### Error Handling
 
@@ -817,7 +817,7 @@ Routing and discovery are model-coordinated skill behavior; they do not emit ded
 zed-kask owns one managed `McpRuntime` in the editor process. It spawns the 12
 registered `hkask-mcp-*` binaries as child processes over stdio, performs the MCP
 handshake and tool discovery, and owns child shutdown/reconnect
-(`kask/crates/hkask-mcp/src/runtime.rs:4-12,646-655,749-751`). The canonical
+(`kask/crates/hkask-mcp/src/runtime.rs`). The canonical
 server-id/binary/env mapping is `BUILT_IN_MCP_SERVERS`
 (`kask/crates/kask_bridge/src/mcp_servers.rs:28-46,55-549`).[^mcp-spec-build][^ousterhout-mcp-build]
 
@@ -855,7 +855,7 @@ inference usage, applies optional ontology annotation, and returns successful
 `content` with `duration_ms` and `usage` while preserving typed errors
 (`kask/crates/hkask-mcp-server/src/server/tool_execution.rs:77-149`). The
 editor-side managed runtime records completed governed calls through the
-injected Regulation sink (`kask/crates/hkask-mcp/src/runtime.rs:1598-1612`); the
+injected Regulation sink (`kask/crates/hkask-mcp/src/runtime.rs`); the
 child wrapper does not duplicate that outcome on stderr.
 
 ### Bootstrap and child binary

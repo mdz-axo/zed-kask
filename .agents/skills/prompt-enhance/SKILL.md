@@ -133,7 +133,7 @@ Array-valued context fields are plain JSON arrays — never stringified JSON. A 
      "reference_models": <from step 1.5>, "unfolded_plan": <from step 2>, "round": 1 }
    ```
    `round` is 1 at medium, 1–3 escalating at high. Produce `ratings`, `findings` (the failed-gap list that feeds a corrective Act), and `verdict` (`pass`, `rewrite_needed`, or `fail`). Challenge whether each proposed check actually establishes its claim and whether unrun checks are mislabeled as verified.
-5. Preserve the critic's specific failed checks and verdict. Skip this stage at low effort and set `grill_verdict = "skipped"`, `grill_ratings = []`; a skipped critic is not a `pass`.
+5. Preserve the critic's specific failed checks and verdict. Skip this stage at low effort and set `grill_verdict = "skipped"`, `grill_ratings = []`, `grill_findings = []`; a skipped critic is not a `pass`.
 6. Run deterministic `lisp_eval` gate `PE-2` after the critique step to enforce the escalation bound. `blocking_defects` is **computed from the critic's structured `findings`**, never typed as a count — `enhance-verify.j2` emits a `severity` field (`Prohibition|Guardrail|Guideline`) per finding, so the count is deterministic and a `pass` cannot be self-certified over an unresolved Prohibition:
    - form: `(let ((count-prohibitions (lambda (items) (if (= 0 (length items)) 0 (+ (if (string= "Prohibition" (assoc "severity" (car items))) 1 0) (count-prohibitions (cdr items))))))) (let ((blocking_defects (count-prohibitions findings))) (list blocking_defects (and (<= rounds_executed 3) (<= pdca_corrections 1) (if (string= verdict "pass") (= blocking_defects 0) true)))))`
    - env: `{ "rounds_executed": <1..3>, "pdca_corrections": <0..1>, "verdict": "<pass|rewrite_needed|fail|skipped>", "findings": <the critic's findings array verbatim from enhance-verify, each with its severity field> }`
@@ -152,14 +152,15 @@ Array-valued context fields are plain JSON arrays — never stringified JSON. A 
    ```json
    { "enhanced_prompt": "<from step 2>", "prompt_type": "<from step 1>", "effort_tier": "<from step 1>",
      "output_format_resolved": "<from step 1>", "output_path_resolved": "<from step 1>",
-     "audit_findings": <from step 2>, "grill_ratings": <from step 3>, "grill_verdict": "<from step 3>",
+     "audit_findings": <from step 2>, "grill_ratings": <step 3 ratings>,
+     "grill_findings": <step 3 findings unchanged, or [] when verification is skipped>, "grill_verdict": "<from step 3>",
      "mutations_applied": <from step 2>, "mutations_deferred": <from step 2>,
      "unfold_mode_resolved": "<from step 1>", "reference_models": <from step 1.5>,
      "unfolded_plan": <from step 2> }
    ```
-   At low effort pass `grill_verdict: "skipped"`, `grill_ratings: []`, `reference_models: []`, and `unfolded_plan: []` (if `rewrite_only`). Do not pass a nested `verification` object. The retired `schema_defects` and `convergence_metric` fields have no producing stage and must not be required. Pass the six array fields (`audit_findings`, `grill_ratings`, `mutations_applied`, `mutations_deferred`, `reference_models`, `unfolded_plan`) as plain arrays of objects with the fields the template reads — never stringified JSON (the 2026-10-08 receipts: the change-log sections rendered placeholder rows while the summary line interpolated, because a stringified array iterates character-by-character; the template now rejects this loudly as `input_errors`).
+   Encode this whole context object once as JSON text for `render_template.context`; keep its seven array fields (`audit_findings`, `grill_ratings`, `grill_findings`, `mutations_applied`, `mutations_deferred`, `reference_models`, `unfolded_plan`) as arrays inside that object, never individually stringified. Pass the final verify step's `findings` unchanged as `grill_findings`, including on `rewrite_needed` or `fail`; do not reconstruct them from ratings or the verdict. At low effort pass `grill_verdict: "skipped"`, `grill_ratings: []`, `grill_findings: []`, `reference_models: []`, and `unfolded_plan: []` (if `rewrite_only`). A missing `grill_findings` field fails admission; a non-array value surfaces as `input_errors` and requires a corrected render. Do not pass a nested `verification` object or the retired `schema_defects` and `convergence_metric` fields.
 2. Deliver the rendered `delivered_output` to the user. `inline` displays it; `file` and `both` additionally require a separate file-write action. A render-only step NEVER writes a file (`output_path_written` stays empty). Report a path only after a successful write.
-3. Always include the change log: audit findings, critique verdict and ratings, applied and deferred mutations. A `rewrite_needed` or `fail` verdict must remain visible; do not report it as verified.
+3. Always include the change log: audit findings, critique verdict, ratings and specific findings, applied and deferred mutations. Preserve the critic's complete structured findings in both `delivered_output` and `change_log.grill_findings`; a `rewrite_needed` or `fail` verdict must remain visible, never upgraded to verified.
 4. This step makes no LLM call. The skill is not complete until its enhanced prompt is delivered, not merely rendered.
 
 ## Executor discipline (operator-approved 2026-10-19, from the live lockout run)

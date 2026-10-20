@@ -1048,8 +1048,78 @@ async fn health_supervisor_removes_dead_connection_without_tool_call() {
 /// each held their own restart authority.
 #[tokio::test(flavor = "multi_thread")]
 async fn second_start_with_same_env_is_a_noop() {
-    let fixture = Fixture::new("second_start_with_same_env_is_a_noop");
-    let (runtime, original_pid) = launch(&fixture).await;
+    let mut fixture = Fixture::new("second_start_with_same_env_is_a_noop");
+    let entered = fixture._tmp.path().join("discovery-entered");
+    let release = fixture._tmp.path().join("discovery-release");
+    fixture.env.insert(
+        "FIXTURE_DISCOVERY_ENTERED".into(),
+        entered.to_string_lossy().into_owned(),
+    );
+    fixture.env.insert(
+        "FIXTURE_DISCOVERY_RELEASE".into(),
+        release.to_string_lossy().into_owned(),
+    );
+    let runtime = McpRuntime::new();
+    let mut changes = runtime.tool_surface_changes();
+    let binary = fixture_binary();
+    let start = runtime.start_server_with_env(
+        "fixture",
+        binary.to_str().expect("fixture path"),
+        hkask_types::ServerEnv::from_canonical(fixture.env.clone()),
+    );
+    let observe_discovery = async {
+        wait_for(
+            || entered.exists(),
+            Duration::from_secs(5),
+            Duration::from_millis(10),
+            "discovery entry",
+        )
+        .await;
+        assert!(
+            runtime.registered_servers().await.is_empty(),
+            "unfinished discovery must not publish metadata"
+        );
+        assert!(!runtime.is_connected("fixture").await);
+        assert!(
+            !changes.has_changed().expect("surface channel"),
+            "only actual publication should notify tool subscribers"
+        );
+        std::fs::write(&release, b"release").expect("release discovery");
+    };
+    let (started, ()) = futures::join!(start, observe_discovery);
+    started.expect("discovery publishes the server");
+    tokio::time::timeout(Duration::from_secs(5), changes.changed())
+        .await
+        .expect("discovery must notify subscribers")
+        .expect("surface channel remains open");
+    let snapshot = |servers: Vec<(String, Vec<hkask_mcp::McpTool>)>| {
+        servers
+            .into_iter()
+            .map(|(id, tools)| {
+                (
+                    id,
+                    tools
+                        .into_iter()
+                        .map(|tool| {
+                            (
+                                tool.name,
+                                tool.description,
+                                tool.input_schema,
+                                tool.server_id,
+                            )
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let discovered = snapshot(runtime.registered_servers().await);
+    assert_eq!(discovered.len(), 1);
+    assert_eq!(discovered[0].0, "fixture");
+    assert_eq!(discovered[0].1.len(), 1);
+    assert_eq!(discovered[0].1[0].0, "ping");
+    assert!(runtime.is_connected("fixture").await);
+    let original_pid = fixture.wait_for_pid().await;
 
     // The redundant reconcile call — same server, same env, live transport.
     runtime
@@ -1074,6 +1144,11 @@ async fn second_start_with_same_env_is_a_noop() {
         result["marker"].as_str().expect("marker"),
         fixture.marker,
         "the original process must still be serving after the redundant start"
+    );
+    assert_eq!(snapshot(runtime.registered_servers().await), discovered);
+    assert!(
+        !changes.has_changed().expect("surface channel"),
+        "a repeated start must not churn the tool surface"
     );
     runtime.shutdown_all().await;
 }

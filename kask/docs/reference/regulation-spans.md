@@ -34,7 +34,7 @@ confirmed working: 2,173 forwarded child-stderr lines in the 2026-09-30
 live log); (b) under a Tracy build the fallback stops firing and the
 same lines move to Tracy. MCP *child* processes always have their own
 stderr subscriber (`server/transport.rs:42-46`); the host forwards their
-stderr lines into this pathway (`hkask-mcp/src/runtime.rs:813-830`).
+stderr lines into this pathway (`kask/crates/hkask-mcp/src/runtime.rs`).
 
 ## 2. Canonical namespace and typed-span surface
 
@@ -87,9 +87,9 @@ The wrapper emits no child-side outcome event. This removes a formerly duplicate
 
 ### 3.2 Governed runtime dispatch: `reg.mcp` path with `ToolCompleted`
 
-For tools invoked through `McpRuntime`, governance performs the per-tick call-meter check, dispatches the tool, then constructs a `RegulationRecord` using `SpanKind::ToolCompleted` and persists it through the configured event sink (`kask/crates/hkask-mcp/src/runtime.rs:1590-1640`). The observation records `server`, `tool`, `calls`, and success/failure status. Persistence failure is surfaced with a warning at target `reg.mcp`.
+For tools invoked through `McpRuntime`, governance performs the per-tick call-meter check, dispatches the tool, then constructs a `RegulationRecord` using `SpanKind::ToolCompleted` and persists it through the configured event sink (`kask/crates/hkask-mcp/src/runtime.rs`). The observation records `server`, `tool`, `calls`, and success/failure status. Persistence failure is surfaced with a warning at target `reg.mcp`.
 
-The same dispatch then records the result in `CyberneticsLoop::record_outcome` and the tool name in the variety feed (`kask/crates/hkask-mcp/src/runtime.rs:1629`). Reliability is aggregated by MCP server name; tool names provide the observed variety states.
+The same dispatch then records the result in `CyberneticsLoop::record_outcome` and the tool name in the variety feed (`kask/crates/hkask-mcp/src/runtime.rs`). Reliability is aggregated by MCP server name; tool names provide the observed variety states.
 
 ### 3.3 Agent context-server dispatch: outcome forwarding
 

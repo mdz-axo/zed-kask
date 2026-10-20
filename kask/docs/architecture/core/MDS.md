@@ -61,7 +61,7 @@ The ontology is re-anchored to the **17 surviving kask crates** (16 `hkask-*` + 
 
 ### 1.3 Service and runtime subsystems
 
-**Crate:** the last `hkask-services-*` crate (`hkask-services-core`) was folded into `hkask-mcp-corpus` (2026-10-13) — it had exactly one consumer and failed the deletion test. Corpus retains the live settings reader in `src/settings.rs`; style operations return the shared MCP tool-error type directly. The editor process owns one `McpRuntime`; it spawns the 9 MCP binaries as child processes over stdio, discovers their tools, and governs dispatch (`kask/crates/hkask-mcp/src/runtime.rs:4-12,646-655,749-751`; registry at `kask/crates/kask_bridge/src/mcp_servers.rs:49-419`). There is no daemon or `KaskCore` singleton.
+**Crate:** the last `hkask-services-*` crate (`hkask-services-core`) was folded into `hkask-mcp-corpus` (2026-10-13) — it had exactly one consumer and failed the deletion test. Corpus retains the live settings reader in `src/settings.rs`; style operations return the shared MCP tool-error type directly. The editor process owns one `McpRuntime`; it spawns the 9 MCP binaries as child processes over stdio, discovers their tools, and governs dispatch (`kask/crates/hkask-mcp/src/runtime.rs`; registry at `kask/crates/kask_bridge/src/mcp_servers.rs:49-419`). There is no daemon or `KaskCore` singleton.
 
 The deleted subcrates (`hkask-services-chat`, `hkask-services-onboarding`, `hkask-services-skill`, `hkask-services-wallet`) are **removed**. Their jobs moved to zed-kask surfaces:
 
@@ -473,7 +473,7 @@ Cross-references are verified by the link checker in CI (relative links within t
 | `hkask-bridge-ontology` | Curation | Ontology bridge — Dublin Core + BIBO + CiTO + PKO core vocabulary and domain supplements (SEPIO, GOLEM, ML-Schema, RDF Data Cube, OMC). Single source of truth for ontology URIs and the dual-axis domain-selection logic. |
 | `hkask-email` | Lifecycle | Curator email — outbound via MXroute SMTP API (alerts, notifications, test) |
 | `hkask-lisp` | Composition | Sandboxed Lisp interpreter (`hkask_lisp::eval_sandboxed_with_budget`) for deterministic compute steps invoked by skills via the `lisp_eval` tool — bounded recursion, JSON-native, no I/O, no `eval`, no network. |
-| `hkask-mcp` | Composition | Child-process lifecycle, tool discovery, metering, and dispatch. Governed completion writes a `SpanKind::ToolCompleted` record to the injected sink and warns at tracing target `reg.mcp` if persistence fails (`kask/crates/hkask-mcp/src/runtime.rs:1598-1612`). |
+| `hkask-mcp` | Composition | Child-process lifecycle, tool discovery, metering, and dispatch. Governed completion writes a `SpanKind::ToolCompleted` record to the injected sink and warns at tracing target `reg.mcp` if persistence fails (`kask/crates/hkask-mcp/src/runtime.rs`). |
 | `hkask-event-store` | Lifecycle, Composition | Append-only event log for agent rollouts (`EventStore`, `EventRecord`, `EventFilter`, `VerdictSource`, `RolloutKind`). Data-plane substrate for agent evaluation and regulation. Wired via `kask_bridge/src/rollout_event_bridge.rs`; consumed by `hkask-regulation/src/cybernetics_loop.rs`. |
 | ~~`hkask-services-core`~~ (removed) | Domain | Corpus retains `HkaskSettings` in `hkask-mcp-corpus/src/settings.rs`; no separate service foundation remains. |
 | `kask_bridge` | Composition | D8 — the bidirectional seam: in-process bridge exposing hKask port traits (InferencePort, ToolPort, MemoryPort, etc.) to MCP servers and zed-kask surfaces (composition root wires components directly) |
@@ -512,11 +512,11 @@ graph TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MDS-001
 verified_date: 2026-10-19
-verified_against: crates/zed/src/main.rs:791-795,912-914,1317-1323; kask/crates/hkask-mcp/src/runtime.rs:4-12,646-655,749-751; kask/crates/kask_bridge/src/mcp_servers.rs:49-419; kask/crates/hkask-inference/src/hkask_inference.rs:190-390; kask/crates/hkask-keystore/Cargo.toml:12-16; crates/media_panel/src/media_panel.rs:235-250
+verified_against: crates/zed/src/main.rs:791-795,912-914,1317-1323; kask/crates/hkask-mcp/src/runtime.rs; kask/crates/kask_bridge/src/mcp_servers.rs:49-419; kask/crates/hkask-inference/src/hkask_inference.rs:190-390; kask/crates/hkask-keystore/Cargo.toml:12-16; crates/media_panel/src/media_panel.rs:235-250
 status: VERIFIED
 -->
 
-Domain and MCP crates never depend on Zed crates. The editor-side `kask_bridge` is the only adapter allowed to cross that dependency boundary; `McpRuntime` crosses the process boundary over stdio and the inference IPC client crosses it over the configured socket (`kask/crates/hkask-mcp/src/runtime.rs:646-760`; `kask/crates/hkask-inference/src/hkask_inference.rs:61-83`).
+Domain and MCP crates never depend on Zed crates. The editor-side `kask_bridge` is the only adapter allowed to cross that dependency boundary; `McpRuntime` crosses the process boundary over stdio and the inference IPC client crosses it over the configured socket (`kask/crates/hkask-mcp/src/runtime.rs`; `kask/crates/hkask-inference/src/hkask_inference.rs:61-83`).
 
 ### Capability Separation Boundaries
 
@@ -534,7 +534,7 @@ other than the caller being checked; the rows below satisfy that.
 | Per-agent tool reach | Each swarm agent card's declared `mcp_tools` allowlist (`hkask-mcp-swarm/src/agent_executor.rs`) | P4 |
 | Per-server credentials | Per-server MCP env / credential allowlists (`kask_bridge/src/mcp_servers.rs`) | P1 |
 | Information flow | **None — absent by decision.** Defense Layer 5 (information-flow control) is not implemented; treat every tool path as taint-unaware | P4 |
-| MCP server isolation | Child processes over stdio, owned by `McpRuntime`; server crates do not link Zed crates (`kask/crates/hkask-mcp/src/runtime.rs:646-660`) | P1 |
+| MCP server isolation | Child processes over stdio, owned by `McpRuntime`; server crates do not link Zed crates (`kask/crates/hkask-mcp/src/runtime.rs`) | P1 |
 | Runaway-loop bounds | Per-tick call ceiling charged in `McpRuntime::invoke` (`EnergyBudgetExceeded`, fail-open on an unseeded agent). Breakers and meters, **not** authorization. The former `SYSTEM_MAX_RECURSION` (7) cascade-depth bound no longer exists (removed 2026-08-20 with the `hkask-templates` crate) | P4 |
 | Sovereignty keys | `hkask-keystore` uses `oo7::Keyring` directly for its `kask://credentials/` entries (`kask/crates/hkask-keystore/Cargo.toml:12-16`; `kask/crates/hkask-keystore/src/keychain.rs:33-34,133-161`) | P1 |
 

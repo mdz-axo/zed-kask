@@ -109,7 +109,7 @@ The dependency checker and metadata inspection found no direct forbidden local h
 
 **Evidence:**
 - `crates/agent/src/tools/context_server_registry.rs:574–592` awaits managed invocation without selecting user cancellation.
-- `kask/crates/hkask-mcp/src/runtime.rs:1686–1698` calls rmcp without a request deadline.
+- `kask/crates/hkask-mcp/src/runtime.rs–1698` calls rmcp without a request deadline.
 - `crates/agent/src/thread.rs:2597–2604,3500–3518,6096–6100` signals cancellation but waits for tool results/turn completion.
 
 **Mechanism/impact:** a connected server that never replies can prevent cancellation completion indefinitely. The locked rmcp implementation was inspected: default request options have no timeout.
@@ -208,7 +208,7 @@ and are retained in prose form as the historical record):**
 
 **Evidence:**
 - `crates/agent/src/tools/context_server_registry.rs:988–1046` retries non-timeout errors.
-- `kask/crates/hkask-mcp/src/runtime.rs:1632–1653,1686–1698` distinguishes non-delivery and uncertain delivery.
+- `kask/crates/hkask-mcp/src/runtime.rs–1653,1686–1698` distinguishes non-delivery and uncertain delivery.
 - `kask/crates/hkask-tool-port/src/tool_port.rs:15–51` defines retry-safe versus interrupted outcomes.
 
 **Mechanism/impact:** a server commits a mutation and loses its response; the host may repeat that mutation. Non-timeout protocol/decoding errors can also enter the retry branch.
@@ -337,7 +337,7 @@ Server-library dependencies alone do not justify a new service layer. Extract on
 
 - §13.1 held in inspected local manifests and the repository checker.
 - Managed dispatch distinguishes proven non-delivery from uncertain delivery; see F7.
-- Child environment clearing and selective injection: `kask/crates/hkask-mcp/src/runtime.rs:649–675`.
+- Child environment clearing and selective injection: `kask/crates/hkask-mcp/src/runtime.rs–675`.
 - Independently held, revocable grants: `kask/crates/kask_bridge/src/delegation_grants.rs:15–74`.
 - Atomic call charging: `kask/crates/hkask-regulation/src/energy.rs:164–193`.
 - Research strict transport validates redirect destinations and connect-time DNS and disables proxies: `kask/mcp-servers/hkask-mcp-research/src/research/providers/raw_fetch.rs:41–49,93–106,128–144`.
@@ -722,7 +722,7 @@ Source citations below are relative to ``; they record execution-time inspection
 | Item | Current disposition and evidence |
 | --- | --- |
 | F1 | Upheld at initial baseline; repaired admission and native tool-ceiling paths in the P1a continuation below. Broader per-call MCP identity is not claimed repaired. |
-| F2 | Upheld at baseline; subsequently closed by the independent Gödel stream (see P1b): the reconnect-wait loops now select on `cancelled_by_user()` (`crates/agent/src/tools/context_server_registry.rs:726,1080,1177`), and `McpRuntime::dispatch` runs under `DEFAULT_CALL_TIMEOUT` / `HKASK_MCP_CALL_TIMEOUT_SECS` (`kask/crates/hkask-mcp/src/runtime.rs:106`), reporting `DispatchError::Interrupted` on timeout — pinned by `off_runtime_deadline_and_drop_do_not_replay_effects` (`kask/crates/hkask-mcp/tests/reconnect_integration.rs:54`). |
+| F2 | Upheld at baseline; subsequently closed by the independent Gödel stream (see P1b): the reconnect-wait loops now select on `cancelled_by_user()` (`crates/agent/src/tools/context_server_registry.rs:726,1080,1177`), and `McpRuntime::dispatch` runs under `DEFAULT_CALL_TIMEOUT` / `HKASK_MCP_CALL_TIMEOUT_SECS` (`kask/crates/hkask-mcp/src/runtime.rs`), reporting `DispatchError::Interrupted` on timeout — pinned by `off_runtime_deadline_and_drop_do_not_replay_effects` (`kask/crates/hkask-mcp/tests/reconnect_integration.rs:54`). |
 | F3 | Upheld at baseline, repaired below. Both providers use the repaired shared generator. Prior TRL removal was retained; only Axolotl/Ludwig are in scope. |
 | F4 | Upheld: `kask/mcp-servers/hkask-mcp-corpus/src/tools/gather.rs:199–210` validates the directory then writes a leaf; shared `validation.rs:289–312` reconstructs missing suffixes before `tools/document.rs:72–89` writes. Existing relative-basename and QA-specific link fixes are not race-resistant publication and were not recreated. |
 | F5 | Reproduced and repaired below. Existing transcript-detachment and unlink-failure identity preservation were retained. |
