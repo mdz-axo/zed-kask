@@ -10,8 +10,9 @@
 //! best-fit process axis (PKO), so the `HMemOntology` blob is the discriminator.
 //!
 //! `MemoryStore` wraps `HMemStore` + `EmbeddingStore` and provides:
-//! - `store()` — accepts any h_mem (no visibility/perspective invariants; the
-//!   ontology blob classifies it)
+//! - `prepare_semantic_write()` / `prepare_semantic_revision()` — derive the
+//!   canonical passage and require atomic row/vector publication
+//! - `store()` — raw EAV/control writes, without a semantic-recall guarantee
 //! - `query_deduped()` / `query_deduped_untouched()` — recall with decay + dedup
 //! - `query_for_deduped_untouched()` — filter by who wrote the memory (the
 //!   swarm hive uses this to scope by agent)
@@ -92,41 +93,104 @@ fn validate_entity_key(entity: &str) -> Result<(), MemoryStoreError> {
 /// provenance-bearing `recall_text`; durable lessons use `text`. Goal events
 /// remove the private calibration receipt before reconstructing tool + JSON.
 pub fn semantic_passage_for_h_mem(h_mem: &HMem) -> Option<String> {
-    if let Some(text) = h_mem.value.as_str() {
+    semantic_passage_for_value(&h_mem.entity, &h_mem.attribute, &h_mem.value)
+}
+
+fn semantic_passage_for_value(
+    entity: &str,
+    attribute: &str,
+    value: &serde_json::Value,
+) -> Option<String> {
+    if let Some(text) = value.as_str() {
         return (!text.is_empty()).then(|| text.to_string());
     }
-    if h_mem
-        .value
+    if value
         .get("mutable_state")
         .and_then(serde_json::Value::as_bool)
         == Some(true)
     {
-        return h_mem
-            .value
+        return value
             .get("recall_text")
             .and_then(serde_json::Value::as_str)
             .filter(|text| !text.is_empty())
             .map(ToString::to_string);
     }
-    if let Some(recall_text) = h_mem
-        .value
+    if let Some(recall_text) = value
         .get("recall_text")
         .and_then(serde_json::Value::as_str)
         .filter(|text| !text.is_empty())
     {
         return Some(recall_text.to_string());
     }
-    if let Some(text) = h_mem.value.get("text").and_then(serde_json::Value::as_str) {
-        return (!text.is_empty()).then(|| text.to_string());
+    if let Some(text) = value
+        .get("text")
+        .and_then(serde_json::Value::as_str)
+        .filter(|text| !text.is_empty())
+    {
+        return Some(text.to_string());
     }
-    if h_mem.entity.starts_with("curator:goal:") {
-        let mut public_value = h_mem.value.clone();
-        if let Some(object) = public_value.as_object_mut() {
-            object.remove("_memory_calibration");
-        }
-        return Some(format!("goal event {}: {}", h_mem.attribute, public_value));
+    if entity.starts_with("curator:goal:") {
+        return Some(format!(
+            "goal event {attribute}: {}",
+            public_value(entity, value)
+        ));
     }
     None
+}
+
+fn public_value(entity: &str, value: &serde_json::Value) -> serde_json::Value {
+    let mut value = value.clone();
+    if entity.starts_with("curator:goal:") {
+        if let Some(object) = value.as_object_mut() {
+            object.remove("_memory_calibration");
+        }
+    }
+    value
+}
+
+/// A semantic write cannot publish its row without the vector for its passage.
+/// Preparation derives missing recall text; inference runs outside database locks.
+#[must_use = "embed passage() and publish, or no memory is written"]
+pub struct SemanticWrite<'a> {
+    memory: &'a MemoryStore,
+    h_mem: HMem,
+    passage: String,
+    replacing: Option<(hkask_storage::HMemId, Option<String>)>,
+}
+
+impl SemanticWrite<'_> {
+    pub fn passage(&self) -> &str {
+        &self.passage
+    }
+
+    /// Commit the row and vector together, preserving the prior row on failure.
+    pub fn publish(
+        self,
+        vector: &[f32],
+        model: &str,
+    ) -> Result<hkask_storage::HMemId, MemoryStoreError> {
+        if !self
+            .memory
+            .embedding
+            .uses_driver(self.memory.h_mem_store.driver())
+        {
+            return Err(HMemError::Infra(hkask_types::InfrastructureError::database(
+                "semantic publication requires h_mem and embedding stores to share one database driver; use MemoryStore::open/open_existing or construct both stores from the same driver",
+            )).into());
+        }
+        self.memory.embedding.publish_h_mem(
+            &self.h_mem,
+            self.replacing
+                .as_ref()
+                .map(|(id, passage)| (id, passage.as_deref())),
+            vector,
+            model,
+            &self.passage,
+            |attribute, value| semantic_passage_for_value(&self.h_mem.entity, attribute, value),
+        )?;
+        self.memory.emit_store_event(&self.h_mem);
+        Ok(self.h_mem.id)
+    }
 }
 
 /// Result of computing a style centroid over a prefix-scoped embedding set.
@@ -339,7 +403,91 @@ impl MemoryStore {
 
     // ── Store ──────────────────────────────────────────────────────────────
 
-    /// Store any h_mem. No visibility/perspective invariants — the ontology
+    /// Prepare a knowledge write, deriving a passage from the supplied value
+    /// when it has no supported text. Raw EAV/control writes use `store` instead.
+    pub fn prepare_semantic_write(
+        &self,
+        h_mem: HMem,
+    ) -> Result<SemanticWrite<'_>, MemoryStoreError> {
+        validate_entity_key(&h_mem.entity)?;
+        Ok(self.semantic_write(h_mem, None))
+    }
+
+    /// Revise a memory without losing its semantic identity or metadata.
+    /// Row rotation is retained; a stale handle cannot resurrect a deleted row.
+    pub fn prepare_semantic_revision(
+        &self,
+        id: &hkask_storage::HMemId,
+        value: serde_json::Value,
+        confidence: Confidence,
+    ) -> Result<SemanticWrite<'_>, MemoryStoreError> {
+        self.prepare_semantic_change(id, Some((value, confidence)))
+    }
+
+    /// Repair passage coverage without rejuvenating a memory's decay clock.
+    /// The replacement retains observation, recall, confidence, and provenance.
+    pub fn prepare_semantic_repair(
+        &self,
+        id: &hkask_storage::HMemId,
+    ) -> Result<SemanticWrite<'_>, MemoryStoreError> {
+        self.prepare_semantic_change(id, None)
+    }
+
+    fn prepare_semantic_change(
+        &self,
+        id: &hkask_storage::HMemId,
+        revision: Option<(serde_json::Value, Confidence)>,
+    ) -> Result<SemanticWrite<'_>, MemoryStoreError> {
+        let mut h_mem = self.h_mem_store.get_by_id(id)?.ok_or_else(|| {
+            HMemError::NotFound(hkask_types::NotFound {
+                entity_type: "h_mem".into(),
+                id: id.to_string(),
+            })
+        })?;
+        let old_passage = semantic_passage_for_h_mem(&h_mem);
+        h_mem.id = hkask_storage::HMemId::new();
+        if let Some((value, confidence)) = revision {
+            h_mem.value = value;
+            h_mem.confidence = confidence;
+            h_mem.observed_at = chrono::Utc::now();
+            h_mem.recalled_at = h_mem.observed_at;
+        }
+        Ok(self.semantic_write(h_mem, Some((*id, old_passage))))
+    }
+
+    fn semantic_write<'a>(
+        &'a self,
+        mut h_mem: HMem,
+        replacing: Option<(hkask_storage::HMemId, Option<String>)>,
+    ) -> SemanticWrite<'a> {
+        let passage = semantic_passage_for_h_mem(&h_mem).unwrap_or_else(|| {
+            let passage = format!(
+                "{} {}: {}",
+                h_mem.entity,
+                h_mem.attribute,
+                public_value(&h_mem.entity, &h_mem.value)
+            );
+            if let Some(object) = h_mem.value.as_object_mut() {
+                object.insert(
+                    "recall_text".into(),
+                    serde_json::Value::String(passage.clone()),
+                );
+            } else {
+                h_mem.value = serde_json::json!({"value": h_mem.value, "recall_text": passage});
+            }
+            passage
+        });
+        SemanticWrite {
+            memory: self,
+            h_mem,
+            passage,
+            replacing,
+        }
+    }
+
+    /// Store raw EAV/control state without a semantic-recall guarantee.
+    /// Knowledge writers use `prepare_semantic_write` / `prepare_semantic_revision`.
+    /// No visibility/perspective invariants — the ontology
     /// blob classifies the memory. The caller is responsible for setting the
     /// ontology (state-anchored h_mems get `HMemOntology::state()`,
     /// process-anchored h_mems get `HMemOntology::process()`).
@@ -862,8 +1010,9 @@ impl MemoryStore {
 
     // ── Consolidation helpers ─────────────────────────────────────────────
 
-    /// Replace an existing h_mem's value and confidence atomically,
-    /// deleting the prior row rather than retaining a superseded version.
+    /// Replace raw EAV/control state atomically, without maintaining an embedding.
+    /// Knowledge revisions use `prepare_semantic_revision` instead.
+    /// Deletes the prior row rather than retaining a superseded version.
     pub fn update_confidence(
         &self,
         existing_id: &hkask_storage::HMemId,
@@ -1413,6 +1562,324 @@ mod tests {
             hkask_storage::EmbeddingStore::from_driver(driver, hkask_storage::embedding_dim())
                 .expect("embedding store");
         MemoryStore::new(h_mem_store, embedding_store)
+    }
+
+    #[test]
+    fn semantic_write_derives_missing_passages_and_preserves_explicit_text() -> anyhow::Result<()> {
+        let store = test_store();
+        let vector = vec![1.0; hkask_storage::embedding_dim()];
+        for value in [
+            serde_json::json!({"resolution": "revised finding"}),
+            serde_json::json!({"mutable_state": true, "text": "finding", "source": "instrument log"}),
+            serde_json::json!({"text": "", "recall_text": ""}),
+            serde_json::json!(["revised finding"]),
+            serde_json::json!(42),
+            serde_json::json!(null),
+            serde_json::json!(""),
+            serde_json::json!({"text": "explicit text"}),
+            serde_json::json!({"text": "other text", "recall_text": "explicit recall"}),
+            serde_json::json!("plain passage"),
+        ] {
+            let row = HMem::new("semantic:target", "finding", value.clone(), WebID::new());
+            let original_passage = semantic_passage_for_h_mem(&row);
+            let write = store.prepare_semantic_write(row)?;
+            let passage = write.passage().to_string();
+            let id = write.publish(&vector, "test-model")?;
+            let stored = store.get_by_id(&id)?.expect("written row");
+            assert_eq!(
+                semantic_passage_for_h_mem(&stored).as_deref(),
+                Some(passage.as_str())
+            );
+            if let Some(original_passage) = original_passage {
+                assert_eq!(
+                    stored.value, value,
+                    "supported representations remain unchanged"
+                );
+                assert_eq!(passage, original_passage);
+            } else {
+                assert!(!passage.is_empty());
+                assert!(stored.value.get("recall_text").is_some());
+            }
+            assert!(store.has_embedding_for_passage("semantic:target", &passage)?);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn semantic_repair_preserves_age_and_recall_history() -> anyhow::Result<()> {
+        let store = test_store();
+        let mut row = HMem::new(
+            "semantic:legacy",
+            "finding",
+            serde_json::json!({"resolution": "old finding"}),
+            WebID::new(),
+        )
+        .with_confidence(Confidence::new(0.35))
+        .with_provenance(hkask_storage::Provenance::ToolObserved);
+        row.observed_at = chrono::Utc::now() - chrono::Duration::days(100);
+        row.recalled_at = row.observed_at + chrono::Duration::days(10);
+        let old_id = row.id;
+        store.store(row.clone())?;
+        let write = store.prepare_semantic_repair(&old_id)?;
+        let passage = write.passage().to_string();
+        let id = write.publish(&vec![1.0; hkask_storage::embedding_dim()], "test-model")?;
+        let repaired = store.get_by_id(&id)?.expect("repaired row");
+        assert_ne!(id, old_id);
+        assert_eq!(repaired.observed_at, row.observed_at);
+        assert_eq!(repaired.recalled_at, row.recalled_at);
+        assert_eq!(repaired.confidence, row.confidence);
+        assert_eq!(repaired.provenance, row.provenance);
+        assert_eq!(repaired.value["resolution"], row.value["resolution"]);
+        assert!(store.has_embedding_for_passage("semantic:legacy", &passage)?);
+        assert!(store.get_by_id(&old_id)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn semantic_goal_passage_does_not_embed_private_calibration_receipt() -> anyhow::Result<()> {
+        let store = test_store();
+        let write = store.prepare_semantic_write(HMem::new(
+            "curator:goal:fixture",
+            "kanban_goal_create",
+            serde_json::json!({
+                "text": "", "mutable_state": true, "goal": "public goal", "_memory_calibration": "private receipt",
+            }),
+            WebID::new(),
+        ))?;
+        assert!(write.passage().contains("public goal"));
+        assert!(!write.passage().contains("private receipt"));
+        let passage = write.passage().to_string();
+        let id = write.publish(&vec![1.0; hkask_storage::embedding_dim()], "test-model")?;
+        assert_eq!(
+            semantic_passage_for_h_mem(&store.get_by_id(&id)?.expect("goal row")).as_deref(),
+            Some(passage.as_str())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn semantic_publication_rejects_split_database_handles() -> anyhow::Result<()> {
+        let h_mem_driver = SqliteDriver::in_memory_driver();
+        let embedding_driver = SqliteDriver::in_memory_driver();
+        let store = MemoryStore::new(
+            HMemStore::from_driver(Arc::clone(&h_mem_driver))?,
+            EmbeddingStore::from_driver(embedding_driver, hkask_storage::embedding_dim())?,
+        );
+        let result = store
+            .prepare_semantic_write(HMem::new(
+                "semantic:target",
+                "finding",
+                serde_json::json!("must not vanish"),
+                WebID::new(),
+            ))?
+            .publish(&vec![1.0; hkask_storage::embedding_dim()], "test-model");
+        let error = result.expect_err("split stores cannot publish atomically");
+        assert!(error.to_string().contains("share one database driver"));
+        assert_eq!(store.h_mem_count()?, 0);
+        assert_eq!(store.embedding_count()?, 0);
+        assert!(
+            HMemStore::from_driver(Arc::clone(&h_mem_driver))?
+                .query_by_entity("semantic:target")?
+                .is_empty()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn semantic_revision_preserves_siblings_and_consumes_old_handle() -> anyhow::Result<()> {
+        let store = test_store();
+        let vector = vec![1.0; hkask_storage::embedding_dim()];
+        let owner = WebID::new();
+        let row = HMem::new(
+            "semantic:target",
+            "finding",
+            serde_json::json!("old"),
+            owner,
+        )
+        .with_perspective(owner)
+        .with_provenance(hkask_storage::Provenance::ToolObserved);
+        let old_id = store
+            .prepare_semantic_write(row)?
+            .publish(&vector, "test-model")?;
+        let sibling_id = store
+            .prepare_semantic_write(HMem::new(
+                "semantic:target",
+                "sibling",
+                serde_json::json!({"mutable_state": true, "text": "not canonical", "recall_text": "old"}),
+                owner,
+            ))?
+            .publish(&vector, "test-model")?;
+        let write = store.prepare_semantic_revision(
+            &old_id,
+            serde_json::json!({"resolution": "new"}),
+            Confidence::new(0.7),
+        )?;
+        let stale = store.prepare_semantic_revision(
+            &old_id,
+            serde_json::json!("stale"),
+            Confidence::full(),
+        )?;
+        let passage = write.passage().to_string();
+        let id = write.publish(&vector, "test-model")?;
+        assert_ne!(id, old_id);
+        assert!(store.get_by_id(&old_id)?.is_none());
+        assert!(matches!(
+            stale.publish(&vector, "test-model"),
+            Err(MemoryStoreError::HMem(HMemError::NotFound(_)))
+        ));
+        let stored = store.get_by_id(&id)?.expect("revised row");
+        assert_eq!(stored.access.owner_webid, owner);
+        assert_eq!(stored.access.perspective, Some(owner));
+        assert_eq!(stored.provenance, hkask_storage::Provenance::ToolObserved);
+        assert!(store.get_by_id(&sibling_id)?.is_some());
+        assert!(store.has_embedding_for_passage("semantic:target", "old")?);
+        assert!(store.has_embedding_for_passage("semantic:target", &passage)?);
+        assert!(!store.has_embedding_for_passage("semantic:target", "stale")?);
+        Ok(())
+    }
+
+    #[test]
+    fn semantic_revision_retirement_failure_preserves_previous_memory() -> anyhow::Result<()> {
+        let store = test_store();
+        let vector = vec![1.0; hkask_storage::embedding_dim()];
+        let id = store
+            .prepare_semantic_write(HMem::new(
+                "semantic:target",
+                "finding",
+                serde_json::json!("old"),
+                WebID::new(),
+            ))?
+            .publish(&vector, "test-model")?;
+        let pool = store.h_mem_store.driver().sqlite_pool().expect("pool");
+        pool.get()?.execute_batch(
+            "CREATE TRIGGER fail_retirement BEFORE DELETE ON embeddings
+             WHEN OLD.passage_text = 'old'
+             BEGIN SELECT RAISE(FAIL, 'forced old-vector retirement failure'); END;",
+        )?;
+        let result = store
+            .prepare_semantic_revision(&id, serde_json::json!("new"), Confidence::full())?
+            .publish(&vector, "test-model");
+        assert!(
+            result.is_err(),
+            "failed retirement must roll back the entire revision"
+        );
+        assert_eq!(
+            store.get_by_id(&id)?.expect("prior row survives").value,
+            "old"
+        );
+        assert_eq!(store.embedding_count()?, 1);
+        assert!(store.has_embedding_for_passage("semantic:target", "old")?);
+        assert!(!store.has_embedding_for_passage("semantic:target", "new")?);
+        Ok(())
+    }
+
+    #[test]
+    fn semantic_publication_rolls_back_row_and_vector_on_database_failure() -> anyhow::Result<()> {
+        for trigger in [
+            "CREATE TRIGGER fail_publish BEFORE INSERT ON embeddings BEGIN SELECT RAISE(FAIL, 'forced failure'); END;",
+            "CREATE TRIGGER fail_publish AFTER INSERT ON embeddings BEGIN INSERT INTO vec_embeddings (rowid, embedding) VALUES (NEW.rowid, NEW.vector); END;",
+        ] {
+            let store = test_store();
+            let vector = vec![1.0; hkask_storage::embedding_dim()];
+            let id = store
+                .prepare_semantic_write(HMem::new(
+                    "semantic:target",
+                    "finding",
+                    serde_json::json!("old"),
+                    WebID::new(),
+                ))?
+                .publish(&vector, "test-model")?;
+            let pool = store.h_mem_store.driver().sqlite_pool().expect("pool");
+            pool.get()?.execute_batch(trigger)?;
+            let result = store
+                .prepare_semantic_revision(
+                    &id,
+                    serde_json::json!({"resolution": "new"}),
+                    Confidence::full(),
+                )?
+                .publish(&vector, "test-model");
+            assert!(result.is_err());
+            assert_eq!(
+                store.get_by_id(&id)?.expect("old row survives").value,
+                "old"
+            );
+            assert_eq!(store.embedding_count()?, 1);
+            let hits = store.search_similar(&vector, 5, "test-model", None)?;
+            assert_eq!(hits.results.len(), 1);
+            assert_eq!(
+                hits.results[0].embedding.passage_text.as_deref(),
+                Some("old")
+            );
+            assert!(
+                store
+                    .prepare_semantic_write(HMem::new(
+                        "semantic:new",
+                        "finding",
+                        serde_json::json!("new"),
+                        WebID::new()
+                    ))?
+                    .publish(&vector, "test-model")
+                    .is_err()
+            );
+            assert!(store.query_deduped_untouched("semantic:new")?.is_empty());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn semantic_revision_round_trips_both_encrypted_deployments() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let dim = hkask_storage::embedding_dim();
+        let vector = vec![1.0; dim];
+        for name in ["curator.db", "corpus.db"] {
+            let path = directory.path().join(name);
+            let path = path.to_str().expect("UTF-8 fixture path");
+            let store = MemoryStore::open(path, "semantic-fixture-key", dim)?;
+            let id = store
+                .prepare_semantic_write(HMem::new(
+                    "semantic:target",
+                    "finding",
+                    serde_json::json!("old"),
+                    WebID::new(),
+                ))?
+                .publish(&vector, "test-model")?;
+            let write = store.prepare_semantic_revision(
+                &id,
+                serde_json::json!({"resolution": "new"}),
+                Confidence::new(0.7),
+            )?;
+            let passage = write.passage().to_string();
+            let written = write.publish(&vector, "test-model")?;
+            drop(store);
+            let store = MemoryStore::open_existing(path, "semantic-fixture-key", dim)?;
+            let hits = store.search_similar(&vector, 5, "test-model", None)?;
+            assert_eq!(hits.results.len(), 1);
+            assert_eq!(
+                hits.results[0].embedding.passage_text.as_deref(),
+                Some(passage.as_str())
+            );
+            assert_eq!(
+                semantic_passage_for_h_mem(&store.get_by_id(&written)?.expect("durable row"))
+                    .as_deref(),
+                Some(passage.as_str())
+            );
+            let read_only = MemoryStore::open_read_only(path, "semantic-fixture-key", dim)?;
+            assert!(
+                read_only
+                    .prepare_semantic_revision(
+                        &written,
+                        serde_json::json!("forbidden"),
+                        Confidence::full()
+                    )?
+                    .publish(&vector, "test-model")
+                    .is_err()
+            );
+            assert!(
+                store.get_by_id(&written)?.is_some(),
+                "read-only publication cannot rotate the row"
+            );
+        }
+        Ok(())
     }
 
     fn store_h_mem(store: &MemoryStore, entity: &str, attribute: &str, value: &str, webid: WebID) {

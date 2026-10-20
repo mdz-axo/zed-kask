@@ -1,8 +1,8 @@
 ---
 title: "Memory System Specification"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-10-18
-version: "5.3.2"
+last_updated: 2026-10-19
+version: "5.3.3"
 status: "Active"
 domain: "Lifecycle"
 mds_categories: [lifecycle, domain, curation, trust]
@@ -1042,16 +1042,33 @@ floor — live in the curator server, pinned by
 `test_curator_memory_edit_tools_available_to_non_curator_threads` in
 `crates/agent/src/tests/mod.rs`):
 
-- **`memory_insert`** (`:1334`) — evidence-grounded insert; confidence
-  starts at 0.5, calibrated by outcomes, not self-assessment; the value's
-  text is embedded under the entity (the entity_ref invariant) so semantic
-  recall finds it by meaning — embedding failure is non-fatal and surfaced
-  in the output, via the shared insert-path contract
-  `embed_for_semantic_recall` (`:1934`).
+- **`memory_insert`** — evidence-grounded insert; confidence starts at 0.5,
+  calibrated by outcomes, not self-assessment. It uses the shared
+  `MemoryStore::prepare_semantic_write` operation: retain a supported canonical
+  passage, or derive `recall_text` from entity, attribute, and the supplied JSON
+  value. Embedding generation must succeed before publication; `SemanticWrite::publish`
+  commits the h_mem and its vector in one transaction. Failure stores neither.
 - **`memory_update`** — Bayesian-combines confidence (log-odds pooling),
-  rather than assigning the incoming confidence directly. Storage atomically
-  deletes the old row and inserts its replacement with the combined confidence
-  and optional new value; no superseded version remains.
+  rather than assigning the incoming confidence directly. The shared
+  `MemoryStore::prepare_semantic_revision` derives missing `recall_text` from the
+  revised value and re-embeds the canonical passage. Publication atomically
+  deletes the old row and inserts its replacement plus vector; the tool returns
+  the replacement ID. Embedding or database failure preserves the old memory.
+  Ownership, perspective, ontology, and provenance carry through; rotation stays.
+  Obsolete passage vectors are retired in that same transaction, after checking
+  surviving rows through the canonical passage projection under the writer lock;
+  shared sibling passages remain indexed.
+  Raw EAV/control operations remain separate: `store` and `update_confidence`
+  do not claim a semantic-recall guarantee. Corpus passage publication uses the
+  same semantic-write operation, while `method_signals` remains raw metadata.
+- **`curator_memory_backfill_embeddings`** — missing-mode dry runs identify
+  legacy curator knowledge rows needing passage repair. Execution revises these
+  through `MemoryStore::prepare_semantic_repair`, adding derived `recall_text`
+  and a vector atomically and reporting replacement IDs. Repair preserves the
+  original observation and recall timestamps, confidence, and provenance; it does
+  not rejuvenate stale knowledge. Supported passages receive vectors without
+  rewriting their rows. Turn storage, distillation watermarks, and goal
+  events remain excluded; sealed external databases are never repaired here.
 - **`memory_resolve_contradiction`** — `forget` physically deletes the
   dissonant h_mem; `update_confidence` reduces its importance. These are the
   only supported strategies (operator reaffirmation 2026-09-04).

@@ -154,11 +154,16 @@ impl PassageIndex {
         embedding: &[f32],
         model: &str,
     ) -> Result<(), McpToolError> {
+        if text.is_empty() {
+            return Err(McpToolError::invalid_argument(
+                "Corpus passage text must be nonempty so its precomputed vector matches the canonical passage",
+            ));
+        }
         let mut state = self.lock()?;
         Self::check_publication(&write.publication)?;
         let key = (write.publication.origin.clone(), entity_ref.to_string());
-        // MemoryStore inserts, rather than upserts. Evict before replacement so a
-        // partial DB failure cannot leave a known-stale cache entry serving answers.
+        // Evict before replacement so a metadata failure cannot serve a stale cache entry.
+        // The passage row and its vector publish atomically through the shared write.
         state.passages.remove(&key);
         let existing = write
             .store
@@ -171,7 +176,35 @@ impl PassageIndex {
                 McpToolError::internal(format!("Cannot serialize method signals: {error}"))
             })?;
         for (attribute, value) in [("text", json!(text)), ("method_signals", signals)] {
-            if let Some(record) = existing.iter().find(|record| record.attribute == attribute) {
+            if attribute == "text" {
+                let semantic_write = if let Some(record) =
+                    existing.iter().find(|record| record.attribute == attribute)
+                {
+                    write.store.prepare_semantic_revision(
+                        &record.id,
+                        value,
+                        hkask_types::Confidence::full(),
+                    )
+                } else {
+                    let mut ontology = hkask_types::HMemOntology::state(
+                        hkask_bridge_ontology::dc_bibo::DOCUMENT,
+                        Vec::new(),
+                        entity_ref,
+                    );
+                    ontology.pko_procedure = Some("PassageIndex::publish_durable".to_string());
+                    ontology.pko_step = Some(entity_ref.to_string());
+                    write.store.prepare_semantic_write(
+                        hkask_storage::HMem::new(entity_ref, attribute, value, write.writer)
+                            .with_ontology(ontology),
+                    )
+                }
+                .map_err(|error| map_memory_store_error(error, "Cannot prepare corpus passage"))?;
+                semantic_write.publish(embedding, model).map_err(|error| {
+                    map_memory_store_error(error, "Cannot publish corpus passage and embedding")
+                })?;
+            } else if let Some(record) =
+                existing.iter().find(|record| record.attribute == attribute)
+            {
                 write
                     .store
                     .update_confidence(&record.id, value, hkask_types::Confidence::new(1.0))
@@ -197,19 +230,7 @@ impl PassageIndex {
                     })?;
             }
         }
-        write
-            .store
-            .delete_embeddings_by_entity(entity_ref)
-            .map_err(|error| map_memory_store_error(error, "Cannot replace passage embedding"))?;
-        write
-            .store
-            .store_embedding(entity_ref, embedding, model, Some(text))
-            .map_err(|error| {
-                map_memory_store_error(
-                    error,
-                    "Cannot store passage embedding (prior embedding may have been removed)",
-                )
-            })?;
+
         state.passages.insert(
             key,
             IndexedPassage {
@@ -497,6 +518,73 @@ mod tests {
             }
         }
         index
+    }
+
+    #[test]
+    fn durable_revision_keeps_passage_and_embedding_in_agreement() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("corpus.db");
+        let path = path.to_str().expect("UTF-8 fixture path");
+        let index = PassageIndex::default();
+        let entity = "corpus:test:passage";
+        let write = index.begin_durable(
+            path,
+            "semantic-fixture-key",
+            PublicationScope::Entities(vec![entity.into()]),
+            hkask_types::WebID::new(),
+        )?;
+        let vector = vec![1.0; crate::embedding_dim()];
+        let error = index
+            .publish_durable(&write, entity, "", &vector, "test-model")
+            .expect_err("empty precomputed passage cannot be normalized after embedding");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+        assert!(write.store.query_deduped_untouched(entity)?.is_empty());
+        index.publish_durable(&write, entity, "original passage", &vector, "test-model")?;
+        index.publish_durable(&write, entity, "revised passage", &vector, "test-model")?;
+        let rows = write.store.query_deduped_untouched(entity)?;
+        let row = rows
+            .iter()
+            .find(|row| row.attribute == "text")
+            .expect("passage row");
+        assert_eq!(rows.len(), 2, "one passage plus its raw method metadata");
+        assert_eq!(
+            hkask_memory::semantic_passage_for_h_mem(row).as_deref(),
+            Some("revised passage")
+        );
+        assert!(
+            write
+                .store
+                .has_embedding_for_passage(entity, "revised passage")?
+        );
+        assert!(
+            !write
+                .store
+                .has_embedding_for_passage(entity, "original passage")?
+        );
+        assert_eq!(write.store.embedding_count()?, 1);
+        let warm = index.retrieve(&vector, 5, 0.0, "test-model", None)?;
+        assert_eq!(
+            warm.matches[0].passage.text.as_deref(),
+            Some("revised passage")
+        );
+        assert!(
+            index
+                .publish_durable(&write, entity, "failed revision", &[], "test-model")
+                .is_err()
+        );
+        assert!(
+            write.store.get_by_id(&row.id)?.is_some(),
+            "invalid vector cannot replace the passage row"
+        );
+        let cold =
+            MemoryStore::open_existing(path, "semantic-fixture-key", crate::embedding_dim())?;
+        let hits = cold.search_similar(&vector, 5, "test-model", None)?;
+        assert_eq!(hits.results.len(), 1);
+        assert_eq!(
+            hits.results[0].embedding.passage_text.as_deref(),
+            Some("revised passage")
+        );
+        Ok(())
     }
 
     /// BH-008: a query whose dimension matches no stored embedding must fail

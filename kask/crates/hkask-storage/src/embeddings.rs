@@ -156,6 +156,11 @@ impl EmbeddingStore {
         Ok(Self { pool, dim, driver })
     }
 
+    /// Semantic row/vector publication requires one shared database handle.
+    pub fn uses_driver(&self, driver: &Arc<dyn crate::database::driver::DatabaseDriver>) -> bool {
+        Arc::ptr_eq(&self.driver, driver)
+    }
+
     fn dim(&self) -> usize {
         self.dim
     }
@@ -315,6 +320,108 @@ impl EmbeddingStore {
         )?;
         transaction.commit()?;
         Ok(id)
+    }
+
+    /// Publish a memory and its exact passage vector in one transaction.
+    /// A revision consumes the old row handle; failed publication preserves it.
+    /// Only the matching passage's vectors are replaced, never sibling passages.
+    pub fn publish_h_mem(
+        &self,
+        h_mem: &crate::HMem,
+        replacing: Option<(&hkask_types::HMemId, Option<&str>)>,
+        vector: &[f32],
+        model: &str,
+        passage: &str,
+        passage_for_value: impl Fn(&str, &serde_json::Value) -> Option<String>,
+    ) -> Result<(), crate::HMemError> {
+        let storage_error = |error: EmbeddingError| {
+            crate::HMemError::Infra(InfrastructureError::database(error.to_string()))
+        };
+        let (id, blob) = self.prepare_new_row(vector).map_err(storage_error)?;
+        let mut connection = self.pool.get().map_err(|error| {
+            crate::HMemError::Infra(InfrastructureError::database(error.to_string()))
+        })?;
+        let database_error = |error: rusqlite::Error| {
+            crate::HMemError::Infra(InfrastructureError::database(error.to_string()))
+        };
+        let transaction = connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(database_error)?;
+        if let Some((previous_id, _)) = replacing {
+            let deleted = transaction
+                .execute(
+                    "DELETE FROM hmems WHERE id = ?1 AND entity = ?2 AND attribute = ?3",
+                    rusqlite::params![previous_id.to_string(), h_mem.entity, h_mem.attribute],
+                )
+                .map_err(database_error)?;
+            if deleted != 1 {
+                return Err(crate::HMemError::NotFound(NotFound {
+                    entity_type: "h_mem".into(),
+                    id: previous_id.to_string(),
+                }));
+            }
+        }
+        crate::HMemStore::insert_on(&transaction, h_mem)?;
+        if let Some((_, Some(previous_passage))) =
+            replacing.filter(|(_, old)| *old != Some(passage))
+        {
+            // The projection belongs to the memory domain. Run it under this
+            // writer lock so another publisher cannot race the reference check.
+            let rows = {
+                let mut statement = transaction
+                    .prepare("SELECT attribute, value FROM hmems WHERE entity = ?1")
+                    .map_err(database_error)?;
+                statement
+                    .query_map(rusqlite::params![h_mem.entity], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                    })
+                    .map_err(database_error)?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(database_error)?
+            };
+            let mut shared = false;
+            for (attribute, value) in rows {
+                let value = serde_json::from_str(&value)?;
+                if passage_for_value(&attribute, &value).as_deref() == Some(previous_passage) {
+                    shared = true;
+                    break;
+                }
+            }
+            if !shared {
+                transaction.execute(
+                    "DELETE FROM vec_embeddings WHERE rowid IN (SELECT rowid FROM embeddings WHERE entity_ref = ?1 AND passage_text = ?2)",
+                    rusqlite::params![h_mem.entity, previous_passage],
+                ).map_err(database_error)?;
+                transaction
+                    .execute(
+                        "DELETE FROM embeddings WHERE entity_ref = ?1 AND passage_text = ?2",
+                        rusqlite::params![h_mem.entity, previous_passage],
+                    )
+                    .map_err(database_error)?;
+            }
+        }
+        transaction.execute(
+            "DELETE FROM vec_embeddings WHERE rowid IN (SELECT rowid FROM embeddings WHERE entity_ref = ?1 AND passage_text = ?2)",
+            rusqlite::params![h_mem.entity, passage],
+        ).map_err(database_error)?;
+        transaction
+            .execute(
+                "DELETE FROM embeddings WHERE entity_ref = ?1 AND passage_text = ?2",
+                rusqlite::params![h_mem.entity, passage],
+            )
+            .map_err(database_error)?;
+        transaction.execute(
+            "INSERT INTO embeddings (id, entity_ref, vector, dimensions, model, passage_text) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![id, h_mem.entity, blob, vector.len() as i32, model, passage],
+        ).map_err(database_error)?;
+        transaction
+            .execute(
+                "INSERT INTO vec_embeddings (rowid, embedding) VALUES (?1, ?2)",
+                rusqlite::params![transaction.last_insert_rowid(), blob],
+            )
+            .map_err(database_error)?;
+        transaction.commit().map_err(database_error)?;
+        Ok(())
     }
 
     /// Retrieve an embedding by entity reference.

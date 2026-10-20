@@ -311,8 +311,11 @@ pub struct MemoryUpdateRequest {
     /// The new confidence value (0.0–1.0). Will be Bayesian-combined with
     /// the existing confidence, not replaced.
     pub new_confidence: f64,
-    /// Optional: a new value to replace the existing one. The old row is
-    /// deleted and its replacement inserted in one transaction.
+    /// Optional: a new value to replace the existing one. Missing recall text
+    /// is derived automatically and the canonical passage is re-embedded.
+    /// The old row and replacement plus vector change in one transaction;
+    /// failure preserves the old memory. Use the returned replacement h_mem_id
+    /// for subsequent updates.
     ///
     /// Accepts arbitrary JSON. Typed as [`AnyJsonValue`] (not
     /// `serde_json::Value`) so the generated tool input schema is an

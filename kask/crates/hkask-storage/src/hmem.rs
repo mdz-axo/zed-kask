@@ -360,10 +360,33 @@ impl HMemStore {
         Ok(())
     }
 
+    pub(crate) fn insert_on(
+        connection: &rusqlite::Connection,
+        h_mem: &HMem,
+    ) -> Result<(), HMemError> {
+        let ontology = h_mem
+            .ontology
+            .as_ref()
+            .map(HMemOntology::to_json_string)
+            .transpose()?;
+        connection.execute(
+            &format!("INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)"),
+            rusqlite::params![
+                h_mem.id.to_string(), h_mem.entity, h_mem.attribute,
+                serde_json::to_string(&h_mem.value)?, h_mem.observed_at.to_rfc3339(),
+                h_mem.recalled_at.to_rfc3339(), h_mem.confidence.value(),
+                h_mem.access.perspective.as_ref().map(ToString::to_string),
+                h_mem.access.visibility.to_string(), h_mem.access.owner_webid.to_string(),
+                ontology, h_mem.provenance.as_str(),
+            ],
+        ).map_err(|error| HMemError::Infra(InfrastructureError::database(error.to_string())))?;
+        Ok(())
+    }
+
     /// Insert a batch of h_mems atomically on one SQLite connection.
     ///
-    /// All values are serialized before the transaction begins. If any insert
-    /// fails, dropping the transaction rolls back every earlier insert, so a
+    /// If serialization or any insert fails, dropping the transaction rolls
+    /// back every earlier insert, so a
     /// trailing commit marker cannot survive without the records it covers.
     pub fn insert_batch_atomic(&self, h_mems: &[HMem]) -> Result<(), HMemError> {
         self.insert_batch_with_controls(h_mems, None, None)
@@ -412,31 +435,7 @@ impl HMemStore {
         if h_mems.is_empty() && required.is_none() {
             return Ok(true);
         }
-        let rows = h_mems
-            .iter()
-            .map(|h_mem| {
-                let value = serde_json::to_string(&h_mem.value)?;
-                let ontology = h_mem
-                    .ontology
-                    .as_ref()
-                    .map(|ontology| ontology.to_json_string())
-                    .transpose()?;
-                Ok((
-                    h_mem.id.to_string(),
-                    h_mem.entity.clone(),
-                    h_mem.attribute.clone(),
-                    value,
-                    h_mem.observed_at.to_rfc3339(),
-                    h_mem.recalled_at.to_rfc3339(),
-                    h_mem.confidence.value(),
-                    h_mem.access.perspective.as_ref().map(ToString::to_string),
-                    h_mem.access.visibility.to_string(),
-                    h_mem.access.owner_webid.to_string(),
-                    ontology,
-                    h_mem.provenance.as_str(),
-                ))
-            })
-            .collect::<Result<Vec<_>, HMemError>>()?;
+
         let pool = self.driver.sqlite_pool().ok_or_else(|| {
             HMemError::Infra(InfrastructureError::database(
                 "atomic h_mem batch publication requires a SqliteDriver",
@@ -472,20 +471,8 @@ impl HMemStore {
                     HMemError::Infra(InfrastructureError::database(error.to_string()))
                 })?;
         }
-        for row in rows {
-            transaction
-                .execute(
-                    &format!(
-                        "INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)"
-                    ),
-                    rusqlite::params![
-                        row.0, row.1, row.2, row.3, row.4, row.5, row.6, row.7, row.8, row.9,
-                        row.10, row.11
-                    ],
-                )
-                .map_err(|error| {
-                    HMemError::Infra(InfrastructureError::database(error.to_string()))
-                })?;
+        for h_mem in h_mems {
+            Self::insert_on(&transaction, h_mem)?;
         }
         transaction
             .commit()

@@ -1006,35 +1006,9 @@ impl CuratorServer {
             // are unverified observations; at 1.0 they outranked verified
             // facts in recall ranking (confidence is a ranking multiplier).
             .with_confidence(hkask_types::Confidence::new(0.5));
-            let embed_text = hkask_memory::semantic_passage_for_h_mem(&h_mem).ok_or_else(|| {
-                McpToolError::internal("skill-use report has no canonical semantic passage")
-            })?;
-
-            // Embed-at-publish — the same contract as `memory_insert`,
-            // goal events, and distillation (therapy 2026-10-08 F002): the
-            // embedding is stored BEFORE the report h_mem, and an embedding
-            // failure fails the report — the gemba walk reads these rows
-            // semantically, so no report may land invisible to
-            // `curator_semantic_search`.
-            let embedded = embed_for_semantic_recall(
-                self.inference_port.as_ref(),
-                memory,
-                &entity,
-                &embed_text,
-            )
-            .await;
-            if !embedded {
-                return Err(McpToolError::failed_precondition(
-                    "embedding failed — the skill-use issue was NOT stored; no row lands \
-                     invisible to curator_semantic_search. See the curator warn log for \
-                     the specific reason (embedding model not configured, embed call \
-                     failed, or embedding store failed)",
-                ));
-            }
-
-            memory
-                .store(h_mem)
-                .map_err(|e| map_memory_store_error(e, "Failed to store skill-use issue report"))?;
+            let write = memory.prepare_semantic_write(h_mem)
+                .map_err(|e| map_memory_store_error(e, "Failed to prepare skill-use issue report"))?;
+            publish_semantic_write(self.inference_port.as_ref(), write).await?;
 
             RegulationSpan::Curation.emit("skill_use_issue_reported");
 
@@ -1135,38 +1109,15 @@ impl CuratorServer {
                 )));
             }
 
-            // Build the h_mem with confidence floor 0.5. The AnyJsonValue
-            // tool input converts to an owned Value here — the handler
-            // mutates it (note insertion, recall_text backfill) below.
+            // Evidence and notes are tool concerns; passage derivation and
+            // atomic row/vector publication belong to the shared store.
             let mut value = incoming;
             if let Some(note) = &req.note {
                 if let Some(obj) = value.as_object_mut() {
                     obj.insert("_note".to_string(), serde_json::Value::String(note.clone()));
                 }
             }
-            let default_recall_text = format!("{} {}: {}", req.entity, req.attribute, value);
-            if let Some(object) = value.as_object_mut() {
-                let has_supported_passage = object
-                    .get("text")
-                    .or_else(|| object.get("recall_text"))
-                    .and_then(serde_json::Value::as_str)
-                    .is_some_and(|text| !text.is_empty());
-                let is_mutable = object
-                    .get("mutable_state")
-                    .and_then(serde_json::Value::as_bool)
-                    == Some(true);
-                if !has_supported_passage && !is_mutable {
-                    object.insert(
-                        "recall_text".to_string(),
-                        serde_json::Value::String(default_recall_text),
-                    );
-                }
-            } else if !value.is_string() {
-                value = serde_json::json!({
-                    "value": value,
-                    "recall_text": default_recall_text,
-                });
-            }
+
             let h_mem = hkask_storage::HMem::new(
                 &req.entity,
                 &req.attribute,
@@ -1180,44 +1131,10 @@ impl CuratorServer {
             // field to claim; only the machine paths that hold a verbatim
             // tool outcome stamp `tool_observed`.
             .with_provenance(hkask_storage::Provenance::ModelInference);
-            let embed_text = hkask_memory::semantic_passage_for_h_mem(&h_mem).ok_or_else(|| {
-                McpToolError::invalid_argument(
-                    "memory value has no canonical semantic passage; mutable state requires recall_text",
-                )
-            })?;
-
-            // Embed-at-publish — the same contract as goal events and
-            // distillation (therapy 2026-10-08 F002): the embedding is
-            // stored BEFORE the h_mem, and an embedding failure fails the
-            // insert, so no knowledge row can land invisible to
-            // `curator_semantic_search` (the entity_ref invariant — without
-            // it, every agent-inserted memory is recallable only by exact
-            // entity name, and a semantic search that found nothing was
-            // read as "no memory exists"). The prior publish-then-embed
-            // ordering kept the row and stamped a degraded note — the
-            // 27-row embedding-invisible class measured 2026-10-08. An
-            // embedding stored for an h_mem whose store then fails is a
-            // harmless orphan (KNN drops entity refs with no h_mem).
-            let embedded = embed_for_semantic_recall(
-                self.inference_port.as_ref(),
-                memory,
-                &req.entity,
-                &embed_text,
-            )
-            .await;
-            if !embedded {
-                return Err(McpToolError::failed_precondition(
-                    "embedding failed — the memory was NOT stored; no row lands invisible \
-                     to curator_semantic_search. See the curator warn log for the specific \
-                     reason (embedding model not configured, embed call failed, or \
-                     embedding store failed)",
-                ));
-            }
-
             let provenance = h_mem.provenance.as_str();
-            memory
-                .store(h_mem)
-                .map_err(|e| map_memory_store_error(e, "Failed to store curator memory"))?;
+            let write = memory.prepare_semantic_write(h_mem)
+                .map_err(|e| map_memory_store_error(e, "Failed to prepare curator memory"))?;
+            publish_semantic_write(self.inference_port.as_ref(), write).await?;
 
             RegulationSpan::Curation.emit("memory_inserted");
 
@@ -1271,17 +1188,16 @@ impl CuratorServer {
                 .map(serde_json::Value::from)
                 .unwrap_or_else(|| existing_h_mem.value.clone());
 
-            memory
-                .update_confidence(&h_mem_id, value, combined)
-                .map_err(|e| {
-                    map_memory_store_error(e, "Failed to update h_mem confidence")
-                })?;
+            let write = memory.prepare_semantic_revision(&h_mem_id, value, combined)
+                .map_err(|e| map_memory_store_error(e, "Failed to prepare memory revision"))?;
+            let written_id = publish_semantic_write(self.inference_port.as_ref(), write).await?;
 
             RegulationSpan::Curation.emit("memory_updated");
 
             Ok(json!({
                 "updated": true,
-                "h_mem_id": req.h_mem_id,
+                "h_mem_id": written_id.to_string(),
+                "semantic_recall": "embedded",
                 "previous_confidence": existing_h_mem.confidence.value(),
                 "input_confidence": req.new_confidence,
                 "combined_confidence": combined.value(),
@@ -1343,16 +1259,18 @@ impl CuratorServer {
                         )
                     })?;
                     let confidence = hkask_types::Confidence::new(new_confidence);
-                    memory
-                        .update_confidence(&target_id, target_h_mem.value, confidence)
+                    let write = memory
+                        .prepare_semantic_revision(&target_id, target_h_mem.value, confidence)
                         .map_err(|e| {
-                            map_memory_store_error(e, "Failed to update h_mem confidence")
+                            map_memory_store_error(e, "Failed to prepare contradiction revision")
                         })?;
+                    let written_id =
+                        publish_semantic_write(self.inference_port.as_ref(), write).await?;
                     RegulationSpan::Curation.emit("contradiction_confidence_lowered");
                     Ok(json!({
                         "resolved": true,
                         "strategy": "update_confidence",
-                        "target_h_mem_id": req.target_h_mem_id,
+                        "target_h_mem_id": written_id.to_string(),
                         "new_confidence": new_confidence,
                         "contradicting_h_mem_ids": req.h_mem_ids,
                         "reason": req.reason
@@ -1625,65 +1543,71 @@ pub(crate) fn curator_embedding_model() -> Option<String> {
     hkask_inference::model_constants::embedding_model()
 }
 
+async fn semantic_embedding(
+    inference_port: &dyn hkask_types::InferencePort,
+    text: &str,
+) -> Result<(Vec<f32>, String), McpToolError> {
+    let model = curator_embedding_model().ok_or_else(|| McpToolError::failed_precondition(
+        "embedding failed — no embedding model configured; set kask.models.embedding_model (HKASK_EMBEDDING_MODEL); memory was NOT stored",
+    ))?;
+    let batch = inference_port
+        .embed_with_dimensions(
+            &model,
+            &[text.to_string()],
+            Some(hkask_storage::embedding_dim() as u32),
+        )
+        .await
+        .map_err(|error| {
+            McpToolError::failed_precondition(format!(
+                "embedding failed — memory was NOT stored: {error}"
+            ))
+        })?;
+    if batch.vectors.len() != 1 || batch.vectors[0].is_empty() {
+        return Err(McpToolError::failed_precondition(
+            "embedding failed — expected one nonempty vector; memory was NOT stored",
+        ));
+    }
+    let model = batch.actual_model.unwrap_or(model);
+    let vector = batch.vectors.into_iter().next().ok_or_else(|| {
+        McpToolError::failed_precondition("embedding failed — no vector returned")
+    })?;
+    Ok((vector, model))
+}
+
+async fn publish_semantic_write(
+    inference_port: &dyn hkask_types::InferencePort,
+    write: hkask_memory::memory_store::SemanticWrite<'_>,
+) -> Result<hkask_storage::HMemId, McpToolError> {
+    let (vector, model) = semantic_embedding(inference_port, write.passage()).await?;
+    write
+        .publish(&vector, &model)
+        .map_err(|error| map_memory_store_error(error, "Failed to publish memory and embedding"))
+}
+
 /// Embed `text` under `entity` so semantic recall finds the h_mem being
 /// stored — the entity_ref invariant (memory-system-specification.md §3).
-/// Returns whether the embedding landed; the CALLER owns the failure
-/// contract. The insert paths (`memory_insert`,
-/// `curator_report_skill_use_issue`, the distillation pass before its
-/// atomic lesson-plus-watermark commit) treat `false` as a hard failure —
-/// nothing lands invisible to `curator_semantic_search` (the
-/// embed-at-publish contract, therapy 2026-10-08 F002; the prior
-/// publish-then-embed ordering left the 27-row embedding-invisible
-/// class, consolidated 2026-09-04 from the original no-embedding inserts).
-/// The backfill sweeps treat `false` as a per-row failure surfaced in
-/// their results. Every failure path warns naming the cause.
+/// Used by embedding-only backfill and distillation's guarded batch
+/// publication. Standalone knowledge inserts and revisions instead use
+/// `publish_semantic_write`, which cannot commit a row without its vector.
+/// Returns whether the embedding landed; every failure warns naming the cause.
 pub(crate) async fn embed_for_semantic_recall(
     inference_port: &dyn hkask_types::InferencePort,
     memory: &hkask_memory::MemoryStore,
     entity: &str,
     text: &str,
 ) -> bool {
-    let owned_text = text.to_string();
-    let Some(embedding_model) = curator_embedding_model() else {
-        tracing::warn!(
-            target: "hkask.mcp.curator",
-            entity,
-            reason = "no embedding model configured — set \\
-                      kask.models.embedding_model (injected as \\
-                      HKASK_EMBEDDING_MODEL); kask never falls back to a \\
-                      hidden code constant",
-            "embedding skipped — semantic recall degraded for this memory"
-        );
-        return false;
+    let result = match semantic_embedding(inference_port, text).await {
+        Ok((vector, model)) => memory
+            .store_embedding(entity, &vector, &model, Some(text))
+            .map(|_| ())
+            .map_err(|error| map_memory_store_error(error, "Failed to store semantic embedding")),
+        Err(error) => Err(error),
     };
-    match inference_port
-        .embed_with_dimensions(
-            &embedding_model,
-            std::slice::from_ref(&owned_text),
-            Some(hkask_storage::embedding_dim() as u32),
-        )
-        .await
-    {
-        Ok(batch) if !batch.vectors.is_empty() && !batch.vectors[0].is_empty() => {
-            match memory.store_embedding(entity, &batch.vectors[0], &embedding_model, Some(text)) {
-                Ok(_) => true,
-                Err(error) => {
-                    tracing::warn!(
-                        target: "hkask.mcp.curator",
-                        %error,
-                        entity,
-                        "Failed to store embedding — semantic recall degraded for this memory"
-                    );
-                    false
-                }
-            }
-        }
-        _ => {
-            tracing::warn!(
-                target: "hkask.mcp.curator",
-                entity,
-                "Embedding unavailable — semantic recall degraded for this memory"
-            );
+    match result {
+        Ok(()) => true,
+        Err(error) => {
+            tracing::warn!(target: "hkask.mcp.curator", %error, entity,
+                "Embedding unavailable — semantic recall degraded for this memory");
             false
         }
     }

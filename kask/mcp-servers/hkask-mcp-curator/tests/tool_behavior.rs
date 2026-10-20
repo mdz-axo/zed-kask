@@ -1343,10 +1343,10 @@ async fn resolve_contradiction_finds_target_by_id() {
     );
 }
 
-/// A knowledge row with no embeddable text is named in the dry run — the
-/// operator can find the memory semantic recall cannot see.
+/// Legacy knowledge rows gain a passage through the same write contract;
+/// dry-run identifies the repair without changing the row, and retry is idempotent.
 #[tokio::test]
-async fn backfill_names_unsupported_rows() {
+async fn backfill_repairs_legacy_rows_without_canonical_passage() {
     let (server, memory) = make_server_with_embeddings();
     let opaque = hkask_storage::HMem::new(
         "opaque-entity",
@@ -1367,15 +1367,54 @@ async fn backfill_names_unsupported_rows() {
             .await
             .expect("dry run ok"),
     );
-    assert_eq!(dry["unsupported_count"].as_u64(), Some(1));
-    assert_eq!(
-        dry["unsupported"][0]["h_mem_id"].as_str(),
-        Some(id.as_str())
+    assert_eq!(dry["unsupported_count"].as_u64(), Some(0));
+    assert_eq!(dry["candidate_count"].as_u64(), Some(1));
+    assert_eq!(dry["candidates"][0]["h_mem_id"].as_str(), Some(id.as_str()));
+    assert_eq!(dry["candidates"][0]["requires_passage_repair"], true);
+    assert_eq!(memory.embedding_count().expect("dry count"), 0);
+    assert!(
+        memory
+            .get_by_id(&id.parse().expect("old id"))
+            .expect("dry read")
+            .is_some()
     );
-    assert_eq!(
-        dry["unsupported"][0]["entity"].as_str(),
-        Some("opaque-entity")
+    let run = parse(
+        &server
+            .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+                mode: None,
+                store: None,
+                dry_run: Some(false),
+            }))
+            .await
+            .expect("repair"),
     );
+    assert_eq!(run["backfilled"], 1);
+    assert_eq!(run["results"][0]["passage_repaired"], true);
+    let written_id = run["results"][0]["h_mem_id"]
+        .as_str()
+        .expect("replacement id");
+    let repaired = memory
+        .get_by_id(&written_id.parse().expect("new id"))
+        .expect("read repair")
+        .expect("repaired row");
+    assert_eq!(repaired.value["count"], 3);
+    let passage = hkask_memory::semantic_passage_for_h_mem(&repaired).expect("derived passage");
+    assert!(
+        memory
+            .has_embedding_for_passage("opaque-entity", &passage)
+            .expect("repair coverage")
+    );
+    let repeat = parse(
+        &server
+            .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+                mode: None,
+                store: None,
+                dry_run: Some(true),
+            }))
+            .await
+            .expect("repeat"),
+    );
+    assert_eq!(repeat["candidate_count"], 0);
 }
 
 /// `curator_memory_backfill_embeddings` must embed knowledge-layer h_mems
@@ -2148,6 +2187,15 @@ async fn memory_update_finds_target_by_id() {
         .h_mems_by_entity_prefix("zed-kask-update-target")
         .expect("query after update");
     assert_eq!(updated.len(), 1);
+    let returned_id = response["h_mem_id"].as_str().expect("written handle");
+    assert_eq!(
+        memory
+            .get_by_id(&returned_id.parse().expect("valid handle"))
+            .expect("resolve returned handle")
+            .expect("written row")
+            .id,
+        updated[0].id
+    );
     assert_eq!(
         updated[0].value,
         serde_json::Value::String("new value".to_string()),
@@ -2157,6 +2205,107 @@ async fn memory_update_finds_target_by_id() {
         updated[0].confidence.value() > 0.5,
         "the Bayesian combine must move the confidence off the floor — got {}",
         updated[0].confidence.value(),
+    );
+}
+
+#[tokio::test]
+async fn memory_update_derives_and_embeds_revised_object() {
+    let (server, memory) = make_server_with_embeddings();
+    let id = seed_h_mem(&memory, "revision-target", "policy", "old passage".into());
+    memory
+        .store_embedding(
+            "revision-target",
+            &unit_vector(),
+            "test-model",
+            Some("old passage"),
+        )
+        .expect("seed old embedding");
+
+    server
+        .memory_update(Parameters(MemoryUpdateRequest {
+            h_mem_id: id.clone(),
+            new_confidence: 0.6,
+            new_value: Some(
+                serde_json::json!({"resolution": "revised telescope calibration"}).into(),
+            ),
+            reason: None,
+        }))
+        .await
+        .expect("revise object without recall_text");
+    let rows = memory
+        .query_deduped_untouched("revision-target")
+        .expect("read revision");
+    assert_eq!(rows.len(), 1);
+    assert_ne!(
+        rows[0].id.to_string(),
+        id,
+        "revision still rotates row identity"
+    );
+    let passage = hkask_memory::semantic_passage_for_h_mem(&rows[0])
+        .expect("revision must derive its canonical passage");
+    assert!(passage.contains("revised telescope calibration"));
+    assert!(
+        memory
+            .has_embedding_for_passage("revision-target", &passage)
+            .expect("coverage")
+    );
+    assert!(
+        !memory
+            .has_embedding_for_passage("revision-target", "old passage")
+            .expect("old coverage")
+    );
+    let search = parse(
+        &server
+            .curator_semantic_search(Parameters(SemanticSearchRequest {
+                query: "optical instrument alignment".into(),
+                limit: None,
+            }))
+            .await
+            .expect("semantic recall"),
+    );
+    assert!(
+        search["results"]
+            .as_array()
+            .expect("results")
+            .iter()
+            .any(|hit| { hit["entity"] == "revision-target" }),
+        "revised object must join back from KNN: {search}"
+    );
+}
+
+#[tokio::test]
+async fn memory_update_embedding_failure_preserves_previous_memory() {
+    let (server, memory) = make_server_with_embedding_port(Arc::new(FailingEmbedPort));
+    let id = seed_h_mem(&memory, "revision-target", "policy", "old passage".into());
+    memory
+        .store_embedding(
+            "revision-target",
+            &unit_vector(),
+            "test-model",
+            Some("old passage"),
+        )
+        .expect("seed old embedding");
+    let result = server
+        .memory_update(Parameters(MemoryUpdateRequest {
+            h_mem_id: id.clone(),
+            new_confidence: 0.6,
+            new_value: Some(serde_json::json!({"resolution": "new passage"}).into()),
+            reason: None,
+        }))
+        .await;
+    assert!(
+        result.is_err(),
+        "embedding failure must refuse the revision"
+    );
+    let old = memory
+        .get_by_id(&id.parse().expect("id"))
+        .expect("read prior row")
+        .expect("failed revision preserves prior row");
+    assert_eq!(old.value, "old passage");
+    assert!(
+        memory
+            .has_embedding_for_passage("revision-target", "old passage")
+            .expect("prior embedding")
     );
 }
 

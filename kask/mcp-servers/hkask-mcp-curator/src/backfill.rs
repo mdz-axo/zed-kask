@@ -126,25 +126,34 @@ pub(crate) async fn backfill_missing_passages(
         BackfillStore::Swarm => h_mem.attribute == SWARM_RESPONSE_CHUNK_ATTRIBUTE,
     };
 
-    let mut candidates: Vec<(&hkask_storage::HMem, String)> = Vec::new();
+    let mut candidates: Vec<(&hkask_storage::HMem, String, bool)> = Vec::new();
     let mut unsupported: Vec<serde_json::Value> = Vec::new();
     for h_mem in active.iter().filter(|h_mem| eligible(h_mem)) {
-        let Some(passage) = hkask_memory::semantic_passage_for_h_mem(h_mem) else {
-            unsupported.push(json!({
-                "h_mem_id": h_mem.id.to_string(),
-                "entity": h_mem.entity,
-                "attribute": h_mem.attribute,
-                "reason": "value has no string, recall_text or text field",
-            }));
-            continue;
+        let (passage, repair) = match hkask_memory::semantic_passage_for_h_mem(h_mem) {
+            Some(passage) => (passage, false),
+            None if matches!(store_target, BackfillStore::Curator) => {
+                let write = memory.prepare_semantic_repair(&h_mem.id).map_err(|error| {
+                    map_memory_store_error(error, "Failed to prepare legacy passage repair")
+                })?;
+                (write.passage().to_string(), true)
+            }
+            None => {
+                unsupported.push(json!({
+                    "h_mem_id": h_mem.id.to_string(),
+                    "entity": h_mem.entity,
+                    "attribute": h_mem.attribute,
+                    "reason": "value has no string, recall_text or text field",
+                }));
+                continue;
+            }
         };
         let already_embedded = memory
             .has_embedding_for_passage(&h_mem.entity, &passage)
             .map_err(|error| {
                 map_memory_store_error(error, "Failed to inspect passage-level embedding coverage")
             })?;
-        if !already_embedded {
-            candidates.push((h_mem, passage));
+        if repair || !already_embedded {
+            candidates.push((h_mem, passage, repair));
         }
     }
 
@@ -161,12 +170,13 @@ pub(crate) async fn backfill_missing_passages(
             "candidate_count": candidates.len(),
             "unsupported_count": unsupported.len(),
             "unsupported": unsupported,
-            "candidates": candidates.iter().map(|(h_mem, _passage)| json!({
+            "candidates": candidates.iter().map(|(h_mem, _passage, repair)| json!({
+                "requires_passage_repair": repair,
                 "h_mem_id": h_mem.id.to_string(),
                 "entity": h_mem.entity,
                 "attribute": h_mem.attribute,
             })).collect::<Vec<_>>(),
-            "guidance": "Dry run — nothing embedded. Re-run without dry_run to backfill."
+            "guidance": "Dry run — nothing changed. Re-run without dry_run to backfill; candidates marked requires_passage_repair will also gain derived recall_text via an atomic memory revision."
         }));
     }
 
@@ -174,16 +184,35 @@ pub(crate) async fn backfill_missing_passages(
     let mut results = Vec::with_capacity(candidate_count);
     let mut embedded_count = 0usize;
     let mut failed_count = 0usize;
-    for (h_mem, embed_text) in candidates {
-        let embedded =
-            embed_for_semantic_recall(inference_port, memory, &h_mem.entity, &embed_text).await;
+    for (h_mem, embed_text, repair) in candidates {
+        let mut written_id = h_mem.id;
+        let embedded = if repair {
+            let write = memory.prepare_semantic_repair(&h_mem.id).map_err(|error| {
+                map_memory_store_error(error, "Failed to prepare legacy passage repair")
+            })?;
+            match crate::publish_semantic_write(inference_port, write).await {
+                Ok(id) => {
+                    written_id = id;
+                    true
+                }
+                Err(error) => {
+                    tracing::warn!(target: "hkask.mcp.curator", %error, h_mem_id = %h_mem.id,
+                        "Legacy passage repair failed — prior row retained");
+                    false
+                }
+            }
+        } else {
+            embed_for_semantic_recall(inference_port, memory, &h_mem.entity, &embed_text).await
+        };
         if embedded {
             embedded_count += 1;
         } else {
             failed_count += 1;
         }
         results.push(json!({
-            "h_mem_id": h_mem.id.to_string(),
+            "h_mem_id": written_id.to_string(),
+            "previous_h_mem_id": h_mem.id.to_string(),
+            "passage_repaired": repair && embedded,
             "entity": h_mem.entity,
             "attribute": h_mem.attribute,
             "embedded": embedded,
@@ -201,7 +230,7 @@ pub(crate) async fn backfill_missing_passages(
         "unsupported_count": unsupported.len(),
         "unsupported": unsupported,
         "results": results,
-        "guidance": "Embeddings are backfilled per exact canonical passage. Goal rows are excluded and never repaired here. Failed candidates remain passage-level candidates on re-run."
+        "guidance": "Embeddings are backfilled per exact canonical passage. Curator knowledge rows lacking a passage are revised with derived recall_text and an embedding atomically; results report replacement IDs. Goal rows are excluded and never repaired here. Failed candidates remain candidates on re-run."
     }))
 }
 
