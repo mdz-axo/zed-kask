@@ -2,7 +2,7 @@
 title: "Memory System Specification"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-10-19
-version: "5.3.3"
+version: "5.3.4"
 status: "Active"
 domain: "Lifecycle"
 mds_categories: [lifecycle, domain, curation, trust]
@@ -92,8 +92,11 @@ narrative generation loop.
 2. **Recalls** relevant memories on every qualifying prompt by:
    - Embedding the query and searching stored embeddings (KNN), injecting
      only the chunk whose text the matched vector names
-   - Loading `curator:thread:*` chunk h_mems by prefix and filtering by
-     keyword overlap
+   - Loading `curator:thread:*` chunk h_mems by prefix and filtering their
+     canonical passages by keyword overlap. KNN, keyword fallback, and exact
+     thread recall all use `semantic_passage_for_h_mem`, including object values;
+     keyword fallback remains thread-only and does not include other knowledge
+     entities. Mutable rows without a supported `recall_text` remain excluded
    - Merging, ranking by relevance × confidence × connectedness, and
      injecting the top results into the model's context
    (`kask/crates/kask_bridge/src/memory.rs`)
@@ -268,9 +271,13 @@ enforced by:
    the vector before the h_mem and removes that exact vector if h_mem storage
    fails, so an embedding-invisible goal row is never exposed.
 2. `hkask_memory::semantic_passage_for_h_mem` is the one passage-identity
-   contract used by production recall and embedding backfill. Mutable lessons
-   project their provenance-bearing `recall_text`; goal events remove the
-   private calibration receipt before reconstructing tool + JSON. Backfill is
+   contract used by production recall and embedding backfill. Curator MCP recall
+   resolves a named vector only to rows whose canonical passage matches, before
+   applying its per-entity flood cap; newer unrelated siblings cannot inherit the
+   vector's distance. Entity-level vectors retain the freshest-row cap. A missing
+   named passage is surfaced as a resolution failure, not substituted silently.
+   Mutable lessons project their provenance-bearing `recall_text`; goal events
+   remove the private calibration receipt before reconstructing tool + JSON. Backfill is
    scoped by exact `(entity, passage)`, so one successful sibling vector cannot
    hide another failed h_mem. Goal rows are excluded: invalid goal publication
    is rejected, never healed by a compatibility backfill. Backfill therefore
@@ -278,8 +285,10 @@ enforced by:
 3. The regression tests `recall_context_finds_turn_by_embedding_only`,
    `ingest_turn_embeds_every_chunk_with_passage_text`,
    `persisted_goal_event_is_semantically_visible_by_entity_ref`,
-   `goal_embedding_failure_blocks_persistence_and_score_acknowledgment`, and
-   `backfill_embeddings_covers_knowledge_layer_and_excludes_turns`.
+   `goal_embedding_failure_blocks_persistence_and_score_acknowledgment`,
+   `backfill_embeddings_covers_knowledge_layer_and_excludes_turns`,
+   `semantic_search_resolves_the_named_passage_not_newer_siblings`, and
+   `object_thread_memory_uses_one_passage_across_recall_legs`.
 
 A future `EntityRef(String)` newtype shared between `HMemStore` and
 `EmbeddingStore` would make this compile-time-enforced, but that is a
@@ -1061,6 +1070,10 @@ floor — live in the curator server, pinned by
   Raw EAV/control operations remain separate: `store` and `update_confidence`
   do not claim a semantic-recall guarantee. Corpus passage publication uses the
   same semantic-write operation, while `method_signals` remains raw metadata.
+  Corpus assertions remain relational metadata under their source chunk; ingested
+  QA h_mems retain research exports and evidence without indexing generated QA
+  as original source passages. Both tools surface their record role, zero generated
+  embeddings, and a retrieval note; these are not failed semantic publications.
 - **`curator_memory_backfill_embeddings`** — missing-mode dry runs identify
   legacy curator knowledge rows needing passage repair. Execution revises these
   through `MemoryStore::prepare_semantic_repair`, adding derived `recall_text`
@@ -1069,6 +1082,10 @@ floor — live in the curator server, pinned by
   not rejuvenate stale knowledge. Supported passages receive vectors without
   rewriting their rows. Turn storage, distillation watermarks, and goal
   events remain excluded; sealed external databases are never repaired here.
+  The opt-in `tests/live_memory_recall.rs` verifier accepts explicit repair IDs,
+  opens the live store read-only, calls the public semantic-search tool through
+  the configured inference bridge, and requires each replacement ID to round-trip
+  in semantic mode. It is ignored in default tests and writes only its report.
 - **`memory_resolve_contradiction`** — `forget` physically deletes the
   dissonant h_mem; `update_confidence` reduces its importance. These are the
   only supported strategies (operator reaffirmation 2026-09-04).

@@ -30,6 +30,23 @@ Source identity and derivation use [Dublin Core](https://www.dublincore.org/spec
 and [PROV-O](https://www.w3.org/TR/prov-o/); procedure metadata uses PKO. These
 anchors do not turn generated assertions or exact citations into verified prose.
 
+## Memory record roles
+
+Source passages are the semantic retrieval unit. Their canonical text and vector
+are published together by the shared semantic-write operation.
+`corpus_extract_assertions` stores SEPIO assertion metadata under the source
+chunk's entity, without creating per-assertion vectors or replacing source text.
+Its response declares `record_role=chunk_anchored_assertions`,
+`embeddings_generated=0`, and a `retrieval_note`.
+
+QA ingestion retains the research export, grounding identity, and evidence in
+relational h_mems; it does not index generated questions or answers as original
+source passages. Its dry and executed responses declare
+`record_role=qa_export_metadata`, `embeddings_generated=0`, and a `retrieval_note`.
+These are explicit record roles, not failed semantic writes. Making these records
+individually searchable would change the retrieval contract and requires a
+separate requirement; it is not an implicit effect of sharing `MemoryStore`.
+
 ## Tools (25)
 
 | Group | Registered tools |

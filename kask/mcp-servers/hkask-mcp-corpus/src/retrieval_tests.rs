@@ -1623,6 +1623,66 @@ async fn retrieval_consolidation_snapshot_is_protected() {
     }
 }
 
+#[tokio::test]
+async fn assertions_remain_chunk_metadata_without_replacing_source_passage() {
+    if std::env::var_os("KASK_ASSERTION_ROLE_FIXTURE").is_none() {
+        let output = tokio::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args(["--exact", "retrieval_tests::assertions_remain_chunk_metadata_without_replacing_source_passage", "--nocapture"])
+            .env("KASK_ASSERTION_ROLE_FIXTURE", "1")
+            .env("HKASK_CLASSIFIER_MODEL", "offline")
+            .env("HKASK_TEMPLATE_ROOT", std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../registry"))
+            .output().await.expect("isolated assertion fixture");
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let directory = fixture();
+    let predicate = hkask_bridge_ontology::rdf::TYPE;
+    let port = Arc::new(RecordingPort {
+        response: Some(json!({"h_mems": [{"subject": "archive", "predicate": predicate, "object": "dataset", "confidence": 0.9}]}).to_string()),
+        ..Default::default()
+    });
+    let server = server(Arc::clone(&port));
+    let source_text = "The archive is a dataset.";
+    let request = embed_request(directory.path(), "memory.db", source_text);
+    let chunks = request.chunks_jsonl.clone();
+    content(server.corpus_embed(Parameters(request)).await);
+    let database = directory.path().join("memory.db");
+    let result = content(server.corpus_extract_assertions(Parameters(serde_json::from_value(json!({
+        "chunks_jsonl": chunks, "db_path": database, "owner": "capabilities-reasoner", "concurrency": 1,
+    })).expect("assertion request"))).await);
+    assert_eq!(result["h_mems_stored"], 1);
+    assert_eq!(result["record_role"], "chunk_anchored_assertions");
+    assert_eq!(result["embeddings_generated"], 0);
+    assert_eq!(port.inputs.lock().expect("embedding calls").len(), 1);
+    let store = hkask_memory::MemoryStore::open_existing(
+        &database.to_string_lossy(),
+        PASSPHRASE,
+        crate::embedding_dim(),
+    )
+    .expect("stored metadata");
+    let rows = store
+        .query_deduped_untouched("corpus:test:1")
+        .expect("chunk metadata");
+    assert!(
+        rows.iter()
+            .any(|row| row.attribute == predicate && row.value["subject"] == "archive")
+    );
+    assert_eq!(store.embedding_count().expect("vectors"), 1);
+    let fresh = self::server(Arc::new(RecordingPort::default()));
+    let retrieved = content(
+        fresh
+            .corpus_query(Parameters(query(Some(&database), false, true)))
+            .await,
+    );
+    assert_eq!(retrieved["total_indexed"], 1);
+    assert_eq!(retrieved["results"][0]["text"], source_text);
+}
+
 /// expect: Failed replacement names its storage error and preserves prior rows and vectors.
 /// [P8] Motivating: a caller can distinguish failed publication from a successful replacement.
 #[tokio::test]

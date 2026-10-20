@@ -1183,6 +1183,54 @@ fn ingest_request_defaults_pin_the_capabilities_reasoner_name() {
     assert_eq!(request.owner, "capabilities-reasoner");
 }
 
+#[tokio::test]
+async fn ingested_qa_is_export_metadata_not_an_indexed_source_passage() -> anyhow::Result<()> {
+    let directory = fixture()?;
+    let server = server();
+    let rows = two_flat_rows();
+    std::fs::write(directory.path().join("generated.jsonl"), rows.join("\n"))?;
+    ground_chunks(
+        &server,
+        directory.path(),
+        &chunk_rows_from_candidates(&rows)?,
+    )
+    .await?;
+    let summary = content(
+        server
+            .corpus_ingest_qa(Parameters(request(directory.path(), false)))
+            .await?,
+    )?;
+    reconciles(&summary);
+    assert_eq!(summary["stored"], 2);
+    assert_eq!(summary["record_role"], "qa_export_metadata");
+    assert_eq!(summary["embeddings_generated"], 0);
+    assert!(
+        summary["retrieval_note"]
+            .as_str()
+            .expect("role is surfaced")
+            .contains("does not index")
+    );
+    let store = hkask_memory::MemoryStore::open_existing(
+        &directory.path().join("memory.db").to_string_lossy(),
+        PASSPHRASE,
+        hkask_storage::embedding_dim(),
+    )?;
+    let records = store.query_by_attribute_untouched("training_qa_pair")?;
+    assert_eq!(records.len(), 2);
+    assert_eq!(
+        store.embedding_count()?,
+        0,
+        "ingestion does not generate passage vectors"
+    );
+    assert!(
+        records
+            .iter()
+            .all(|record| record.value.get("question").is_some()
+                && record.value.get("grounding").is_some())
+    );
+    Ok(())
+}
+
 /// Brave-derived QA candidates are excluded from ingestion and the exclusion
 /// is surfaced (task c1d65229 — Brave API ToS clause xiii bans training AI
 /// models on Search Results). The retained pair carries its originating

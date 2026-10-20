@@ -334,8 +334,8 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
                             );
                         }
 
-                        // Store subject + object in value so build_prompts can format
-                        // triples as "subject --predicate--> object" with confidence.
+                        // Keep assertions as chunk-anchored relational metadata.
+                        // They must not replace the original source passage in retrieval.
                         let value = json!({
                             "subject": subject,
                             "object": object,
@@ -399,6 +399,9 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
             "succeeded": succeeded,
             "failed": failed,
             "h_mems_stored": h_mems_stored,
+            "record_role": "chunk_anchored_assertions",
+            "embeddings_generated": 0,
+            "retrieval_note": "Assertions are relational metadata under the source chunk; this operation does not index synthesized assertions as source passages.",
         });
         Ok(result)
     }

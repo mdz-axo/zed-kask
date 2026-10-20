@@ -75,8 +75,8 @@ enum SemanticRecallError {
 }
 
 /// Semantic-recall outcome: the resolved `(h_mem, distance)` fragments
-/// plus the number of KNN hits that failed to resolve to any h_mem — the
-/// store errored, or the hit's entity has no h_mems (the KNN-orphan case).
+/// plus the number of KNN hits that failed to resolve to a matching h_mem —
+/// the store errored, or the hit's entity or named passage is orphaned.
 /// Zero fragments with failures > 0 means recall degraded, not an empty
 /// store; callers surface the failure count so the two cannot be confused.
 struct SemanticRecall {
@@ -268,10 +268,10 @@ impl CuratorServer {
     /// Embed a recall query and resolve the nearest stored h_mems by cosine
     /// similarity. Returns the resolved `(h_mem, distance)` pairs (most
     /// similar first) plus the count of KNN hits that failed to resolve to
-    /// any h_mem — the store errored, or the hit's entity has no h_mems
-    /// (the KNN-orphan case). Each distinct entity contributes at most
-    /// `MAX_FRAGMENTS_PER_ENTITY` fragments (its freshest), and no h_mem
-    /// appears twice even when the KNN hits it through several embeddings.
+    /// any matching h_mem — the store errored, or its entity/passage is orphaned.
+    /// Named passage vectors resolve only matching canonical passages; entity-level
+    /// vectors retain the freshest-row behavior. Each entity contributes at most
+    /// `MAX_FRAGMENTS_PER_ENTITY` fragments, with no duplicated h_mem IDs.
     /// `Err(reason)` when the query cannot be embedded (no IPC bridge, no
     /// embedding provider) or the store has no embedding index — callers fall
     /// back to exact-entity lookup and surface the reason. The query's model
@@ -308,16 +308,20 @@ impl CuratorServer {
             }
             match memory.query_deduped_untouched(&entity_ref) {
                 Ok(mut h_mems) => {
+                    if let Some(passage) = result.embedding.passage_text.as_deref() {
+                        h_mems.retain(|h_mem| {
+                            hkask_memory::semantic_passage_for_h_mem(h_mem).as_deref()
+                                == Some(passage)
+                        });
+                    }
                     if h_mems.is_empty() {
-                        // KNN orphan: the embedding's entity has no h_mems,
-                        // so this hit resolved to nothing. Count it so an
-                        // all-orphans run reads as degraded recall, not as
-                        // an empty store.
+                        // A missing entity or named passage is a resolution failure,
+                        // not permission to substitute an unrelated sibling.
                         resolution_failures += 1;
                         tracing::warn!(
                             target: "hkask.mcp.curator",
                             entity_ref = %entity_ref,
-                            "KNN hit resolved to zero h_mems — orphaned embedding (non-fatal)"
+                            "KNN hit resolved to zero matching h_mems — orphaned entity or passage (non-fatal)"
                         );
                         continue;
                     }
@@ -1562,6 +1566,7 @@ async fn semantic_embedding(
                 "embedding failed — memory was NOT stored: {error}"
             ))
         })?;
+    hkask_mcp_server::server::record_tool_usage(batch.usage, batch.cost_usd);
     if batch.vectors.len() != 1 || batch.vectors[0].is_empty() {
         return Err(McpToolError::failed_precondition(
             "embedding failed — expected one nonempty vector; memory was NOT stored",

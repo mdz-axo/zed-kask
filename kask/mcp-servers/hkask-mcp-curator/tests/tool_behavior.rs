@@ -2225,6 +2225,30 @@ async fn memory_update_finds_target_by_id() {
 }
 
 #[tokio::test]
+async fn memory_update_reports_its_embedding_call_in_usage() {
+    let (server, memory) = make_server_with_embeddings();
+    let id = seed_h_mem(&memory, "usage:revision", "finding", "original".into());
+    let output = server
+        .memory_update(Parameters(MemoryUpdateRequest {
+            h_mem_id: id,
+            new_confidence: 0.6,
+            new_value: Some(serde_json::json!({"resolution": "updated finding"}).into()),
+            reason: None,
+        }))
+        .await
+        .expect("revision succeeds");
+    let envelope: serde_json::Value = serde_json::from_str(&output).expect("tool envelope");
+    assert_eq!(
+        envelope["usage"]["calls"], 1,
+        "embedding inference must not read as a deterministic no-usage tool"
+    );
+    assert_eq!(
+        envelope["usage"]["reported"], false,
+        "the stub does not claim provider-reported tokens"
+    );
+}
+
+#[tokio::test]
 async fn memory_update_derives_and_embeds_revised_object() {
     let (server, memory) = make_server_with_embeddings();
     let id = seed_h_mem(&memory, "revision-target", "policy", "old passage".into());
@@ -2392,6 +2416,87 @@ fn memory_update_request_new_value_schema_is_object_typed_not_boolean() {
     assert!(
         hkask_types::find_boolean_schema_positions(&schema).is_empty(),
         "MemoryUpdateRequest must carry no bare-boolean schema positions",
+    );
+}
+
+#[tokio::test]
+async fn semantic_search_resolves_the_named_passage_not_newer_siblings() {
+    let (server, memory) = make_server_with_embeddings();
+    let entity = "semantic:shared-entity";
+    let passage = "the older optical calibration decision";
+    let mut target = hkask_storage::HMem::new(
+        entity,
+        "target",
+        serde_json::json!({"recall_text": passage}),
+        WebID::new(),
+    );
+    target.observed_at = chrono::Utc::now() - chrono::Duration::days(30);
+    let target_id = target.id.to_string();
+    memory.store(target).expect("older named passage");
+    for index in 0..4 {
+        memory
+            .store(hkask_storage::HMem::new(
+                entity,
+                &format!("newer:{index}"),
+                serde_json::json!("unrelated newer sibling"),
+                WebID::new(),
+            ))
+            .expect("newer sibling without a matching passage vector");
+    }
+    memory
+        .store_embedding(entity, &unit_vector(), "test-model", Some(passage))
+        .expect("only target vector");
+    let response = parse(
+        &server
+            .curator_semantic_search(Parameters(SemanticSearchRequest {
+                query: "query with no lexical overlap".into(),
+                limit: Some(1),
+            }))
+            .await
+            .expect("semantic search"),
+    );
+    assert_eq!(
+        response["results"][0]["id"], target_id,
+        "a named vector must join its passage, not the entity newest rows: {response}"
+    );
+}
+
+#[tokio::test]
+async fn semantic_search_surfaces_a_named_passage_orphan_without_substituting_a_sibling() {
+    let (server, memory) = make_server_with_embeddings();
+    let entity = "semantic:shared-entity";
+    seed_h_mem(
+        &memory,
+        entity,
+        "survivor",
+        "unrelated surviving memory".into(),
+    );
+    memory
+        .store_embedding(
+            entity,
+            &unit_vector(),
+            "test-model",
+            Some("deleted passage"),
+        )
+        .expect("orphaned passage vector under a surviving entity");
+    let response = parse(
+        &server
+            .curator_semantic_search(Parameters(SemanticSearchRequest {
+                query: "any semantic query".into(),
+                limit: Some(5),
+            }))
+            .await
+            .expect("degradation is surfaced in response"),
+    );
+    assert_eq!(
+        response["count"], 0,
+        "unrelated rows cannot inherit the named vector distance"
+    );
+    assert!(
+        response["note"]
+            .as_str()
+            .is_some_and(|note| !note.is_empty()),
+        "a named-passage resolution failure must be surfaced: {response}"
     );
 }
 
