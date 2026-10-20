@@ -1925,6 +1925,40 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         ],
         authority: "operator ruling 2026-10-18 (B.5b: author the derived entry); composed over CSO 3.5 cso:separation_of_concerns, cso:software_design, cso:software_component (vendored pin, sources/cso/CSO.3.5.owl) — no cso modularity topic exists",
     },
+    DerivedConcept {
+        term: "embedding",
+        aliases: &[
+            "vector embedding",
+            "embeddings",
+            "vector embeddings",
+            "dense vector representation",
+            "text embedding",
+        ],
+        identity: "a learned map from a discrete object (word, sentence, document, image) to a fixed-width real-valued vector such that semantic similarity between objects corresponds to geometric proximity between their vectors",
+        definition: "Tomas Mikolov, Kai Chen, Greg Corrado & Jeffrey Dean, 'Efficient Estimation of Word Representations in Vector Space', arXiv:1301.3781 (2013): a dense, low-dimensional continuous vector representation learned so that objects used in similar contexts map to nearby points, making semantic similarity computable as a geometric distance (cosine similarity or Euclidean). In zed-kask it grounds the embeddings store and every semantic-recall path (curator_semantic_search, corpus_query, embed_for_semantic_recall). The nameable violation is treating an embedding as interpretable per-dimension or as a stable identifier: the coordinates are not features, and they change wholesale when the model or its width changes, so vectors from different models are not comparable and must never be mixed in one KNN index.",
+        constituents: &["vector space model", "neural network", "cosine similarity"],
+        authority: "operator ruling 2026-10-19 (card 75d2211b: resolve the coarse embedding/ANN vocabulary); Mikolov, Chen, Corrado & Dean, arXiv:1301.3781 (2013)",
+    },
+    DerivedConcept {
+        term: "approximate_nearest_neighbor_search",
+        aliases: &[
+            "approximate nearest neighbor search",
+            "approximate nearest neighbour search",
+            "ann search",
+            "ann",
+            "vector search",
+            "similarity search",
+        ],
+        identity: "retrieval of the stored vectors closest to a query vector under a distance metric, trading a bounded recall shortfall against exact search for sublinear query time",
+        definition: "Yu. A. Malkov & D. A. Yashunin, 'Efficient and robust approximate nearest neighbor search using Hierarchical Navigable Small World graphs', arXiv:1603.09320 (2016, rev. 2018), and Jianyang Gao & Cheng Long, 'RaBitQ: Quantizing High-Dimensional Vectors with a Theoretical Error Bound for Approximate Nearest Neighbor Search', SIGMOD 2024, arXiv:2405.12497: graph-based indexes (HNSW) navigate a multi-layer proximity graph for logarithmic-complexity search, and randomized quantization (RaBitQ) compresses vectors to D-bit codes with a sharp error bound; both accept recall below 1.0 in exchange for speed. In zed-kask it grounds the vec0 KNN retrieval path behind corpus_query and curator_semantic_search. The nameable violation is reporting an approximate result as exact: an ANN hit set is a bounded-recall estimate, so a missing neighbor is not evidence of absence and recall must be measured, never assumed.",
+        constituents: &[
+            "nearest neighbor search",
+            "embedding",
+            "data compression",
+            "metric space",
+        ],
+        authority: "operator ruling 2026-10-19 (card 75d2211b: resolve the coarse embedding/ANN vocabulary); Malkov & Yashunin, arXiv:1603.09320 (2016/2018); Gao & Long, SIGMOD 2024, arXiv:2405.12497",
+    },
 ];
 /// Normalization matches the onto_anchor tool's: lowercase alphanumeric
 /// characters only, separators and case folded away.
@@ -2284,6 +2318,89 @@ mod tests {
         ] {
             let resolved = crate::term_resolution::resolve_term(constituent);
             assert_eq!(resolved.concept, concept, "{constituent}: {resolved:?}");
+        }
+    }
+
+    /// expect: [P5] The 2026-10-19 embedding/ANN ruling resolves both terms
+    /// as derived concepts citing their verified primary authorities, and
+    /// every constituent resolves above the coarse core anchor (a derived
+    /// entry never fabricates a constituent anchor).
+    #[test]
+    fn embedding_and_ann_rulings_resolve_with_published_authority() {
+        for (term, expected_term, marker) in [
+            ("embedding", "embedding", "arXiv:1301.3781"),
+            ("vector embedding", "embedding", "Mikolov"),
+            ("embeddings", "embedding", "2013"),
+            (
+                "approximate nearest neighbor search",
+                "approximate_nearest_neighbor_search",
+                "arXiv:1603.09320",
+            ),
+            (
+                "ANN search",
+                "approximate_nearest_neighbor_search",
+                "arXiv:2405.12497",
+            ),
+            (
+                "vector search",
+                "approximate_nearest_neighbor_search",
+                "SIGMOD 2024",
+            ),
+        ] {
+            let concept = resolve_derived(term).expect("the 2026-10-19 ruling must resolve");
+            assert_eq!(
+                concept.term, expected_term,
+                "{term} resolves to {expected_term}"
+            );
+            assert!(
+                concept.authority.contains(marker),
+                "{term}: {}",
+                concept.authority
+            );
+            assert!(
+                concept.authority.contains("2026-10-19"),
+                "{term} cites the 2026-10-19 ruling"
+            );
+        }
+        // The load-bearing semantics are nameable in each definition: the
+        // embedding's model-comparability violation and the ANN's
+        // approximate-is-not-exact violation.
+        assert!(
+            resolve_derived("embedding")
+                .expect("embedding")
+                .definition
+                .contains("never be mixed in one KNN index"),
+            "the embedding definition names the cross-model mixing violation"
+        );
+        assert!(
+            resolve_derived("approximate nearest neighbor search")
+                .expect("ann")
+                .definition
+                .contains("bounded-recall"),
+            "the ANN definition names the approximate-is-not-exact violation"
+        );
+        // Constituents resolve through the ladder themselves — above the
+        // coarse core anchor. (`index` is deliberately NOT a constituent:
+        // the only remaining `index` sense is SUMO's financial benchmark,
+        // the FIBO data-structure sense having left the ladder.)
+        for (constituent, expected_concept) in [
+            ("vector space model", "cso:vector_space_model"),
+            ("neural network", "cso:neural_network"),
+            ("cosine similarity", "cosine_distance"),
+            ("nearest neighbor search", "cso:nearest_neighbor_search"),
+            ("data compression", "cso:data_compression"),
+            ("metric space", "cso:metric_space"),
+            ("embedding", "embedding"),
+        ] {
+            let resolved = crate::term_resolution::resolve_term(constituent);
+            assert_eq!(
+                resolved.concept, expected_concept,
+                "{constituent}: {resolved:?}"
+            );
+            assert_ne!(
+                resolved.tier, "core",
+                "{constituent} must resolve above the coarse core anchor"
+            );
         }
     }
 
