@@ -85,10 +85,10 @@ For each level, generate 2-3 sharp questions and evaluate the prompt against the
 ### Round scaling
 
 - **Round 1** (medium and high): Recall + Mechanism only.
-- **Round 2** (high only): + Rationale. Escalate if Round 1 was Solid (≥80%).
-- **Round 3** (high only): + Edge Cases + Synthesis. Escalate if Round 2 was Solid.
+- **Round 2** (high only): + Rationale. The invoking skill admits this level only when PE-3 returns `escalate: true` from the previous recorded ratings (the existing ≥80% rule).
+- **Round 3** (high only): + Edge Cases + Synthesis. The invoking skill again requires PE-3 admission.
 
-If a round's solid ratio is < 40%, do not escalate — re-probe the same level with different angles and note the gap.
+Supply semantic Solid/Partial/Gap ratings only. Do not calculate counts, ratios, escalation or re-probe eligibility. The invoking skill computes both threshold decisions and the remaining three-execution budget with PE-3; `reprobe: true` means the same level with different angles under the existing <40% rule. Empty/invalid ratings never admit another level. A re-probe is not an extra execution allowance.
 
 ## Evaluation Against Acceptance Criteria
 

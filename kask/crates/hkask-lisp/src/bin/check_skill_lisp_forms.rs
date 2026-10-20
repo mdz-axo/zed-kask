@@ -1845,6 +1845,171 @@ form: "(= (+ a b) 3)"
     }
 
     #[test]
+    fn arithmetic_pe_thresholds_use_recorded_critic_results() {
+        let form = skill_candidate("prompt-enhance", "\"rating_count\"");
+        let run = |solid: usize, total: usize, effort: &str, calls: usize, next: usize| {
+            let ratings = (0..total)
+                .map(|index| json!({"rating": if index < solid { "Solid" } else { "Gap" }}))
+                .collect::<Vec<_>>();
+            let env = json!({
+                "effort_tier": effort,
+                "next_round": next,
+                "critique_runs": vec![json!({"ratings": ratings}); calls]
+            });
+            eval_sandboxed(&form, &env).expect("authored PE threshold gate evaluates")
+        };
+        for (solid, total, effort, calls, next, escalate, reprobe) in [
+            (4, 5, "high", 1, 2, true, false),
+            (3, 5, "high", 1, 2, false, false),
+            (2, 5, "high", 1, 2, false, false),
+            (1, 5, "high", 1, 2, false, true),
+            (5, 5, "medium", 1, 2, false, false),
+            (5, 5, "low", 1, 2, false, false),
+            (5, 5, "high", 3, 3, false, false),
+            (5, 5, "high", 2, 3, true, false),
+        ] {
+            let result = run(solid, total, effort, calls, next);
+            assert_eq!(result["input_valid"], json!(true));
+            assert_eq!(result["escalate"], json!(escalate));
+            assert_eq!(result["reprobe"], json!(reprobe));
+            assert_eq!(result["solid_count"], json!(solid));
+            assert_eq!(result["rating_count"], json!(total));
+            assert_eq!(result["rounds_executed"], json!(calls));
+        }
+        for result in [
+            run(0, 0, "high", 1, 2),
+            run(0, 0, "high", 0, 2),
+            run(5, 5, "high", 1, 4),
+        ] {
+            assert_eq!(result["input_valid"], json!(false));
+            assert_eq!(result["escalate"], json!(false));
+            assert_eq!(result["reprobe"], json!(false));
+        }
+        let invalid = eval_sandboxed(
+            &form,
+            &json!({
+                "effort_tier": "high", "next_round": 2,
+                "critique_runs": [{"ratings": [{"rating": "Unrated"}]}]
+            }),
+        )
+        .expect("invalid ratings return a surfaced invalid result");
+        assert_eq!(invalid["input_valid"], json!(false));
+        assert_eq!(invalid["error"], "invalid_ratings");
+
+        let bound = skill_candidate("prompt-enhance", "count-prohibitions");
+        for (calls, expected) in [(3, true), (4, false)] {
+            let result = eval_sandboxed(
+                &bound,
+                &json!({
+                    "critique_runs": vec![json!({"ratings": []}); calls],
+                    "pdca_corrections": 0, "verdict": "pass", "findings": []
+                }),
+            )
+            .expect("PE-2 counts the same actual critic log");
+            assert_eq!(result, json!([0, expected]));
+        }
+    }
+
+    #[test]
+    fn arithmetic_tb_count_adjustment_and_directives_share_one_result() {
+        let count_form = skill_candidate("task-breakdown", "\"task_count\"");
+        let gate_form = skill_candidate("task-breakdown", "\"base_gate_scores\"");
+        for (count, penalty) in [(0, 0.1), (2, 0.1), (3, 0.0), (20, 0.0), (21, 0.1)] {
+            assert_scientific_case(
+                &count_form,
+                "task-count boundary",
+                &json!({
+                    "tasks": vec![json!({"id": "fixture"}); count]
+                }),
+                json!({"task_count": count, "task_count_penalty": penalty}),
+            );
+        }
+        let size_directive = json!([{
+            "criterion": "task_sizing", "what_is_wrong": "Review the supplied task sizes/count.",
+            "expected_fix": "Reslice the named fixture tasks."
+        }]);
+        let environment = |penalty: f64, sizing: f64, directives: serde_json::Value| {
+            json!({
+                "base_gate_scores": {
+                    "target_condition_coverage": 0.0, "task_sizing": sizing,
+                    "vertical_slice_integrity": 0.0, "ac_specificity": 0.0,
+                    "dependency_ordering": 0.0, "checkpoint_presence": 0.0,
+                    "red_flag_absence": 0.0
+                },
+                "task_count_penalty": penalty, "refinement_directives": directives,
+                "gate_findings": [{"finding": "retain this reviewer observation"}], "red_flags": []
+            })
+        };
+        for (penalty, base, adjusted, pass) in [
+            (0.1, 0.0, 0.1, true),
+            (0.0, 0.0, 0.0, true),
+            (0.1, 0.2, 0.3, true),
+            (0.1, 0.2001, 0.3001, false),
+            (0.1, 0.95, 1.0, false),
+            (0.0, 0.25, 0.25, true),
+        ] {
+            let directives = if adjusted > 0.0 {
+                size_directive.clone()
+            } else {
+                json!([])
+            };
+            let env = environment(penalty, base, directives);
+            let result = eval_sandboxed(&gate_form, &env).expect("authored gate evaluates");
+            assert_eq!(result["input_valid"], json!(true));
+            assert_eq!(result["directives_complete"], json!(true));
+            assert_eq!(result["gate_pass"], json!(pass));
+            let effective = result["gate_scores"]["task_sizing"]
+                .as_f64()
+                .expect("effective score");
+            assert!((effective - adjusted).abs() < 1e-12);
+            assert_eq!(result["base_gate_scores"], env["base_gate_scores"]);
+            assert_eq!(result["gate_findings"], env["gate_findings"]);
+            assert_eq!(
+                result["refinement_directives"],
+                env["refinement_directives"]
+            );
+        }
+        let missing = eval_sandboxed(&gate_form, &environment(0.1, 0.0, json!([])))
+            .expect("missing directive is surfaced separately from numeric grading");
+        assert_eq!(missing["input_valid"], json!(true));
+        assert_eq!(missing["directives_complete"], json!(false));
+        assert_eq!(missing["gate_pass"], json!(false));
+        assert_eq!(
+            missing["missing_refinement_criteria"],
+            json!(["task_sizing"])
+        );
+        for invalid in [
+            json!(-0.01),
+            json!(1.01),
+            json!("not a score"),
+            serde_json::Value::Null,
+        ] {
+            let mut env = environment(0.1, 0.0, size_directive.clone());
+            env["base_gate_scores"]["task_sizing"] = invalid;
+            let result = eval_sandboxed(&gate_form, &env).expect("invalid scores are surfaced");
+            assert_eq!(result["input_valid"], json!(false));
+            assert_eq!(result["gate_pass"], json!(false));
+        }
+        let mut edge = environment(
+            0.1,
+            0.2,
+            json!([
+                {"criterion":"task_sizing"}, {"criterion":"target_condition_coverage"},
+                {"criterion":"vertical_slice_integrity"}
+            ]),
+        );
+        edge["base_gate_scores"]["target_condition_coverage"] = json!(0.3);
+        edge["base_gate_scores"]["vertical_slice_integrity"] = json!(0.2);
+        let result = eval_sandboxed(&gate_form, &edge).expect("exact acceptance boundary");
+        assert_eq!(result["gate_weighted_total"], json!(0.15));
+        assert_eq!(result["gate_scores"]["task_sizing"], json!(0.3));
+        assert_eq!(result["gate_pass"], json!(true));
+        edge["base_gate_scores"]["vertical_slice_integrity"] = json!(0.2001);
+        let result = eval_sandboxed(&gate_form, &edge).expect("just above acceptance boundary");
+        assert_eq!(result["gate_pass"], json!(false));
+    }
+
+    #[test]
     fn guarded_union_and_assoc_null_check_are_accepted() {
         let forms = parse(
             "(and (is_null (assoc \"optional\" row)) (or (and (stringp x) (string= x \"none\")) (and (numberp x) (> x 0.05))))",

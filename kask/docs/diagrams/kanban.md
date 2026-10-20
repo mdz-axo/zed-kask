@@ -51,7 +51,7 @@ stateDiagram-v2
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STATE-TASK-STATUS
 verified_date: 2026-09-28
-verified_against: kask/crates/hkask-types/src/kanban_status.rs (TaskStatus L24 — Backlog/Ready/InProgress/Review/Done); kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/board.rs (can_transition L51); kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs (task_move L585, task_reopen L889)
+verified_against: kask/crates/hkask-types/src/kanban_status.rs (TaskStatus L24 — Backlog/Ready/InProgress/Review/Done); kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/board.rs (can_transition L51); kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs (task_move L584, task_reopen L890; these two service edges rechecked 2026-10-20)
 status: VERIFIED
 -->
 

@@ -15,7 +15,7 @@ Decompose work into verifiable vertical slices with acceptance criteria and chec
 
 ## D/P labelling
 
-Decomposition, dependency mapping, and the raw criterion scores (`gate_scores`) are P — judgment, critiqued by the independent quality gate (`task-breakdown-quality-gate.j2`). Catastrophic-plan short-circuiting (`TB-1` `plan_escalation` over `tasks`) and the weighted-criterion arithmetic (`TB-2` `gate_weighted_total` and `gate_pass` from `gate_scores`) are D (`lisp_eval`), never model-emitted. Missing or invalid dimensions stop evaluation instead of counting as zero.
+Decomposition, dependency mapping, base criterion scores (`base_gate_scores`) and useful directive text are P — judgment from the independent critic. TB-1 short-circuiting, TB-COUNT task-count facts, and TB-2 adjustment/clamping/weighted grade/directive-reference coverage/final `gate_result` are D (`lisp_eval`). The critic never adds a count penalty or types the final grade. Missing/invalid dimensions and incomplete directive coverage stop acceptance; mechanical presence does not establish semantic quality.
 
 ## When to Use
 
@@ -63,16 +63,22 @@ Decomposition, dependency mapping, and the raw criterion scores (`gate_scores`) 
 
 ### task-breakdown-quality-gate
 
-1. Evaluate the plan independently using `task-breakdown-quality-gate.j2` against the seven weighted criteria: target-condition coverage (0.20), task sizing (0.20), vertical-slice integrity (0.15), acceptance-criteria specificity (0.15), dependency ordering (0.10), checkpoint presence (0.10), red-flag absence (0.10). These local weights sum to 1; the published Improvement Kata does not prescribe them.
-2. Score each criterion from 0 (perfect) to 1 (severely deficient), honestly — inflated scores produce worse plans.
-3. Task-count awareness: in the `task_sizing` criterion, add +0.10 if task count > 20 (too granular) or < 3 (too coarse), clamped so the sizing score stays in [0,1]; no adjustment in the 3–20 healthy range. This is in addition to existing XL/L checks.
-4. Use the `context_summary` (Good Regulator) to check project-specific conventions — testing patterns, file-path consistency with module structure, and crate dependency ordering — not just generic criteria. Inspect `checkpoints` (`{after_task_ids, label, checks}`) and `phases` directly.
-5. Check for red flags: implementation begins without a written task list; a task says "implement the feature" without acceptance criteria; no verification steps; all tasks XL-sized; no checkpoints; dependency order not considered; "and" in a task title; a task touches more than ~5 files without stated justification (cross-crate Rust features legitimately touch 5–7 files with justification); a task does not trace to the target condition (orphan task).
-6. For each criterion scored above 0.00, emit a specific, actionable, task-addressable refinement directive in `refinement_directives` (`{criterion, what_is_wrong, expected_fix}`); do not emit directives for criteria scored at 0.00.
-7. Produce a JSON object from the template with `gate_scores`, `gate_findings`, `refinement_directives`, and `red_flags`.
-8. **Deterministic gate computation (`TB-2`, D — `lisp_eval`):** after the template returns all seven raw scores in `gate_scores`, require each to be numeric in [0,1] and compute `gate_weighted_total` and `gate_pass` (including the 0.30 compensation-masking ceiling) in one `lisp_eval` call:
-   - form: `(let ((scores (list target_condition_coverage task_sizing vertical_slice_integrity ac_specificity dependency_ordering checkpoint_presence red_flag_absence))) (begin (define all-valid (lambda (xs) (if (is_null xs) true (and (numberp (car xs)) (>= (car xs) 0.0) (<= (car xs) 1.0) (all-valid (cdr xs)))))) (if (not (all-valid scores)) (list "invalid_scores" false) (let ((total (+ (* 0.20 target_condition_coverage) (* 0.20 task_sizing) (* 0.15 vertical_slice_integrity) (* 0.15 ac_specificity) (* 0.10 dependency_ordering) (* 0.10 checkpoint_presence) (* 0.10 red_flag_absence))) (worst (max target_condition_coverage task_sizing vertical_slice_integrity ac_specificity dependency_ordering checkpoint_presence red_flag_absence))) (list total (and (<= total 0.15) (<= worst 0.30)))))))`
-   - env: `{ "target_condition_coverage": <score>, "task_sizing": <score>, "vertical_slice_integrity": <score>, "ac_specificity": <score>, "dependency_ordering": <score>, "checkpoint_presence": <score>, "red_flag_absence": <score> }`. If any score is missing or invalid, stop instead of treating it as zero. Assemble `gate_result` as `{gate_scores, gate_weighted_total, gate_pass, gate_findings, refinement_directives, red_flags}` for downstream consumption.
+1. Before the critic, compute the unchanged task-count rule with **TB-COUNT**, D over the actual decomposed `tasks`:
+   - form: `(let ((task-count (length tasks))) (list (list "task_count" task-count) (list "task_count_penalty" (if (or (< task-count 3) (> task-count 20)) 0.10 0.0))))`
+   - env: `{ "tasks": <actual tasks from DECOMPOSE> }`. Retain this result/receipt; do not hand-type a count or penalty. If tasks change, recompute these facts before judging them.
+2. Render the independent quality gate once with this complete decoded context; JSON-encode the outer object for `render_template.context`:
+   ```json
+   { "tasks": <from DECOMPOSE>, "slices": <from DECOMPOSE>, "dependency_graph": <from PLAN>,
+     "context_summary": "<from PLAN>", "target_condition": "<confirmed target>",
+     "phases": <from DECOMPOSE>, "checkpoints": <from DECOMPOSE>,
+     "task_count": <TB-COUNT task_count>, "task_count_penalty": <TB-COUNT task_count_penalty> }
+   ```
+3. The critic judges seven `base_gate_scores` from 0 (perfect) to 1 (deficient), including task sizes but **not** the count penalty. It supplies `gate_findings`, `refinement_directives` and `red_flags`. Weights remain 0.20/0.20/0.15/0.15/0.10/0.10/0.10; these and the count rule are local policy, not prescribed by published Kata.
+4. Directive text remains the critic's responsibility: each positive base criterion needs a task-addressable directive, and the rendered count mandate also requires `task_sizing` when the precomputed penalty applies, even with base sizing 0. This avoids a second normal critic call just to add arithmetic. The critic uses project context, target, phases and checkpoints to assess the original red-flag rubric.
+5. Run **TB-2**, D, over the critic's unadjusted output plus the unchanged TB-COUNT penalty. It validates numbers, applies the penalty once, clamps at 1, computes the original weighted grade/0.30 ceiling and checks required criterion references:
+   - form: `(begin (define all-valid (lambda (xs) (if (is_null xs) true (and (numberp (car xs)) (>= (car xs) 0.0) (<= (car xs) 1.0) (all-valid (cdr xs)))))) (define has-directive (lambda (criterion ds) (if (is_null ds) false (or (string= criterion (assoc "criterion" (car ds))) (has-directive criterion (cdr ds)))))) (define missing-directives (lambda (scores ds) (if (is_null scores) (quote ()) (append (if (and (> (nth 1 (car scores)) 0.0) (not (has-directive (nth 0 (car scores)) ds))) (list (nth 0 (car scores))) (quote ())) (missing-directives (cdr scores) ds))))) (let ((target_condition_coverage (assoc! "target_condition_coverage" base_gate_scores)) (task_sizing (assoc! "task_sizing" base_gate_scores)) (vertical_slice_integrity (assoc! "vertical_slice_integrity" base_gate_scores)) (ac_specificity (assoc! "ac_specificity" base_gate_scores)) (dependency_ordering (assoc! "dependency_ordering" base_gate_scores)) (checkpoint_presence (assoc! "checkpoint_presence" base_gate_scores)) (red_flag_absence (assoc! "red_flag_absence" base_gate_scores))) (if (not (all-valid (list target_condition_coverage task_sizing vertical_slice_integrity ac_specificity dependency_ordering checkpoint_presence red_flag_absence))) (list (list "input_valid" false) (list "gate_pass" false) (list "error" "invalid_scores")) (if (not (and (numberp task_count_penalty) (or (= task_count_penalty 0.0) (= task_count_penalty 0.10)))) (list (list "input_valid" false) (list "gate_pass" false) (list "error" "invalid_count_penalty")) (let ((adjusted (min 1.0 (/ (+ (* 10 task_sizing) (* 10 task_count_penalty)) 10)))) (let ((scores (list (list "target_condition_coverage" target_condition_coverage) (list "task_sizing" adjusted) (list "vertical_slice_integrity" vertical_slice_integrity) (list "ac_specificity" ac_specificity) (list "dependency_ordering" dependency_ordering) (list "checkpoint_presence" checkpoint_presence) (list "red_flag_absence" red_flag_absence))) (total (/ (+ (* 20 target_condition_coverage) (* 20 adjusted) (* 15 vertical_slice_integrity) (* 15 ac_specificity) (* 10 dependency_ordering) (* 10 checkpoint_presence) (* 10 red_flag_absence)) 100)) (worst (max target_condition_coverage adjusted vertical_slice_integrity ac_specificity dependency_ordering checkpoint_presence red_flag_absence))) (let ((missing (missing-directives scores refinement_directives))) (list (list "input_valid" true) (list "base_gate_scores" base_gate_scores) (list "gate_scores" scores) (list "task_count_penalty" task_count_penalty) (list "gate_weighted_total" total) (list "gate_pass" (and (<= total 0.15) (<= worst 0.30) (= (length missing) 0))) (list "directives_complete" (= (length missing) 0)) (list "missing_refinement_criteria" missing) (list "gate_findings" gate_findings) (list "refinement_directives" refinement_directives) (list "red_flags" red_flags)))))))))`
+   - env: `{ "base_gate_scores": <critic's original seven base scores>, "task_count_penalty": <TB-COUNT penalty>, "gate_findings": <critic findings>, "refinement_directives": <critic directives>, "red_flags": <critic flags> }`.
+6. Require `input_valid` and `directives_complete` before accepting the result as `gate_result`. Otherwise stop and report the exact error/missing criteria for correction; an incomplete review is not a scored-plan pass or permission to invent directives. Presence checks do not judge directive usefulness. For complete input, pass the **whole TB-2 object unchanged** downstream; do not manually assemble scores, overwrite `base_gate_scores`, or feed adjusted `gate_scores` back as base input. `gate_pass` retains the 0.15 total/0.30 per-criterion ceilings. Tenths/percentage evaluation avoids decimal-boundary addition artifacts without adding rounding or an epsilon.
 
 ### task-breakdown-write-plan
 
@@ -96,7 +102,7 @@ Decomposition, dependency mapping, and the raw criterion scores (`gate_scores`) 
 
 ### Convergence loop
 
-After the quality gate, before write-plan:
+After a complete, input-valid TB-2 quality result, before write-plan (protocol errors/missing directives stop in the quality phase):
 
 1. If `TB-2`'s `gate_weighted_total` exceeds 0.15 (or `gate_pass` is false) and `refinement_directives` exist, loop back to DECOMPOSE with directives as focused, task-addressable improvement targets.
 2. `refinement_directives` are explicitly routed back to decompose (mechanical and documented).
@@ -117,21 +123,16 @@ To render a template, call the `render_template` tool with the template ref (e.g
 Template context variables (from each template's [inference] contract):
 - `task-breakdown-plan.j2`: `target_condition`, `crate_scope`, `code_context`, `task`
 - `task-breakdown-decompose.j2`: `context_summary`, `dependency_graph`, `risks`, `refinement_directives`, `parallelization_hint`, `skill_catalog`
-- `task-breakdown-quality-gate.j2`: `tasks`, `slices`, `dependency_graph`, `context_summary`, `target_condition`, `phases`, `checkpoints`
+- `task-breakdown-quality-gate.j2`: `tasks`, `slices`, `dependency_graph`, `context_summary`, `target_condition`, `phases`, `checkpoints`, `task_count`, `task_count_penalty` (both unchanged from TB-COUNT)
 - `task-breakdown-write-plan.j2`: `context_summary`, `target_condition`, `dependency_graph`, `tasks`, `slices`, `risks`, `open_questions` (unchanged from PLAN), `gate_result`, `refinement_directives`, `phases`, `checkpoints`
 
 ## Regression case
 
-Run the `TB-2` weighted-total and gate form through `lisp_eval` with representative scores
-(all seven in [0,1]): the first element must equal the hand-computed weighted sum,
-and the second element is `gate_pass` (`true` when `total <= 0.15` AND `max score <= 0.30`;
-`false` when any single score exceeds 0.30, e.g. `ac_specificity=0.4` — compensation
-masking — or when `total > 0.15`). Run `TB-1` on an empty task list (`["empty_decomposition"]`)
-and a healthy multi-task list (`[]`). All receipts executed through the live tool.
+Run TB-COUNT at counts 2/3/20/21: penalties are 0.10/0/0/0.10. Feed the actual count result and critic base scores into TB-2: check raw scores stay unchanged, sizing is adjusted once/clamped, totals match hand-computed expectations and the 0.15/0.30 boundaries remain exact. A positive count-adjusted sizing score with no sizing directive must report `directives_complete: false` and cannot pass; a criterion reference does not prove useful semantic text. Invalid scores/penalties stop explicitly. Run TB-1 on an empty task list (`["empty_decomposition"]`) and a healthy multi-task list (`[]`). These are execution cases to run, not claims of future task quality.
 
 ## Constraints
 
 - `task-breakdown-plan.j2`: Read-only mode — no code proposals, file edits, or implementation sketches. Empty-spec validation is mandatory before producing any output.
 - `task-breakdown-decompose.j2`: Every task is a vertical feature path, not a horizontal layer. No task may be XL. No "and" in a task title. The "~5 files" limit is advisory for cross-crate Rust features (legitimate 5–7 file touches allowed with justification). Every task must have acceptance criteria AND a verification step AND declared dependencies (or "None"). Dependency order must be respected. `skill_match_query` is required per task when `skill_catalog` is provided, omitted otherwise. Catastrophic conditions are gated via `TB-1` `lisp_eval`.
-- `task-breakdown-quality-gate.j2`: Independent evaluation — score each criterion independently 0–1; do not inflate. Task-count awareness (>20 or <3) applies to `task_sizing` only. Only emit `refinement_directives` for criteria scored above 0.00. `TB-2` `lisp_eval` computes `gate_weighted_total` and `gate_pass` (compensation masking: any single criterion > 0.30 forces `gate_pass` false).
+- `task-breakdown-quality-gate.j2`: semantic base scoring/text remains independent. TB-COUNT supplies count facts; the critic never adds the penalty. TB-2 alone emits the final object with original/effective scores, weighted grade and required-directive coverage. Do not accept invalid input or incomplete references, double-apply a penalty, or treat mechanical coverage as semantic correctness.
 - `task-breakdown-write-plan.j2`: Both files must be complete, self-contained markdown. `plan.md` must include overview, architecture decisions, phased task list with checkpoints, risks table, open questions, and (when refinement occurred) Refinement History. `todo.md` must be a checklist grouped by phase. Do not invent tasks not present in the input `tasks` array.

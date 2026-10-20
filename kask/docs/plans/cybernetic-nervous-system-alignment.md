@@ -360,7 +360,7 @@ not verdict (operator calibration, 2026-09-30).
   all verified with cited enforcement lines:** `write_turn`
   (`kask_bridge/src/memory/ingest.rs:277`, claimed at
   `hkask-types/src/ports/memory_port.rs:56`); `validate_board_name`
-  (`kata-kanban/src/kanban/service_impl/service.rs:124`, claimed at
+  (`kata-kanban/src/kanban/service_impl/service.rs:130@validate_board_name`, claimed at
   `kanban_wire.rs:28`); the >=8 passphrase minimum
   (`hkask-storage/src/core/connection.rs:250`, `rotation.rs:125`,
   claimed at `hkask-keystore/src/passphrase.rs:14`); the legacy

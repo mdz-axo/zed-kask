@@ -9,8 +9,10 @@ contract:
     target_condition: string
     phases: array
     checkpoints: array
+    task_count: integer
+    task_count_penalty: number
   output:
-    gate_scores: object
+    base_gate_scores: object
     gate_findings: array
     refinement_directives: array
     red_flags: array
@@ -77,14 +79,14 @@ collectively achieve this target? Does every task trace to this target?
 | Criterion | Weight | 0 (perfect) | 1 (severely deficient) |
 |-----------|--------|-------------|------------------------|
 | target_condition_coverage | 0.20 | Every task traces to the target; collectively they achieve it | Orphan tasks; gaps in coverage; redundancy |
-| task_sizing | 0.20 | All XS-M; none L+; none touches >5 files (advisory); task count 3-20 | XL present or L un-decomposed; task count <3 or >20 |
+| task_sizing | 0.20 | Base size deficiency only: XS-M, no L+, file scope advisory | XL/L un-decomposed; count penalty is applied separately by TB-2 |
 | vertical_slice_integrity | 0.15 | Every task a vertical feature path | Horizontal layers present |
 | ac_specificity | 0.15 | Every AC a testable condition ("what must be true") | Vague ACs; "implement the feature"; >3 bullets |
 | dependency_ordering | 0.10 | Foundations first; deps satisfied | A task precedes a task it depends on |
 | checkpoint_presence | 0.10 | Checkpoints (`{after_task_ids, label, checks}`) between every major phase | No checkpoints between tasks |
 | red_flag_absence | 0.10 | No red flags | One or more red flags present |
 
-Report all seven independently judged raw scores in `gate_scores`. The invoking agent computes `gate_weighted_total` and `gate_pass` deterministically with `lisp_eval` (`TB-2`): the gate passes only if `gate_weighted_total <= 0.15` AND no individual score exceeds `0.30` (compensation-masking guard). Missing scores never count as zero.
+Report all seven independently judged, unadjusted scores in `base_gate_scores`. Do not add a count penalty, clamp a score or emit a final grade. TB-2 computes the effective `gate_scores`, weighted total and pass decision, preserving these original base scores and checking directive-reference coverage. The existing numeric ceilings are total <=0.15 and no effective criterion >0.30. Missing scores never count as zero.
 
 ### Target Condition Coverage
 
@@ -95,10 +97,14 @@ This criterion checks whether the decomposed tasks collectively achieve the expl
 
 ### Task-count awareness
 
-The `task_sizing` criterion accounts for task count in addition to task size (XL/L checks):
-- Task count > 20: add +0.10 (too granular — a list of micro-tasks that is hard to track and coordinate), clamped to [0, 1].
-- Task count < 3: add +0.10 (too coarse — not decomposed enough for reliable estimation and verification), clamped to [0, 1].
-- Task count 3-20: no adjustment (healthy range).
+These facts were computed by TB-COUNT over the supplied tasks; do not count or calculate them yourself:
+```json
+{"task_count": {{ task_count | tojson }}, "task_count_penalty": {{ task_count_penalty | tojson }}}
+```
+The unchanged local rule is +0.10 outside 3..20 tasks, zero otherwise; TB-2 adds it to the base sizing deficiency once and clamps at 1.
+{% if task_count_penalty > 0 %}
+**Required count-induced refinement:** include a task-addressable `task_sizing` directive explaining how to improve this {{ task_count }}-task decomposition, even if its base size score is 0. Do not adjust that score to manufacture the directive. TB-2 applies the numeric adjustment.
+{% endif %}
 
 ## Red Flags (any present => red_flag_absence > 0)
 - Implementation begins without a written task list.
@@ -113,7 +119,7 @@ The `task_sizing` criterion accounts for task count in addition to task size (XL
 
 ## Refinement Directives
 
-For each criterion scored above 0.00, emit a specific, actionable, task-addressable refinement directive in `refinement_directives`. Each directive must name the criterion, state what is wrong (citing specific `task_id`s where applicable), and describe the expected fix. Do not emit directives for criteria scored at 0.00.
+For each positive base criterion, emit a specific task-addressable directive in `refinement_directives` (`{criterion, what_is_wrong, expected_fix}`). Also obey the deterministically rendered count mandate above, even for base sizing 0. Do not emit unrelated zero-score directives. You own useful explanation text; TB-2 checks that every positive effective criterion has a matching reference, not that the text is semantically correct.
 
 ## Output Requirements
 
@@ -121,7 +127,7 @@ Respond with a JSON object:
 
 ```json
 {
-  "gate_scores": {
+  "base_gate_scores": {
     "target_condition_coverage": 0.0,
     "task_sizing": 0.0,
     "vertical_slice_integrity": 0.0,
@@ -151,6 +157,6 @@ Respond with a JSON object:
 ## Constraints
 
 - Score each criterion independently from 0 to 1. Do not inflate scores.
-- Provide all seven numeric scores in [0, 1]; the invoking agent computes `gate_weighted_total` and `gate_pass` deterministically via `lisp_eval` (`TB-2`).
-- Only emit refinement directives for criteria scored above 0.00.
-- Task-count awareness (>20 or <3) applies to `task_sizing` only.
+- Provide all seven unadjusted numeric base scores in [0,1]; TB-2 alone computes adjusted scores and final grade.
+- Emit directives for positive base scores and the rendered count mandate; do not omit a required sizing directive because its base score is 0.
+- Task-count adjustment affects sizing only and is applied once, never in this critic's output.

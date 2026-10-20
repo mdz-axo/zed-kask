@@ -1495,4 +1495,46 @@ mod finalizer_handoff_tests {
             assert!(!rendered.contains("Full markdown content of plan.md"));
         }
     }
+
+    #[test]
+    fn task_count_facts_drive_the_critic_directive_mandate() {
+        let context = |count: usize, penalty: f64| {
+            json!({
+                "tasks": vec![json!({"id": "fixture"}); count],
+                "slices": [], "dependency_graph": [],
+                "context_summary": "Count-mandate rendering fixture, not a graded plan.",
+                "target_condition": "Preserve one source of truth for task-count adjustment.",
+                "phases": [], "checkpoints": [],
+                "task_count": count, "task_count_penalty": penalty
+            })
+        };
+        for (count, penalty, mandated) in [(2, 0.1, true), (3, 0.0, false)] {
+            let rendered = render_template_for_test(
+                "task-breakdown/task-breakdown-quality-gate",
+                context(count, penalty),
+            )
+            .expect("precomputed facts reach the real critic template");
+            assert_eq!(
+                section_json(&rendered, "### Task-count awareness"),
+                json!({"task_count": count, "task_count_penalty": penalty}),
+            );
+            assert_eq!(
+                rendered.contains("Required count-induced refinement"),
+                mandated
+            );
+            assert!(rendered.contains("\"base_gate_scores\""));
+            assert!(!rendered.contains("\"gate_scores\": {"));
+        }
+        for missing in ["task_count", "task_count_penalty"] {
+            let mut incomplete = context(2, 0.1);
+            incomplete
+                .as_object_mut()
+                .expect("context object")
+                .remove(missing);
+            let error =
+                render_template_for_test("task-breakdown/task-breakdown-quality-gate", incomplete)
+                    .expect_err("missing deterministic facts must not be fabricated by the critic");
+            assert!(error.contains(missing), "{error}");
+        }
+    }
 }
