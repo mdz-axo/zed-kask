@@ -23,6 +23,3 @@ pub const KEY_DB_PASSPHRASE: &str = "hkask_db_passphrase";
 /// per the rotation-ordering invariant). An entry here means "a change is
 /// scheduled", never "applied".
 pub const KEY_DB_PASSPHRASE_PENDING: &str = "hkask_db_passphrase_pending";
-
-/// Keychain key for the capability probe (internal diagnostics).
-pub const KEY_CAPABILITY_PROBE: &str = "__hkask_capability_probe__";

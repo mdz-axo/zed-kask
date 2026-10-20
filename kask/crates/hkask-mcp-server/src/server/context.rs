@@ -1,10 +1,7 @@
-//! Server context — credential requirements, capability detection, and construction context.
+//! Server construction context and credential requirements.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-
-use super::credentials::resolve_db_passphrase;
-use super::error::McpError;
 
 /// A credential that an MCP server requires to function.
 ///
@@ -53,129 +50,10 @@ impl CredentialRequirement {
     }
 }
 
-/// Infrastructure capabilities detected at server startup.
-///
-/// Computed from environment and credential resolution results — not configured.
-/// Servers use this to advertise available tools and report their operating mode.
-///
-/// Two operating modes emerge from capability detection:
-/// - **Embedded** (hKask runtime): WebID is non-anonymous, keystore reachable,
-///   persistence available, Regulation consumes spans.
-/// - **Standalone** (IDE): WebID is anonymous, keystore may be unavailable,
-///   persistence unavailable, Regulation spans go to stderr.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CapabilityTier {
-    /// Running as part of an hKask installation (vs standalone in an IDE).
-    pub embedded: bool,
-    /// OS keychain is reachable for secret resolution.
-    pub keystore_available: bool,
-    /// Persistent storage (database) is configured.
-    pub persistence_available: bool,
-}
-
-impl CapabilityTier {
-    /// Detect capabilities from the resolved WebID, resolved credentials, and environment.
-    ///
-    /// `embedded` is `true` when the WebID is non-anonymous (i.e., the server
-    /// was launched by the hKask runtime, which injects a real WebID via
-    /// `HKASK_WEBID`). This is checked by comparing the WebID against the
-    /// anonymous persona (`WebID::from_persona(b"anonymous")`) — not by
-    /// probing the credential map, because `HKASK_WEBID` is an identity
-    /// (non-secret), not a credential, and is injected via `config_env`, not
-    /// `credentials`.
-    ///
-    /// expect: "The system provides authenticated tool execution context for MCP servers"
-    /// pre:  resolved_credentials is a valid map, webid is the resolved identity
-    /// post: returns CapabilityTier with embedded, keystore_available, persistence_available fields set
-    #[must_use]
-    pub fn detect(
-        webid: &hkask_types::WebID,
-        resolved_credentials: &HashMap<String, String>,
-    ) -> Self {
-        let anonymous = hkask_types::WebID::from_persona(b"anonymous");
-        let embedded = *webid != anonymous;
-        // `HKASK_DB_PASSPHRASE` is the persistence credential — injected by
-        // `build_mcp_server_env` for every DB-backed server. (This previously
-        // checked `HKASK_DB_PATH`, a variable nothing ever injects — the flag
-        // was permanently false, a broken feedback loop.)
-        let persistence_available = resolved_credentials.contains_key("HKASK_DB_PASSPHRASE");
-        let keystore_available = Self::probe_keystore();
-        Self {
-            embedded,
-            keystore_available,
-            persistence_available,
-        }
-    }
-
-    /// Probe whether the OS keychain is reachable — bounded.
-    ///
-    /// Attempts a lightweight keychain read with a sentinel key. The probe
-    /// is a liveness check, not a correctness one: a keychain that neither
-    /// responds nor errors within the probe window is treated as
-    /// unavailable. The 2026-10-04 wedged-portal incident: a session restart
-    /// left the XDG secret portal accepting connections but never
-    /// answering, and this unbounded probe blocked every MCP child at
-    /// startup — `keystore_available=false` is the honest non-blocking
-    /// answer, and the timeout is logged so "wedged" stays visible, never
-    /// silent. A probe that answers (even "not found") means reachable.
-    fn probe_keystore() -> bool {
-        const PROBE_TIMEOUT_SECS: u64 = 5;
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let verdict = matches!(
-                hkask_keystore::Keychain
-                    .retrieve_by_key(hkask_keystore::keychain_keys::KEY_CAPABILITY_PROBE),
-                Ok(_) | Err(hkask_keystore::KeychainError::NotFound(_))
-            );
-            let _ = tx.send(verdict);
-        });
-        match rx.recv_timeout(std::time::Duration::from_secs(PROBE_TIMEOUT_SECS)) {
-            Ok(verdict) => verdict,
-            Err(_) => {
-                tracing::warn!(
-                    timeout_secs = PROBE_TIMEOUT_SECS,
-                    "OS keychain probe did not answer — treating keystore as unavailable (a wedged secret portal must not block server startup)"
-                );
-                false
-            }
-        }
-    }
-}
-
 /// Server construction context. No ambient authority — all deps injected here.
 pub struct ServerContext {
     pub credentials: HashMap<String, String>,
 
     /// Resolved from HKASK_WEBID → anonymous.
     pub webid: hkask_types::WebID,
-}
-
-impl ServerContext {
-    /// Resolve the DB passphrase using the canonical 2-tier chain.
-    ///
-    /// Delegates to [`super::credentials::resolve_db_passphrase`] which checks
-    /// `ctx.credentials` first, then `resolve_credential("HKASK_DB_PASSPHRASE")`
-    /// (env var → `hkask-keystore` keychain `kask://credentials/hkask_db_passphrase`).
-    fn resolve_db_credential(&self) -> Result<String, McpError> {
-        resolve_db_passphrase(&self.credentials).map_err(|e| {
-            McpError::DatabasePassphrase(format!("Failed to resolve DB passphrase: {e}"))
-        })
-    }
-
-    /// Looks up `db_env_var` and resolves the passphrase. Falls back to in-memory DB.
-    ///
-    /// expect: "The system provides authenticated tool execution context for MCP servers"
-    /// pre:  db_env_var is set and contains a valid path in credentials map
-    /// post: returns opened Database with passphrase from credentials or keystore chain, or in-memory fallback
-    #[must_use = "result must be used"]
-    pub fn open_database(&self, db_env_var: &str) -> Result<hkask_storage::Database, McpError> {
-        use hkask_storage::open_database;
-        match self.credentials.get(db_env_var) {
-            Some(path) => {
-                let passphrase = self.resolve_db_credential()?;
-                Ok(open_database(path, &passphrase)?)
-            }
-            None => Ok(hkask_storage::Database::in_memory()?),
-        }
-    }
 }

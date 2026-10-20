@@ -975,10 +975,9 @@ impl RealMemoryPort {
             match store.query_deduped_untouched_by_prefix(&entity_prefix, recall_budget) {
                 Ok(h_mems) => {
                     for h_mem in h_mems {
-                        let text = h_mem.value.as_str().unwrap_or("").to_string();
-                        if text.is_empty() {
+                        let Some(text) = hkask_memory::semantic_passage_for_h_mem(&h_mem) else {
                             continue;
-                        }
+                        };
                         let overlap =
                             hkask_memory::salience::keyword_overlap_score(&query_words, &text);
                         if overlap == 0 {
@@ -1124,10 +1123,9 @@ impl RealMemoryPort {
                 ))
             })?;
         for h_mem in h_mems {
-            let text = h_mem.value.as_str().unwrap_or("").to_string();
-            if text.is_empty() {
+            let Some(text) = hkask_memory::semantic_passage_for_h_mem(&h_mem) else {
                 continue;
-            }
+            };
             candidates.push((
                 MemorySnippet {
                     text,
@@ -3693,6 +3691,98 @@ pub(crate) mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn object_thread_memory_uses_one_passage_across_recall_legs() {
+        let semantic_port = in_memory_port_with_embeddings();
+        let keyword_port = in_memory_port();
+        let mut passage = String::new();
+        for port in [&semantic_port, &keyword_port] {
+            let store = port.curator_store.get().expect("curator store");
+            let write = store
+                .prepare_semantic_write(hkask_storage::HMem::new(
+                    "curator:thread:structured",
+                    "finding",
+                    serde_json::json!({"resolution": "ruby telescope calibration"}),
+                    port.curator_webid,
+                ))
+                .expect("prepare structured memory");
+            passage = write.passage().to_string();
+            write
+                .publish(&vec![0.25; 1024], "test-model")
+                .expect("publish structured memory");
+        }
+        let semantic = semantic_port
+            .recall_context_curator("wombat guava", 10)
+            .await
+            .expect("KNN recall");
+        let keyword = keyword_port
+            .recall_context_curator("ruby telescope", 10)
+            .await
+            .expect("keyword fallback");
+        let thread = keyword_port
+            .recall_thread_curator("structured", 10)
+            .await
+            .expect("exact thread recall");
+        for (label, snippets) in [
+            ("semantic", semantic),
+            ("keyword", keyword),
+            ("thread", thread),
+        ] {
+            assert!(
+                snippets.iter().any(|snippet| snippet.text == passage),
+                "{label} must read the canonical passage: {snippets:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn projected_keyword_recall_keeps_thread_scope_and_mutable_boundary() {
+        let port = in_memory_port();
+        let store = port.curator_store.get().expect("curator store");
+        for (entity, attribute, value) in [
+            (
+                "curator:thread:scope",
+                "plain",
+                serde_json::json!("quokka legacy passage"),
+            ),
+            (
+                "curator:thread:scope",
+                "unsupported",
+                serde_json::json!({"mutable_state": true, "text": "quokka unbounded claim"}),
+            ),
+            (
+                "knowledge:outside",
+                "finding",
+                serde_json::json!({"recall_text": "quokka non-thread knowledge"}),
+            ),
+        ] {
+            store
+                .store(hkask_storage::HMem::new(
+                    entity,
+                    attribute,
+                    value,
+                    port.curator_webid,
+                ))
+                .expect("seed scope fixture");
+        }
+        let keyword = port
+            .recall_context_curator("quokka", 10)
+            .await
+            .expect("keyword recall");
+        let thread = port
+            .recall_thread_curator("scope", 10)
+            .await
+            .expect("thread recall");
+        for snippets in [keyword, thread] {
+            assert_eq!(
+                snippets.len(),
+                1,
+                "scope and unsupported mutable rows must not widen: {snippets:?}"
+            );
+            assert_eq!(snippets[0].text, "quokka legacy passage");
         }
     }
 

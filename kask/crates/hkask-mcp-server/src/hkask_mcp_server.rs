@@ -17,9 +17,9 @@ pub mod server;
 // `"kata-kanban"`, and the two contradicted each other silently).
 
 pub use server::{
-    CapabilityTier, CredentialRequirement, McpError, ServerContext, ToolContext, execute_tool,
-    parse_env_warn, resolve_credential, resolve_db_passphrase, run_stdio_server,
-    validate_identifier, validate_path, validate_tool_url_permissive, validate_tool_url_with_dns,
+    CredentialRequirement, McpError, ServerContext, ToolContext, execute_tool, parse_env_warn,
+    resolve_credential, resolve_db_passphrase, run_stdio_server, validate_identifier,
+    validate_path, validate_tool_url_permissive, validate_tool_url_with_dns,
 };
 pub use server::{
     MAX_READ_BYTES, contain_for_read, contain_for_write, ensure_existing_dir, ensure_existing_file,

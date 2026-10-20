@@ -1623,8 +1623,8 @@ async fn retrieval_consolidation_snapshot_is_protected() {
     }
 }
 
-/// expect: Failed replacement names its storage error and potential loss of the prior embedding.
-/// [P8] Motivating: a failed-row count alone cannot disclose destructive partial application.
+/// expect: Failed replacement names its storage error and preserves prior rows and vectors.
+/// [P8] Motivating: a caller can distinguish failed publication from a successful replacement.
 #[tokio::test]
 async fn retrieval_replacement_error_survives_tool_boundary() {
     for consolidate in [false, true] {
@@ -1650,6 +1650,16 @@ async fn retrieval_replacement_error_survives_tool_boundary() {
                     .await,
             );
         }
+        let memory = hkask_memory::MemoryStore::open_existing(
+            &database.to_string_lossy(),
+            PASSPHRASE,
+            crate::embedding_dim(),
+        )
+        .expect("memory before failed replacement");
+        let rows_before = memory.h_mems_by_entity_prefix("").expect("prior rows");
+        let mut embeddings_before = memory.all_embeddings_with_text().expect("prior vectors");
+        embeddings_before
+            .sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.2.cmp(&right.2)));
         let handle = hkask_storage::Database::open(&database.to_string_lossy(), PASSPHRASE)
             .expect("database");
         let pool = handle.sqlite_pool().expect("pool");
@@ -1670,12 +1680,23 @@ async fn retrieval_replacement_error_survives_tool_boundary() {
             error.message.contains("injected embedding storage failure"),
             "{error:?}"
         );
-        assert!(
-            error
-                .message
-                .contains("prior embedding may have been removed"),
-            "{error:?}"
+        assert_eq!(error.kind, hkask_types::McpErrorKind::Internal);
+        let mut embeddings_after = memory.all_embeddings_with_text().expect("retained vectors");
+        embeddings_after
+            .sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.2.cmp(&right.2)));
+        assert_eq!(embeddings_after, embeddings_before);
+        assert_eq!(
+            memory.h_mem_count().expect("retained row count"),
+            rows_before.len()
         );
+        for previous in rows_before {
+            let retained = memory
+                .get_by_id(&previous.id)
+                .expect("row lookup")
+                .expect("prior row retained");
+            assert_eq!(retained.value, previous.value);
+            assert_eq!(retained.confidence, previous.confidence);
+        }
     }
 }
 

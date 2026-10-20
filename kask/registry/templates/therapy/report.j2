@@ -1,12 +1,10 @@
 {# goal: Guide the report phase. #}
-{# Variables: target (string), findings (list), proposals (list, each with its approved flag), executions (list, each with finding_id, strategy, success and outcome), values_pass (object, optional — the Phase-2f values pass) #}
+{# Variables: findings (list), proposals (list, each with its approved flag), executions (list, each with finding_id, strategy, success and outcome), values_pass (object, optional — the Phase-2f values pass) #}
 {# Output: a therapy session report #}
 [inference]
 contract:
   input:
-    target:
-      type: string
-      non_blank: true
+
     findings: array
     proposals: array
     executions: array
@@ -23,7 +21,7 @@ contract:
     report: string
 ---
 
-You are producing the therapy session report for "{{ target }}".
+You are producing the therapy session report for curator memory (`curator.db`).
 
 {% set approved_proposals = proposals | selectattr("approved", "equalto", true) | list %}
 {% set successful_executions = executions | selectattr("success", "equalto", true) | list %}

@@ -1220,9 +1220,7 @@ graph TD
 
     User -->|chats with| ZedAgent
     User -->|chats with| Curator
-    Curator -->|therapy on| Curator
-    Curator -->|therapy on| Corpus
-    Curator -->|therapy on| Swarm
+    Curator -->|therapy on curator memory only| Curator
 ```
 
 <!-- DIAGRAM_ALIGNMENT

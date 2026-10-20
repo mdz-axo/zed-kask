@@ -35,7 +35,7 @@ pub use crate::security::{
     validate_resolved_addresses, validate_tool_url_literal, validate_tool_url_permissive,
     validate_tool_url_with_dns,
 };
-pub use context::{CapabilityTier, CredentialRequirement, ServerContext};
+pub use context::{CredentialRequirement, ServerContext};
 pub use credentials::{parse_env_warn, resolve_credential, resolve_db_passphrase};
 pub use error::{McpError, McpToolError};
 pub use http_helpers::{classify_http_error, serpapi_get_json, url_encode_query_value};

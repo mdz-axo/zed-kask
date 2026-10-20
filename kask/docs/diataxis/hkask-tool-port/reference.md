@@ -50,7 +50,7 @@ comparison was a value against itself
 | Parent-held grant check     | `kask/crates/kask_bridge/src/delegation_grants.rs:66-77`; `kask/crates/kask_bridge/src/inference_ipc_server.rs:936-943` |
 | Per-agent `mcp_tools` allowlist | `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:262-274,537-548`                    |
 | Per-server credential allowlist | `kask/crates/kask_bridge/src/mcp_servers.rs:43` (`BuiltinMcpServer.credentials`)         |
-| `CapabilityTier::detect`     | `kask/crates/hkask-mcp-server/src/server/context.rs:91`                                        |
+
 
 The crate's `src/` directory holds exactly two files: `hkask_tool_port.rs`
 (lib root) and `tool_port.rs`.
@@ -277,38 +277,6 @@ request produced on a path production can actually reach is refused. Do not
 re-add a per-call authorization argument to `ToolPort::invoke` without that
 proof.
 
-## CapabilityTier (sibling crate)
-
-`CapabilityTier` lives in the sibling `hkask-mcp-server` crate, not here. It
-is the per-server startup probe (`context.rs:67`) that distinguishes
-**embedded** mode (launched by the hKask runtime, non-anonymous WebID,
-keystore reachable, persistence available) from **standalone** mode
-(anonymous WebID, keystore may be unavailable, persistence unavailable).
-Detection (`context.rs:91`) compares the resolved WebID against the anonymous
-persona (`WebID::from_persona(b"anonymous")`, `context.rs:95`) — not the
-credential map, because `HKASK_WEBID` is an identity injected via
-`config_env`, not a credential.
-
-```mermaid
-classDiagram
-    class CapabilityTier {
-        +embedded: bool
-        +keystore_available: bool
-        +persistence_available: bool
-        +detect(webid, resolved_credentials) CapabilityTier
-    }
-    class WebID {
-        +from_persona(bytes) WebID
-    }
-    CapabilityTier ..> WebID : compares against anonymous
-```
-
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-CAP-003
-verified_date: 2026-09-28
-verified_against: kask/crates/hkask-mcp-server/src/server/context.rs:67,91,95
-status: VERIFIED
--->
 
 ## See also
 

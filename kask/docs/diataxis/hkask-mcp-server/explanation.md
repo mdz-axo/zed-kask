@@ -14,7 +14,7 @@ mds_categories: [trust, curation]
 
 ## Why construction flows through `ServerContext`
 
-`run_stdio_server` resolves declared credentials and identity before it calls the server factory (`kask/crates/hkask-mcp-server/src/server/transport.rs:68-118`). The factory receives `ServerContext { credentials, webid }`; the detected `CapabilityTier` is logged at startup, not passed to the server (`kask/crates/hkask-mcp-server/src/server/context.rs:126-132`). This makes the server's declared dependencies visible and prevents constructors from running before required credentials have been checked.
+`run_stdio_server` resolves declared credentials and identity before it calls the server factory (`kask/crates/hkask-mcp-server/src/server/transport.rs`, `run_stdio_server`). The factory receives `ServerContext { credentials, webid }` (`kask/crates/hkask-mcp-server/src/server/context.rs`, `ServerContext`). This makes the server's declared dependencies visible and prevents constructors from running before required credentials have been checked.
 
 ```mermaid
 sequenceDiagram
@@ -33,7 +33,7 @@ sequenceDiagram
         Resolver-->>Bootstrap: value or missing
     end
     Bootstrap->>Bootstrap: reject missing required credentials
-    Bootstrap->>Bootstrap: derive WebID and CapabilityTier
+    Bootstrap->>Bootstrap: derive WebID
     Bootstrap->>Factory: ServerContext
     Factory-->>Bootstrap: Server
     Bootstrap->>Server: serve(stdio)
@@ -42,17 +42,12 @@ sequenceDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MCPSRV-030
 verified_date: 2026-09-28
-verified_against: kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:41-54; kask/crates/hkask-mcp-server/src/server/transport.rs:42-130; kask/crates/hkask-mcp-server/src/server/context.rs:126-132
+verified_against: kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:41-54; kask/crates/hkask-mcp-server/src/server/transport.rs (run_stdio_server); kask/crates/hkask-mcp-server/src/server/context.rs (ServerContext)
 status: VERIFIED
 -->
 
 The boundary is not a claim that no framework code reads environment variables. Bootstrap and credential helpers must read launch configuration (`kask/crates/hkask-mcp-server/src/server/transport.rs:50-60`, `kask/crates/hkask-mcp-server/src/server/transport.rs:91-103`; `kask/crates/hkask-mcp-server/src/server/credentials.rs:25-59`). The design claim is narrower: domain server construction receives resolved dependencies through context rather than independently inventing resolution chains.
 
-## Why capability detection is descriptive
-
-`CapabilityTier::detect` reports three observed startup properties: whether the WebID is non-anonymous, whether the keychain responds, and whether resolved credentials include `HKASK_DB_PASSPHRASE` (`kask/crates/hkask-mcp-server/src/server/context.rs:56-74`, `kask/crates/hkask-mcp-server/src/server/context.rs:76-123`). It does not authorize tools. The fields let a server describe embedded identity, keychain reachability, and persistence configuration without hiding how those conclusions were reached.
-
-Persistence detection uses the shared database passphrase, not a database-path variable (`kask/crates/hkask-mcp-server/src/server/context.rs:97-107`). Database opening remains explicit: `ServerContext::open_database` uses the named path from the credential map or creates an in-memory database when the path is absent (`kask/crates/hkask-mcp-server/src/server/context.rs:140-161`).
 
 ## Why `mcp_server!` is a macro
 
@@ -62,7 +57,7 @@ The macro does not register tools or a server globally. Tool discovery remains r
 
 ## Why `execute_tool` preserves typed errors
 
-`execute_tool` accepts business logic returning `Result<Value, McpToolError>` and itself returns `Result<String, McpToolError>` (`kask/crates/hkask-mcp-server/src/server/tool_execution.rs:104-149`). Successful values are serialized with `content`, `duration_ms`, and aggregate inference `usage`; errors remain `Err`, so rmcp sets `is_error: true`, emits the human message as text, and puts `{"error", "kind"}` in structured content (`kask/crates/hkask-mcp-server/src/server/error.rs:178-203`).
+`execute_tool` accepts business logic returning `Result<Value, McpToolError>` and itself returns `Result<String, McpToolError>` (`kask/crates/hkask-mcp-server/src/server/tool_execution.rs:104-149`). Successful values are serialized with `content`, `duration_ms`, and aggregate inference `usage`; errors remain `Err`, so rmcp sets `is_error: true`, emits the human message as text, and puts `{"error", "kind"}` in structured content (`kask/crates/hkask-mcp-server/src/server/error.rs`, `IntoCallToolResult for McpToolError`).
 
 This avoids in-band error sniffing. A client can use protocol error state and the `McpErrorKind` value rather than parse prose. The Model Context Protocol explicitly distinguishes error tool results from successful content.[^mcp]
 
@@ -74,12 +69,12 @@ The framework deliberately does not emit a second child-process outcome event. T
 
 ## Why there are two error layers
 
-`McpError` represents server startup and infrastructure failures: missing required credentials, database passphrase, storage, infrastructure, and transport (`kask/crates/hkask-mcp-server/src/server/error.rs:11-42`). `McpToolError` represents a completed tool dispatch with a typed `McpErrorKind` and message (`kask/crates/hkask-mcp-server/src/server/error.rs:44-51`).
+`McpError` represents server startup and infrastructure failures: missing required credentials, storage, infrastructure, and transport (`kask/crates/hkask-mcp-server/src/server/error.rs`, `McpError`). `McpToolError` represents a completed tool dispatch with a typed `McpErrorKind` and message (`kask/crates/hkask-mcp-server/src/server/error.rs`, `McpToolError`).
 
 The split matches two recovery scopes:
 
 - startup failures are handled by the operator or launcher;
-- tool failures are returned to the MCP client, which can react to `not_found`, `invalid_argument`, `permission_denied`, `rate_limited`, `failed_precondition`, `unavailable`, or `internal` (`kask/crates/hkask-mcp-server/src/server/error.rs:53-127`).
+- tool failures are returned to the MCP client, which can react to `not_found`, `invalid_argument`, `permission_denied`, `rate_limited`, `failed_precondition`, `unavailable`, or `internal` (`kask/crates/hkask-mcp-server/src/server/error.rs`, `impl McpToolError`).
 
 Canonical error mappers preserve caller-fixable and transient categories instead of flattening them to `internal` (`kask/crates/hkask-mcp-server/src/server/validation.rs:71-163`).
 

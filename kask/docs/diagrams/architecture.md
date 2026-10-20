@@ -241,8 +241,7 @@ changed servers. Verified current 2026-08-31.
 erDiagram
     MCP_SERVER ||--o{ SERVER_CONTEXT : "constructed with"
     SERVER_CONTEXT ||--|| CREDENTIALS_MAP : "ctx.credentials: HashMap<String,String>"
-    SERVER_CONTEXT ||--|| RESOLVE_DB_CRED : "resolve_db_credential()"
-    RESOLVE_DB_CRED ||--|| RESOLVE_DB_PASSPHRASE_MCP : "delegates to"
+    MCP_SERVER ||--|| RESOLVE_DB_PASSPHRASE_MCP : "resolves passphrase for server-specific persistence"
     RESOLVE_DB_PASSPHRASE_MCP ||--o{ CREDENTIALS_MAP : "tier 1: ctx.credentials.get('HKASK_DB_PASSPHRASE')"
     RESOLVE_DB_PASSPHRASE_MCP ||--|| RESOLVE_CREDENTIAL : "tier 2: resolve_credential('HKASK_DB_PASSPHRASE')"
     RESOLVE_CREDENTIAL ||--o{ ENV_VAR : "SecretRef::env('HKASK_DB_PASSPHRASE')"
@@ -307,7 +306,7 @@ erDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ERD-CREDENTIAL-RESOLUTION-001
 verified_date: 2026-09-28
-verified_against: kask/crates/hkask-mcp-server/src/server/credentials.rs (resolve_credential L25, resolve_db_passphrase L76); kask/crates/hkask-mcp-server/src/server/context.rs (ServerContext::resolve_db_credential L140); kask/crates/hkask-keystore/src/keychain.rs (resolve_db_passphrase L347, resolve_db_passphrase_string L362); kask/crates/kask_bridge/src/identity.rs (provision_db_passphrase L132, provision_agent L87); kask/crates/kask_bridge/src/mcp_servers.rs (provision_default_passphrase launch path L886); crates/settings_ui/src/pages/kask_page.rs (write_credential L241, nudge_mcp_servers L280, delete_credential L285)
+verified_against: kask/crates/hkask-mcp-server/src/server/credentials.rs (resolve_credential L25, resolve_db_passphrase L76); kask/crates/hkask-mcp-server/src/server/context.rs (ServerContext); kask/crates/hkask-keystore/src/keychain.rs (resolve_db_passphrase L347, resolve_db_passphrase_string L362); kask/crates/kask_bridge/src/identity.rs (provision_db_passphrase L132, provision_agent L87); kask/crates/kask_bridge/src/mcp_servers.rs (provision_default_passphrase launch path L886); crates/settings_ui/src/pages/kask_page.rs (write_credential L241, nudge_mcp_servers L280, delete_credential L285)
 status: VERIFIED
 -->
 

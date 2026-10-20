@@ -2,7 +2,7 @@
 
 use std::str::FromStr;
 
-use super::context::{CapabilityTier, CredentialRequirement, ServerContext};
+use super::context::{CredentialRequirement, ServerContext};
 use super::credentials::resolve_credential;
 use super::error::McpError;
 
@@ -105,13 +105,7 @@ where
     };
 
     tracing::info!(webid = %webid.redacted_display(), "Agent identity resolved");
-    let capability_tier = CapabilityTier::detect(&webid, &resolved);
-    tracing::info!(
-        embedded = capability_tier.embedded,
-        keystore = capability_tier.keystore_available,
-        persistence = capability_tier.persistence_available,
-        "Capability tier detected"
-    );
+
     let ctx = ServerContext {
         credentials: resolved,
         webid,

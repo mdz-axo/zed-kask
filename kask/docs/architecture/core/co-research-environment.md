@@ -31,7 +31,7 @@ Map a research institution onto zed-kask and every seat is occupied:
 | Instruments & labs | The MCP servers — research (evidence ledgers, verification states), corpus, scenarios, experimentation, prediction-markets |
 | Methods & protocols | The skills — superforecasting, hypothesis-framer, falsifiability, experimental-design, hypothesis-testing, grounding-verify, program-manager |
 | Lab notebook & pre-registration | The experimentation server (sealed eval contracts, grounded fitness records) and Brier-scored goals |
-| Library & institutional memory | The corpus and curator memory, with therapy for reorganization |
+| Library & institutional memory | The corpus and curator memory; therapy reorganizes curator memory |
 | Peer review & governance | The algedonic review gemba walk, consent gates, skill-use issue reporting |
 | Integrity & accounting | Brier scores, calibration curves, verification states, completion records that cite commit hashes |
 | Ethics & telos | Magnifica Humanitas and its discernment test |

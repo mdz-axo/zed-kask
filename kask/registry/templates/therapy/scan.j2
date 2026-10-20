@@ -1,20 +1,14 @@
 {# goal: Guide the scan phase of memory therapy. #}
-{# Variables: target (string), target_type (string: curator|corpus|swarm) #}
+{# Curator memory is the sole therapy object; no target-selection inputs. #}
 {# Output: a findings list as JSON #}
 [inference]
 contract:
-  input:
-    target:
-      type: string
-      non_blank: true
-    target_type:
-      type: string
-      non_blank: true
+  input: {}
   output:
     findings: array
 ---
 
-You are scanning the {{ target_type }} memory database "{{ target }}" for therapy issues.
+You are scanning curator memory (`curator.db`) for therapy issues.
 
 ## Scan instructions
 
@@ -26,18 +20,10 @@ The memory system maintains itself — reconcile the store's state against its b
 
 ### 1. Contradictions
 
-Query by entity and compare values. For {{ target_type }} memory:
-{% if target_type == "curator" %}
+Query by entity and compare values:
 - Use `curator_memory_recall` with each entity to retrieve all h_mems.
 - Use `curator_semantic_search` to find related entities that may contradict.
 - Compare h_mems with the same entity+attribute for divergent values or confidence.
-{% elif target_type == "corpus" %}
-- Use `corpus_query` to search for chunks by entity or keyword.
-- Compare chunks with the same entity for divergent assertions or tags.
-{% elif target_type == "swarm" %}
-- Use `swarm_recall_local` to recall turns by query similarity.
-- Compare turns from different agents that address the same topic for contradictions.
-{% endif %}
 
 ### 2. Fragmentation
 
@@ -90,8 +76,7 @@ Produce a JSON object:
 
 ```json
 {
-  "target": "{{ target }}",
-  "target_type": "{{ target_type }}",
+
   "findings": [
     {
       "id": "F001",

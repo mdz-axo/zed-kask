@@ -1,6 +1,6 @@
 ---
 name: therapy
-description: Memory therapy session — scans a memory database (curator, replica/corpus, or swarm) for contradictions, fragmentation, and miscalibrated confidence; resolves them; then reifies useful lessons as skills, templates, or rules and purges/condenses the source memories. The user approves all modifications. Therapy is the process of re-organizing memory to be useful and reifying learned experience into proactive guidance.
+description: Memory therapy session — scans curator memory for contradictions, fragmentation, and miscalibrated confidence; resolves them; then reifies useful lessons as skills, templates, or rules and purges/condenses the source memories. The user approves all modifications. Therapy is the process of re-organizing memory to be useful and reifying learned experience into proactive guidance.
 ---
 
 # Therapy
@@ -29,8 +29,8 @@ Forgetting (purging/condensing) is NOT learning. It is shedding low-value inform
 
 ## Initial and target condition
 
-- **Initial condition:** a named memory store (curator, replica/corpus, or
-  swarm) reachable for a read-only scan, its charter version when the values
+- **Initial condition:** curator memory (`curator.db`) reachable for a
+  read-only scan, its charter version when the values
   pass is triggered, and the Phase-2 predicted finding counts recorded before
   the scan runs. A store that cannot be scanned is a blocked session, never a
   clean one.
@@ -48,8 +48,7 @@ The scan's counts, the approved-proposal count, the execution check and the post
 ## When to Use
 
 - When the user wants to run a therapy session on the curator's memory database — run from a Curator agent panel session by default. Therapy from the zed agent is a contract deviation permitted only under explicit operator approval and only with the mitigations that preserve the curator's awareness: the session records a `curator-process|therapy_session_<date>` awareness row, and zed-agent turns ingest into curator memory (verified 2026-10-08; the pre-2026-10-08 text claimed the curator would never observe a zed-agent session, which is false). The curator must remember the act of therapy (the forgetting, the reification, the lessons learned) so the cybernetic loop closes — the awareness row is what carries that memory when the session runs outside the Curator panel.
-- When the user wants to run a therapy session on a replica/corpus chunk memory database — can be run from a curator panel session or a corpus-scoped kask panel tab.
-- When the user wants to run a therapy session on a swarm's shared memory database — should be run from a curator panel session or a swarm-scoped kask panel tab.
+
 - When recall is misleading agents by returning old code status or pre-solution configurations.
 - When the user notices contradictions in what agents recall or assert.
 - When confidence values appear miscalibrated.
@@ -105,14 +104,10 @@ The scan's counts, the approved-proposal count, the execution check and the post
 
 ## Instructions
 
-### Phase 1 — Target selection
+### Phase 1 — Establish curator memory access
 
-1. Ask the user which memory database to run therapy on:
-   - **Curator memory** (`curator.db`) — the curator's own memory of conversations and observations.
-   - **Replica/corpus memory** — a corpus chunk database (e.g., `capabilities-reasoner.db`).
-   - **Swarm memory** — a swarm's shared memory database.
-
-2. Record the target. For curator memory, the MCP tools are `curator_memory_recall`, `curator_semantic_search`, `memory_insert`, `memory_update`, `memory_resolve_contradiction`. For corpus memory, the tools are `corpus_query` and corpus-specific tools. For swarm memory, the tools are `swarm_recall_local` and swarm-specific tools.
+1. Therapy always targets curator memory (`curator.db`), the curator's own memory of conversations and observations. Do not ask the user to select a store.
+2. Establish read-only access before scanning. Use `curator_memory_recall` and `curator_semantic_search` for recall; `memory_insert`, `memory_update`, and `memory_resolve_contradiction` are the user-approved modification path.
 
 ### Phase 2 — Scan
 
@@ -120,11 +115,11 @@ The scan's counts, the approved-proposal count, the execution check and the post
 1. **Inventory the memory architecture's own valves (before any maintenance proposal).** The memory system maintains itself; a session proposing manual maintenance must first reconcile the store's actual state against what the architecture is already doing — routine architecture behavior is not a finding (operator correction 2026-10-13). For curator memory, enumerate from the tree and live settings: the decay setting (`memory_life_days`, Settings → Kask → Memory — confidence decays with days since last recall, recall resets the clock), the distillation timer (compresses finished conversations into lessons, watermarks what it covered), the forgetting horizon (`forgetting_days`, default 7 days — deletes the covered conversation copies once the watermark ages past the horizon; rides the distillation timer), the manual prune valve (`curator_memory_prune` — the valve for residue the automatic chain can't reach), and the alarm layer (the memory-life and growth sensors). Reconcile the store's state against each valve (e.g., episodic-tier age span vs the forgetting horizon; **sheddable-tier row count — turn storage (`curator:thread:`) plus goal events (`curator:goal:`) — vs the growth ceiling; the additive-by-design knowledge layer is exempt — its growth is distillation working, not a valve stall**, algedonic card 33b0eebb option (A), 2026-10-18) and record the reconciliation. Any manual-maintenance proposal from this session names the valve it replicates or adjusts and the reason the automatic path hasn't already done the work.
 2. Call `render_template` to render the scan template:
    - template: `therapy/scan.j2`
-   - variables: { "target": "<target name>", "target_type": "<curator|corpus|swarm>" }
+   - context: `{}` — curator memory is fixed in the template; no target-selection inputs.
 
 3. Following the template's guidance, scan the memory database for five categories of issues:
 
-   **a. Contradictions** — h_mems with the same entity+attribute but divergent values or confidence. Use `curator_memory_recall` (for curator) or `corpus_query` (for corpus) or `swarm_recall_local` (for swarm) to query by entity, then compare values. For curator memory, also use `curator_semantic_search` to find related entities that may contradict.
+   **a. Contradictions** — h_mems with the same entity+attribute but divergent values or confidence. Use `curator_memory_recall` to query by entity, then compare values. Also use `curator_semantic_search` to find related entities that may contradict.
 
    **b. Fragmentation** — h_mems that are isolated (low connectedness, no co-occurrence links) but semantically similar to well-connected h_mems. These are dilution candidates (Tetlock's dilution effect). Query by embedding similarity and check for isolated vs. connected clusters.
 
@@ -173,14 +168,14 @@ The scan's counts, the approved-proposal count, the execution check and the post
 5. Call `lisp_eval` to check the scan is non-trivial:
    - form: `(length findings)`
    - env: `{ "findings": <the scan output's findings array> }` — pass the findings array itself, not the whole scan output: an absent `findings` binding refuses with the engine's unbound-symbol error (a scan that produced no findings array is a broken scan, never a clean one), and an empty array legitimately reads 0.
-   - If the result is 0, report "No issues found in {target}. Memory is clean." and exit.
+   - If the result is 0, report "No issues found in curator memory. Memory is clean." and exit.
    - For recursive helper forms, pass `max_depth` ≥ 8× the list length — helpers consume 2–4 depth frames per element, so the 1024 default only covers lists of a few hundred elements.
 
 ### Phase 3 — Classify and propose
 
 1. Call `render_template` to render the classification template:
    - template: `therapy/classify.j2`
-   - variables: { "findings": <scan findings>, "target": "<target name>" }
+   - context: `{ "findings": <scan findings> }`
 
 2. Following the template's guidance, classify each finding. For a skill-use finding, verify `failure_origin` first: `skill_contract` and repeated `agent_execution` can produce skill changes; `tool_implementation`, `provider_transport`, `environment_or_baseline`, `operator_interruption`, and `expected_absence` route to those owners; `unknown` remains unresolved. Attribution changes ownership, never suppresses the raw failure.
 
@@ -281,12 +276,9 @@ The scan's counts, the approved-proposal count, the execution check and the post
    - **Condense**: `memory_insert` to create the summary h_mem, then `memory_resolve_contradiction` with strategy "forget" for each source h_mem.
    - **Keep sources**: if the user chose to keep the source memories, no action.
 
-2. For corpus memory targets, use the corpus-specific tools to modify the chunk database.
-3. For swarm memory targets, use the swarm-specific tools to modify the swarm database.
+2. For each approved proposal, record one aggregate execution result with `finding_id`, `strategy`, `success` and `outcome` copied from the proposal and tool receipts. If a proposal requires several tool calls, summarize their receipts in that one outcome and set `success: true` only when every required call succeeded. These join keys let the report distinguish approval from actual resolution; a result without them cannot count as resolved.
 
-4. For each approved proposal, record one aggregate execution result with `finding_id`, `strategy`, `success` and `outcome` copied from the proposal and tool receipts. If a proposal requires several tool calls, summarize their receipts in that one outcome and set `success: true` only when every required call succeeded. These join keys let the report distinguish approval from actual resolution; a result without them cannot count as resolved.
-
-5. Call `lisp_eval` to verify all executions succeeded:
+3. Call `lisp_eval` to verify all executions succeeded:
    - form: "(define count-failed (lambda (lst) (if (is_null lst) 0 (if (not (eq (assoc \"success\" (car lst)) t)) (+ 1 (count-failed (cdr lst))) (count-failed (cdr lst)))))) (count-failed results)"
    - env: { "results": <your execution results> }
    - The interpreter has no `filter` builtin — the count is a recursive
@@ -316,12 +308,12 @@ the operator approved only partial merges is expected, not a failure.
    The gap is the session's calibration signal about this memory store, carried into the report's hygiene summary.
 1. Call `render_template` to render the report template:
    - template: `therapy/report.j2`
-   - variables: { "target": "<target name>", "findings": <scan findings>, "proposals": <all proposals, each with its Phase-4 approved flag>, "executions": <execution results, each with finding_id, strategy, success and outcome>, "values_pass": <the Phase-2f values-pass record, or omitted when the pass did not run> }
+   - context: { "findings": <scan findings>, "proposals": <all proposals, each with its Phase-4 approved flag>, "executions": <execution results, each with finding_id, strategy, success and outcome>, "values_pass": <the Phase-2f values-pass record, or omitted when the pass did not run> }
 
    Copyable context shape:
    ```json
    {
-     "target": "<target name>",
+
      "findings": [],
      "proposals": [],
      "executions": [
@@ -377,7 +369,8 @@ All receipts executed live through the tools — `lisp_eval` for the forms, `ren
   exact practiced/thin/conflicted counts; a duplicate/missing value, unknown
   state, missing version, or wrong row count reports `Values pass incomplete`
   and never renders alignment counts.
-- `therapy/classify` renders with `{target, findings}` and the findings list
+- `therapy/scan` renders with `{}` and names curator memory without a store-selection branch or corpus/swarm query instructions.
+- `therapy/classify` renders with `{findings}` and the findings list
   appears in the rendered prompt (before the repair the template never
   injected the findings it exists to classify).
 

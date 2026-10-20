@@ -14,9 +14,6 @@ use thiserror::Error;
 /// structured context suitable for Regulation spans and operator diagnostics.
 #[derive(Debug, Error)]
 pub enum McpError {
-    #[error("{0} set but HKASK_DB_PASSPHRASE missing")]
-    DatabasePassphrase(String),
-
     #[error("Unexpected {context} response: {detail}")]
     UnexpectedResponse { context: String, detail: String },
 

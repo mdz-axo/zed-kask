@@ -26,7 +26,7 @@ classDiagram
     class server_context {
         +credentials: HashMap
         +webid: WebID
-        +open_database()
+
     }
     class tool_execution {
         +ToolContext
@@ -53,7 +53,7 @@ classDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MCPSRV-020
 verified_date: 2026-10-19
-verified_against: kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:1-28,364-464; kask/crates/hkask-mcp-server/src/server.rs:22-50; kask/crates/hkask-mcp-server/src/server/tool_execution.rs:1-149; kask/crates/hkask-mcp-server/src/server/error.rs:44-203
+verified_against: kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:1-28,364-464; kask/crates/hkask-mcp-server/src/server.rs:22-50; kask/crates/hkask-mcp-server/src/server/tool_execution.rs:1-149; kask/crates/hkask-mcp-server/src/server/error.rs (McpToolError, IntoCallToolResult impl)
 status: VERIFIED
 -->
 
@@ -63,11 +63,11 @@ Defined at `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:19-35`.
 
 | Export | Implementation |
 |---|---|
-| `CapabilityTier`, `CredentialRequirement`, `ServerContext` | `kask/crates/hkask-mcp-server/src/server/context.rs:9-163` |
-| `McpError` | `kask/crates/hkask-mcp-server/src/server/error.rs:11-42` |
+| `CredentialRequirement`, `ServerContext` | `kask/crates/hkask-mcp-server/src/server/context.rs` (`CredentialRequirement`, `ServerContext`) |
+| `McpError` | `kask/crates/hkask-mcp-server/src/server/error.rs` (`McpError`) |
 | `ToolContext`, `execute_tool` | `kask/crates/hkask-mcp-server/src/server/tool_execution.rs:97-149` |
 | `parse_env_warn`, `resolve_credential`, `resolve_db_passphrase` | `kask/crates/hkask-mcp-server/src/server/credentials.rs:8-144` |
-| `run_stdio_server` | `kask/crates/hkask-mcp-server/src/server/transport.rs:9-130` |
+| `run_stdio_server` | `kask/crates/hkask-mcp-server/src/server/transport.rs` (`run_stdio_server`) |
 | `validate_identifier`, `validate_path` | `kask/crates/hkask-mcp-server/src/server/validation.rs:5-69` |
 | `validate_tool_url_permissive`, `validate_tool_url_with_dns` | `kask/crates/hkask-mcp-server/src/security.rs:339-366` |
 | `MAX_READ_BYTES`, `contain_for_read`, `contain_for_write`, `read_capped` | `kask/crates/hkask-mcp-server/src/server/validation.rs:165-169`, `kask/crates/hkask-mcp-server/src/server/validation.rs:368-381`, `kask/crates/hkask-mcp-server/src/server/validation.rs:590-611` |
@@ -81,7 +81,7 @@ Defined at `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:19-35`.
 | Export | Facade location |
 |---|---|
 | `validate_resolved_addresses`, `validate_tool_url_literal`, `validate_tool_url_permissive`, `validate_tool_url_with_dns` | `kask/crates/hkask-mcp-server/src/server.rs:32-35` |
-| `CapabilityTier`, `CredentialRequirement`, `ServerContext` | `kask/crates/hkask-mcp-server/src/server.rs:36` |
+| `CredentialRequirement`, `ServerContext` | `kask/crates/hkask-mcp-server/src/server.rs` (`pub use context`) |
 | `parse_env_warn`, `resolve_credential`, `resolve_db_passphrase` | `kask/crates/hkask-mcp-server/src/server.rs:37` |
 | `McpError`, `McpToolError` | `kask/crates/hkask-mcp-server/src/server.rs:38` |
 | `classify_http_error` | `kask/crates/hkask-mcp-server/src/server.rs:39` |
@@ -121,26 +121,13 @@ pub struct CredentialRequirement {
 }
 ```
 
-Definition: `kask/crates/hkask-mcp-server/src/server/context.rs:9-22`.
+Definition: `kask/crates/hkask-mcp-server/src/server/context.rs` (`CredentialRequirement`).
 
 | Constructor | Effect | Evidence |
 |---|---|---|
-| `required(env_var, description)` | `required = true` | `kask/crates/hkask-mcp-server/src/server/context.rs:24-38` |
-| `optional(env_var, description)` | `required = false` | `kask/crates/hkask-mcp-server/src/server/context.rs:40-53` |
+| `required(env_var, description)` | `required = true` | `kask/crates/hkask-mcp-server/src/server/context.rs` (`CredentialRequirement::required`) |
+| `optional(env_var, description)` | `required = false` | `kask/crates/hkask-mcp-server/src/server/context.rs` (`CredentialRequirement::optional`) |
 
-### `CapabilityTier`
-
-```rust
-pub struct CapabilityTier {
-    pub embedded: bool,
-    pub keystore_available: bool,
-    pub persistence_available: bool,
-}
-```
-
-Definition: `kask/crates/hkask-mcp-server/src/server/context.rs:56-74`.
-
-`detect(webid, resolved_credentials)` sets `embedded` from comparison with the anonymous persona, `persistence_available` from the presence of `HKASK_DB_PASSPHRASE`, and `keystore_available` from a keychain probe (`kask/crates/hkask-mcp-server/src/server/context.rs:76-123`).
 
 ### `ServerContext`
 
@@ -151,11 +138,7 @@ pub struct ServerContext {
 }
 ```
 
-Definition: `kask/crates/hkask-mcp-server/src/server/context.rs:126-132`.
-
-| Method | Return | Evidence |
-|---|---|---|
-| `open_database(db_env_var)` | persistent database or in-memory fallback | `kask/crates/hkask-mcp-server/src/server/context.rs:146-161` |
+Definition: `kask/crates/hkask-mcp-server/src/server/context.rs` (`ServerContext`). The context carries resolved credentials and WebID; database opening remains server-specific.
 
 ## Tool execution
 
@@ -189,11 +172,11 @@ Success is a JSON string containing `content`, numeric `duration_ms`, and either
 
 ### `McpError`
 
-Server-level enum defined at `kask/crates/hkask-mcp-server/src/server/error.rs:11-42`.
+Server-level enum defined at `kask/crates/hkask-mcp-server/src/server/error.rs` (`McpError`).
 
 | Variant | Payload |
 |---|---|
-| `DatabasePassphrase` | `String` |
+
 | `UnexpectedResponse` | `{ context: String, detail: String }` |
 | `MissingCredentials` | `{ missing: String }` |
 | `Storage` | `hkask_storage::DatabaseError` |
@@ -209,7 +192,7 @@ pub struct McpToolError {
 }
 ```
 
-Definition and constructors: `kask/crates/hkask-mcp-server/src/server/error.rs:44-127`.
+Definition and constructors: `kask/crates/hkask-mcp-server/src/server/error.rs` (`McpToolError` and its inherent impl).
 
 | Constructor | Kind |
 |---|---|
@@ -222,7 +205,7 @@ Definition and constructors: `kask/crates/hkask-mcp-server/src/server/error.rs:4
 | `rate_limited` | `RateLimited` |
 | `failed_precondition` | `FailedPrecondition` |
 
-`to_json_string()` returns `{"error": message, "kind": kind}` (`kask/crates/hkask-mcp-server/src/server/error.rs:122-127`). Its rmcp conversion sets `is_error`, text content, and structured content (`kask/crates/hkask-mcp-server/src/server/error.rs:130-155`).
+`to_json_string()` returns `{"error": message, "kind": kind}` (`kask/crates/hkask-mcp-server/src/server/error.rs`, `McpToolError::to_json_string`). Its rmcp conversion sets `is_error`, text content, and structured content (`kask/crates/hkask-mcp-server/src/server/error.rs`, `IntoCallToolResult for McpToolError`).
 
 ## Credential APIs
 
@@ -293,7 +276,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MCPSRV-010
 verified_date: 2026-09-28
-verified_against: kask/crates/hkask-mcp-server/src/server/context.rs:9-53,126-163; kask/crates/hkask-mcp-server/src/server/tool_span.rs:108-170; kask/crates/hkask-mcp-server/src/server/validation.rs:5-169,258-381,590-611; kask/crates/hkask-mcp-server/src/security.rs:334-397
+verified_against: kask/crates/hkask-mcp-server/src/server/context.rs (CredentialRequirement, ServerContext); kask/crates/hkask-mcp-server/src/server/tool_span.rs:108-170; kask/crates/hkask-mcp-server/src/server/validation.rs:5-169,258-381,590-611; kask/crates/hkask-mcp-server/src/security.rs:334-397
 status: VERIFIED
 -->
 
@@ -308,17 +291,11 @@ let requirements = vec![
 ];
 ```
 
-`required` and `optional` set the `required` field to `true` and `false`, respectively (`kask/crates/hkask-mcp-server/src/server/context.rs:24-53`). Bootstrap resolves every requirement and rejects the complete missing-required set before calling the factory (`kask/crates/hkask-mcp-server/src/server/transport.rs:70-91`).
+`required` and `optional` set the `required` field to `true` and `false`, respectively (`kask/crates/hkask-mcp-server/src/server/context.rs`, `CredentialRequirement::required` and `CredentialRequirement::optional`). Bootstrap resolves every requirement and rejects the complete missing-required set before calling the factory (`kask/crates/hkask-mcp-server/src/server/transport.rs:70-91`).
 
 API keys resolve from environment variables. `HKASK_DB_PASSPHRASE` alone uses the dedicated hKask keystore resolver (`kask/crates/hkask-mcp-server/src/server/credentials.rs:8-59`).
 
-### Open a database from `ServerContext`
-
-```rust
-let database = ctx.open_database("SERVICE_DB_PATH")?;
-```
-
-When the named path exists in `ctx.credentials`, the helper resolves the shared passphrase and opens that database. When the path is absent, it opens an in-memory database (`kask/crates/hkask-mcp-server/src/server/context.rs:140-161`).
+### Resolve a database passphrase for server-specific persistence
 
 For custom DDL, open with `hkask_storage::Database::open_with_extensions` directly, as the research server does. For tools that resolve the passphrase after startup, call the root-exported `resolve_db_passphrase(&ctx.credentials)`; missing configuration is `McpToolError::permission_denied` and names the env/keychain sources (`kask/crates/hkask-mcp-server/src/server/credentials.rs:75-113`).
 
@@ -336,7 +313,7 @@ async fn status(&self) -> Result<String, McpToolError> {
 }
 ```
 
-The future must return `Result<serde_json::Value, McpToolError>`. `execute_tool` returns `Result<String, McpToolError>` (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:145-170`). A successful value becomes a `{"content": value}` JSON string (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:62-74`). A failure remains a typed error; rmcp marks it with `is_error: true` and includes `{"error", "kind"}` as structured content (`kask/crates/hkask-mcp-server/src/server/error.rs:130-155`).
+The future must return `Result<serde_json::Value, McpToolError>`. `execute_tool` returns `Result<String, McpToolError>` (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:145-170`). A successful value becomes a `{"content": value}` JSON string (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:62-74`). A failure remains a typed error; rmcp marks it with `is_error: true` and includes `{"error", "kind"}` as structured content (`kask/crates/hkask-mcp-server/src/server/error.rs`, `IntoCallToolResult for McpToolError`).
 
 Use the constructor that matches the recovery action:
 
@@ -344,7 +321,7 @@ Use the constructor that matches the recovery action:
 return Err(McpToolError::not_found("record does not exist"));
 ```
 
-Constructors cover `internal`, `not_found`, `invalid_argument`, `unavailable`, `permission_denied`, `rate_limited`, and `failed_precondition` (`kask/crates/hkask-mcp-server/src/server/error.rs:53-127`).
+Constructors cover `internal`, `not_found`, `invalid_argument`, `unavailable`, `permission_denied`, `rate_limited`, and `failed_precondition` (`kask/crates/hkask-mcp-server/src/server/error.rs`, `impl McpToolError`).
 
 ### Validate an identifier or path string
 

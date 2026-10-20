@@ -433,7 +433,7 @@ The SQLCipher passphrase is resolved through a canonical 2-tier helper,
 `ctx.credentials.get("HKASK_DB_PASSPHRASE")` → `resolve_credential("HKASK_DB_PASSPHRASE")`
 (env → hKask keychain). All six DB-passphrase-consuming servers (kata-kanban,
 research, curator, swarm, corpus) use this helper, not inline
-re-implementations; `ServerContext::resolve_db_credential` delegates to it. A miss
+re-implementations. A miss
 returns `McpToolError::permission_denied` naming the env var.
 
 Corpus cannot read `ctx.credentials` from serde-default call sites, so it captures

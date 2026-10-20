@@ -1,19 +1,17 @@
 {# goal: Guide the classification and proposal phase. #}
-{# Variables: findings (list), target (string) #}
+{# Variables: findings (list) #}
 {# Output: a proposal list as JSON #}
 [inference]
 contract:
   input:
-    target:
-      type: string
-      non_blank: true
+
     findings:
       type: array
   output:
     proposals: array
 ---
 
-You are classifying therapy findings for "{{ target }}" and proposing resolutions.
+You are classifying curator-memory therapy findings and proposing resolutions.
 
 ## Findings
 
@@ -101,7 +99,7 @@ Produce a JSON object:
 
 ```json
 {
-  "target": "{{ target }}",
+
   "proposals": [
     {
       "finding_id": "F001",

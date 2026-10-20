@@ -1282,7 +1282,7 @@ async fn resolve_contradiction_finds_target_by_id() {
     let response = parse(
         &server
             .memory_resolve_contradiction(Parameters(MemoryResolveContradictionRequest {
-                h_mem_ids: vec!["some-other-id".to_string()],
+                h_mem_ids: vec![forget_id.clone()],
                 strategy: "forget".to_string(),
                 target_h_mem_id: forget_id,
                 new_confidence: None,
@@ -1318,7 +1318,7 @@ async fn resolve_contradiction_finds_target_by_id() {
     let response = parse(
         &server
             .memory_resolve_contradiction(Parameters(MemoryResolveContradictionRequest {
-                h_mem_ids: vec![],
+                h_mem_ids: vec![confidence_id.clone()],
                 strategy: "update_confidence".to_string(),
                 target_h_mem_id: confidence_id,
                 new_confidence: Some(0.5),
@@ -1336,6 +1336,22 @@ async fn resolve_contradiction_finds_target_by_id() {
         .h_mems_by_entity_prefix("zed-kask-confidence-target")
         .expect("query after update");
     assert_eq!(updated.len(), 1);
+    let returned = response["target_h_mem_id"]
+        .as_str()
+        .expect("replacement handle");
+    assert_eq!(
+        memory
+            .get_by_id(&returned.parse().expect("replacement id"))
+            .expect("resolve replacement")
+            .expect("row exists")
+            .id,
+        updated[0].id
+    );
+    assert!(
+        memory
+            .has_embedding_for_passage("zed-kask-confidence-target", "policy text")
+            .expect("confidence revision remains recallable")
+    );
     assert!(
         (updated[0].confidence.value() - 0.5).abs() < 1e-9,
         "update_confidence must set the value — got {}",

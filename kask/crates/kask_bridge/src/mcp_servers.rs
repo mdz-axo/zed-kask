@@ -218,7 +218,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_BRAVE_API_KEY",
             "HKASK_SERPAPI_API_KEY",
             "HKASK_FIRECRAWL_API_KEY",
-            // DB encryption passphrase — read by resolve_db_credential() for
+            // DB encryption passphrase — read by resolve_db_passphrase() for
             // the research SQLite DB. Without this, RSS and research-run
             // tools are silently unavailable under governed launch.
             "HKASK_DB_PASSPHRASE",

@@ -189,7 +189,7 @@ and are retained in prose form as the historical record):**
 **Class:** verified attribution defect; broader authorization impact is workflow-dependent. **Severity:** High for ownership/audit semantics. **Confidence:** High.
 
 **Evidence:**
-- `kask/crates/hkask-mcp-server/src/server/transport.rs:91–117` falls back to anonymous identity.
+- `kask/crates/hkask-mcp-server/src/server/transport.rs:93–105` falls back to anonymous identity.
 - `kask/crates/kask_bridge/src/mcp_env.rs:46–54` maps curator identity only.
 - `kask/crates/hkask-mcp-server/src/server/transport.rs:91–104` derives one process identity from launch context; each generated server struct retains that WebID as `self.webid`.
 - `kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:873–883` claims tasks as the “authenticated caller” using `self.webid`.
