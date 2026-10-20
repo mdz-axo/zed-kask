@@ -1887,6 +1887,42 @@ mod tests {
         21,
         tool_surface_is_exactly_21_registered_tools,
     );
+
+    /// S-02 (mcp-tool-review): a missing-state condition the caller can
+    /// remedy surfaces as `failed_precondition`, never `internal`. An empty
+    /// forecast store is exactly that condition — the caller records and
+    /// resolves forecasts, then retries — so `scenario_calibration` must
+    /// classify it accordingly and name the missing state in the message.
+    #[tokio::test]
+    async fn scenario_calibration_without_forecasts_is_failed_precondition() {
+        let server = ScenariosServer::new(
+            hkask_types::WebID::new(),
+            std::sync::Arc::new(std::sync::Mutex::new(superforecast::ForecastStore::new(
+                None,
+            ))),
+            std::sync::Arc::new(std::sync::Mutex::new(superforecast::JournalStore::new(
+                None,
+            ))),
+            std::sync::Mutex::new(None),
+            std::sync::Mutex::new(HashSet::new()),
+            std::sync::Mutex::new(superforecast::ProjectStore::new(None)),
+        );
+        let error = server
+            .scenario_calibration(rmcp::handler::server::wrapper::Parameters(
+                crate::requests::CalibrationRequest { subject: None },
+            ))
+            .await
+            .expect_err("calibrating an empty store must fail");
+        assert!(
+            matches!(error.kind, hkask_types::McpErrorKind::FailedPrecondition),
+            "a missing-state condition the caller can remedy is failed_precondition, \
+             never internal, got: {error:?}"
+        );
+        assert!(
+            error.message.contains("no stored forecasts"),
+            "the error must name the missing state, got: {error:?}"
+        );
+    }
 }
 
 // ── Entry point ────────────────────────────────────────────────────────────
