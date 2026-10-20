@@ -23,6 +23,8 @@ mod context;
 mod credentials;
 mod error;
 mod http_helpers;
+#[doc(hidden)]
+pub mod test_support;
 mod tool_span;
 mod transport;
 mod validation;

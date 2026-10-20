@@ -515,53 +515,15 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 mod smoke {
     use super::*;
     use hkask_types::WebID;
-    use hkask_types::ports::{InferenceError, InferencePort, InferenceResult};
-    use hkask_types::template::LLMParameters;
+    use hkask_types::ports::InferencePort;
     use rmcp::handler::server::wrapper::Parameters;
-    use std::pin::Pin;
     use std::sync::Arc;
 
-    /// Unavailable inference for smoke tests: local operations must still work,
-    /// while inference-dependent operations must surface a structured error.
-    struct NoopInferencePort;
-
-    impl InferencePort for NoopInferencePort {
-        fn generate(
-            &self,
-            _: &str,
-            _: &LLMParameters,
-            _: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> Pin<
-            Box<
-                dyn std::future::Future<Output = Result<InferenceResult, InferenceError>>
-                    + Send
-                    + '_,
-            >,
-        > {
-            Box::pin(async {
-                Err(InferenceError::Connection(
-                    "noop inference port — not configured for smoke tests".into(),
-                ))
-            })
-        }
-
-        fn embed_with_dimensions<'a>(
-            &'a self,
-            _model: &str,
-            _texts: &[String],
-            _dimensions: Option<u32>,
-        ) -> hkask_types::EmbedWithIdentityFuture<'a> {
-            // corpus_query passes the store's width; fail it explicitly with
-            // the same message the width-less default produces, so the
-            // structured-error pin (Unavailable, surfaced) stays the behavior
-            // under test — not the trait default's width-discard guard.
-            Box::pin(async {
-                Err(hkask_types::EmbeddingGenerationError::Connection(
-                    "embed not supported by this InferencePort".to_string(),
-                ))
-            })
-        }
-    }
+    /// Unavailable inference for smoke tests: local operations must still
+    /// work, while inference-dependent operations must surface a structured
+    /// error. The double is shared (`hkask_mcp_server::server::test_support`)
+    /// — one definition across the servers, not a copy per server.
+    use hkask_mcp_server::server::test_support::NoopInferencePort;
 
     fn make_server() -> CorpusServer {
         crate::helpers::seed_test_passphrase();
@@ -694,7 +656,10 @@ mod smoke {
                     error.message.contains("Query embedding failed"),
                     "{error:?}"
                 );
-                assert!(error.message.contains("embed not supported"), "{error:?}");
+                // The embed failure surfaces the port's own error text (the
+                // shared NoopInferencePort's message) — the pin is that a
+                // structured Unavailable is surfaced, not a silent success.
+                assert!(error.message.contains("noop inference port"), "{error:?}");
             }
             return Ok(());
         }

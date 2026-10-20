@@ -295,117 +295,29 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
     }
 }
 
-/// Both axes for a registered tool, or `None` when the name is not one.
-///
-/// P5.4's dual-axis core: a caller never gets one axis without the other,
-/// so a partial mapping cannot silently satisfy the contract.
-pub(crate) fn tool_to_dual_axis(tool_name: &str) -> Option<(PkoConcept, DcConcept)> {
-    match (tool_to_pko(tool_name), tool_to_dc(tool_name)) {
-        (Some(process), Some(state)) => Some((process, state)),
-        _ => None,
-    }
-}
+// The shared dual-axis machinery (the both-axes combinator, the central
+// annotate stamp, and the both-directions totality tests) comes from the
+// framework crate's `dual_axis_annotate!` macro — one definition across
+// the nine stamped servers instead of a copy per server.
 
-/// Stamp the dual-axis identity onto a tool response.
-///
-/// This is the production consumer of the mapping: wired as the central
-/// `ToolContext::annotate_response` hook via the `mcp_server!` macro's
-/// annotate override, so every media tool response carries the process
-/// (PKO) and state (DC+BIBO) concept its artifact occupies without a
-/// per-site wrap at each of the 102 tool returns. The annotation is
-/// additive — the existing body is untouched (the OMC supplement in the
-/// `display_hint`'s nested `ontology` field is a different key path and
-/// is untouched).
-///
-/// A name with no mapping returns the body unchanged rather than
-/// inventing an axis: `dual_axis_covers_all_registered_tools` is what
-/// guarantees the registered surface is total, and a silent default
-/// would defeat it.
-pub(crate) fn annotate(tool_name: &str, mut body: serde_json::Value) -> serde_json::Value {
-    let Some((process, state)) = tool_to_dual_axis(tool_name) else {
-        return body;
-    };
-    if let Some(object) = body.as_object_mut() {
-        object.insert(
-            "ontology".to_string(),
-            serde_json::json!({
-                "pko_procedure": process,
-                "dc_type": state,
-            }),
-        );
-    }
-    body
-}
+hkask_mcp_server::dual_axis_annotate!(
+    tool_to_pko,
+    tool_to_dc,
+    PkoConcept,
+    DcConcept,
+    &["gallery_", "face_", "educt_", "audio_", "video_", "image_", "model_", "job_", "workflow_", "reduct_", "youtube_", "generate_", "transform_", "upscale_", "describe_", "expand_prompt", "record_", "transcribe_", "voice_design"],
+    &[],
+);
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // The generated canonical tool-name list — included from OUT_DIR, so
-    // the totality test derives its expectations from the live tool
-    // surface (build.rs scan), never a hardcoded list.
-    include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
-
-    /// P5.4: "Every MCP server uses BOTH axes." Every registered tool
-    /// must carry a process AND a state identity — a tool added without
-    /// an explicit arm fails here rather than silently losing its axes.
-    #[test]
-    fn dual_axis_covers_all_registered_tools() {
-        for name in TOOL_NAMES {
-            let mapped = tool_to_dual_axis(name);
-            assert!(
-                mapped.is_some(),
-                "no dual-axis mapping for registered tool '{name}'; add an explicit arm \
-                 to tool_to_pko and tool_to_dc in src/ontology.rs"
-            );
-        }
-        // The reverse direction: every name the mapping claims must be a
-        // registered tool. Coverage alone let a phantom name sit in the
-        // swarm mapping undetected (live 2026-10-18: `swarm_delete_local`,
-        // a typo, matched no call site and still passed coverage).
-        let ontology_src = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ontology.rs"),
-        )
-        .expect("src/ontology.rs must be readable");
-        let mut mapped: Vec<&str> = Vec::new();
-        // The stamp's own JSON keys are not tool names — excluded by name,
-        // not by pattern (a bare contains-'_' filter would catch them).
-        const STAMP_KEYS: [&str; 3] = ["ontology", "pko_procedure", "dc_type"];
-        for chunk in ontology_src.split('"').skip(1).step_by(2) {
-            if !chunk.is_empty()
-                && chunk.contains('_')
-                && !STAMP_KEYS.contains(&chunk)
-                && chunk
-                    .chars()
-                    .all(|c| c.is_ascii_lowercase() || c == '_' || c.is_ascii_digit())
-            {
-                mapped.push(chunk);
-            }
-        }
-        mapped.sort_unstable();
-        mapped.dedup();
-        assert!(
-            !mapped.is_empty(),
-            "the reverse scan found no mapping names — the instrument is broken"
-        );
-        for name in &mapped {
-            assert!(
-                TOOL_NAMES.contains(name),
-                "mapping names '{name}', which is not a registered tool — a stale or \
-                 misspelled arm in src/ontology.rs"
-            );
-        }
-    }
-
-    /// The mapping is defined only over the registered surface: an
-    /// unknown name returns None on both axes rather than a default
-    /// concept.
-    #[test]
-    fn unknown_tool_has_no_axes() {
-        assert!(tool_to_pko("not_a_tool").is_none());
-        assert!(tool_to_dc("not_a_tool").is_none());
-        assert!(tool_to_dual_axis("not_a_tool").is_none());
-    }
+    // The both-directions totality tests (coverage + the phantom-name
+    // reverse scan) are emitted by the framework crate's
+    // `dual_axis_annotate!` macro above — one definition across the nine
+    // stamped servers, including its own generated TOOL_NAMES include.
+    // This module keeps the media-specific tests.
 
     /// The axes must discriminate: a generation step and a gallery
     /// reading are different process concepts; a write and a read are
@@ -422,30 +334,6 @@ mod tests {
         assert_eq!(tool_to_dc("gallery_list_assets"), Some(REPORT));
     }
 
-    /// The stamp is additive: the body's own fields survive, and both
-    /// axis concepts appear under `ontology`. The OMC supplement's
-    /// nested `ontology` field inside `display_hint` (a fenced-block
-    /// STRING, not an object at this level) is untouched by the hook.
-    #[test]
-    fn annotate_stamps_both_axes_without_disturbing_the_body() {
-        let body = serde_json::json!({"output": "/tmp/img.png"});
-        let stamped = annotate("generate_image", body.clone());
-        assert_eq!(
-            stamped["output"],
-            serde_json::json!("/tmp/img.png"),
-            "{stamped:?}"
-        );
-        assert_eq!(
-            stamped["ontology"]["pko_procedure"],
-            serde_json::json!(STEP_EXECUTION)
-        );
-        assert_eq!(stamped["ontology"]["dc_type"], serde_json::json!(DATASET));
-        // An unmapped name returns the body unchanged — never an
-        // invented axis.
-        let untouched = annotate("not_a_registered_tool", body.clone());
-        assert_eq!(untouched, body);
-    }
-
     /// End-to-end: a real tool invocation through `execute_tool` carries
     /// the dual-axis stamp on its response — the central hook works, not
     /// just the mapping table.
@@ -455,35 +343,10 @@ mod tests {
         use std::sync::Arc;
 
         // The tool_behavior_tests construction (make_server_with_port),
-        // built here: a minimal inference port over an empty gallery state
-        // — workflow_list needs no inference and no credential. Only the
-        // non-defaulted trait methods are implemented; vision/embed default
-        // to typed refusals, which this tool never reaches.
-        struct NoopPort;
-        impl hkask_types::ports::InferencePort for NoopPort {
-            fn generate(
-                &self,
-                _: &str,
-                _: &hkask_types::template::LLMParameters,
-                _: Option<&[hkask_types::ChatToolDefinition]>,
-            ) -> std::pin::Pin<
-                Box<
-                    dyn std::future::Future<
-                            Output = Result<
-                                hkask_types::InferenceResult,
-                                hkask_types::InferenceError,
-                            >,
-                        > + Send
-                        + '_,
-                >,
-            > {
-                Box::pin(async {
-                    Err(hkask_types::InferenceError::Connection(
-                        "noop inference port — not configured for this test".into(),
-                    ))
-                })
-            }
-        }
+        // built here: the shared noop inference double over an empty
+        // gallery state — workflow_list needs no inference and no
+        // credential.
+        use hkask_mcp_server::server::test_support::NoopInferencePort as NoopPort;
 
         let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
         let gallery_store = Arc::new(

@@ -125,8 +125,15 @@ mod workflow;
 // `src/*.rs`. The single source of truth — the tool surface is asserted
 // against the live `combined_router()` surface at test time, so drift is
 // caught. Consumers across the seam (e.g. `swarm_panel`) re-export this
-// const as `parse::SWARM_TOOLS`.
-include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
+// const as `parse::SWARM_TOOLS`. `CLOUD_SWARM_TOOL_NAMES` is read only by
+// this crate's cloud-router test (the ABW/local split is a test-time
+// invariant), so the include is wrapped in a module whose dead-code lint
+// tolerates it in a non-test build.
+mod generated_tool_names {
+    #![allow(dead_code)]
+    include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
+}
+pub use generated_tool_names::{CLOUD_SWARM_TOOL_NAMES, TOOL_NAMES};
 
 // ── Public local-swarm surface (reused by other kask MCP servers) ──────────
 //

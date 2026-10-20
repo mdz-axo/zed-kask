@@ -223,35 +223,21 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
     }
 }
 
-/// Both axes for a registered tool, or `None` when the name is not one.
-///
-/// P5.4's dual-axis core: a caller never gets one axis without the other.
-pub(crate) fn tool_to_dual_axis(tool_name: &str) -> Option<(PkoConcept, DcConcept)> {
-    match (tool_to_pko(tool_name), tool_to_dc(tool_name)) {
-        (Some(process), Some(state)) => Some((process, state)),
-        _ => None,
-    }
-}
+// The shared dual-axis machinery (the both-axes combinator, the central
+// annotate stamp, and the both-directions totality tests) comes from the
+// framework crate's `dual_axis_annotate!` macro — one definition across
+// the nine stamped servers instead of a copy per server (the ratchet
+// measured ~19 cross-server duplication clusters from the per-server
+// copies before this hoist).
 
-/// The server-level response stamp consumed by the framework's central
-/// `ToolContext::annotate_response` hook (`execute_tool`) — every swarm
-/// tool response carries both axes without a per-site wrap at each of
-/// the 91 tool returns.
-pub(crate) fn annotate(tool_name: &str, mut body: serde_json::Value) -> serde_json::Value {
-    let Some((process, state)) = tool_to_dual_axis(tool_name) else {
-        return body;
-    };
-    if let Some(object) = body.as_object_mut() {
-        object.insert(
-            "ontology".to_string(),
-            serde_json::json!({
-                "pko_procedure": process,
-                "dc_type": state,
-            }),
-        );
-    }
-    body
-}
+hkask_mcp_server::dual_axis_annotate!(
+    tool_to_pko,
+    tool_to_dc,
+    PkoConcept,
+    DcConcept,
+    &["swarm_", "local_", "a2a_", "knowledge_"],
+    &[],
+);
 
 #[cfg(test)]
 mod tests {
@@ -330,14 +316,21 @@ mod tests {
         )
         .expect("src/ontology.rs must be readable");
         let mut mapped: Vec<String> = Vec::new();
+        // The predicate fn's own prefix literals ("swarm_", ...) are
+        // fragments, not names — a name is strictly longer than its
+        // prefix (the same fragment rule as is_tool_name).
+        const PREFIXES: [&str; 4] = ["swarm_", "local_", "a2a_", "knowledge_"];
         for chunk in ontology_src.split('"').skip(1).step_by(2) {
-            if !chunk.is_empty()
-                && chunk.starts_with("swarm_")
-                && chunk
-                    .chars()
-                    .all(|c| c.is_ascii_lowercase() || c == '_' || c.is_ascii_digit())
-            {
-                mapped.push(chunk.to_string());
+            for p in PREFIXES {
+                if let Some(rest) = chunk.strip_prefix(p) {
+                    if !rest.is_empty()
+                        && rest
+                            .chars()
+                            .all(|c| c.is_ascii_lowercase() || c == '_' || c.is_ascii_digit())
+                    {
+                        mapped.push(chunk.to_string());
+                    }
+                }
             }
         }
         mapped.sort();
@@ -349,24 +342,6 @@ mod tests {
                  a stale or misspelled arm in src/ontology.rs"
             );
         }
-    }
-
-    /// The stamp is additive: the body's own fields survive, and both
-    /// axis concepts appear under `ontology`.
-    #[test]
-    fn annotate_stamps_both_axes_without_disturbing_the_body() {
-        let body = serde_json::json!({"count": 3, "results": []});
-        let stamped = annotate("swarm_list_local_swarms", body.clone());
-        assert_eq!(stamped["count"], serde_json::json!(3), "{stamped:?}");
-        assert_eq!(
-            stamped["ontology"]["pko_procedure"],
-            serde_json::json!(PROCEDURE_EXECUTION)
-        );
-        assert_eq!(stamped["ontology"]["dc_type"], serde_json::json!(REPORT));
-        // An unmapped name returns the body unchanged — never an
-        // invented axis.
-        let untouched = annotate("not_a_registered_tool", body);
-        assert!(untouched.get("ontology").is_none(), "{untouched:?}");
     }
 
     /// End-to-end: a real tool invocation through `execute_tool` carries

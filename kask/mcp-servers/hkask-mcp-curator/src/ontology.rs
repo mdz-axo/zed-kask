@@ -97,114 +97,16 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
     }
 }
 
-/// Both axes for a registered tool, or `None` when the name is not one.
-///
-/// P5.4's dual-axis core: a caller never gets one axis without the other,
-/// so a partial mapping cannot silently satisfy the contract.
-pub(crate) fn tool_to_dual_axis(tool_name: &str) -> Option<(PkoConcept, DcConcept)> {
-    match (tool_to_pko(tool_name), tool_to_dc(tool_name)) {
-        (Some(process), Some(state)) => Some((process, state)),
-        _ => None,
-    }
-}
+// The shared dual-axis machinery (the both-axes combinator, the central
+// annotate stamp, and the both-directions totality tests) comes from the
+// framework crate's `dual_axis_annotate!` macro — one definition across
+// the nine stamped servers instead of a copy per server.
 
-/// Stamp the dual-axis identity onto a tool response.
-///
-/// This is the production consumer of the mapping: every curator tool
-/// routes its JSON body through here, so each response carries the
-/// process (PKO) and state (DC+BIBO) concept its artifact occupies. The
-/// annotation is additive — the existing body is untouched, so no caller
-/// contract changes.
-///
-/// A name with no mapping returns the body unchanged rather than inventing
-/// an axis: `dual_axis_covers_all_registered_tools` is what guarantees the
-/// registered surface is total, and a silent default would defeat it.
-pub(crate) fn annotate(tool_name: &str, mut body: serde_json::Value) -> serde_json::Value {
-    let Some((process, state)) = tool_to_dual_axis(tool_name) else {
-        return body;
-    };
-    if let Some(object) = body.as_object_mut() {
-        object.insert(
-            "ontology".to_string(),
-            serde_json::json!({
-                "pko_procedure": process,
-                "dc_type": state,
-            }),
-        );
-    }
-    body
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // The generated canonical tool-name list — included from OUT_DIR, so
-    // the totality test derives its expectations from the live tool
-    // surface (build.rs scan), never a hardcoded list.
-    include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
-
-    /// P5.4: "Every MCP server uses BOTH axes" (operator ruling B.2
-    /// 2026-10-18: every tool RESPONSE). Every registered curator tool
-    /// must carry a process AND a state identity — a tool added without
-    /// an explicit arm fails here rather than silently losing its axes.
-    #[test]
-    fn dual_axis_covers_all_registered_tools() {
-        for name in TOOL_NAMES {
-            let mapped = tool_to_dual_axis(name);
-            assert!(
-                mapped.is_some(),
-                "no dual-axis mapping for registered tool '{name}'; add an explicit arm \
-                 to tool_to_pko and tool_to_dc in src/ontology.rs"
-            );
-        }
-        // The reverse direction: every name the mapping claims must be a
-        // registered tool. Coverage alone let a phantom name sit in the
-        // swarm mapping undetected (live 2026-10-18: `swarm_delete_local`,
-        // a typo, matched no call site and still passed coverage). Scanned
-        // from the mapping source, so no new registry is introduced.
-        let ontology_src = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ontology.rs"),
-        )
-        .expect("src/ontology.rs must be readable");
-        let mut mapped: Vec<&str> = Vec::new();
-        for chunk in ontology_src.split('"').skip(1).step_by(2) {
-            if (chunk.starts_with("curator_")
-                || chunk.starts_with("memory_")
-                || chunk.starts_with("reg_"))
-                && chunk
-                    .chars()
-                    .all(|c| c.is_ascii_lowercase() || c == '_' || c.is_ascii_digit())
-            {
-                mapped.push(chunk);
-            }
-        }
-        mapped.sort_unstable();
-        mapped.dedup();
-        for name in &mapped {
-            assert!(
-                TOOL_NAMES.contains(name),
-                "mapping names '{name}', which is not a registered tool — a stale or \
-                 misspelled arm in src/ontology.rs"
-            );
-        }
-    }
-
-    /// The stamp is additive: the body's own fields survive, and both
-    /// axis concepts appear under `ontology`.
-    #[test]
-    fn annotate_stamps_both_axes_without_disturbing_the_body() {
-        let body = serde_json::json!({"count": 3, "results": []});
-        let stamped = annotate("curator_semantic_search", body.clone());
-        assert_eq!(stamped["count"], serde_json::json!(3), "{stamped:?}");
-        assert_eq!(
-            stamped["ontology"]["pko_procedure"],
-            serde_json::json!(PROCEDURE_EXECUTION)
-        );
-        assert_eq!(stamped["ontology"]["dc_type"], serde_json::json!(REPORT));
-        // An unmapped name returns the body unchanged — never an
-        // invented axis.
-        let untouched = annotate("not_a_registered_tool", body);
-        assert!(untouched.get("ontology").is_none(), "{untouched:?}");
-    }
-}
+hkask_mcp_server::dual_axis_annotate!(
+    tool_to_pko,
+    tool_to_dc,
+    PkoConcept,
+    DcConcept,
+    &["curator_", "memory_", "reg_"],
+    &[],
+);
