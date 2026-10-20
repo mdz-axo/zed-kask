@@ -174,6 +174,10 @@ impl AgentTool for LispEvalTool {
 
     const NAME: &'static str = "lisp_eval";
 
+    fn deserialize_replay_input(input: serde_json::Value) -> Result<Self::Input> {
+        super::deserialize_saved_json_map(input, "env")
+    }
+
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Other
     }
@@ -331,6 +335,40 @@ mod tests {
         assert_eq!(
             super::evaluate_lisp(input).expect("evaluate decoded bindings"),
             json!(8)
+        );
+    }
+
+    #[test]
+    fn saved_env_migration_preserves_bindings_without_relaxing_live_inputs() {
+        use crate::AgentTool;
+
+        let bindings = json!({
+            "count": 7,
+            "ready": true,
+            "items": [1, null, {"nested": 2}],
+            "literal": "{\"not\":\"an object\"}"
+        });
+        let saved = json!({"form": "(+ count 1)", "env": bindings});
+        assert!(serde_json::from_value::<LispEvalToolInput>(saved.clone()).is_err());
+        for env in [bindings.clone(), json!(bindings.to_string())] {
+            let mut input = saved.clone();
+            input["env"] = env;
+            let decoded = super::LispEvalTool::deserialize_replay_input(input)
+                .expect("decode saved environment");
+            assert_eq!(
+                serde_json::to_value(&decoded.env).expect("bindings"),
+                bindings
+            );
+            assert_eq!(
+                super::evaluate_lisp(decoded).expect("scalar arithmetic"),
+                json!(8)
+            );
+        }
+        let omitted = super::LispEvalTool::deserialize_replay_input(json!({"form": "(+ 1 2)"}))
+            .expect("omitted environment keeps its default");
+        assert_eq!(
+            super::evaluate_lisp(omitted).expect("constant arithmetic"),
+            json!(3)
         );
     }
 

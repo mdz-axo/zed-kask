@@ -7344,6 +7344,13 @@ where
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>>;
 
+    /// Decode saved arguments independently of the current model-facing contract.
+    /// Tools whose wire format changed can migrate a replay copy here; live
+    /// execution continues to deserialize `Self::Input` directly.
+    fn deserialize_replay_input(input: serde_json::Value) -> Result<Self::Input> {
+        Ok(serde_json::from_value(input)?)
+    }
+
     /// Emits events for a previous execution of the tool.
     fn replay(
         &self,
@@ -7496,7 +7503,7 @@ where
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Result<()> {
-        let input = serde_json::from_value(input)?;
+        let input = T::deserialize_replay_input(input)?;
         let output = serde_json::from_value(output)?;
         self.0.replay(input, output, event_stream, cx)
     }

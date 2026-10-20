@@ -57,8 +57,7 @@ use serde::{
 /// audit lockout (5 identical malformed-env emissions hard-refused by the
 /// per-input retry tracker). `tolerate_stringified` additionally accepts
 /// the field as a stringified JSON string (models occasionally stringify
-/// nested arguments — the `lisp_eval.env` / `edit_file.edits` /
-/// `render_template.context` pattern). The teaching message replaces the
+/// nested arguments such as `edit_file.edits`). The teaching message replaces the
 /// inner serde error entirely, so no position noise ("at line 1 column N")
 /// reaches the model.
 pub(crate) fn deserialize_teaching_field<'de, T, D>(
@@ -112,6 +111,21 @@ where
             describe_json_shape(&raw)
         ))
     })
+}
+
+/// Convert a pre-JSON-text native map on a saved-input copy only. Current
+/// strings, omitted fields and invalid shapes still use the strict decoder;
+/// nested JSON-looking strings must not be interpreted a second time.
+fn deserialize_saved_json_map<T: DeserializeOwned>(
+    mut input: serde_json::Value,
+    field: &str,
+) -> anyhow::Result<T> {
+    if let Some(value) = input.get_mut(field)
+        && value.is_object()
+    {
+        *value = serde_json::Value::String(serde_json::to_string(value)?);
+    }
+    Ok(serde_json::from_value(input)?)
 }
 
 /// One-line shape description for teaching errors: "null", "boolean true",
@@ -485,6 +499,54 @@ mod tests {
                 Some(true),
                 "{name} must expose the same read-only curator_status tool"
             );
+        }
+    }
+
+    #[gpui::test]
+    fn saved_json_map_tools_replay_without_execution(cx: &mut gpui::TestAppContext) {
+        let bindings = serde_json::json!({
+            "count": 7,
+            "ready": true,
+            "items": [1, null, {"nested": 2}],
+            "literal": "{\"not\":\"an object\"}"
+        });
+        let cases = [
+            (
+                LispEvalTool.erase(),
+                "env",
+                serde_json::json!({"form": "(invalid saved form"}),
+                serde_json::json!({"result": 8}),
+            ),
+            (
+                RenderTemplateTool.erase(),
+                "context",
+                serde_json::json!({"template_ref": "missing-template-must-not-be-rendered"}),
+                serde_json::json!({"text": "saved output"}),
+            ),
+        ];
+        for (tool, field, base, output) in cases {
+            for value in [bindings.clone(), serde_json::json!(bindings.to_string())] {
+                let mut input = base.clone();
+                input[field] = value;
+                let (stream, _receiver) = crate::ToolCallEventStream::test();
+                cx.update(|cx| tool.replay(input, output.clone(), stream, cx))
+                    .expect(
+                        "saved object and JSON-text inputs must both replay without re-execution",
+                    );
+            }
+            for value in [
+                serde_json::Value::Null,
+                serde_json::json!([]),
+                serde_json::json!("{"),
+            ] {
+                let mut input = base.clone();
+                input[field] = value;
+                let (stream, _receiver) = crate::ToolCallEventStream::test();
+                assert!(
+                    cx.update(|cx| tool.replay(input, output.clone(), stream, cx))
+                        .is_err()
+                );
+            }
         }
     }
 

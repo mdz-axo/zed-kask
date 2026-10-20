@@ -88,6 +88,10 @@ impl AgentTool for RenderTemplateTool {
 
     const NAME: &'static str = "render_template";
 
+    fn deserialize_replay_input(input: serde_json::Value) -> Result<Self::Input> {
+        super::deserialize_saved_json_map(input, "context")
+    }
+
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Other
     }
