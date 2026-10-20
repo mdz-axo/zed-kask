@@ -161,6 +161,7 @@ hkask_mcp_server::dual_axis_annotate!(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hkask_bridge_ontology::pko::PROCEDURE;
 
     // The both-directions totality tests (coverage + the phantom-name
     // reverse scan) are emitted by the framework crate's
@@ -269,7 +270,7 @@ mod tests {
         );
         assert_eq!(
             content["boards"][0]["ontology"],
-            serde_json::json!("pko:Procedure"),
+            serde_json::json!(PROCEDURE),
             "the nested per-item BoardInfo.ontology string survives (the widget's S4 sensor): {content}"
         );
     }
