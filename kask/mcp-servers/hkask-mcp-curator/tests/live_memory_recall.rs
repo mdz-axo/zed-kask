@@ -95,3 +95,33 @@ async fn live_repaired_passages_resolve_to_their_own_rows() -> Result<(), Box<dy
     )?;
     Ok(())
 }
+
+#[test]
+#[ignore = "Requires an operator-approved encrypted backup path and its DB credential"]
+fn live_backup_preserves_vector_bindings() -> Result<(), Box<dyn std::error::Error>> {
+    let passphrase = hkask_mcp_server::server::resolve_db_passphrase(&Default::default())?;
+    let database = hkask_storage::Database::open_read_only(
+        &std::env::var("HKASK_LIVE_MEMORY_BACKUP")?,
+        &passphrase,
+    )?;
+    let pool = database.sqlite_pool()?;
+    let connection = pool.get()?;
+    let count: i64 =
+        connection.query_row("SELECT COUNT(*) FROM embeddings", [], |row| row.get(0))?;
+    let mismatches: i64 = connection.query_row(
+        "SELECT COUNT(*) FROM embeddings e LEFT JOIN vec_embeddings v ON v.rowid=e.rowid \
+         WHERE v.rowid IS NULL OR e.vector IS NOT v.embedding",
+        [],
+        |row| row.get(0),
+    )?;
+    println!("backup embedding rows: {count}; vector binding mismatches: {mismatches}");
+    assert!(
+        count > 0,
+        "a nonempty backup is required for this verification"
+    );
+    assert_eq!(
+        mismatches, 0,
+        "backup metadata and vector-index rowids must agree"
+    );
+    Ok(())
+}
