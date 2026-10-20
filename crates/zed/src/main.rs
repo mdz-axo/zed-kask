@@ -1584,8 +1584,8 @@ fn main() {
                 log::info!("kask agent name: {agent_name}");
 
                 // zed-kask: D8 — the governed invoker is shared by the
-                // board sink, its status reader and the panel. No kanban DB
-                // is opened in the editor.
+                // board sink, its status reader and the panel. Only native
+                // goal decisions use the in-process canonical service below.
                 let panel_tool_invoker = std::sync::Arc::new(PanelToolInvoker {
                     tool_port: tool_port_for_deferred.clone(),
                     executor: cx.background_executor().clone(),

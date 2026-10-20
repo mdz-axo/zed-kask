@@ -11,6 +11,9 @@ Explanations: Evidence from Forecasting Tournaments" — Forecasting Research
 Institute. The paper defines the EQM instrument — 60 theory-guided marker patterns across six families; the reference catalog carries all 60 verbatim from Appendix A.4; the live `market_score_rationale` tool scores the predictive 12 using an LLM. Aggregate only complete tool results to forecast- and forecaster-level composites,
 validates against realized outcomes, and emits calibration feedback.
 
+## Goal evidence, closure and optional forecasts
+
+Use `program-manager`'s goal contract and the [canonical pact](../../../kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md): create requires a real specification `source` and returns the full goal's `id`; ordinary goals omit `forecast`. Worker progress is not human closure. Native `kanban_goal_close` obtains human ActionChoice, never a model-supplied outcome; `kanban_goal_correct_outcome` is separate. Keep blinded assessment findings and human labels distinct, unknown visible, canonical history retained. The current assessor cannot fetch evidence and cannot certify unseen references. No automatic success closure or routine goal probability.
 ## Initial and target condition
 
 - **Initial condition:** the exact rationale corpus, its question/probability/forecaster IDs, the requested marker set, the scorer's returned 12-marker coverage, and any matched realized outcomes. Missing scores or outcomes are unavailable evidence, not zero quality or proof against gaming.
@@ -38,7 +41,7 @@ validates against realized outcomes, and emits calibration feedback.
 | Anchor | How it shapes the skill |
 |---|---|
 | Karvetski et al. (2026, arXiv:2606.30987) — the EQM method (`onto_anchor` → derived `explanation_quality_marker`, operator ruling 2026-09-25) | The marker instrument (LLM-scored 0/1/2), composite, asymmetric signal, forecast-level + forecaster-level prediction. Defines the Score → Aggregate → Validate → Feedback shape. |
-| Tetlock Brier scoring (via superforecasting) | The outcome ground truth that validates EQM scores against accuracy. |
+| Tetlock Brier scoring (via superforecasting) | A loss measure on independently resolved forecasts, not ground truth or calibration by itself (Murphy 1973). |
 | PKO (Procedural Knowledge Ontology) | The skill models a measurement procedure: specification (which EQMs, which rationales) / execution (LLM scoring) / verification (outcome correlation). |
 | Dublin Core | Metadata for the rationale corpus (forecaster id, question id, timestamp, resolution status) needed by forecaster-level aggregation. |
 
@@ -165,13 +168,10 @@ Steps:
    - Fixed priority order: Hurts(2) > Hurts(1) > Helps(0) > Helps(1) — red-flag elimination before green-flag polish, the paper's asymmetric signal.
    - Target-set summary via `lisp_eval`: `(- (sum helps_targets) (sum hurts_targets))`, env `{ "helps_targets": <2 per failing Helps marker>, "hurts_targets": <0 per failing Hurts marker> }`.
    Join each failing marker's `id` to its verbatim `description` in `kask/registry/templates/eqm/eqm-catalog.yaml` (read the catalog, match by id — the single source of truth for what a score of 2 or 0 looks like) to form `prioritized_markers` and `failing_markers` before rendering `eqm-imp-predict` and `eqm-imp-experiment`. This subset summary is not the whole-rationale composite and cannot by itself close the loop.
-2. **Predict** (P — calibrated by operator-scored Brier on the recorded goal) — render `eqm/eqm-imp-predict`: "intervention X raises marker Y
-   from A to B", with a confidence. Record it with `kanban_goal_create`
-   (`goal_text` `eqm: <prediction>`, the confidence as `prediction`) so the
-   operator can score it.
+2. **Predict** (P — critiqued by measured marker changes and source preservation) — render `eqm/eqm-imp-predict`: "intervention X raises marker Y from A to B". Record the confirmed target, criteria and actual source with `kanban_goal_create` if tracking it; omit routine `forecast`. Optional forecasts require the full prospective pact, not just confidence.
 3. **Experiment** (P — critiqued by re-scoring and the three mitigations) — render `eqm/eqm-imp-experiment` and produce the rewrite
    under the three mitigations.
-4. **Check** (D) — re-score the *same predictive-12* set, requiring complete coverage and the original probability; compare the submitted forecast probability to the original with `lisp_eval` `(= original_probability revised_probability)`. Join each selected `marker_target.id` to its fresh score; missing/duplicate IDs, an unknown direction, or a score outside 0–2 are not a pass. Call `lisp_eval` with the `marker_targets` records (`id`, `direction`, `current_score` from the new tool response, `target_score`) and the `misses` form below; judge the goal (`kanban_goal_judge`) with actual per-marker evidence. The intake Brier score arrives only when the operator resolves the goal.
+4. **Check** (D) — re-score the *same predictive-12* set, requiring complete coverage and the original probability; compare the submitted forecast probability to the original with `lisp_eval` `(= original_probability revised_probability)`. Join each selected `marker_target.id` to its fresh score; missing/duplicate IDs, an unknown direction, or a score outside 0–2 are not a pass. Call `lisp_eval` with the `marker_targets` records (`id`, `direction`, `current_score` from the new tool response, `target_score`) and the `misses` form below; judge the goal (`kanban_goal_judge`) with actual per-marker evidence. The worker finding does not close the goal; request native human closure separately and preserve independent assessment limitations.
 5. **Act** — a nonempty failing-marker list names the next experiment; if empty and at least one target was checked, stop. Stop immediately on a *supported* `gaming_suspected` verdict, or after 8 iterations with remaining markers named. Missing outcomes leave external accuracy `Undetermined`, never a claim that the rationale is proven ungamed.
 
 ### Convergence

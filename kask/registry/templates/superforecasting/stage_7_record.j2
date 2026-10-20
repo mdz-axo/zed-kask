@@ -51,6 +51,15 @@ Create a complete record including:
 - Summary of reasoning
 - Key assumptions made
 
+### Prospective admission (caller action, not template execution)
+
+Before outcome visibility, the caller must use `scenario_declare` with a new
+`forecast_id`, full `events` and named `resolver`. This freezes propositions,
+deadlines and tree marginals. At resolution `scenario_score` requires the same
+ID, exact frozen events, resolver and observed outcomes. A tracking ID or JSON
+record from this render is not a persisted declaration; never claim one was made
+without its receipt. Changed probabilities or propositions require a new ID.
+
 ### Post-Mortem Preparation
 Set up for later error analysis:
 - What would count as resolution?

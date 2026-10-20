@@ -59,7 +59,7 @@ mechanically verified by `scripts/check-forecast-conformance.sh` in CI.
 | 7 Record                                  | —                                                          | Natural-language only (forecast record structure). Persistent journal storage is `ForecastStore` in `hkask-mcp-scenarios`.                                                                                                                                                       |
 | Quality gate                              | —                                                          | Natural-language only (independent rubric evaluation).                                                                                                                                                                                                                           |
 | Convergence check                         | —                                                          | The gate loop re-renders the quality gate; the pass rule is deterministic via `lisp_eval` (all four scores >= 0.60), bounded at 2 gate cycles.                                                                                                                                                                                                             |
-| Brier scoring (cross-cutting)             | `brier_score`, `brier_score_multi`, `brier_interpretation` | Used by stage 7 record feedback and the MCP servers' outcome tracking.                                                                                                                                                                                                           |
+| Brier scoring (cross-cutting)             | `brier_score`, `brier_score_multi` | Used by stage 7 record feedback and the MCP servers' outcome tracking.                                                                                                                                                                                                           |
 | Calibration confidence (cross-cutting)   | `wilson_bounds`                                            | Wilson score interval on per-bin hit rates — the confidence bounds `hkask-mcp-scenarios` reports alongside its backward-looking calibration curve (stage 6).                                                                                                                       |
 | Marginalization (cross-cutting)           | `marginalize`                                              | Marginal probability over a set of parent variables with conditional probabilities. Used by event-tree scenario analysis in `hkask-mcp-scenarios`.                                                                                                                               |
 | Certainty tier (cross-cutting)            | `certainty_tier`                                           | Maps a probability to a qualitative tier (proximate / probable / possible) for display coloring consistency.                                                                                                                                                                     |
@@ -138,10 +138,8 @@ SKILL.md's stage instructions are the operating procedure):
   it — the per-node before/after record of a prior revision;
   `scenario_update` itself is stateless: it computes and returns the
   posterior, and the durable record is the forecast journal below)
-- The forecast journal at resolution (`scenario_score` — the only writer;
-  Brier is computed there, on the tree's resolved MARGINAL probabilities:
-  for a dependent event the scored belief is the marginal, not the raw
-  prior field; journal schema v3 marks those records `scored_from_marginal`)
+- Prospective `scenario_declare` (`forecast_id`, full `events`, named `resolver`) freezes the event/probability/deadline before outcome visibility.
+- `scenario_score` accepts only matching frozen events/resolver and scores stored marginals; a template tracking ID is not admission. Legacy undeclared records remain unscored history.
 
 (An earlier revision of this README described a flow engine emitting
 `hkask.template.*` Regulation spans, variety counters, an algedonic alert,
@@ -161,9 +159,11 @@ that machinery exists; the description was fabricated and is removed.)
 - [ ] Ensemble mode (multiple parallel pipeline runs) — Note: distinct from hKask ensemble module (deferred 2026-06-14)
 - [ ] Human-in-the-loop checkpoints
 - [ ] Automatic reference class lookup from knowledge base
-- [x] Brier score tracking and feedback — `scenario_score` at resolution writes the forecast journal and reports Brier; `scenario_calibration` computes the curve; `scenario_calibrate` applies the learned bias (≥5 resolved)
+- [x] Brier score tracking and feedback — `scenario_declare` freezes the prospective record; `scenario_score` reports raw binary loss at resolution; `scenario_calibration` supplies descriptive bins, not certification or automatic bias correction
 - [x] MCDA-style weighted aggregation in stage 5 (synthesis) — causal models scored against evidence alignment, reference class stability, causal mechanism clarity, and model confidence criteria, with compensation masking detection. Embedded in the synthesis template rather than delegated via template_ref (the platform has no flow-step ordinal machinery; embedding avoids inventing one).
 - [ ] Sub-question independence validation in stage 1 (Fermi) — hypothesis-framer interface mismatch: FINER/PICO evaluates research question quality, not Fermi sub-question independence. A lightweight independence check embedded in the Fermi template is a better fit than cross-skill delegation.
+
+Raw loss is not calibration: Murphy (1973), DOI `10.1175/1520-0450(1973)012<0595:ANVPOT>2.0.CO;2`, separates reliability, resolution and uncertainty. Compare matched cases/weights/horizons, report counts, and never use universal loss bands or inverse-Brier weighting.
 
 ## References
 

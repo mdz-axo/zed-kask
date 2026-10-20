@@ -49,13 +49,14 @@ This is a refinement cycle. Compare the current state to the previous grasp. Wha
 {% endif %}
 
 {% if prior_calibration %}
-## Prior Calibration (operator-scored metacognition goals from kanban_goal_list)
+## Prior evidence and eligible forecast history
 ```json
 {{ prior_calibration | tojson }}
 ```
-Each resolved goal pairs your stated confidence with the operator's scored outcome.
-- Brier score per goal is (confidence - outcome)^2: 0 = perfect, 0.25 = a constant 0.5 guess, 1 = worst.
-- If your confident predictions mostly failed, you are overconfident: lower your confidence in step 3.
+Keep worker findings, human closure and independent assessment separate. Only
+prospectively declared, resolved comparable forecasts belong in a loss cohort.
+Report convention, event counts, source and unresolved/legacy exclusions. Raw
+loss is not calibration (Murphy 1973); no automatic probability adjustment.
 {% endif %}
 
 ## What to Measure

@@ -5,6 +5,38 @@ description: Govern code-producing work as a technical program manager — recov
 
 # Program Manager
 
+## Goal evidence, closure and optional forecasts
+
+Follow the [canonical goal pact](../../../kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md).
+`kanban_goal_create` requires `goal_text`, 1–4 observable `criteria` and
+`source: { interaction_id, session_id, source }` locating the real specification.
+Never invent a source interaction or treat a worker-supplied source as authentication.
+It returns the full goal with `id`, `criterion_ids` and `spec_digest`; retain those,
+not an abbreviated response's `goal_id`. Changed requirements use `supersedes`.
+Ordinary goals have no prediction: omit `forecast`. Only a decision-relevant,
+prospective declaration may supply the typed `forecast` (proposition, probability,
+horizon, resolution_deadline, execution_policy, resources, resolver,
+baseline_probability, cohort and fixed-at-declaration update_policy).
+
+`kanban_goal_judge` records worker progress with complete criterion coverage,
+not human acceptance or an independent finding. Native `kanban_goal_close`
+accepts only `goal_id` and an evidence manifest; the host asks the human via
+`ActionChoice` for accomplished/stop and achieved/not-achieved/unknown.
+Never supply a human outcome/actor field, infer success from task completion,
+or automatically close work because a check passed. Native
+`kanban_goal_correct_outcome` is a separate authenticated correction interaction;
+it appends history rather than rewriting the original closure.
+
+The host schedules a fresh blinded assessment of the frozen spec and evidence
+manifest, excluding worker verdicts, human choice, forecast probabilities and scores.
+Keep worker claims, human labels, machine evidence and assessor findings separate,
+including disagreement. The current host assessor has no evidence-fetch tools:
+it must return unknown, not supported/contradicted from locators alone. Failures
+remain visible and retryable. Canonical history and the durable projection outbox
+survive delivery; receipt acknowledgment never deletes the goal. Optional forecasts
+resolve only under their frozen source rule after an assessment attempt. Unknown,
+disputed and ineligible cases stay explicit; versions do not add independent cases.
+
 ## Ontological Anchors
 
 - **Technical Program Management** (industry TPM practice): the TPM
@@ -85,7 +117,7 @@ Constraints and Instructions are the enforcement:
 | 3 Execute | D | compiler, tool receipts; Phase 3 timebox |
 | 4 Verify | D | the run validation command and its output; `./script/clippy`; `lisp_eval` for counts |
 | 5 Close: ledger score | D | `lisp_eval` ledger form |
-| 5 Close: goal judgment | P | `kanban_goal_score` Brier against the operator's ground truth |
+| 5 Close: human judgment | P | Native human ActionChoice; independent findings and optional forecast resolution remain separate |
 
 Step-level exceptions to the phase rows: Phase 0 step 3 (asking the
 operator for a missing spec) is P — critic: the operator. Phase 2 step
@@ -147,11 +179,7 @@ insert is D — the returned h_mem id.
    deferred item, the risk register entry — what breaks if it stays
    deferred, how likely, how severe. A decision surfaced without its
    deferral risk is an unpriced decision.
-5. If a goal-tracking loop is active and the target is non-trivial,
-   record the goal (`kanban_goal_create`) with the operator's words as
-   `goal_text` and your intake prediction. The prediction is
-   Brier-scored later — record confidence honestly, not modestly or
-   optimistically.
+5. If goal tracking is active and the target is non-trivial, record the confirmed specification and real source with `kanban_goal_create`. Omit `forecast` for ordinary work; see the goal contract above for eligible declarations.
 
 ### Phase 2 — Design (architect before coder)
 
@@ -299,10 +327,7 @@ insert is D — the returned h_mem id.
    identity and silently miss env-provided strings; the regression
    case validates the form live in both directions plus the
    object-shape red case.)
-6. When the operator confirms the outcome, resolve the goal
-   (`kanban_goal_score`) so the intake prediction is Brier-scored
-   against their ground truth — the kata's gap measurement. An
-   unjudged goal is an unclosed loop.
+6. Request native human closure with the evidence manifest when appropriate; only the host ActionChoice records the choice. Do not turn a worker verdict into success. Keep assessment, delivery and any forecast resolution pending/failed/unknown visibly distinct from closure.
 7. Bank the learning: one sentence on what the goal, the approach, or
    the collaboration taught — and start the next bit of work from it.
 

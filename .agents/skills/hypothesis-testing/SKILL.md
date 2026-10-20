@@ -7,6 +7,9 @@ description: "Orchestrate one human-gated hypothesis-testing lifecycle: framing,
 
 Hypothesis testing is the one end-to-end scientific inquiry lifecycle in zed-kask. It composes the skills and instruments that own each phase; it never reimplements their methods. The operator remains principal investigator: holding the question, judgment and veto. The experimentation MCP server is the sealed registry and lab notebook, never the executor.
 
+## Goal evidence, closure and optional forecasts
+
+Use `program-manager`'s goal contract and the [canonical pact](../../../kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md): create requires a real specification `source` and returns the full goal's `id`; ordinary goals omit `forecast`. Worker progress is not human closure. Native `kanban_goal_close` obtains human ActionChoice, never a model-supplied outcome; `kanban_goal_correct_outcome` is separate. Keep blinded assessment findings and human labels distinct, unknown visible, canonical history retained. The current assessor cannot fetch evidence and cannot certify unseen references. No automatic success closure or routine goal probability.
 ## Pipeline and ownership
 
 `hypothesis-framer` → `falsifiability` → `experimental-design` → domain executor → experimentation registry → `grounding-verify` → algedonic review.
@@ -36,7 +39,7 @@ Hypothesis testing is the one end-to-end scientific inquiry lifecycle in zed-kas
 ## Initial and target condition
 
 - **Initial condition:** a real research question and operator authority to begin. No confirmatory measurement for the proposed design has been inspected.
-- **Target condition:** either a typed stop before scientific spend, or a resolved inquiry carrying a versioned preregistered `DesignSpec`, real executor reports, a `FindingsSpec`, independent findings audit, lineage, and human-review record. A genuinely binary resolved claim may also close its linked goal for Brier calibration.
+- **Target condition:** either a typed stop before scientific spend, or a resolved inquiry carrying a versioned preregistered `DesignSpec`, real executor reports, a `FindingsSpec`, independent findings audit, lineage, and human-review record. Linked goals track verification regardless of scientific outcome; human closure is separate. An eligible forecast needs its own frozen proposition and resolver.
 
 ## Step types (D/P labelling)
 
@@ -93,7 +96,7 @@ Compute HT-R. The registry carries two seal attestations, so compatibility has t
 
 The semantic booleans come from the adapter's cited evidence; the verdict does not.
 
-The arms are a **preference order, not mutual exclusion**. A design carrying both a meaningful binary pass rate and a design-family headroom criterion is admissible science: it takes the binary arm, because that arm also yields pass-rate eligibility. The server's `SealAttestationConflict` refuses supplying *both attestations at seal* — it does not refuse a design *capable* of either. Within HT-R, `genuinely_binary_claim` gates only the binary pass-rate arm; independently, genuine claim binarity still governs linked-goal/Brier eligibility downstream. Thus a genuinely binary single-arm study may take `compatible_scientific` without fabricating a pass rate and still carry a linked goal.
+The arms are a **preference order, not mutual exclusion**. A design carrying both a meaningful binary pass rate and a design-family headroom criterion is admissible science: it takes the binary arm, because that arm also yields pass-rate eligibility. The server's `SealAttestationConflict` refuses supplying *both attestations at seal* — it does not refuse a design *capable* of either. Within HT-R, `genuinely_binary_claim` gates only the binary pass-rate arm; independently, forecast eligibility requires a prospective frozen declaration and resolver, not binarity alone. Thus a genuinely binary single-arm study may take `compatible_scientific` without fabricating a pass rate and still carry a linked goal.
 
 Calibration, single-arm measurement, observational estimation and practical equivalence are **not** incompatible — they are the `compatible_scientific` arm, attested by a tagged scientific headroom criterion (`design_family`, `criterion`, `evidence`). `registry_schema_mismatch` means what it says: a missing baseline arm, inexpressible rubrics, no run ceiling, absent or non-disjoint partitions, an unversioned `DesignSpec`, an unbound executor, or neither headroom attestation available. On mismatch, preserve the complete DesignSpec outside a fake experiment, keep all failed-condition evidence, do not render the declaration mapper, and do not call a registry write tool. **Never fabricate a pass rate to force the binary arm.**
 
@@ -159,8 +162,8 @@ A false result returns to mapping once; a second failure stops as `registry_mapp
 
 Then:
 
-1. Create the linked goal only for a genuinely binary claim; prediction confidence comes from `superforecasting` / `scenario_calibrate` or an externally calibrated method, never unaided self-assessment.
-2. `experiment_propose` with the versioned eval-set object, the top-level `design_spec`, rubrics, fitness function, noise band, budget and (genuinely binary claim only) goal id.
+1. Create a linked verification goal when useful, with confirmed criteria and actual source. Omit routine goal forecast; a binary claim alone is not a complete prospective declaration. Do not count linked experiment and goal as independent forecast events.
+2. `experiment_propose` with the versioned eval-set object, the top-level `design_spec`, rubrics, fitness function, noise band, budget and optional linked verification goal id.
 3. `variant_register` **every arm the DesignSpec predeclared**, before measurement: the control as `role="baseline"` (exactly one), each comparator as `role="challenger"`, and each ablation as `role="ablation"` naming the `parent_variant_id` whose component it ablates — the server refuses a parentless ablation. Registration is not measurement: pre-seal challenger *fitness* is refused by the server (`ExperimentNotSealed`), so registering the full arm set early cannot leak a pre-seal measurement. Freeze the arm-selection rule here, before any feedback result is read.
 4. Execute the baseline arm through the DesignSpec-bound executor and `fitness_record(seal_id=null)` its real report references. Pre-seal fitness is baseline-only.
 5. `experiment_seal` with **exactly one** attestation, matching the HT-R arm: `baseline_pass_rate` for `compatible_binary` (the scientifically meaningful measured rate), or `scientific_headroom` — `{design_family, criterion, evidence}` with recorded report refs — for `compatible_scientific`. Supplying both, or neither, is a typed refusal. A binary pass rate at 1.0 is a typed no-headroom refusal. For a scientific design, resolve that information-inadequate study through human review as `scientific_outcome="design_void"`, with the no-headroom reason preserved in `reject_reasons` or the FindingsSpec; redesign and re-declare, never weaken evaluators. Literal `no-headroom` closure remains only for artifact-layer experiments.
@@ -206,7 +209,7 @@ The algedonic review chairs disposition. Pass `FindingsSpec.typed_scientific_out
 
 Supply `scientific_outcome` **alone**. Do not also supply `verdict`: the tool layer synthesizes the stored resolution token from whichever single field is given, which is what satisfies the store's `verdict == outcome` equality check; supplying both is a typed `SelectionResolutionConflict` refusal. A `rejected` outcome still requires non-empty `reject_reasons`.
 
-- `rejected` and `corroborated` enter the Brier calibration record. A linked goal exists only for a genuinely binary claim, so only these two can judge and score one.
+- `rejected` and `corroborated` enter the Brier calibration record. This experiment score never automatically closes a linked goal. Any scientific outcome may supply worker progress evidence; human closure and optional goal-forecast resolution remain separate.
 - `evidence_of_practical_equivalence`, `inconclusive`, `measurement_void` and `design_void` are excluded from calibration **on the typed field itself** — no literal marker string is needed, and none should be invented. Preserve the FindingsSpec and the review decision; the fossil states honestly that the claim was neither held nor refuted.
 
 Literal `no-headroom` / `measurement-void` markers remain the closure path for **artifact-layer experiments only** (`self-improvement` owns those; they resolve through `verdict`, which has no typed field). A scientific design never needs them.
@@ -215,7 +218,7 @@ Refinement requires a new versioned `HypothesisSpec` with lineage. Evidence that
 
 ### 8. Metacognitive check and bounded improvement
 
-Before execution, record the design’s expected outcome and confidence. After execution, compare expectation with observation. Only `rejected` and `corroborated` outcomes carry a linked goal to score. Periodically inspect calibration across experiments and revise the design method when systematic error appears; never count `design_void`, `measurement_void` or `inconclusive` as refutations.
+Before execution, record the design’s expected outcome and confidence. After execution, compare expectation with observation. Do not infer human achievement from the scientific disposition. Only eligible binary experiment outcomes enter their declared forecast cohort. Periodically inspect calibration across experiments and revise the design method when systematic error appears; never count `design_void`, `measurement_void` or `inconclusive` as refutations.
 
 Apply the conclusions-update gate HT-1 after each completed measurement batch:
 

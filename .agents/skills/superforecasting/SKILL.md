@@ -8,6 +8,28 @@ description: "Superforecasting pipeline following Tetlock's Good Judgment Projec
 
 Superforecasting pipeline following Tetlock's Good Judgment Project methodology. Eight-stage process from question triage through Fermi decomposition, outside/inside views, Bayesian evidence updating, dragonfly-eye synthesis, probability calibration, and forecast recording.
 
+## Goal evidence, closure and optional forecasts
+
+Use `program-manager`'s goal contract and the [canonical pact](../../../kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md): create requires a real specification `source` and returns the full goal's `id`; ordinary goals omit `forecast`. Worker progress is not human closure. Native `kanban_goal_close` obtains human ActionChoice, never a model-supplied outcome; `kanban_goal_correct_outcome` is separate. Keep blinded assessment findings and human labels distinct, unknown visible, canonical history retained. The current assessor cannot fetch evidence and cannot certify unseen references. No automatic success closure or routine goal probability.
+## Forecast interpretation and evidence limits
+
+Binary Brier loss is mean((p−y)^2), range [0,1]; the original categorical
+sum-over-outcomes convention has range [0,2] (two-category vector loss is
+2×binary loss). State the convention. Constant .5 has binary loss .25,
+not a universal climatology or quality threshold. Missing probability stays
+missing; never synthesize a scoring prior or historical performance.
+Murphy (1973), *A New Vector Partition of the Probability Score*, DOI
+`10.1175/1520-0450(1973)012<0595:ANVPOT>2.0.CO;2`, separates reliability,
+resolution and uncertainty: raw loss alone is not calibration. Compare a
+declared reference on the same cases, weights and lead times; skill is
+undefined when reference loss is zero. Report eligible/resolved/unresolved
+counts and event dependence; versions are not independent outcomes. No
+universal score bands, score labels, inverse-loss reliability weights or
+automatic historical-bias correction. The [approved evidence register](../../../kask/docs/research/goal-closure-and-forecast-verification-plan.md#2-statistical-purpose-sources-conventions-and-transfer)
+records Murphy/GJP access and the limits of Brier OCR and the local Tetlock
+edition. Ontology lookup names the concept; if its gloss calls raw loss
+calibration, use these sources for interpretation rather than repeating it.
+
 ## Reference model
 
 Tetlock & Gardner, *Superforecasting: The Art and Science of Prediction* (2015) — `onto_anchor` → derived `superforecasting`, `fermi_decomposition`, and `reference_class_forecasting` (operator ruling 2026-09-25). Brier (1950) → derived `brier_score`. Each stage below is labelled **D** (deterministic, oracle named) or **P** (probabilistic, calibration or critique named).
@@ -41,7 +63,7 @@ one outcome.
 - When you need to record a forecast with resolution criteria for later tracking, Brier scoring, and post-mortem analysis.
 - When evaluating generated forecasts through an independent quality gate to assess calibration realism, confidence justification, evidence trail, and record completeness without self-assessment bias.
 - When LEAP expert-judgment forecasts are available for the forecasting question or a close reference class, and you want to anchor the outside view on FRI's longitudinal expert panel rather than (or in addition to) market-implied probabilities.
-- When the prediction-market calibration store needs a health check (scan cadence, per-bucket Brier, demotion verification) or a resolution needs recording, or before relying on a market reliability tier (the Market-prior calibration check).
+- When the prediction-market calibration store needs a health check (scan cadence, per-bucket raw loss and observation coverage) or a resolution needs recording, or before relying on a market reliability tier (the Market-prior calibration check).
 
 ## When NOT to Use
 
@@ -138,7 +160,7 @@ The former single inside-view step is split into three steps. Generation and cou
 4. Define what would count as resolution and what evidence will determine the outcome.
 5. Set an expiration date for when the forecast should be evaluated.
 
-> **No scoring at record time.** `scenario_score` requires outcomes; it runs only after the deadline, when the event has resolved (D — Brier computed by the server). Keep the record's tracking ID so the resolution can be scored then. For equity-price questions only, `forecast_persist` (scenarios server) stores a price target for later Brier scoring.
+> **Declare before resolution.** A template record is not durable admission. Call `scenario_declare` with a new `forecast_id`, complete `events` and named `resolver` before outcome visibility; it freezes tree marginals, propositions and deadlines. At resolution `scenario_score` requires the same ID, exact frozen events and resolver plus observed outcomes. A revised forecast needs a new identity. For equity questions, `forecast_persist` freezes the return-accuracy target; missing `forecast_probability` remains unscored, never a synthetic prior.
 
 ### forecast-quality-gate (P — decoupled critic: a separate render that evaluates, never generates; pass rule D)
 
@@ -159,19 +181,20 @@ The former single inside-view step is split into three steps. Generation and cou
 
 ### Market-prior calibration check (formerly calibration-stewardship)
 
-The prediction-markets server annotates every market record with a reliability tier derived from per-bucket Brier scores (Brier 1950, `onto_anchor` → derived `brier_score`; calibration in Tetlock & Gardner's sense → derived `forecast_calibration`). That tier is only as good as the observations feeding it, and the honest observation is the price a scan FIRST saw, never the post-resolution price. Run this check before a market prior anchors stage 2, or on its own when the operator asks for a calibration health check. Every tool call and the gate are D (the server computes snapshots, Brier and tiers; `lisp_eval` evaluates the gate); the cadence recommendation is P and the operator's decision.
+Market reliability tiers describe liquidity/spread, not empirical forecast accuracy. Read snapshots and raw loss/counts to inspect observation coverage; no raw-Brier demotion is supported. Tool arithmetic is D, interpretation and scan-cadence recommendations are P. A named source rule is provenance, not authenticated ground truth.
 
 Why it is two-phase: `market_check_resolutions` (1) snapshots every OPEN market's current price as the pre-resolution probability-at-observation (the earliest snapshot per market is kept) and (2) scores newly resolved markets against their snapshot. A market that resolves before its first scan is counted in `resolved_without_snapshot` and skipped — its terminal price is the outcome declaration, and scoring it would give Brier ≈ 0 by construction. Scans must therefore run often enough that open markets are snapshotted before they resolve; a high too-late rate is the primary signal this check manages.
 
 1. **Scan.** Call `market_check_resolutions` (default limit 100; raise toward 500 for a catch-up after a gap; `series` scopes the Kalshi phases only). Read `snapshotted`, `recorded`, `resolved_without_snapshot`, `skipped_ambiguous` (50-50 resolutions, never fabricated), `already_known`, `zero_scan_reason` and `warnings`. The scan is idempotent.
-2. **Read the signal.** Call `market_calibration` for the market prior's bucket (a domain such as "politics" or a series ticker) and any other bucket of interest. `stale: true` means no resolved data — report it as unknown, never as well calibrated. For a non-stale bucket report Brier with its band (excellent < 0.05, good < 0.10, fair < 0.20, poor < 0.33) and the sample size; a small sample is weak evidence.
+2. **Read the signal.** Call `market_calibration` for the market prior's bucket (a domain such as "politics" or a series ticker) and any other bucket of interest. `stale: true` means no resolved data — report it as unknown, never as well calibrated. For a non-stale bucket report raw binary loss, sample size, observation horizon and missing-resolution limitations. No universal quality band or calibration certification follows.
 3. **Record resolutions honestly.** A `market_subscribe_resolutions` notification carries NO pre-resolution probability. To record one, take the probability-at-observation from the scan's snapshot or the operator's own recorded pre-resolution observation, then call `market_record_resolution` (bucket, probability, outcome). Never pass the terminal price as the probability.
-4. **Verify the demotion rule (when testable).** `reliability_tier` (`hkask-mcp-prediction-markets/src/types.rs`) lowers High to Medium only when the bucket is not stale, has ≥ 5 resolved markets and Brier > 0.25; Medium and Low are unchanged. If a bucket from step 2 meets all three, call `market_lookup` for a market in it with volume ≥ 50,000 and spread ≤ 0.04: it should read Medium, and High is a discrepancy to report. A Medium or Low record is not evidence either way. If no bucket qualifies, report the demotion rule untested this run.
-5. **Gate.** Call `lisp_eval` with form `(and (= stale_buckets 0) (< without_snapshot_rate 0.2))`, env `{ "stale_buckets": <buckets of interest reporting stale>, "without_snapshot_rate": <resolved_without_snapshot / (recorded + resolved_without_snapshot)> }`. True: calibration evidence is current. False: recommend a more frequent scan cadence to the operator and re-run step 1 once; if the rate is still ≥ 0.2, report the cadence problem instead of re-running. When a bucket stays stale, a market prior from it may still anchor stage 2, but its tier is volume/spread-only and the rationale must say so.
+4. **Separate liquidity from accuracy.** Inspect volume/spread as market access signals only. Preserve raw forecast history for a matched-cohort analysis; do not demote or certify reliability from a raw score.
+
+5. **Gate.** Call `lisp_eval` with form `(and (= stale_buckets 0) (< without_snapshot_rate 0.2))`, env `{ "stale_buckets": <buckets of interest reporting stale>, "without_snapshot_rate": <resolved_without_snapshot / (recorded + resolved_without_snapshot)> }`. True: this scan-coverage heuristic passes, not a calibration certificate. An empty denominator is unknown, not a zero too-late rate. False: recommend a more frequent scan cadence to the operator and re-run step 1 once; if the rate is still ≥ 0.2, report the cadence problem instead of re-running. When a bucket stays stale, a market prior from it may still anchor stage 2, but its tier is volume/spread-only and the rationale must say so.
 
 Never record a post-resolution price as the probability-at-observation, and never retry an ambiguous (50-50) resolution hoping for a different result. This check scores market buckets; scoring your own forecasts is the Brier loop below.
 
-Across questions, the Brier loop closes outside this session: once forecasts resolve, `scenario_calibration` returns the curve, and `scenario_calibrate` applies the learned bias (`hkask_forecast::apply_calibration_adjustment`, called inside the server, not by the agent) to later forecasts. Post-mortem BOTH failures and successes (the book's Commandment 8): a failed forecast gets an unflinching reasoning review, and a successful one gets one too — "not all successes imply that your reasoning was right. You may have just lucked out by making offsetting errors."
+Across questions, inspect `scenario_calibration` as descriptive eligible-history bins with counts and uncertainty, not a certificate or an automatic correction. `scenario_calibrate` does not apply learned historical bias. Review both successful and failed forecasts; lower loss alone cannot demonstrate learning across a changed task mix.
 
 ## LEAP Integration
 

@@ -158,7 +158,7 @@ Render `mcp-tool-review/findings-artifact` for the JSON shape. Load-bearing fiel
 
 - Deterministic: count reconciliation, the citation script, and the routing invariant — receipts recorded in the artifact.
 - Probabilistic: description-honesty judgments carry the file:line trace channel; the critic pass is recorded.
-- Run-level: the pilot's intake prediction is Brier-scored via the goal loop (`kanban_goal_score`).
+- Run-level: the pilot records evidence-grounded worker progress; native human closure and optional prospective forecast resolution remain separate.
 
 ## Constraints
 

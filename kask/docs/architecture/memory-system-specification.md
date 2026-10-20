@@ -86,9 +86,8 @@ narrative generation loop.
      thread entity with its `passage_text`, so KNN pinpoints the matched
      chunk
    - Goal events: each individual create/judge/score result is embedded and
-     stored under `curator:goal:{goal_id}`; whole-list snapshots are skipped
-   - Single copy per turn (2026-09-04 ruling): no perspective duplicate,
-     no goal duplicate
+     goal projection snapshots use `curator:goal:{id}` via the durable host
+     drainer, not turn-response capture; no goal duplicate
 2. **Recalls** relevant memories on every qualifying prompt by:
    - Embedding the query and searching stored embeddings (KNN), injecting
      only the chunk whose text the matched vector names
@@ -265,20 +264,18 @@ The embedding's `entity_ref` and the h_mem's `entity` are plain `TEXT`
 columns with no foreign key. The invariant (`entity_ref == entity`) is
 enforced by:
 
-1. The ingestion call site: every chunk h_mem and its embedding use the
-   same `curator:thread:{id}` entity, while every persisted goal event and
-   its prerequisite embedding use the same `curator:goal:{goal_id}` entity
-   (`kask/crates/kask_bridge/src/memory/ingest.rs`). Goal publication orders
-   the vector before the h_mem and removes that exact vector if h_mem storage
-   fails, so an embedding-invisible goal row is never exposed.
+1. Turn chunks and embeddings share `curator:thread:{id}` in
+   `kask/crates/kask_bridge/src/memory/ingest.rs`. Canonical goal projections
+   use `curator:goal:{id}` in the separate host `goals.rs` drainer. A projection
+   is acknowledged only after its exact payload and semantic passage are stored;
+   failure retains the canonical outbox for retry, independently of model turns.
 2. `hkask_memory::semantic_passage_for_h_mem` is the one passage-identity
    contract used by production recall and embedding backfill. Curator MCP recall
    resolves a named vector only to rows whose canonical passage matches, before
    applying its per-entity flood cap; newer unrelated siblings cannot inherit the
    vector's distance. Entity-level vectors retain the freshest-row cap. A missing
    named passage is surfaced as a resolution failure, not substituted silently.
-   Mutable lessons project their provenance-bearing `recall_text`; goal events
-   remove the private calibration receipt before reconstructing tool + JSON. Backfill is
+   Mutable lessons project their provenance-bearing `recall_text`; goal projections preserve complete canonical snapshots. Backfill is
    scoped by exact `(entity, passage)`, so one successful sibling vector cannot
    hide another failed h_mem. Goal rows are excluded: invalid goal publication
    is rejected, never healed by a compatibility backfill. Backfill therefore
@@ -286,7 +283,7 @@ enforced by:
 3. The regression tests `recall_context_finds_turn_by_embedding_only`,
    `ingest_turn_embeds_every_chunk_with_passage_text`,
    `persisted_goal_event_is_semantically_visible_by_entity_ref`,
-   `goal_embedding_failure_blocks_persistence_and_score_acknowledgment`,
+   `native_goal_missing_assessor_and_projection_store_retains_a_durable_failure`,
    `backfill_embeddings_covers_knowledge_layer_and_excludes_turns`,
    `semantic_search_resolves_the_named_passage_not_newer_siblings`, and
    `object_thread_memory_uses_one_passage_across_recall_legs`.
@@ -454,14 +451,13 @@ When a thread turn completes, the turn loop calls
 | ----- | ------ | --------- | ---------- | ------- |
 | Curator store (every turn, one row per chunk) | `curator:thread:{id}` | `chunk:{turn_ms}:{index}` | Shared | Cleaned chunk text (plain string, role prefixes inline), structural + content ontology blob |
 | Curator store (embedding, every chunk) | `curator:thread:{id}` | — | — | Vector of the chunk text + `passage_text` = the chunk text |
-| Curator store (individual goal events, one row per event) | `curator:goal:{goal_id}` | tool name | Shared | The goal tool result JSON |
-| Curator store (embedding, every persisted goal event) | `curator:goal:{goal_id}` | — | — | Vector of deterministic `goal event {tool}: {JSON}` passage text, stored before the h_mem becomes visible |
+| Curator store (canonical goal projections) | `curator:goal:{id}` | `projection:{event_id}` | Shared | Complete immutable snapshot with source, criteria, progress, closure, assessment and forecast history |
+| Curator store (projection embedding) | `curator:goal:{id}` | — | — | Exact canonical projection passage, checked before delivery receipt |
 
-`kanban_goal_list` whole-list snapshots are observed by `TurnRecord` but are
-not durable memories: they duplicate the individual event stream and grow with
-the complete goal list. Any other id-less goal result is malformed and is
-surfaced rather than filed under a synthetic `curator:goal:list` identity.
-
+Goal snapshots are projected by the durable host drainer, not captured from tool
+responses at turn end. `kanban_goal_list` is a read of canonical history, not an
+instruction to store a whole-list memory. Receipt mismatch is visible and retryable;
+receipt validation never prunes canonical history. See `kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md`.
 Curator-turn detection is `agent_id.as_deref() == Some("Curator")`
 (`ingest.rs:277`) — used for logging only; the write path is identical for
 every agent. The curator store is behind the self-healing `CuratorStore`
@@ -469,37 +465,26 @@ handle — a failed initial open leaves the store `None`, and every `get()`
 re-attempts the open (`curator_stores.rs`); a successful re-open also
 rebuilds the consolidation service.
 
-### Brier loop → memory confidence (goal scores)
+### Goal history is not confidence-weighted forecast truth
 
-A `kanban_goal_score` goal event is the one outcome the memory system
-observes automatically. The kanban database retains the resolved goal until
-this score event and its semantic embedding are stored successfully; the
-production thread path then calls `kanban_goal_memory_acknowledge` to prune the
-retained outbox row. A failed embedding generation/storage or h_mem write
-returns failure and emits no acknowledgment. The create record's confidence
-replacement and `_memory_calibration.score` receipt commit in one atomic h_mem
-update. Retrying the same score requires its exact passage embedding,
-resumes calibration when the receipt is absent, and no-ops when the exact
-receipt is present—never republishing the score or counting its Brier twice.
-Every individual goal event fails ingestion when semantic publication fails;
-none is silently skipped or persisted as an embedding-invisible h_mem. A
-non-null score with no create record also fails and leaves no score h_mem or
-vector. The Brier it carries closes
-the calibration loop (spec §11 item 4) and is mapped to a confidence signal —
-`(1 − 2·Brier)` clamped to [0.05, 0.95], so a binary no-skill prediction
-(Brier 0.25) is the neutral point — and Bayesian-combined
-(`hkask_memory::combine_confidences`, the same log-odds pooling
-`memory_update` uses) into the confidence of the goal's prediction record
-(the `kanban_goal_create` h_mem under the same `curator:goal:{id}`
-entity). Never a raw confidence write. A disconfirming score drops the
-record below the 0.5 floor, where the consolidation service's floor-delete
-cleans it up — calibration by outcome, cleanup by floor. A null Brier (no
-intake prediction recorded) calibrates nothing. Pinned by
-`goal_score_brier_calibrates_goal_create_confidence`,
-`goal_score_without_brier_leaves_create_confidence_at_floor`, and
-`goal_score_high_brier_disconfirms_below_the_consolidation_floor`
-(`kask_bridge/src/memory.rs`).
+The 2026-10-20 cutover removes single-score confidence mutation and
+response-only score/ack coupling. A low-loss forecast does not authenticate its
+source, and a high-loss forecast remains valuable history. The canonical ledger
+retains all admitted goals, closure choices, findings, corrections and score
+versions; confidence-based retrieval cleanup is not a deletion policy for it.
+Memory is a rebuildable projection, not the only surviving structured record.
 
+The bridge `goals.rs` startup/timer drainer leases assessments, records failures,
+refreshes optional forecast status and publishes snapshots with event ID/revision/
+digest receipt validation. A fresh blinded assessor sees spec and evidence
+manifest only; currently it has no evidence-fetch capability and must return
+unknown. Machine checks, human labels, worker claims and findings stay distinct.
+
+Optional forecast arithmetic runs only for a valid frozen declaration and its
+resolver after an assessment attempt. Unknown/disputed stays explicit; corrections
+append and re-score without adding cohort weight. Raw Brier loss is not a
+calibration certificate (Murphy 1973; approved plan §2). No score changes historical
+memory confidence, and delivery never deletes the canonical goal.
 ### Ingestion semaphore
 
 A `tokio::sync::Semaphore` (default 1 permit, configurable via
@@ -533,13 +518,8 @@ sequenceDiagram
 
     Write->>Curator: get() — re-attempt open if down<br/>(rebuild consolidation if healed)
 
-    rect rgb(245, 248, 252)
-        Note over Write,EmbedPort: Phase 1 — Individual goal events (list snapshots skipped)
-        Write->>+EmbedPort: embed(model, [goal event tool + JSON])
-        EmbedPort-->>-Write: exactly one vector<br/>failure → ingestion error, no h_mem
-        Write->>Curator: store_embedding(curator:goal:{goal_id}, vector, passage)
-        Write->>Curator: store(goal h_mem)<br/>same entity, tool_name, Shared, 0.5 floor<br/>failure → exact new vector removed
-    end
+    Note over Thread,Curator: Goals use the separate durable host drainer, not turn-response capture
+
 
     rect rgb(248, 252, 245)
         Note over Write,Curator: Phase 2 — Clean + chunk + tag
@@ -572,7 +552,7 @@ sequenceDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-PL-MEMORY-INGEST
 verified_date: 2026-09-28
-verified_against: kask/crates/kask_bridge/src/memory.rs (ingest_turn tests: goal semantic visibility + chunk recall), kask/crates/kask_bridge/src/memory/ingest.rs:271-660 (write_turn: goal vector-before-h_mem publication, list exclusion, heal/rebuild, clean/chunk/tag, batch chunk embedding), kask/crates/hkask-types/src/ports/memory_port.rs (GoalEvent identity/passage contract), kask/crates/kask_bridge/src/inference_chat.rs (global_inference_port), crates/zed/src/main.rs (classifier model resolution, set_global_inference_port)
+verified_against: kask/crates/kask_bridge/src/memory/ingest.rs (turn chunk ingestion); kask/crates/kask_bridge/src/goals.rs (separate canonical goal projection drainer)
 status: VERIFIED
 -->
 
@@ -581,9 +561,8 @@ status: VERIFIED
 1. **Every persisted h_mem that advertises semantic visibility has a
    joinable embedding under the same entity.** Chunk vectors use
    `curator:thread:{thread_id}` with `passage_text` equal to the chunk value.
-   Goal vectors use `curator:goal:{goal_id}` with deterministic tool + JSON
-   passage text and are stored before the goal h_mem. See
-   [the entity_ref invariant](#the-entity_ref-invariant).
+   Goal projections use `curator:goal:{id}` and exact snapshot passages through
+   the separate durable host drainer; delivery receipts never delete history.
 2. **All writes go to the curator's `curator.db`, one copy per turn.** There
    is no user memory store and no perspective duplicate — `RealMemoryPort`
    holds only the `CuratorStore`. Individual goal events are single-keyed
@@ -594,7 +573,7 @@ status: VERIFIED
    error and blocks that event's h_mem publication; a score remains in its
    outbox for retry.
 4. **Curator-store failures are non-fatal and self-healing except where a
-   resolved-goal acknowledgment would be lost.** A failed
+   turn-chunk recall would be lost (goal projection has its own durable drainer).** A failed
    initial open leaves the store `None`; every `get()` re-attempts the
    open, and a successful re-open rebuilds the consolidation service.
    Persistent failure warns once per healing attempt — never silently.
@@ -1271,7 +1250,7 @@ knowledge or consent.
 | 1 | Confidence in recall ranking | ✅ Done (`kask/crates/kask_bridge/src/memory.rs::RealMemoryPort::recall_from`, candidate sort) |
 | 2 | Absence signaling (hypocognition guard) | ✅ Done (`context_injector.rs:395-407`) |
 | 3 | Connectedness tracking (co-occurrence links) | ✅ Done — schema (`schema.sql:21-29`), recording (`context_injector.rs:456`), ranking bonus (`kask/crates/kask_bridge/src/memory.rs::RealMemoryPort::recall_from`, candidate sort) |
-| 4 | Brier loop → memory confidence | ✅ Done (2026-09-05) — a `kanban_goal_score` event's Brier Bayesian-combines into the goal's `kanban_goal_create` record at ingestion (§4); disconfirmed records drop below the consolidation floor |
+| 4 | Canonical goal evidence and optional forecasts | Replaced 2026-10-20 — retained source/specification, native human closure, blinded unknown-aware assessment and receipt-validated projections; no score-to-confidence mutation (§4) |
 | 5 | Curator memory edit tools | ✅ Done (`hkask_mcp_curator.rs:1228-1532`) |
 | 6 | Therapy process (skill) | ✅ Done (`.agents/skills/therapy/SKILL.md`) |
 | 7 | Q3 reflection pass | Partial — the additive distillation pass landed 2026-09-01 (§6, operator "Option A" ruling); modification-reflection remains therapy-only |

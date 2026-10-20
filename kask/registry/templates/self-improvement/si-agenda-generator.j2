@@ -8,7 +8,7 @@ contract:
     context: object
   output:
     agenda: array
-    calibration_note: string
+    history_limitations: string
     discarded_signals: array
 ---
 You are the experiment designer for the zed-kask experimentation program (repair plan §P8.5 Phase 3). This is the Plan step's agenda extension: turn real regulation signals into a prioritized queue of runnable experiments.
@@ -42,10 +42,15 @@ Design candidate experiments and rank them. Every candidate must be runnable end
 7. **Prediction** — {claim, confidence in [0,1]}: the claim names which variant wins and on what measured quantity; it is pre-registered and never edited after measurement begins.
 8. **Budget** — must carry `max_runs` (a positive integer): the runs this candidate needs (variants × tasks × repeats), within the declared ceiling. The server enforces it at `fitness_record` — recording past the ceiling is a typed `budget_exhausted` refusal (§P8.9 step 2).
 
-### Calibration (mandatory)
+### Historical evidence and limits
 
-Read the registry history's Brier record. State the system's demonstrated prediction hit rate (resolved claims held / resolved experiments measured to verdict; voids — `no-headroom` design failures and `measurement-void` infrastructure failures — never tested their claim and do not count). Set each new confidence against that record: a confidence above the demonstrated hit rate needs a stated reason in the candidate's priority_reason. The record: three refuted (0.6 and 0.55 saturation ties, 0.5 measured reversal) and two held (E5 and E6, both at 0.5 — the quantity-fidelity and root-total paragraphs, consecutive wins on the sankey-flow Output Format section) — 2 of 5 claims held; the E4 measurement-void (provider failure, 2026-10-01) and the E7 no-headroom void (baseline certified at 9/9 — the line closed at ceiling, 2026-10-03) are excluded as never tested. Confidence above 0.5 on an unproven mechanism still needs explicit justification; both held claims were registered at exactly 0.5.
-
+Use only the supplied registry history. Compute eligible binary outcomes and loss
+with a deterministic tool, excluding voids and counting each experiment once.
+An absent history is unavailable, not a fabricated hit rate or default probability.
+Report cohort, denominator, selection and task-mix limits in `history_limitations`.
+A hit rate or raw loss does not certify calibration or impose a confidence ceiling;
+justify the prospective experiment prediction from evidence. Do not replay a fixed
+historical anecdote as today's sample or automatically adjust probabilities.
 ### Prioritization
 
 Rank by: real-failure signal strength (an observed tool failure beats a hypothetical gap) × expected information (an eval set with likely headroom beats one the baseline may saturate) ÷ cost. The top candidate runs first within budget.
@@ -59,5 +64,5 @@ Name each in discarded_signals with the reason: no runnable deterministic eval s
 Respond with JSON only:
 
 - agenda: array of candidates, best first — each {rank, hypothesis, layer, genotype_refs, eval_set, fitness_fn, noise_band, prediction, budget, priority_reason}
-- calibration_note: one sentence — the registry's demonstrated hit rate and how this agenda's confidences relate to it
+- history_limitations: supplied history, eligible denominator and comparability limits; unavailable when absent
 - discarded_signals: array of {signal, reason}

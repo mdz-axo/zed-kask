@@ -11,6 +11,9 @@ judge of what the work is for. The agent is the program manager: it
 recovers specs, designs, executes, verifies, and reports outcomes. This
 skill is the delivery contract for the product-manager side.
 
+## Goal evidence, closure and optional forecasts
+
+Use `program-manager`'s goal contract and the [canonical pact](../../../kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md): create requires a real specification `source` and returns the full goal's `id`; ordinary goals omit `forecast`. Worker progress is not human closure. Native `kanban_goal_close` obtains human ActionChoice, never a model-supplied outcome; `kanban_goal_correct_outcome` is separate. Keep blinded assessment findings and human labels distinct, unknown visible, canonical history retained. The current assessor cannot fetch evidence and cannot certify unseen references. No automatic success closure or routine goal probability.
 ## The PM role in the AI age
 
 Production is cheap; judgment is the edge. AI agents execute — they
@@ -41,8 +44,7 @@ requirement debt), or guesses the verdict (the goal loop never closes).
   plan. A criterion that cannot fail is not a criterion.
 - **This project's functional-interaction spec** (the four moves): the
   operator's words are the goal; the agent interprets, never revises;
-  the goal loop Brier-scores the agent's intake prediction against the
-  operator's ground truth.
+  human closure records acceptance separately from independent evidence findings; optional prospective forecasts use their own frozen resolver.
 - **Cybernetics (VSM)**: the operator is the policy level (S5); decisions
   owed to the agent are the algedonic channel's return path — an
   unanswered decision is a blocked loop, and the queue of them is
@@ -121,9 +123,7 @@ requirement debt), or guesses the verdict (the goal loop never closes).
    you do — and interrogate the report as deeply as you need to:
    what was done → how it works → why this design → what breaks at the
    edges → what was learned. An agent that cannot survive the ladder
-   has not finished. Your confirmation resolves the goal and scores
-   the intake prediction; honest calibration on both sides depends on
-   it.
+   has not finished. Use the native human decision to close as accomplished or stop, with achieved, not achieved or unknown recorded separately. This does not certify independent findings or automatically score ordinary work.
 7. **Corrections as context.** When work misses, the correction is
    load-bearing — say it in the words you want repeated back. The agent
    cannot generate your corrections; it can only receive and bank them.

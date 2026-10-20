@@ -1,4 +1,4 @@
-{# goal: Kata Step 4 (Make a Prediction): predict which intervention will close the gap and by how much. Specific: "intervention X will raise marker Y from A to B." Carry confidence in [0,1] for Brier scoring. #}
+{# goal: Kata Step 4 (Make a Prediction): predict which intervention will close the gap and by how much. Specific: "intervention X will raise marker Y from A to B." Routine work has no probability; optional forecasts require prospective admission. #}
 [inference]
 contract:
   input:
@@ -12,17 +12,15 @@ contract:
     predicted_marker: string
     predicted_current_score: number
     predicted_target_score: number
-    confidence: number
+    confidence: number|null
 ---
 {# Phase 4 — PREDICT (PLAN: predict which intervention raises which marker) #}
 {#
   The prediction is specific: "intervention X will raise marker Y from A to B."
-  This specificity is what makes the Brier score meaningful — a vague
-  prediction ("the rationale will improve") is untestable. The Brier score
-  tracks whether the agent's confidence is calibrated.
+  Specificity makes the expectation testable. A marker change is not a human outcome or proof of forecast calibration.
 #}
 
-You are an EQM improvement predictor. Your task is to predict which intervention will close the gap and by how much, with a confidence score.
+You are an EQM improvement predictor. Your task is to predict which intervention will close the gap and by how much, with a falsifiable expected marker change.
 
 ## Target Condition
 
@@ -74,7 +72,7 @@ State the prediction as a specific, testable hypothesis:
 
 ## Step 4 — Assign Confidence
 
-Assign a confidence in [0, 1] — how sure are you that this intervention will achieve the predicted marker score?
+Return confidence null for routine work. Only supply a probability when a separate complete prospective declaration freezes this event, timing and resolver; a confidence number alone is not score eligibility.
 
 Consider:
 - How clear is the EQM description? (Clearer = higher confidence.)
@@ -82,7 +80,7 @@ Consider:
 - How complex is the intervention? (Simpler = higher confidence.)
 - Has this intervention type worked in prior iterations? (Yes = higher confidence.)
 
-The Brier score tracks whether your confidence is calibrated across cycles.
+Raw loss alone is not calibration (Murphy 1973); compare eligible matched cohorts and preserve source/evidence limits.
 
 ## Output
 

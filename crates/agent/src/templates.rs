@@ -660,12 +660,7 @@ mod tests {
 
     #[test]
     fn test_system_prompt_wires_four_moves_to_goal_tools_when_available() {
-        // Pins the loop-closing wiring: when the kata-kanban goal tools are
-        // in the turn's tool registry, the Division section tells the model
-        // to run the four moves on the native system (create at intake,
-        // judge at report, score at resolution). Without this, the tools
-        // exist but nothing tells the model to use them (the recorded
-        // P3 = 0.25 prediction: unwired machinery doesn't get used).
+        // Pin the approved separation of worker progress and host-authenticated closure.
         let project = prompt_store::ProjectContext::default();
         let template = SystemPromptTemplate {
             project: &project,
@@ -673,7 +668,8 @@ mod tests {
                 "echo".into(),
                 "kanban_goal_create".into(),
                 "kanban_goal_judge".into(),
-                "kanban_goal_score".into(),
+                "kanban_goal_close".into(),
+                "kanban_goal_correct_outcome".into(),
             ],
             model_name: None,
             date: "2026-01-01".to_string(),
@@ -692,13 +688,71 @@ mod tests {
         for wiring in [
             "Move 1 → `kanban_goal_create`",
             "Move 3 → `kanban_goal_judge`",
-            "Move 4 → `kanban_goal_score`",
+            "Move 4 → `kanban_goal_close`",
+            "Correction → `kanban_goal_correct_outcome`",
         ] {
             assert!(
                 rendered.contains(wiring),
                 "every move-to-tool mapping must be present; missing: {wiring}"
             );
         }
+    }
+
+    #[test]
+    fn test_goal_prompt_corpus_retires_coupled_scoring_and_keeps_authority() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut paths = vec![root.join("crates/agent/src/templates/system_prompt.hbs")];
+        let mut directories = vec![root.join(".agents/skills"), root.join("kask/registry/templates")];
+        while let Some(directory) = directories.pop() {
+            for entry in std::fs::read_dir(&directory).expect("read live prompt directory") {
+                let path = entry.expect("read live prompt entry").path();
+                if path.is_dir() {
+                    directories.push(path);
+                } else if matches!(path.extension().and_then(|extension| extension.to_str()), Some("md" | "j2" | "yaml" | "hbs")) {
+                    paths.push(path);
+                }
+            }
+        }
+        assert!(paths.len() > 100, "a narrowed or empty sweep is not coverage");
+        for path in paths {
+            let text = std::fs::read_to_string(&path).expect("read live prompt text");
+            for retired in ["kanban_goal_score", "kanban_goal_memory_acknowledge", "brier_interpretation", "calibration_note", "excellent < 0.05", "inverse-Brier weighting)."] {
+                assert!(!text.contains(retired), "{} still advertises {retired}", path.display());
+            }
+        }
+        let governance = std::fs::read_to_string(root.join(".agents/skills/program-manager/SKILL.md"))
+            .expect("read canonical skill governance");
+        for requirement in ["interaction_id", "spec_digest", "ActionChoice", "forecast", "blinded", "unknown", "never deletes"] {
+            assert!(governance.contains(requirement), "goal governance missing {requirement}");
+        }
+        let forecasting = std::fs::read_to_string(root.join(".agents/skills/superforecasting/SKILL.md"))
+            .expect("read forecasting protocol");
+        for requirement in ["scenario_declare", "resolver", "Murphy (1973)", "not calibration", "same cases", "undefined"] {
+            assert!(forecasting.contains(requirement), "forecast guidance missing {requirement}");
+        }
+    }
+
+    #[test]
+    fn test_goal_prompt_does_not_advertise_native_decisions_without_tools() {
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["kanban_goal_create".into(), "kanban_goal_judge".into()],
+            model_name: None,
+            date: "2026-10-20".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+            mcp_tools_hidden: 0,
+        };
+        let rendered = template.render(&Templates::new()).expect("render create-only goal prompt");
+        assert!(rendered.contains("Move 1 → `kanban_goal_create`"));
+        assert!(!rendered.contains("Move 4 → `kanban_goal_close`"));
+        assert!(!rendered.contains("Correction → `kanban_goal_correct_outcome`"));
+        assert!(!rendered.contains("kanban_goal_score"));
+        assert!(rendered.contains("Ordinary goals omit `forecast`"));
     }
 
     #[test]

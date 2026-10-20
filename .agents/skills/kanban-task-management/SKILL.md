@@ -22,6 +22,9 @@ Decompose → Delegate → Operate
   escalate to the human operator. The agent calls `kanban_task_list`,
   `kanban_task_move`, `kanban_task_verify`, `kanban_task_comment`, etc.
 
+## Goal evidence, closure and optional forecasts
+
+Use `program-manager`'s goal contract and the [canonical pact](../../../kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md): create requires a real specification `source` and returns the full goal's `id`; ordinary goals omit `forecast`. Worker progress is not human closure. Native `kanban_goal_close` obtains human ActionChoice, never a model-supplied outcome; `kanban_goal_correct_outcome` is separate. Keep blinded assessment findings and human labels distinct, unknown visible, canonical history retained. The current assessor cannot fetch evidence and cannot certify unseen references. No automatic success closure or routine goal probability.
 ## Initial and target condition
 
 - **Initial condition:** the operator's confirmed functional goal and criteria (or an explicit gap awaiting confirmation), current board/task state, and the source task/delegation evidence. A project description alone does not authorize inferred goals.
@@ -64,7 +67,7 @@ Step 0 (deterministic triage and preflight, **`KTM-1`** via `lisp_eval`) examine
 | `task_to_delegate` | delegate | `configure-spawn` → `kanban_task_spawn` → `kanban_task_delegate_result` |
 | `board_id` | operate | `kanban_board_list` + `kanban_task_list` → `coordinate-agents` → `track-deliverables` → `kanban_task_move` → `verify-completion` → `escalate` |
 
-Templates for non-active phases are not rendered. Before Decompose, confirm the operator's functional goal, 2–4 observable criteria and any existing goal identity; an inferred goal is only a question. When confirmed and no goal exists, call `kanban_goal_create` once with the operator's `goal_text`, criteria and a stable idempotency key; retain its `goal_id` and verbatim criterion text for `kanban_task_create.advances` (verified by `KTM-1`). Render `kanban-task-management/decompose-tasks` with `project_description`, `target_task_hours`, `goals`, `constraints`, and `resources`; it emits `project_name`, `tasks`, and `recomposition`. Then render `kanban-task-management/review-tasks` with `tasks` and `project_name`, and create the board (`kanban_board_create`) and accepted tasks (`kanban_task_create`) directly via MCP tools. If the user has not confirmed the target, stop before board creation. For Delegate, render `kanban-task-management/configure-spawn` with `task` and `available_skills`.
+Templates for non-active phases are not rendered. Before Decompose, confirm the operator's functional goal, 2–4 observable criteria and any existing goal identity; an inferred goal is only a question. When confirmed and no goal exists, call `kanban_goal_create` once with the operator's `goal_text`, criteria, actual `source` and a stable idempotency key; omit routine `forecast` and retain the returned full goal's `id` and verbatim criterion text for `kanban_task_create.advances` (verified by `KTM-1`). Render `kanban-task-management/decompose-tasks` with `project_description`, `target_task_hours`, `goals`, `constraints`, and `resources`; it emits `project_name`, `tasks`, and `recomposition`. Then render `kanban-task-management/review-tasks` with `tasks` and `project_name`, and create the board (`kanban_board_create`) and accepted tasks (`kanban_task_create`) directly via MCP tools. If the user has not confirmed the target, stop before board creation. For Delegate, render `kanban-task-management/configure-spawn` with `task` and `available_skills`.
 
 ### Reference models and labels
 
@@ -105,9 +108,10 @@ One bounded PDCA applies to the active phase: Plan from the initial and target c
 | `kanban_task_reopen` | operate | Post-step: reopen for rework |
 | `kanban_task_comments_since` | operate | Pre-step: read incremental updates |
 | `kanban_goal_judge` | operate | Record an evidence-grounded criterion result without substituting for operator confirmation |
-| `kanban_goal_score` | operate | Only after the operator supplies achieved/not-achieved ground truth |
+| `kanban_goal_close` | operate | Native host ActionChoice only; submit goal identity and evidence, never an outcome |
+| `kanban_goal_correct_outcome` | operate | Separate native human correction |
 
-All tools are on the `hkask-mcp-kata-kanban` server.
+Board/task and create/judge/get/list goal tools are on `hkask-mcp-kata-kanban`; human closure/correction tools are native host tools, not MCP routes.
 
 ## Verification Evidence Tiers
 

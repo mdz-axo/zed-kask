@@ -117,6 +117,13 @@ fn open(dir: &std::path::Path, provider: Arc<Provider>) -> anyhow::Result<Arc<Go
     )))
 }
 fn declare(host: &GoalHost, owner: WebID) -> anyhow::Result<Goal> {
+    declare_with_forecast(host, owner, None)
+}
+fn declare_with_forecast(
+    host: &GoalHost,
+    owner: WebID,
+    forecast: Option<GoalForecast>,
+) -> anyhow::Result<Goal> {
     Ok(host.service.goal_create(
         GoalDeclaration {
             goal_text: "The user can retrieve the original frozen requirements after restart"
@@ -135,7 +142,7 @@ fn declare(host: &GoalHost, owner: WebID) -> anyhow::Result<Goal> {
                 session_id: "native-test".into(),
                 source: "test-human-specification".into(),
             },
-            forecast: None,
+            forecast,
             supersedes: None,
         },
         owner,
@@ -164,8 +171,35 @@ async fn decision(
             limitation: "not independently fetched".into(),
         }]
     };
-    let task = cx.spawn(async move |mut cx| {
-        agent::decide(goal_id, evidence, correction, stream, host, &mut cx).await
+    use agent::AgentTool;
+    static NATIVE_HOOK: futures::lock::Mutex<()> = futures::lock::Mutex::new(());
+    cx.executor().allow_parking();
+    let _serial = NATIVE_HOOK.lock().await;
+    struct HookGuard;
+    impl Drop for HookGuard {
+        fn drop(&mut self) {
+            agent::set_native_goal_host(None);
+        }
+    }
+    agent::set_native_goal_host(Some(host));
+    let _hook = HookGuard;
+    let task = cx.update(|cx| {
+        if correction {
+            Arc::new(agent::GoalCorrectTool).run(
+                agent::ToolInput::resolved(agent::GoalCorrectInput { goal_id }),
+                stream,
+                cx,
+            )
+        } else {
+            Arc::new(agent::GoalCloseTool).run(
+                agent::ToolInput::resolved(agent::GoalCloseInput {
+                    goal_id,
+                    evidence_manifest: evidence,
+                }),
+                stream,
+                cx,
+            )
+        }
     });
     let authorization = receiver.expect_authorization().await;
     assert_eq!(
@@ -175,8 +209,12 @@ async fn decision(
     let rendered = serde_json::to_string(&authorization.tool_call).expect("prompt JSON");
     assert!(rendered.contains(&goal.spec_digest));
     assert!(rendered.contains("Exact recall retains the complete frozen criterion"));
-    if !correction {
-        assert!(rendered.contains("unfetched://test-result"));
+    assert!(
+        rendered.contains("unfetched://test-result"),
+        "correction must show the original frozen evidence, not empty correction input"
+    );
+    if correction {
+        assert!(rendered.contains("Latest human outcome: unknown"));
     }
     let acp_thread::PermissionOptions::Flat(options) = &authorization.options else {
         panic!("explicit flat choices required")
@@ -437,61 +475,333 @@ async fn native_goal_invalid_choice_cannot_authorize_a_closure(cx: &mut gpui::Te
 }
 
 #[gpui::test]
-async fn native_goal_restart_after_publication_before_ack_reuses_exact_receipt(cx: &mut gpui::TestAppContext) {
+async fn native_goal_restart_after_publication_before_ack_reuses_exact_receipt(
+    cx: &mut gpui::TestAppContext,
+) {
     let dir = tempfile::tempdir().expect("test directory");
     let provider = Arc::new(Provider::default());
     let owner = WebID::new();
     let host = open(dir.path(), provider.clone()).expect("host");
     let goal = declare(&host, owner).expect("goal");
-    decision(host.clone(), &goal, owner, "accomplished_achieved", false, cx).await;
+    decision(
+        host.clone(),
+        &goal,
+        owner,
+        "accomplished_achieved",
+        false,
+        cx,
+    )
+    .await;
     cx.executor().allow_parking();
     let runtime = tokio::runtime::Runtime::new().expect("runtime");
     let host_for_task = host.clone();
     let task = runtime.spawn(async move {
         let mut work = Box::pin(host_for_task.drain_once());
-        assert!(futures::poll!(work.as_mut()).is_pending(), "production drainer yields after durable publication before receipt");
+        assert!(
+            futures::poll!(work.as_mut()).is_pending(),
+            "production drainer yields after durable publication before receipt"
+        );
         drop(work); // Model a host interruption at the actual publication/ack boundary.
     });
-    cx.background_spawn(async move { task.await.expect("interrupt production drainer") }).await;
+    cx.background_spawn(async move { task.await.expect("interrupt production drainer") })
+        .await;
     let entity = format!("curator:goal:{}", goal.id);
-    let rows = host.memory.as_ref().expect("memory").h_mems_by_entity_prefix(&entity).expect("published row");
+    let rows = host
+        .memory
+        .as_ref()
+        .expect("memory")
+        .h_mems_by_entity_prefix(&entity)
+        .expect("published row");
     assert_eq!(rows.len(), 1);
     let original_id = rows[0].id;
-    assert!(host.service.goal_get(goal.id, owner).expect("get").expect("goal").projections.iter().all(|p|p.delivered_receipt.is_none()));
+    assert!(
+        host.service
+            .goal_get(goal.id, owner)
+            .expect("get")
+            .expect("goal")
+            .projections
+            .iter()
+            .all(|p| p.delivered_receipt.is_none())
+    );
     drop(host);
     let host = open(dir.path(), provider.clone()).expect("reopen after interruption");
     scheduled_tick(host.clone(), provider, cx).await;
-    let goal = host.service.goal_get(goal.id, owner).expect("get").expect("canonical goal retained");
-    let rows = host.memory.as_ref().expect("memory").h_mems_by_entity_prefix(&entity).expect("recall");
+    let goal = host
+        .service
+        .goal_get(goal.id, owner)
+        .expect("get")
+        .expect("canonical goal retained");
+    let rows = host
+        .memory
+        .as_ref()
+        .expect("memory")
+        .h_mems_by_entity_prefix(&entity)
+        .expect("recall");
     assert_eq!(rows.len(), goal.projections.len());
-    assert_eq!(rows.iter().filter(|r|r.id==original_id).count(),1,"replay does not replace or duplicate the already-published event");
-    assert_eq!(goal.projections[0].delivered_receipt, Some(original_id.to_string()));
+    assert_eq!(
+        rows.iter().filter(|r| r.id == original_id).count(),
+        1,
+        "replay does not replace or duplicate the already-published event"
+    );
+    assert_eq!(
+        goal.projections[0].delivered_receipt,
+        Some(original_id.to_string())
+    );
 }
 
 #[gpui::test]
-async fn native_goal_missing_criterion_is_failed_retryable_not_passed(cx: &mut gpui::TestAppContext) {
+async fn native_goal_missing_criterion_is_failed_retryable_not_passed(
+    cx: &mut gpui::TestAppContext,
+) {
     let dir = tempfile::tempdir().expect("test directory");
     let provider = Arc::new(Provider::default());
     provider.bad_findings.store(true, Ordering::SeqCst);
     let owner = WebID::new();
     let host = open(dir.path(), provider.clone()).expect("host");
     let goal = declare(&host, owner).expect("goal");
-    decision(host.clone(), &goal, owner, "accomplished_not_achieved", false, cx).await;
+    decision(
+        host.clone(),
+        &goal,
+        owner,
+        "accomplished_not_achieved",
+        false,
+        cx,
+    )
+    .await;
     cx.executor().allow_parking();
     let runtime = tokio::runtime::Runtime::new().expect("runtime");
     let host_for_task = host.clone();
-    let task = runtime.spawn(async move { host_for_task.drain_once().await.expect("scan"); });
-    cx.background_spawn(async move { task.await.expect("bounded drain") }).await;
-    let failed = host.service.goal_get(goal.id, owner).expect("get").expect("goal");
+    let task = runtime.spawn(async move {
+        host_for_task.drain_once().await.expect("scan");
+    });
+    cx.background_spawn(async move { task.await.expect("bounded drain") })
+        .await;
+    let failed = host
+        .service
+        .goal_get(goal.id, owner)
+        .expect("get")
+        .expect("goal");
     assert!(failed.assessment_pending);
     assert!(failed.assessments[0].completion.is_none());
-    assert!(failed.assessments[0].failure.is_some(), "missing exact criterion coverage is a durable failure");
+    assert!(
+        failed.assessments[0].failure.is_some(),
+        "missing exact criterion coverage is a durable failure"
+    );
     provider.bad_findings.store(false, Ordering::SeqCst);
     drop(host);
     let host = open(dir.path(), provider.clone()).expect("restart");
     scheduled_tick(host.clone(), provider, cx).await;
-    let recovered = host.service.goal_get(goal.id, owner).expect("get").expect("goal");
+    let recovered = host
+        .service
+        .goal_get(goal.id, owner)
+        .expect("get")
+        .expect("goal");
     assert_eq!(recovered.assessments.len(), 2);
     assert!(recovered.assessments[1].completion.is_some());
-    assert_eq!(recovered.closure.expect("closure").input.choice, HumanClosureChoice::AccomplishedNotAchieved);
+    assert_eq!(
+        recovered.closure.expect("closure").input.choice,
+        HumanClosureChoice::AccomplishedNotAchieved
+    );
+}
+
+#[gpui::test]
+async fn native_goal_empty_evidence_keeps_assessment_unknown_but_declared_human_forecast_scores(
+    cx: &mut gpui::TestAppContext,
+) {
+    let dir = tempfile::tempdir().expect("test directory");
+    let provider = Arc::new(Provider::default());
+    let host = open(dir.path(), provider.clone()).expect("host");
+    let owner = WebID::new();
+    let now = Utc::now();
+    let goal = declare_with_forecast(
+        &host,
+        owner,
+        Some(GoalForecast {
+            proposition: "The human accepts the original goal under the declared execution policy"
+                .into(),
+            probability: 0.8,
+            horizon: now + Duration::milliseconds(50),
+            resolution_deadline: now + Duration::minutes(5),
+            execution_policy: "Native host integration test".into(),
+            resources: "Disposable file-backed fixture".into(),
+            resolver: GoalForecastResolver::HumanAcceptance,
+            baseline_probability: 0.5,
+            cohort: "host-integration-fixture".into(),
+            update_policy: ForecastUpdatePolicy::FixedAtDeclaration,
+        }),
+    )
+    .expect("prospective forecast");
+    cx.executor().allow_parking();
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    let wait = runtime.spawn(async {
+        tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+    });
+    cx.background_spawn(async move { wait.await.expect("horizon elapsed") })
+        .await;
+    let (stream, mut receiver) = agent::ToolCallEventStream::test_for_actor(owner);
+    let host_for_task = host.clone();
+    let id = goal.id.to_string();
+    let task = cx.spawn(async move |mut cx| {
+        agent::decide(id, vec![], false, stream, host_for_task, &mut cx).await
+    });
+    let prompt = receiver.expect_authorization().await;
+    assert_eq!(prompt.kind, acp_thread::AuthorizationKind::ActionChoice);
+    prompt
+        .response
+        .send(acp_thread::SelectedPermissionOutcome::new(
+            acp::PermissionOptionId::new("accomplished_achieved"),
+            acp::PermissionOptionKind::AllowOnce,
+        ))
+        .expect("human selection");
+    task.await.expect("closure");
+    scheduled_tick(host.clone(), provider, cx).await;
+    let goal = host
+        .service
+        .goal_get(goal.id, owner)
+        .expect("get")
+        .expect("goal");
+    assert!(
+        goal.closure
+            .as_ref()
+            .expect("closure")
+            .input
+            .evidence_manifest
+            .is_empty()
+    );
+    assert!(
+        goal.assessments[0]
+            .completion
+            .as_ref()
+            .expect("assessment")
+            .findings
+            .iter()
+            .all(|f| f.status == CriterionEvidenceStatus::Unknown)
+    );
+    assert_eq!(goal.forecast_status, ForecastStatus::Resolved);
+    assert_eq!(goal.scores.len(), 1);
+    assert!((goal.scores[0].brier - 0.04).abs() < 1e-12);
+    assert_eq!(goal.scores[0].baseline_brier, 0.25);
+}
+
+#[gpui::test]
+async fn native_goal_expired_assessment_lease_resumes_without_reopening_work(
+    cx: &mut gpui::TestAppContext,
+) {
+    let dir = tempfile::tempdir().expect("test directory");
+    let provider = Arc::new(Provider::default());
+    let host = open(dir.path(), provider.clone()).expect("host");
+    let owner = WebID::new();
+    let goal = declare(&host, owner).expect("goal");
+    decision(host.clone(), &goal, owner, "stop_not_achieved", false, cx).await;
+    host.service
+        .goal_claim_assessment(
+            goal.id,
+            owner,
+            AssessmentLeaseRequest {
+                attempt_id: "interrupted-host".into(),
+                assessor_id: "host-blinded-assessor".into(),
+                model_version: "fixture-assessor".into(),
+                tool_version: "fixture".into(),
+                lease_until: Utc::now() + Duration::seconds(2),
+            },
+        )
+        .expect("persist in-flight lease before simulated restart");
+    drop(host);
+    let host = open(dir.path(), provider.clone()).expect("restart");
+    cx.executor().allow_parking();
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    let host_for_task = host.clone();
+    let provider_for_task = provider.clone();
+    let task = runtime.spawn(async move {
+        host_for_task
+            .drain_once()
+            .await
+            .expect("startup scan with live lease");
+        assert!(
+            provider_for_task
+                .requests
+                .lock()
+                .expect("capture")
+                .is_empty(),
+            "startup must not steal a live lease"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(2100)).await;
+        host_for_task
+            .drain_once()
+            .await
+            .expect("next scheduled work scan after expiration");
+    });
+    cx.background_spawn(async move { task.await.expect("lease recovery") })
+        .await;
+    let recovered = host
+        .service
+        .goal_get(goal.id, owner)
+        .expect("get")
+        .expect("goal");
+    assert_eq!(recovered.assessments.len(), 2);
+    assert!(
+        recovered.assessments[0].failure.is_some(),
+        "expired attempt remains failure history"
+    );
+    assert!(recovered.assessments[1].completion.is_some());
+    assert_eq!(
+        recovered.closure.expect("closure retained").input.choice,
+        HumanClosureChoice::StopNotAchieved
+    );
+}
+
+#[gpui::test]
+async fn native_goal_missing_assessor_and_projection_store_retains_a_durable_failure(
+    cx: &mut gpui::TestAppContext,
+) {
+    let dir = tempfile::tempdir().expect("test directory");
+    let provider = Arc::new(Provider::default());
+    let configured = open(dir.path(), provider.clone()).expect("canonical ledger");
+    let host = Arc::new(GoalHost::new(
+        configured.ledger.clone(),
+        None,
+        provider.clone(),
+        String::new(),
+        "fixture-embedding".into(),
+        hkask_storage::embedding_dim() as u32,
+    ));
+    let owner = WebID::new();
+    let goal = declare(&host, owner).expect("goal");
+    decision(host.clone(), &goal, owner, "stop_unknown", false, cx).await;
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    let host_for_task = host.clone();
+    let task = runtime.spawn(async move {
+        host_for_task.drain_once().await.expect("scan");
+    });
+    cx.background_spawn(async move { task.await.expect("bounded drain") })
+        .await;
+    let pending = host
+        .service
+        .goal_get(goal.id, owner)
+        .expect("get")
+        .expect("canonical goal retained");
+    assert!(
+        pending.closure.is_some(),
+        "missing background capabilities never block human closure"
+    );
+    assert!(pending.assessment_pending);
+    assert_eq!(pending.assessments.len(), 1);
+    assert!(
+        pending.assessments[0]
+            .failure
+            .as_ref()
+            .expect("persisted configuration failure")
+            .reason
+            .contains("kask.models.classifier_model")
+    );
+    assert!(
+        pending
+            .projections
+            .iter()
+            .all(|projection| projection.delivered_receipt.is_none())
+    );
+    assert!(
+        provider.requests.lock().expect("capture").is_empty(),
+        "an unconfigured marker is never sent as a provider model"
+    );
 }

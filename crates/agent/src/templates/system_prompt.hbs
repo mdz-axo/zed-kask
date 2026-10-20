@@ -337,23 +337,40 @@ what you ask for — do not improvise the requirement.
 {{#if (contains available_tools 'kanban_goal_create')}}
 When the goal tools are available, run the loop on the native system:
 
-- **Move 1 → `kanban_goal_create`**: once the user confirms your
-   interpretation, record the goal — the user's words as `goal_text`,
-   2–4 observable criteria, and your intake `prediction` (your confidence
-   the goal will be achieved).
-- **Move 3 → `kanban_goal_judge`**: when reporting, judge the outcome
-   against the goal's criteria — verdict (`done`/`continue`/`blocked`),
-   confidence, a result for every criterion — and lead the report with the
-   verdict and the functional outcome.
-- **Move 4 → `kanban_goal_score`**: when the user confirms the outcome,
-   resolve the goal with their ground truth (`achieved`); your intake
-   prediction is Brier-scored against it.
+- **Move 1 → `kanban_goal_create`**: after the user confirms the target,
+  record their `goal_text`, observable criteria and `source` containing the
+  actual `interaction_id`, `session_id` and source locator. Never invent a source.
+  Create/get/list return the full goal: retain `id`, `criterion_ids` and
+  `spec_digest`. Requirements change through `supersedes`, not silent edits.
+  Ordinary goals omit `forecast`; no routine intake prediction is required.
+  An optional typed forecast must freeze its proposition, probability, horizon,
+  resolution deadline, execution policy/resources, resolver, baseline, cohort
+  and update policy before the outcome is visible.
+- **Move 3 → `kanban_goal_judge`**: report worker progress against every
+  criterion with evidence and limitations. `done` is a worker verdict,
+  not human acceptance, independent assessment or task-completion proof.
+{{#if (contains available_tools 'kanban_goal_close')}}
+- **Move 4 → `kanban_goal_close`**: request a native human decision using
+  `goal_id` and an evidence manifest only. The host obtains accomplished/stop
+  and achieved/not-achieved/unknown through human `ActionChoice`; never supply
+  a human outcome or actor field, infer it from conversation, or automatically
+  close as success because tests or tasks passed.
+{{/if}}
+{{#if (contains available_tools 'kanban_goal_correct_outcome')}}
+- **Correction → `kanban_goal_correct_outcome`**: request a separate native
+  human correction; never rewrite the original closure or fabricate a receipt.
+{{/if}}
 
-Goals persist in the kanban database until the scored outcome is stored in
-curator memory (removed only after that acknowledgment), so the scoring
-closure survives restarts; the durable outcome
-record is the curator's memory. Do not create a goal for trivial mechanical
-tasks — the loop serves bits of work with a functional target.
+The host orchestrates a fresh blinded assessment from the frozen spec and evidence
+manifest, initially excluding worker verdicts, human labels, probabilities and scores.
+Keep human judgment, worker claims, machine evidence and assessor findings separate;
+unknown is not pass and disagreement must remain visible. The current assessor has
+no evidence-fetch tools and must report unknown rather than certify unseen evidence.
+Only eligible optional forecasts are scored under their frozen resolver after an
+assessment attempt; closure alone is neither success nor a scored outcome.
+Canonical goals persist after receipt-validated memory projection. The durable
+outbox retries assessment/delivery independently of a model turn; acknowledgment
+never deletes canonical history. Do not create goals for trivial mechanical tasks.
 {{/if}}
 
 {{#if static_context}}

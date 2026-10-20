@@ -156,7 +156,13 @@ impl GoalHost {
             AssessmentLeaseRequest {
                 attempt_id: attempt_id.clone(),
                 assessor_id: "host-blinded-assessor".into(),
-                model_version: self.assessor_model.clone(),
+                // Name absent configuration in the failed attempt; this is
+                // never used as a provider model or a fallback dispatch.
+                model_version: if self.assessor_model.trim().is_empty() {
+                    "unconfigured:kask.models.classifier_model".into()
+                } else {
+                    self.assessor_model.clone()
+                },
                 tool_version: env!("CARGO_PKG_VERSION").into(),
                 lease_until: Utc::now() + Duration::seconds(90),
             },
@@ -403,6 +409,35 @@ impl NativeGoalHost for GoalHost {
         } else {
             None
         };
+        let displayed_evidence = match &goal.closure {
+            Some(closure) if correction => {
+                serde_json::to_string_pretty(&closure.input.evidence_manifest)
+            }
+            _ => serde_json::to_string_pretty(evidence),
+        }
+        .map_err(|error| error.to_string())?;
+        let correction_context = if correction {
+            let latest = goal
+                .human_corrections
+                .last()
+                .map(|correction| correction.outcome)
+                .or_else(|| {
+                    goal.closure
+                        .as_ref()
+                        .map(|closure| closure.input.choice.outcome())
+                })
+                .flatten();
+            format!(
+                " Latest human outcome: {}. This appends a human correction; original closure is retained.",
+                match latest {
+                    Some(true) => "achieved",
+                    Some(false) => "not achieved",
+                    None => "unknown",
+                }
+            )
+        } else {
+            String::new()
+        };
         let message = format!(
             "Goal: {}\nFrozen specification: {}\nCriteria:\n{}\nEvidence manifest (worker-supplied references, not verified support):\n{}\nNo evidence access means unknown assessment. Closing or stopping does not imply achievement.{}",
             goal.goal_text,
@@ -412,12 +447,8 @@ impl NativeGoalHost for GoalHost {
                 .map(|c| c.description.as_str())
                 .collect::<Vec<_>>()
                 .join("\n"),
-            serde_json::to_string_pretty(evidence).map_err(|e| e.to_string())?,
-            if correction {
-                " This appends a human correction; original closure is retained."
-            } else {
-                ""
-            }
+            displayed_evidence,
+            correction_context
         );
         Ok(NativeGoalPrompt {
             spec_digest: goal.spec_digest,

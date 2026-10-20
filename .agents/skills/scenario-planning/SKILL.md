@@ -11,6 +11,9 @@ on evidence, score resolutions, and assess the project itself (Chermack).
 The scenarios server implements all three methodologies as one pipeline;
 this skill is the operating procedure for that pipeline.
 
+## Goal evidence, closure and optional forecasts
+
+Use `program-manager`'s goal contract and the [canonical pact](../../../kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md): create requires a real specification `source` and returns the full goal's `id`; ordinary goals omit `forecast`. Worker progress is not human closure. Native `kanban_goal_close` obtains human ActionChoice, never a model-supplied outcome; `kanban_goal_correct_outcome` is separate. Keep blinded assessment findings and human labels distinct, unknown visible, canonical history retained. The current assessor cannot fetch evidence and cannot certify unseen references. No automatic success closure or routine goal probability.
 ## Reference models
 
 - Schwartz, *The Art of the Long View* (1991) — focal question, driving forces, 2x2 narratives, indicators.
@@ -21,7 +24,7 @@ this skill is the operating procedure for that pipeline.
 
 ## Initial and target condition
 
-- **Initial condition (T1):** the `scenario_triage` classification, the FramingDocument (`focal_question`, `time_horizon`, `in_scope`, `out_of_scope`), and — when prior projects exist — `scenario_calibration` (resolved count, Brier, bias) read as `prior_calibration` and applied automatically by Phase 3 Step 13 (`scenario_calibrate`) when ≥5 resolved forecasts exist; on a first run it is null.
+- **Initial condition (T1):** the `scenario_triage` classification, the FramingDocument (`focal_question`, `time_horizon`, `in_scope`, `out_of_scope`), and — when prior projects exist — `scenario_calibration` (resolved count, Brier, bias) read as descriptive history only; no automatic bias correction from a small resolved sample. On a first run it is null.
 - **Target condition (T2):** the Convergence gate below passes and the Chermack assessment is reported.
 
 **D/P labelling.** Every `scenario_*` tool call is D (the server is the oracle: it rejects bad probabilities, conditional lengths and cycles, and computes marginals, Bayes, synthesis and Brier). The quadrant bucketing `SP-1`, the quality-gate pass predicate `SP-2`, and the Convergence gate (step 21) are D — `lisp_eval` forms over the scored counts and ratings. Framing answers are the operator's (human decision). Brainstorm events, conditionals, forces and narratives are P — including the `driving-forces` micro/STEEP enumeration and the `implications-indicators` render's strategies, indicators and monitoring plan — critiqued by the separate `scenario-quality-gate` render (scenarios) + `SP-2`, `scenario_cross_validate` (divergence > 0.15 → `grill-me`, probability estimates), and, at resolution, Brier (events). Force selection is critiqued by `driving-forces.j2`'s internal independence rule, `SP-1`'s quadrant check, and the gate's axis-span criterion.
@@ -67,9 +70,7 @@ this skill is the operating procedure for that pipeline.
 5. Scaffold the project worklist: `kanban_board_create` named
    "<subject> scenarios"; `kanban_goal_create` with the framing
    document's focal question as `goal_text`, 2–4 observable criteria
-   from its success criteria, and your intake `prediction` (confidence
-   the project improves the decision at stake — Brier-scored at Phase 5,
-   so record it honestly).
+   from its success criteria and the actual specification `source`; omit routine `forecast`. Retain the returned full goal `id`.
 
 ### Phase 2 — Diverge and structure (Schwartz: brainstorm)
 
@@ -138,9 +139,7 @@ quantified backbone.
    takes the project-wide `forecast_id`) and then `scenario_propagate`
    with the full event list and the event's new prior to recompute
    descendants and the joint (propagate takes events, event_id, new_prior
-   — no forecast_id). Mint one project-wide `forecast_id` at first use
-   and reuse it for every update and score call (the journal is keyed by
-   it; calibrate and propagate take no forecast_id). The propagation
+   — no forecast_id). Mint a `forecast_id` for each frozen prospective declaration. Call `scenario_declare` with `forecast_id`, full `events` and a named `resolver` before outcome visibility. Revised probabilities, propositions or horizons require a new identity; calibrate and propagate do not declare a forecast. The propagation
    journal is the audit
    record — report the deltas. When the evidence is an OBSERVATION (an
    observed probability, an occurred/not-occurred outcome, or a likelihood
@@ -150,7 +149,7 @@ quantified backbone.
    exact on polytrees, degrading to forward-only with a note on
    multiply-connected DAGs.
 15. When multiple independent perspectives exist, collect them and call
-   `scenario_synthesize` (dragonfly-eye, inverse-Brier weighting).
+   `scenario_synthesize` (dragonfly-eye, explicitly equal weights; historical losses are not comparable reliability weights).
 16. Call `scenario_cross_validate` comparing your estimate against
     the server-computed one. If divergence exceeds 0.15, activate the
     `grill-me` skill on the diverging sub-questions before proceeding.
@@ -160,14 +159,7 @@ quantified backbone.
 
 ### Phase 4 — Resolve and learn (the Brier loop)
 
-17. When event deadlines pass, call `scenario_score` with the events
-    and their outcomes. This is the ONLY step that writes the forecast
-    journal — persistence happens here, not at build time. Report the
-    Brier score and its interpretation, then close each event's board
-    task with its observed outcome as the verification evidence. The
-    score is computed on each event's tree MARGINAL — the resolved
-    belief the tree propagates, not the raw prior field — so for
-    dependent events the Brier measures the belief actually forecast.
+17. Before resolution, call `scenario_declare` with `forecast_id`, full events and a named outcome-source `resolver` if not already declared. Never declare after observing the outcome. At resolution call `scenario_score` with the same ID, exact frozen events and resolver plus observed outcomes. The server scores stored tree marginals, not resolution-time inputs; duplicate/conflicting outcomes are refused. Report raw loss, event counts, convention and limitations, not universal bands. Declaration records a caller-reported source rule, not authentication. A score is evidence for Review, never automatic task verification or human goal closure.
 18. Call `scenario_calibration` to compute the calibration curve over
     resolved forecasts. Report bias direction (too high / too low);
     below 10 resolved forecasts, say the curve is thin — the server
@@ -184,9 +176,7 @@ quantified backbone.
     generated and implemented, learning events, early-warning
     indicators. Report the per-phase scores, gaps, strengths, and
     recommendations.
-20. Judge the project goal (`kanban_goal_judge`) against its criteria —
-    the Chermack assessment and the Brier-scored goal close together;
-    the operator scores it (`kanban_goal_score`) on confirmation.
+20. Record worker progress with `kanban_goal_judge` against every criterion. Request native human closure separately; Chermack findings, worker claims, human choice and optional forecast results must not be conflated.
 
 ### Convergence
 

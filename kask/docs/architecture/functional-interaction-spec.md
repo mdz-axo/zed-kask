@@ -90,7 +90,7 @@ optimizes.
 **P2 — The gradient is created by anchoring reward on the local
 functional goal.** In an agent system with a frozen base model, the
 effective reward function is the *feedback structure*: what is measured,
-scored, remembered, and fed back at each cycle. Anchoring those
+assessed, remembered, and fed back at each cycle. Anchoring those
 structures on the local functional goal creates a mechanical gradient —
 work that serves the goal is reinforced (progress recorded, prediction
 validated, lesson ingested); work that does not is corrected by the
@@ -204,20 +204,27 @@ The interaction is implemented as two coupled layers.[^kata]
   `Division of Responsibilities` section implements the four moves; move 2 is
   **Decide by class**. Functional questions remain with the user, while the
   agent decides technical questions and reports their functional consequence
-  (`crates/agent/src/templates/system_prompt.hbs:1-3,301-357`). Template tests
+  (`crates/agent/src/templates/system_prompt.hbs`). Template tests
   pin the opening roles, decision classification, goal-tool wiring, and
   functional-first closeout (`crates/agent/src/templates.rs`).
-- **Persistent goal layer.** `kanban_goal_create`, `kanban_goal_judge`,
-  `kanban_goal_list`, and `kanban_goal_score` use the kanban service's DB-backed
-  goal store. Scoring records resolution but retains the goal across restarts as
-  a durable outbox entry. The production turn-memory path stores the score event
-  in curator memory and only then calls `kanban_goal_memory_acknowledge`, which
-  removes the retained row. Failed ingestion or acknowledgment leaves the same
-  outcome retryable; conflicting outcomes are rejected.
-- **Criterion coupling.** A judge result covers every criterion exactly once.
-  Task `advances` citations bind technical work to a goal criterion and remain
-  readable after the goal is resolved. The citation is captured task data, not
-  a foreign key to a goal row that is deleted on resolution.
+- **Persistent goal layer (D58).** MCP create/judge/get/list preserve immutable
+  source-backed specification, stable criterion IDs and digest. Ordinary goals
+  omit forecasts. Create/get/list return the full goal with `id`, not an
+  abbreviated `goal_id`. Worker progress is never human closure.
+- **Human authority.** Native `kanban_goal_close` takes identity/evidence only;
+  the host obtains human `ActionChoice` for accomplished/stop separately from
+  achieved/not-achieved/unknown. Corrections use `kanban_goal_correct_outcome`,
+  append provenance and preserve the original choice. No inferred success from
+  task status, test results or a model-authored human receipt.
+- **Independent assessment and custody.** A fresh blinded request receives only
+  the frozen spec and evidence manifest initially, not worker verdict/human
+  label/forecast p/score. Findings and all labels stay separate. The current
+  assessor cannot fetch evidence and reports unknown; failure stays retryable.
+  Canonical history survives receipt-validated memory projection; a persistent
+  outbox drains independently of turn completion. See `kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md`.
+- **Criterion coupling.** Progress covers every criterion exactly once. Task
+  `advances` citations bind technical work to the original criterion and remain
+  captured task data. They do not prove achievement or supply human acceptance.
 - **Conditional use.** The prompt advertises native goal-tool steps only when
   `kanban_goal_create` is available. Without the server, the conversational
   discipline remains but no persistence capability is claimed.
@@ -234,16 +241,18 @@ The current definition of done is structural and falsifiable:
    verifies that an idempotent create returns the same still-live persistent
    goal after a server restart
    (`kask/mcp-servers/hkask-mcp-kata-kanban/tests/idempotent_creates.rs`).
-3. Goal service tests exercise create, judge, list, idempotent score retry,
-   owner isolation, retention through reconstructed service state, and removal
-   only on memory acknowledgment through the DB-backed service
+3. Goal lifecycle tests exercise immutable source/specification, owner isolation,
+   authenticated closure ingress, assessment leases and complete findings,
+   receipt validation, append-only corrections and retained legacy history
    (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs`).
-4. Outcome quality is resolved against each criterion's named instrument — a
-   test result, tool result, file state, market resolution, log line, or date —
-   rather than an agent's self-report. The operator supplies final ground truth;
-   `kanban_goal_score` records the achieved/not-achieved outcome and Brier-scores
-   the intake prediction.
-
+4. Host integration fixtures in `kask/crates/kask_bridge/src/goals/tests.rs`
+   drive native ActionChoice, retry/restart, exact and semantic projection, and
+   missing evidence/configuration. A fixture run proves its assertions, not that
+   the editor was deployed or real evidence independently assessed.
+5. Forecasts are optional prospective declarations with frozen resolver,
+   baseline, horizon, cohort and execution policy. Only the declared source
+   resolves them after an assessment attempt. Unknown is unscored; stop is not
+   automatically failure. No raw loss changes memory confidence.
 *Scope-exempt from the Sourced-Ideas Mandate: this section indexes executable
 verification for the design in §§3–6.*
 
