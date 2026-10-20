@@ -22,7 +22,7 @@ use hkask_mcp_scenarios::types::{
 use hkask_mcp_scenarios::{ForecastStore, JournalStore, ProjectStore, ScenariosServer};
 use hkask_types::WebID;
 use rmcp::handler::server::wrapper::Parameters;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 // The equity forecast store (ported from the companies server, Phase A P1)
@@ -37,14 +37,12 @@ fn equity_forecast_store() -> Arc<Mutex<JournalStore<StoredEquityForecast>>> {
 fn make_server() -> ScenariosServer {
     let forecast_store = Arc::new(Mutex::new(ForecastStore::new(None)));
     let tree_cache = Mutex::new(None);
-    let called_tools = Mutex::new(HashSet::new());
     let project_store = Mutex::new(ProjectStore::new(None));
     ScenariosServer::new(
         WebID::new(),
         forecast_store,
         equity_forecast_store(),
         tree_cache,
-        called_tools,
         project_store,
     )
 }
@@ -55,7 +53,6 @@ fn file_backed_server(path: &std::path::Path) -> ScenariosServer {
         Arc::new(Mutex::new(ForecastStore::new(Some(path.to_path_buf())))),
         equity_forecast_store(),
         Mutex::new(None),
-        Mutex::new(HashSet::new()),
         Mutex::new(ProjectStore::new(None)),
     )
 }
@@ -68,7 +65,6 @@ fn project_backed_server(path: &std::path::Path) -> ScenariosServer {
         Arc::new(Mutex::new(ForecastStore::new(None))),
         equity_forecast_store(),
         Mutex::new(None),
-        Mutex::new(HashSet::new()),
         Mutex::new(ProjectStore::new(Some(path.to_path_buf()))),
     )
 }
@@ -557,10 +553,7 @@ async fn scenario_brainstorm_default_context_never_names_removed_scenario_resear
     );
 }
 
-/// PR-12: the sequence advisory fires only on the one hard wire dependency.
-/// `scenario_quantify` accepts caller-supplied trees from multiple
-/// legitimate entries (market bridges, superforecasting, manual
-/// construction) — a cold call must not warn.
+/// Caller-supplied trees are valid without preceding scenario-tool calls.
 #[tokio::test]
 async fn scenario_quantify_called_cold_emits_no_sequence_note() {
     let server = make_server();
@@ -575,32 +568,6 @@ async fn scenario_quantify_called_cold_emits_no_sequence_note() {
     assert!(
         parsed.get("sequence_note").is_none(),
         "a cold quantify with a caller-supplied tree is a legitimate entry — no advisory, got: {parsed}"
-    );
-}
-
-/// PR-12's legitimate-case pin: the one hard wire dependency still advises.
-/// `scenario_frame_document`'s answers come from the framing conversation,
-/// so a cold call carries the advisory naming `scenario_frame`.
-#[tokio::test]
-async fn scenario_frame_document_called_cold_advises_scenario_frame() {
-    let server = make_server();
-    let output = server
-        .scenario_frame_document(Parameters(FrameDocumentRequest {
-            subject: "ACME".to_string(),
-            project_id: None,
-            answers: serde_json::json!({
-                "focal_question": "Will ACME's new product reach scale by 2027?"
-            })
-            .into(),
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
-    assert!(
-        parsed["sequence_note"]
-            .as_str()
-            .is_some_and(|note| note.contains("scenario_frame")),
-        "the one hard wire dependency still advises its predecessor, got: {parsed}"
     );
 }
 

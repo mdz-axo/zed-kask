@@ -21,7 +21,6 @@ use hkask_mcp_scenarios::{ForecastStore, JournalStore, ProjectStore, ScenariosSe
 use hkask_types::WebID;
 use rmcp::handler::server::wrapper::Parameters;
 use serde_json::Value;
-use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 fn server() -> ScenariosServer {
@@ -30,7 +29,6 @@ fn server() -> ScenariosServer {
         Arc::new(Mutex::new(ForecastStore::new(None))),
         equity_forecast_store(),
         Mutex::new(None),
-        Mutex::new(HashSet::new()),
         Mutex::new(ProjectStore::new(None)),
     )
 }

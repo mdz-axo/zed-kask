@@ -182,7 +182,6 @@ mod tests {
             Arc::new(Mutex::new(crate::superforecast::ForecastStore::new(None))),
             Arc::new(Mutex::new(crate::superforecast::JournalStore::new(None))),
             Mutex::new(None),
-            Mutex::new(std::collections::HashSet::new()),
             Mutex::new(crate::superforecast::ProjectStore::new(None)),
         );
         let response = server

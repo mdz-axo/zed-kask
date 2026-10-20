@@ -18,7 +18,7 @@ Tool count is pinned against the live `combined_router()` by `tool_surface_is_ex
 
 ## Pipeline Architecture (DIAG-RF-005)
 
-This diagram shows the control flow between the 21 MCP tools in the scenarios server, grouped by pipeline phase. Solid arrows indicate the expected predecessor relationship enforced by the pipeline conventions. Dashed arrows indicate optional or independent paths.[^tetlock-scenarios-ref][^schwartz-scenarios-ref]
+This diagram shows the recommended flow between the 21 MCP tools, grouped by methodology phase. Arrows describe how outputs can feed later work, not an enforced tool-call order; dashed arrows show optional or independent paths. Tools process caller-supplied inputs without session-order advisories. Framing guidance remains available through `scenario_frame`, but supplied answers can go directly to `scenario_frame_document`; actual input and persisted-state requirements still apply.[^tetlock-scenarios-ref][^schwartz-scenarios-ref]
 
 ```mermaid
 flowchart TD

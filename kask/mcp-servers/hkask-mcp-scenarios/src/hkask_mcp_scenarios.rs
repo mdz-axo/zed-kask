@@ -34,8 +34,6 @@
 //! - `forecast_list` — List durable equity forecasts for a symbol (ported from the companies server)
 //! - `scenario_risk_measure` — Probability-weighted risk measure over caller-supplied scenario branches
 
-use std::collections::HashSet;
-
 use hkask_mcp_server::server::{McpToolError, execute_tool};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
@@ -113,80 +111,11 @@ hkask_mcp_server::mcp_server!(
             std::sync::Mutex<superforecast::JournalStore<equity_forecast::StoredEquityForecast>>,
         >,
         pub tree_cache: std::sync::Mutex<Option<types::EventTree>>,
-        pub called_tools: std::sync::Mutex<HashSet<String>>,
         pub project_store: std::sync::Mutex<superforecast::ProjectStore>,
     } = crate::ontology::annotate;
 );
 
 impl ScenariosServer {
-    /// Expected predecessor for each pipeline-stage tool.
-    /// Returns None for tools that can be called independently.
-    ///
-    /// Only the one hard wire dependency carries a predecessor: the framing
-    /// answers `scenario_frame_document` consumes come from the framing
-    /// conversation (`scenario_frame`'s 7-turn protocol, or its
-    /// `prior_answers` re-supply). Every other tool accepts caller-supplied
-    /// inputs from multiple legitimate entries — the market bridge
-    /// (`scenario_from_markets_set`), superforecasting's own tree, manual
-    /// construction, or a store
-    /// populated by a previous session — and an advisory that warns on
-    /// those entries is a broken feedback signal (PR-12: the former
-    /// frame → brainstorm → build → quantify → … chain warned on every
-    /// legitimate alternate path). The process ladder lives in the skills
-    /// (`scenario-planning`'s phases, `superforecasting`'s stages), where
-    /// the entry context is known.
-    fn expected_predecessor(tool: &str) -> Option<&'static str> {
-        match tool {
-            "scenario_frame_document" => Some("scenario_frame"),
-            _ => None,
-        }
-    }
-
-    /// Track pipeline sequence for this tool and emit a Regulation warning if
-    /// its expected predecessor was not called. In-memory only: tracking
-    /// resets when the server process restarts. Does not block execution —
-    /// tool flexibility is preserved for exploratory and bypass workflows.
-    /// Returns the advisory note when the expected predecessor was skipped
-    /// (S-03, mcp-tool-review): the caller — the only party that can correct
-    /// the sequence — now sees it, not just the server log.
-    fn record_experience(&self, tool: &str) -> Option<String> {
-        let mut called = self.called_tools.lock().unwrap_or_else(|e| e.into_inner());
-
-        let mut note = None;
-        if let Some(expected) = Self::expected_predecessor(tool)
-            && !called.contains(expected)
-        {
-            tracing::warn!(
-                target: "hkask.mcp.scenarios.sequence",
-                tool = %tool,
-                expected_predecessor = %expected,
-                "Pipeline sequence violation: {} called without prior {}",
-                tool, expected
-            );
-            note = Some(format!(
-                "called without prior {expected} — the answers parameter comes from the framing conversation; run {expected} first or supply prior_answers from a previous session (this note advises, it never blocks)"
-            ));
-        }
-
-        called.insert(tool.to_string());
-        note
-    }
-
-    /// Attach the pipeline-sequence advisory to a tool response when the
-    /// expected predecessor was skipped (S-03). Non-blocking — the note
-    /// advises, it never gates; responses without a violation are unchanged.
-    fn with_sequence_note(
-        mut output: serde_json::Value,
-        note: Option<String>,
-    ) -> serde_json::Value {
-        if let Some(note) = note
-            && let Some(obj) = output.as_object_mut()
-        {
-            obj.insert("sequence_note".to_string(), serde_json::Value::String(note));
-        }
-        output
-    }
-
     /// Persist a tree into the project record (PR-07): upsert the project
     /// (created when absent, keyed by the tree's subject) with the tree as
     /// its last quantified state — the durable tree cache. Persistence
@@ -402,10 +331,7 @@ impl ScenariosServer {
                 tree,
             );
 
-            Ok(Self::with_sequence_note(
-                output,
-                self.record_experience("scenario_status"),
-            ))
+            Ok(output)
         }).await
     }
 
@@ -542,10 +468,7 @@ impl ScenariosServer {
                 }
             });
 
-            Ok(Self::with_sequence_note(
-                output,
-                self.record_experience("scenario_cross_validate"),
-            ))
+            Ok(output)
         })
         .await
     }
@@ -574,10 +497,7 @@ impl ScenariosServer {
                     );
                 }
 
-            Ok(Self::with_sequence_note(
-                output,
-                self.record_experience("scenario_frame"),
-            ))
+            Ok(output)
         })
         .await
     }
@@ -663,10 +583,7 @@ impl ScenariosServer {
                 ]
             });
 
-            Ok(Self::with_sequence_note(
-                output,
-                self.record_experience("scenario_frame_document"),
-            ))
+            Ok(output)
         })
         .await
     }
@@ -764,10 +681,7 @@ impl ScenariosServer {
                 }
             });
 
-            Ok(Self::with_sequence_note(
-                output,
-                self.record_experience("scenario_brainstorm"),
-            ))
+            Ok(output)
         })
         .await
     }
@@ -883,10 +797,7 @@ impl ScenariosServer {
                 }
             });
 
-            Ok(Self::with_sequence_note(
-                output,
-                self.record_experience("scenario_build"),
-            ))
+            Ok(output)
         })
         .await
     }
@@ -951,10 +862,7 @@ impl ScenariosServer {
                 "framework": "Conditional probability tree. Each node's marginal is computed via full joint-table marginalization under parent independence: P(E) = Sum_a P(E|a) * Product_i P(p_i)^{a_i} * (1-P(p_i))^{1-a_i}. Root nodes use their intrinsic probability. Joint = product of all-nodes-occur conditionals."
             });
 
-            Ok(Self::with_sequence_note(
-                output,
-                self.record_experience("scenario_quantify"),
-            ))
+            Ok(output)
         })
         .await
     }
@@ -1160,10 +1068,7 @@ impl ScenariosServer {
                 }),
             });
 
-            Ok(Self::with_sequence_note(
-                output,
-                self.record_experience("scenario_recompute_posteriors"),
-            ))
+            Ok(output)
         })
         .await
     }
@@ -1214,10 +1119,7 @@ impl ScenariosServer {
                 "reference": "Tetlock & Gardner, Superforecasting (2015), Ch. 5"
             });
 
-            Ok(Self::with_sequence_note(
-                output,
-                self.record_experience("scenario_update"),
-            ))
+            Ok(output)
         })
         .await
     }
@@ -1345,10 +1247,7 @@ impl ScenariosServer {
                 )))?;
             }
 
-            Ok(Self::with_sequence_note(
-                output,
-                self.record_experience("scenario_score"),
-            ))
+            Ok(output)
         })
         .await
     }
@@ -1476,10 +1375,7 @@ impl ScenariosServer {
                 "reference": "Tetlock & Gardner, Superforecasting (2015), Ch. 4-6"
             });
 
-            Ok(Self::with_sequence_note(
-                output,
-                self.record_experience("scenario_calibrate"),
-            ))
+            Ok(output)
         })
         .await
     }
@@ -1528,10 +1424,7 @@ impl ScenariosServer {
                 "reference": "Tetlock & Gardner, Superforecasting (2015), Ch. 7 — Dragonfly-Eye"
             });
 
-            Ok(Self::with_sequence_note(
-                output,
-                self.record_experience("scenario_synthesize"),
-            ))
+            Ok(output)
         })
         .await
     }
@@ -1618,10 +1511,7 @@ impl ScenariosServer {
                 "reference": "Brier (1950); Murphy (1973) — decomposition of Brier score into reliability, resolution, and uncertainty components"
             });
 
-            Ok(Self::with_sequence_note(
-                output,
-                self.record_experience("scenario_calibration"),
-            ))
+            Ok(output)
         })
         .await
     }
@@ -1661,10 +1551,7 @@ impl ScenariosServer {
                 "reference": "Tetlock & Gardner, Superforecasting (2015), Ch. 3 — Triage and the Goldilocks Zone"
             });
 
-            Ok(Self::with_sequence_note(
-                output,
-                self.record_experience("scenario_triage"),
-            ))
+            Ok(output)
         })
         .await
     }
@@ -1825,10 +1712,7 @@ impl ScenariosServer {
                 }
             }
 
-            Ok(Self::with_sequence_note(
-                output,
-                self.record_experience("scenario_assess"),
-            ))
+            Ok(output)
         })
         .await
     }
@@ -1888,6 +1772,94 @@ mod tests {
         tool_surface_is_exactly_21_registered_tools,
     );
 
+    /// Supplied framing answers are independent of process call history.
+    #[tokio::test]
+    async fn supplied_framing_answers_are_independent_of_call_history() {
+        use std::sync::{Arc, Mutex};
+        let directory = tempfile::tempdir().expect("project directory");
+        let projects_path = directory.path().join("projects.json");
+        let server = ScenariosServer::new(
+            hkask_types::WebID::new(),
+            Arc::new(Mutex::new(ForecastStore::new(None))),
+            Arc::new(Mutex::new(JournalStore::new(None))),
+            Mutex::new(None),
+            Mutex::new(ProjectStore::new(Some(projects_path.clone()))),
+        );
+        let parse = |output: &str| {
+            hkask_types::tool_response::parse_tool_response(output).expect("valid tool response")
+        };
+        let answers = serde_json::json!({
+            "focal_question": "Will ACME's new product reach scale by 2027?",
+            "decision_at_stake": "Whether to expand production",
+            "time_horizon": "tactical",
+            "in_scope": ["product demand"],
+            "out_of_scope": ["acquisitions"]
+        });
+        let mut expected_document = None;
+        for project_id in ["direct", "after-guidance"] {
+            let output = server
+                .scenario_frame_document(Parameters(FrameDocumentRequest {
+                    subject: "ACME".into(),
+                    project_id: Some(project_id.into()),
+                    answers: answers.clone().into(),
+                }))
+                .await
+                .expect("supplied framing answers");
+            let parsed = parse(&output);
+            assert!(parsed.get("sequence_note").is_none(), "{parsed}");
+            assert_eq!(parsed["project_id"], project_id);
+            assert_eq!(parsed["persisted"], true);
+            assert_eq!(
+                parsed["framing_document"]["focal_question"],
+                answers["focal_question"]
+            );
+            if let Some(expected) = &expected_document {
+                assert_eq!(&parsed["framing_document"], expected);
+            } else {
+                expected_document = Some(parsed["framing_document"].clone());
+                let protocol = parse(
+                    &server
+                        .scenario_frame(Parameters(FrameRequest {
+                            subject: "A different project".into(),
+                            prior_answers: Some(answers.clone().into()),
+                        }))
+                        .await
+                        .expect("framing guidance"),
+                );
+                assert_eq!(
+                    protocol["conversation_flow"]
+                        .as_array()
+                        .expect("turns")
+                        .len(),
+                    7
+                );
+                assert_eq!(protocol["prior_answers"], answers);
+                assert!(protocol.get("sequence_note").is_none(), "{protocol}");
+            }
+        }
+        let error = server
+            .scenario_frame_document(Parameters(FrameDocumentRequest {
+                subject: " ".into(),
+                project_id: Some("invalid".into()),
+                answers: answers.clone().into(),
+            }))
+            .await
+            .expect_err("invalid subject must still fail");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+        drop(server);
+        let restarted = ProjectStore::new(Some(projects_path));
+        for project_id in ["direct", "after-guidance"] {
+            let document = restarted
+                .get(project_id)
+                .expect("persisted project")
+                .framing_document
+                .as_ref()
+                .expect("persisted frame");
+            assert_eq!(document.focal_question, answers["focal_question"]);
+        }
+        assert!(restarted.get("invalid").is_none());
+    }
+
     /// S-02 (mcp-tool-review): a missing-state condition the caller can
     /// remedy surfaces as `failed_precondition`, never `internal`. An empty
     /// forecast store is exactly that condition — the caller records and
@@ -1904,7 +1876,6 @@ mod tests {
                 None,
             ))),
             std::sync::Mutex::new(None),
-            std::sync::Mutex::new(HashSet::new()),
             std::sync::Mutex::new(superforecast::ProjectStore::new(None)),
         );
         let error = server
@@ -1964,7 +1935,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     Some(scenarios_data_dir.join("equity_forecasts.json")),
                 ))),
                 std::sync::Mutex::new(None),
-                std::sync::Mutex::new(HashSet::new()),
                 std::sync::Mutex::new(superforecast::ProjectStore::new(Some(
                     scenarios_data_dir.join("projects.json"),
                 ))),

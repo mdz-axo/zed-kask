@@ -54,6 +54,7 @@ Nineteen registered tools (pinned against the live `scenario_router()` by
 
 - A `requires_consent` pipeline step is refused by `PipelineRunner` until a separate approval mechanism supplies consent. This is the P2 affirmative-consent boundary.
 - Scenario calculations are explicit inputs and outputs; external research remains an input to `scenario_build`'s `context` field, rather than hidden server-side collection.
+- Framing guidance does not require session-order tracking: supplied answers can go directly to `scenario_frame_document`, including after a restart or for another project. Input validation and persisted-state requirements still apply.
 - Each tool outcome is recorded through the MCP tool context, supporting P9 feedback and inspection.
 
 ## Related documentation
