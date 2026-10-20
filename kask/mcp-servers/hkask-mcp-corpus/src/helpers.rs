@@ -133,20 +133,41 @@ pub(crate) fn map_triage_error(error: crate::ocr::triage::TriageError) -> McpToo
     }
 }
 
-/// `ServiceError` from the compose pipeline into the appropriate
-/// `McpToolError` kind via its semantic `ErrorKind`: `Forbidden` → `permission_denied`,
-/// `BadRequest` → `invalid_argument`,
-/// `ServiceUnavailable` → `unavailable`.
-pub(crate) fn map_service_error(
-    error: crate::services_core::ServiceError,
-    context: &str,
-) -> McpToolError {
-    use crate::services_core::ErrorKind;
-    let message = format!("{context}: {error}");
-    match error.kind() {
-        ErrorKind::Forbidden => McpToolError::permission_denied(message),
-        ErrorKind::BadRequest => McpToolError::invalid_argument(message),
-        ErrorKind::ServiceUnavailable => McpToolError::unavailable(message),
+/// Keep credential, transport, input and provider failures distinct at the tool boundary.
+pub(crate) fn map_inference_error(error: hkask_types::InferenceError) -> McpToolError {
+    use hkask_types::InferenceError;
+    let message = error.to_string();
+    match error {
+        InferenceError::Model(_) => McpToolError::invalid_argument(message),
+        InferenceError::NotConfigured(_) | InferenceError::Auth(_) => {
+            McpToolError::permission_denied(message)
+        }
+        InferenceError::Connection(_)
+        | InferenceError::Overloaded(_)
+        | InferenceError::CircuitOpen(_)
+        | InferenceError::Timeout(_) => McpToolError::unavailable(message),
+        InferenceError::Generation(_)
+        | InferenceError::Json(_)
+        | InferenceError::VisionUnsupported(_) => McpToolError::internal(message),
+    }
+}
+
+pub(crate) fn map_embedding_error(error: hkask_types::EmbeddingGenerationError) -> McpToolError {
+    use hkask_types::EmbeddingGenerationError;
+    let message = error.to_string();
+    match error {
+        EmbeddingGenerationError::NotConfigured(_)
+        | EmbeddingGenerationError::Api(401 | 403, _) => McpToolError::permission_denied(message),
+        EmbeddingGenerationError::Connection(_)
+        | EmbeddingGenerationError::Api(408 | 429 | 500..=599, _) => {
+            McpToolError::unavailable(message)
+        }
+        EmbeddingGenerationError::InvalidRequest(_)
+        | EmbeddingGenerationError::DimensionMismatch { .. }
+        | EmbeddingGenerationError::Api(400..=499, _) => McpToolError::invalid_argument(message),
+        EmbeddingGenerationError::Json(_)
+        | EmbeddingGenerationError::EmptyResponse
+        | EmbeddingGenerationError::Api(_, _) => McpToolError::internal(message),
     }
 }
 

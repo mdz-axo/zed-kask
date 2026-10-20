@@ -181,12 +181,12 @@ and completeness.[^reconstruct]
 
 ```mermaid
 flowchart TD
-    A[corpus_chunk tool<br/>hkask-mcp-corpus/src/tools/document.rs:355] --> B[chunk_word_bounds<br/>hkask-mcp-corpus/src/helpers.rs:393]
-    B --> C[tokens_to_words<br/>words = tokens / 1.33<br/>hkask-mcp-corpus/src/helpers.rs:356]
+    A[corpus_chunk tool<br/>hkask-mcp-corpus/src/tools/document.rs:355] --> B["chunk_word_bounds: corpus helpers"]
+    B --> C["tokens_to_words: floor tokens / 1.33"]
     B --> D{multi_tier}
     D -->|yes| E[coarse 2048 / medium 512 / fine 128 tokens<br/>document.rs:395-397]
-    D -->|no| F[single tier, default 256 tokens<br/>hkask-mcp-corpus services_core/standalone_settings.rs:234]
-    E --> G[chunk_structure<br/>helpers.rs:429]
+    D -->|no| F["single tier: corpus settings default 256 tokens"]
+    E --> G["chunk_structure: corpus helpers"]
     F --> G
     G --> H[chunk_text_with_overlap<br/>hkask-memory/src/text_chunking.rs:211]
     H --> I[sanitize_text<br/>text_chunking.rs:45]
@@ -198,7 +198,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RES-CHUNK-002
 verified_date: 2026-09-28
-verified_against: kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:355-426; kask/mcp-servers/hkask-mcp-corpus/src/helpers.rs:356-429; kask/crates/hkask-memory/src/text_chunking.rs:20-311; kask/mcp-servers/hkask-mcp-corpus/src/services_core/standalone_settings.rs:234-263
+verified_against: kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:355-426; kask/mcp-servers/hkask-mcp-corpus/src/helpers.rs (tokens_to_words, chunk_word_bounds, chunk_structure); kask/crates/hkask-memory/src/text_chunking.rs:20-311; kask/mcp-servers/hkask-mcp-corpus/src/settings.rs (HkaskSettings::chunk_max_tokens)
 status: VERIFIED
 -->
 
@@ -215,7 +215,7 @@ Traceability of each capability to its canonical pattern:
 | Corrupted-encoding detection | `kask/crates/hkask-memory/src/text_chunking.rs:20` | Ingestion hygiene |
 | Boilerplate and front/back-matter filter | `kask/crates/hkask-memory/src/text_chunking.rs:404` | Ingestion hygiene |
 | Deduplication and LLM consolidation | `kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus.rs:69-166` | Post-processing |
-| Ontology-tag prefix on embedding input | `kask/mcp-servers/hkask-mcp-corpus/src/tools/semantic.rs:303` | Metadata-as-text, partial |
+| Ontology-tag prefix on embedding input | `kask/mcp-servers/hkask-mcp-corpus/src/tools/semantic.rs`, `embed_batch_from_jsonl` | Metadata-as-text, partial |
 
 The structural splitter, the sentence-end fallback, and the boilerplate
 filtering are a well-executed instance of the structure-based family that §5
@@ -234,7 +234,7 @@ hygiene, and multi-tier output that is structurally the hierarchical pattern.
 The deliberate absence of semantic chunking is consistent with §5.[^semcost]
 
 The chunk-size approximation — `floor(tokens / 1.33)` whitespace words
-(`kask/mcp-servers/hkask-mcp-corpus/src/helpers.rs:356`) — deliberately avoids
+(`kask/mcp-servers/hkask-mcp-corpus/src/helpers.rs`, `tokens_to_words`) — deliberately avoids
 a tokenizer dependency. It is an English-prose heuristic: the ratio is
 calibrated to English text, so the effective budget drifts for
 morphologically richer languages and for code, where a whitespace-delimited
@@ -269,7 +269,7 @@ choice rather than being independently optimizable.[^pdfchunk]
 **Metadata prefixing exists, but is narrow and opt-in.** Ontology tags are
 prepended to the embedded text when `tagged_jsonl` is supplied, with a neutral
 `[unclassified] ` prefix for chunks that carry no tags
-(`kask/mcp-servers/hkask-mcp-corpus/src/tools/semantic.rs:303-328`). Two gaps
+(`kask/mcp-servers/hkask-mcp-corpus/src/tools/semantic.rs`, `embed_batch_from_jsonl`). Two gaps
 remain. First, the prefix carries ontology tags only — not structural
 provenance such as source file or section heading. Second, the chunk-time index
 path behind `corpus_chunk(index: true)` embeds bare passage text
@@ -358,7 +358,7 @@ stage, no tier linking, and no model-derived default budget.
    `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:395-397` with a
    per-tier overlap, or a per-tier fraction, and evaluate it.
 3. **Generalize the metadata prefix and apply it on both embed paths.** Extend
-   the existing tag prefix (`kask/mcp-servers/hkask-mcp-corpus/src/tools/semantic.rs:303-328`)
+   the existing tag prefix (`kask/mcp-servers/hkask-mcp-corpus/src/tools/semantic.rs`, `embed_batch_from_jsonl`)
    to carry structural provenance — source file and section heading — and apply
    the same composition on the chunk-time index path
    (`kask/mcp-servers/hkask-mcp-corpus/src/services/convert.rs:447`), which

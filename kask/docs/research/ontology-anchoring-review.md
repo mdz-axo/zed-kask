@@ -155,7 +155,7 @@ Downstream, the multi-namespace map is read where domains matter:
 `read_ontology_namespaces` lists the touched domains per chunk
 (`kask/mcp-servers/hkask-mcp-corpus/src/tools/semantic/ontology_io.rs:27-60`).
 Consolidation merges cluster members' concepts and re-canonicalizes
-(`kask/mcp-servers/hkask-mcp-corpus/src/services/consolidation.rs:305-312`).
+(`kask/mcp-servers/hkask-mcp-corpus/src/services/consolidation.rs`, `ConsolidationService::consolidate`).
 Salience deliberately uses the **raw** `candidate_terms`, not the canonical
 concepts, because canonical anchors are too coarse for the graph when exact
 resolution correctly reaches the shared 5W1H core

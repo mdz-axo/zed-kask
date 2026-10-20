@@ -14,13 +14,11 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::helpers::map_service_error;
-
 use crate::{McpToolError, Parameters, execute_tool, tool, tool_router};
 
 /// Resolve the embedding model from HkaskSettings.
 fn embedding_model() -> String {
-    crate::services_core::standalone_settings::HkaskSettings::load().embedding_model()
+    crate::settings::HkaskSettings::load().embedding_model()
 }
 
 /// Resolve the generation model from InferenceConfig.
@@ -212,7 +210,9 @@ impl crate::CorpusServer {
 
             let result = crate::compose::ComposeService::compose(request)
                 .await
-                .map_err(|e| map_service_error(e, "Compose failed"))?;
+                .map_err(|error| {
+                    McpToolError::new(error.kind, format!("Compose failed: {}", error.message))
+                })?;
 
             Ok(json!({
                 "prose": result.generated_prose,
@@ -272,7 +272,12 @@ impl crate::CorpusServer {
                     dim: crate::embedding_dim(),
                 },
             )
-            .map_err(|e| map_service_error(e, "Centroid computation failed"))?;
+            .map_err(|error| {
+                McpToolError::new(
+                    error.kind,
+                    format!("Centroid computation failed: {}", error.message),
+                )
+            })?;
 
             Ok(json!({
                 "author": params.author,
@@ -316,7 +321,9 @@ impl crate::CorpusServer {
 
             let result = crate::compose::ComposeService::compose(request)
                 .await
-                .map_err(|e| map_service_error(e, "Rewrite failed"))?;
+                .map_err(|error| {
+                    McpToolError::new(error.kind, format!("Rewrite failed: {}", error.message))
+                })?;
 
             Ok(json!({
                 "rewritten": result.generated_prose,

@@ -21,10 +21,12 @@ the current code contract, not a completed live corpus run.
 | Canonical `TaggedChunk`, `ClassificationOutcome`, `QaEvidence`, prompt IDs and passage-ref exclusion | `hkask-types/src/corpus.rs` |
 | Durable passage publication and warm/DB retrieval | `src/index.rs`, `src/tools/storage.rs` |
 | Source-scoped context and prepared prompts | `src/services/prompt_builder.rs` |
-| QA validation, envelope and accounting | `src/services/qa_pipeline.rs`, `src/tools/semantic/qa.rs` |
+| QA validation, envelope and accounting | `src/services/qa_pipeline.rs` |
 | Output ownership, transport and retry | `src/services/qa_batch.rs`, `src/batch.rs`, `src/path_safety.rs` |
 | QA ingestion and retained metadata | `src/tools/corpus.rs`, `src/tools/corpus/qa_parsing.rs` |
 | Style selection, centroid and validation | `src/compose.rs`, `src/tools/compose_tools.rs`, `hkask-memory/src/memory_store.rs` |
+| Typed provider-to-MCP failure mapping | `src/helpers.rs` |
+| Corpus model and chunk settings | `src/settings.rs` |
 
 Source identity and derivation use [Dublin Core](https://www.dublincore.org/specifications/dublin-core/dcmi-terms/)
 and [PROV-O](https://www.w3.org/TR/prov-o/); procedure metadata uses PKO. These

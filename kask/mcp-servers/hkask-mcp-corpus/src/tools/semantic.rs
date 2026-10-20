@@ -12,7 +12,6 @@
 mod assertions;
 
 mod ontology_io;
-pub(crate) mod qa;
 
 use crate::batch::{
     ADAPTIVE_CONCURRENCY_FLOOR, AdaptiveLimiter, BatchOutcome, MAX_RETRIES, retry_with_backoff,
@@ -35,7 +34,6 @@ pub(crate) use assertions::{
 };
 pub(crate) use ontology_io::read_ontology_namespaces;
 pub(crate) use ontology_io::read_ontology_tags;
-pub(crate) use qa::configured_qa_model;
 
 #[derive(Default)]
 struct EmbeddingIdentityState {

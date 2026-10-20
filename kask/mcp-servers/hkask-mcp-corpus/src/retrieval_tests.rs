@@ -75,7 +75,8 @@ struct RecordingPort {
     prompts: Mutex<Vec<String>>,
     generation_models: Mutex<Vec<Option<String>>>,
     embedding_requests: Mutex<Vec<(String, Option<u32>)>>,
-    generation_error: bool,
+    generation_error: Option<InferenceError>,
+    embedding_error: Option<hkask_types::EmbeddingGenerationError>,
     inputs: Mutex<Vec<String>>,
     pause: Option<(tokio::sync::Notify, tokio::sync::Notify)>,
     short: bool,
@@ -106,10 +107,8 @@ impl InferencePort for RecordingPort {
                 .expect("corrupt centroid vector");
         }
         Box::pin(async move {
-            if self.generation_error {
-                return Err(InferenceError::Generation(
-                    "offline generation rejected".into(),
-                ));
+            if let Some(error) = &self.generation_error {
+                return Err(error.clone());
             }
             Ok(InferenceResult {
                 text: response,
@@ -147,6 +146,9 @@ impl InferencePort for RecordingPort {
         let count = texts.len();
         let requested_model = model.to_string();
         Box::pin(async move {
+            if let Some(error) = &self.embedding_error {
+                return Err(error.clone());
+            }
             if let Some((entered, release)) = &self.pause {
                 entered.notify_one();
                 release.notified().await;
@@ -523,7 +525,8 @@ async fn composition_routes_models_through_injected_port_and_surfaces_generation
     let selected_model = "offline/selected-non-default-generation";
     for generation_error in [false, true] {
         let port = Arc::new(RecordingPort {
-            generation_error,
+            generation_error: generation_error
+                .then(|| InferenceError::Generation("offline generation rejected".into())),
             ..Default::default()
         });
         let mut request = composition_request(&database, Arc::clone(&port), Value::Null);
@@ -564,6 +567,222 @@ async fn composition_routes_models_through_injected_port_and_surfaces_generation
             vec!["test: Write about a river."]
         );
     }
+}
+
+/// Style tools preserve actionable provider failures rather than a generic service error.
+#[tokio::test]
+async fn style_tools_classify_provider_failures_without_losing_detail() {
+    use hkask_types::EmbeddingGenerationError as EmbeddingError;
+    use hkask_types::McpErrorKind::{Internal, InvalidArgument, PermissionDenied, Unavailable};
+    let directory = fixture();
+    let database = directory.path().join("style-errors.db");
+    let _store = crate::helpers::open_memory_store(&database.to_string_lossy(), PASSPHRASE)
+        .expect("style database");
+    let config_path = directory.path().join("cognition.yaml");
+    let mut config = json!({
+        "author":"test", "embedding":{"model":"offline", "dim":crate::embedding_dim(),
+        "centroid_entity_ref":"style:test:centroid"},
+        "validation":{"centroid_distance_max":1.0}
+    });
+    std::fs::write(
+        &config_path,
+        serde_yaml_neo::to_string(&config).expect("cognition YAML"),
+    )
+    .expect("config file");
+    let inference_cases = [
+        (
+            InferenceError::NotConfigured("provider key missing".into()),
+            PermissionDenied,
+        ),
+        (
+            InferenceError::Auth("provider rejected key".into()),
+            PermissionDenied,
+        ),
+        (
+            InferenceError::Connection("provider offline".into()),
+            Unavailable,
+        ),
+        (
+            InferenceError::CircuitOpen("provider circuit open".into()),
+            Unavailable,
+        ),
+        (
+            InferenceError::Timeout("provider timed out".into()),
+            Unavailable,
+        ),
+        (
+            InferenceError::Overloaded("provider at capacity".into()),
+            Unavailable,
+        ),
+        (
+            InferenceError::Model("invalid model".into()),
+            InvalidArgument,
+        ),
+        (
+            InferenceError::Generation("provider generation failed".into()),
+            Internal,
+        ),
+        (
+            InferenceError::Json("provider JSON invalid".into()),
+            Internal,
+        ),
+        (
+            InferenceError::VisionUnsupported("unsupported provider operation".into()),
+            Internal,
+        ),
+    ];
+    let embedding_cases = [
+        (
+            EmbeddingError::NotConfigured("embedding key missing".into()),
+            PermissionDenied,
+        ),
+        (
+            EmbeddingError::Api(401, "embedding key rejected".into()),
+            PermissionDenied,
+        ),
+        (
+            EmbeddingError::Api(403, "embedding access denied".into()),
+            PermissionDenied,
+        ),
+        (
+            EmbeddingError::Connection("embedding provider offline".into()),
+            Unavailable,
+        ),
+        (
+            EmbeddingError::Api(429, "embedding rate limited".into()),
+            Unavailable,
+        ),
+        (
+            EmbeddingError::Api(503, "embedding provider unavailable".into()),
+            Unavailable,
+        ),
+        (
+            EmbeddingError::Api(400, "embedding request rejected".into()),
+            InvalidArgument,
+        ),
+        (
+            EmbeddingError::InvalidRequest("invalid embedding request".into()),
+            InvalidArgument,
+        ),
+        (
+            EmbeddingError::DimensionMismatch {
+                expected: 3,
+                actual: 2,
+            },
+            InvalidArgument,
+        ),
+        (EmbeddingError::EmptyResponse, Internal),
+        (
+            EmbeddingError::Json("embedding JSON invalid".into()),
+            Internal,
+        ),
+    ];
+    let cases = inference_cases
+        .into_iter()
+        .map(|(error, kind)| (Some(error), None, kind))
+        .chain(
+            embedding_cases
+                .into_iter()
+                .map(|(error, kind)| (None, Some(error), kind)),
+        );
+    for (generation_error, embedding_error, expected_kind) in cases {
+        let detail = generation_error
+            .as_ref()
+            .map(ToString::to_string)
+            .or_else(|| embedding_error.as_ref().map(ToString::to_string))
+            .expect("typed failure");
+        let server = server(Arc::new(RecordingPort {
+            generation_error,
+            embedding_error,
+            ..Default::default()
+        }));
+        for rewrite in [false, true] {
+            let result = if rewrite {
+                server
+                    .corpus_rewrite(Parameters(crate::tools::compose_tools::RewriteRequest {
+                        content: "Rewrite a sentence.".into(),
+                        author: "test".into(),
+                        db_path: database.to_string_lossy().into(),
+                        dimension: "hopper".into(),
+                        config_path: Some(config_path.to_string_lossy().into()),
+                    }))
+                    .await
+            } else {
+                server
+                    .corpus_compose(Parameters(crate::tools::compose_tools::ComposeRequest {
+                        prompt: "Write a sentence.".into(),
+                        author: "test".into(),
+                        db_path: database.to_string_lossy().into(),
+                        no_validate: false,
+                        config_path: Some(config_path.to_string_lossy().into()),
+                    }))
+                    .await
+            };
+            let error = result.expect_err("typed provider failure must surface");
+            assert_eq!(
+                error.kind, expected_kind,
+                "rewrite={rewrite}: {detail}: {error}"
+            );
+            assert!(error.message.contains(&detail), "{error}");
+            assert!(
+                error.message.starts_with(if rewrite {
+                    "Rewrite failed:"
+                } else {
+                    "Compose failed:"
+                }),
+                "{error}"
+            );
+        }
+    }
+    for (template, stage) in [("{% if %}", "parse"), ("{{ missing_value }}", "render")] {
+        config["jinja2_template"] = json!(template);
+        std::fs::write(
+            &config_path,
+            serde_yaml_neo::to_string(&config).expect("cognition YAML"),
+        )
+        .expect("config file");
+        let port = Arc::new(RecordingPort::default());
+        let server = server(Arc::clone(&port));
+        let error = server
+            .corpus_compose(Parameters(crate::tools::compose_tools::ComposeRequest {
+                prompt: "Write a sentence.".into(),
+                author: "test".into(),
+                db_path: database.to_string_lossy().into(),
+                no_validate: true,
+                config_path: Some(config_path.to_string_lossy().into()),
+            }))
+            .await
+            .expect_err("strict template error");
+        assert_eq!(error.kind, Unavailable);
+        assert!(
+            error.message.contains(&format!("Template {stage} failed")),
+            "{error}"
+        );
+        assert!(port.prompts.lock().expect("prompts").is_empty());
+    }
+    let port = Arc::new(RecordingPort::default());
+    let server = server(Arc::clone(&port));
+    let error = server
+        .corpus_compose(Parameters(crate::tools::compose_tools::ComposeRequest {
+            prompt: "x".repeat(50_001),
+            author: "test".into(),
+            db_path: database.to_string_lossy().into(),
+            no_validate: true,
+            config_path: Some(config_path.to_string_lossy().into()),
+        }))
+        .await
+        .expect_err("oversized input");
+    assert_eq!(error.kind, InvalidArgument);
+    assert!(
+        error.message.contains("Prompt exceeds 50KB limit"),
+        "{error}"
+    );
+    assert!(
+        port.embedding_requests
+            .lock()
+            .expect("embeddings")
+            .is_empty()
+    );
 }
 
 /// expect: "A stored style centroid makes corpus_compose's validation run

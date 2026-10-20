@@ -77,7 +77,7 @@ the current `ocr_protocol` do not resume; no plain-text compatibility route exis
 
 Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:994-1097`,
 `kask/mcp-servers/hkask-mcp-corpus/src/tools/tagging/ops.rs:578-594`, `kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus.rs:560-698`,
-`kask/mcp-servers/hkask-mcp-corpus/src/tools/compose_tools.rs:110-154`, `kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs:444-470`, and
+`kask/mcp-servers/hkask-mcp-corpus/src/tools/compose_tools.rs` (`ComposeRequest`, `RewriteRequest`, `CentroidRequest`), `kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs:444-470`, and
 `kask/mcp-servers/hkask-mcp-corpus/src/tools/gather.rs:46-81`.
 
 | Tool | Inputs and defaults |
@@ -304,7 +304,7 @@ default 256). **Overlap defaults to 64 approximate tokens = 48 words**; explicit
 whitespace words, not tokenizer counts. Invalid/nonprogressing bounds fail before
 reading/writing. Every positive-overlap window repeats the previous suffix and
 adds new words; zero uses the same structural/sentence engine. Short final
-fragments are valid (`kask/mcp-servers/hkask-mcp-corpus/src/helpers.rs:336–398`;
+fragments are valid (`kask/mcp-servers/hkask-mcp-corpus/src/helpers.rs`, `tokens_to_words` and `chunk_word_bounds`;
 `kask/crates/hkask-memory/src/text_chunking.rs:123–197`).
 
 Directory mode enumerates immediate `.txt` children, containment-checks each,
@@ -527,6 +527,16 @@ selects the requested dimension (default `composite`) even with `config_path`.
 Compose `no_validate=true` explicitly skips; other lookup errors propagate.
 Optional `embedding.retrieval.declared_method.signal` thresholds all must match;
 missing method signals exclude passages and increment `method_signals_missing`.
+
+Style operations return `McpToolError` directly. Missing/rejected provider credentials
+map to `permission_denied`; transport, timeout, capacity and transient embedding API
+failures map to `unavailable`; invalid model/request parameters map to
+`invalid_argument`; malformed or unexpected provider results map to `internal`.
+Strict template errors and centroid lookup failures remain visible as `unavailable`,
+while an absent centroid retains the distinct `centroid_missing` result. Operation
+context and underlying failure detail remain in the message
+(`kask/mcp-servers/hkask-mcp-corpus/src/helpers.rs`, `map_inference_error` and
+`map_embedding_error`; `src/compose.rs` and `src/template.rs`).
 
 `corpus_query(db_path=...)` queries the named durable database through disk
 KNN only when the in-memory index is **empty**; a nonempty index (same-process

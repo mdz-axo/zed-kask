@@ -101,20 +101,8 @@ pub(crate) fn render_docproc_template(
 }
 
 // ── One-shot rendering (Strict, no cache) ───────────────────────────────────
-// One Environment construction and ServiceError wrapping for one-shot renders
-// (`compose.rs`).
-
-use crate::services_core::{DomainKind, ErrorKind, ServiceError};
-
-/// Construct a `ServiceError` from a minijinja error.
-pub(crate) fn template_error(operation: &str, name: &str, e: minijinja::Error) -> ServiceError {
-    let message = format!("Template {operation} failed for '{name}': {e}");
-    ServiceError::Domain {
-        domain: DomainKind::Infrastructure,
-        kind: ErrorKind::ServiceUnavailable,
-        source: Some(Box::new(e)),
-        message,
-    }
+fn template_error(operation: &str, name: &str, error: minijinja::Error) -> crate::McpToolError {
+    crate::McpToolError::unavailable(format!("Template {operation} failed for '{name}': {error}"))
 }
 
 /// Render a minijinja template from source with `Strict` undefined behavior.
@@ -125,7 +113,7 @@ pub(crate) fn render_one_shot(
     name: &str,
     source: impl Into<String>,
     ctx: &minijinja::Value,
-) -> Result<String, ServiceError> {
+) -> Result<String, crate::McpToolError> {
     let mut env = minijinja::Environment::new();
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
     env.add_template_owned(name, source.into())

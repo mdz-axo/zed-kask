@@ -51,13 +51,13 @@ The architecture is coherent, but authority, interruption, and recovery semantic
 
 ### Inventory measured during review
 
-Offline Cargo metadata reported 299 workspace members, including **19 libraries under `kask/crates/` and 12 MCP server packages**. The measured workspace release was 0.40.0. (Current tree, re-verified 2026-10-13: 18 libraries — `hkask-services-core` was folded into `hkask-mcp-corpus` as its `services_core` module and deleted, commit `8fb33f8e73` — and 13 MCP server packages, the experimentation server having been added.)
+Offline Cargo metadata reported 299 workspace members, including **19 libraries under `kask/crates/` and 12 MCP server packages**. The measured workspace release was 0.40.0. (Current tree, re-verified 2026-10-13: 18 libraries — `hkask-services-core` was folded into `hkask-mcp-corpus` and deleted, commit `8fb33f8e73`; its surviving settings reader now lives in `hkask-mcp-corpus/src/settings.rs` — and 13 MCP server packages, the experimentation server having been added.)
 
 | Responsibility | Libraries |
 | --- | --- |
 | Contracts and vocabulary | `hkask-types`, `hkask-bridge-ontology`, `hkask-tool-port` |
 | Persistence and memory | `hkask-storage`, `hkask-event-store`, `hkask-memory`, `hkask-keystore` |
-| Execution infrastructure | `hkask-mcp`, `hkask-mcp-server`, `hkask-inference` (`hkask-services-core` folded into `hkask-mcp-corpus` as its `services_core` module, 2026-10-13, commit `8fb33f8e73`) |
+| Execution infrastructure | `hkask-mcp`, `hkask-mcp-server`, `hkask-inference` (`hkask-services-core` folded into `hkask-mcp-corpus`, 2026-10-13, commit `8fb33f8e73`; current settings reader: `hkask-mcp-corpus/src/settings.rs`) |
 | Computation and capabilities | `hkask-forecast`, `hkask-lisp`, `hkask-condenser` |
 | Regulation and interaction support | `hkask-regulation`, `hkask-email`, `hkask-steer-core` |
 | Zed-side integration exception | `kask_bridge` |

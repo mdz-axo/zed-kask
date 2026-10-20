@@ -300,8 +300,8 @@ behavior preservation, `./script/clippy` + crate tests + `cargo check
 - **CU-7 — Legacy-mode verification.** Named candidates — cite the
   production consumer or delete the mode: the standalone-launch
   tracing subscriber
-  (`kask/mcp-servers/hkask-mcp-corpus/src/services_core/standalone_settings.rs:377`, originally
-  hkask-services-core line 391 before the 2026-10-13 fold); any
+  (`kask/mcp-servers/hkask-mcp-corpus/src/settings.rs`,
+  `tests::malformed_settings_surface_fallback`); any
   `HKASK_USE_*` opt-in without a recorded consumer; settings knobs
   whose capability was deleted.
 - **CU-8 — Specification and doc updates ride with every slice.** The
@@ -335,10 +335,10 @@ an actual displacement; CU-7 independent, smallest first.
   rule); no deps orphaned by the CU-1 deletion. NO CANDIDATE, with
   evidence.
 - **CU-7's named candidates:** (a) the standalone-launch subscriber
-  (`standalone_settings.rs:391`) — REJECTED: a test fixture inside
+  (`kask/mcp-servers/hkask-mcp-corpus/src/settings.rs`) — REJECTED: a test fixture inside
   `malformed_settings_surface_fallback`, in a live module with cited
-  consumers (the corpus server's settings load,
-  `compose_tools.rs:23`, `hkask_mcp_corpus.rs:224`); (b)
+  consumers (`tools/compose_tools.rs::embedding_model` and the
+  `HkaskSettings::load` calls in `hkask_mcp_corpus.rs`); (b)
   `HKASK_USE_*` opt-ins — one in the tree, `HKASK_USE_FAL_DOCRES`, and
   it is a removal guard pin (`mcp_servers.rs:1464-1471@training_server_is_not_registered`), not an
   opt-in — REJECTED; (c) settings knobs — the pub settings fields
@@ -365,8 +365,8 @@ not verdict (operator calibration, 2026-09-30).
   (`hkask-storage/src/core/connection.rs:250`, `rotation.rs:125`,
   claimed at `hkask-keystore/src/passphrase.rs:14`); the legacy
   `declared_method.threshold` rejection
-  (`hkask-mcp-corpus/src/compose.rs:225-239`, a typed BadRequest naming
-  the remediation, claimed at `salience.rs:438`); the never-untagged
+  (`hkask-mcp-corpus/src/compose.rs`, `ComposeService::compose`, an
+  `invalid_argument` error naming the remediation, claimed at `salience.rs:438`); the never-untagged
   ladder (the total rung chain, `axis.rs:184-196`); the `busy_timeout`
   ordering (enforced by the `WAL_PRAGMA_BATCH` constant itself,
   `sqlite.rs:16-24`); drop-safety for the forgetting-spec migration (the

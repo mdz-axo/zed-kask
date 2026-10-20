@@ -1,28 +1,9 @@
-//! Standalone (non-zed) settings layer — single source of truth for the
-//! settings file location read by MCP servers under direct launch (not
-//! launched by zed — no IPC bridge). Magna Carta
-//! P3: those surfaces read the same `~/.config/zed-kask/settings.json`
-//! as the host, with compatible JSONC syntax. This layer never writes it.
-//! Also provides `HkaskSettings` for model defaults shared across all servers.
+//! Corpus model and chunk settings read from environment and the host settings file.
 //!
-//! # The two settings layers
-//!
-//! There are TWO settings modules in the workspace — this file is the
-//! **standalone layer**, not the zed layer. Do not confuse them:
-//!
-//! - **This file** (`hkask-services-core/src/standalone_settings.rs`):
-//!   `~/.config/zed-kask/settings.json` + env vars. Read by MCP servers when
-//!   they are NOT launched by zed (no IPC bridge).
-//!   Priority: env var > settings.json > hardcoded default.
-//! - **The zed layer** (`kask/crates/kask_bridge/src/settings.rs`): zed's
-//!   settings store (`KaskSettings`, `From<Content>` conversions, schema in
-//!   `crates/settings_content/src/settings_content.rs`). Read when servers
-//!   ARE launched by zed; `KaskSettings::mcp_env()` translates it into the
-//!   same env vars this layer reads.
-//!
-//! The layers meet at the env vars (`HKASK_*_MODEL` etc.): zed writes them
-//! from its settings store at launch; standalone surfaces read them from the
-//! shell or fall back to this file.
+//! Priority: environment overrides, `~/.config/zed-kask/settings.json`, defaults.
+//! The host injects model environment variables from its own settings store;
+//! direct launches can supply the same variables. This reader accepts JSONC
+//! and never writes the settings file.
 
 use serde::{Deserialize, Serialize};
 
@@ -38,7 +19,7 @@ pub(crate) fn settings_path() -> std::path::PathBuf {
     path.push("zed-kask");
     if let Err(e) = std::fs::create_dir_all(&path) {
         tracing::warn!(
-            target: "hkask.services_core",
+            target: "hkask.mcp.corpus.settings",
             error = %e,
             path = %path.display(),
             "Failed to create zed-kask config directory — \
@@ -49,8 +30,7 @@ pub(crate) fn settings_path() -> std::path::PathBuf {
     path
 }
 
-/// System-wide model defaults persisted to `~/.config/zed-kask/settings.json`.
-/// Shared across CLI, API, REPL, and all MCP servers.
+/// Corpus defaults read from `~/.config/zed-kask/settings.json`.
 /// Priority: env var > settings.json > hardcoded default.
 ///
 /// Note: the generation model is `HKASK_DEFAULT_MODEL` in `InferenceConfig` —
@@ -410,7 +390,7 @@ mod tests {
         let output = std::process::Command::new(std::env::current_exe()?)
             .args([
                 "--exact",
-                "standalone_settings::tests::environment_model_takes_precedence",
+                "settings::tests::environment_model_takes_precedence",
             ])
             .env(VARIABLE, "test/environment")
             .env_remove("HKASK_SETTINGS_TEST_ABSENT")
@@ -420,6 +400,11 @@ mod tests {
             "{}\n{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+            "the child must execute the environment-precedence test: {:?}",
+            output.stdout
         );
         Ok(())
     }

@@ -93,7 +93,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // ocr/llm_ocr.rs, falls back to 1200s.
             "HKASK_OCR_INFERENCE_TIMEOUT_SECS",
             // Chunk token budget override — read by HkaskSettings::chunk_max_tokens()
-            // in services_core/standalone_settings.rs.
+            // in hkask-mcp-corpus/src/settings.rs.
             "HKASK_CHUNK_MAX_TOKENS",
             // OCR vision model override — read by ctx.credentials.get() in
             // hkask_mcp_corpus.rs and std::env::var in corpus/embed/ocr.rs.

@@ -9,7 +9,8 @@ use serde::Deserialize;
 
 use tracing::debug;
 
-use crate::services_core::{DomainKind, ErrorKind, ServiceError};
+use crate::McpToolError;
+use crate::helpers::{map_embedding_error, map_inference_error};
 
 // ── Cognition configuration ──────────────────────────────────────────────
 
@@ -190,15 +191,9 @@ fn open_style_memory_store(
     db_path: &std::path::Path,
     db_passphrase: &str,
     dim: usize,
-) -> Result<MemoryStore, ServiceError> {
-    MemoryStore::open_existing(&db_path.to_string_lossy(), db_passphrase, dim).map_err(|e| {
-        ServiceError::Domain {
-            kind: ErrorKind::BadRequest,
-            domain: DomainKind::Storage,
-            source: None,
-            message: e.to_string(),
-        }
-    })
+) -> Result<MemoryStore, McpToolError> {
+    MemoryStore::open_existing(&db_path.to_string_lossy(), db_passphrase, dim)
+        .map_err(|error| McpToolError::invalid_argument(error.to_string()))
 }
 
 // ── Service ──────────────────────────────────────────────────────────────
@@ -221,7 +216,7 @@ impl ComposeService {
     /// # REQ: P3-svc-compose-004 — compose uses Jinja2 template from cognition config
     /// # expect: "The service layer enables generative access to domain capabilities"
     #[must_use = "result must be used"]
-    pub async fn compose(request: ComposeRequest) -> Result<ComposeResult, ServiceError> {
+    pub async fn compose(request: ComposeRequest) -> Result<ComposeResult, McpToolError> {
         if request
             .cognition
             .embedding
@@ -230,24 +225,16 @@ impl ComposeService {
             .as_ref()
             .is_some_and(|method| method.threshold.is_some())
         {
-            return Err(ServiceError::Domain {
-                kind: ErrorKind::BadRequest,
-                domain: DomainKind::User,
-                source: None,
-                message: "declared_method.threshold is unsupported; configure per-signal thresholds in declared_method.signal".into(),
-            });
+            return Err(McpToolError::invalid_argument(
+                "declared_method.threshold is unsupported; configure per-signal thresholds in declared_method.signal",
+            ));
         }
         // Input length validation
         if request.prompt.len() > 50_000 {
-            return Err(ServiceError::Domain {
-                kind: ErrorKind::BadRequest,
-                domain: DomainKind::User,
-                source: None,
-                message: format!(
-                    "Prompt exceeds 50KB limit (received {} bytes)",
-                    request.prompt.len()
-                ),
-            });
+            return Err(McpToolError::invalid_argument(format!(
+                "Prompt exceeds 50KB limit (received {} bytes)",
+                request.prompt.len()
+            )));
         }
 
         // 1. Open DB + construct memory infrastructure
@@ -266,12 +253,14 @@ impl ComposeService {
                 std::slice::from_ref(&request.prompt),
                 Some(crate::embedding_dim() as u32),
             )
-            .await?;
+            .await
+            .map_err(map_embedding_error)?;
         let prompt_vector = prompt_batch
             .vectors
             .into_iter()
             .next()
-            .ok_or(hkask_types::EmbeddingGenerationError::EmptyResponse)?;
+            .ok_or(hkask_types::EmbeddingGenerationError::EmptyResponse)
+            .map_err(map_embedding_error)?;
 
         // 3. KNN search for exemplar passages, gated on model identity
         let outcome = store
@@ -281,12 +270,7 @@ impl ComposeService {
                 &request.cognition.embedding.model,
                 prompt_batch.actual_model.as_deref(),
             )
-            .map_err(|e| ServiceError::Domain {
-                kind: ErrorKind::BadRequest,
-                domain: DomainKind::Memory,
-                source: None,
-                message: e.to_string(),
-            })?;
+            .map_err(|error| McpToolError::invalid_argument(error.to_string()))?;
         if outcome.excluded_model_mismatch > 0 {
             tracing::warn!(
                 target: "hkask.mcp.corpus.compose",
@@ -332,15 +316,10 @@ impl ComposeService {
                 Ok(h_mems) => h_mems,
                 Err(error) => {
                     if retrieval.declared_method.is_some() {
-                        return Err(ServiceError::Domain {
-                            kind: ErrorKind::BadRequest,
-                            domain: DomainKind::Memory,
-                            source: None,
-                            message: format!(
-                                "Cannot check declared method for {}: {error}",
-                                r.embedding.entity_ref
-                            ),
-                        });
+                        return Err(McpToolError::invalid_argument(format!(
+                            "Cannot check declared method for {}: {error}",
+                            r.embedding.entity_ref
+                        )));
                     }
                     tracing::warn!(target: "hkask.mcp.corpus.compose", entity_ref = %r.embedding.entity_ref, %error,
                         "Salience lookup failed — treating salience as 0.0");
@@ -365,14 +344,11 @@ impl ComposeService {
                 let signals = serde_json::from_value::<hkask_memory::salience::MethodSignals>(
                     record.value.clone(),
                 )
-                .map_err(|error| ServiceError::Domain {
-                    kind: ErrorKind::BadRequest,
-                    domain: DomainKind::Memory,
-                    source: None,
-                    message: format!(
+                .map_err(|error| {
+                    McpToolError::invalid_argument(format!(
                         "Invalid method signals for {}: {error}",
                         r.embedding.entity_ref
-                    ),
+                    ))
                 })?;
                 if !method.matches(&signals) {
                     continue;
@@ -480,7 +456,8 @@ impl ComposeService {
                 Some(&request.generation_model),
                 None,
             )
-            .await?;
+            .await
+            .map_err(map_inference_error)?;
         crate::helpers::record_usage(&result);
         let generated_prose = result.text.trim().to_string();
 
@@ -500,11 +477,13 @@ impl ComposeService {
                             std::slice::from_ref(&generated_prose),
                             Some(crate::embedding_dim() as u32),
                         )
-                        .await?
+                        .await
+                        .map_err(map_embedding_error)?
                         .vectors
                         .into_iter()
                         .next()
-                        .ok_or(hkask_types::EmbeddingGenerationError::EmptyResponse)?;
+                        .ok_or(hkask_types::EmbeddingGenerationError::EmptyResponse)
+                        .map_err(map_embedding_error)?;
                     let distance =
                         crate::cosine_distance(&prose_vector, &centroid_embedding.vector);
                     let threshold = request.cognition.validation.centroid_distance_max;
@@ -518,12 +497,9 @@ impl ComposeService {
                     None
                 }
                 Err(error) => {
-                    return Err(ServiceError::Domain {
-                        kind: ErrorKind::ServiceUnavailable,
-                        domain: DomainKind::Storage,
-                        source: None,
-                        message: format!("Centroid lookup failed: {error}"),
-                    });
+                    return Err(McpToolError::unavailable(format!(
+                        "Centroid lookup failed: {error}"
+                    )));
                 }
             }
         };
@@ -552,7 +528,7 @@ impl ComposeService {
     /// failure, a missing ref, an empty eligible set, or a store failure
     pub(crate) fn style_centroid(
         request: CentroidComputeRequest,
-    ) -> Result<CentroidComputeResult, ServiceError> {
+    ) -> Result<CentroidComputeResult, McpToolError> {
         let store = open_style_memory_store(&request.db_path, &request.db_passphrase, request.dim)?;
 
         let prefix = format!("style:{}:", request.author);
@@ -573,12 +549,7 @@ impl ComposeService {
                 Some(&request.model),
             ),
         }
-        .map_err(|e| ServiceError::Domain {
-            kind: ErrorKind::BadRequest,
-            domain: DomainKind::Memory,
-            source: None,
-            message: e.to_string(),
-        })?;
+        .map_err(|error| McpToolError::invalid_argument(error.to_string()))?;
 
         Ok(CentroidComputeResult {
             passage_count: result.passage_count,
@@ -606,7 +577,7 @@ fn render_jinja2_prompt(
     exemplars: &[String],
     no_validate: bool,
     centroid_distance_max: f64,
-) -> Result<String, ServiceError> {
+) -> Result<String, McpToolError> {
     let ctx = minijinja::context! {
         prompt,
         author,

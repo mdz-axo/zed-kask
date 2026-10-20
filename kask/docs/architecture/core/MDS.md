@@ -61,7 +61,7 @@ The ontology is re-anchored to the **17 surviving kask crates** (16 `hkask-*` + 
 
 ### 1.3 Service and runtime subsystems
 
-**Crate:** the last `hkask-services-*` crate (`hkask-services-core`) was folded into `hkask-mcp-corpus` as its `services_core` module (2026-10-13) — it had exactly one consumer and failed the deletion test. The editor process owns one `McpRuntime`; it spawns the 9 MCP binaries as child processes over stdio, discovers their tools, and governs dispatch (`kask/crates/hkask-mcp/src/runtime.rs:4-12,646-655,749-751`; registry at `kask/crates/kask_bridge/src/mcp_servers.rs:49-419`). There is no daemon or `KaskCore` singleton.
+**Crate:** the last `hkask-services-*` crate (`hkask-services-core`) was folded into `hkask-mcp-corpus` (2026-10-13) — it had exactly one consumer and failed the deletion test. Corpus retains the live settings reader in `src/settings.rs`; style operations return the shared MCP tool-error type directly. The editor process owns one `McpRuntime`; it spawns the 9 MCP binaries as child processes over stdio, discovers their tools, and governs dispatch (`kask/crates/hkask-mcp/src/runtime.rs:4-12,646-655,749-751`; registry at `kask/crates/kask_bridge/src/mcp_servers.rs:49-419`). There is no daemon or `KaskCore` singleton.
 
 The deleted subcrates (`hkask-services-chat`, `hkask-services-onboarding`, `hkask-services-skill`, `hkask-services-wallet`) are **removed**. Their jobs moved to zed-kask surfaces:
 
@@ -76,14 +76,14 @@ Surviving subcrates (kept temporarily while MCP servers depend on them; dissolve
 
 | Subcrate | Domain | Contract Prefix | Count | Status |
 |----------|--------|----------------|-------|--------|
-| ~~`hkask-services-core`~~ (folded) | Foundation: config, error types, settings — folded into `hkask-mcp-corpus` (`services_core` module) | — | — | ✅ Folded |
+| ~~`hkask-services-core`~~ (removed) | Corpus settings reader: `hkask-mcp-corpus/src/settings.rs` | — | — | ✅ Removed |
 | ~~`hkask-services-compose`~~ (folded) | Template composition — folded into `hkask-mcp-corpus` (internal `compose` module) | — | — | ✅ Folded |
 | ~~`hkask-services-context`~~ (folded) | Service context and contract monitoring — `governance.rs` moved to `hkask-mcp-curator`; `mcp_server_guard.rs` + `storage_guard.rs` were dead code | `P{N}-svc-context-*` | 31 | ✅ Folded |
 | ~~`hkask-services-corpus`~~ (folded) | Content corpus: discovery + embed — folded into `hkask-mcp-corpus` (internal `corpus` module) | `P{N}-svc-corpus-*` | 30 | ✅ Folded |
 | ~~`hkask-services-kata-kanban`~~ (folded) | Toyota Kata + Kanban board coordination — folded into `hkask-mcp-kata-kanban` | `P{N}-svc-kata-*` / `KAN-SVC-*` | 61 | ✅ Folded |
 | ~~`hkask-services-runtime`~~ (folded) | Runtime services: classify + guard + provider_intel — folded into `hkask-mcp-corpus` (internal `runtime` module) | `P{N}-svc-runtime-*` | 13 | ✅ Folded |
 | ~~`hkask-services-self-heal`~~ (deleted) | Cross-domain self-healing coordination — deleted in 2026-07-25 cleanup | — | — | ✅ Deleted |
-| ~~`hkask-services-inference`~~ (deleted) | Scaffolding removed; corpus composition requires an injected `Arc<dyn InferencePort>` and explicit `generation_model` (`kask/mcp-servers/hkask-mcp-corpus/src/compose.rs:110-123`) | — | — | ✅ Deleted |
+| ~~`hkask-services-inference`~~ (deleted) | Scaffolding removed; corpus composition requires an injected `Arc<dyn InferencePort>` and explicit `generation_model` (`kask/mcp-servers/hkask-mcp-corpus/src/compose.rs`, `ComposeRequest`) | — | — | ✅ Deleted |
 | `hkask-inference` | Inference routing primitives (`MediaRouter`, `InferenceIpcClient`, `ProviderId`). `InferenceConfig::from_env` reads provider configuration from the child process environment only (`kask/crates/hkask-inference/src/config.rs:109-129,218-228`). Chat, vision, embedding, and model listing can use IPC; media generation is child-local (`hkask_inference.rs:190-390`). | `P{N}-svc-inference-*` | 7 | ✅ Current |
 
 ---
@@ -475,7 +475,7 @@ Cross-references are verified by the link checker in CI (relative links within t
 | `hkask-lisp` | Composition | Sandboxed Lisp interpreter (`hkask_lisp::eval_sandboxed_with_budget`) for deterministic compute steps invoked by skills via the `lisp_eval` tool — bounded recursion, JSON-native, no I/O, no `eval`, no network. |
 | `hkask-mcp` | Composition | Child-process lifecycle, tool discovery, metering, and dispatch. Governed completion writes a `SpanKind::ToolCompleted` record to the injected sink and warns at tracing target `reg.mcp` if persistence fails (`kask/crates/hkask-mcp/src/runtime.rs:1598-1612`). |
 | `hkask-event-store` | Lifecycle, Composition | Append-only event log for agent rollouts (`EventStore`, `EventRecord`, `EventFilter`, `VerdictSource`, `RolloutKind`). Data-plane substrate for agent evaluation and regulation. Wired via `kask_bridge/src/rollout_event_bridge.rs`; consumed by `hkask-regulation/src/cybernetics_loop.rs`. |
-| ~~`hkask-services-core`~~ (folded) | Domain | Foundation: `ServiceError`, `HkaskSettings` — folded into `hkask-mcp-corpus` (`services_core` module, 2026-10-13). |
+| ~~`hkask-services-core`~~ (removed) | Domain | Corpus retains `HkaskSettings` in `hkask-mcp-corpus/src/settings.rs`; no separate service foundation remains. |
 | `kask_bridge` | Composition | D8 — the bidirectional seam: in-process bridge exposing hKask port traits (InferencePort, ToolPort, MemoryPort, etc.) to MCP servers and zed-kask surfaces (composition root wires components directly) |
 | 9 MCP servers | Composition | The tools — child processes over stdio (D3), governed by the in-process `McpRuntime`: corpus, curator, experimentation, kata-kanban, media, prediction-markets, research, scenarios, swarm (the companies server was removed 2026-10-18, commit `3439db5e00`). |
 

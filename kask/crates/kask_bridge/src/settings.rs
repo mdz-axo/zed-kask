@@ -549,9 +549,9 @@ impl Default for KaskMediaSettings {
 //    `config_env` allowlist (pinned by `*_allowlist_matches_actual_reads`)
 // 5. The consuming MCP server — reads the env var
 // 6. `crates/settings_ui/src/pages/kask_page/models.rs` — the settings UI page
-// The standalone (non-zed) layer is
-// `kask/mcp-servers/hkask-mcp-corpus/src/services_core/standalone_settings.rs`
-// (folded in from the deleted `hkask-services-core`, 2026-10-13).
+// The corpus process reads model settings through
+// `kask/mcp-servers/hkask-mcp-corpus/src/settings.rs`,
+// using host-injected environment variables before its JSONC file fallback.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct KaskModelsSettings {
     /// Default inference model (provider-prefixed, e.g. `"OpenRouter/z-ai/glm-5.3"`).

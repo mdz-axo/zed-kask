@@ -14,7 +14,6 @@ use serde_json::json;
 
 use crate::batch::{ADAPTIVE_CONCURRENCY_FLOOR, AdaptiveLimiter};
 use crate::render_docproc_template;
-use crate::tools::semantic::configured_qa_model;
 
 const CONSOLIDATED_PREFIX: &str = "corpus:researcher:consolidated:";
 
@@ -144,7 +143,9 @@ impl ConsolidationService {
 
         let limiter = AdaptiveLimiter::new(concurrency, ADAPTIVE_CONCURRENCY_FLOOR);
         let router = Arc::clone(&self.inference_router);
-        let model_override = configured_qa_model(None);
+        let model_override = std::env::var("HKASK_QA_MODEL")
+            .ok()
+            .or_else(|| std::env::var("HKASK_DEFAULT_MODEL").ok());
 
         let mut handles = Vec::with_capacity(multi_indices.len());
         for &ci in &multi_indices {

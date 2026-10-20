@@ -27,7 +27,7 @@ use crate::services::qa_pipeline::{
 };
 use hkask_mcp_server::server::map_io_error;
 
-use crate::tools::semantic::qa::map_qa_inference_error;
+use crate::helpers::map_inference_error;
 
 // One registry across service instances and transports, not one mutex per call.
 static QA_OUTPUTS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
@@ -200,7 +200,7 @@ impl QaBatchService {
         let adjudications = read_complete_adjudications(&quality_adjudications_jsonl, &prompts)?;
         let selected_model =
             hkask_inference::model_constants::resolve_qa_generation_model(model.as_deref())
-                .map_err(map_qa_inference_error)?;
+                .map_err(map_inference_error)?;
 
         let output_path = crate::path_safety::distinct_output_path(&prompts_jsonl, &output)?;
         crate::path_safety::distinct_output_path(&quality_adjudications_jsonl, &output)?;
