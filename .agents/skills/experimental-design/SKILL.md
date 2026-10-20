@@ -251,16 +251,11 @@ Attach the exact ED-2 result as `FindingsSpec.typed_scientific_outcome`; do not 
 
 ### 7. Check and improve (bounded PDCA)
 
-Run pin cases through ED-C/ED-1/ED-1S/ED-2I/ED-2:
+Run `bash kask/scripts/check-skill-lisp-forms.sh`. After corpus parsing, the same gate runs the `scientific_gate_` behavioral regressions in the Lisp checker against the **actual authored forms**, using the production evaluator; zero matching tests is a failure.
 
-- Wright-style reference-data/geometry transport failure and instrument failure → `measurement_void`, with a bounded calibration design rather than automatic exoneration;
-- underpowered plan before spend → `no-headroom: no_information`;
-- non-rejection or apparent contradiction after execution with inadequate realized precision → `inconclusive`;
-- confounded observational causal claim → `design_void: not_identified`;
-- naive optional stopping → `design_void: not_preregistered`;
-- valid prespecified equivalence with adequate precision → `evidence_of_practical_equivalence`;
-- a selected id absent from the ED-1 survivor set → ED-1S `false`;
-- contradictory findings classifications (`prediction_contradicted=true` and `equivalence_met=true`) → ED-2I `false`.
+The suite pins ED-0R/ED-0 ownership reconciliation and routing, ED-C cardinality/unique ids, every ED-1 admission branch, ED-1S survivor/alternative reconciliation, ED-2I report-presence/consistency checks, and all six ED-2 outcomes. Its negative and boundary cases include measurement/transport failure, underpowered plans, confounding, optional stopping, imprecise contradiction/non-rejection, valid equivalence, unknown selection ids and contradictory findings. In-memory mutations must remain parseable but disagree with the same decision oracles.
+
+These tests check decision logic over classified inputs, not scientific validity, calibration execution or a complete study. JSON null and empty objects/arrays are null-like in Lisp; ED-0R tests use a nonempty versioned spec for the nonnull case. The normalization output's full JSON contract still needs validation outside these decision checks.
 
 If a candidate fails for a fixable design reason, re-enter candidate synthesis once with the named failure. Maximum two design passes. A second failure reports the typed stop and open assumption; it does not weaken the gate.
 

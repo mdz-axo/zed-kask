@@ -3,8 +3,9 @@
 # production hkask-lisp parser and reject mechanically certain inert/type-broken
 # forms before they reach an agent.
 #
-# The Rust checker owns extraction and AST linting. This wrapper only binds the
-# live corpus paths and gives fixture selftests an override seam.
+# The Rust checker owns extraction and AST linting. Scientific gate regressions
+# also evaluate the authored ED/HT forms; parsing alone cannot pin decisions.
+# The binary override remains the isolated detector-fixture seam.
 
 set -euo pipefail
 
@@ -18,5 +19,7 @@ if [ -n "${SKILL_LISP_CHECKER_BIN:-}" ]; then
 fi
 
 cd "$ROOT"
-exec cargo run -q -p hkask-lisp --bin check-skill-lisp-forms -- \
+cargo run -q -p hkask-lisp --bin check-skill-lisp-forms -- \
     "$SKILLS_DIR" "$TEMPLATES_DIR"
+exec bash "$SCRIPT_DIR/cargo-test-nonzero.sh" -q -p hkask-lisp \
+    --bin check-skill-lisp-forms scientific_gate_

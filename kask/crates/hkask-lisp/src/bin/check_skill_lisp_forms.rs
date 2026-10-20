@@ -1067,6 +1067,715 @@ form: "(= (+ a b) 3)"
         );
     }
 
+    fn scientific_env(base: &serde_json::Value, changes: serde_json::Value) -> serde_json::Value {
+        let mut env = base.clone();
+        env.as_object_mut()
+            .expect("gate fixture is an object")
+            .extend(
+                changes
+                    .as_object()
+                    .expect("fixture changes are an object")
+                    .clone(),
+            );
+        env
+    }
+
+    fn assert_scientific_case(
+        form: &str,
+        case: &str,
+        env: &serde_json::Value,
+        expected: serde_json::Value,
+    ) {
+        let actual = eval_sandboxed(form, env)
+            .unwrap_or_else(|error| panic!("{case}: authored gate failed to evaluate: {error}"));
+        assert_eq!(actual, expected, "{case}");
+    }
+
+    fn scientific_normalization_env() -> serde_json::Value {
+        json!({
+            "hypothesis_spec": {"spec_version": "hypothesis-spec-v1"},
+            "missing_fields": [], "owner_returns": [], "framer_missing": [],
+            "falsifiability_missing": [], "provenance_missing": [], "constraints_missing": []
+        })
+    }
+
+    fn scientific_admission_env() -> serde_json::Value {
+        json!({
+            "ethics_safety": true, "feasibility": true, "rivals_differ": true,
+            "equivalence_prespecified": false, "identification": true,
+            "measurement_validity": true, "information_adequacy": true,
+            "bias_control": true, "preregistration": true, "reproducibility": true
+        })
+    }
+
+    fn scientific_selection_env() -> serde_json::Value {
+        json!({
+            "candidate_drafts": [{"candidate_id": "a"}, {"candidate_id": "b"}],
+            "gate_results": [
+                {"candidate_id": "a", "result": "execute"},
+                {"candidate_id": "b", "result": "design_void: not_identified"}
+            ],
+            "selected_design": {"candidate_id": "a"},
+            "strongest_rejected_alternative": {"candidate_id": "b"}
+        })
+    }
+
+    fn scientific_findings_env() -> serde_json::Value {
+        json!({
+            "design_valid": true, "measurement_valid": true,
+            "prediction_contradicted": false, "precision_adequate": true,
+            "equivalence_prespecified": false, "equivalence_met": false,
+            "severe": false, "run_reports": ["fixture:report"]
+        })
+    }
+
+    fn scientific_mapping_env(arm: &str) -> serde_json::Value {
+        json!({
+            "layer": "scientific_hypothesis", "design_spec_toplevel": true,
+            "design_spec_in_eval_set": false, "spec_version_nonempty": true,
+            "max_runs": 1, "rubric_kinds": ["metric", "implementation"],
+            "feedback_partition_present": true, "selection_partition_present": true,
+            "expected_headroom_arm": arm, "mapped_headroom_arm": arm,
+            "meaningful_pass_rate_definition": true, "binary_resolution_present": true,
+            "design_family_nonempty": true, "criterion_nonempty": true
+        })
+    }
+
+    #[test]
+    fn scientific_gate_ed0r_reconciles_owner_and_partition_sets() {
+        let form = skill_candidate("experimental-design", "define unique-strings");
+        let complete = scientific_normalization_env();
+        assert_scientific_case(&form, "complete", &complete, json!(true));
+        let missing = scientific_env(
+            &complete,
+            json!({
+                "hypothesis_spec": null,
+                "missing_fields": ["question", "rivals"],
+                "owner_returns": [{"field": "question"}, {"field": "rivals"}],
+                "framer_missing": ["question"], "falsifiability_missing": ["rivals"]
+            }),
+        );
+        assert_scientific_case(&form, "all missing owners retained", &missing, json!(true));
+        for (case, changes) in [
+            (
+                "missing fields with a nonnull spec",
+                json!({"hypothesis_spec": {"spec_version": "hypothesis-spec-v1"}}),
+            ),
+            (
+                "dropped owner",
+                json!({"owner_returns": [{"field": "question"}]}),
+            ),
+            (
+                "duplicate owner",
+                json!({"owner_returns": [{"field": "question"}, {"field": "question"}]}),
+            ),
+            (
+                "unknown owner field",
+                json!({"owner_returns": [{"field": "question"}, {"field": "other"}]}),
+            ),
+            (
+                "owner without a field",
+                json!({"owner_returns": [{"field": "question"}, {}]}),
+            ),
+            (
+                "duplicate missing field",
+                json!({"missing_fields": ["question", "question"]}),
+            ),
+            (
+                "overlapping partitions",
+                json!({"falsifiability_missing": ["question"]}),
+            ),
+            (
+                "unknown partition field",
+                json!({"falsifiability_missing": ["other"]}),
+            ),
+            ("missing partition", json!({"falsifiability_missing": []})),
+        ] {
+            assert_scientific_case(
+                &form,
+                case,
+                &scientific_env(&missing, changes),
+                json!(false),
+            );
+        }
+        assert_scientific_case(
+            &form,
+            "complete fields require a spec",
+            &scientific_env(&complete, json!({"hypothesis_spec": null})),
+            json!(false),
+        );
+    }
+
+    #[test]
+    fn scientific_gate_ed0_routes_to_the_earliest_missing_owner() {
+        let form = skill_candidate("experimental-design", "blocked: malformed_normalization");
+        let base = scientific_normalization_env();
+        for (case, changes, expected) in [
+            ("ready", json!({}), "ready"),
+            (
+                "framing",
+                json!({"framer_missing": ["question"]}),
+                "return_to_framer",
+            ),
+            (
+                "falsifiability",
+                json!({"falsifiability_missing": ["rivals"]}),
+                "return_to_falsifiability",
+            ),
+            (
+                "provenance",
+                json!({"provenance_missing": ["source"]}),
+                "blocked: provenance",
+            ),
+            (
+                "constraints",
+                json!({"constraints_missing": ["ethics"]}),
+                "blocked: constraints",
+            ),
+            (
+                "null spec",
+                json!({"hypothesis_spec": null}),
+                "blocked: malformed_normalization",
+            ),
+            (
+                "framing precedes later owners",
+                json!({
+                    "framer_missing": ["question"], "falsifiability_missing": ["rivals"],
+                    "provenance_missing": ["source"], "constraints_missing": ["ethics"]
+                }),
+                "return_to_framer",
+            ),
+        ] {
+            assert_scientific_case(
+                &form,
+                case,
+                &scientific_env(&base, changes),
+                json!(expected),
+            );
+        }
+    }
+
+    #[test]
+    fn scientific_gate_edc_bounds_candidates_and_requires_unique_ids() {
+        let form = skill_candidate("experimental-design", "define unique-candidate-ids");
+        for count in 0..=6 {
+            let drafts = (0..count)
+                .map(|id| json!({"candidate_id": format!("c{id}")}))
+                .collect::<Vec<_>>();
+            assert_scientific_case(
+                &form,
+                &format!("candidate count {count}"),
+                &json!({
+                    "candidate_drafts": drafts, "only_credible_explanation": null
+                }),
+                json!((2..=5).contains(&count)),
+            );
+        }
+        for (case, drafts, explanation, expected) in [
+            (
+                "justified sole candidate",
+                json!([{"candidate_id": "a"}]),
+                json!("Other designs cannot identify this contrast"),
+                true,
+            ),
+            (
+                "empty sole justification",
+                json!([{"candidate_id": "a"}]),
+                json!(""),
+                false,
+            ),
+            (
+                "duplicate ids",
+                json!([{"candidate_id": "a"}, {"candidate_id": "a"}]),
+                json!(null),
+                false,
+            ),
+            (
+                "empty id",
+                json!([{"candidate_id": "a"}, {"candidate_id": ""}]),
+                json!(null),
+                false,
+            ),
+            (
+                "missing id",
+                json!([{"candidate_id": "a"}, {}]),
+                json!(null),
+                false,
+            ),
+        ] {
+            assert_scientific_case(
+                &form,
+                case,
+                &json!({
+                    "candidate_drafts": drafts, "only_credible_explanation": explanation
+                }),
+                json!(expected),
+            );
+        }
+    }
+
+    #[test]
+    fn scientific_gate_ed1_keeps_validity_noncompensatory() {
+        let form = skill_candidate("experimental-design", "blocked: ethics_safety");
+        let base = scientific_admission_env();
+        assert_scientific_case(&form, "admitted", &base, json!("execute"));
+        for (field, expected) in [
+            ("ethics_safety", "blocked: ethics_safety"),
+            ("feasibility", "blocked: infeasible"),
+            ("rivals_differ", "design_void: no_discrimination"),
+            ("identification", "design_void: not_identified"),
+            (
+                "measurement_validity",
+                "measurement_void: measurement_invalid",
+            ),
+            ("information_adequacy", "no-headroom: no_information"),
+            ("bias_control", "design_void: bias_uncontrolled"),
+            ("preregistration", "design_void: not_preregistered"),
+            ("reproducibility", "design_void: not_reproducible"),
+        ] {
+            let mut env = base.clone();
+            env[field] = json!(false);
+            assert_scientific_case(&form, field, &env, json!(expected));
+        }
+        assert_scientific_case(
+            &form,
+            "prespecified equivalence discriminates",
+            &scientific_env(
+                &base,
+                json!({"rivals_differ": false, "equivalence_prespecified": true}),
+            ),
+            json!("execute"),
+        );
+        assert_scientific_case(
+            &form,
+            "ethics cannot be compensated",
+            &scientific_env(
+                &base,
+                json!({"ethics_safety": false, "measurement_validity": false}),
+            ),
+            json!("blocked: ethics_safety"),
+        );
+    }
+
+    #[test]
+    fn scientific_gate_ed1s_selects_only_gated_survivors() {
+        let form = skill_candidate("experimental-design", "define unique-result-ids");
+        let base = scientific_selection_env();
+        assert_scientific_case(&form, "eligible selection", &base, json!(true));
+        for (case, changes) in [
+            (
+                "ineligible selection",
+                json!({"selected_design": {"candidate_id": "b"}}),
+            ),
+            (
+                "unknown selection",
+                json!({"selected_design": {"candidate_id": "other"}}),
+            ),
+            (
+                "selected equals rejected",
+                json!({"strongest_rejected_alternative": {"candidate_id": "a"}}),
+            ),
+            (
+                "unknown alternative",
+                json!({"strongest_rejected_alternative": {"candidate_id": "other"}}),
+            ),
+            (
+                "missing alternative",
+                json!({"strongest_rejected_alternative": null}),
+            ),
+            (
+                "missing receipt",
+                json!({"gate_results": [{"candidate_id": "a", "result": "execute"}]}),
+            ),
+            (
+                "duplicate receipt",
+                json!({"gate_results": [
+                    {"candidate_id": "a", "result": "execute"}, {"candidate_id": "a", "result": "execute"}
+                ]}),
+            ),
+            (
+                "equal counts do not prove coverage",
+                json!({"gate_results": [
+                    {"candidate_id": "a", "result": "execute"}, {"candidate_id": "other", "result": "execute"}
+                ]}),
+            ),
+        ] {
+            assert_scientific_case(&form, case, &scientific_env(&base, changes), json!(false));
+        }
+        assert_scientific_case(
+            &form,
+            "sole candidate needs no alternative",
+            &scientific_env(
+                &base,
+                json!({
+                    "candidate_drafts": [{"candidate_id": "a"}],
+                    "gate_results": [{"candidate_id": "a", "result": "execute"}],
+                    "strongest_rejected_alternative": null
+                }),
+            ),
+            json!(true),
+        );
+    }
+
+    #[test]
+    fn scientific_gate_ed2i_reconciles_findings_with_report_presence() {
+        let form = skill_candidate("experimental-design", "(length run_reports)");
+        let base = scientific_findings_env();
+        for (case, changes, expected) in [
+            ("reported observation", json!({}), true),
+            (
+                "contradiction",
+                json!({"prediction_contradicted": true}),
+                true,
+            ),
+            (
+                "prespecified equivalence",
+                json!({"equivalence_met": true, "equivalence_prespecified": true}),
+                true,
+            ),
+            (
+                "contradiction and equivalence",
+                json!({"prediction_contradicted": true, "equivalence_met": true, "equivalence_prespecified": true}),
+                false,
+            ),
+            (
+                "post hoc equivalence",
+                json!({"equivalence_met": true}),
+                false,
+            ),
+            (
+                "missing reports claimed valid",
+                json!({"run_reports": []}),
+                false,
+            ),
+            (
+                "missing reports surfaced as invalid",
+                json!({"run_reports": [], "measurement_valid": false}),
+                true,
+            ),
+        ] {
+            assert_scientific_case(
+                &form,
+                case,
+                &scientific_env(&base, changes),
+                json!(expected),
+            );
+        }
+    }
+
+    #[test]
+    fn scientific_gate_ed2_distinguishes_outcomes_and_respects_precision() {
+        let form = skill_candidate("experimental-design", "\"corroborated\"");
+        let base = scientific_findings_env();
+        for (case, changes, expected) in [
+            ("neutral", json!({}), "inconclusive"),
+            (
+                "invalid design",
+                json!({"design_valid": false, "prediction_contradicted": true}),
+                "design_void",
+            ),
+            (
+                "invalid measurement cannot refute",
+                json!({"measurement_valid": false, "prediction_contradicted": true}),
+                "measurement_void",
+            ),
+            (
+                "precise contradiction",
+                json!({"prediction_contradicted": true}),
+                "rejected",
+            ),
+            (
+                "imprecise contradiction",
+                json!({"prediction_contradicted": true, "precision_adequate": false}),
+                "inconclusive",
+            ),
+            (
+                "equivalence",
+                json!({"equivalence_prespecified": true, "equivalence_met": true}),
+                "evidence_of_practical_equivalence",
+            ),
+            (
+                "imprecise equivalence",
+                json!({"equivalence_prespecified": true, "equivalence_met": true, "precision_adequate": false}),
+                "inconclusive",
+            ),
+            (
+                "severe precise test",
+                json!({"severe": true}),
+                "corroborated",
+            ),
+            (
+                "imprecision cannot corroborate",
+                json!({"severe": true, "precision_adequate": false}),
+                "inconclusive",
+            ),
+        ] {
+            assert_scientific_case(
+                &form,
+                case,
+                &scientific_env(&base, changes),
+                json!(expected),
+            );
+        }
+    }
+
+    #[test]
+    fn scientific_gate_htr_prefers_binary_headroom_without_excluding_scientific_designs() {
+        let form = skill_candidate("hypothesis-testing", "(let ((common");
+        let base = json!({
+            "meaningful_baseline": true, "rubric_expressible": true, "positive_max_runs": true,
+            "partitions_valid": true, "design_spec_versioned": true, "executor_bound": true,
+            "binary_headroom": true, "genuinely_binary_claim": true, "scientific_headroom_criterion": false
+        });
+        for (case, changes, expected) in [
+            ("binary", json!({}), "compatible_binary"),
+            (
+                "both available prefers binary",
+                json!({"scientific_headroom_criterion": true}),
+                "compatible_binary",
+            ),
+            (
+                "scientific without binary pass rate",
+                json!({"binary_headroom": false, "scientific_headroom_criterion": true}),
+                "compatible_scientific",
+            ),
+            (
+                "nonbinary scientific claim",
+                json!({"genuinely_binary_claim": false, "scientific_headroom_criterion": true}),
+                "compatible_scientific",
+            ),
+            (
+                "neither headroom",
+                json!({"binary_headroom": false}),
+                "registry_schema_mismatch",
+            ),
+            (
+                "nonbinary pass-rate claim",
+                json!({"genuinely_binary_claim": false}),
+                "registry_schema_mismatch",
+            ),
+        ] {
+            assert_scientific_case(
+                &form,
+                case,
+                &scientific_env(&base, changes),
+                json!(expected),
+            );
+        }
+        for field in [
+            "meaningful_baseline",
+            "rubric_expressible",
+            "positive_max_runs",
+            "partitions_valid",
+            "design_spec_versioned",
+            "executor_bound",
+        ] {
+            let mut env = base.clone();
+            env["scientific_headroom_criterion"] = json!(true);
+            env[field] = json!(false);
+            assert_scientific_case(&form, field, &env, json!("registry_schema_mismatch"));
+        }
+    }
+
+    #[test]
+    fn scientific_gate_htrm_validates_exact_arm_tokens_and_rendered_rubric_kinds() {
+        let form = skill_candidate("hypothesis-testing", "define valid-rubric-kinds");
+        for arm in ["compatible_binary", "compatible_scientific"] {
+            let base = scientific_mapping_env(arm);
+            assert_scientific_case(&form, arm, &base, json!(true));
+            for (case, changes) in [
+                ("wrong layer", json!({"layer": "skill"})),
+                ("spec not top-level", json!({"design_spec_toplevel": false})),
+                (
+                    "dual-written spec",
+                    json!({"design_spec_in_eval_set": true}),
+                ),
+                ("unversioned spec", json!({"spec_version_nonempty": false})),
+                ("zero budget", json!({"max_runs": 0})),
+                ("negative budget", json!({"max_runs": -1})),
+                (
+                    "missing feedback",
+                    json!({"feedback_partition_present": false}),
+                ),
+                (
+                    "missing selection",
+                    json!({"selection_partition_present": false}),
+                ),
+                ("no rubrics", json!({"rubric_kinds": []})),
+                ("no metric", json!({"rubric_kinds": ["implementation"]})),
+                (
+                    "no implementation evidence",
+                    json!({"rubric_kinds": ["metric"]}),
+                ),
+                (
+                    "unknown kind",
+                    json!({"rubric_kinds": ["metric", "implementation", "other"]}),
+                ),
+                (
+                    "cased kind",
+                    json!({"rubric_kinds": ["metric", "Implementation"]}),
+                ),
+            ] {
+                assert_scientific_case(&form, case, &scientific_env(&base, changes), json!(false));
+            }
+            assert_scientific_case(
+                &form,
+                "grounded report is valid evidence",
+                &scientific_env(
+                    &base,
+                    json!({"rubric_kinds": ["metric", "grounded_report"]}),
+                ),
+                json!(true),
+            );
+            let (required, irrelevant) = if arm == "compatible_binary" {
+                (
+                    [
+                        "meaningful_pass_rate_definition",
+                        "binary_resolution_present",
+                    ],
+                    ["design_family_nonempty", "criterion_nonempty"],
+                )
+            } else {
+                (
+                    ["design_family_nonempty", "criterion_nonempty"],
+                    [
+                        "meaningful_pass_rate_definition",
+                        "binary_resolution_present",
+                    ],
+                )
+            };
+            for field in required {
+                let mut env = base.clone();
+                env[field] = json!(false);
+                assert_scientific_case(&form, field, &env, json!(false));
+            }
+            let mut env = base.clone();
+            for field in irrelevant {
+                env[field] = json!(false);
+            }
+            assert_scientific_case(
+                &form,
+                "other arm fields are not required",
+                &env,
+                json!(true),
+            );
+            let other = if arm == "compatible_binary" {
+                "compatible_scientific"
+            } else {
+                "compatible_binary"
+            };
+            assert_scientific_case(
+                &form,
+                "mapper must not switch arms",
+                &scientific_env(&base, json!({"mapped_headroom_arm": other})),
+                json!(false),
+            );
+        }
+        for token in [
+            "registry_schema_mismatch",
+            "binary",
+            "scientific",
+            "",
+            "compatible_scientfic",
+        ] {
+            let env = scientific_mapping_env(token);
+            assert_scientific_case(
+                &form,
+                "matching unknown tokens still refuse",
+                &env,
+                json!(false),
+            );
+        }
+    }
+
+    #[test]
+    fn scientific_gate_ht1_only_updates_on_the_four_declared_triggers() {
+        let form = skill_candidate("hypothesis-testing", "\"new_category\"");
+        for trigger in [
+            "contradiction",
+            "new_category",
+            "flip",
+            "refinement",
+            "reconfirmation",
+            "",
+            "other",
+        ] {
+            let expected =
+                if ["contradiction", "new_category", "flip", "refinement"].contains(&trigger) {
+                    "update"
+                } else {
+                    "keep"
+                };
+            assert_scientific_case(
+                &form,
+                trigger,
+                &json!({"trigger": trigger}),
+                json!(expected),
+            );
+        }
+    }
+
+    #[test]
+    fn scientific_gate_negative_controls_detect_semantic_mutations() {
+        // Mutate only an in-memory copy of the authored form. A syntactically
+        // valid weakening must disagree with the same negative-case oracle.
+        for (skill, needle, original, replacement, env, expected) in [
+            (
+                "hypothesis-testing",
+                "define valid-rubric-kinds",
+                "(t (not t))",
+                "(t t)",
+                scientific_mapping_env("registry_schema_mismatch"),
+                json!(false),
+            ),
+            (
+                "hypothesis-testing",
+                "define valid-rubric-kinds",
+                "(string= expected_headroom_arm mapped_headroom_arm)",
+                "t",
+                scientific_env(
+                    &scientific_mapping_env("compatible_binary"),
+                    json!({"mapped_headroom_arm": "compatible_scientific"}),
+                ),
+                json!(false),
+            ),
+            (
+                "experimental-design",
+                "\"corroborated\"",
+                "(and prediction_contradicted precision_adequate)",
+                "prediction_contradicted",
+                scientific_env(
+                    &scientific_findings_env(),
+                    json!({"prediction_contradicted": true, "precision_adequate": false}),
+                ),
+                json!("inconclusive"),
+            ),
+            (
+                "experimental-design",
+                "(length run_reports)",
+                "(not measurement_valid)",
+                "true",
+                scientific_env(&scientific_findings_env(), json!({"run_reports": []})),
+                json!(false),
+            ),
+        ] {
+            let form = skill_candidate(skill, needle);
+            assert_eq!(
+                form.matches(original).count(),
+                1,
+                "mutation target must remain unique: {original}"
+            );
+            assert_scientific_case(&form, original, &env, expected.clone());
+            let mutant = form.replacen(original, replacement, 1);
+            parse(&mutant).expect("negative control remains syntactically valid");
+            assert_ne!(
+                eval_sandboxed(&mutant, &env).expect("mutant evaluates"),
+                expected,
+                "the decision oracle must detect {original} -> {replacement}"
+            );
+        }
+    }
+
     #[test]
     fn vc0_typed_predicate_admits_content_and_rejects_invisible_leaders() {
         // The VC-0 typed-reference predicate (verification-compression PLAN

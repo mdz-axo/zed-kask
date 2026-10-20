@@ -119,4 +119,56 @@ printf '# Demo\n\nCall lisp_eval with a form supplied elsewhere.\n' \
     > "$fixture/skills/demo/SKILL.md"
 expect_fail "lisp_eval without candidate fails non-vacuously" 'exposes no parseable Lisp candidate' "$fixture/vacuous.txt"
 
-echo "SELFTEST OK: skill Lisp detector is alive (2 pass controls, 6 fail controls)."
+# Pin the production wrapper too: parsing must precede behavioral tests, either
+# failure must reach CI, and a stale filter must not turn zero tests into green.
+mkdir -p "$fixture/bin"
+cat > "$fixture/bin/cargo" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$1" in
+    run)
+        echo parse >> "$FAKE_CARGO_LOG"
+        if [[ "$FAKE_CARGO_MODE" == parse_failure ]]; then exit 41; fi
+        ;;
+    test)
+        [[ " $* " == *" --bin check-skill-lisp-forms scientific_gate_ "* ]] || exit 43
+        echo behavior >> "$FAKE_CARGO_LOG"
+        if [[ "$FAKE_CARGO_MODE" == behavior_failure ]]; then exit 42; fi
+        if [[ "$FAKE_CARGO_MODE" == zero_tests ]]; then
+            echo 'test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out'
+        else
+            echo 'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out'
+        fi
+        ;;
+    *) exit 44 ;;
+esac
+EOF
+chmod +x "$fixture/bin/cargo"
+for mode in pass parse_failure behavior_failure zero_tests; do
+    : > "$fixture/cargo-calls"
+    status=0
+    PATH="$fixture/bin:$PATH" FAKE_CARGO_LOG="$fixture/cargo-calls" \
+        FAKE_CARGO_MODE="$mode" SKILL_LISP_CHECKER_BIN= \
+        bash "$CHECK" > "$fixture/pipeline-$mode.txt" 2>&1 || status=$?
+    case "$mode" in
+        pass) expected=0 ;;
+        parse_failure) expected=41 ;;
+        behavior_failure) expected=42 ;;
+        zero_tests) expected=4 ;;
+    esac
+    if [[ "$status" -ne "$expected" ]]; then
+        echo "SELFTEST FAIL: pipeline $mode exited $status, expected $expected"
+        cat "$fixture/pipeline-$mode.txt"
+        exit 1
+    fi
+    if [[ "$mode" == parse_failure ]]; then
+        printf 'parse\n' > "$fixture/expected-calls"
+    else
+        printf 'parse\nbehavior\n' > "$fixture/expected-calls"
+    fi
+    cmp "$fixture/expected-calls" "$fixture/cargo-calls" || {
+        echo "SELFTEST FAIL: pipeline $mode skipped or reordered stages"; exit 1; }
+    echo "OK (pipeline $mode)"
+done
+
+echo "SELFTEST OK: skill Lisp detector and behavioral gate are alive."
