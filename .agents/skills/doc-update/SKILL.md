@@ -1,6 +1,6 @@
 ---
 name: doc-update
-description: Realign the kask/docs tree with the current code. Full recomposition per docs-set (ground → compare → recompose → verify) under the <75-file condensation cap (working target 60), with role-based triage, file:line citation discipline, and the corpus-tool decision point. Use when code changes have drifted docs, when adding a new crate/server to the documented surface, or on a scheduled docs refresh.
+description: Realign the kask/docs tree with the current code. Full recomposition per docs-set (ground → compare → recompose → verify) under the <85-file condensation cap (working target 75), with role-based triage, file:line citation discipline, and the corpus-tool decision point. Use when code changes have drifted docs, when adding a new crate/server to the documented surface, or on a scheduled docs refresh.
 ---
 
 # doc-update
@@ -17,7 +17,7 @@ to make every documented claim verifiable against the current tree.
   quadrant determines its recomposition standard.
 - **Minimalism** (Carroll, *The Nurnberg Funnel*) — fewer, task-oriented
   documents beat comprehensive ones. Anchors the condensation cap: the tree
-  holds fewer than 75 files (working target 60); leaf docs without a formal role are folded
+  holds fewer than 85 files (working target 75); leaf docs without a formal role are folded
   or deleted, never left to rot.
 - **PKO** (Procedural Knowledge Ontology) — this skill IS a procedure with
   specification/execution separation: the SKILL.md is the spec, the phases
@@ -30,7 +30,7 @@ to make every documented claim verifiable against the current tree.
 ## Initial and target condition
 
 - **Initial condition:** the current `kask/docs/` inventory and count, governing documentation specs, the code surfaces each selected docs-set describes, and the existing claims/links/citations to classify.
-- **Target condition:** the tree remains below 75 files, every fold/delete names a successor, and all five Phase 6 gates (count, links, citations, frontmatter, no-deleted-surfaces) return true after registries and diagrams are reconciled. A failed gate re-enters its owning phase at most twice; a third failure ends the pass with that failure reported.
+- **Target condition:** the tree remains below 85 files, every fold/delete names a successor, and all five Phase 6 gates (count, links, citations, frontmatter, no-deleted-surfaces) return true after registries and diagrams are reconciled. A failed gate re-enters its owning phase at most twice; a third failure ends the pass with that failure reported.
 
 ## When to Use
 
@@ -49,7 +49,7 @@ to make every documented claim verifiable against the current tree.
 ## Governing specs (read before editing)
 
 1. `kask/docs/architecture/DOCUMENTATION_STANDARDS.md` — frontmatter,
-   Mermaid-First, DIAGRAM_ALIGNMENT, lifecycle, the <75 cap with 60 working
+   Mermaid-First, DIAGRAM_ALIGNMENT, lifecycle, the <85 cap with 75 working
    target (§3), verification checklist (§10).
 2. `kask/docs/architecture/core/MDS.md` — the surviving-crate list
    (Composition Root). A doc naming a crate not in that table, or a deleted
@@ -71,9 +71,9 @@ citations were not re-checked is unverified recomposition.
 
 ### Phase 0 — Condensation triage (before any recomposition)
 
-1. Count the tree: `find kask/docs -type f | wc -l`. The cap is **< 75**
-   (all files, not only Markdown; working target 60 — operator ruling
-   2026-09-30).
+1. Count the tree: `find kask/docs -type f | wc -l`. The cap is **< 85**
+   (all files, not only Markdown; working target 75 — operator ruling
+   2026-10-07).
    If the realignment would add documents, the triage must first make room.
 2. Classify every candidate artifact by role:
    - **CORE** — referenced from a governing spec (README, INDEX,
@@ -92,7 +92,7 @@ citations were not re-checked is unverified recomposition.
    resources, NOT files next to SKILL.md). Record every decision with a
    successor.
 4. Never delete without a successor named. Git history is the content
-   archive; the ledger is the map to it. Verify the Phase 0 triage cap and successor completeness in `lisp_eval` (`DU-1`) before starting Phase 1: `(and (< count_after 75) (= successorless_folds 0) (= count_after (- count_before deleted_or_folded)))`.
+   archive; the ledger is the map to it. Verify the Phase 0 triage cap and successor completeness in `lisp_eval` (`DU-1`) before starting Phase 1: `(and (< count_after 85) (= successorless_folds 0) (= count_after (- count_before deleted_or_folded)))`.
 
 ### Phase 1 — Ground (per docs-set, one pass each)
 
@@ -174,8 +174,8 @@ frontmatter grep).
 
 Run every gate; all must pass before the pass is done:
 
-1. **Count gate**: `find kask/docs -type f | wc -l` → must be < 75
-   (working target 60).
+1. **Count gate**: `find kask/docs -type f | wc -l` → must be < 85
+   (working target 75).
 2. **Link gate**: sweep every `](target)` relative link in every `.md`;
    zero may be unresolved.
 3. **Citation gate**: sample at least 5 `file:line` citations per recomposed
@@ -237,8 +237,8 @@ Template context variables (from the template's `[inference]` contract):
 
 ## Constraints
 
-- The cap is **fewer than 75 files** in `kask/docs/` (working target
-  60) — enforced at Phase 0 and re-checked at Phase 6.
+- The cap is **fewer than 85 files** in `kask/docs/` (working target
+  75) — enforced at Phase 0 and re-checked at Phase 6.
 - Never document a deleted surface as current. Tombstones say "no longer
   exists" and name the commit or date.
 - Never invent a tool name, test name, or count. Extract from the `#[tool]`
