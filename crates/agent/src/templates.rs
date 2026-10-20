@@ -702,33 +702,76 @@ mod tests {
     fn test_goal_prompt_corpus_retires_coupled_scoring_and_keeps_authority() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let mut paths = vec![root.join("crates/agent/src/templates/system_prompt.hbs")];
-        let mut directories = vec![root.join(".agents/skills"), root.join("kask/registry/templates")];
+        let mut directories = vec![
+            root.join(".agents/skills"),
+            root.join("kask/registry/templates"),
+        ];
         while let Some(directory) = directories.pop() {
             for entry in std::fs::read_dir(&directory).expect("read live prompt directory") {
                 let path = entry.expect("read live prompt entry").path();
                 if path.is_dir() {
                     directories.push(path);
-                } else if matches!(path.extension().and_then(|extension| extension.to_str()), Some("md" | "j2" | "yaml" | "hbs")) {
+                } else if matches!(
+                    path.extension().and_then(|extension| extension.to_str()),
+                    Some("md" | "j2" | "yaml" | "hbs")
+                ) {
                     paths.push(path);
                 }
             }
         }
-        assert!(paths.len() > 100, "a narrowed or empty sweep is not coverage");
+        assert!(
+            paths.len() > 100,
+            "a narrowed or empty sweep is not coverage"
+        );
         for path in paths {
             let text = std::fs::read_to_string(&path).expect("read live prompt text");
-            for retired in ["kanban_goal_score", "kanban_goal_memory_acknowledge", "brier_interpretation", "calibration_note", "excellent < 0.05", "inverse-Brier weighting)."] {
-                assert!(!text.contains(retired), "{} still advertises {retired}", path.display());
+            for retired in [
+                "kanban_goal_score",
+                "kanban_goal_memory_acknowledge",
+                "brier_interpretation",
+                "calibration_note",
+                "excellent < 0.05",
+                "inverse-Brier weighting).",
+            ] {
+                assert!(
+                    !text.contains(retired),
+                    "{} still advertises {retired}",
+                    path.display()
+                );
             }
         }
-        let governance = std::fs::read_to_string(root.join(".agents/skills/program-manager/SKILL.md"))
-            .expect("read canonical skill governance");
-        for requirement in ["interaction_id", "spec_digest", "ActionChoice", "forecast", "blinded", "unknown", "never deletes"] {
-            assert!(governance.contains(requirement), "goal governance missing {requirement}");
+        let governance =
+            std::fs::read_to_string(root.join(".agents/skills/program-manager/SKILL.md"))
+                .expect("read canonical skill governance");
+        for requirement in [
+            "interaction_id",
+            "spec_digest",
+            "ActionChoice",
+            "forecast",
+            "blinded",
+            "unknown",
+            "never deletes",
+        ] {
+            assert!(
+                governance.contains(requirement),
+                "goal governance missing {requirement}"
+            );
         }
-        let forecasting = std::fs::read_to_string(root.join(".agents/skills/superforecasting/SKILL.md"))
-            .expect("read forecasting protocol");
-        for requirement in ["scenario_declare", "resolver", "Murphy (1973)", "not calibration", "same cases", "undefined"] {
-            assert!(forecasting.contains(requirement), "forecast guidance missing {requirement}");
+        let forecasting =
+            std::fs::read_to_string(root.join(".agents/skills/superforecasting/SKILL.md"))
+                .expect("read forecasting protocol");
+        for requirement in [
+            "scenario_declare",
+            "resolver",
+            "Murphy (1973)",
+            "not calibration",
+            "same cases",
+            "undefined",
+        ] {
+            assert!(
+                forecasting.contains(requirement),
+                "forecast guidance missing {requirement}"
+            );
         }
     }
 
@@ -747,7 +790,9 @@ mod tests {
             is_windows: false,
             mcp_tools_hidden: 0,
         };
-        let rendered = template.render(&Templates::new()).expect("render create-only goal prompt");
+        let rendered = template
+            .render(&Templates::new())
+            .expect("render create-only goal prompt");
         assert!(rendered.contains("Move 1 → `kanban_goal_create`"));
         assert!(!rendered.contains("Move 4 → `kanban_goal_close`"));
         assert!(!rendered.contains("Correction → `kanban_goal_correct_outcome`"));

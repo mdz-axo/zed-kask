@@ -71,8 +71,7 @@ disputed and ineligible cases stay explicit; versions do not add independent cas
   falsifiably) → `oracle_verified` (a matched, causally dependent,
   spec-anchored check ran; output shown, not summarized) →
   `operator_confirmed` (ground truth). The same lattice instantiates
-  as grounding-verify's provenance tiers, the kanban goal loop (agent
-  judges → operator scores, Brier-calibrated), and kanban task
+  as grounding-verify's provenance tiers, the goal lifecycle (worker progress → human closure → blinded assessment; optional forecast resolution separate), and kanban task
   verification's evidence tiers. Presenting a weak oracle's green as
   verification is oracle substitution.
 
@@ -357,8 +356,8 @@ The change is complete when ALL hold:
 5. Behavior changes pinned by tests; docs aligned.
 6. Open items surfaced with closure state and owner; the closure
    ledger scores green (zero reported-abandoned, zero unowned);
-   durable decisions recorded; goal judged (and scored when the
-   operator confirms).
+   durable decisions recorded; worker progress judged and native human closure
+   requested when appropriate, without inventing acceptance.
 
 If any fails, the work is NOT done — it is technical debt wearing a
 completed task's appearance. Return to the failing phase or halt with a

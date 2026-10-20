@@ -11,7 +11,7 @@ mds_categories: [composition, lifecycle]
 # Scenarios MCP Server Reference
 
 **Crate:** `kask/mcp-servers/hkask-mcp-scenarios`
-**Tools:** 21 — `scenario_frame`, `scenario_frame_document`, `scenario_brainstorm`, `scenario_build`, `scenario_quantify`, `scenario_propagate`, `scenario_recompute_posteriors`, `scenario_calibrate`, `scenario_update`, `scenario_synthesize`, `scenario_cross_validate`, `scenario_score`, `scenario_calibration`, `scenario_assess`, `scenario_triage`, `scenario_status`, `scenario_from_markets_set`, `forecast_persist`, `forecast_record`, `forecast_list`, `scenario_risk_measure`. The direct market-record bridge is `scenario_from_markets_set`; a single record is passed as a set of one. The four forecast tools were ported from the retired companies server (2026-10-18).
+**Tools:** 22 — `scenario_frame`, `scenario_frame_document`, `scenario_brainstorm`, `scenario_build`, `scenario_quantify`, `scenario_propagate`, `scenario_recompute_posteriors`, `scenario_calibrate`, `scenario_update`, `scenario_synthesize`, `scenario_cross_validate`, `scenario_declare`, `scenario_score`, `scenario_calibration`, `scenario_assess`, `scenario_triage`, `scenario_status`, `scenario_from_markets_set`, `forecast_persist`, `forecast_record`, `forecast_list`, `scenario_risk_measure`. The direct market-record bridge is `scenario_from_markets_set`; a single record is passed as a set of one. The four forecast tools were ported from the retired companies server (2026-10-18).
 **Auto-start:** Yes by default with the full built-in set; operators can disable the fleet or this server through `kask.mcp` (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:254-268,700-710`).
 
 Tool count is pinned against the live `combined_router()` by `tool_surface_is_exactly_21_registered_tools` (the `mod tests` pin in `kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs`).
@@ -60,7 +60,7 @@ flowchart TD
     calibrate --> update
     calibrate --> cross_validate
     calibrate --> synthesize
-    quantify --> score --> calibration
+    quantify --> declare["scenario_declare"] --> score --> calibration
     synthesize --> assess
     triage -.-> build
     status -.-> calibration
@@ -69,7 +69,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-005
 verified_date: 2026-10-06
-verified_against: kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (the 21 #[tool] handlers; tool_surface_is_exactly_21_registered_tools pin); kask/mcp-servers/hkask-mcp-scenarios/src/superforecast.rs; kask/mcp-servers/hkask-mcp-scenarios/src/types.rs
+verified_against: kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (the 22 #[tool] handlers; tool_surface_is_exactly_22_registered_tools pin); kask/mcp-servers/hkask-mcp-scenarios/src/superforecast.rs; kask/mcp-servers/hkask-mcp-scenarios/src/types.rs
 status: VERIFIED
 -->
 
@@ -110,9 +110,9 @@ full derivation is in git history — see the Redesign record):
 | BinomialEvent | yes/no question + deadline + probability + basis + Fermi sub-questions + base rate | MAIA event composition; Tetlock question discipline | `ScenarioEvent` |
 | DependencyEdge | parent ids + bitmap-ordered conditional table, length 2^\|parents\| | MAIA path dependence; Bayesian-network CPT | `depends_on` |
 | EventTree | marginals, topological order, joint = P(all events occur) | MAIA template; Tetlock inside view | `scenario_quantify` and the market bridges |
-| Perspective + Synthesis | inverse-Brier-weighted aggregation with disagreement score | Tetlock dragonfly-eye | `scenario_synthesize` |
-| ForecastRecord + journal | append-only journal + snapshot; Brier on tree marginals (schema v3) | Tetlock record/score | `ForecastStore` — `scenario_score` is the only journal writer |
-| CalibrationObservation | 10-bin curve, weighted bias, isotonic second channel | Tetlock calibration | `scenario_calibration` |
+| Perspective + Synthesis | explicitly equal-weight aggregation with disagreement score | Tetlock dragonfly-eye | `scenario_synthesize` |
+| ForecastRecord + journal | append-only journal + snapshot; prospectively frozen tree marginals (schema v4) | Tetlock record/score | `ForecastStore` — `scenario_declare` freezes records; `scenario_score` records matching outcomes |
+| CalibrationObservation | descriptive eligible-history bins, signed bias and isotonic diagnostic; no calibration certificate | Tetlock calibration | `scenario_calibration` |
 | ScenarioProject | the spine: framing document, trees, assessment history, journal linkage | Chermack's unit of assessment | `ProjectStore` (see Project persistence) |
 | Narrative / Implications / Indicators | quadrant stories, strategies, early-warning indicators | Schwartz steps 5–8 | the skill layer (`scenario-planning` templates) — a ruled contract, not a server primitive |
 | ImpactMapping | per-node yes/no DCF deltas; 2^N paths weighted by probability | MAIA "events drive the financial forecast" | caller-authored impact mappings consumed by the skill layer (the former `scenario_impact_valuation` tool retired with the companies server; the shared `hkask_forecast` risk core survives) |
@@ -153,21 +153,22 @@ full derivation is in git history — see the Redesign record):
 | `scenario_quantify` | Quantify an event tree: topological sort, marginal probabilities via conditional propagation, joint probability, per-event variance contribution, sensitivity ranking; detects cycles and missing parents. | `events` JSON |
 | `scenario_propagate` | Update one event's prior and propagate through the tree: descendant marginals and joint probability recomputed; returns the updated tree plus a per-node before/after propagation journal (tâtonnement record). CPTs untouched. | `events`, `event_id`, `new_prior` |
 | `scenario_recompute_posteriors` | Recompute posteriors under evidence, in BOTH directions (forward to descendants, backward to ancestors) via the shared `hkask_forecast::posterior` engine — the same implementation the graph widget delegates to. Exact on polytrees; degrades to forward-only with a note on multiply-connected DAGs. | `events`, `evidence` (one of `observed_probability` / `occurred` / `likelihood_ratio` per entry) |
-| `scenario_calibrate` | Four-stage calibration (Fermi decomposition → outside view → inside view → calibration feedback from ≥5 resolved forecasts); returns calibrated probability, bounds, and certainty tier. | Fermi sub-questions, base rate |
+| `scenario_calibrate` | Fermi decomposition → outside view → inside view, without automatic historical-bias adjustment; returns calibrated probability, bounds, and certainty tier. | Fermi sub-questions, base rate |
 | `scenario_update` | Bayesian update: P(H\|E) = P(E\|H) × P(H) / P(E); returns posterior and update magnitude. | `prior`, `likelihood`, `evidence_base_rate` |
 
 ### Aggregation (2)
 
 | Tool | Description | Key params |
 |------|-------------|------------|
-| `scenario_synthesize` | Dragonfly-eye synthesis (Tetlock Stage 5): empirical-Bayes aggregation of ≥2 independent perspectives weighted by historical Brier; disagreement score and strongest dissent. | `perspectives` |
+| `scenario_synthesize` | Dragonfly-eye synthesis (Tetlock Stage 5): explicit equal-weight aggregation of ≥2 perspectives; unmatched historical loss is not a defensible weight; disagreement score and strongest dissent. | `perspectives` |
 | `scenario_cross_validate` | Cross-validate an LLM estimate against a server-computed estimate per sub-question; flags for review when overall divergence exceeds threshold (default 0.15). | two estimate sets |
 
 ### Tracking (2)
 
 | Tool | Description | Key params |
 |------|-------------|------------|
-| `scenario_score` | Brier-score a forecast against known outcomes; per-event and aggregate scores with interpretation bands (excellent <0.05 … worse_than_climatology ≥0.33). | `events`, `outcomes` |
+| `scenario_declare` | Before outcome visibility, freeze full events, tree marginals, deadline and named caller-reported outcome source. New probabilities/propositions need a new ID; withheld-market scaffolds are ineligible. A source name is not authenticated evidence. | `forecast_id`, `events`, `resolver` |
+| `scenario_score` | Resolve only an existing prospective declaration with exact frozen events and resolver; score stored marginals. Duplicate/conflicting outcomes fail; unmatched outcomes are listed and ignored. Undeclared legacy history is unscored. Raw loss has no quality bands. | `forecast_id`, `events`, `resolver`, `outcomes` |
 | `scenario_calibration` | Calibration curve from stored forecasts (10 probability bins, actual hit rate vs mean forecast), optionally filtered by subject. | `subject` |
 
 ### Assessment (2)
@@ -185,7 +186,7 @@ full derivation is in git history — see the Redesign record):
 
 ## Key paths
 
-- **Standard pipeline:** `scenario_frame` → `scenario_frame_document` → `scenario_brainstorm` → `scenario_build` → `scenario_quantify` → `scenario_calibrate` → `scenario_synthesize` → `scenario_score` → `scenario_assess`[^tetlock-key-paths]
+- **Standard pipeline:** `scenario_frame` → `scenario_frame_document` → `scenario_brainstorm` → `scenario_build` → `scenario_quantify` → `scenario_calibrate` → `scenario_synthesize` → `scenario_declare` → `scenario_score` → `scenario_assess`[^tetlock-key-paths]
 - **Research entry:** `scenario_build` with research text (skip brainstorming if events are extracted from web text)
 - **Valuation bridge (skill layer):** `scenario_quantify` → the caller authors per-node impact mappings and branch returns → the `scenario-planning` skill composes them with the scenario tree; the shared `hkask_forecast` risk core (`scenario_risk_measure`, `fuse_volatility`) is exposed by the scenarios server's `scenario_risk_measure` tool over caller-supplied branch returns. (The former companies-server `scenario_impact_valuation` DCF bridge retired 2026-10-18.)
 - **Markets bridge:** `scenario_from_markets_set` (a single market is a set-of-1) → `scenario_quantify`; market records come from `hkask-mcp-prediction-markets` (`market_lookup` / `market_match`)
@@ -194,23 +195,27 @@ full derivation is in git history — see the Redesign record):
 
 ## Forecast persistence
 
-`scenario_score` durably tracks every forecast and outcome in `ForecastStore`
-(`kask/mcp-servers/hkask-mcp-scenarios/src/superforecast/store.rs`): an append-only JSON-line journal (one line per
-mutation, `fsync`ed before the record is admitted to memory) plus a full
-snapshot compacted from it. On load, the snapshot is applied first and the
-journal is replayed on top of it, last write wins.
+**Equity admission:** `forecast_persist` freezes the return target, tolerance and
+caller-reported horizon resolver. Missing `forecast_probability` remains absent
+and unscored, never a default .7. `forecast_record` resolves a stored declaration,
+not a return target reconstructed after observing the result. Report raw loss and
+eligibility/source limits, not score labels.
 
-**Marginal scoring (schema v3, PR-02).** `scenario_score` resolves the
-event tree first and Brier-scores each node's resolved MARGINAL — for a
-dependent event the belief actually forecast is the marginal the tree
-propagates, not the caller-supplied prior field. The journal records the
-marginal with `scored_from_marginal: true` (schema v3); v2-and-earlier
-records hold the caller-supplied prior and are distinguished by the
-marker. The calibration curve and the domain-bias correction
-consequently learn from marginals on v3 records. A re-score never
-rewrites the historical forecast: the recorded probability stays the
-first score's marginal.
+`scenario_declare` prospectively freezes each full event, marginal probability,
+deadline and named resolver under a new `forecast_id`. `scenario_score` requires
+that ID, the exact frozen events/resolver and observed outcomes; it never creates
+a forecast at resolution. It scores stored marginals, not submitted probabilities.
+The named resolver is a caller-reported source rule, not authenticated evidence.
 
+`ForecastStore` (`src/superforecast/store.rs`) retains an append-only JSON-line
+journal plus compacted snapshot, replayed on reopen. Schema v4 carries the
+prospective declaration; older records remain provenance-limited unscored history.
+Replays do not add independent event weight; changed forecasts need new IDs.
+Raw binary Brier loss is not calibration, and no automatic historical-bias
+correction is applied. Murphy (1973), DOI
+`10.1175/1520-0450(1973)012<0595:ANVPOT>2.0.CO;2`, separates reliability,
+resolution and uncertainty. Compare references on matched cases/weights/horizons;
+report admission, resolution, exclusions and dependence, not universal bands.
 Durability ordering — verified by regression (`kask/mcp-servers/hkask-mcp-scenarios/tests/tool_behavior.rs`):
 
 - A failed snapshot publication leaves the journal intact, so reopening
@@ -324,7 +329,7 @@ reference on 2026-10-07 and live in git history
 
 - The calibration curve's empty bins surface as `null` hit rates with
   bin-midpoint expecteds — cosmetic, surfaced rather than hidden.
-- `scenario_score` persists a full snapshot per resolution event — a
+- `scenario_declare` journals prospective records; `scenario_score` snapshots matching resolution updates — a
   minor durability-ordering cost, accepted.
 - `hkask_forecast::marginalize` zero-fills missing table entries while
   the server's validation rejects wrong lengths first — the lenient

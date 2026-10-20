@@ -17,6 +17,17 @@ prediction-markets server that feeds them. The widgets render
 [Architecture diagrams](./architecture.md) for the viz-core composition
 root). Unique `DIAGRAM_ALIGNMENT` IDs are preserved from the originals.
 
+## Scenario evidence status — 2026-10-20
+
+`crates/hkask-scenarios-widget/src/block.rs::CalibrationSummary` carries optional
+`overall_brier`, signed `overconfidence_score`, counts and `evidence_status`.
+`view.rs::render_calibration` displays absence and defaults the evidence-status
+text to insufficient; it does not certify calibration from raw loss or signed
+cancellation. Action guidance declares prospective identities with
+`scenario_declare` before resolving exact frozen events/resolver with
+`scenario_score`; legacy records remain unscored. Other widget maps below are
+unchanged. This source map is not an editor deployment receipt.
+
 ## Graph Widget
 
 `hkask-graph-widget` renders ```` ```graph ```` fenced blocks as an

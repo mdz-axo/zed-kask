@@ -109,7 +109,7 @@ cannot honour[^parnas-1972].
 | `model_name` | `:235` | Drops `## Model Information` |
 | `has_skills` | `:241` | Drops `## Agent Skills` and the `<available_skills>` catalog |
 | `(or user_agents_md has_rules)` | `:269` | Drops `## User's Custom Instructions` |
-| `(contains available_tools 'kanban_goal_create')` | `:337` | Drops the four-moves → goal-tools wiring inside `## Division of Responsibilities` (D40) |
+| `(contains available_tools 'kanban_goal_create')` | conditional goal section | Drops the four-moves → goal-tools wiring inside `## Division of Responsibilities` (D40) |
 | `static_context` | `:359` | Drops `## Session Context` |
 
 ## 4. Section inventory
@@ -298,7 +298,7 @@ II, "Merging Skill Outputs").
 - **Loop-closing wiring (2026-08-29):** a conditional block inside the
   section — `{{#if (contains available_tools 'kanban_goal_create')}}` —
   maps the moves to the native goal tools (Move 1 → `kanban_goal_create`,
-  Move 3 → `kanban_goal_judge`, Move 4 → `kanban_goal_score`) when the
+  Move 3 → `kanban_goal_judge`; separately gated Move 4 → native `kanban_goal_close` and correction → `kanban_goal_correct_outcome`) when the
   kata-kanban server is connected, and vanishes when it isn't (§3.1: never
   advertise a capability the turn doesn't have).
 - **Skill rubrics (2026-09-04):** a paragraph after the four moves names
@@ -678,7 +678,7 @@ The test: "Could a deterministic function produce this output from these inputs?
 
 Every skill that produces forecasts, analyses, or recommendations should read its own prior outputs from MCP persistence before starting. This closes the feedback loop: the skill's current invocation is informed by its past performance.
 
-The pattern: the skill body instructs the model to call the relevant MCP tool (e.g., `scenario_calibration`) at the start of the process to read prior runs, then thread the results into the first reasoning step.
+The pattern: the skill body instructs the model to call the relevant MCP tool (e.g., `scenario_calibration`) at intake to read descriptive eligible history and limitations, then thread that context into reasoning; raw loss or signed bias is not a calibration certificate or an automatic correction.
 
 #### 3. Failure Surfacing
 

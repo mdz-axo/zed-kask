@@ -14,6 +14,7 @@ validates against realized outcomes, and emits calibration feedback.
 ## Goal evidence, closure and optional forecasts
 
 Use `program-manager`'s goal contract and the [canonical pact](../../../kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md): create requires a real specification `source` and returns the full goal's `id`; ordinary goals omit `forecast`. Worker progress is not human closure. Native `kanban_goal_close` obtains human ActionChoice, never a model-supplied outcome; `kanban_goal_correct_outcome` is separate. Keep blinded assessment findings and human labels distinct, unknown visible, canonical history retained. The current assessor cannot fetch evidence and cannot certify unseen references. No automatic success closure or routine goal probability.
+
 ## Initial and target condition
 
 - **Initial condition:** the exact rationale corpus, its question/probability/forecaster IDs, the requested marker set, the scorer's returned 12-marker coverage, and any matched realized outcomes. Missing scores or outcomes are unavailable evidence, not zero quality or proof against gaming.

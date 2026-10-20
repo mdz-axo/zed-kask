@@ -188,3 +188,15 @@ alongside their published vocabularies).
   selections; every term in every pinned file is in the compiled index.
   Coverage claims in this document were probed live against the running
   binary (2026-10-13, post-rung-2 rebuild).
+
+## Statistical interpretation warning — goal/forecast cutover
+
+The live derived Brier anchor still supplies the correct binary formula but
+calls raw loss calibration and constant .5 a universal baseline. This gloss is
+not statistical authority. Murphy (1973), DOI
+`10.1175/1520-0450(1973)012<0595:ANVPOT>2.0.CO;2`, separates reliability,
+resolution and uncertainty; compare matched references and disclose populations.
+See the approved goal-closure plan §2 for accessed-source limits and P6. The
+ontology implementation is outside this docs cutover; the remaining warning is
+routed to `skill_use_issue:onto-anchor` for the ontology owner, not silently
+rewritten as a private definition or claimed fixed here.

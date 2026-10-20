@@ -23,7 +23,7 @@ mds_categories: [domain, composition, lifecycle]
 > Independent.
 
 The prediction-markets server turns Polymarket and Kalshi market prices into
-calibrated, ontology-annotated base rates for the forecasting stack. Its
+ontology-annotated market probabilities with observation history for the forecasting stack. Its
 governing invariant: **never return a bare probability** — every `MarketRecord`
 pairs its probability with spread, volume, calibration, volatility, a
 reliability tier, and a dual-axis (PKO + Dublin Core) ontology mapping. The
@@ -36,7 +36,7 @@ server is the outside-view sense arm for the scenarios server:
 |--------|------|
 | `provider_polymarket.rs` | Polymarket CLOB + Gamma API provider |
 | `provider_kalshi.rs` | Kalshi REST + candlestick provider |
-| `calibration.rs` | Per-bucket Brier scoring and reliability tiers (via `hkask-forecast`) |
+| `calibration.rs` | Per-bucket raw Brier loss/counts (via `hkask-forecast`); reliability tiers use liquidity/spread only |
 | `volatility.rs` | DR-AS structural volatility model (arXiv:2607.08199) |
 | `residual.rs` | Niche-market decomposition into base-event beta + idiosyncratic residual |
 | `streaming.rs` | Polymarket websocket subscription for resolution events |
@@ -45,7 +45,7 @@ server is the outside-view sense arm for the scenarios server:
 
 ## The calibration feedback loop
 
-The server closes a self-feeding calibration loop. The scan is two-phase
+The server records pre-resolution observations and later outcomes for descriptive evaluation; this is not calibration certification. The scan is two-phase
 so the scored probability is honest:
 
 1. **Sense (snapshots):** `market_check_resolutions` first scans OPEN
@@ -57,7 +57,7 @@ so the scored probability is honest:
    snapshot — the Brier loop scores the price the scanner first saw,
    never the post-resolution price (scoring the terminal price would be
    self-fulfilling: the outcome is derived from that same price, so
-   Brier ≈ 0 by construction and the demotion gate could never fire). A
+   Brier ≈ 0 by construction and would misrepresent prospective accuracy). A
    market that resolves before its first scan is counted in
    `resolved_without_snapshot` and skipped — never fabricated. Ambiguous
    50-50 resolutions are skipped the same way. The scan is idempotent.
@@ -66,9 +66,7 @@ so the scored probability is honest:
 4. **Evaluate:** `market_calibration` computes per-bucket Brier scores from the
    accrued observations. A bucket with no resolved data returns `stale: true` —
    never a synthetic Brier of 0.
-5. **Act:** poorly calibrated buckets are demoted to lower reliability tiers on
-   subsequent `market_lookup` / `market_match` calls, which downstream
-   consumers (`scenario_from_markets_set`) read as a gate on base-rate anchoring.
+5. **Interpret cautiously:** retain loss, counts, missing snapshots and observation horizons. Reliability tiers use volume/spread only; raw Brier does not demote markets or establish empirical reliability. Compare a declared reference on matched cases/weights/lead times before changing forecasting practice. Murphy (1973), DOI `10.1175/1520-0450(1973)012<0595:ANVPOT>2.0.CO;2`, separates calibration/reliability from resolution and uncertainty; no universal loss band certifies either.
 
 Bucket keys are family-first (`BaseEconomicObject::label()`, e.g.
 `policy_interest_rate`) on both the snapshot writer and the lookup reader —

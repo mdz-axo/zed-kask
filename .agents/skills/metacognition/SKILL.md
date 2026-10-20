@@ -8,13 +8,13 @@ description: "Metacognitive Improvement Kata: ground the current and task-specif
 
 Master self-reflection skill following the Toyota Improvement Kata (Rother 2010).
 The skill runs actual PDCA: grasp the current condition, establish a target
-condition, make a prediction, run an experiment, measure the gap, and score
-the prediction. Evaluate convergence via the hypotenuse
+condition, make a prediction, run an experiment, measure the gap, and compare observation with expectation. Evaluate convergence via the hypotenuse
 of object-space (Dublin Core) and process-space (PKO) gaps; an optional forecast requires a separate prospective declaration and frozen resolver.
 
 ## Goal evidence, closure and optional forecasts
 
 Use `program-manager`'s goal contract and the [canonical pact](../../../kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md): create requires a real specification `source` and returns the full goal's `id`; ordinary goals omit `forecast`. Worker progress is not human closure. Native `kanban_goal_close` obtains human ActionChoice, never a model-supplied outcome; `kanban_goal_correct_outcome` is separate. Keep blinded assessment findings and human labels distinct, unknown visible, canonical history retained. The current assessor cannot fetch evidence and cannot certify unseen references. No automatic success closure or routine goal probability.
+
 ## Reference models
 
 - Improvement Kata — Rother, *Toyota Kata* (2010); `onto_anchor` → derived `improvement_kata`.
@@ -123,7 +123,7 @@ Status classification (`exists`/`grounded`/`complete`) is P — model-proposed a
 
 To render a template, call the `render_template` tool with the template ref (e.g., `metacognition/meta-grasp-current`) and a context object with the required variables. Context keys are **top-level** (not nested under `variables`). Pass the prior step's result as the named condition (`current_condition` = Step 1 result, `target_condition` = Step 2 result, `prediction` = Step 3 result), not as `current_grasp` or `predicted_calibration`; `gap_before` is the measured Step 2 value (>0), carried unchanged.
 
-Copyable `render_template` context blocks (variable names from each template's `[inference] contract`):
+Copyable `render_template` context blocks (variable names from each template's `[inference] contract`): prior evidence is empty/null unless source-backed records exist; never fill examples with invented human outcomes. Eligible forecast history must carry its declaration, resolver, timing, cohort and loss convention, not just confidence/outcome pairs.
 
 `metacognition/meta-grasp-current`:
 ```json
@@ -131,9 +131,9 @@ Copyable `render_template` context blocks (variable names from each template's `
   "goal": "<the user's goal>",
   "session_history": "<prior session turns cited as evidence>",
   "current_state": { "<regulation counter or bot status>": "<observed value>" },
-  "prior_outcomes": ["<resolved goal outcome>"],
+  "prior_outcomes": [],
   "prev_grasp": { "<previous iteration's measured field>": "<measured value>" },
-  "prior_calibration": { "<resolved goal>": { "confidence": 0.5, "outcome": true } }
+  "prior_calibration": null
 }
 ```
 

@@ -1,6 +1,6 @@
 # Goal closure, outcome assessment and forecast verification
 
-Date: 2026-10-20. Status: investigation complete; functional policy approval required; no implementation authorized.
+Date: 2026-10-20. Status: **P1–P6 approved by the operator; code cutover implemented; docs/prompt/skill cutover implemented in the shared tree.** Deployment and real end-to-end editor acceptance are not claimed.
 Task: `03f242e1-4a92-4fd0-b8c4-9973379daa42`, board `8e1c3324-2745-4272-bd5c-b026f651a9ca`.
 Specification: user's amended six-section request, retained in task description/activity and this session. T1/T2 independent; T3 waited for both; T4 followed T3; T5 followed T4; T6 integrates the result.
 
@@ -12,7 +12,7 @@ Retain the shared binary Brier arithmetic. Replace coupled close-and-score, resp
 
 This deepens the human's seat at the bench: the person holds the question and veto; the system supplies evidence and bookkeeping. It answers the project's V2/V3/V4/V6 charter by making disagreement challengeable and eliminating repetitive scoring labor, rather than automating human judgment away (`kask/docs/architecture/core/magnifica-humanitas.md:36–74`). That is a project-policy argument, not statistical evidence.
 
-### What the inquiry found
+### What the inquiry found (historical pre-cutover observations)
 
 - **Observed implementation:** `(p-y)^2` is correct. **Delegated live-data observation:** 191 surviving numeric intake/score pairs match it within `1e-12`. This is not evidence of calibrated probabilities or valid labels.
 - **Observed implementation:** scoring does not require authenticated human confirmation, a prior assessment, a structured horizon or independent evidence. This is an enforcement gap, not proof anyone closed a goal without permission.
@@ -21,7 +21,7 @@ This deepens the human's seat at the bench: the person holds the question and ve
 - **Observed implementation:** universal raw-score quality labels reach tools/prompts; empty qualifying calibration bins can become `well_calibrated`; missing equity probability can become `.7`. Raw-score policies affect later weighting, correction and reported market reliability tiers. The inspected High-to-Medium demotion does not cross the downstream Low-only admission gate.
 - **Not established:** Goodhart effects, self-confirmation as a cause of observed scores, unauthorized human closure, or genuine learning. Selection/agent influence are hypotheses. Short horizon alone does not invalidate a forecast.
 
-## 1. Evidence register and current lifecycle
+## 1. Historical evidence register and pre-cutover lifecycle
 
 Paths below are relative to the canonical repository. Labels distinguish source inspection, documentation and inference. Source lines were inspected in the live shared tree; HEAD moved during this read-only inquiry. T1 closing HEAD was `bf45c8990e5e6e87cc0467011db12feea080bbe8`; T5 assessed `1793662db4aeaaded66e1c67d8693cae724d712d`; parent checkpoint HEAD was `ecb7e42f233857d01cee82581971cf75047b803a`. This is not an atomic single-commit audit. Re-pin citations before implementation.
 
@@ -41,7 +41,7 @@ Paths below are relative to the canonical repository. Labels distinguish source 
 | No wired goal-cohort dashboard found; other forecast populations are separate | `crates/hkask-scenarios-widget/src/view.rs:203–235`; scenarios `src/hkask_mcp_scenarios.rs:240–290`; experimentation `src/types.rs:416–469` | Bounded whole-repository name/consumer census, not proof of absence outside inspected surface |
 | Metacognition reads resolved goals from a list whose acknowledged rows disappear | `.agents/skills/metacognition/SKILL.md:62–65`; `kask/registry/templates/metacognition/meta-grasp-current.j2:51–58` | Live instruction conflicts with successful-pruning lifecycle |
 
-Current ownership: human declares/accepts in conversation → worker calls create/judge/score → kanban stores full row → thread buffers response events → bridge embeds abbreviated responses and mutates confidence → autoack prunes kanban row. Numerical scoring, semantic judgment, evidence custody and delivery are coupled across these boundaries.
+Pre-cutover ownership: human declares/accepts in conversation → worker calls create/judge/score → kanban stores full row → thread buffers response events → bridge embeds abbreviated responses and mutates confidence → autoack prunes kanban row. Numerical scoring, semantic judgment, evidence custody and delivery are coupled across these boundaries.
 
 ### Cross-domain consumers that change the redesign scope
 
@@ -122,7 +122,7 @@ Pending sample: `ad2d62e8-1ada-41c5-8f71-6da33a37208a` p=.87; `08948ee3-915d-469
 
 Surviving create timestamps in scored sample can follow judge timestamps because confidence updates replace create memories; they cannot prove original pre-outcome timing. Stored `tool_observed` means a tool result was observed, not that the human authenticated its label. Human source turns were not recovered. Six scored IDs lack surviving creates; nine retained resolutions lack score memory. Do not reconstruct missing p from a score, manufacture criteria or silently merge near-identical IDs.
 
-## 4. Proposed closure contract — policies await approval
+## 4. Approved closure contract — P1–P6
 
 ### Lifecycle and ownership
 
@@ -136,7 +136,7 @@ Surviving create timestamps in scored sample can follow judge timestamps because
 
 The canonical ledger must not be eligible for confidence-based forgetting. Memory is a rebuildable retrieval projection; an inaccurate forecast is valuable history, not less authentic history. Retention/privacy deletion remains a separate explicit user policy, not a score side effect. Delivery guarantees are at-least-once with idempotent effects, not unsupported exactly-once transport claims.
 
-### Human decisions needed
+### Approved human decisions (P1–P6)
 
 | Policy | Recommendation | Alternative / consequence if deferred |
 |---|---|---|
@@ -153,7 +153,7 @@ Both `deep-module` and `refactor-architecture` were actually invoked and applied
 
 **Deletion test both directions:** inline existing goal logic and ownership, identity, criterion coverage, atomic transition and replay/conflict handling reappear in callers; replace it with raw storage/math calls and those protections disappear. Therefore retain/deepen the existing goal boundary, not another wrapper. Deleting score-confidence policy removes real behavior: retirement is a policy recommendation, not a false dead-code finding. A universal scoring wrapper adds no invariant beyond existing math and would wrongly unite divergent outcome policies; do not create it.
 
-Home: existing `kanban/types/goal.rs` and `kanban/service_impl/goals.rs` hold durable transitions and provenance. Existing curator/bridge orchestrates inference; goal service must not depend on inference or other servers. Conceptual operations: declare, get, list, record assessment/progress, record human closure, enumerate pending work, acknowledge receipt. Exact public shape awaits approved policy; avoid inventing config/traits to hit a numerical style target. Shared `hkask-forecast` remains pure math; no universal resolution engine across domains.
+Home: existing `kanban/types/goal.rs` and `kanban/service_impl/goals.rs` hold durable transitions and provenance. Existing curator/bridge orchestrates inference; goal service must not depend on inference or other servers. Conceptual operations: declare, get, list, record assessment/progress, record human closure, enumerate pending work, acknowledge receipt. The approved public shape is now pinned in `GOAL_INTERFACE.md`; avoid inventing config/traits to hit a numerical style target. Shared `hkask-forecast` remains pure math; no universal resolution engine across domains.
 
 Consumer map includes defining crate, tests, panels, inline calls and prompt files: MCP goal wire types/endpoints; task CriterionCitation in `kanban/types/task.rs:29`, `task_spec.rs:19`, `service_impl/service.rs:384–413`; `crates/agent/src/agent.rs:3144–3155`, `thread.rs`, `kask_thread_state.rs:62,138–145`; `hkask-types/src/ports/memory_port.rs:50–96,144–154`; bridge memory and ingestion; `crates/kanban_panel/src/kanban_panel.rs:364–384`; experiment linked_goal_id in `server.rs:144,273`, `store.rs:360–387`. Linked experiment and goal must not become duplicate independent forecasts.
 
@@ -181,7 +181,7 @@ Retire metrics with no defensible decision use: routine single-goal Brier as mem
 
 ## 6. Dependency-ordered implementation and checks
 
-All following steps are conditional on functional approval. No compatibility shims: update every affected caller and delete old policy in the same cutover; preserve unrelated work and keep the tree buildable. Staged internal changes may prepare a slice but must not ship competing public lifecycle APIs.
+P1–P6 and the implementation sequence below are approved. The sequence remains the acceptance contract, not evidence that every deployment check has run. No compatibility shims: update every affected caller and delete old policy in the same cutover; preserve unrelated work and keep the tree buildable. Staged internal changes may prepare a slice but must not ship competing public lifecycle APIs.
 
 1. **Policy/specification lock — human + program-manager.** Record P1–P6 decisions, falsifiable acceptance criteria and immutable source turns. Fix terms in ontology/instructions against primary references. Exit: disagreement/unknown/stop table agreed; no agent invents outcome policy. Deferred risk: ambiguous resolver makes scores uninterpretable.
 2. **Canonical lifecycle and authority — deep-module + refactor-architecture; tdd at implementation time.** Deepen existing goal transition, versioned records and trusted human closure ingress. Preserve citations, owner boundaries and atomicity. Replace `goal_score`/prune-on-ack coupling (`goals.rs:292–371,405–411`) and generic GoalResolution. Exit: authorized closure and separate findings replay without overwrite; malformed or forged human receipts fail.
@@ -214,7 +214,7 @@ TDD is routed to later implementation, not ceremonially loaded in this investiga
 
 Preserve old records as provenance-limited history with explicit eligibility reasons. Do not retroactively mark legacy predictions prospective, recreate lost human confirmations, or use reconstructed probabilities as independent intake evidence. Identity corrections require source evidence and an audit trail. Operator may choose archival-only legacy scores. No backward API compatibility is required; evidence preservation is not a compatibility shim.
 
-## Research checkpoint, receipts and limitations
+## Historical research checkpoint, receipts and limitations
 
 Initial evidence passes T1/T2/T3 completed; one targeted T3 reconciliation follow-up, one T5 consumer/interpretation follow-up. Stop: evidence discriminates numeric correctness from lifecycle and interpretation defects sufficiently for the recommendation. No further research needed to choose architecture. Remaining empirical Goodhart/learning questions cannot be settled from surviving convenience records; propose a separately authorized prospective study only if needed for a later feedback policy.
 
@@ -235,3 +235,57 @@ Separate audit session `9da74f8a-7888-4fec-a483-857a93e53c45` applied grounding-
 Parent `lisp_eval` receipt: retained partition61=52+9+0 true; union311=61+305−55 true; paired191=200−6−3 true; excess8=208−200 true. Deliberately adding one retained row made the denominator control false. For p=.8, binary true=.03999999999999998, false=.6400000000000001, vector true=.07999999999999996; Murphy example=.286. On a constructed 1% event population, reference p=.01 gives .0099 while p=.20 gives .04600000000000001: the latter would receive the current “excellent” label despite worse reference-relative performance. These calculations use cited inputs, not live score mutations or production Rust tests.
 
 Concrete same-population calibration control for later tests: outcomes `[0,0,0,1,0,1,1,1]`. Forecast A=.5 throughout: BS=.25, REL0, RES0, UNC.25. Forecast B=`[0,0,0,0,1,1,1,1]`: BS=.25, REL.0625, RES.0625, UNC.25, signed bias0. This refutes raw score or zero signed bias as a sufficient calibration diagnostic without changing the outcome population. The reviewer checked this construction mathematically; it is an acceptance-fixture design, not an executed production test.
+
+## Approved cutover implementation result — 2026-10-20
+
+Operator approval covers all P1–P6; no pending functional-policy vote remains.
+The canonical implemented contract is
+`kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md`. Production code is
+recorded in `f21ab8d61b` and subsequent shared-tree host changes; the prompt/skill
+slice was captured by the concurrent owner in `05a9ffbe73` while this docs pass
+continued. This agent made no commit; remaining reference/docs and cleanup edits
+are uncommitted until the owner records their receipt. Historical sections above
+retain their original evidence limitations and line citations as audit history,
+not current operational instructions.
+
+- MCP create/judge/get/list require source-backed immutable specification and
+  return complete goals with `id`, stable criterion IDs and digest. Routine work
+  omits forecast; eligible optional declarations freeze target/timing/resolver/
+  policy/resources/baseline/cohort. Human closure and source corrections are
+  separate native ActionChoice interactions, never worker-authored outcomes.
+- The host stores assessment/projection work durably, supplies fresh blinded
+  spec/evidence requests, validates projection receipts and retains canonical
+  history. Human labels, worker progress, machine evidence and findings remain
+  separate. Current assessor requests have **no evidence-fetch capability**;
+  unknown is required, not support/contradiction based on a locator alone.
+  Scheduling follows `curator.always_on`; disabled or failed work stays pending.
+- Forecast guidance removes universal raw-loss bands, synthetic scoring priors,
+  inverse-loss reliability weights and automatic correction. Scenario records
+  require prospective `scenario_declare` and matching frozen resolver/events for
+  `scenario_score`; legacy undeclared records stay unscored. Market tiers remain
+  liquidity/spread-only. Murphy/GJP provide interpretation with P6's source limits.
+- Owned skills, templates, system prompt/pins, functional/memory/type maps,
+  forecasting references, diagrams and D6/D18/D40/D58 divergence entries now
+  describe this separation. This replaces obsolete score/prune instructions,
+  tests and comments; it does not alter unrelated code or `.rules`.
+
+### This docs/prompt pass: checks and owner follow-up
+
+`bash kask/scripts/cargo-test-nonzero.sh -p agent --lib templates::tests::test_goal_ -- --nocapture`
+ran 2 tests, both passed (nonzero wrapper confirmed coverage).
+`bash kask/scripts/check-skill-crossrefs.sh` passed.
+`bash kask/scripts/audit/skill-corpus-prescreen.sh` checked 222 templates and
+59 skills: no D/P or initial/target flags; one advisory LOW OVERLAP flag on the
+unchanged `metacognition/falstaffian-rotation.j2` (22%). Owner: skill-maintenance
+review; retained as a visible warning, not hidden by changing the acceptance ledger.
+Further final prompt-suite/sweep receipts are recorded below by this pass or may
+be appended by the owner; no broad build or editor deployment is implied.
+
+The live ontology gloss still overclaims raw Brier loss as calibration. Owner:
+ontology implementation; routed to `skill_use_issue:onto-anchor` via the issue tool
+(semantic_definition, tool_implementation). Consumer guidance now qualifies it;
+this out-of-scope implementation warning is not claimed fixed. End-to-end editor
+closure, actual independently fetched evidence, deployment/restart acceptance and
+any prospective benefit study remain owner acceptance work, not a fabricated human
+outcome or task-completion claim. Learning: freshness of assessor context does not
+supply evidence access, and arithmetic correctness does not establish calibration.

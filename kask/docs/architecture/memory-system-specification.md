@@ -85,8 +85,7 @@ narrative generation loop.
    - Embed: every chunk in one batched call; each vector stored under the
      thread entity with its `passage_text`, so KNN pinpoints the matched
      chunk
-   - Goal events: each individual create/judge/score result is embedded and
-     goal projection snapshots use `curator:goal:{id}` via the durable host
+   - Goal custody is separate from turn ingestion: projection snapshots use `curator:goal:{id}` via the durable host
      drainer, not turn-response capture; no goal duplicate
 2. **Recalls** relevant memories on every qualifying prompt by:
    - Embedding the query and searching stored embeddings (KNN), injecting
@@ -282,7 +281,7 @@ enforced by:
    cannot report success with a passage production recall will reject.
 3. The regression tests `recall_context_finds_turn_by_embedding_only`,
    `ingest_turn_embeds_every_chunk_with_passage_text`,
-   `persisted_goal_event_is_semantically_visible_by_entity_ref`,
+   `native_goal_restart_drains_blinded_assessment_and_exact_semantic_projection`,
    `native_goal_missing_assessor_and_projection_store_retains_a_durable_failure`,
    `backfill_embeddings_covers_knowledge_layer_and_excludes_turns`,
    `semantic_search_resolves_the_named_passage_not_newer_siblings`, and
@@ -313,7 +312,7 @@ knowledge class:
 
 | Class | Form | Examples |
 | --- | --- | --- |
-| System records | `<namespace>:…` | `curator:thread:{id}`, `curator:goal:{goal_id}`, `skill_use_issue:{skill}`, `kanban:{id}`, `agent:{id}:turn:{uuid}` |
+| System records | `<namespace>:…` | `curator:thread:{id}`, `curator:goal:{id}`, `skill_use_issue:{skill}`, `kanban:{id}`, `agent:{id}:turn:{uuid}` |
 | Skill knowledge | the BARE skill name (ruling ac85c2c8, 2026-09-28) | `company-research-deep`, `therapy` |
 | Lessons / knowledge | bare lowercase-hyphen slug | `verification-protocol`, `workflow-gating`, `release-hygiene` |
 | Curator process records | `curator-process` (the attribute carries the record type) | see below |
@@ -565,15 +564,12 @@ status: VERIFIED
    the separate durable host drainer; delivery receipts never delete history.
 2. **All writes go to the curator's `curator.db`, one copy per turn.** There
    is no user memory store and no perspective duplicate — `RealMemoryPort`
-   holds only the `CuratorStore`. Individual goal events are single-keyed
-   under `curator:goal:{goal_id}`; list snapshots are excluded.
+   holds only the `CuratorStore`. Canonical goal projections are single-keyed
+   under `curator:goal:{id}`; list snapshots are excluded.
 3. **Turn-chunk embedding and tagging failures are non-fatal.** Chunk h_mems
    remain keyword-recallable or structurally tagged and the degradation is
-   warned. Goal-event embedding is different: failure returns an ingestion
-   error and blocks that event's h_mem publication; a score remains in its
-   outbox for retry.
-4. **Curator-store failures are non-fatal and self-healing except where a
-   turn-chunk recall would be lost (goal projection has its own durable drainer).** A failed
+   warned. Goal projection embedding failure instead retains the canonical outbox; the host drainer retries without treating missing semantic evidence as success.
+4. **Curator-store failures are visible and self-healing.** Goal projection failures retain their separate canonical outbox. A failed
    initial open leaves the store `None`; every `get()` re-attempts the
    open, and a successful re-open rebuilds the consolidation service.
    Persistent failure warns once per healing attempt — never silently.
@@ -581,8 +577,7 @@ status: VERIFIED
    (`start_consolidation_timer`), never in the ingestion path. Write-time
    LLM tagging is creation metadata, not consolidation — it does not
    modify existing h_mems (the sovereignty line).
-6. **Every write enters at the 0.5 confidence floor** — chunks and goal
-   events alike. `HMem::new`'s 1.0 default starves recall ranking and the
+6. **Every write enters at the 0.5 confidence floor** — chunks and goal projections alike. `HMem::new`'s 1.0 default starves recall ranking and the
    cleanup consolidator.
 
 ## 5. Recall

@@ -10,6 +10,7 @@ Hypothesis testing is the one end-to-end scientific inquiry lifecycle in zed-kas
 ## Goal evidence, closure and optional forecasts
 
 Use `program-manager`'s goal contract and the [canonical pact](../../../kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md): create requires a real specification `source` and returns the full goal's `id`; ordinary goals omit `forecast`. Worker progress is not human closure. Native `kanban_goal_close` obtains human ActionChoice, never a model-supplied outcome; `kanban_goal_correct_outcome` is separate. Keep blinded assessment findings and human labels distinct, unknown visible, canonical history retained. The current assessor cannot fetch evidence and cannot certify unseen references. No automatic success closure or routine goal probability.
+
 ## Pipeline and ownership
 
 `hypothesis-framer` → `falsifiability` → `experimental-design` → domain executor → experimentation registry → `grounding-verify` → algedonic review.
@@ -52,7 +53,7 @@ Use `program-manager`'s goal contract and the [canonical pact](../../../kask/mcp
 | Execution | D/P by domain | Named harness/data source/human report. |
 | Scientific interpretation | D over classified evidence | `experimental-design` ED-2. |
 | Report audit | P + D | Decoupled `grounding-verify`. |
-| Review and calibration | P + D | Human review; goal score only for genuinely binary resolved claims. |
+| Review and calibration | P + D | Human review and native closure separate; optional forecast resolution requires a complete prospective declaration, not binarity alone. |
 
 ## Instructions
 

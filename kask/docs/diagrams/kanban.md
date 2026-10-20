@@ -101,43 +101,36 @@ status: VERIFIED
 
 ## Goal Lifecycle
 
-The functional goal (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/goal.rs:20`)
-is the kata target condition as a first-class object: 1–4 observable criteria, an
-optional intake prediction, a verdict history, and a scored resolution. Goals persist
-as RDF h_mems in the same DB-backed `HMemStore` as boards and tasks
-(`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs:1-23`).
-
-The lifecycle is a persistent-until-acknowledged outbox. `kanban_goal_score` records
-the resolution but **retains** the row across restarts; only `kanban_goal_memory_acknowledge`
-— after the production turn-ingestion path confirms the scored outcome is stored in
-curator memory — prunes it. Failed ingestion or acknowledgment leaves the row retryable.
-Scoring is idempotent for the same outcome and rejects a conflicting outcome
-(`goals.rs:303`). A judge verdict must judge every criterion exactly once; the
-verdict history is the learning record (`goals.rs:247`, `goals.rs:260`). The Brier score applies
-the intake prediction to the realized outcome; no prediction stays `None` — a
-synthetic 0 would read as perfect calibration (`GoalResolution`,
-`types/goal.rs:161-175`).
+The canonical aggregate preserves immutable specification/source, stable criterion
+IDs/digest, worker progress, human closure, blinded findings, optional forecast
+versions and projection receipts. MCP offers create/judge/get/list only. Native
+closure obtains accomplished/stop × achieved/not-achieved/unknown via actual human
+ActionChoice; correction is a separate interaction. Task Done is not achievement.
+The host assessor currently cannot fetch evidence and must return unknown.
 
 ```mermaid
-stateDiagram-v2
-    direction TD
-    [*] --> Open : goal_create (1-4 criteria, optional prediction)
-    Open --> Open : goal_judge (verdict appended, every criterion judged)
-    Open --> Resolved : goal_score (operator ground truth)
-    Open --> Open : goal_list (retained until resolution)
-    Resolved --> Resolved : re-score same outcome (idempotent retry)
-    Resolved --> Resolved : conflicting outcome rejected
-    Resolved --> Pruned : goal_acknowledge_memory (curator memory confirmed)
-    Pruned --> [*] : outbox row pruned
+flowchart TD
+    A[Confirmed spec and real source] --> B[MCP create - full id and spec digest]
+    B --> C[Worker progress and evidence]
+    C --> D[Native human ActionChoice]
+    D --> E[Retained closure and pending assessment]
+    E --> F[Fresh blinded spec and evidence assessment]
+    F --> G[Separate findings or visible retryable failure]
+    G --> H[Optional frozen-resolver forecast resolution]
+    G --> I[Durable canonical snapshot outbox]
+    H --> I
+    I --> J[Exact and semantic memory projection]
+    J --> K[Validate receipt - retain canonical history]
+    D --> L[Separate native human correction]
+    L --> E
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STATE-GOAL-LIFECYCLE
-verified_date: 2026-10-05
-verified_against: kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs (goal_create L52, goal_get L125, goal_row L138 — the identity read every lifecycle lookup resolves through, goal_judge L216, goal_score L289, goal_acknowledge_memory L350, transition_goal L371, goal_prune L400, conflicting-outcome rejection L303, judge-every-criterion L247/L260, verdict append L274, outbox retention doc L1-23); kask/crates/hkask-storage/src/hmem.rs (update_value_atomic L429); kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/goal.rs (Goal L20, GoalVerdict L143, GoalResolution L161)
-status: VERIFIED
+verified_date: 2026-10-20
+verified_against: kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md; crates/agent/src/tools/goal_tools.rs; kask/crates/kask_bridge/src/goals.rs
+status: SOURCE_INSPECTED - diagram is not a live editor deployment receipt
 -->
-
 ## See also
 
 - [UI widget diagrams](./ui-widgets.md) — the `KanbanWidget` class diagram

@@ -10,6 +10,26 @@ mds_categories: [domain, composition, trust, lifecycle]
 
 # Loop Register
 
+## Current goal/forecast cutover — 2026-10-20
+
+P1–P6 are approved. Current L9 path is immutable source/specification → worker
+progress → native human ActionChoice → fresh blinded assessment → optional
+frozen-resolver forecast → receipt-validated canonical snapshot projection.
+The canonical aggregate is never pruned on acknowledgment; raw loss never changes
+historical memory confidence. The current assessor has no evidence-fetch tools
+and reports unknown. Scheduling is host-owned under `curator.always_on`; disabled
+or failed work remains visibly pending. See the canonical `GOAL_INTERFACE.md`
+and `kask/crates/kask_bridge/src/goals.rs`. L8 uses prospective `scenario_declare`
+before matching `scenario_score`, equal-weight synthesis and descriptive bins;
+market reliability tiers are liquidity/spread-only, not raw-loss calibration.
+
+The dated audit graphs, predictions, citations and receipts below are historical
+snapshots, not instructions to invoke retired APIs or current deployment claims.
+In particular L8/L9's 2026-09-27 graphs and their later historical follow-ups are
+superseded where they describe score/prune, raw-loss demotion or automatic bias
+correction. Keep those records as evidence of what was inspected at the time.
+
+
 One row per canonical loop: a persistent feedback or control cycle with an
 identifiable sense → orient → decide → act → observe path. This register is
 the audit's worklist for the Canonical Loop Audit & Consolidation program
@@ -126,7 +146,7 @@ vocabulary is the one notable absence.
 | curator memory / h_mem | `hkask-memory/src/memory_store.rs:288` `store`, `:331` `query_deduped`, `:447` `touch_recall`; `kask_bridge/src/memory/ingest.rs`; curator tools `hkask_mcp_curator.rs` (insert/update/extract/prune/dedup) |
 | drift | `hkask-regulation/src/metacognition.rs:358+` (skill-outcome/operator-feedback drift sense) |
 | feedback | `crates/agent/src/tools/record_skill_feedback_tool.rs:69-90`; `hkask_mcp_curator.rs:1312` `curator_report_skill_use_issue` (the companies server's `result_feedback` retired with the server, 2026-10-18) |
-| Brier / calibration | `hkask-forecast/src/hkask_forecast.rs:190/:196`; `hkask-mcp-prediction-markets/src/calibration.rs:134`; goal Brier `hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:514` |
+| Brier / calibration | `hkask-forecast/src/hkask_forecast.rs:190/:196`; `hkask-mcp-prediction-markets/src/calibration.rs:134`; optional goal forecasts in the canonical `GOAL_INTERFACE.md`; no routine goal score |
 | toast / AlertSink | `hkask-regulation/src/metacognition.rs:61` `AlertEvent`, `:78` `AlertSink`; `crates/zed/src/main.rs` (`ToastAlertSink` and its `AlertSink` implementation), wired `:1117` |
 | loop-quality telemetry (coalesced) | `cybernetics_loop.rs:895-968` — "Coalesce only semantically identical persistent deviation/advisory cycles. Changed values, clearing, and rollout measurements always emit" |
 | `expect:` (doc convention) | `hkask-regulation` doc comments (`algedonic.rs:156`, `sensor_provider.rs:50`); validated statically by `bin/check_test_evidence.rs` (`:43` `InvalidExpectation`) — a design-evidence discipline, not a runtime signal |
@@ -268,7 +288,7 @@ grilling is Phase 3's deliverable (per-row blocks below).
 | L6 | A, B | mechanical gates (A); agent-driven chain + surfaced failures (B) |
 | L7 | B | panel/widget surfaces, toasts |
 | L8 | A, B, C | tier demotion (A); readback (B); calibration history (C) |
-| L9 | B, C | in-thread actions/panels (B); goal score → memory, Brier (C) |
+| L9 | B, C | in-thread actions/panels (B); separate human closure, assessment and durable projections (C) |
 | L10 | B, C | context injection (B); curator memory substrate (C) |
 | L11 | A, B | admission/cancel/rollback (A); panel polling (B) |
 | L12 | A, B | append receipts, first-observation (A); agent annotations (B) |
@@ -308,7 +328,7 @@ named invariants from the Phase 2 model, file:line, verdict):
 | Invariant | Holds where (file:line) | Verdict |
 | --- | --- | --- |
 | INV1 — one canonical pathway per layer | within-loop single-copy: L4's one `execute_tool` response boundary (`tool_execution.rs:115`), L2's one alert fan-out (`cycle.rs:568+`), L10's one store (`memory_store.rs:288`), L14's one sync funnel (`crates/zed/src/main.rs`), L25's afferent sensor feeding L2's canonical arms (a new loop adding no new report pathway) | **PARTIAL** — canonical within loops; cross-cutting, twelve report pathways serve three layers (Pass 3 inventory R1–R12) |
-| INV2 — expectation carriage | `Signal.set_point` + `Deviation` (`loops/signals.rs:189-196,242-249`); alert deficit/threshold (`cycle.rs:628-639`); goal intake prediction (Brier at resolution); forecast probability (`forecast_persist`); L22's base digest | **PARTIAL, scoped by design** (operator ruling 2026-10-01, closing O3) — held in L2 (exemplar), L8/L9/L17 (stored priors), L22 (digest), and the board cards' deficit/threshold pair; absent from R1–R4, R9, R12 *by design* — event-record surfaces where expectation fields would be ceremony with no scoring consumer |
+| INV2 — expectation carriage | `Signal.set_point` + `Deviation` (`loops/signals.rs:189-196,242-249`); alert deficit/threshold (`cycle.rs:628-639`); optional prospectively declared goal forecast (frozen resolver); forecast probability (`forecast_persist`); L22's base digest | **PARTIAL, scoped by design** (operator ruling 2026-10-01, closing O3) — held in L2 (exemplar), L8/L9/L17 (stored priors), L22 (digest), and the board cards' deficit/threshold pair; absent from R1–R4, R9, R12 *by design* — event-record surfaces where expectation fields would be ceremony with no scoring consumer |
 | INV3 — surprise-gated reporting | loop-quality telemetry coalescer (`cybernetics_loop.rs:895-968`); algedonic binary threshold (`algedonic.rs:247+`); L20's conditional GET (protocol level) | **GAP** — one in-process pathway of twelve; the rest log raw activity. S3 (2026-09-30, operator-approved) deleted the per-tick raw duplicate of the coalesced span (net −14) — the direction held; the count changes only with S6 pathway scoping |
 | INV4 — escalation, never silent drop | exhaustion escalation (`cycle.rs:781-804`); circuit breaker (`kask/crates/hkask-mcp/src/runtime.rs`); L18's `RunningUnknown` (the F1 repair); L22's explicit unknown; L23's `live_stats_degraded` (the S4 repair, 2026-09-30), L25's broken-source warn-and-None (D87, pinned by test) | **HELD at the audited sites** — both named violations resolved (L23 repaired by S4; the suspected in-host tracing drop refuted by the Pass 4 experiment); a full per-row INV4 sweep rides the §8 cleanup (alignment plan) |
 | INV5 — model revision at the top | curator distillation/consolidation (`kask/crates/hkask-memory/src/consolidation_service.rs::MemoryConsolidator::consolidate`); set-point loading (`set_points.rs:396`); skill verdicts (algedonic review); calibration readback (L8/L17) | **PARTIAL** — the C-tier machinery exists; the B→C handoffs carry standing receipt deferrals (L1/L7 memory receipt, L9 acknowledgment gate) |

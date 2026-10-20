@@ -40,7 +40,7 @@ runs, never simulated.
    joins the seal fingerprint (a post-seal design edit yields a different
    fingerprint rather than silently reusing a stale design); omit it for a
    legacy artifact experiment. Optional `linked_goal_id` joins the
-   experiment to the kanban goal that Brier-scores its claim. Optional
+   experiment to a verification goal; its optional forecast is a separate declaration. Optional
    `experiment_key` converges retried calls.
 2. **Vary** — `variant_register`: genotype configurations with an optional
    **role** (P4: baseline | challenger | ablation — exactly one baseline per
@@ -90,8 +90,7 @@ view for the algedonic agenda and the curator's ORIENT.
 
 The `Prediction` type is a pre-registered claim with the experiment's own
 confidence — "the tiny controller (§P8.1)". The claim is scored against the
-experiment's measured outcome by the linked kanban goal (`linked_goal_id` —
-the goal loop's Brier scoring closes the expectation loop). The seal adds a
+experiment's eligible binary measured outcome in its own registry cohort. A linked kanban goal records verification progress, never automatic human closure or duplicate independent forecast weight. The seal adds a
 second expectation carriage: the eval contract is fingerprinted before the
 challengers run, so the measurement that resolves the claim is provably the
 measurement that was declared.

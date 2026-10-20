@@ -14,6 +14,7 @@ this skill is the operating procedure for that pipeline.
 ## Goal evidence, closure and optional forecasts
 
 Use `program-manager`'s goal contract and the [canonical pact](../../../kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md): create requires a real specification `source` and returns the full goal's `id`; ordinary goals omit `forecast`. Worker progress is not human closure. Native `kanban_goal_close` obtains human ActionChoice, never a model-supplied outcome; `kanban_goal_correct_outcome` is separate. Keep blinded assessment findings and human labels distinct, unknown visible, canonical history retained. The current assessor cannot fetch evidence and cannot certify unseen references. No automatic success closure or routine goal probability.
+
 ## Reference models
 
 - Schwartz, *The Art of the Long View* (1991) — focal question, driving forces, 2x2 narratives, indicators.
@@ -131,10 +132,9 @@ quantified backbone.
 ### Phase 3 — Quantify and update (Tetlock)
 
 13. For each event needing calibration, call `scenario_calibrate` with
-   its Fermi sub-questions, base rate, and reference class. When ≥5
-   resolved forecasts exist in the store it applies the learned
-   overconfidence bias automatically — read the calibration-adjusted
-   probability it returns.
+   its Fermi sub-questions, base rate and reference class. Read the returned
+   estimate and source limitations; historical loss does not trigger automatic
+   probability correction or certify calibration.
 14. On new evidence for a single event, call `scenario_update` (Bayes; it
    takes the project-wide `forecast_id`) and then `scenario_propagate`
    with the full event list and the event's new prior to recompute

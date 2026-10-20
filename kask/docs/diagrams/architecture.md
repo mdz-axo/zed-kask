@@ -594,7 +594,7 @@ flowchart TD
         A[Skill activation - SkillTool / host skill] -->|record_skill_outcome| O1[reg.skill.id.outcome - success, invoker]
         B[Tool failure while a skill is active - Thread run_tool] -->|record_skill_tool_failure| O2[reg.skill.id.tool_failure - invoker, tool, error]
         C[Curator classifies an issue] -->|curator_report_skill_use_issue| O3[skill_use_issue h_mem - failure_origin]
-        G[Goal scored by user] -->|kanban_goal_score| O4[Brier score in curator memory]
+        G[Native human goal closure] -->|durable host drainer| O4[Separate findings and optional forecast projection]
     end
     subgraph Evaluate["Evaluate - algedonic review"]
         S[curator_status - board cards not Done, log cap] --> R[Algedonic review board - alert cards triaged in standard columns]
@@ -636,7 +636,7 @@ status: VERIFIED
 | Observe | `SkillTool` / `activate_delegated_skill` | `reg.skill.<id>.outcome` with `invoker` (`Curator`, `Zed Agent`, `delegated`) | automatic |
 | Observe | `Thread::run_tool` (active skill set) | `reg.skill.<id>.tool_failure` — unclassified evidence | automatic |
 | Observe | `curator_report_skill_use_issue` | `skill_use_issue:<skill>` h_mem with `failure_origin` | Curator, unprompted |
-| Observe | `kanban_goal_score` | Brier-scored outcome in curator memory (D58) | user confirms |
+| Observe | native `kanban_goal_close` | Retained human choice, blinded findings and optional forecast projection (D58) | human ActionChoice; host drainer |
 | Evaluate | `algedonic-review` (triage, then gemba walk) | one Algedonic review board + `reg.skill.<id>.operator_feedback` | operator with Curator |
 | Propose | `skill-maintenance`, `curator_directive` `evolve_mcp_tool_schema`, `memory_insert` / `therapy` | proposal card, `reg.cybernetics`, curator memory | Curator / agent |
 | Execute | same card assigned or delegated to a spawned agent | card comments and deliverables | delegated agent |

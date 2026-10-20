@@ -11,6 +11,7 @@ Superforecasting pipeline following Tetlock's Good Judgment Project methodology.
 ## Goal evidence, closure and optional forecasts
 
 Use `program-manager`'s goal contract and the [canonical pact](../../../kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md): create requires a real specification `source` and returns the full goal's `id`; ordinary goals omit `forecast`. Worker progress is not human closure. Native `kanban_goal_close` obtains human ActionChoice, never a model-supplied outcome; `kanban_goal_correct_outcome` is separate. Keep blinded assessment findings and human labels distinct, unknown visible, canonical history retained. The current assessor cannot fetch evidence and cannot certify unseen references. No automatic success closure or routine goal probability.
+
 ## Forecast interpretation and evidence limits
 
 Binary Brier loss is mean((p−y)^2), range [0,1]; the original categorical
@@ -140,9 +141,9 @@ The former single inside-view step is split into three steps. Generation and cou
    The template's `synthesized_probability_judgment` is a non-authoritative holistic cross-check only; compare it with the computed value and report the disagreement, never average them.
 7. Aggregate the judgments of different models, noting where they agree and diverge.
 
-### stage_6_calibration (P — calibration: `scenario_calibrate`, which applies the learned overconfidence bias when ≥5 resolved forecasts exist)
+### stage_6_calibration (P — critiqued by source evidence and later matched-cohort outcomes; `scenario_calibrate` performs no automatic historical correction)
 
-1. Assign a precise, well-calibrated probability to the forecasted outcome using the full 0-100% scale.
+1. Assign an evidence-justified probability using the full 0–100% scale. Calibration is an empirical cohort property, not a label this generation can certify.
 2. Anchor the assignment on `scenario_calibrate` (hkask-mcp-scenarios): call it with the question and per-sub-question estimates (constructed from the stage-3 tree nodes' marginals paired with the stage-1 sub-questions, each with an estimate + confidence) — the server computes the calibrated probability via Tetlock's methodology. Pass its output as `server_calibrated_probability` to the stage-6 render and anchor `final_probability` on it; depart only with explicit justification.
 3. Avoid hedge words and use specific percentages matched to evidence quality.
 4. Assess confidence level (low, medium, high) based on evidence quality, model agreement, and reference class stability.

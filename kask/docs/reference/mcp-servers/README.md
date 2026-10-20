@@ -28,19 +28,19 @@ mds_categories: [composition, domain]
 
 ## Server Catalog
 
-9 built-in MCP servers, **343 registered tools** fleet-wide (re-reconciled 2026-10-19 against the live `tool_surface_pin!` tests below — every server pins its exact count and generated tool-name set; unified by `ede1ba0ca8`, CI-gated by `kask/scripts/check-mcp-registration.sh`). The earlier 360-tool fleet figure included the companies server (32 tools), removed 2026-10-18, commit `3439db5e00`. `KaskMcpSettings::default()` sets `load_default: true`, so all nine auto-load unless the operator disables the fleet or an individual server (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs`).
+9 built-in MCP servers, **343 registered tools** fleet-wide (goal/scenario counts reconciled 2026-10-20; other counts retained from 2026-10-19 against the live `tool_surface_pin!` tests below — every server pins its exact count and generated tool-name set; unified by `ede1ba0ca8`, CI-gated by `kask/scripts/check-mcp-registration.sh`). The earlier 360-tool fleet figure included the companies server (32 tools), removed 2026-10-18, commit `3439db5e00`. `KaskMcpSettings::default()` sets `load_default: true`, so all nine auto-load unless the operator disables the fleet or an individual server (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs`).
 
 | Server | Crate | Purpose | Tools |
 |--------|-------|---------|------:|
 | [Corpus](corpus.md) | `kask/mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 25 |
 | Curator | `kask/mcp-servers/hkask-mcp-curator` | Curator agent metacognition (memory, regulation query, algedonic signals, skill-use issue reporting) | 15 |
 | [Experimentation](experimentation.md) | `kask/mcp-servers/hkask-mcp-experimentation` | Experiment registry for the sharded experimentation program: registered experiments with pre-registered predictions, variant lineages, grounded fitness records, selection fossils | 8 |
-| Kata Kanban | `kask/mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards and persistent-until-resolved functional goals | 27 |
+| Kata Kanban | `kask/mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards and retained canonical goals with separate human closure | 26 |
 | [Media](media.md) | `kask/mcp-servers/hkask-mcp-media` | AI media generation (image, video, audio, gallery, educt transcripts, Reduct cloud) | 102 |
 
 | [Prediction Markets](prediction-markets.md) | `kask/mcp-servers/hkask-mcp-prediction-markets` | Polymarket/Kalshi base rates, calibration, residuals | 27 |
 | [Research](research.md) | `kask/mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds, evidence scoring, research-run ledger, paper identity | 27 |
-| [Scenarios](scenarios.md) | `kask/mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) with equity forecast persistence and Brier scoring | 21 |
+| [Scenarios](scenarios.md) | `kask/mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) with prospective declaration, equity persistence and raw loss | 22 |
 | [Swarm](swarm.md) | `kask/mcp-servers/hkask-mcp-swarm` | Agent Bestiary World swarms + Xaman Ek curator + local swarm substrate (v2 §15) | 91 |
 
 ### Count verification (unified 2026-10-05; re-verified 2026-10-17)
@@ -88,7 +88,7 @@ The scenarios server implements three methodologies as an integrated pipeline:
   triage (well_specified/goldilocks/needs_refinement specification-quality
   classification), Fermi decomposition, outside-view base rates
   with a shrinkage estimator, Bayesian updating, dragonfly-eye synthesis
-  (inverse-Brier weighting), Brier scoring, calibration tracking.
+  (explicit equal weights; unmatched raw loss is not reliability), Brier scoring, calibration tracking.
 - **Schwartz — scenario imagination** (Schwartz, 1991): the construction approach —
   focal question, STEEP driving forces, 2×2 axis matrix, implications. In the scenarios
   server this is the framing/brainstorming surface (`scenario_frame`, `scenario_frame_document`,
@@ -99,7 +99,7 @@ The scenarios server implements three methodologies as an integrated pipeline:
 
 The pipeline flows from imagination (Schwartz: `scenario_frame`, `scenario_brainstorm`,
 `scenario_build`) through computation (Tetlock: `scenario_quantify`, `scenario_calibrate`,
-`scenario_update`, `scenario_synthesize`, `scenario_score`, `scenario_calibration`) to
+`scenario_update`, `scenario_synthesize`, `scenario_declare`, `scenario_score`, `scenario_calibration`) to
 evaluation (Chermack: `scenario_assess`).
 
 ### Event-tree model (MAIA)
@@ -186,21 +186,21 @@ asserts:[^fagan-inspection]
 2. Every primitive the contract table names actually exists in `hkask-forecast` (no dangling
    references).
 
-### The closed feedback loop (operational)
+### Prospective forecasts and separate interpretation
 
-The Brier learning loop — Tetlock's record → score → recalibrate cycle — is operational
-across the layers:[^brier-1950][^tetlock-record]
-
-1. **Record**: `scenario_score` writes `StoredForecastRecord` entries into the
-   `ForecastStore` journal.
-2. **Score**: `hkask_forecast::brier_score` / `brier_score_multi` compute the Brier score
-   for resolved forecasts.
-3. **Calibration curve**: `compute_calibration_curve` (scenarios) bins resolved forecasts
-   into 10 probability bands and derives an `overconfidence_score`.
-4. **Recalibrate**: `hkask_forecast::apply_calibration_adjustment` consumes the
-   overconfidence bias and regresses the next forecast's prior. `scenario_calibrate` applies
-   this automatically when ≥5 resolved forecasts exist.
-
+1. **Declare:** `scenario_declare` freezes `forecast_id`, full events/marginals,
+   deadline and named `resolver` before outcome visibility; a template ID is not
+   durable admission. Revised forecasts need a new identity.
+2. **Resolve:** `scenario_score` requires exact frozen events/resolver and scores
+   stored probabilities. Undeclared legacy records are unscored history. The
+   caller-reported resolver name is not authenticated evidence.
+3. **Describe:** `scenario_calibration` reports eligible-history bins/counts.
+   Signed bias can cancel and raw loss is not calibration (Murphy 1973,
+   DOI `10.1175/1520-0450(1973)012<0595:ANVPOT>2.0.CO;2`). No universal bands,
+   synthetic historical priors, inverse-loss weights or automatic bias correction.
+4. **Compare:** use declared references on matched events/weights/lead times,
+   retaining unresolved fractions and dependence. A lower historical score alone
+   does not demonstrate learning. Skill is undefined for zero reference loss.
 ### The `compute` action
 
 The deterministic `hkask_forecast::*` primitives are invoked by the model directly via the
@@ -219,10 +219,7 @@ six deterministic checks (executed live through `lisp_eval`; receipts in the ski
 
 The server-side deterministic computations: `scenario_quantify` (the tree
 marginalization — the outcome node's `marginal_probability` is stage 4's
-prior), `scenario_calibrate` (the calibrated probability; it applies the
-learned overconfidence bias internally when ≥5 resolved forecasts exist —
-`apply_calibration_adjustment` is called inside the server, not by the agent),
-and `scenario_score` (Brier at resolution — the only forecast-journal writer).
+prior), `scenario_calibrate` (Fermi/outside/inside-view estimate without automatic historical correction), `scenario_declare` (frozen prospective admission), and `scenario_score` (raw loss against that declaration at resolution).
 
 ### Common drift and how this model prevents it
 
@@ -269,12 +266,15 @@ classDiagram
         +store: HMemStore
     }
     class HMemStore {
-        boards, tasks, and unresolved goals persisted as RDF h_mems
+        boards, tasks, and canonical goals retained as RDF h_mems
     }
     class Goal {
-        +goal_id: GoalID
+        +id: GoalID
         +criteria: Vec~VerificationCriterion~
-        +prediction: Option~f64~
+        +source: GoalSource
+        +forecast: Option~GoalForecast~
+        +closure: Option~HumanClosure~
+        +assessments: Vec~GoalAssessmentAttempt~
         +verdicts: Vec~GoalVerdict~
     }
     class Board {
@@ -300,7 +300,7 @@ classDiagram
     KanbanService --> HMemStore : persists via
     HMemStore "1" o-- "many" Board : contains
     HMemStore "1" o-- "many" Task : contains
-    HMemStore "1" o-- "many" Goal : contains until resolution
+    HMemStore "1" o-- "many" Goal : retains canonical history
     Board "1" o-- "many" Task : holds
     Task "1" --> "1" TaskStatus : has
 ```
@@ -308,12 +308,20 @@ classDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-IC-017
 verified_date: 2026-09-28
-verified_against: kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs:30-70; kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs:9-22,242-324; kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:40-79; kask/crates/hkask-types/src/kanban_status.rs:24
+verified_against: kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md; kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/goal.rs; kask/crates/kask_bridge/src/goals.rs
 status: VERIFIED
 -->
 
-The Kata-Kanban server persists boards, tasks, and functional goals as RDF h_mems in the same DB-backed `HMemStore` (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs:30-70`; `kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs:9-22,271-324`). `kanban_goal_score` records the resolution but retains the row across restarts as a retryable outbox entry. After the production turn-ingestion path stores the scored outcome in curator memory, `kanban_goal_memory_acknowledge` prunes the retained row; failed ingestion or acknowledgment leaves it retryable (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs:242-324`). The former `KataEngine` orchestrator is deleted; kata coaching prompts are generated per task by `kanban_task_kata_prompt`. `TaskStatus` is defined in `kask/crates/hkask-types/src/kanban_status.rs:24`.
-
+The Kata-Kanban server persists boards, tasks and canonical functional goals in
+its DB-backed `HMemStore`. MCP create/judge/get/list are worker surfaces; native
+host closure/correction obtain real human ActionChoice, never model-authored
+outcomes. A fresh blinded assessor initially sees spec/evidence only; the current
+host has no evidence-fetch tools and returns unknown. Durable assessment/projection
+jobs retry without a model turn and validate event/revision/digest receipts;
+acknowledgment never deletes canonical history. Ordinary goals require no forecast.
+See `kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md` for exact types and
+`kask/crates/kask_bridge/src/goals.rs` for orchestration. Task status is not goal
+achievement. Kata prompts remain per-task `kanban_task_kata_prompt`.
 ## Footnotes
 
 [^tetlock]: Tetlock, P. E., & Gardner, D. (2015). *Superforecasting: The Art and Science of Prediction*. Crown Publishers.
@@ -338,10 +346,10 @@ The Kata-Kanban server persists boards, tasks, and functional goals as RDF h_mem
     Cited for the mechanical-conformance-inspection principle the conformance contract applies to skill–library consistency.
 
 [^brier-1950]: Brier, G. W. (1950). Verification of forecasts expressed in terms of probability. *Monthly Weather Review*, 78(1), 1–3. https://doi.org/10.1175/1520-0493(1950)078<0001:VOFERT>2.0.CO;2
-    Cited for the Brier scoring formula the closed feedback loop uses to measure forecast accuracy.
+    Cited for the Brier scoring formula the closed feedback loop uses to measure probabilistic loss, not calibration by itself.
 
 [^tetlock-record]: Tetlock, P. E., & Gardner, D. (2015). *Superforecasting: The Art and Science of Prediction*. Crown Publishers.
-    Cited for the record → score → recalibrate cycle that operationalizes Brier's calibration feedback.
+    Cited as forecasting practice context, not evidence that automatic correction is effective here.
 
 [^deming-pdca-compute]: Deming, W. E. (1986). *Out of the Crisis*. MIT Center for Advanced Engineering Study.
     Cited for the PDCA cycle that `lisp_eval` embeds as a deterministic step within the LLM-driven skill process.
