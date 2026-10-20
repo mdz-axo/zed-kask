@@ -593,7 +593,7 @@ form: "(= (+ a b) 3)"
         // a `pass` verdict could be self-certified over a blocking defect.
         let prompt_enhance = skill_candidate("prompt-enhance", "count-prohibitions");
         let pass_over_blocking = json!({
-            "rounds_executed": 1,
+            "critique_runs": [{"ratings": []}],
             "pdca_corrections": 0,
             "verdict": "pass",
             "findings": [
@@ -607,7 +607,7 @@ form: "(= (+ a b) 3)"
             "a pass verdict carrying a Prohibition finding must fail PE-2"
         );
         let clean_pass = json!({
-            "rounds_executed": 1,
+            "critique_runs": [{"ratings": []}],
             "pdca_corrections": 0,
             "verdict": "pass",
             "findings": [{"area":"Mechanism","gap":"g2","severity":"Guardrail"}]
@@ -617,7 +617,7 @@ form: "(= (+ a b) 3)"
             json!([0, true])
         );
         let no_findings = json!({
-            "rounds_executed": 1,
+            "critique_runs": [{"ratings": []}],
             "pdca_corrections": 0,
             "verdict": "pass",
             "findings": []
@@ -627,7 +627,7 @@ form: "(= (+ a b) 3)"
             json!([0, true])
         );
         let non_pass_with_defect = json!({
-            "rounds_executed": 3,
+            "critique_runs": [{"ratings": []}, {"ratings": []}, {"ratings": []}],
             "pdca_corrections": 1,
             "verdict": "rewrite_needed",
             "findings": [{"area":"Recall","gap":"g1","severity":"Prohibition"}]
