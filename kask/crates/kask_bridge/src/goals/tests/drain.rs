@@ -230,6 +230,79 @@ async fn unchanged_rejections_are_quiet_but_changes_and_recurrences_warn() {
 }
 
 #[tokio::test]
+async fn native_scan_preserves_canonical_validation_and_caller_separation() {
+    let dir = tempfile::tempdir().expect("directory");
+    let (host, _, _) = observed_host(dir.path());
+    let owners = [WebID::new(), WebID::new()];
+    let first = declare(&host, owners[0]).expect("first");
+    let second = declare(&host, owners[1]).expect("second");
+    let unsupported_first = unsupported(&host, owners[0]);
+    unsupported(&host, owners[1]);
+    let forged_id = hkask_types::GoalID::new();
+    let mut forged = serde_json::to_value(&second).expect("goal JSON");
+    forged["id"] = serde_json::json!(forged_id);
+    let wrong_key = hkask_types::GoalID::new();
+    let malformed = hkask_types::GoalID::new();
+    for row in [
+        HMem::new("kanban:goal", &forged_id.to_string(), forged, owners[0]),
+        HMem::new(
+            "kanban:goal",
+            &wrong_key.to_string(),
+            serde_json::to_value(&first).expect("goal JSON"),
+            owners[0],
+        ),
+        HMem::new(
+            "kanban:goal",
+            &malformed.to_string(),
+            serde_json::json!({"schema_version":3}),
+            owners[0],
+        ),
+        HMem::new(
+            "kanban:goal",
+            &first.id.to_string(),
+            serde_json::to_value(&first).expect("duplicate goal JSON"),
+            owners[0],
+        ),
+    ] {
+        host.ledger.insert(&row).expect("invalid canonical fixture");
+    }
+    let mut scanned = host.service.goal_scan_for_host().expect("native scan");
+    let first_listing = scanned.remove(&owners[0]).expect("first owner");
+    assert_eq!(first_listing.goals.len(), 1);
+    assert_eq!(first_listing.goals[0].id, first.id);
+    assert_eq!(first_listing.rejected.len(), 5);
+    assert!(first_listing.rejected[&unsupported_first.attribute].contains("expected version 3"));
+    assert!(
+        first_listing.rejected[&forged_id.to_string()]
+            .to_lowercase()
+            .contains("permission denied")
+    );
+    assert!(first_listing.rejected[&wrong_key.to_string()].contains("key mismatch"));
+    assert!(first_listing.rejected[&malformed.to_string()].contains("goal decode"));
+    assert!(first_listing.rejected[&first.id.to_string()].contains("duplicate canonical identity"));
+    assert_eq!(
+        serde_json::to_value(first_listing).expect("native listing"),
+        serde_json::to_value(host.service.goal_list(&owners[0]).expect("caller listing"))
+            .expect("caller JSON")
+    );
+    let second_listing = scanned.remove(&owners[1]).expect("second owner");
+    assert_eq!(second_listing.goals.len(), 1);
+    assert_eq!(second_listing.goals[0].id, second.id);
+    assert_eq!(second_listing.rejected.len(), 1);
+    assert_eq!(
+        serde_json::to_value(second_listing).expect("native listing"),
+        serde_json::to_value(host.service.goal_list(&owners[1]).expect("caller listing"))
+            .expect("caller JSON")
+    );
+    assert!(scanned.is_empty());
+    let stranger = host
+        .service
+        .goal_list(&WebID::new())
+        .expect("foreign listing");
+    assert!(stranger.goals.is_empty() && stranger.rejected.is_empty());
+}
+
+#[tokio::test]
 async fn bounded_work_retries_and_does_not_starve_other_owners() {
     let dir = tempfile::tempdir().expect("directory");
     let (host, _, provider) = observed_host(dir.path());

@@ -1,18 +1,10 @@
 //! Media Panel — a Steer-only surface for the `hkask-mcp-media` MCP server.
 //!
-//! This panel deliberately has **no browse forms** — the media server exposes
-//! 98 tools spanning gallery management, image/video
-//! generation, voice synthesis, transcription, and face recognition. A
-//! hand-written management UI for all of these would be impractical and would
-//! duplicate the Steer conversation's chat-driven workflow. The panel's sole
-//! affordance is a cross-domain curator `ConversationView` (via
-//! `hkask_steer::SteerSurface`) whose prompt highlights the media server's
-//! generated `TOOL_NAMES` without hiding other MCP tools.
-//!
-//! Generated media (images, videos) renders inline in the conversation via the
-//! media block renderer (the D18 seam). The operator asks the curator to
-//! generate, search, organize, or transform media; the curator dispatches via
-//! the media MCP tools and results appear inline.
+//! A cross-domain curator conversation supports ingesting, organizing,
+//! annotating, and extracting existing research evidence. The viewer exposes
+//! Media, Library, Queue, and Detail tabs; chat drives the server tools.
+//! The prompt highlights the server's generated `TOOL_NAMES` without hiding
+//! other MCP tools. Source-linked media results render inline (the D18 seam).
 
 pub mod media_viewer;
 pub mod panel_button;
@@ -93,7 +85,7 @@ pub fn init(cx: &mut App) {
 /// split by a draggable horizontal divider.
 ///
 /// The director (bottom) is a cross-domain curator conversation — media
-/// operations (generate, search, organize, transform, transcribe) are
+/// operations (ingest, search, organize, annotate, transcribe, excerpt) are
 /// driven through chat. The viewing pane (top) surfaces what the tools
 /// produced: assets are extracted structurally from tool-result
 /// `display_hint` fields, so the viewer updates on every tool
@@ -225,18 +217,13 @@ impl MediaPanel {
                 "video_",
                 "audio_",
                 "face_",
-                "generate_",
-                "voice_",
                 "transcribe",
                 "record_",
                 "educt_",
+                "reduct_",
                 "model_",
                 "job_",
-                "workflow_",
                 "describe_",
-                "expand_",
-                "upscale_",
-                "transform_",
             ],
             window,
             cx,
@@ -261,31 +248,29 @@ fn steer_system_prompt() -> SharedString {
             ("Face tools", &["face_"]),
             ("Image tools", &["image_", "describe_"]),
             ("Video tools", &["video_"]),
-            (
-                "Generation tools",
-                &["generate_", "transform_", "upscale_", "expand_"],
-            ),
-            ("Voice tools", &["voice_"]),
             ("Audio tools", &["audio_", "transcribe", "record_"]),
             ("Transcript store tools (local)", &["educt_"]),
             ("Reduct cloud connection", &["reduct_"]),
             ("Model tools", &["model_"]),
             ("Job tools", &["job_"]),
-            ("Workflow tools", &["workflow_"]),
         ],
     );
     let prompt = format!(
         "## Media Panel — Steer Mode\n\
          You are operating in the Media panel's cross-domain Steer mode. The \
-         full MCP tool surface remains available. Media operations are driven \
-         through chat — there are no management forms in this panel.\n\
+         full MCP tool surface remains available. Use media tools to ingest, \
+         organize, annotate, search, transcribe, and extract existing research evidence.\n\
          \n\
          {tool_section}\
          \n\
-         Generated media (images, videos) renders inline in the conversation \
-         via the media block renderer. Use `generate_image` for image \
-         creation, `gallery_search` to find existing images, and \
-         `gallery_organize` to manage the gallery structure."
+         Preserve source bytes and stable asset identities. Keep user-authored \
+         annotations distinct from model-derived observations; neither is verified \
+         source evidence by itself. Link excerpts and reels to their source and \
+         transcript ranges, and retain historical provenance. Use face identification \
+         only when explicitly selected by the operator. Reduct cloud uploads and \
+         publication require an explicit operator decision. Do not synthesize \
+         research evidence. Media results render inline; the Library, Queue, and \
+         Detail tabs expose indexed assets, research jobs, and provenance."
     );
     prompt.into()
 }
@@ -470,18 +455,13 @@ mod tests {
                 "video_",
                 "audio_",
                 "face_",
-                "generate_",
-                "voice_",
                 "transcribe",
                 "record_",
                 "educt_",
+                "reduct_",
                 "model_",
                 "job_",
-                "workflow_",
                 "describe_",
-                "expand_",
-                "upscale_",
-                "transform_",
             ],
         ) {
             assert!(

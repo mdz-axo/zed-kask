@@ -19,7 +19,6 @@ pub fn create_env() -> Result<Environment<'static>, crate::MediaError> {
         ("tag_colors", TAG_COLORS),
         ("tag_composition", TAG_COMPOSITION),
         ("caption", CAPTION),
-        ("voice_design", VOICE_DESIGN),
         ("video_caption", VIDEO_CAPTION),
         ("validate_face_ref", VALIDATE_FACE_REF),
         ("match_faces", MATCH_FACES),
@@ -300,23 +299,6 @@ Generate 5-10 relevant hashtags for this video content. Each should start with #
 {% endif %}
 
 Return ONLY the text. No markdown, no preamble, no labels."#;
-
-const VOICE_DESIGN: &str = r#"Design a synthetic voice based on this character description:
-
-{{ character_description }}
-
-Produce a structured voice profile with these fields:
-- name: A short, evocative name for this voice (e.g., "Warm Mentor", "Crisp Analyst", "Gentle Storyteller")
-- pitch: One of "low", "medium-low", "medium", "medium-high", "high"
-- timbre: One of "warm", "bright", "dark", "breathy", "clear", "resonant", "nasal"
-- pace: One of "slow", "deliberate", "moderate", "brisk", "fast"
-- accent: A specific accent if appropriate (e.g., "british", "american-southern", "australian", "indian"), or empty string for neutral
-- emotion_range: Array of 2-4 emotions this voice naturally conveys (e.g., ["warm", "authoritative", "playful"])
-- gender_presentation: One of "masculine", "feminine", "androgynous", "neutral"
-- age_range: One of "young", "young-adult", "middle-aged", "senior"
-- description: A 1-2 sentence natural-language description synthesizing all the above, suitable as input to a TTS model. Write it in prose like "A warm, middle-aged feminine voice with a gentle British accent, speaking at a moderate pace with a clear, resonant timbre."
-
-Return ONLY a JSON object with exactly these 9 fields. No markdown, no preamble."#;
 
 const VALIDATE_FACE_REF: &str = r#"You are validating a reference image for facial recognition. This image will be used as the canonical reference for matching a specific person across a photo gallery. Assess it against these criteria:
 

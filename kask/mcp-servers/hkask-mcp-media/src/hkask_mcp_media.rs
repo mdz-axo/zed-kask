@@ -3,15 +3,11 @@
 // the same `cfg_attr(not(test), …)` pattern as hkask-email/hkask-inference.
 #![cfg_attr(not(test), forbid(unsafe_code))]
 #![warn(clippy::let_underscore_future)]
-//! hKask MCP Media — AI media generation (image, video, voice via centralized inference router)
+//! hKask MCP Media — source-media research and curation.
 //!
-//! Tool families:
-//! - Gallery: organize, search, status
-//! - Image: describe, remove_background, apply_style, create_collage
-//! - Video: clip, to_gif, image_to_video, add_caption, remix, concat, from_images
-//! - Generation: generate_image, transform_image, upscale_image, generate_video
-//! - Voice: voice_design, generate_speech
-//! - Audio: transcribe, transcribe_bundle, audio_capture, record_and_transcribe
+//! Tool families retain source discovery, gallery analysis and annotations,
+//! source-linked audio/video editing, transcription, and transcript-backed reels.
+//! Historical lineage remains readable; creative generation is not a research job.
 
 mod assets;
 mod error;
@@ -40,7 +36,6 @@ use gallery::vision::{self};
 use hkask_mcp_server::server::{McpToolError, execute_tool, validate_tool_url_with_dns};
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_types::InferencePort;
-use hkask_types::VoiceDesign;
 
 use crate::transcript::{TimedWord, TranscriptBundle, TranscriptSegment};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
@@ -95,10 +90,8 @@ pub(crate) static ARTIFACTS_ENV_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>
 /// `None` when unset and callers fail visibly naming the env var (the
 /// operator's no-hidden-models spec).
 pub mod models {
-    pub const TTS_ENV: &str = "HKASK_MEDIA_TTS_MODEL";
     pub const STT_ENV: &str = "HKASK_MEDIA_STT_MODEL";
     pub const VISION_ENV: &str = "HKASK_MEDIA_VISION_MODEL";
-    pub const IMAGE_GEN_ENV: &str = "HKASK_MEDIA_IMAGE_GEN_MODEL";
 
     /// Resolve a configured media model from its env var — `None` when
     /// unset (the operator's no-hidden-models spec: no constant fallback;
@@ -107,20 +100,11 @@ pub mod models {
         std::env::var(env_key).ok().filter(|m| !m.trim().is_empty())
     }
 
-    pub fn tts_model() -> Option<String> {
-        configured(TTS_ENV)
-    }
     pub fn stt_model() -> Option<String> {
         configured(STT_ENV)
     }
     pub fn vision_model() -> Option<String> {
         configured(VISION_ENV)
-    }
-    pub fn image_gen_model() -> Option<String> {
-        configured(IMAGE_GEN_ENV)
-    }
-    pub fn video_model() -> Option<String> {
-        configured("HKASK_MEDIA_VIDEO_MODEL")
     }
 }
 
@@ -172,10 +156,10 @@ struct GalleryAccess {
 hkask_mcp_server::mcp_server!(
     pub struct MediaServer {
         /// Inference port for vision/chat/embed calls routed through zed's
-        /// LanguageModelRegistry via the IPC bridge, and for media generation
-        /// handled child-locally: `media_generate`
-        /// (image/video/speech/transcription) dispatches to the local
-        /// `MediaRouter` with this process's env-injected keys — no IPC
+        /// LanguageModelRegistry via the IPC bridge. Transcription is
+        /// handled child-locally: `media_generate("transcribe", ...)`
+        /// dispatches to the local `MediaRouter` with this process's
+        /// env-injected keys — no IPC
         /// round-trip. `generate_vision` handles
         /// face/object/color/composition/caption analysis; `embed` handles
         /// the gallery embedding path.
@@ -186,7 +170,7 @@ hkask_mcp_server::mcp_server!(
         pub ffmpeg: FfmpegRunner,
         /// yt-dlp runner for video downloading (video_fetch tool).
         pub ytdlp: YtDlpRunner,
-        /// In-memory generation job store for async job tracking (OMC `Task`).
+        /// In-memory research job store for async job tracking (OMC `Task`).
         pub job_store: jobs::JobStore,
         /// SerpApi credential for structured YouTube discovery and metadata.
         /// Binary media retrieval remains the separate `YtDlpRunner` concern.
@@ -197,7 +181,6 @@ hkask_mcp_server::mcp_server!(
     } = crate::ontology::annotate;
 );
 
-mod style;
 pub mod transcript;
 pub mod transcript_export;
 pub mod transcript_layers;
@@ -447,10 +430,8 @@ impl MediaServer {
         Self::gallery_router()
             + Self::processing_router()
             + Self::audio_router()
-            + Self::generation_router()
             + Self::models_router()
             + Self::jobs_router()
-            + Self::workflows_router()
             + Self::educt_router()
             + Self::youtube_router()
             + Self::reduct_router()
@@ -1236,147 +1217,11 @@ mod tool_behavior_tests {
                 }))
                 .await
                 .expect_err("oversized frame extraction must fail"),
-            server
-                .generate_image(Parameters(GenerateImageRequest {
-                    prompt: "bounded variants".to_string(),
-                    image_size: None,
-                    num_images: Some(0),
-                    style: None,
-                }))
-                .await
-                .expect_err("zero variants must fail"),
-            server
-                .generate_image(Parameters(GenerateImageRequest {
-                    prompt: "bounded variants".to_string(),
-                    image_size: None,
-                    num_images: Some(hkask_types::media_limits::MAX_GENERATION_VARIANTS + 1),
-                    style: None,
-                }))
-                .await
-                .expect_err("oversized variants must fail"),
         ];
 
         for error in errors {
             assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
         }
-        Ok(())
-    }
-
-    /// dcterms:identifier: `MediaServer::generate_image`
-    /// expect: Multi-variant generation preserves valid outputs and explicitly reports partial
-    /// or failed completion with one original cause per failed variant.
-    /// [P3] Motivating: useful generated work survives sibling failures.
-    /// pre: a provider returns two requested variant payloads with mixed validity.
-    /// post: partial and failed responses retain requested/returned counts and causal failures;
-    /// only valid outputs remain durable.
-    #[tokio::test]
-    async fn multi_variant_generation_preserves_partial_successes_and_causes()
-    -> Result<(), Box<dyn std::error::Error>> {
-        struct BatchMedia {
-            items: Vec<serde_json::Value>,
-        }
-        crate::test_support::media_inference_stub! {
-            BatchMedia,
-            generate(self, _prompt): {
-                panic!("generation test must use media_generate")
-            },
-            media_generate(self, _op, _params): {
-                let items = self.items.clone();
-                Box::pin(async move { Ok(serde_json::json!({"data": items})) })
-            }
-        }
-
-        struct FailingMedia;
-        crate::test_support::media_inference_stub! {
-            FailingMedia,
-            generate(self, _prompt): {
-                panic!("generation test must use media_generate")
-            },
-            media_generate(self, _op, _params): {
-                Box::pin(async {
-                    Err(hkask_types::InferenceError::Connection(
-                        "provider sentinel failure".to_string(),
-                    ))
-                })
-            }
-        }
-
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let artifacts = tempfile::tempdir()?;
-        let _env = ArtifactsEnvGuard::set(artifacts.path());
-        let request = || {
-            Parameters(GenerateImageRequest {
-                prompt: "two variants".to_string(),
-                image_size: None,
-                num_images: Some(2),
-                style: None,
-            })
-        };
-        let valid = serde_json::json!({"b64_json": "/9j/4AAQSkZJRg=="});
-        let invalid = serde_json::json!({"b64_json": "%%% invalid base64 %%%"});
-
-        let partial_server = make_server_with_port(Arc::new(BatchMedia {
-            items: vec![valid, invalid.clone()],
-        }));
-        let partial = content_of(&partial_server.generate_image(request()).await?);
-        assert_eq!(partial["status"], "partial");
-        assert_eq!(partial["count_requested"], 2);
-        assert_eq!(partial["count_returned"], 1);
-        assert_eq!(partial["failures"].as_array().map(Vec::len), Some(1));
-        assert_eq!(partial["failures"][0]["variant_index"], 1);
-        assert!(
-            partial["failures"][0]["cause"]
-                .as_str()
-                .is_some_and(|cause| cause.contains("Invalid symbol 37"))
-        );
-        assert_eq!(
-            std::fs::read_dir(crate::assets::generated_assets_dir())?.count(),
-            1
-        );
-
-        let failed_server = make_server_with_port(Arc::new(BatchMedia {
-            items: vec![invalid.clone(), invalid],
-        }));
-        let failed = content_of(&failed_server.generate_image(request()).await?);
-        assert_eq!(failed["status"], "failed");
-        assert_eq!(failed["count_requested"], 2);
-        assert_eq!(failed["count_returned"], 0);
-        assert_eq!(failed["failures"].as_array().map(Vec::len), Some(2));
-        assert_eq!(
-            std::fs::read_dir(crate::assets::generated_assets_dir())?.count(),
-            1,
-            "failed variants left durable files"
-        );
-
-        let provider_failed_server = make_server_with_port(Arc::new(FailingMedia));
-        let provider_failed = content_of(&provider_failed_server.generate_image(request()).await?);
-        assert_eq!(provider_failed["status"], "failed");
-        assert_eq!(
-            provider_failed["failures"].as_array().map(Vec::len),
-            Some(2)
-        );
-        assert!(
-            provider_failed["failures"]
-                .as_array()
-                .is_some_and(|failures| failures.iter().all(|failure| {
-                    failure["stage"] == "provider"
-                        && failure["cause"]
-                            .as_str()
-                            .is_some_and(|cause| cause.contains("provider sentinel failure"))
-                }))
-        );
-
-        let completed_server = make_server_with_port(Arc::new(BatchMedia {
-            items: vec![
-                serde_json::json!({"b64_json": "/9j/4AAQSkZJRg=="}),
-                serde_json::json!({"b64_json": "/9j/4AAQSkZJRg=="}),
-            ],
-        }));
-        let completed = content_of(&completed_server.generate_image(request()).await?);
-        assert_eq!(completed["status"], "completed");
-        assert_eq!(completed["count_requested"], 2);
-        assert_eq!(completed["count_returned"], 2);
-        assert_eq!(completed["failures"], serde_json::json!([]));
         Ok(())
     }
 
@@ -6322,146 +6167,4 @@ mod gallery_lifecycle_tests {
         Ok(())
     }
 
-    /// A generation port with a first-call barrier: `media_generate`
-    /// returns one URL-based image variant per call, parking the first call
-    /// until released so a test can switch gallery roots mid-inference.
-    struct GenerateBarrierVision {
-        urls: Vec<String>,
-        entered: tokio::sync::Notify,
-        resume: tokio::sync::Notify,
-        calls: std::sync::atomic::AtomicUsize,
-    }
-    impl GenerateBarrierVision {
-        fn new(urls: Vec<String>) -> Self {
-            Self {
-                urls,
-                entered: tokio::sync::Notify::new(),
-                resume: tokio::sync::Notify::new(),
-                calls: std::sync::atomic::AtomicUsize::new(0),
-            }
-        }
-    }
-    crate::test_support::media_inference_stub! {
-        GenerateBarrierVision,
-        generate(self, _prompt): {
-            Box::pin(async {
-                Err(hkask_types::InferenceError::NotConfigured(
-                    "test only supports media_generate".into(),
-                ))
-            })
-        },
-        generate_vision(self, _prompt, _images): {
-            Box::pin(async {
-                Err(hkask_types::InferenceError::NotConfigured(
-                    "test only supports media_generate".into(),
-                ))
-            })
-        },
-        media_generate(self, _op, _params): {
-            let index = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            let url = self
-                .urls
-                .get(index)
-                .cloned()
-                .unwrap_or_else(|| self.urls.last().expect("at least one URL").clone());
-            Box::pin(async move {
-                if index == 0 {
-                    self.entered.notify_one();
-                    self.resume.notified().await;
-                }
-                Ok(serde_json::json!({ "data": [{ "url": url }] }))
-            })
-        }
-    }
-
-    /// expect: Every generated variant is filed under the generated gallery,
-    /// even when the active root switches during inference and again during a
-    /// variant download — real tool entry, not the persistence helper. [P1]
-    #[tokio::test]
-    async fn generate_image_files_every_variant_under_the_generated_gallery() -> TestResult {
-        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
-        let _environment = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let fixture = tempfile::tempdir()?;
-        let prior = std::env::var_os("HKASK_ARTIFACTS_DIR");
-        unsafe {
-            std::env::set_var("HKASK_ARTIFACTS_DIR", fixture.path());
-        }
-        let result: TestResult = async {
-            let first = fixture.path().join("first"); let second = fixture.path().join("second"); let third = fixture.path().join("third");
-            std::fs::create_dir(&first)?; std::fs::create_dir(&second)?; std::fs::create_dir(&third)?;
-            let source = fixture.path().join("source.png"); png(&source, 1);
-            let bytes = std::fs::read(source)?;
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-            let address = listener.local_addr()?;
-            let download_entered = Arc::new(tokio::sync::Notify::new());
-            let download_resume = Arc::new(tokio::sync::Notify::new());
-            let download = {
-                let entered = download_entered.clone(); let resume = download_resume.clone();
-                let bytes = bytes.clone();
-                tokio::spawn(async move {
-                    for index in 0..2 {
-                        let (mut stream, _) = listener.accept().await?;
-                        let mut reader = tokio::io::BufReader::new(&mut stream);
-                        loop {
-                            let mut line = String::new();
-                            if reader.read_line(&mut line).await? == 0 {
-                                return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof));
-                            }
-                            if line == "\r\n" { break; }
-                        }
-                        if index == 0 { entered.notify_one(); resume.notified().await; }
-                        stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", bytes.len()).as_bytes()).await?;
-                        stream.write_all(&bytes).await?;
-                    }
-                    Ok::<(), std::io::Error>(())
-                })
-            };
-            let vision = Arc::new(GenerateBarrierVision::new(vec![
-                format!("http://{address}/one"), format!("http://{address}/two"),
-            ]));
-            let server = Arc::new(server(&fixture.path().join("gallery.sqlite"), vision.clone()));
-            organize(&server, &first, true).await?;
-            let generation = {
-                let server = server.clone();
-                tokio::spawn(async move {
-                    server.generate_image(Parameters(GenerateImageRequest {
-                        prompt: "admission binding".into(), image_size: None, num_images: Some(2), style: None,
-                    })).await
-                })
-            };
-            // Switch roots while the first inference call is parked.
-            tokio::time::timeout(std::time::Duration::from_secs(5), vision.entered.notified()).await?;
-            organize(&server, &second, true).await?;
-            vision.resume.notify_one();
-            // Switch roots again while the first variant download is parked.
-            tokio::time::timeout(std::time::Duration::from_secs(5), download_entered.notified()).await?;
-            organize(&server, &third, true).await?;
-            download_resume.notify_one();
-            let output = generation.await??;
-            download.await??;
-            let value: serde_json::Value = serde_json::from_str(&output)?;
-            let content = value.get("content").unwrap_or(&value);
-            assert_eq!(content["count_returned"], 2, "{output}");
-            let generated = crate::assets::owning_gallery_id(
-                &server.gallery_store,
-                &crate::assets::generated_assets_dir(),
-                &crate::assets::generated_assets_dir(),
-            )?;
-            assert_eq!(server.gallery_store.count_assets(&generated)?, 2,
-                "every variant belongs to the generated gallery");
-            for gallery in [&first, &second, &third] {
-                organize(&server, gallery, true).await?;
-                assert_eq!(server.access_gallery()?.image_count, 0,
-                    "active roots indexed nothing");
-            }
-            Ok(())
-        }.await;
-        unsafe {
-            match prior {
-                Some(value) => std::env::set_var("HKASK_ARTIFACTS_DIR", value),
-                None => std::env::remove_var("HKASK_ARTIFACTS_DIR"),
-            }
-        }
-        result
-    }
 }

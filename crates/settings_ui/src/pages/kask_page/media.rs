@@ -1,10 +1,9 @@
-//! Media sub-page — media server model configuration (TTS, STT, Vision,
-//! Image Gen, Video models).
+//! Media sub-page — research transcription and visual analysis models.
 //!
 //! Reads from `kask_bridge::KaskMediaSettings` (the `"kask.media"` section
 //! in settings.json) and writes via `kask_string_input` — the same pattern
 //! as every other kask settings sub-page. The media MCP server reads these
-//! as env vars (`HKASK_MEDIA_TTS_MODEL` etc.) emitted by
+//! as env vars (`HKASK_MEDIA_STT_MODEL`, `HKASK_MEDIA_VISION_MODEL`) emitted by
 //! `mcp_env::emit_media_env` at server launch.
 
 use super::*;
@@ -21,14 +20,6 @@ pub(crate) fn render_media_page(
         .map(Into::into)
         .unwrap_or_default();
 
-    let tts_input = kask_string_input(
-        "kask-media-tts",
-        "TTS Model",
-        "Provider/model-id (required — no hidden default)",
-        media.tts_model,
-        "media",
-        "tts_model",
-    );
     let stt_input = kask_string_input(
         "kask-media-stt",
         "STT Model",
@@ -45,22 +36,6 @@ pub(crate) fn render_media_page(
         "media",
         "vision_model",
     );
-    let image_gen_input = kask_string_input(
-        "kask-media-image-gen",
-        "Image Generation Model",
-        "Provider/model-id (required — no hidden default)",
-        media.image_gen_model,
-        "media",
-        "image_gen_model",
-    );
-    let video_input = kask_string_input(
-        "kask-media-video",
-        "Video Generation Model",
-        "Provider/model-id (required — no hidden default)",
-        media.video_model,
-        "media",
-        "video_model",
-    );
 
     v_flex()
         .id("kask-media-page")
@@ -72,24 +47,16 @@ pub(crate) fn render_media_page(
         .child(Headline::new("Media Server").size(HeadlineSize::XLarge))
         .child(
             Label::new(
-                "Configure the media MCP server: model overrides for TTS, \
-                 speech-to-text, vision, image generation, and video generation. \
-                 When empty, the server falls back to the kask default models. \
-                 The media panel (View > Media or the status bar button) provides \
-                 a cross-domain Steer conversation framed around media work.",
+                "Curate existing research evidence: ingest recordings and images, \
+                 organize assets, annotate observations, and extract source-linked excerpts. \
+                 Configure speech-to-text and vision models below. Settings provide defaults; \
+                 explicitly clearing a model disables that pipeline with a visible error. \
+                 Open the media panel from View > Media or the status bar button.",
             )
             .color(Color::Muted)
             .size(LabelSize::Small),
         )
         .child(div().mt_4())
-        .child(
-            v_flex()
-                .gap_3()
-                .child(tts_input)
-                .child(stt_input)
-                .child(vision_input)
-                .child(image_gen_input)
-                .child(video_input),
-        )
+        .child(v_flex().gap_3().child(stt_input).child(vision_input))
         .into_any_element()
 }

@@ -1427,6 +1427,10 @@ pub struct Thread {
     /// Survives across multiple requests as the model performs tool calls and
     /// we run tools, report their results.
     running_turn: Option<RunningTurn>,
+    // Retain the latest pending-message owner even after cancel takes running_turn.
+    // Weak identity prevents stale cleanup from acting on a successor, without
+    // keeping its stream or workers alive.
+    pending_message_owner: std::rc::Weak<RefCell<Vec<oneshot::Receiver<()>>>>,
     /// When set, the current turn ends at the next message boundary instead of
     /// running to completion. The UI sets this to deliver a "steering" queued
     /// message mid-task; by default queued messages wait for the turn to finish.
@@ -1613,6 +1617,7 @@ impl Thread {
             messages: Vec::new(),
             user_store: project.read(cx).user_store(),
             running_turn: None,
+            pending_message_owner: std::rc::Weak::new(),
             end_turn_at_next_boundary: false,
             pending_message: None,
             tools: BTreeMap::default(),
@@ -2003,6 +2008,7 @@ impl Thread {
             messages: db_thread.messages,
             user_store: project.read(cx).user_store(),
             running_turn: None,
+            pending_message_owner: std::rc::Weak::new(),
             end_turn_at_next_boundary: false,
             pending_message: None,
             tools: BTreeMap::default(),
@@ -2637,12 +2643,15 @@ impl Thread {
             return Task::ready(());
         };
 
+        let event_stream = running_turn.event_stream.clone();
         let turn_task = running_turn.cancel();
 
         cx.spawn(async move |this, cx| {
             turn_task.await;
             this.update(cx, |this, cx| {
-                this.flush_pending_message(cx);
+                if this.owns_pending_message(&event_stream) {
+                    this.flush_pending_message(cx);
+                }
             })
             .ok();
         })
@@ -2908,6 +2917,7 @@ impl Thread {
 
         let (events_tx, events_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
         let event_stream = ThreadEventStream::new(events_tx);
+        self.pending_message_owner = Rc::downgrade(&event_stream.lisp_completions);
         let (cancellation_tx, mut cancellation_rx) = watch::channel(false);
         let task = cx.spawn({
             let event_stream = event_stream.clone();
@@ -3016,14 +3026,15 @@ impl Thread {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
-        // Flush the old pending message synchronously before cancelling,
-        // to avoid a race where the detached cancel task might flush the NEW
-        // turn's pending message instead of the old one.
+        // Flush the old message before transferring pending-message ownership.
+        // Deferred cancellation cleanup is identity-guarded and must not flush
+        // the successor's message.
         self.flush_pending_message(cx);
         self.cancel(cx).detach();
 
         let (events_tx, events_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
         let event_stream = ThreadEventStream::new(events_tx);
+        self.pending_message_owner = Rc::downgrade(&event_stream.lisp_completions);
         let message_ix = self.messages.len().saturating_sub(1);
         self.clear_summary();
         let tools = self.enabled_tools(cx);
@@ -3033,9 +3044,12 @@ impl Thread {
             async move |this, cx| {
                 log::debug!("Starting agent turn execution");
 
-                let turn_result =
+                let mut turn_result =
                     Self::run_turn_internal(&this, &event_stream, cancellation_rx.clone(), cx)
                         .await;
+                if let Err(error) = event_stream.join_lisp_completions().await {
+                    turn_result = Err(error);
+                }
 
                 // Check if we were cancelled - if so, cancel() already took running_turn
                 // and we shouldn't touch it (it might be a NEW turn now)
@@ -3602,16 +3616,32 @@ impl Thread {
             let end_turn = tool_results.is_empty() && early_tool_results.is_empty();
 
             for (owning_message_ix, tool_result) in early_tool_results {
-                Self::process_tool_result(this, event_stream, cx, owning_message_ix, tool_result)?;
+                Self::process_tool_result(
+                    this,
+                    event_stream,
+                    cx,
+                    owning_message_ix,
+                    tool_result,
+                    &mut cancellation_rx,
+                )?;
             }
             while let Some((owning_message_ix, tool_result)) = tool_results.next().await {
-                Self::process_tool_result(this, event_stream, cx, owning_message_ix, tool_result)?;
+                Self::process_tool_result(
+                    this,
+                    event_stream,
+                    cx,
+                    owning_message_ix,
+                    tool_result,
+                    &mut cancellation_rx,
+                )?;
             }
 
             this.update(cx, |this, cx| {
-                this.flush_pending_message(cx);
-                if this.title.is_none() {
-                    this.generate_title(cx);
+                if this.owns_pending_message(event_stream) {
+                    this.flush_pending_message(cx);
+                    if this.title.is_none() {
+                        this.generate_title(cx);
+                    }
                 }
             })?;
 
@@ -4298,8 +4328,17 @@ impl Thread {
         event_stream: &ThreadEventStream,
         cx: &mut AsyncApp,
         owning_message_ix: usize,
-        tool_result: LanguageModelToolResult,
+        mut tool_result: LanguageModelToolResult,
+        cancellation_rx: &mut watch::Receiver<bool>,
     ) -> Result<(), anyhow::Error> {
+        // Results can sit buffered after the worker finishes. Fence the actual
+        // publication, not just evaluation, using this result's old turn watch.
+        if tool_result.tool_name.as_ref() == LispEvalTool::NAME && *cancellation_rx.borrow() {
+            let error = hkask_lisp::LispError::Cancelled.to_string();
+            tool_result.is_error = true;
+            tool_result.content = vec![error.clone().into()];
+            tool_result.output = Some(serde_json::json!({"error": error}));
+        }
         log::debug!("Tool finished {:?}", tool_result);
 
         event_stream.update_tool_call_fields(
@@ -4318,10 +4357,12 @@ impl Thread {
             },
         );
         this.update(cx, |this, _cx| {
-            this.kask.trace_tool_finished(&tool_result.tool_use_id);
-            this.pending_message()
-                .tool_results
-                .insert(tool_result.tool_use_id.clone(), tool_result)
+            if this.owns_pending_message(event_stream) {
+                this.kask.trace_tool_finished(&tool_result.tool_use_id);
+                this.pending_message()
+                    .tool_results
+                    .insert(tool_result.tool_use_id.clone(), tool_result);
+            }
         })?;
         Ok(())
     }
@@ -5361,6 +5402,11 @@ impl Thread {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    fn owns_pending_message(&self, event_stream: &ThreadEventStream) -> bool {
+        self.pending_message_owner
+            .ptr_eq(&Rc::downgrade(&event_stream.lisp_completions))
     }
 
     fn pending_message(&mut self) -> &mut AgentMessage {
@@ -7386,6 +7432,7 @@ pub(crate) fn scoped_tool_call_id(
 struct ThreadEventStream {
     sender: mpsc::UnboundedSender<Result<ThreadEvent>>,
     active_compaction: Rc<RefCell<Option<acp_thread::ContextCompactionId>>>,
+    lisp_completions: Rc<RefCell<Vec<oneshot::Receiver<()>>>>,
 }
 
 impl ThreadEventStream {
@@ -7393,7 +7440,24 @@ impl ThreadEventStream {
         Self {
             sender,
             active_compaction: Rc::default(),
+            lisp_completions: Rc::default(),
         }
+    }
+
+    // Receipts outlive result tasks dropped by provider early-exit paths.
+    async fn join_lisp_completions(&self) -> Result<()> {
+        let completions = std::mem::take(&mut *self.lisp_completions.borrow_mut());
+        let mut closed = false;
+        for completion in completions {
+            if completion.await.is_err() {
+                log::error!(
+                    "Lisp worker completion receipt closed without cleanup acknowledgement"
+                );
+                closed = true;
+            }
+        }
+        anyhow::ensure!(!closed, "Lisp cleanup acknowledgement missing");
+        Ok(())
     }
 
     fn send_user_message(&self, message: &UserMessage) {
@@ -7775,9 +7839,27 @@ impl ToolCallEventStream {
         });
     }
 
+    /// Register before launching a Lisp worker, including one never polled.
+    pub(crate) fn register_lisp_completion(&self) -> oneshot::Sender<()> {
+        let mut completions = self.stream.lisp_completions.borrow_mut();
+        completions.retain_mut(|completion| match completion.try_recv() {
+            Ok(Some(())) => false,
+            Ok(None) => true,
+            Err(_) => {
+                log::error!(
+                    "Lisp worker receipt closed without acknowledgement during registration"
+                );
+                true
+            }
+        });
+        let (done, completion) = oneshot::channel();
+        completions.push(completion);
+        done
+    }
+
     /// Returns a future that resolves when the user cancels the tool call.
     /// Tools should select on this alongside their main work to detect user cancellation.
-    pub fn cancelled_by_user(&self) -> impl std::future::Future<Output = ()> + '_ {
+    pub fn cancelled_by_user(&self) -> impl std::future::Future<Output = ()> + Send + use<> {
         let mut rx = self.cancellation_rx.clone();
         async move {
             loop {
@@ -9486,6 +9568,532 @@ mod tests {
             compaction_input_capacity(128_000, Some(128_000), None),
             128_000
         );
+    }
+
+    /// expect: "Thread cancellation joins real Lisp cleanup even when provider stop bypasses result draining" [H6B]
+    #[gpui::test]
+    async fn h6b_cancel_joins_provider_early_exit(cx: &mut TestAppContext) {
+        h6b_cancel_scenario(cx, None).await;
+    }
+
+    /// expect: "Old cancellation cannot mutate or join a newer turn, even when both running turns have been taken" [H6B]
+    #[gpui::test]
+    async fn h6b_old_new_turn_isolation(cx: &mut TestAppContext) {
+        for cancel_successor in [false, true] {
+            h6b_cancel_scenario(cx, Some(cancel_successor)).await;
+        }
+    }
+
+    async fn h6b_cancel_scenario(cx: &mut TestAppContext, successor: Option<bool>) {
+        // One barrier factory for both real workers; no blocking OS test gate.
+        let hold_worker = |cx: &mut App| {
+            let (entered_tx, entered_rx) = oneshot::channel();
+            let (release_tx, release_rx) = oneshot::channel();
+            let (decoded_tx, decoded_rx) = oneshot::channel();
+            let (exited_tx, exited_rx) = oneshot::channel();
+            crate::RUN_PROBE.with(|probe| {
+                assert!(
+                    probe
+                        .borrow_mut()
+                        .replace(crate::RunProbe {
+                            executor: cx.background_executor().clone(),
+                            entered: entered_tx,
+                            release: release_rx,
+                            decoded: decoded_tx,
+                            exited: Some(exited_tx),
+                        })
+                        .is_none()
+                );
+            });
+            (entered_rx, release_tx, decoded_rx, exited_rx)
+        };
+        let tool_event = |id: &str| {
+            LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                id: id.to_string().into(),
+                name: LispEvalTool::NAME.into(),
+                raw_input: r#"{"form":"(let ((f (lambda () 3))) (f))"}"#.into(),
+                input: language_model::LanguageModelToolUseInput::Json(
+                    json!({"form":"(let ((f (lambda () 3))) (f))"}),
+                ),
+                is_input_complete: true,
+                thought_signature: None,
+            })
+        };
+        for stop in [
+            StopReason::ToolUse,
+            StopReason::Refusal,
+            StopReason::MaxTokens,
+        ] {
+            if successor.is_some() && stop != StopReason::ToolUse {
+                continue;
+            }
+            let (thread, _, fake) = setup_thread_for_test(cx).await;
+            let model = fake.update_model("fake", |model| model.supports_tools = true);
+            let mut events = cx.update(|cx| {
+                let mut settings = AgentSettings::get_global(cx).clone();
+                let mut profile = settings
+                    .profiles
+                    .values()
+                    .next()
+                    .expect("test profile")
+                    .clone();
+                profile.tools.clear();
+                profile.tools.insert(LispEvalTool::NAME.into(), true);
+                let id = AgentProfileId("h6b-lisp".into());
+                settings.profiles.insert(id.clone(), profile);
+                AgentSettings::override_global(settings, cx);
+                thread
+                    .update(cx, |thread, cx| {
+                        thread.set_model(model.clone(), cx);
+                        thread.add_tool(LispEvalTool);
+                        thread.set_profile(id, cx);
+                        thread.send(ClientUserMessageId::new(), vec!["calculate"], cx)
+                    })
+                    .expect("start actual turn")
+            });
+            cx.run_until_parked();
+            let request = fake.pending_completions_for(&model).pop().expect("request");
+            assert!(
+                request
+                    .tools
+                    .iter()
+                    .any(|tool| tool.name == LispEvalTool::NAME),
+                "Lisp must be advertised"
+            );
+            let (mut entered_rx, release_tx, mut decoded_rx, mut exited_rx) = cx.update(|cx| {
+                let observations = hold_worker(cx);
+                fake.send_event(&model, &request, tool_event("h6b"));
+                observations
+            });
+            cx.run_until_parked();
+            assert_eq!(entered_rx.try_recv().expect("entry channel"), Some(false));
+            let turn_stream = thread.read_with(cx, |thread, _| {
+                thread
+                    .running_turn
+                    .as_ref()
+                    .expect("running turn")
+                    .event_stream
+                    .clone()
+            });
+            assert_eq!(
+                turn_stream.lisp_completions.borrow().len(),
+                1,
+                "real worker registered before launch"
+            );
+            assert_eq!(
+                turn_stream.lisp_completions.borrow_mut()[0]
+                    .try_recv()
+                    .expect("worker receipt"),
+                None,
+                "cleanup cannot acknowledge while real worker is held"
+            );
+            // Protocol witness pins the early-exit join even when GPUI immediately
+            // destroys the dropped worker future. It is not a second evaluator.
+            let (join_tx, join_rx) = oneshot::channel();
+            turn_stream.lisp_completions.borrow_mut().push(join_rx);
+            // Queue the ready provider error before waking the root select.
+            fake.send_event(&model, &request, LanguageModelCompletionEvent::Stop(stop));
+            let mut cancel = cx.update(|cx| thread.update(cx, |thread, cx| thread.cancel(cx)));
+            cx.run_until_parked();
+            let returned_early = (&mut cancel).now_or_never().is_some();
+            let new_turn = if let Some(cancel_successor) = successor {
+                let new_events = cx
+                    .update(|cx| {
+                        thread.update(cx, |thread, cx| {
+                            thread.send(ClientUserMessageId::new(), vec!["new turn"], cx)
+                        })
+                    })
+                    .expect("start overlapping turn");
+                cx.run_until_parked();
+                let new_request = fake
+                    .pending_completions_for(&model)
+                    .pop()
+                    .expect("new turn request");
+                let (mut entered, release, decoded, exited) = cx.update(|cx| {
+                    let observations = hold_worker(cx);
+                    fake.send_text(&model, &new_request, "new turn still streaming");
+                    fake.send_event(&model, &new_request, tool_event("h6b-new"));
+                    observations
+                });
+                cx.run_until_parked();
+                assert_eq!(entered.try_recv().expect("successor entry"), Some(false));
+                let stream = thread.read_with(cx, |thread, _| {
+                    thread
+                        .running_turn
+                        .as_ref()
+                        .expect("new running turn")
+                        .event_stream
+                        .clone()
+                });
+                let (done, receipt) = oneshot::channel();
+                stream.lisp_completions.borrow_mut().push(receipt);
+                let mut new_cancel = cancel_successor
+                    .then(|| cx.update(|cx| thread.update(cx, |thread, cx| thread.cancel(cx))));
+                cx.run_until_parked();
+                if let Some(cancel) = new_cancel.as_mut() {
+                    assert!(
+                        cancel.now_or_never().is_none(),
+                        "successor still owns its held worker"
+                    );
+                }
+                thread.read_with(cx, |thread, _| {
+                    assert!(
+                        thread.pending_message.is_some(),
+                        "successor pending before old cleanup"
+                    );
+                    assert_eq!(thread.running_turn.is_none(), cancel_successor);
+                });
+                Some((
+                    new_request,
+                    stream,
+                    done,
+                    new_cancel,
+                    release,
+                    decoded,
+                    exited,
+                    new_events,
+                ))
+            } else {
+                None
+            };
+            if release_tx.send(()).is_err() {
+                assert_ne!(
+                    stop,
+                    StopReason::ToolUse,
+                    "normal cancellation must retain real worker"
+                );
+                assert_eq!(
+                    exited_rx.try_recv().expect("exit channel"),
+                    Some(true),
+                    "early-drop cleanup completed"
+                );
+            }
+            join_tx.send(()).expect("release completion witness");
+            if !returned_early {
+                cancel.await;
+            }
+            cx.run_until_parked();
+            if stop == StopReason::ToolUse {
+                assert_eq!(exited_rx.try_recv().expect("exit channel"), Some(true));
+                assert!(
+                    decoded_rx.try_recv().expect("decode channel").is_some(),
+                    "real input decoded off foreground"
+                );
+            }
+            assert!(
+                turn_stream.lisp_completions.borrow().is_empty(),
+                "turn joined all receipts"
+            );
+            if let Some((
+                new_request,
+                stream,
+                done,
+                new_cancel,
+                release,
+                mut decoded,
+                mut exited,
+                _new_events,
+            )) = new_turn
+            {
+                thread.read_with(cx, |thread, _| {
+                    let pending = thread.pending_message.as_ref().expect("old cancellation must not flush new pending message");
+                    assert!(!pending.tool_results.contains_key(&LanguageModelToolUseId::from("h6b")), "old result must not be inserted into successor");
+                    assert!(pending.content.iter().any(|content| matches!(content, AgentMessageContent::Text(text) if text == "new turn still streaming")));
+                    assert!(thread.owns_pending_message(&stream), "latest owner survives running_turn.take");
+                    assert_eq!(thread.running_turn.is_none(), successor == Some(true), "old cleanup cannot cancel successor");
+                    let old = thread.messages.iter().find_map(|message| match message.as_ref() {
+                        Message::Agent(message) => message.tool_results.get(&LanguageModelToolUseId::from("h6b")),
+                        _ => None,
+                    }).expect("old message flushed at successor start");
+                    assert!(old.is_error);
+                    assert_eq!(old.content, vec![TOOL_CANCELED_MESSAGE.into()], "old placeholder remains in old history");
+                });
+                assert_eq!(
+                    stream.lisp_completions.borrow().len(),
+                    2,
+                    "old join did not take successor receipts"
+                );
+                let new_cancel = new_cancel.unwrap_or_else(|| {
+                    cx.update(|cx| thread.update(cx, |thread, cx| thread.cancel(cx)))
+                });
+                cx.run_until_parked();
+                release.send(()).expect("release successor worker");
+                done.send(()).expect("release successor receipt");
+                fake.end_stream(&model, &new_request);
+                new_cancel.await;
+                cx.run_until_parked();
+                assert_eq!(exited.try_recv().expect("successor exited"), Some(true));
+                assert!(decoded.try_recv().expect("successor decode").is_some());
+                assert!(stream.lisp_completions.borrow().is_empty());
+            } else if stop == StopReason::ToolUse {
+                thread.read_with(cx, |thread, _| {
+                    let result = thread
+                        .messages
+                        .iter()
+                        .find_map(|message| match message.as_ref() {
+                            Message::Agent(message) => message
+                                .tool_results
+                                .get(&LanguageModelToolUseId::from("h6b")),
+                            _ => None,
+                        })
+                        .expect("same-turn cancellation recorded and flushed");
+                    assert!(result.is_error);
+                    assert_eq!(
+                        result.output,
+                        Some(json!({"error":"Lisp evaluation cancelled"}))
+                    );
+                });
+            }
+            let mut saw_cancelled_result = false;
+            while let Some(Some(event)) = events.next().now_or_never() {
+                if let Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::V2(update))) =
+                    event
+                {
+                    assert_ne!(
+                        update.status,
+                        MaybeUndefined::Value(acp_v2::ToolCallStatus::Completed)
+                    );
+                    if update.raw_output
+                        == MaybeUndefined::Value(json!({"error":"Lisp evaluation cancelled"}))
+                    {
+                        assert_eq!(
+                            update.status,
+                            MaybeUndefined::Value(acp_v2::ToolCallStatus::Failed)
+                        );
+                        saw_cancelled_result = true;
+                    }
+                }
+            }
+            if stop == StopReason::ToolUse {
+                assert!(
+                    saw_cancelled_result,
+                    "old scoped ACP still publishes canonical failure"
+                );
+            }
+            assert!(
+                !returned_early,
+                "Thread::cancel returned before held real worker exited: {stop:?}"
+            );
+        }
+    }
+
+    /// expect: "Completed receipts are pruned, closed receipts are not cleanup, and all outstanding jobs are joined" [H6B]
+    #[gpui::test]
+    async fn h6b_receipt_lifecycle(cx: &mut TestAppContext) {
+        let (events, _receiver) = ToolCallEventStream::test();
+        events
+            .register_lisp_completion()
+            .send(())
+            .expect("ack completed worker");
+        let closed = events.register_lisp_completion();
+        assert_eq!(
+            events.stream.lisp_completions.borrow().len(),
+            1,
+            "prune acknowledged receipt"
+        );
+        drop(closed);
+        let last = events.register_lisp_completion();
+        assert_eq!(
+            events.stream.lisp_completions.borrow().len(),
+            2,
+            "closed acknowledgement retained distinctly"
+        );
+        let mut join = Box::pin(events.stream.join_lisp_completions());
+        assert!(
+            (&mut join).now_or_never().is_none(),
+            "closed receipt must not skip later pending worker"
+        );
+        last.send(()).expect("ack last worker");
+        assert!(
+            join.await
+                .expect_err("closed is not cleanup proof")
+                .to_string()
+                .contains("acknowledgement")
+        );
+        assert!(events.stream.lisp_completions.borrow().is_empty());
+        cx.run_until_parked();
+    }
+
+    /// expect: "Root cancellation fences buffered Lisp success payload and ACP status, but does not rewrite other tools" [H6B]
+    #[gpui::test]
+    async fn h6b_buffered_publication_fence(cx: &mut TestAppContext) {
+        let (thread, _, _) = setup_thread_for_test(cx).await;
+        let output = cx
+            .update(|cx| {
+                LispEvalTool.erase().run(
+                    ToolInput::ready(json!({"form":"(let ((f (lambda () 3))) (f))"})),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await
+            .unwrap_or_else(|error| panic!("real closure calculation: {}", error.raw_output));
+        assert_eq!(output.raw_output, json!({"result":3}));
+        let error_output = cx
+            .update(|cx| {
+                LispEvalTool.erase().run(
+                    ToolInput::ready(json!({"form":"(car 3)"})),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await
+            .err()
+            .expect("real type error output");
+        for (name, cancelled, input_error) in [
+            (LispEvalTool::NAME, false, false),
+            (LispEvalTool::NAME, true, false),
+            (LispEvalTool::NAME, false, true),
+            ("read_file", false, false),
+            ("read_file", true, false),
+            ("read_file", false, true),
+            ("read_file", true, true),
+        ] {
+            let output = if input_error { &error_output } else { &output };
+            let fenced = name == LispEvalTool::NAME && cancelled;
+            let (sender, mut receiver) = mpsc::unbounded();
+            let events = ThreadEventStream::new(sender);
+            thread.update(cx, |thread, _| {
+                thread.pending_message_owner = Rc::downgrade(&events.lisp_completions);
+            });
+            let (_cancel_tx, mut cancel_rx) = watch::channel(cancelled);
+            let result = LanguageModelToolResult {
+                tool_use_id: "buffered".into(),
+                tool_name: name.into(),
+                is_error: input_error,
+                content: output.llm_output.clone(),
+                output: Some(output.raw_output.clone()),
+            };
+            Thread::process_tool_result(
+                &thread.downgrade(),
+                &events,
+                &mut cx.to_async(),
+                0,
+                result,
+                &mut cancel_rx,
+            )
+            .expect("publish buffered result");
+            let expected = if fenced {
+                json!({"error":"Lisp evaluation cancelled"})
+            } else {
+                output.raw_output.clone()
+            };
+            thread.read_with(cx, |thread, _| {
+                let result = &thread
+                    .pending_message
+                    .as_ref()
+                    .expect("history insertion")
+                    .tool_results[&LanguageModelToolUseId::from("buffered")];
+                assert_eq!(result.is_error, fenced || input_error);
+                assert_eq!(result.output, Some(expected.clone()));
+                assert_eq!(
+                    result.content,
+                    if fenced {
+                        vec!["Lisp evaluation cancelled".into()]
+                    } else {
+                        output.llm_output.clone()
+                    }
+                );
+            });
+            let ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::V2(update)) = receiver
+                .next()
+                .await
+                .expect("ACP event")
+                .expect("ACP success")
+            else {
+                panic!("ACP update")
+            };
+            assert_eq!(update.raw_output, MaybeUndefined::Value(expected));
+            assert_eq!(
+                update.status,
+                MaybeUndefined::Value(if fenced || input_error {
+                    acp_v2::ToolCallStatus::Failed
+                } else {
+                    acp_v2::ToolCallStatus::Completed
+                })
+            );
+        }
+    }
+
+    /// expect: "Pending input, queued workers and owner destruction all acknowledge real worker teardown" [H6B]
+    #[gpui::test]
+    async fn h6b_worker_input_and_owner_drop(cx: &mut TestAppContext) {
+        // The sender stays alive: cancellation, not end-of-input, must wake recv.
+        let (_input_tx, input) = ToolInputSender::channel();
+        let (events, _receiver, mut cancellation) = ToolCallEventStream::test_with_cancellation();
+        let stream = events.stream.clone();
+        let task = cx.update(|cx| LispEvalTool.erase().run(input, events, cx));
+        cx.run_until_parked();
+        cancellation.send(true).expect("cancel pending input");
+        let error = match task.await {
+            Err(error) => error,
+            Ok(output) => panic!("pending input succeeded: {}", output.raw_output),
+        };
+        assert_eq!(
+            error.raw_output,
+            json!({"error":"Lisp evaluation cancelled"})
+        );
+        stream
+            .join_lisp_completions()
+            .await
+            .expect("pending-input worker exited");
+
+        for drop_queued in [true, false] {
+            let (events, _receiver) = ToolCallEventStream::test();
+            let stream = events.stream.clone();
+            let (entered_tx, mut entered_rx) = oneshot::channel();
+            let (release_tx, release_rx) = oneshot::channel();
+            let (decoded_tx, _decoded_rx) = oneshot::channel();
+            let (exited_tx, mut exited_rx) = oneshot::channel();
+            let task = cx.update(|cx| {
+                crate::RUN_PROBE.with(|probe| {
+                    assert!(
+                        probe
+                            .borrow_mut()
+                            .replace(crate::RunProbe {
+                                executor: cx.background_executor().clone(),
+                                entered: entered_tx,
+                                release: release_rx,
+                                decoded: decoded_tx,
+                                exited: Some(exited_tx),
+                            })
+                            .is_none()
+                    )
+                });
+                Arc::new(LispEvalTool).run(ToolInput::ready(json!({"form":"(+ 1 2)"})), events, cx)
+            });
+            assert_eq!(
+                stream.lisp_completions.borrow().len(),
+                1,
+                "registered synchronously"
+            );
+            if !drop_queued {
+                cx.run_until_parked();
+                assert_eq!(entered_rx.try_recv().expect("entry channel"), Some(false));
+            }
+            if drop_queued {
+                assert_eq!(
+                    entered_rx.try_recv().expect("queued entry channel"),
+                    None,
+                    "not polled before owner drop"
+                );
+            }
+            drop(task);
+            cx.run_until_parked();
+            stream
+                .join_lisp_completions()
+                .await
+                .expect("dropped owner worker teardown");
+            assert_eq!(
+                exited_rx.try_recv().expect("exit proof"),
+                Some(true),
+                "owner drop raises monotonic cancellation"
+            );
+            assert!(
+                release_tx.send(()).is_err(),
+                "no live worker waiting after acknowledgement"
+            );
+        }
     }
 
     async fn setup_thread_for_test(

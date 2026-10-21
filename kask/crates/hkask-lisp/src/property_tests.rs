@@ -975,6 +975,30 @@ fn seeded_random_forms_are_total_and_deterministic() {
 }
 
 proptest! {
+    /// expect: "An unset invocation flag preserves default results, exactness and budget failures" [H6A]
+    #[test]
+    fn h6a_unset_flag_preserves_pure_entry(
+        values in prop::collection::vec(-1000i64..1000, 0..80),
+        steps in prop_oneof![Just(0u64), Just(100_000), 1u64..2000],
+    ) {
+        let env = serde_json::json!({"xs": values});
+        for form in [
+            "(reverse xs)", "(eq xs xs)", "(member 7 xs)", "(length xs)",
+            "(assoc! \"missing\" xs)", "(/ 9007199254740993 1)",
+            "(define f (lambda (x) (if (= x 0) 42 (f (- x 1))))) (f 10)",
+        ] {
+            let ordinary = eval_sandboxed_with_budget(form, &env, steps, 1024);
+            let flag = Arc::new(AtomicBool::new(false));
+            let controlled = eval_sandboxed_with_cancellation(form, &env, steps, 1024, flag.clone());
+            match (ordinary, controlled) {
+                (Ok(left), Ok(right)) => prop_assert_eq!(left, right),
+                (Err(left), Err(right)) => prop_assert_eq!(left.to_string(), right.to_string()),
+                (left, right) => prop_assert!(false, "entry mismatch: {:?} versus {:?}", left, right),
+            }
+            prop_assert!(!flag.load(Ordering::Acquire));
+        }
+    }
+
     /// expect: "Integer literal admission matches the signed i64 domain without float fallback" [P8]
     #[test]
     fn integer_literal_admission_matches_rust_domain(

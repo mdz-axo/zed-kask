@@ -356,16 +356,16 @@ fn is_infix_context(tok: &str) -> bool {
 
 fn tokenize(source: &str, budget: &EvalBudget) -> Result<Vec<String>, LispError> {
     let mut tokens = Vec::new();
-    let mut chars = source.chars().peekable();
-    while let Some(&c) = chars.peek() {
-        check_cancellation(budget.cancellation.as_deref(), "source", c.len_utf8())?;
+    let mut chars = source.char_indices().peekable();
+    while let Some(&(offset, c)) = chars.peek() {
+        check_cancellation(budget.cancellation.as_deref(), "source", offset)?;
         if c.is_whitespace() {
             chars.next();
             continue;
         }
         if c == ';' {
-            for c in chars.by_ref() {
-                check_cancellation(budget.cancellation.as_deref(), "source", c.len_utf8())?;
+            for (offset, c) in chars.by_ref() {
+                check_cancellation(budget.cancellation.as_deref(), "source", offset)?;
                 if c == '\n' {
                     break;
                 }
@@ -380,13 +380,13 @@ fn tokenize(source: &str, budget: &EvalBudget) -> Result<Vec<String>, LispError>
         if c == '"' {
             chars.next();
             let mut s = String::from("\"");
-            while let Some(&c) = chars.peek() {
-        check_cancellation(budget.cancellation.as_deref(), "source", c.len_utf8())?;
+            while let Some(&(offset, c)) = chars.peek() {
+                check_cancellation(budget.cancellation.as_deref(), "source", offset)?;
                 chars.next();
                 s.push(c);
                 if c == '\\' {
-                    if let Some(&next) = chars.peek() {
-                        check_cancellation(budget.cancellation.as_deref(), "source", next.len_utf8())?;
+                    if let Some(&(offset, next)) = chars.peek() {
+                        check_cancellation(budget.cancellation.as_deref(), "source", offset)?;
                         chars.next();
                         s.push(next);
                     }
@@ -400,8 +400,8 @@ fn tokenize(source: &str, budget: &EvalBudget) -> Result<Vec<String>, LispError>
             continue;
         }
         let mut atom = String::new();
-        while let Some(&c) = chars.peek() {
-        check_cancellation(budget.cancellation.as_deref(), "source", c.len_utf8())?;
+        while let Some(&(offset, c)) = chars.peek() {
+            check_cancellation(budget.cancellation.as_deref(), "source", offset)?;
             if c.is_whitespace() || c == '(' || c == ')' || c == ';' || c == '\'' {
                 break;
             }
@@ -412,6 +412,7 @@ fn tokenize(source: &str, budget: &EvalBudget) -> Result<Vec<String>, LispError>
             tokens.push(atom);
         }
     }
+    check_cancellation(budget.cancellation.as_deref(), "source", source.len())?;
     Ok(tokens)
 }
 
@@ -451,10 +452,8 @@ fn parse_form<'a>(
         budget.enter()?;
         let (form, next) = parse_form(rest, budget)?;
         budget.exit();
-        let quoted = LispValue::List(budget.make_list(vec![
-            LispValue::Symbol("quote".into()),
-            form,
-        ])?);
+        let quoted =
+            LispValue::List(budget.make_list(vec![LispValue::Symbol("quote".into()), form])?);
         return Ok((quoted, next));
     }
     Ok((parse_atom(tok, budget)?, rest))
@@ -463,7 +462,10 @@ fn parse_form<'a>(
 fn parse_atom(tok: &str, budget: &EvalBudget) -> Result<LispValue, LispError> {
     budget.check_cancelled()?;
     if tok.starts_with('"') && tok.ends_with('"') && tok.len() >= 2 {
-        return Ok(LispValue::String(unescape_string(&tok[1..tok.len() - 1], budget)?));
+        return Ok(LispValue::String(unescape_string(
+            &tok[1..tok.len() - 1],
+            budget,
+        )?));
     }
     if let Ok(i) = tok.parse::<i64>() {
         return Ok(LispValue::Int(i));
@@ -504,10 +506,19 @@ fn unescape_string(s: &str, budget: &EvalBudget) -> Result<String, LispError> {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars();
     while let Some(c) = chars.next() {
-        // One iteration consumes at most two UTF-8 scalars (eight bytes).
-        check_cancellation(budget.cancellation.as_deref(), "unescape", c.len_utf8() + 4)?;
+        check_cancellation(
+            budget.cancellation.as_deref(),
+            "unescape",
+            s.len() - chars.as_str().len(),
+        )?;
         if c == '\\' {
-            match chars.next() {
+            let next = chars.next();
+            check_cancellation(
+                budget.cancellation.as_deref(),
+                "unescape",
+                s.len() - chars.as_str().len(),
+            )?;
+            match next {
                 Some('n') => out.push('\n'),
                 Some('t') => out.push('\t'),
                 Some('r') => out.push('\r'),
@@ -596,8 +607,9 @@ impl EvalBudget {
 
     fn collect_list(&self, list: &List) -> Result<Vec<LispValue>, LispError> {
         list.iter()
-            .map(|value| {
-                check_cancellation(self.cancellation.as_deref(), "list", 1)?;
+            .enumerate()
+            .map(|(index, value)| {
+                check_cancellation(self.cancellation.as_deref(), "list", index)?;
                 Ok(value.clone())
             })
             .collect()
@@ -605,8 +617,8 @@ impl EvalBudget {
 
     fn make_list(&self, items: Vec<LispValue>) -> Result<Rc<List>, LispError> {
         let mut list = List::nil();
-        for item in items.into_iter().rev() {
-            check_cancellation(self.cancellation.as_deref(), "list-build", 1)?;
+        for (index, item) in items.into_iter().rev().enumerate() {
+            check_cancellation(self.cancellation.as_deref(), "list-build", index)?;
             list = List::cons(item, list);
         }
         Ok(list)
@@ -617,10 +629,16 @@ impl EvalBudget {
         if let Some(value) = env.vars.get(symbol) {
             return Ok(Some(value.clone()));
         }
-        match &env.parent {
-            Some(parent) => self.lookup(&parent.borrow(), symbol),
-            None => Ok(None),
+        let mut parent = env.parent.clone();
+        while let Some(scope) = parent {
+            check_cancellation(self.cancellation.as_deref(), "lookup", 1)?;
+            let scope = scope.borrow();
+            if let Some(value) = scope.vars.get(symbol) {
+                return Ok(Some(value.clone()));
+            }
+            parent = scope.parent.clone();
         }
+        Ok(None)
     }
 
     fn new_scope(&mut self, env: Env) -> Result<Rc<RefCell<Env>>, LispError> {
@@ -710,7 +728,8 @@ fn eval_inner(
         | LispValue::Float(_)
         | LispValue::String(_) => Ok(form.clone()),
 
-        LispValue::Symbol(s) => budget.lookup(&env.borrow(), s)?
+        LispValue::Symbol(s) => budget
+            .lookup(&env.borrow(), s)?
             .ok_or_else(|| LispError::UnboundSymbol(s.clone())),
 
         LispValue::List(list) => {
@@ -795,7 +814,8 @@ fn eval_special_form(
                 return Err(LispError::Arity("lambda expects (params body)".into()));
             }
             let params: Vec<String> = match &args[0] {
-                LispValue::List(p) => budget.collect_list(p)?
+                LispValue::List(p) => budget
+                    .collect_list(p)?
                     .iter()
                     .map(|v| {
                         budget.check_cancelled()?;
@@ -869,7 +889,9 @@ fn eval_special_form(
         // far more readable for multi-branch verdict dispatch (e.g. skill
         // convergence checks).
         "cond" => {
-            for clause in args {
+            for (index, clause) in args.iter().enumerate() {
+                // Empty clauses skip collection/evaluation work checkpoints.
+                check_cancellation(budget.cancellation.as_deref(), "cond", index)?;
                 let clause_items = match clause {
                     LispValue::List(cl) => budget.collect_list(cl)?,
                     _ => {
@@ -891,7 +913,8 @@ fn eval_special_form(
             Ok(LispValue::Nil)
         }
         _ => {
-            let func = budget.lookup(&env.borrow(), name)?
+            let func = budget
+                .lookup(&env.borrow(), name)?
                 .ok_or_else(|| LispError::UnboundSymbol(name.to_string()))?;
             let args_eval: Result<Vec<LispValue>, LispError> = args
                 .iter()
@@ -911,9 +934,9 @@ fn apply(
     match func {
         LispValue::NativeFunc(f) => {
             charge_native_arguments(args, budget)?;
-            budget.check_cancelled()?;
+            check_cancellation(budget.cancellation.as_deref(), "native-before", 0)?;
             let result = f(&env, args, budget);
-            budget.check_cancelled()?;
+            check_cancellation(budget.cancellation.as_deref(), "native-after", 0)?;
             result
         }
         LispValue::Lambda {
@@ -1037,7 +1060,7 @@ fn default_builtins() -> Vec<(&'static str, NativeFn)> {
         ("max", max_fn),
         ("min", min_fn),
         // Generic equality. (eq a b) returns true iff a and b are structurally
-        // equal (delegates to LispValue::PartialEq). This is the value-equality
+        // equal (with controlled list traversal). This is the value-equality
         // counterpart to `=` (numeric) and `string=` (string-only). Distinct
         // from `=` because `=` errors on non-numbers; `eq` accepts any value
         // type and returns false for mismatched types. Used by `cond` clauses
@@ -1103,6 +1126,16 @@ fn as_list(v: &LispValue) -> Result<Rc<List>, LispError> {
     }
 }
 
+fn all_integers(args: &[LispValue], budget: &EvalBudget) -> Result<bool, LispError> {
+    for arg in args {
+        budget.check_cancelled()?;
+        if !matches!(arg, LispValue::Int(_)) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 /// Choose the numeric path before accumulating: a later Float must not make
 /// a mixed operation overflow an otherwise irrelevant integer prefix.
 fn arithmetic_fold(
@@ -1118,7 +1151,7 @@ fn arithmetic_fold(
     {
         let mut acc = *initial;
         for arg in args {
-        budget.check_cancelled()?;
+            budget.check_cancelled()?;
             if let LispValue::Int(value) = arg {
                 acc = integer_op(acc, *value).ok_or_else(|| {
                     LispError::Runtime(format!(
@@ -1148,9 +1181,14 @@ fn add(
     args: &[LispValue],
     budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
-    arithmetic_fold("+", &LispValue::Int(0), args, i64::checked_add, |a, b| {
-        a + b
-    }, budget)
+    arithmetic_fold(
+        "+",
+        &LispValue::Int(0),
+        args,
+        i64::checked_add,
+        |a, b| a + b,
+        budget,
+    )
 }
 
 fn sub(
@@ -1181,9 +1219,14 @@ fn mul(
     args: &[LispValue],
     budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
-    arithmetic_fold("*", &LispValue::Int(1), args, i64::checked_mul, |a, b| {
-        a * b
-    }, budget)
+    arithmetic_fold(
+        "*",
+        &LispValue::Int(1),
+        args,
+        i64::checked_mul,
+        |a, b| a * b,
+        budget,
+    )
 }
 
 fn div(
@@ -1358,9 +1401,9 @@ fn length(
         return Err(LispError::Arity("length expects 1 arg".into()));
     }
     match &args[0] {
-        // Traversal charges (lisp-repair L3): len() walks every node and
-        // chars().count() walks every byte — one step per unit of work,
-        // charged where the traversal happens, never at argument pass.
+        // Traversal charges (lisp-repair L3): one step per spine node or
+        // UTF-8 byte, charged here rather than at argument pass. Cancellation
+        // also checks each visited node/scalar without consuming extra steps.
         LispValue::List(l) => {
             let mut count = 0;
             for _ in l.iter() {
@@ -1375,7 +1418,11 @@ fn length(
             budget.charge(s.len())?;
             let mut count = 0;
             for character in s.chars() {
-                check_cancellation(budget.cancellation.as_deref(), "string-length", character.len_utf8())?;
+                check_cancellation(
+                    budget.cancellation.as_deref(),
+                    "string-length",
+                    character.len_utf8(),
+                )?;
                 count += 1;
             }
             Ok(LispValue::Int(count))
@@ -1576,9 +1623,23 @@ fn assoc_strict_fn(
     let key_display = match key {
         LispValue::String(s) => format!("{s:?}"),
         LispValue::Symbol(s) => s.clone(),
+        LispValue::Lambda { .. } => "<lambda>".into(),
+        LispValue::NativeFunc(_) => "<native-function>".into(),
+        LispValue::List(_) => {
+            // Raw Debug follows captured environments and can cycle. Project
+            // only charged data, never a callable's environment, for this error.
+            charge_value(key, budget, 0)?;
+            charge_output_layout(key, budget, 0)?;
+            let projected = to_json(key);
+            budget.check_cancelled()?;
+            let display = format!("{projected:?}");
+            budget.check_cancelled()?;
+            display
+        }
         other => format!("{other:?}"),
     };
-    let message = format!("assoc!: key {key_display} not found — available keys: {available_keys:?}");
+    let message =
+        format!("assoc!: key {key_display} not found — available keys: {available_keys:?}");
     budget.check_cancelled()?;
     Err(LispError::Runtime(message))
 }
@@ -2001,11 +2062,38 @@ fn min_fn(
     )
 }
 
-/// Generic equality: `(eq a b)` returns true iff a and b are structurally
-/// equal (delegates to `LispValue::PartialEq`). Accepts any value type and
-/// returns false for mismatched types — distinct from `=` (numeric, errors on
-/// non-numbers) and `string=` (string-only). Used by `cond` clauses comparing
-/// string verdicts where the author wants a single equality operator.
+// Stream list equality so controlled calls never enter the raw PartialEq
+// traversal, which has no invocation budget. Scalar semantics stay identical.
+#[stacksafe::stacksafe]
+fn equal_with_budget(
+    left: &LispValue,
+    right: &LispValue,
+    budget: &EvalBudget,
+) -> Result<bool, LispError> {
+    check_cancellation(budget.cancellation.as_deref(), "equality", 1)?;
+    if let (LispValue::List(left), LispValue::List(right)) = (left, right) {
+        let mut left = left.iter();
+        let mut right = right.iter();
+        loop {
+            match (left.next(), right.next()) {
+                (Some(left), Some(right)) => {
+                    if !equal_with_budget(left, right, budget)? {
+                        return Ok(false);
+                    }
+                }
+                (None, None) => return Ok(true),
+                _ => return Ok(false),
+            }
+        }
+    }
+    // Scalar equality uses std string comparison; the caller has already
+    // charged both values. Lists never enter the raw recursive PartialEq path.
+    let equal = left == right;
+    budget.check_cancelled()?;
+    Ok(equal)
+}
+
+/// Generic structural equality, type-sensitive and false for callables.
 fn eq_fn(
     _env: &Rc<RefCell<Env>>,
     args: &[LispValue],
@@ -2016,7 +2104,9 @@ fn eq_fn(
     }
     charge_value(&args[0], budget, 0)?;
     charge_value(&args[1], budget, 0)?;
-    Ok(LispValue::Bool(equal_with_budget(&args[0], &args[1], budget)?))
+    Ok(LispValue::Bool(equal_with_budget(
+        &args[0], &args[1], budget,
+    )?))
 }
 
 /// List membership: `(member x list)` returns true iff `x` is structurally
@@ -2075,6 +2165,7 @@ fn charge_value(value: &LispValue, budget: &mut EvalBudget, depth: u64) -> Resul
     if depth > budget.max_depth {
         return Err(LispError::DepthLimitExceeded(budget.max_depth));
     }
+    check_cancellation(budget.cancellation.as_deref(), "value-traversal", 1)?;
     budget.tick()?;
     match value {
         LispValue::String(text) | LispValue::Symbol(text) => budget.charge(text.len())?,
@@ -2101,6 +2192,7 @@ fn charge_json(value: &Value, budget: &mut EvalBudget, depth: u64) -> Result<(),
     if depth > budget.max_depth {
         return Err(LispError::DepthLimitExceeded(budget.max_depth));
     }
+    check_cancellation(budget.cancellation.as_deref(), "json-traversal", 1)?;
     budget.tick()?;
     match value {
         Value::String(text) => budget.charge(text.len())?,
@@ -2317,13 +2409,24 @@ fn check_output_json_depth(
         return Err(LispError::OutputDepthLimitExceeded(MAX_JSON_DEPTH));
     }
     match value {
+        Value::String(text) if text.len() > MAX_OUTPUT_BYTES => {
+            return Err(LispError::Runtime(format!(
+                "max_output_bytes exceeded; allowed {MAX_OUTPUT_BYTES} pretty JSON UTF-8 bytes"
+            )));
+        }
         Value::Array(values) => {
             for value in values {
                 check_output_json_depth(value, depth + 1, cancellation)?;
             }
         }
         Value::Object(values) => {
-            for value in values.values() {
+            for (key, value) in values {
+                check_cancellation(cancellation, "output-key", 1)?;
+                if key.len() > MAX_OUTPUT_BYTES {
+                    return Err(LispError::Runtime(format!(
+                        "max_output_bytes exceeded; allowed {MAX_OUTPUT_BYTES} pretty JSON UTF-8 bytes"
+                    )));
+                }
                 check_output_json_depth(value, depth + 1, cancellation)?;
             }
         }
@@ -2390,7 +2493,15 @@ pub fn eval_sandboxed(form: &str, env_json: &Value) -> Result<Value, LispError> 
     eval_sandboxed_with_budget(form, env_json, 100000, 1024)
 }
 
-/// Evaluate with an invocation-owned, monotonic cancellation flag.
+/// Evaluate with a per-invocation, monotonic cancellation flag.
+///
+/// The caller requests cancellation by storing `true` with Release ordering;
+/// checkpoints load with Acquire and return [`LispError::Cancelled`]. The flag
+/// is never reset. Existing work/depth/output limits remain independent.
+/// Custom scans and traversals check each iteration. Bounded std operations
+/// (including scalar string operations), raw JSON conversion and destruction
+/// are nonpreemptible; scope teardown always completes before this returns.
+/// This is cooperative cancellation, not a time or heap quota.
 pub fn eval_sandboxed_with_cancellation(
     form: &str,
     env_json: &Value,
@@ -2461,6 +2572,9 @@ fn eval_sandboxed_inner(
     let result = to_json(&result);
     check_cancellation(budget.cancellation.as_deref(), "json-output-after", 0)?;
     pretty_json_output_size_with_cancellation(&result, budget.cancellation.as_deref())?;
+    // Teardown is infallible and deliberately uninterruptible. Recheck after
+    // it as well, before returning the Value to the caller's publication fence.
+    drop(budget.invocation_scopes.take());
     check_cancellation(budget.cancellation.as_deref(), "publish", 0)?;
     Ok(result)
 }
@@ -2514,10 +2628,352 @@ mod tests {
     fn h6a_pre_cancelled_public_entry() {
         let flag = Arc::new(AtomicBool::new(false));
         flag.store(true, Ordering::Release);
-        let probe = ScopeProbe::start(None);
-        let result = eval_sandboxed_with_cancellation("42", &Value::Null, 100_000, 1024, flag);
-        assert!(result.is_err(), "pre-cancelled evaluation must not succeed");
-        probe.assert_reclaimed();
+        let _probe = ScopeProbe::start(None);
+        let result =
+            eval_sandboxed_with_cancellation("42", &Value::Null, 100_000, 1024, flag.clone());
+        assert!(matches!(result, Err(LispError::Cancelled)));
+        assert_eq!(
+            result.expect_err("cancelled").to_string(),
+            "Lisp evaluation cancelled"
+        );
+        assert!(
+            flag.load(Ordering::Acquire),
+            "the evaluator must never reset the flag"
+        );
+        OBSERVED_SCOPES.with_borrow(|observation| {
+            assert!(observation.as_ref().expect("scope probe").scopes.is_empty());
+        });
+    }
+
+    /// expect: "External cancellation stops real workers at bounded checkpoints, after complete teardown" [H6A]
+    #[test]
+    fn h6a_worker_cancellation_checkpoints_and_teardown() {
+        use std::sync::mpsc::sync_channel;
+        use std::time::Duration;
+
+        let cycle =
+            "(define root (lambda () root)) (let () (begin (define orphan (lambda () orphan)) 0))";
+        let cases = [
+            (
+                "source",
+                format!(";{}\n42", "é".repeat(2048)),
+                Value::Null,
+                1200,
+                false,
+            ),
+            (
+                "source",
+                format!("\"{}\"", "🦎".repeat(2048)),
+                Value::Null,
+                1200,
+                false,
+            ),
+            (
+                "unescape",
+                format!("\"{}\"", "\\né".repeat(2048)),
+                Value::Null,
+                1200,
+                false,
+            ),
+            ("infix", "1 + ".repeat(512) + "1", Value::Null, 100, false),
+            (
+                "json-traversal",
+                "xs".into(),
+                serde_json::json!({"xs": vec![1; 512]}),
+                100,
+                false,
+            ),
+            (
+                "list",
+                format!("{cycle} (reverse xs)"),
+                serde_json::json!({"xs": vec![1; 512]}),
+                100,
+                true,
+            ),
+            (
+                "list-build",
+                format!("{cycle} (reverse xs)"),
+                serde_json::json!({"xs": vec![1; 512]}),
+                100,
+                true,
+            ),
+            (
+                "equality",
+                format!("{cycle} (eq xs xs)"),
+                serde_json::json!({"xs": vec![1; 512]}),
+                100,
+                true,
+            ),
+            (
+                "value-traversal",
+                format!("{cycle} xs"),
+                serde_json::json!({"xs": vec![1; 512]}),
+                100,
+                true,
+            ),
+            (
+                "output-depth",
+                format!("{cycle} xs"),
+                serde_json::json!({"xs": vec![1; 512]}),
+                100,
+                true,
+            ),
+            (
+                "output-write",
+                format!("{cycle} seed"),
+                serde_json::json!({"seed": "\0".repeat(4096)}),
+                100,
+                true,
+            ),
+            (
+                "cond",
+                format!("{cycle} (cond {})", "() ".repeat(1000)),
+                Value::Null,
+                100,
+                true,
+            ),
+            (
+                "work",
+                format!("{cycle} (define f (lambda () (f))) (f)"),
+                Value::Null,
+                0,
+                true,
+            ),
+        ];
+        for (phase, form, env, threshold, expect_scopes) in cases {
+            if phase == "cond" {
+                assert_eq!(
+                    eval_sandboxed_with_budget(&form, &env, MAX_STEPS, 1024)
+                        .expect("empty cond clauses preserve nil"),
+                    Value::Null,
+                );
+                let steps = minimal_steps(&form, &env, 1024);
+                assert_eq!(steps, 4128, "clause cancellation must not add work charges");
+                eprintln!("H6A cond default: minimal_steps={steps}");
+            }
+            let flag = Arc::new(AtomicBool::new(false));
+            let worker_flag = flag.clone();
+            let (reached_tx, reached_rx) = sync_channel(1);
+            let (resume_tx, resume_rx) = sync_channel(1);
+            let (done_tx, done_rx) = sync_channel(1);
+            let worker = std::thread::spawn(move || {
+                let scope_probe = ScopeProbe::start(None);
+                let mut visits = 0;
+                let mut units_seen = 0;
+                let mut max_units = 0;
+                let mut previous_offset = 0;
+                let mut parked = false;
+                let _checkpoint_probe = CheckpointProbe::start(move |observed, units| {
+                    if observed != phase || parked {
+                        return;
+                    }
+                    visits += 1;
+                    if phase == "cond" {
+                        // Only the actual cond loop emits this label/index;
+                        // empty collect_list calls emit no list checkpoints.
+                        assert_eq!(units, visits - 1, "every skipped clause must check");
+                        max_units = max_units.max(units - previous_offset);
+                        previous_offset = units;
+                        units_seen = units;
+                    } else if matches!(phase, "source" | "unescape" | "list" | "list-build") {
+                        // Actual iterator byte/node positions, not claimed
+                        // chunk sizes. Each new list starts at index zero.
+                        if matches!(phase, "list" | "list-build") && units == 0 {
+                            previous_offset = 0;
+                        }
+                        assert!(units >= previous_offset);
+                        max_units = max_units.max(units - previous_offset);
+                        previous_offset = units;
+                        units_seen = units;
+                    } else {
+                        units_seen += units;
+                        max_units = max_units.max(units);
+                    }
+                    let scope_count = OBSERVED_SCOPES.with_borrow(|observation| {
+                        observation.as_ref().expect("scope probe").scopes.len()
+                    });
+                    let reached = if phase == "work" {
+                        scope_count >= 12
+                    } else {
+                        visits >= threshold
+                    };
+                    if reached {
+                        parked = true;
+                        reached_tx
+                            .send((visits, units_seen, max_units, scope_count))
+                            .expect("checkpoint receipt");
+                        resume_rx
+                            .recv_timeout(Duration::from_secs(5))
+                            .expect("caller resumes worker");
+                    }
+                });
+                let result = eval_sandboxed_with_cancellation(
+                    &form,
+                    &env,
+                    MAX_STEPS,
+                    1024,
+                    worker_flag.clone(),
+                );
+                assert!(
+                    matches!(result, Err(LispError::Cancelled)),
+                    "{phase}: {result:?}"
+                );
+                assert!(worker_flag.load(Ordering::Acquire));
+                if expect_scopes {
+                    scope_probe.assert_reclaimed();
+                } else {
+                    OBSERVED_SCOPES.with_borrow(|observation| {
+                        assert!(observation.as_ref().expect("scope probe").scopes.is_empty());
+                    });
+                }
+                // Acknowledgment follows weak-probe proof, never just the flag store.
+                done_tx.send(()).expect("teardown receipt");
+            });
+            let (visits, units, max_units, scope_count) = reached_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("real evaluator reaches checkpoint");
+            eprintln!(
+                "H6A {phase}: visits={visits} position_or_units={units} max_gap={max_units} scopes={scope_count}"
+            );
+            assert!(visits > 0);
+            if phase == "cond" {
+                assert_eq!((visits, units, max_units), (100, 99, 1));
+                assert!(max_units <= 64, "empty-clause checkpoint spacing");
+            } else if matches!(phase, "source" | "unescape") {
+                assert!(units > 1024, "the actual scan must cross a chunk boundary");
+                assert!(max_units <= 4, "at most one UTF-8 scalar per check");
+            } else if phase != "work" {
+                assert!(max_units <= 2, "at most two visited nodes per check");
+            }
+            if expect_scopes {
+                assert!(
+                    scope_count >= 2,
+                    "root and orphan scopes must already exist"
+                );
+            }
+            // The cancelled worker is still parked: no global/runtime control leaks.
+            assert_eq!(
+                eval_sandboxed("(+ 20 22)", &Value::Null).expect("independent default invocation"),
+                Value::from(42)
+            );
+            flag.store(true, Ordering::Release);
+            resume_tx.send(()).expect("resume cancelled worker");
+            done_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("worker teardown acknowledged");
+            worker.join().expect("worker exited without panic");
+        }
+    }
+
+    /// expect: "Cancellation brackets native phases and final publication without skipping cleanup" [H6A]
+    #[test]
+    fn h6a_phase_fences_and_raw_environment_ownership() {
+        let source =
+            "(define f (lambda () f)) (let () (begin (define g (lambda () g)) 0)) (reverse xs)";
+        for phase in [
+            "json-input-before",
+            "json-input-after",
+            "json-output-before",
+            "json-output-after",
+            "native-before",
+            "native-after",
+            "output-count-before",
+            "output-count-after",
+            "publish",
+        ] {
+            let flag = Arc::new(AtomicBool::new(false));
+            let signal = flag.clone();
+            let _observer = CheckpointProbe::start(move |observed, _| {
+                if observed == phase {
+                    signal.store(true, Ordering::Release);
+                }
+            });
+            let probe = ScopeProbe::start(None);
+            let result = eval_sandboxed_with_cancellation(
+                source,
+                &serde_json::json!({"xs": [1, 2, 3]}),
+                MAX_STEPS,
+                1024,
+                flag,
+            );
+            assert!(
+                matches!(result, Err(LispError::Cancelled)),
+                "{phase}: {result:?}"
+            );
+            probe.assert_reclaimed();
+        }
+        // A separate JSON invocation's cancellation cannot clear a caller's raw root.
+        let env = Rc::new(RefCell::new(Env::new_root()));
+        for form in parse("(define f (lambda (x) (+ x 1)))").expect("raw definition") {
+            eval(env.clone(), &form).expect("caller-owned definition");
+        }
+        assert!(matches!(
+            eval_sandboxed_with_cancellation(
+                "42",
+                &Value::Null,
+                MAX_STEPS,
+                1024,
+                Arc::new(AtomicBool::new(true))
+            ),
+            Err(LispError::Cancelled)
+        ));
+        let call = parse("(f 41)").expect("raw call");
+        assert_eq!(
+            eval(env.clone(), &call[0]).expect("raw root survives"),
+            LispValue::Int(42)
+        );
+        env.borrow_mut().vars.clear();
+    }
+
+    /// expect: "Missing-key diagnostics never follow cyclic closure environments" [H6A]
+    #[test]
+    fn h6a_callable_keys_have_bounded_diagnostics() {
+        for key in ["f", "(list f)", "car", "(list car)"] {
+            let source = format!("(define f (lambda () f)) (assoc! {key} nil)");
+            let probe = ScopeProbe::start(None);
+            let error = eval_sandboxed_with_cancellation(
+                &source,
+                &Value::Null,
+                MAX_STEPS,
+                1024,
+                Arc::new(AtomicBool::new(false)),
+            )
+            .expect_err("missing key");
+            assert!(matches!(error, LispError::Runtime(_)), "{key}: {error}");
+            let message = error.to_string();
+            assert!(message.contains("not found") && message.contains("available keys: []"));
+            assert!(message.contains(if key.contains('f') {
+                "<lambda>"
+            } else {
+                "<native-function>"
+            }));
+            probe.assert_reclaimed();
+        }
+    }
+
+    /// expect: "Output cancellation is distinct from quota and write_all cannot retry it" [H6A]
+    #[test]
+    fn h6a_output_cancellation_and_observer_unwind() {
+        use std::io::Write;
+        let flag = AtomicBool::new(true);
+        let mut counter = OutputByteCounter {
+            cancellation: Some(&flag),
+            ..OutputByteCounter::default()
+        };
+        let error = counter.write_all(b"null").expect_err("cancelled writer");
+        assert_eq!(error.kind(), std::io::ErrorKind::Other);
+        assert!(counter.cancelled);
+        assert!(!counter.exceeded);
+        assert_eq!(counter.bytes, 0);
+        let unwind = std::panic::catch_unwind(|| {
+            let _observer = CheckpointProbe::start(|_, _| panic!("observer unwind"));
+            eval_sandboxed("42", &Value::Null)
+        });
+        assert!(unwind.is_err());
+        assert_eq!(
+            eval_sandboxed("42", &Value::Null).expect("observer reset after unwind"),
+            Value::from(42)
+        );
     }
 
     /// expect: "Escaping amplification hits the pretty-document cap, not input/work admission" [H4B]

@@ -1,10 +1,17 @@
 # hkask-mcp-media
 
-Media generation MCP server — image, video, and audio generation via the configured media providers.
+Research media MCP server — ingest, organize, annotate, search, transcribe,
+and extract existing evidence. Source-linked excerpts and reels are derived
+outputs, not synthetic evidence. Scanning never changes source bytes.
+Historical media, lineage, and OMC provenance remain readable.
 
-## Tools (102)
+## Tools
 
-The full surface is pinned end-to-end by `tool_surface_is_exactly_102_registered_tools` (`src/hkask_mcp_media.rs`) and documented per-tool in [`kask/docs/reference/mcp-servers/media.md`](../../docs/reference/mcp-servers/media.md). The table below is a partial quick-reference.
+The canonical inventory is the build-generated `TOOL_NAMES`, checked against
+`MediaServer::combined_router()` by `tool_names_match_live_router`. Do not copy
+a historical tool count into clients. See the [reference](../../docs/reference/mcp-servers/media.md)
+for research operations, request contracts, and the retained presentation boundary.
+The table below is a partial quick-reference.
 
 | Tool | Description |
 |------|-------------|
@@ -13,7 +20,7 @@ The full surface is pinned end-to-end by `tool_surface_is_exactly_102_registered
 | `gallery_search` | Search your gallery by describing what you're looking for. Mode `tags` (default) fuzzy-matches AI-generated tags; mode `semantic` matches by caption-embedding similarity (the former `gallery_find_similar`, requires `gallery_analyze` first) |
 | `gallery_add_media` | Import a video or audio file into the gallery whose folder contains it, not the active gallery (`media_type` selects the kind); path-identity upsert with SHA-256 change detection. The former `gallery_add_video`/`gallery_add_audio` pair, merged |
 | `gallery_refresh` | Refresh the gallery: scan for new/removed images, then update all AI metadata (objects, colors, composition, scene descriptions). Face detection is OFF by default; when include_faces=true, also scans the face reference folder (mcp/media/faces/ by default) for new reference faces, then auto-matches detected faces against the face_registry |
-| `describe_image` | Describe an image in detail. Choose a style: descriptive (full scene), artistic (poetic), technical (photographic analysis), or alt_text (accessibility) |
+| `describe_image` | Describe source content; distinguish observations from researcher interpretation |
 | `gallery_analyze` | Analyze gallery images with AI: detect faces, objects, colors, composition, and generate scene descriptions. Tags are persisted and become searchable |
 | `gallery_name_face` | Name a face group from gallery_analyze. Provide either a free-text name or a face_id from the face registry |
 | `face_validate` | Validate a gallery image as a face reference for facial recognition. Checks: exactly 1 face, face coverage â¥15%, frontal pose, good lighting, no occlusion, sharp focus |
@@ -22,29 +29,17 @@ The full surface is pinned end-to-end by `tool_surface_is_exactly_102_registered
 | `face_list` | List all registered faces in the face registry. Optionally filter by status: valid, rejected, or pending |
 | `face_remove` | Remove a face from the registry by its ID |
 | `gallery_timeline` | Organize gallery images by time period using EXIF dates. Returns images grouped by year, month, or decade |
-| `image_remove_background` | Remove background from a gallery image. Delegates to the configured background-removal provider |
-| `image_apply_style` | Apply style transfer to a gallery image. Delegates to the configured style-transfer provider |
 | `image_create_collage` | Create a collage from multiple gallery images. Local composition using image crate. Three modes: search_terms, similar_to_index, or image_indices |
 | `youtube_search` | Search YouTube through SerpApi for structured metadata (views, duration, channel, publication date, provider extensions, URL); does not invoke yt-dlp or download media |
 | `video_fetch` | Download a selected YouTube/Vimeo/platform URL with yt-dlp and publish it as a durable local gallery asset |
 | `video_clip` | Trim a video to specified start/end times using local ffmpeg |
 | `video_to_gif` | Convert a video segment to GIF format using local ffmpeg |
-| `image_to_video` | Animate a gallery image into a short video clip. Delegates to the configured video-generation provider |
 | `video_add_caption` | Add text caption overlay to a video using local ffmpeg |
-| `video_remix` | Generate a video remix: clip, add caption, convert to GIF |
-| `video_from_images` | Create a video or GIF from a sequence of gallery images using ffmpeg |
 | `video_concat` | Concatenate multiple video clips into one using ffmpeg |
 | `video_caption` | Generate a description of video content by extracting keyframes and analyzing them with a vision LLM |
-| `video_meme` | Create a meme video from a gallery image with text overlay and camera motion. Composes text rendering + AI motion generation |
-| `voice_design` | Design a synthetic voice profile from a character description. Returns a VoiceDesign JSON for use with generate_speech |
-| `generate_speech` | Generate speech audio from text using a voice design. Publishes and returns a durable local audio Asset; provider payloads do not enter the result |
 | `transcribe_bundle` | Transcribe audio and return a synchronized TranscriptBundle with word-level timings (the former bare `transcribe` tool, merged) |
 | `audio_capture` | Capture audio from the default system microphone and publish a canonical durable WAV asset optimized for Whisper transcription (16kHz mono) |
 | `record_and_transcribe` | Record audio from microphone and transcribe it in one call. Returns linked audio file path and transcript |
-| `generate_image` | Generate an image from a text prompt. Describe what you want to see |
-| `transform_image` | Transform an existing image with a text prompt. Describe the change you want |
-| `upscale_image` | Upscale an image to higher resolution |
-| `generate_video` | Generate a short video from a text prompt. Describe the scene you want to see in motion |
 
 ## Tool-result contracts
 
@@ -127,26 +122,22 @@ four-slot fail-fast authority with background jobs. The fifth combined operation
 fails before external work; it is never queued, clamped, or silently truncated.
 Job list/status/cancel and cheap gallery reads remain available under load.
 Concat accepts at most 64 audio
-or video inputs, image-sequence rendering accepts 256 images, keyframe
-extraction accepts 256 frames, and image generation accepts 10 variants.
-Workflow graphs are limited to 1 MiB. Cap violations fail before work begins;
+or video inputs; keyframe extraction accepts 256 frames.
+Cap violations fail before work begins;
 requests are never clamped or silently truncated.
 
-Multi-variant generation reports `completed`, `partial`, or `failed`, preserves
-each valid published variant, and returns a causal failure for every missing
-variant. Keyframe extraction owns one scratch batch, removes it on success or
+Keyframe extraction owns one scratch batch, removes it on success or
 failure, removes failed durable copies, aggregates failures instead of warning
 once per frame, and reports partial completion explicitly.
 
 `job_list` defaults to 20 rows, accepts at most 256, and returns `total` plus
 `has_more`; the panel displays the subset rather than presenting it as the
 whole history. Job history is process-local: restart loss and bounded terminal
-retention are disclosed at list/status/cancel boundaries. `workflow_save`
-validates a ComfyUI/fal.ai-style `WorkflowGraph` DAG (1–64 topologically ordered
-`steps`/`nodes` with unique `id`s, `tool` names in `TOOL_NAMES`, and verified
-upstream `{"$from": "<step_id>", "field": "..."}` bindings). Workflow listing is
-bounded to summaries (default 100, maximum 256); `workflow_load` is the only
-list/load surface that returns the full graph.
+retention are disclosed at list/status/cancel boundaries. The retained queue
+accepts `transcribe`, `audio_trim`, `audio_concat`, `video_clip`, and `video_concat`.
+`params` is serialized JSON matching that operation's request, not a generation
+request. Transcription jobs return a source-linked bundle; store it explicitly
+if durable transcript retrieval is needed.
 
 The media panel applies latest-request ownership to Library, Queue, and Detail.
 Direct trim/concat edits are serialized: while one side-effecting edit is active,
@@ -215,8 +206,8 @@ colors array, an empty composition object, or a blank caption — surfaces as an
 analysis error that retains staleness; legitimate empty face/object detections are
 valid results. Every produced file is
 filed under the gallery whose folder contains it — `media-mcp/generated/` — whatever
-gallery is active. Provider-generated variants, job completions, and canonically
-published local media share one rollback-armed publication aggregate. It commits
+gallery is active. File-producing research jobs and canonically published local
+media share one rollback-armed publication aggregate. It commits
 the gallery Asset, generation lineage, effective parameters, and OMC v2.8
 creation graph in one SQLite transaction; coupled files and rows roll back on
 failure, and cancellation arbitrates before terminal job publication. Each graph:
@@ -238,8 +229,8 @@ two spellings.
 Schema DDL creates `missing` and `metadata_stale` directly and enforces unique `(gallery_id, absolute_path)`; gallery count/size derive from active-row aggregates, with no legacy read paths, API aliases, or migration shims. `GalleryStore::open` opens or creates the canonical root, and insertion derives the relative path from the canonical absolute path.
 
 Pins: `gallery_reopen_restores_requested_root`, `gallery_rescan_preserves_identity`,
-`gallery_lifecycle_tests` (including `generate_image_files_every_variant_under_the_generated_gallery`
-and `invalid_analysis_outputs_retain_staleness`), and `gallery::store::tests`
+`gallery_lifecycle_tests` (including `invalid_analysis_outputs_retain_staleness`),
+and `gallery::store::tests`
 (`path_upsert_retains_annotations_and_deterministic_positions` and
 `absent_alias_path_resolves_existing_ancestors_and_keeps_identity`).
 
@@ -420,7 +411,11 @@ named fields. Enter/reset the key in Settings â Kask â Data Services; writes/d
 
 ## Configuration
 
-Media generation is child-local: `LazyInferencePort::media_generate` calls the media process's `MediaRouter` using its env-injected `DEEPINFRA_API_KEY` / `OPENROUTER_API_KEY` (D35). Vision/chat/embed calls use the inference IPC bridge to zed's `LanguageModelRegistry`; media generation does not make that IPC round-trip.
+Transcription is child-local: `LazyInferencePort::media_generate` uses the
+media process's `MediaRouter` and the selected provider's env-injected
+`DEEPINFRA_API_KEY` / `OPENROUTER_API_KEY`. Vision/chat/embed use the IPC bridge
+to zed's `LanguageModelRegistry`. Shared inference generation support is outside
+this server's research-tool boundary.
 
 Routing policy was ratified on **2026-09-06**, superseding `d660f3b754`
 (scoring/automatic fallback) and `8cc79c797e` (registration order), while
@@ -433,27 +428,25 @@ automatic cross-provider retry on any error.
 
 | Variable | Settings default | Operations |
 |---|---|---|
-| `HKASK_MEDIA_IMAGE_GEN_MODEL` | unset | image generation and image-to-image |
-| `HKASK_MEDIA_VIDEO_MODEL` | unset | text-to-video and image-to-video |
-| `HKASK_MEDIA_TTS_MODEL` | unset | speech (DeepInfra only) |
-| `HKASK_MEDIA_STT_MODEL` | `OpenRouter/openai/whisper-large-v3-turbo` | transcription, the educt transcript passes, and `voice_design` |
+| `HKASK_MEDIA_STT_MODEL` | `DEFAULT_MEDIA_STT_MODEL` | transcription and educt transcript passes |
+| `HKASK_MEDIA_VISION_MODEL` | `DEFAULT_MEDIA_VISION_MODEL` | source-image and video analysis |
 
 Settings inject resolved defaults into the child; standalone calls need env
-configuration or an explicit override. Background removal and upscale use
-fixed DeepInfra native models, require `DEEPINFRA_API_KEY`, need no model
-env var, and reject model overrides. Missing selected credentials/config
+configuration or an explicit override. Explicitly empty settings clear a
+default; there is no hidden server fallback. Missing selected credentials/config
 and HTTP 401/403 are `permission_denied`; invalid model/provider selection
-is `invalid_argument`, never a retryable outage. Image-to-image is
-DeepInfra-only in the current adapters. Vision/chat/embed are unchanged.
+is `invalid_argument`, never a retryable outage. `model_list` / `model_info`
+discover configured STT and registry-confirmed vision models only; registry
+failures surface rather than masquerading as empty discovery.
 
 **Migration:** qualify bare/short-alias media model settings and saved replay
-overrides with a full provider name; configure that provider's key. Remove
-model overrides for background removal/upscale. See the
+overrides with a full provider name; configure that provider's key. See the
 [inference routing contract](../../crates/hkask-inference/README.md#media-routing-policy--operator-decision-2026-09-06).
 
 ## Face recognition — design decision
 
-Face recognition relies on vision-LLM calls, not local code. The implementation surface is the minijinja (j2) prompt templates — `validate_face_ref` (reference validation) and `match_faces` (two-image same-person comparison) in `src/templates.rs` — dispatched through the inference port, the same pattern as every other vision capability in this server. There is no local embedding model and no local geometric matching; a previous LLM-produced-"embedding" cosine path was removed because LLMs cannot emit geometrically consistent vectors. `run_face_matching` (`src/faces.rs`) groups valid `face_registry` entries by `(first_name, last_name)` so multiple reference portraits for the same person evaluate as a best-of set (early-exiting at confidence ≥ 0.85), replaces unnamed `face` tags in place via `GalleryStore::replace_tag` while preserving `bbox`, skips already-identified `face` tags on subsequent refreshes, and surfaces crop errors rather than falling back to uncropped full images. Full build-out beyond this vision-LLM surface remains **deferred — decision recorded 2026-10-06**.
+Face detection and identification are optional, explicitly selected operations,
+not implied by generic gallery analysis or auto-analysis. Face recognition relies on vision-LLM calls, not local code. The implementation surface is the minijinja (j2) prompt templates — `validate_face_ref` (reference validation) and `match_faces` (two-image same-person comparison) in `src/templates.rs` — dispatched through the inference port, the same pattern as every other vision capability in this server. There is no local embedding model and no local geometric matching; a previous LLM-produced-"embedding" cosine path was removed because LLMs cannot emit geometrically consistent vectors. `run_face_matching` (`src/faces.rs`) groups valid `face_registry` entries by `(first_name, last_name)` so multiple reference portraits for the same person evaluate as a best-of set (early-exiting at confidence ≥ 0.85), replaces unnamed `face` tags in place via `GalleryStore::replace_tag` while preserving `bbox`, skips already-identified `face` tags on subsequent refreshes, and surfaces crop errors rather than falling back to uncropped full images. Full build-out beyond this vision-LLM surface remains **deferred — decision recorded 2026-10-06**.
 
 ## Quick Start
 
@@ -467,8 +460,8 @@ hkask-mcp-media
 ## Usage
 
 ```
-"Generate an image of a sunset over mountains"  â generate_image
-"Search my gallery for cat photos"              â gallery_search
-"Convert this video to GIF"                      â video_to_gif
-"Transcribe this audio recording"                â transcribe_bundle
+"Index this research recording folder"         → gallery_organize
+"Find images of the instrument setup"           → gallery_search
+"Locate this phrase in stored interviews"       → educt_search_transcripts
+"Transcribe and store this interview"           → transcribe_and_store
 ```

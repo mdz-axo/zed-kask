@@ -1,163 +1,115 @@
-//! Model browser tools — enumerate available media generation models.
-//!
-//! Fills the OMC `Participant` concept: the model/provider is a participant in
-//! the creation task. The model list is constructed from `model_constants`
-//! defaults (resolvable via env vars) and their known `MediaOp` capabilities.
+//! Research model discovery: registry-confirmed vision models and configured STT.
 use crate::types::{MediaModelInfo, ModelInfoRequest, ModelListRequest};
 use crate::*;
 
-/// Build the full list of configured media models from `model_constants` defaults.
-///
-/// Each model is annotated with its provider (parsed from the prefixed name),
-/// modality, and capabilities. The `is_default` flag is true for all entries —
-/// these are the configured defaults. Future dynamic enumeration will add
-/// non-default models from provider APIs.
-fn build_model_list() -> Vec<MediaModelInfo> {
-    use crate::models;
-
-    // Only CONFIGURED models are listed — an unset modality is absent, and
-    // calling it fails visibly with a NotConfigured error naming the env
-    // var (the operator's no-hidden-models spec: the list never shows a
-    // model the user did not choose).
-    let image_model = models::image_gen_model();
-    let video_model = models::video_model();
-    let tts_model = models::tts_model();
-    let stt_model = models::stt_model();
-    let vision_model = models::vision_model();
-
-    let all = vec![
-        MediaModelInfo {
-            id: image_model.clone().unwrap_or_default(),
-            name: strip_provider_prefix(&image_model.clone().unwrap_or_default()).to_string(),
-            provider: parse_provider(&image_model.clone().unwrap_or_default()),
-            modality: "image".to_string(),
-            capabilities: vec!["generate_image".to_string(), "image_to_image".to_string()],
-            is_default: true,
-            description: Some("Image generation and transformation".to_string()),
-        },
-        MediaModelInfo {
-            id: video_model.clone().unwrap_or_default(),
-            name: strip_provider_prefix(&video_model.clone().unwrap_or_default()).to_string(),
-            provider: parse_provider(&video_model.clone().unwrap_or_default()),
-            modality: "video".to_string(),
-            capabilities: vec!["generate_video".to_string(), "image_to_video".to_string()],
-            is_default: true,
-            description: Some("Text-to-video and image-to-video generation".to_string()),
-        },
-        MediaModelInfo {
-            id: tts_model.clone().unwrap_or_default(),
-            name: strip_provider_prefix(&tts_model.clone().unwrap_or_default()).to_string(),
-            provider: parse_provider(&tts_model.clone().unwrap_or_default()),
-            modality: "audio".to_string(),
-            capabilities: vec!["generate_speech".to_string()],
-            is_default: true,
-            description: Some("Text-to-speech voice synthesis".to_string()),
-        },
-        MediaModelInfo {
-            id: stt_model.clone().unwrap_or_default(),
-            name: strip_provider_prefix(&stt_model.clone().unwrap_or_default()).to_string(),
-            provider: parse_provider(&stt_model.clone().unwrap_or_default()),
+/// The registry's only analysis capability flag is vision. Do not infer audio
+/// support from model names; transcription uses the explicitly configured STT model.
+fn build_model_list(
+    registry: Vec<hkask_types::ModelEntry>,
+    stt: Option<String>,
+    vision: Option<String>,
+) -> Vec<MediaModelInfo> {
+    let mut models = Vec::new();
+    if let Some(id) = stt {
+        models.push(MediaModelInfo {
+            name: strip_provider_prefix(&id).to_string(),
+            provider: parse_provider(&id),
+            id,
             modality: "audio".to_string(),
             capabilities: vec!["transcribe".to_string()],
             is_default: true,
-            description: Some("Speech-to-text transcription".to_string()),
-        },
-        MediaModelInfo {
-            id: vision_model.clone().unwrap_or_default(),
-            name: strip_provider_prefix(&vision_model.clone().unwrap_or_default()).to_string(),
-            provider: parse_provider(&vision_model.clone().unwrap_or_default()),
+            description: Some("Configured speech-to-text transcription model".to_string()),
+        });
+    }
+    for entry in registry.into_iter().filter(|entry| entry.supports_vision) {
+        if models
+            .iter()
+            .any(|model| model.id == entry.prefixed_name && model.modality == "vision")
+        {
+            continue;
+        }
+        models.push(MediaModelInfo {
+            name: entry.model,
+            provider: parse_provider(&entry.prefixed_name),
+            is_default: vision.as_deref() == Some(entry.prefixed_name.as_str()),
+            id: entry.prefixed_name,
             modality: "vision".to_string(),
             capabilities: vec![
                 "describe_image".to_string(),
                 "gallery_analyze".to_string(),
                 "video_caption".to_string(),
-                "expand_prompt".to_string(),
             ],
-            is_default: true,
             description: Some(
-                "Vision LLM for image analysis, scene description, and prompt expansion"
-                    .to_string(),
+                "Registry-confirmed vision model for source-media analysis".to_string(),
             ),
-        },
-    ];
-
-    // Keep only the entries whose model is configured (the entry order
-    // matches the model variables above).
-    let configured_flags = [
-        image_model.is_some(),
-        video_model.is_some(),
-        tts_model.is_some(),
-        stt_model.is_some(),
-        vision_model.is_some(),
-    ];
-    all.into_iter()
-        .zip(configured_flags)
-        .filter(|(_, configured)| *configured)
-        .map(|(entry, _)| entry)
-        .collect()
-}
-
-/// Extract the provider name from a prefixed model id (e.g. "DeepInfra/..." → "deepinfra").
-fn parse_provider(prefixed: &str) -> String {
-    if let Some((provider, _)) = prefixed.split_once('/') {
-        provider.to_lowercase()
-    } else {
-        "unknown".to_string()
+        });
     }
+    models
 }
 
-/// Strip the provider prefix from a model id (e.g. "DeepInfra/black-forest-labs/FLUX-2-klein-4b" → "black-forest-labs/FLUX-2-klein-4b").
+fn parse_provider(prefixed: &str) -> String {
+    prefixed
+        .split_once('/')
+        .map(|(provider, _)| provider.to_lowercase())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 fn strip_provider_prefix(prefixed: &str) -> &str {
-    if let Some((_, rest)) = prefixed.split_once('/') {
-        rest
-    } else {
-        prefixed
+    prefixed
+        .split_once('/')
+        .map_or(prefixed, |(_, model)| model)
+}
+
+impl MediaServer {
+    async fn research_models(&self) -> Result<Vec<MediaModelInfo>, McpToolError> {
+        let registry =
+            self.vision_port.list_models().await.map_err(|error| {
+                classify_inference_error("Research model discovery failed", error)
+            })?;
+        Ok(build_model_list(
+            registry,
+            models::stt_model(),
+            models::vision_model(),
+        ))
     }
 }
 
 #[tool_router(router = models_router, vis = "pub")]
 impl MediaServer {
-    /// List available media generation models with their provider, modality,
-    /// capabilities, and default status. Optionally filter by provider.
     #[tool(
-        description = "List available media generation models with their provider, modality, capabilities, and default status. Optionally filter by provider (e.g. 'deepinfra', 'openrouter')."
+        description = "List research media models: configured speech-to-text and registry-confirmed vision analysis models. Optionally filter by provider. Registry failures are surfaced; audio-analysis capabilities not declared by the registry are not inferred."
     )]
     pub async fn model_list(
         &self,
         Parameters(ModelListRequest { provider }): Parameters<ModelListRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "model_list", async {
-            let mut models = build_model_list();
-            if let Some(filter) = provider
-                && !filter.is_empty()
-            {
-                let filter_lower = filter.to_lowercase();
-                models.retain(|m| m.provider == filter_lower);
+            let mut models = self.research_models().await?;
+            if let Some(filter) = provider.filter(|filter| !filter.is_empty()) {
+                models.retain(|model| model.provider.eq_ignore_ascii_case(&filter));
             }
-            serde_json::to_value(&models)
-                .map_err(|e| McpToolError::internal(format!("encode model list: {e}")))
+            serde_json::to_value(models)
+                .map_err(|error| McpToolError::internal(format!("encode model list: {error}")))
         })
         .await
     }
 
-    /// Get detailed information about a specific media model by its id.
-    #[tool(description = "Get detailed information about a specific media model by its id.")]
+    #[tool(
+        description = "Get details for a research media model returned by model_list (speech-to-text or registry-confirmed vision analysis)."
+    )]
     pub async fn model_info(
         &self,
         Parameters(ModelInfoRequest { model_id }): Parameters<ModelInfoRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "model_info", async {
-            let models = build_model_list();
-            let model = models
+            let model = self.research_models().await?
                 .into_iter()
-                .find(|m| m.id == model_id)
-                .ok_or_else(|| {
-                    McpToolError::not_found(format!(
-                        "Model not found: {model_id}. Call model_list to see available models."
-                    ))
-                })?;
-            serde_json::to_value(&model)
-                .map_err(|e| McpToolError::internal(format!("encode model info: {e}")))
+                .find(|model| model.id == model_id)
+                .ok_or_else(|| McpToolError::not_found(format!(
+                    "Research model not found: {model_id}. Call model_list to see available models."
+                )))?;
+            serde_json::to_value(model)
+                .map_err(|error| McpToolError::internal(format!("encode model info: {error}")))
         })
         .await
     }
@@ -167,154 +119,173 @@ impl MediaServer {
 mod tests {
     use super::*;
 
-    #[test]
-    fn parse_provider_extracts_lowercase_provider() {
-        assert_eq!(
-            parse_provider("DeepInfra/black-forest-labs/FLUX-2-klein-4b"),
-            "deepinfra"
-        );
-        assert_eq!(parse_provider("OpenRouter/openai/dall-e-3"), "openrouter");
+    struct RegistryPort {
+        fail: bool,
     }
 
+    impl InferencePort for RegistryPort {
+        fn generate(
+            &self,
+            _: &str,
+            _: &hkask_types::template::LLMParameters,
+            _: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            panic!("model discovery must not generate content")
+        }
+
+        fn list_models(
+            &self,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<Vec<hkask_types::ModelEntry>, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async move {
+                if self.fail {
+                    Err(hkask_types::InferenceError::Connection(
+                        "registry sentinel".into(),
+                    ))
+                } else {
+                    Ok(vec![
+                        entry("Provider/registered-vision", true),
+                        entry("Provider/text-only", false),
+                    ])
+                }
+            })
+        }
+    }
+
+    fn registry_server(fail: bool) -> Result<MediaServer, Box<dyn std::error::Error>> {
+        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
+        Ok(MediaServer::new(
+            hkask_types::WebID::new(),
+            Arc::new(RegistryPort { fail }),
+            Arc::new(Mutex::new(None)),
+            Arc::new(GalleryStore::from_driver(driver)?),
+            templates::create_env()?,
+            FfmpegRunner::detect(),
+            YtDlpRunner::detect(),
+            crate::jobs::new_job_store(),
+            None,
+            None,
+        ))
+    }
+
+    /// expect: Model tools enumerate the actual registry, model_info can inspect
+    /// its entries, and bridge failures remain errors rather than empty lists.
+    #[tokio::test]
+    async fn model_tools_use_registry_and_surface_discovery_failure()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server = registry_server(false)?;
+        let response = server
+            .model_list(Parameters(ModelListRequest {
+                provider: Some("PROVIDER".into()),
+            }))
+            .await?;
+        let payload =
+            hkask_types::tool_response::unwrap_tool_envelope(serde_json::from_str(&response)?);
+        assert!(
+            payload
+                .as_array()
+                .expect("model list")
+                .iter()
+                .any(|entry| entry["id"] == "Provider/registered-vision")
+        );
+        let response = server
+            .model_info(Parameters(ModelInfoRequest {
+                model_id: "Provider/registered-vision".into(),
+            }))
+            .await?;
+        let payload =
+            hkask_types::tool_response::unwrap_tool_envelope(serde_json::from_str(&response)?);
+        assert_eq!(payload["modality"], "vision");
+        let error = server
+            .model_info(Parameters(ModelInfoRequest {
+                model_id: "Provider/text-only".into(),
+            }))
+            .await
+            .expect_err("non-vision registry model excluded");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::NotFound);
+        let broken = registry_server(true)?;
+        for error in [
+            broken
+                .model_list(Parameters(ModelListRequest { provider: None }))
+                .await
+                .expect_err("registry failure"),
+            broken
+                .model_info(Parameters(ModelInfoRequest {
+                    model_id: "Provider/registered-vision".into(),
+                }))
+                .await
+                .expect_err("registry failure"),
+        ] {
+            assert_eq!(error.kind, hkask_types::McpErrorKind::Unavailable);
+            assert!(error.message.contains("registry sentinel"));
+        }
+        Ok(())
+    }
+
+    fn entry(id: &str, supports_vision: bool) -> hkask_types::ModelEntry {
+        hkask_types::ModelEntry {
+            prefixed_name: id.into(),
+            model: strip_provider_prefix(id).into(),
+            supports_vision,
+        }
+    }
+
+    /// expect: Research discovery only claims capabilities supported by the
+    /// registry or explicit transcription configuration, never creative operations.
     #[test]
-    fn parse_provider_handles_unknown() {
+    fn discovery_uses_registry_capabilities_and_explicit_defaults() {
+        let models = build_model_list(
+            vec![
+                entry("Provider/vision", true),
+                entry("Provider/text", false),
+                entry("Provider/vision", true),
+                entry("Provider/other-vision", true),
+            ],
+            Some("Provider/stt".into()),
+            Some("Provider/vision".into()),
+        );
+        assert_eq!(models.len(), 3);
+        assert_eq!(models[0].capabilities, ["transcribe"]);
+        assert!(models[0].is_default);
+        assert_eq!(models[1].id, "Provider/vision");
+        assert!(models[1].is_default);
+        assert!(!models[2].is_default);
+        for model in models {
+            assert_eq!(model.provider, "provider");
+            assert!(model.capabilities.iter().all(|op| {
+                [
+                    "transcribe",
+                    "describe_image",
+                    "gallery_analyze",
+                    "video_caption",
+                ]
+                .contains(&op.as_str())
+            }));
+        }
+    }
+
+    /// expect: Unregistered configured vision names do not masquerade as
+    /// confirmed registry capabilities, and no hidden defaults appear.
+    #[test]
+    fn empty_registry_does_not_invent_vision_or_audio_models() {
+        assert!(build_model_list(Vec::new(), None, Some("Provider/absent".into())).is_empty());
         assert_eq!(parse_provider("no-prefix"), "unknown");
-    }
-
-    #[test]
-    fn strip_provider_prefix_removes_first_segment() {
         assert_eq!(
-            strip_provider_prefix("DeepInfra/black-forest-labs/FLUX-2-klein-4b"),
-            "black-forest-labs/FLUX-2-klein-4b"
+            strip_provider_prefix("Provider/family/model"),
+            "family/model"
         );
-        assert_eq!(
-            strip_provider_prefix("OpenRouter/openai/dall-e-3"),
-            "openai/dall-e-3"
-        );
-    }
-
-    #[test]
-    fn strip_provider_prefix_passthrough_no_prefix() {
-        assert_eq!(strip_provider_prefix("no-prefix"), "no-prefix");
-    }
-
-    /// Env-mutation lock: the list tests configure the five media model
-    /// env vars (the list shows only CONFIGURED models — the operator's
-    /// no-hidden-models spec), and env is process-global, so the tests
-    /// serialize on this mutex to avoid racing each other.
-    static LIST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    fn configured_model_list() -> Vec<MediaModelInfo> {
-        let _guard = LIST_ENV_LOCK.lock().unwrap();
-        let vars = [
-            ("HKASK_MEDIA_IMAGE_GEN_MODEL", "DeepInfra/test-image"),
-            ("HKASK_MEDIA_VIDEO_MODEL", "DeepInfra/test-video"),
-            ("HKASK_MEDIA_TTS_MODEL", "DeepInfra/test-tts"),
-            ("HKASK_MEDIA_STT_MODEL", "DeepInfra/test-stt"),
-            ("HKASK_MEDIA_VISION_MODEL", "OpenRouter/test-vision"),
-        ];
-        let saved: Vec<(String, Option<String>)> = vars
-            .iter()
-            .map(|(key, _)| (key.to_string(), std::env::var(key).ok()))
-            .collect();
-        unsafe { std::env::remove_var("HKASK_MEDIA_TEST_SENTINEL") };
-        for (key, value) in vars {
-            // SAFETY: serialized by LIST_ENV_LOCK; the only tests reading
-            // these vars hold the same lock.
-            unsafe { std::env::set_var(key, value) };
-        }
-        let models = build_model_list();
-        for (key, prior) in saved {
-            match prior {
-                Some(value) => unsafe { std::env::set_var(&key, value) },
-                None => unsafe { std::env::remove_var(&key) },
-            }
-        }
-        models
-    }
-
-    #[test]
-    fn build_model_list_returns_at_least_five_models() {
-        let models = configured_model_list();
-        assert!(
-            models.len() >= 5,
-            "expected ≥5 configured models, got {}",
-            models.len()
-        );
-    }
-
-    #[test]
-    fn build_model_list_has_correct_modalities() {
-        let models = configured_model_list();
-        let modalities: Vec<&str> = models.iter().map(|m| m.modality.as_str()).collect();
-        assert!(modalities.contains(&"image"), "missing image modality");
-        assert!(modalities.contains(&"video"), "missing video modality");
-        assert!(modalities.contains(&"audio"), "missing audio modality");
-        assert!(modalities.contains(&"vision"), "missing vision modality");
-    }
-
-    /// The no-hidden-models spec: with NOTHING configured, the list is
-    /// EMPTY — it never shows a model the user did not choose.
-    #[test]
-    fn build_model_list_is_empty_when_nothing_is_configured() {
-        let _guard = LIST_ENV_LOCK.lock().unwrap();
-        let keys = [
-            "HKASK_MEDIA_IMAGE_GEN_MODEL",
-            "HKASK_MEDIA_VIDEO_MODEL",
-            "HKASK_MEDIA_TTS_MODEL",
-            "HKASK_MEDIA_STT_MODEL",
-            "HKASK_MEDIA_VISION_MODEL",
-        ];
-        let saved: Vec<(String, Option<String>)> = keys
-            .iter()
-            .map(|k| (k.to_string(), std::env::var(k).ok()))
-            .collect();
-        for key in keys {
-            unsafe { std::env::remove_var(key) };
-        }
-        let models = build_model_list();
-        for (key, prior) in saved {
-            match prior {
-                Some(value) => unsafe { std::env::set_var(&key, value) },
-                None => unsafe { std::env::remove_var(&key) },
-            }
-        }
-        assert!(
-            models.is_empty(),
-            "unconfigured models must not be listed, got {}",
-            models.len()
-        );
-    }
-
-    #[test]
-    fn build_model_list_all_have_non_empty_capabilities() {
-        let models = build_model_list();
-        for model in &models {
-            assert!(
-                !model.capabilities.is_empty(),
-                "model {} has empty capabilities",
-                model.id
-            );
-        }
-    }
-
-    #[test]
-    fn build_model_list_all_marked_as_default() {
-        let models = build_model_list();
-        for model in &models {
-            assert!(model.is_default, "model {} not marked as default", model.id);
-        }
-    }
-
-    #[test]
-    fn build_model_list_all_have_provider() {
-        let models = build_model_list();
-        for model in &models {
-            assert!(
-                !model.provider.is_empty() && model.provider != "unknown",
-                "model {} has unknown provider",
-                model.id
-            );
-        }
     }
 }

@@ -1,7 +1,8 @@
 //! Gallery storage — SQLite-backed image gallery index.
 //!
 //! The gallery is a lens over the filesystem, not a copy of it.
-//! Images are indexed by path + hash; tags are AI-generated metadata.
+//! Images are indexed by path + hash; tags distinguish model metadata from
+//! user-authored annotations through their persisted provenance.
 //! Schema is flat — one join maximum (image → tags).
 //!
 //! Tables:
@@ -258,10 +259,8 @@ pub struct AlbumRecord {
     pub created_at: String,
 }
 
-/// Generation lineage for a gallery image — the full context that produced
-/// the asset (WS-3). Enables `gallery_reproduce` (re-run the stored
-/// op+params). Anti-lock-in: this is the
-/// metadata that makes an asset reproducible even if the provider changes.
+/// Historical generation evidence for an indexed asset. Retained for read-only
+/// inspection, not as authority to replay a retired creative operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerationRecord {
     pub id: String,
@@ -371,8 +370,10 @@ impl GalleryStore {
                 ON gallery_tags(image_id);
             CREATE INDEX IF NOT EXISTS idx_gallery_tags_type
                 ON gallery_tags(tag_type);
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_gallery_tags_unique
-                ON gallery_tags(image_id, tag_type, value);
+            -- Human acceptance must not alias a model suggestion with the same text.
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_gallery_tags_provenance
+                ON gallery_tags(image_id, tag_type, value, model_used);
+            DROP INDEX IF EXISTS idx_gallery_tags_unique;
             CREATE TABLE IF NOT EXISTS face_registry (
                 id TEXT PRIMARY KEY,
                 first_name TEXT NOT NULL,
@@ -829,7 +830,7 @@ impl GalleryStore {
         }
         for (tag_type, value, confidence) in tags {
             transaction.execute("INSERT INTO gallery_tags (id, image_id, tag_type, value, confidence, model_used, created_at)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(image_id, tag_type, value) DO NOTHING",
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(image_id, tag_type, value, model_used) DO NOTHING",
                 params![uuid::Uuid::new_v4().to_string(), record.id, tag_type, value, confidence, model, now_rfc3339()]).map_err(database_error)?;
         }
         if complete {
@@ -960,7 +961,7 @@ impl GalleryStore {
         };
         Ok(row)
     }
-    /// Tag an image with AI-generated metadata.
+    /// Tag an asset with provenance-separated user or model metadata.
     ///
     /// expect: "The system provides durable storage for gallery data"
     /// Tag an image in a gallery.
@@ -989,35 +990,65 @@ impl GalleryStore {
                 DbValue::Text(value.to_string()),
                 DbValue::Real(confidence),
                 DbValue::Text(model_used.to_string()),
-                DbValue::Text(now.clone()),
+                DbValue::Text(now),
             ],
         )?;
-        // Read back the existing row when insert was ignored
-        let existing_id: String = query_row(
+        // Idempotent authoring returns the persisted identity AND provenance,
+        // not a new timestamp/confidence attached to an older tag ID.
+        query_row(
             &*self.driver,
-            "SELECT id FROM gallery_tags WHERE image_id = ?1 AND tag_type = ?2 AND value = ?3",
+            "SELECT id, image_id, tag_type, value, confidence, model_used, created_at FROM gallery_tags WHERE image_id = ?1 AND tag_type = ?2 AND value = ?3 AND model_used = ?4",
             &[
                 DbValue::Text(image_id.to_string()),
                 DbValue::Text(tag_type.to_string()),
                 DbValue::Text(value.to_string()),
+                DbValue::Text(model_used.to_string()),
             ],
-            |row| Ok(row.get_str(0)?.to_string()),
+            Self::tag_from_row,
         )?
-        .ok_or_else(|| {
-            GalleryStoreError::NotFound(NotFound {
-                entity_type: "image".to_string(),
-                id: "tag vanished".to_string(),
-            })
-        })?;
-        Ok(TagRecord {
-            id: existing_id,
-            image_id: image_id.to_string(),
-            tag_type: tag_type.to_string(),
-            value: value.to_string(),
-            confidence,
-            model_used: model_used.to_string(),
-            created_at: now,
-        })
+        .ok_or_else(|| GalleryStoreError::NotFound(NotFound {
+            entity_type: "tag".to_string(),
+            id: format!("{image_id}/{tag_type}/{value}"),
+        }))
+    }
+
+    /// Researcher edits cannot overwrite or delete model suggestions.
+    /// Ownership is checked in the mutation, not a racy read-then-write check.
+    pub fn update_user_annotation(
+        &self,
+        image_id: &str,
+        annotation_id: &str,
+        value: &str,
+    ) -> Result<(), GalleryStoreError> {
+        let changed = self.driver.execute(
+            "UPDATE gallery_tags SET value = ?1 WHERE image_id = ?2 AND id = ?3 AND model_used = 'user' AND tag_type IN ('tag', 'note')",
+            &[DbValue::Text(value.to_string()), DbValue::Text(image_id.to_string()), DbValue::Text(annotation_id.to_string())],
+        )?;
+        if changed == 0 {
+            return Err(GalleryStoreError::NotFound(NotFound {
+                entity_type: "user annotation".to_string(),
+                id: annotation_id.to_string(),
+            }));
+        }
+        Ok(())
+    }
+
+    pub fn delete_user_annotation(
+        &self,
+        image_id: &str,
+        annotation_id: &str,
+    ) -> Result<(), GalleryStoreError> {
+        let changed = self.driver.execute(
+            "DELETE FROM gallery_tags WHERE image_id = ?1 AND id = ?2 AND model_used = 'user' AND tag_type IN ('tag', 'note')",
+            &[DbValue::Text(image_id.to_string()), DbValue::Text(annotation_id.to_string())],
+        )?;
+        if changed == 0 {
+            return Err(GalleryStoreError::NotFound(NotFound {
+                entity_type: "user annotation".to_string(),
+                id: annotation_id.to_string(),
+            }));
+        }
+        Ok(())
     }
 
     /// Update an existing tag row in place (used by `run_face_matching` and
@@ -1411,9 +1442,9 @@ impl GalleryStore {
         Ok(())
     }
 
-    /// Record the generation lineage for a gallery image. The image must
-    /// already exist in `gallery_images` (the FK is enforced).
-    pub fn record_generation(
+    /// Historical fixture writer; production publication uses the atomic asset aggregate.
+    #[cfg(test)]
+    pub(crate) fn record_generation(
         &self,
         image_id: &str,
         op: &str,
@@ -1461,7 +1492,7 @@ impl GalleryStore {
     }
 
     /// Look up the most recent generation lineage for an image (None if none
-    /// recorded). Used by `gallery_reproduce`.
+    /// recorded). Historical evidence is readable even after creative tools retire.
     #[must_use = "result must be used"]
     pub fn get_generation(
         &self,

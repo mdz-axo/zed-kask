@@ -2,6 +2,57 @@
 use crate::*;
 
 const ANALYSIS_PIPELINES: [&str; 5] = ["faces", "objects", "colors", "composition", "scene"];
+// Face detection/identification is never implied by generic analysis or auto-analysis.
+const DEFAULT_ANALYSIS_PIPELINES: [&str; 4] = ["objects", "colors", "composition", "scene"];
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GalleryAnnotationCreateRequest {
+    pub gallery_asset_id: String,
+    /// One of: tag, note.
+    pub kind: String,
+    /// Researcher-authored text, not a model suggestion.
+    pub value: String,
+    /// Explicit approval of this write by the user; false refuses the operation.
+    pub user_approved: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GalleryAnnotationListRequest {
+    pub gallery_asset_id: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GalleryAnnotationUpdateRequest {
+    pub gallery_asset_id: String,
+    pub annotation_id: String,
+    pub value: String,
+    pub user_approved: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GalleryAnnotationDeleteRequest {
+    pub gallery_asset_id: String,
+    pub annotation_id: String,
+    pub user_approved: bool,
+}
+
+pub(super) fn require_annotation_approval(approved: bool) -> Result<(), McpToolError> {
+    if !approved {
+        return Err(McpToolError::invalid_argument(
+            "user_approved must be true for researcher annotation writes",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_annotation_value(value: &str) -> Result<(), McpToolError> {
+    if value.trim().is_empty() || value.len() > 4096 {
+        return Err(McpToolError::invalid_argument(
+            "annotation value must be nonblank and at most 4096 UTF-8 bytes",
+        ));
+    }
+    Ok(())
+}
 
 #[derive(Debug, PartialEq, Eq)]
 enum AnalysisTarget {
@@ -12,7 +63,8 @@ enum AnalysisTarget {
 fn validate_analysis_pipelines(
     pipelines: Option<Vec<String>>,
 ) -> Result<Vec<String>, McpToolError> {
-    let pipelines = pipelines.unwrap_or_else(|| ANALYSIS_PIPELINES.map(String::from).to_vec());
+    let pipelines =
+        pipelines.unwrap_or_else(|| DEFAULT_ANALYSIS_PIPELINES.map(String::from).to_vec());
     if pipelines.is_empty() {
         return Err(McpToolError::invalid_argument(
             "pipelines must contain at least one pipeline",
@@ -173,6 +225,72 @@ fn ranked_image_display_hints<'a>(
 
 #[tool_router(router = gallery_router, vis = "pub")]
 impl MediaServer {
+    // User metadata lives in the index even in read-only gallery mode. These
+    // operations never rewrite source bytes or touch another provenance class.
+    #[tool(
+        description = "Create a user-approved researcher tag or note on a stable gallery_asset_id. Does not modify source media. Identical model suggestions remain separate. Requires user_approved=true."
+    )]
+    pub async fn gallery_annotation_create(
+        &self,
+        Parameters(request): Parameters<GalleryAnnotationCreateRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "gallery_annotation_create", async {
+            require_annotation_approval(request.user_approved)?;
+            validate_annotation_value(&request.value)?;
+            if !matches!(request.kind.as_str(), "tag" | "note") {
+                return Err(McpToolError::invalid_argument("kind must be tag or note"));
+            }
+            self.gallery_store.get_by_id(&request.gallery_asset_id).map_err(map_gallery_store_error)?;
+            let annotation = self.gallery_store.tag_image(&request.gallery_asset_id, &request.kind, &request.value, 1.0, "user")
+                .map_err(map_gallery_store_error)?;
+            Ok(serde_json::json!({"annotation": annotation, "provenance": "user", "gallery_changed": true}))
+        }).await
+    }
+
+    #[tool(
+        description = "List researcher-authored tags and notes for a stable gallery_asset_id, excluding model suggestions. Missing source files do not hide retained annotations."
+    )]
+    pub async fn gallery_annotation_list(
+        &self,
+        Parameters(request): Parameters<GalleryAnnotationListRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "gallery_annotation_list", async {
+            self.gallery_store.get_by_id(&request.gallery_asset_id).map_err(map_gallery_store_error)?;
+            let annotations = self.gallery_store.get_tags(&request.gallery_asset_id).map_err(map_gallery_store_error)?
+                .into_iter().filter(|tag| tag.model_used == "user" && matches!(tag.tag_type.as_str(), "tag" | "note")).collect::<Vec<_>>();
+            Ok(serde_json::json!({"gallery_asset_id": request.gallery_asset_id, "annotations": annotations, "provenance": "user"}))
+        }).await
+    }
+
+    #[tool(
+        description = "Update only a researcher-authored tag or note by stable asset and annotation IDs. Preserves annotation identity and creation provenance. Requires user_approved=true."
+    )]
+    pub async fn gallery_annotation_update(
+        &self,
+        Parameters(request): Parameters<GalleryAnnotationUpdateRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "gallery_annotation_update", async {
+            require_annotation_approval(request.user_approved)?;
+            validate_annotation_value(&request.value)?;
+            self.gallery_store.update_user_annotation(&request.gallery_asset_id, &request.annotation_id, &request.value).map_err(map_gallery_store_error)?;
+            Ok(serde_json::json!({"gallery_asset_id": request.gallery_asset_id, "annotation_id": request.annotation_id, "value": request.value, "provenance": "user", "gallery_changed": true}))
+        }).await
+    }
+
+    #[tool(
+        description = "Delete only the named researcher annotation, never model tags, other user annotations, or source bytes. Requires user_approved=true."
+    )]
+    pub async fn gallery_annotation_delete(
+        &self,
+        Parameters(request): Parameters<GalleryAnnotationDeleteRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "gallery_annotation_delete", async {
+            require_annotation_approval(request.user_approved)?;
+            self.gallery_store.delete_user_annotation(&request.gallery_asset_id, &request.annotation_id).map_err(map_gallery_store_error)?;
+            Ok(serde_json::json!({"gallery_asset_id": request.gallery_asset_id, "annotation_id": request.annotation_id, "deleted": true, "gallery_changed": true}))
+        }).await
+    }
+
     // ── Gallery tools ────────────────────────────────────────────────────────
 
     #[tool(
@@ -234,8 +352,7 @@ impl MediaServer {
             });
             if auto_analyze && !reconciled.analysis_assets.is_empty() {
                 let _admission = self.admit_heavy_operation()?;
-                let pipelines =
-                    ["faces", "objects", "colors", "composition", "scene"].map(String::from);
+                let pipelines = DEFAULT_ANALYSIS_PIPELINES.map(String::from);
                 let analysis = self
                     .run_analysis_on_assets_detailed(&reconciled.analysis_assets, &pipelines)
                     .await;
@@ -269,7 +386,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Search your gallery by describing what you're looking for. Mode 'tags' (default) fuzzy-matches against AI-generated tags (objects, faces, colors, composition) — works without embeddings. Mode 'semantic' matches visual descriptions by caption-embedding cosine similarity (requires gallery_analyze to have generated captions); in semantic mode, pass image_index to find images similar to a given gallery image instead of matching the query text."
+        description = "Search your gallery. Mode 'tags' (default) fuzzy-matches researcher tags/notes and model suggestions, returning per-match provenance; works without embeddings. Mode 'semantic' matches visual descriptions by caption-embedding cosine similarity (requires gallery_analyze captions); pass image_index in semantic mode for similar images."
     )]
     pub async fn gallery_search(
         &self,
@@ -315,7 +432,7 @@ impl MediaServer {
         .await
     }
 
-    /// Tags-mode core: fuzzy match against AI-generated tags (the original
+    /// Tags-mode core: fuzzy match against user and model metadata (the original
     /// gallery_search body).
     async fn gallery_search_tags(
         &self,
@@ -361,6 +478,9 @@ impl MediaServer {
                 "value": tag.value,
                 "similarity": sim,
                 "confidence": tag.confidence,
+                "annotation_id": tag.id,
+                "provenance": if tag.model_used == "user" { "user" } else { "model" },
+                "model_used": tag.model_used,
             }));
         }
 
@@ -712,7 +832,7 @@ impl MediaServer {
     // ── Analysis tools ──────────────────────────────────────────────────────
 
     #[tool(
-        description = "Analyze gallery images with AI: detect faces, objects, colors, composition, and generate scene descriptions. Tags are persisted and become searchable."
+        description = "Analyze gallery images with AI: objects, colors, composition, and scene descriptions by default. Faces require explicit pipelines=[\"faces\"] (alone or with other pipelines). User annotations are preserved; model suggestions remain distinct."
     )]
     pub async fn gallery_analyze(
         &self,
@@ -1132,55 +1252,7 @@ impl MediaServer {
         .await
     }
 
-    // ── Generation lineage (WS-3) ────────────────────────────────────────────
-
-    #[tool(
-        description = "Record the generation lineage for a gallery image — the prompt, model, provider, seed, and params that produced it. Call this after generating an image and saving it to the gallery so it can be reproduced (gallery_reproduce) or varied later. The image must already be indexed in the gallery (run gallery_organize / gallery_refresh after saving)."
-    )]
-    pub async fn gallery_record_generation(
-        &self,
-        Parameters(GalleryRecordGenerationRequest {
-            image_index,
-            op,
-            prompt,
-            model,
-            provider,
-            seed,
-            params,
-            workflow_id,
-            parent_image_index,
-        }): Parameters<GalleryRecordGenerationRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "gallery_record_generation", async {
-            if op.trim().is_empty() {
-                return Err(McpToolError::invalid_argument("op must not be empty"));
-            }
-            let image_id = self
-                .resolve_image_id(image_index)
-                .map_err(map_media_error)?;
-            let parent_image_id = match parent_image_index {
-                Some(idx) => Some(self.resolve_image_id(idx).map_err(map_media_error)?),
-                None => None,
-            };
-            let record = self
-                .gallery_store
-                .record_generation(
-                    &image_id,
-                    &op,
-                    prompt.as_deref(),
-                    model.as_deref(),
-                    provider.as_deref(),
-                    seed,
-                    params.as_deref(),
-                    workflow_id.as_deref(),
-                    parent_image_id.as_deref(),
-                )
-                .map_err(map_gallery_store_error)?;
-            serde_json::to_value(&record)
-                .map_err(|e| McpToolError::internal(format!("encode lineage: {e}")))
-        })
-        .await
-    }
+    // Historical generation evidence remains readable.
 
     #[tool(
         description = "Show the recorded generation lineage for a gallery image (op, prompt, model, provider, seed, params, workflow, parent, timestamp). Returns lineage: null if none is recorded."
@@ -1253,7 +1325,7 @@ impl MediaServer {
     }
 
     /// Get complete details for a gallery asset in a single call — the image
-    /// record (path, dimensions, format, media_type), all AI-generated tags,
+    /// record (path, dimensions, format, media_type), all user/model tags,
     /// generation lineage (if recorded), and face registry entries. This is
     /// the inspector-panel data source.
     #[tool(
@@ -1318,75 +1390,6 @@ impl MediaServer {
                 "transcript_render": &transcript_render,
                 "faces": &faces,
             }))
-        })
-        .await
-    }
-
-    #[tool(
-        description = "Re-run the generation that produced a gallery image, using its stored lineage (op + prompt + params). For image-ops (image_to_image, upscale, image_to_video) the current gallery image is used as the source. Returns the new generation result. Call gallery_record_generation first to record lineage."
-    )]
-    pub async fn gallery_reproduce(
-        &self,
-        Parameters(GalleryReproduceRequest { image_index }): Parameters<GalleryReproduceRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "gallery_reproduce", async {
-            let _admission = self.admit_heavy_operation()?;
-            let image_id = self.resolve_image_id(image_index).map_err(map_media_error)?;
-            let lineage = self
-                .gallery_store
-                .get_generation(&image_id)
-                .map_err(|e| map_media_error(e.into()))?
-                .ok_or_else(|| {
-                    McpToolError::not_found(format!(
-                        "No lineage recorded for image {image_index} — call gallery_record_generation first"
-                    ))
-                })?;
-            // Replay the stored params JSON (a serialized MediaGenerateParams),
-            // then apply the stored prompt and — for image-ops — the current
-            // image URL as the source (the stored image_url may be stale).
-            // Corrupt stored params must error, not silently fall back to
-            // defaults — a default-params "reproduction" is a different
-            // generation reported as success.
-            let mut media_params: hkask_types::MediaGenerateParams =
-                match lineage.params.as_deref() {
-                    None => Default::default(),
-                    Some(p) => serde_json::from_str(p).map_err(|e| {
-                        McpToolError::internal(format!(
-                            "Corrupt lineage params for image {image_index}: {e}"
-                        ))
-                    })?,
-                };
-            if let Some(prompt) = lineage.prompt {
-                media_params.prompt = Some(prompt);
-            }
-            const IMAGE_OPS: &[&str] = &["image_to_image", "upscale", "image_to_video"];
-            if IMAGE_OPS.contains(&lineage.op.as_str()) {
-                media_params.image_url =
-                    Some(self.resolve_image_url(image_index).map_err(map_media_error)?);
-            }
-            let result = self
-                .vision_port
-                .media_generate(&lineage.op, &media_params)
-                .await
-                .map_err(|e| classify_inference_error("Reproduce failed", e))?;
-            // Connect the reproduced asset to the inline widget (mirrors
-            // generate_image/generate_video). The kind comes from the
-            // recorded op — image_to_video yields a video, generate_speech
-            // an audio asset, every other op an image. The OMC tag reflects
-            // the reproduced op (a reproduce of `upscale` is a `Version`).
-            // Persist the payload and compose the slim result (the raw
-            // provider response never enters the model's context).
-            let kind = media_op_kind(&lineage.op).unwrap_or("image");
-            let args = serde_json::to_value(&media_params)
-                .unwrap_or(serde_json::Value::Null);
-            persist_slim_and_enrich(
-                &self.gallery_store,
-                &result,
-                "gallery_reproduce",
-                kind,
-                args,
-            )
-            .await
         })
         .await
     }
@@ -1713,8 +1716,211 @@ impl MediaServer {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
+
+    struct ResearchInference;
+    crate::test_support::media_inference_stub!(ResearchInference,
+        generate(self, _prompt): { Box::pin(async { panic!("research CRUD/search must not call inference") }) }
+    );
+
+    pub(crate) fn research_server() -> MediaServer {
+        let store =
+            GalleryStore::from_driver(SqliteDriver::in_memory_driver()).expect("gallery store");
+        MediaServer::new(
+            hkask_types::WebID::new(),
+            Arc::new(ResearchInference),
+            Arc::new(Mutex::new(None)),
+            Arc::new(store),
+            templates::create_env().expect("templates"),
+            FfmpegRunner::detect(),
+            YtDlpRunner::detect(),
+            jobs::new_job_store(),
+            None,
+            None,
+        )
+    }
+
+    pub(crate) fn payload(response: &str) -> serde_json::Value {
+        let response = serde_json::from_str(response).expect("tool response JSON");
+        hkask_types::tool_response::unwrap_tool_envelope(response)
+    }
+
+    /// expect: Researcher annotations survive actual scans and successful reanalysis,
+    /// remain searchable/readable by stable IDs, and never alter source bytes. [P1]
+    #[tokio::test]
+    async fn researcher_annotations_roundtrip_scan_analysis_search_and_owned_delete()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server = research_server();
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("specimen.png");
+        image::RgbImage::new(2, 2).save(&path)?;
+        let original = std::fs::read(&path)?;
+        server
+            .gallery_organize(crate::test_support::read_only_organize_request(dir.path()))
+            .await?;
+        let ga = server.access_gallery()?;
+        let image = server
+            .gallery_store
+            .list_assets(&ga.gallery_id, 0, 10)?
+            .remove(0);
+        let model =
+            server
+                .gallery_store
+                .tag_image(&image.id, "tag", "specimen", 0.8, "vision-model")?;
+        let create = |kind: &str, value: &str| {
+            Parameters(GalleryAnnotationCreateRequest {
+                gallery_asset_id: image.id.clone(),
+                kind: kind.into(),
+                value: value.into(),
+                user_approved: true,
+            })
+        };
+        let tag = payload(
+            &server
+                .gallery_annotation_create(create("tag", "specimen"))
+                .await?,
+        );
+        let note = payload(
+            &server
+                .gallery_annotation_create(create("note", "Inspect fracture"))
+                .await?,
+        );
+        let tag_id = tag["annotation"]["id"].as_str().ok_or("tag id")?;
+        let note_id = note["annotation"]["id"].as_str().ok_or("note id")?;
+        assert_ne!(tag_id, model.id);
+        let repeated = payload(
+            &server
+                .gallery_annotation_create(create("tag", "specimen"))
+                .await?,
+        );
+        assert_eq!(repeated["annotation"], tag["annotation"]);
+        server
+            .gallery_organize(crate::test_support::read_only_organize_request(dir.path()))
+            .await?;
+        assert_eq!(server.gallery_store.get_by_id(&image.id)?.id, image.id);
+        // Exercise the production persistence seam after a successful analysis;
+        // provider transport is independent from metadata ownership semantics.
+        assert!(server.gallery_store.persist_analysis_for_tag_types(
+            &image,
+            &[("tag".into(), "specimen".into(), 0.9)],
+            &["tag".into()],
+            "vision-model",
+            true
+        )?);
+        let listed = payload(
+            &server
+                .gallery_annotation_list(Parameters(GalleryAnnotationListRequest {
+                    gallery_asset_id: image.id.clone(),
+                }))
+                .await?,
+        );
+        assert_eq!(
+            listed["annotations"].as_array().ok_or("annotations")?.len(),
+            2
+        );
+        let found = payload(
+            &server
+                .gallery_search(Parameters(GallerySearchRequest {
+                    query: "specimen".into(),
+                    mode: Some("tags".into()),
+                    image_index: None,
+                    limit: Some(10),
+                    tag_types: Some(vec!["tag".into()]),
+                    min_similarity: Some(1.0),
+                }))
+                .await?,
+        );
+        assert_eq!(found["results"][0]["image_id"], image.id);
+        let matches = found["results"][0]["matching_tags"]
+            .as_array()
+            .ok_or("matching tags")?;
+        assert!(
+            matches.iter().any(
+                |matched| matched["annotation_id"] == tag_id && matched["provenance"] == "user"
+            )
+        );
+        assert!(
+            matches
+                .iter()
+                .any(|matched| matched["provenance"] == "model")
+        );
+        server
+            .gallery_annotation_update(Parameters(GalleryAnnotationUpdateRequest {
+                gallery_asset_id: image.id.clone(),
+                annotation_id: note_id.into(),
+                value: "Recheck fracture".into(),
+                user_approved: true,
+            }))
+            .await?;
+        let updated = server.gallery_store.get_tags(&image.id)?;
+        assert!(
+            updated
+                .iter()
+                .any(|tag| tag.id == note_id && tag.value == "Recheck fracture")
+        );
+        assert!(
+            server
+                .gallery_annotation_delete(Parameters(GalleryAnnotationDeleteRequest {
+                    gallery_asset_id: image.id.clone(),
+                    annotation_id: updated
+                        .iter()
+                        .find(|tag| tag.model_used == "vision-model")
+                        .ok_or("retained model suggestion")?
+                        .id
+                        .clone(),
+                    user_approved: true
+                }))
+                .await
+                .is_err()
+        );
+        server
+            .gallery_annotation_delete(Parameters(GalleryAnnotationDeleteRequest {
+                gallery_asset_id: image.id.clone(),
+                annotation_id: tag_id.into(),
+                user_approved: true,
+            }))
+            .await?;
+        let remaining = server.gallery_store.get_tags(&image.id)?;
+        assert!(remaining.iter().any(|tag| tag.id == note_id));
+        assert!(remaining.iter().any(|tag| tag.model_used == "vision-model"));
+        assert!(!remaining.iter().any(|tag| tag.id == tag_id));
+        assert_eq!(std::fs::read(&path)?, original);
+        assert!(
+            server
+                .gallery_annotation_create(Parameters(GalleryAnnotationCreateRequest {
+                    user_approved: false,
+                    ..create("tag", "unapproved").0
+                }))
+                .await
+                .is_err()
+        );
+        assert!(
+            server
+                .gallery_annotation_list(Parameters(GalleryAnnotationListRequest {
+                    gallery_asset_id: "absent".into()
+                }))
+                .await
+                .is_err()
+        );
+        Ok(())
+    }
+
+    /// expect: No implicit analysis path requests faces; explicit consent still works. [P1]
+    #[test]
+    fn researcher_analysis_defaults_omit_faces() {
+        assert!(
+            !validate_analysis_pipelines(None)
+                .expect("defaults")
+                .iter()
+                .any(|pipeline| pipeline == "faces")
+        );
+        assert_eq!(
+            validate_analysis_pipelines(Some(vec!["faces".into()])).expect("explicit faces"),
+            vec!["faces"]
+        );
+        assert!(!DEFAULT_ANALYSIS_PIPELINES.contains(&"faces"));
+    }
 
     /// expect: Selection validation preserves caller order, removes duplicates, and never truncates requested indices. [P1]
     #[test]

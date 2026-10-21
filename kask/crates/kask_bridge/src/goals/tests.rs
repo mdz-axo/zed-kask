@@ -373,11 +373,13 @@ async fn scheduled_tick(
         let run = tokio::spawn(host.clone().run());
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
-            let goals = host
+            let goals: Vec<_> = host
                 .service
-                .goal_list(&host.owners().expect("owners")[0])
+                .goal_scan_for_host()
                 .expect("goals")
-                .goals;
+                .into_values()
+                .flat_map(|listing| listing.goals)
+                .collect();
             let done = if provider.fail.load(Ordering::SeqCst) {
                 provider.embedding_calls.load(Ordering::SeqCst) > before
             } else {

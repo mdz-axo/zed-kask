@@ -1,4 +1,4 @@
-//! Audio tools — voice design, speech generation, transcription, audio capture.
+//! Research audio tools — transcription, source-linked editing, and capture.
 use crate::*;
 
 const CAPTURE_SAMPLE_RATE: u32 = 16_000;
@@ -109,7 +109,7 @@ fn timed_words_from_provider(entries: &[serde_json::Value]) -> Vec<TimedWord> {
 /// Shared by `transcribe_bundle` and `record_and_transcribe` — the capture
 /// path previously parsed the response inline WITHOUT the separator-prefix
 /// trimming, so its stored words made every `educt_locate` quote no_match.
-fn transcript_bundle_from_raw(
+pub(super) fn transcript_bundle_from_raw(
     raw: &serde_json::Value,
     audio_path: String,
     language: Option<String>,
@@ -157,121 +157,6 @@ fn transcript_bundle_from_raw(
 
 #[tool_router(router = audio_router, vis = "pub")]
 impl MediaServer {
-    // ── Voice tools ──────────────────────────────────────────────────────────
-
-    #[tool(
-        description = "Design a synthetic voice profile from a character description. Returns a VoiceDesign JSON for use with generate_speech."
-    )]
-    pub async fn voice_design(
-        &self,
-        Parameters(VoiceDesignRequest {
-            character_description,
-        }): Parameters<VoiceDesignRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "voice_design", async {
-            let _admission = self.admit_heavy_operation()?;
-            if character_description.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "character_description must not be empty",
-                ));
-            }
-            let mut vars = HashMap::new();
-            vars.insert("character_description", character_description.as_str());
-            let prompt = self
-                .render_prompt("voice_design", &vars)
-                .map_err(|e| McpToolError::internal(format!("Template render failed: {}", e)))?;
-
-            // Fail-visible (the operator's no-hidden-models spec): the
-            // transcript-pipeline model is the STT model — no configured
-            // STT model is a typed error naming the setting, never a
-            // hidden code constant.
-            let model = crate::models::stt_model().ok_or_else(|| {
-                McpToolError::permission_denied(format!(
-                    "no STT model configured — set {} \
-                     (injected from kask.media.stt_model); kask never falls back to a hidden \
-                     code constant",
-                    crate::models::STT_ENV
-                ))
-            })?;
-            let params = hkask_types::template::LLMParameters::default();
-            let r = self
-                .vision_port
-                .generate_with_model(&prompt, &params, Some(model.as_str()), None)
-                .await
-                .map_err(|e| classify_inference_error("Voice design inference failed", e))?;
-
-            match serde_json::from_str::<serde_json::Value>(&r.text) {
-                Ok(v) => Ok(serde_json::json!({
-                    "voice_design": v,
-                    // The resolved model that actually ran — never a hardcoded
-                    // label (the result must not claim a model the call did
-                    // not use).
-                    "model": model.as_str(),
-                })),
-                Err(_) => Ok(serde_json::json!({
-                    "voice_design": {"description": r.text.trim()},
-                    "model": model.as_str(),
-                    "warning": "LLM did not return valid JSON; using raw description."
-                })),
-            }
-        })
-        .await
-    }
-
-    #[tool(
-        description = "Generate speech audio from text using a voice design. Returns the persisted audio file path."
-    )]
-    pub async fn generate_speech(
-        &self,
-        Parameters(GenerateSpeechRequest { text, voice_design }): Parameters<GenerateSpeechRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "generate_speech", async {
-            let _admission = self.admit_heavy_operation()?;
-            if text.trim().is_empty() {
-                return Err(McpToolError::invalid_argument("text must not be empty"));
-            }
-            let voice = if let Some(ref vd_json) = voice_design {
-                match serde_json::from_str::<VoiceDesign>(vd_json) {
-                    Ok(vd) => vd.to_elevenlabs_voice().to_string(),
-                    // No silent fallback: a malformed voice_design is a caller
-                    // error surfaced with its parse cause — never a silent
-                    // default voice masking the rejected input.
-                    Err(error) => {
-                        return Err(McpToolError::invalid_argument(format!(
-                            "voice_design must be valid VoiceDesign JSON (as returned by voice_design): {error}"
-                        )));
-                    }
-                }
-            } else {
-                // No voice design provided — the documented default voice.
-                "Rachel".to_string()
-            };
-
-            let media_params = hkask_types::MediaGenerateParams {
-                text: Some(text.clone()),
-                voice: Some(voice.clone()),
-                ..Default::default()
-            };
-            let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
-            let result = self
-                .vision_port
-                .media_generate("generate_speech", &media_params)
-                .await
-                .map_err(|e| classify_inference_error("Speech generation failed", e))?;
-            // Persist the audio payload and compose the slim result (the
-            // base64 data URI never enters the model's context).
-            persist_slim_and_enrich(
-                &self.gallery_store,
-                &result,
-                "generate_speech",
-                "audio",
-                args,
-            )
-            .await
-        })
-        .await
-    }
-
     // ── Audio tools ─────────────────────────────────────────────────
 
     /// Transcribe `audio_url` into a `TranscriptBundle`: admit the local

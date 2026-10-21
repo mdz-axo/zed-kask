@@ -1,8 +1,19 @@
-use std::sync::Arc;
+use std::{
+    future::Future,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
 use agent_client_protocol::schema::v2 as acp;
 use anyhow::Result;
+use futures::{
+    FutureExt,
+    channel::oneshot,
+    future::{Either, select},
+};
 use gpui::{App, AppContext, Task};
 use language_model::LanguageModelToolResultContent;
 use schemars::JsonSchema;
@@ -322,15 +333,16 @@ fn title_for_form(form: Option<&str>) -> SharedString {
 #[cfg(test)]
 thread_local! {
     static ENV_DECODE_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static RUN_PROBE: std::cell::RefCell<Option<RunProbe>> = const { std::cell::RefCell::new(None) };
+    pub(crate) static RUN_PROBE: std::cell::RefCell<Option<RunProbe>> = const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(test)]
-struct RunProbe {
-    executor: gpui::BackgroundExecutor,
-    entered: futures::channel::oneshot::Sender<bool>,
-    release: futures::channel::oneshot::Receiver<()>,
-    decoded: futures::channel::oneshot::Sender<(bool, usize)>,
+pub(crate) struct RunProbe {
+    pub(crate) executor: gpui::BackgroundExecutor,
+    pub(crate) entered: futures::channel::oneshot::Sender<bool>,
+    pub(crate) release: futures::channel::oneshot::Receiver<()>,
+    pub(crate) decoded: futures::channel::oneshot::Sender<(bool, usize)>,
+    pub(crate) exited: Option<futures::channel::oneshot::Sender<bool>>,
 }
 
 impl AgentTool for LispEvalTool {
@@ -362,45 +374,118 @@ impl AgentTool for LispEvalTool {
     fn run(
         self: Arc<Self>,
         input: ToolInput<Self::Input>,
-        _event_stream: ToolCallEventStream,
+        event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
         #[cfg(test)]
         let probe = RUN_PROBE.with(|probe| probe.take());
-        cx.background_spawn(async move {
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let cancel_on_drop = util::defer({
+            let cancellation = cancellation.clone();
+            move || cancellation.store(true, Ordering::Release)
+        });
+        let done = event_stream.register_lisp_completion();
+        let mut worker = cx.background_spawn(lisp_worker(
+            input,
+            cancellation.clone(),
+            event_stream.cancelled_by_user(),
+            done,
             #[cfg(test)]
-            let decoded_probe = if let Some(probe) = probe {
-                probe
-                    .entered
-                    .send(probe.executor.is_main_thread())
-                    .expect("entry observer");
-                probe.release.await.expect("release real evaluation");
-                ENV_DECODE_COUNT.with(|count| count.set(0));
-                Some((probe.executor, probe.decoded))
-            } else {
-                None
+            probe,
+        ));
+        cx.spawn(async move |_| {
+            let _cancel_on_drop = cancel_on_drop;
+            let result = match select(&mut worker, Box::pin(event_stream.cancelled_by_user())).await
+            {
+                Either::Left((result, _)) => result,
+                Either::Right(((), worker)) => {
+                    cancellation.store(true, Ordering::Release);
+                    worker.await
+                }
             };
-            let input = input.recv().await.map_err(|e| LispEvalToolOutput::Error {
-                error: format!("failed to receive input: {e}"),
-            })?;
-            #[cfg(test)]
-            if let Some((executor, decoded)) = decoded_probe {
-                decoded
-                    .send((
-                        executor.is_main_thread(),
-                        ENV_DECODE_COUNT.with(|count| count.get()),
-                    ))
-                    .expect("decode observer");
+            if event_stream.cancelled_by_user().now_or_never().is_some() {
+                Err(LispEvalToolOutput::Error {
+                    error: hkask_lisp::LispError::Cancelled.to_string(),
+                })
+            } else {
+                result
             }
-            evaluate_lisp(input)
-                .map(|result| LispEvalToolOutput::Success { result })
-                .map_err(|error| LispEvalToolOutput::Error { error })
         })
+    }
+}
+
+/// Build the worker with its completion guard already alive before the first poll.
+fn lisp_worker(
+    input: ToolInput<LispEvalToolInput>,
+    cancellation: Arc<AtomicBool>,
+    input_cancelled: impl Future<Output = ()> + Send + 'static,
+    done: oneshot::Sender<()>,
+    #[cfg(test)] mut probe: Option<RunProbe>,
+) -> impl Future<Output = Result<LispEvalToolOutput, LispEvalToolOutput>> + Send {
+    #[cfg(test)]
+    let exited = probe.as_mut().and_then(|probe| probe.exited.take());
+    #[cfg(test)]
+    let exit_cancellation = cancellation.clone();
+    let worker_done = util::defer(move || {
+        if done.send(()).is_err() {
+            log::debug!("Lisp worker cleanup completed after its turn owner was dropped");
+        }
+        #[cfg(test)]
+        if let Some(exited) = exited {
+            exited
+                .send(exit_cancellation.load(Ordering::Acquire))
+                .expect("worker exit observer");
+        }
+    });
+    async move {
+        // Captured before spawn, so a never-polled future acknowledges too.
+        let _worker_done = worker_done;
+        #[cfg(test)]
+        let decoded_probe = if let Some(probe) = probe {
+            probe
+                .entered
+                .send(probe.executor.is_main_thread())
+                .expect("entry observer");
+            probe.release.await.expect("release real evaluation");
+            ENV_DECODE_COUNT.with(|count| count.set(0));
+            Some((probe.executor, probe.decoded))
+        } else {
+            None
+        };
+        let input = match select(Box::pin(input.recv()), Box::pin(input_cancelled)).await {
+            Either::Left((input, _)) => input.map_err(|e| LispEvalToolOutput::Error {
+                error: format!("failed to receive input: {e}"),
+            })?,
+            Either::Right(((), _)) => {
+                return Err(LispEvalToolOutput::Error {
+                    error: hkask_lisp::LispError::Cancelled.to_string(),
+                });
+            }
+        };
+        #[cfg(test)]
+        if let Some((executor, decoded)) = decoded_probe {
+            decoded
+                .send((
+                    executor.is_main_thread(),
+                    ENV_DECODE_COUNT.with(|count| count.get()),
+                ))
+                .expect("decode observer");
+        }
+        evaluate_lisp_controlled(input, Some(cancellation))
+            .map(|result| LispEvalToolOutput::Success { result })
+            .map_err(|error| LispEvalToolOutput::Error { error })
     }
 }
 
 /// The tool's evaluation, shared with delegated `host/lisp_eval` dispatch.
 pub fn evaluate_lisp(input: LispEvalToolInput) -> Result<Value, String> {
+    evaluate_lisp_controlled(input, None)
+}
+
+fn evaluate_lisp_controlled(
+    input: LispEvalToolInput,
+    cancellation: Option<Arc<std::sync::atomic::AtomicBool>>,
+) -> Result<Value, String> {
     // Sorted for byte-identical error messages across processes (HashMap
     // iteration order is process-randomized — the L2 canonicalization rule
     // applied to the error path too).
@@ -437,12 +522,21 @@ pub fn evaluate_lisp(input: LispEvalToolInput) -> Result<Value, String> {
         pairs.sort_by(|a, b| a.0.cmp(&b.0));
         serde_json::Value::Object(pairs.into_iter().collect())
     };
-    hkask_lisp::eval_sandboxed_with_budget(
-        &input.form,
-        &env_value,
-        input.max_steps,
-        input.max_depth,
-    )
+    match cancellation {
+        Some(cancellation) => hkask_lisp::eval_sandboxed_with_cancellation(
+            &input.form,
+            &env_value,
+            input.max_steps,
+            input.max_depth,
+            cancellation,
+        ),
+        None => hkask_lisp::eval_sandboxed_with_budget(
+            &input.form,
+            &env_value,
+            input.max_steps,
+            input.max_depth,
+        ),
+    }
     .map_err(|error| match error {
         // The unbound-symbol error teaches: it names the available bindings,
         // so a model that nested env one level too deep (the unteachable class
@@ -502,6 +596,96 @@ pub fn evaluate_lisp(input: LispEvalToolInput) -> Result<Value, String> {
 mod tests {
     use super::LispEvalToolInput;
     use serde_json::json;
+
+    /// expect: "Dropping the actual production worker before any poll acknowledges cleanup without entering or decoding" [H6B]
+    #[test]
+    fn h6b_unpolled_production_worker_acknowledges_without_decoding() {
+        use futures::channel::oneshot;
+        use std::sync::{Arc, atomic::AtomicBool};
+
+        let (done_tx, mut done_rx) = oneshot::channel();
+        let (entered_tx, mut entered_rx) = oneshot::channel();
+        let (release_tx, release_rx) = oneshot::channel();
+        let (decoded_tx, mut decoded_rx) = oneshot::channel();
+        let (exited_tx, mut exited_rx) = oneshot::channel();
+        let probe = super::RunProbe {
+            executor: gpui::BackgroundExecutor::new(Arc::new(gpui::TestDispatcher::new(0))),
+            entered: entered_tx,
+            release: release_rx,
+            decoded: decoded_tx,
+            exited: Some(exited_tx),
+        };
+        super::ENV_DECODE_COUNT.with(|count| count.set(0));
+        let worker = super::lisp_worker(
+            crate::ToolInput::ready(json!({"form":"(+ a b)", "env":"{unfinished"})),
+            Arc::new(AtomicBool::new(false)),
+            std::future::pending::<()>(),
+            done_tx,
+            Some(probe),
+        );
+        assert_eq!(
+            done_rx.try_recv(),
+            Ok(None),
+            "worker owns a live acknowledgement"
+        );
+        assert_eq!(entered_rx.try_recv(), Ok(None), "worker has not entered");
+        assert_eq!(super::ENV_DECODE_COUNT.with(|count| count.get()), 0);
+        // No spawn, poll, scheduler tick, or executor-driven drop ordering.
+        drop(worker);
+        assert_eq!(
+            done_rx.try_recv(),
+            Ok(Some(())),
+            "affirmative cleanup, not a closed channel"
+        );
+        assert_eq!(
+            super::ENV_DECODE_COUNT.with(|count| count.get()),
+            0,
+            "malformed env was never decoded"
+        );
+        assert!(
+            entered_rx.try_recv().is_err(),
+            "entry sender dropped without a message"
+        );
+        assert!(
+            decoded_rx.try_recv().is_err(),
+            "decode sender dropped without a message"
+        );
+        assert_eq!(
+            exited_rx.try_recv(),
+            Ok(Some(false)),
+            "constructor-created guard ran without foreground cancellation"
+        );
+        assert!(
+            release_tx.send(()).is_err(),
+            "no worker awaits the H5 barrier"
+        );
+    }
+
+    /// expect: "Native control reaches H6A without changing delegated/default evaluation or model inputs" [H6B]
+    #[test]
+    fn h6b_private_control_preserves_public_default() {
+        let form = "(let ((f (lambda () 3))) (f))";
+        let input = || {
+            serde_json::from_value::<LispEvalToolInput>(json!({"form":form}))
+                .expect("closure input")
+        };
+        let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        assert_eq!(
+            super::evaluate_lisp_controlled(input(), Some(cancelled)),
+            Err("Lisp evaluation cancelled".into())
+        );
+        assert_eq!(
+            super::evaluate_lisp(input()).expect("delegated default unchanged"),
+            json!(3)
+        );
+        let schema =
+            serde_json::to_value(schemars::schema_for!(LispEvalToolInput)).expect("input schema");
+        let properties = schema["properties"].as_object().expect("properties");
+        assert_eq!(properties.len(), 4);
+        for key in ["form", "env", "max_steps", "max_depth"] {
+            assert!(properties.contains_key(key));
+        }
+    }
 
     /// expect: "Erased partial and full titles inspect form only, never decode env" [H5]
     #[gpui::test]
@@ -574,6 +758,7 @@ mod tests {
                             entered: entered_tx,
                             release: release_rx,
                             decoded: decoded_tx,
+                            exited: None,
                         })
                         .is_none()
                 );

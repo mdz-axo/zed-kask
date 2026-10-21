@@ -457,6 +457,12 @@ When a thread turn completes, the turn loop calls
 The host drainer publishes goal recall independently of turn completion.
 `kanban_goal_list` reads canonical history, not instructions to store whole-list
 copies. Publication failures remain retryable; indexing never prunes the goal.
+Each scheduling pass uses one full goal-store scan, preserving per-owner canonical
+validation before bounded work. Only the current rejected-row identities/reasons
+are retained for diagnostic coalescing: new or changed failures warn, unchanged
+failures stay quiet, and resolved failures can warn again on recurrence. Explicit
+listings retain every caller-owned rejection; no accepted record or admission
+result is cached.
 See [GOAL_INTERFACE.md](../../mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md).
 Curator-turn detection is `agent_id.as_deref() == Some("Curator")`
 (`ingest.rs:277`) — used for logging only; the write path is identical for

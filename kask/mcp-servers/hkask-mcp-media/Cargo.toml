@@ -3,7 +3,7 @@ name = "hkask-mcp-media"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Media generation MCP server (image, video, audio via configured media providers)"
+description = "Source-media research and curation MCP server (analysis, transcription, source-linked editing)"
 
 [features]
 default = []

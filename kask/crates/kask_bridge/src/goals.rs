@@ -8,6 +8,7 @@ use chrono::Utc;
 use hkask_mcp_kata_kanban::*;
 use hkask_storage::{HMem, HMemStore, Provenance};
 use hkask_types::{ChatMessage, Confidence, Visibility, WebID};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 // Resource bounds, not outcome policy. One tick never dispatches an unbounded backlog.
@@ -15,10 +16,18 @@ const GOALS_PER_TICK: usize = 8;
 const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 pub const GOAL_DRAIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 
+#[derive(Default)]
+struct GoalDrain {
+    cursor: usize,
+    // Current diagnostic snapshot only, not cached records or acceptance decisions.
+    rejected: HashMap<(WebID, String), String>,
+}
+
 pub struct GoalHost {
     // Trusted composition identity, not the initiating session's attribution.
     execution_owner: WebID,
     service: KanbanService,
+    #[cfg(test)]
     ledger: HMemStore,
     memory: Option<Arc<hkask_memory::MemoryStore>>,
     chat: Arc<
@@ -28,7 +37,7 @@ pub struct GoalHost {
     assessor_model: String,
     embedding_model: String,
     embedding_dim: u32,
-    drain: tokio::sync::Mutex<usize>,
+    drain: tokio::sync::Mutex<GoalDrain>,
 }
 impl GoalHost {
     fn new(
@@ -46,15 +55,16 @@ impl GoalHost {
     ) -> Self {
         Self {
             execution_owner,
-            service: KanbanService::new(ledger.clone()),
-            ledger,
+            #[cfg(test)]
+            ledger: ledger.clone(),
+            service: KanbanService::new(ledger),
             memory,
             chat: Arc::new(chat),
             embed: Arc::new(embed),
             assessor_model,
             embedding_model,
             embedding_dim,
-            drain: tokio::sync::Mutex::new(0),
+            drain: tokio::sync::Mutex::new(GoalDrain::default()),
         }
     }
 
@@ -96,16 +106,7 @@ impl GoalHost {
         );
         Ok(host)
     }
-    fn owners(&self) -> anyhow::Result<Vec<WebID>> {
-        // Enumerate persisted ownership, including sessions no longer open in the UI.
-        let mut owners = Vec::new();
-        for row in self.ledger.query_by_entity("kanban:goal")? {
-            if !owners.contains(&row.access.owner_webid) {
-                owners.push(row.access.owner_webid);
-            }
-        }
-        Ok(owners)
-    }
+
     /// Immediate startup scan followed by ticks; caller applies curator.always_on.
     pub async fn run(self: Arc<Self>) {
         let mut interval = tokio::time::interval(GOAL_DRAIN_INTERVAL);
@@ -118,14 +119,18 @@ impl GoalHost {
         }
     }
     async fn drain_once(&self) -> anyhow::Result<()> {
-        let Ok(mut cursor) = self.drain.try_lock() else {
+        let Ok(mut state) = self.drain.try_lock() else {
             return Ok(());
         };
         let mut pending = Vec::new();
-        for owner in self.owners()? {
-            let listing = self.service.goal_list(&owner)?;
+        let mut rejected = HashMap::new();
+        for (owner, listing) in self.service.goal_scan_for_host()? {
             for (id, reason) in listing.rejected {
-                tracing::warn!(goal_id = %id, %reason, "Goal row rejected; supported siblings continue");
+                let key = (owner, id);
+                if state.rejected.get(&key) != Some(&reason) {
+                    tracing::warn!(owner = %owner, goal_id = %key.1, %reason, "Goal row rejected; supported siblings continue");
+                }
+                rejected.insert(key, reason);
             }
             pending.extend(listing.goals.into_iter().filter(|g| {
                 g.needs_assessment(self.service.goal_now())
@@ -136,12 +141,13 @@ impl GoalHost {
                     )
             }));
         }
+        state.rejected = rejected;
         pending.sort_by_key(|goal| goal.id.to_string());
         if pending.is_empty() {
-            *cursor = 0;
+            state.cursor = 0;
             return Ok(());
         }
-        let start = *cursor % pending.len();
+        let start = state.cursor % pending.len();
         let count = pending.len().min(GOALS_PER_TICK);
         for offset in 0..count {
             let goal = &pending[(start + offset) % pending.len()];
@@ -149,7 +155,7 @@ impl GoalHost {
                 tracing::warn!(goal_id = %goal.id, %error, "Goal work failed; retained for next scheduled retry; siblings continue");
             }
         }
-        *cursor = (start + count) % pending.len();
+        state.cursor = (start + count) % pending.len();
         Ok(())
     }
     async fn drain_goal(&self, goal: &Goal) -> anyhow::Result<()> {

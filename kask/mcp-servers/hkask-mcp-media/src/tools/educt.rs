@@ -23,6 +23,158 @@ use crate::types::{
 };
 use crate::*;
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct EductAnnotationCreateRequest {
+    pub transcript_id: String,
+    /// Inclusive immutable source-word indices, not corrected-text indices.
+    pub start_word: usize,
+    pub end_word: usize,
+    pub label: String,
+    pub note: String,
+    pub user_approved: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct EductAnnotationListRequest {
+    pub transcript_id: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct EductAnnotationUpdateRequest {
+    pub transcript_id: String,
+    pub annotation_id: String,
+    pub start_word: usize,
+    pub end_word: usize,
+    pub label: String,
+    pub note: String,
+    pub user_approved: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct EductAnnotationDeleteRequest {
+    pub transcript_id: String,
+    pub annotation_id: String,
+    pub user_approved: bool,
+}
+
+fn researcher_highlight(
+    start_word: usize,
+    end_word: usize,
+    label: String,
+    note: String,
+    approved: bool,
+) -> Result<HighlightEntry, McpToolError> {
+    super::gallery::require_annotation_approval(approved)?;
+    if label.trim().is_empty() || label.len() > 256 || note.len() > 4096 {
+        return Err(McpToolError::invalid_argument(
+            "label must be nonblank and at most 256 bytes; note at most 4096 bytes",
+        ));
+    }
+    Ok(HighlightEntry {
+        start_word,
+        end_word,
+        label,
+        note,
+    })
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct EductSearchTranscriptsRequest {
+    /// Literal substring; ASCII case-insensitive, non-ASCII text is exact.
+    pub query: String,
+    /// Explicit retrieval method. Only lexical is supported; corpus export is the semantic handoff.
+    pub mode: String,
+    /// Maximum citations, 1..=100 (default 20).
+    pub limit: Option<usize>,
+    /// Maximum recordings examined in this page, 1..=500 (default 100).
+    pub recording_limit: Option<usize>,
+    /// Recording-page offset, default 0. Stable order: newest timestamp, then ID.
+    pub recording_offset: Option<usize>,
+    pub gallery_asset_id: Option<String>,
+}
+
+fn validate_transcript_search(
+    request: &EductSearchTranscriptsRequest,
+) -> Result<(usize, usize, usize), McpToolError> {
+    let limit = request.limit.unwrap_or(20);
+    let recordings = request.recording_limit.unwrap_or(100);
+    let offset = request.recording_offset.unwrap_or(0);
+    if request.mode != "lexical" || request.query.trim().is_empty() || request.query.len() > 256 {
+        return Err(McpToolError::invalid_argument(
+            "mode must be lexical; query must be nonblank and at most 256 UTF-8 bytes",
+        ));
+    }
+    if !(1..=100).contains(&limit)
+        || !(1..=500).contains(&recordings)
+        || offset > i64::MAX as usize - 501
+    {
+        return Err(McpToolError::invalid_argument(
+            "limit must be 1..=100, recording_limit 1..=500, recording_offset within SQLite integer range",
+        ));
+    }
+    Ok((limit, recordings, offset))
+}
+
+/// Exact excerpts, not summaries. Byte offsets refer to the returned working
+/// text view; word indices are inclusive and only emitted with aligned words.
+/// No original-source timing is borrowed for an unaligned corrected view.
+fn lexical_citations(
+    working: &WorkingTranscript,
+    query: &str,
+    limit: usize,
+) -> Vec<serde_json::Value> {
+    let mut hits = Vec::new();
+    for (start, _) in working.text.char_indices() {
+        let end = start + query.len();
+        let Some(matched) = working.text.get(start..end) else {
+            continue;
+        };
+        if !matched.eq_ignore_ascii_case(query) {
+            continue;
+        }
+        let range = working.words.as_ref().and_then(|words| {
+            let mut offset = 0;
+            let mut first = None;
+            let mut last = None;
+            for (index, word) in words.iter().enumerate() {
+                let word_end = offset + word.word.len();
+                if offset < end && word_end > start {
+                    first.get_or_insert(index);
+                    last = Some(index);
+                }
+                offset = word_end + 1;
+                if offset > end {
+                    break;
+                }
+            }
+            first
+                .zip(last)
+                .map(|(first, last)| WordRange::new(first, last))
+        });
+        let times = range.zip(working.words.as_deref()).map(|(range, words)| {
+            // Both indices came from this same word slice above.
+            (
+                words[range.start_word].start_ms,
+                words[range.end_word].end_ms,
+            )
+        });
+        hits.push(serde_json::json!({
+            "matched_text": matched, "start_byte": start, "end_byte": end,
+            "word_range": range,
+            "time_range_ms": times.map(|(start_ms, end_ms)| serde_json::json!({"start_ms": start_ms, "end_ms": end_ms})),
+            "alignment": working.alignment, "alignment_error": working.alignment_error,
+            "correction_layer_id": working.correction_layer_id,
+            "realignment_layer_id": working.realignment_layer_id,
+            "text_view": "working_transcript",
+            "word_index_basis": "working_transcript", // Not immutable-source indices after re-anchoring.
+        }));
+        if hits.len() == limit {
+            break;
+        }
+    }
+    hits
+}
+
 #[derive(serde::Serialize)]
 struct EdlRenderEffectiveParams<'a> {
     transcript_id: &'a str,
@@ -394,6 +546,127 @@ pub(crate) fn store_transcript_summary_value(
 
 #[tool_router(router = educt_router, vis = "pub")]
 impl MediaServer {
+    #[tool(
+        description = "Author a user-approved research highlight with label and note over inclusive immutable source-word indices. Returns stable annotation_id (a highlight layer ID). Never changes transcript or media bytes. Requires user_approved=true."
+    )]
+    pub async fn educt_annotation_create(
+        &self,
+        Parameters(request): Parameters<EductAnnotationCreateRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "educt_annotation_create", async {
+            let entry = researcher_highlight(request.start_word, request.end_word, request.label, request.note, request.user_approved)?;
+            let driver = &**self.gallery_store.driver();
+            load_timed_transcript(driver, &request.transcript_id, "research annotations require source word timings")?;
+            let layer = TranscriptLayer::Highlight(crate::transcript_layers::HighlightLayer {
+                provenance: LayerProvenance { model: "user".to_string(), prompt_template: "researcher_annotation".to_string(), created_at: hkask_types::time::now_rfc3339() },
+                highlights: vec![entry],
+            });
+            let record = transcript_store::store_layer(driver, &request.transcript_id, &layer).map_err(map_store_error)?;
+            Ok(serde_json::json!({"annotation_id": record.id, "transcript_id": request.transcript_id, "layer": record.layer, "provenance": "user", "word_index_basis": "immutable_source"}))
+        }).await
+    }
+
+    #[tool(
+        description = "List researcher-authored highlight annotations with their original label, note, and inclusive source-word ranges. Excludes model suggestions; existing transcript layers remain available via educt_list_layers."
+    )]
+    pub async fn educt_annotation_list(
+        &self,
+        Parameters(request): Parameters<EductAnnotationListRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "educt_annotation_list", async {
+            let driver = &**self.gallery_store.driver();
+            if transcript_store::load_transcript(driver, &request.transcript_id).map_err(map_store_error)?.is_none() {
+                return Err(McpToolError::not_found(format!("transcript {} not found", request.transcript_id)));
+            }
+            let annotations = transcript_store::list_layers(driver, &request.transcript_id).map_err(map_store_error)?.into_iter()
+                .filter(|record| matches!(&record.layer, TranscriptLayer::Highlight(layer) if layer.provenance.model == "user" && layer.provenance.prompt_template == "researcher_annotation"))
+                .collect::<Vec<_>>();
+            Ok(serde_json::json!({"transcript_id": request.transcript_id, "annotations": annotations, "provenance": "user", "word_index_basis": "immutable_source"}))
+        }).await
+    }
+
+    #[tool(
+        description = "Update one researcher highlight by stable annotation_id, replacing its source-word range, label, and note while preserving identity/provenance. Cannot edit model suggestions. Requires user_approved=true."
+    )]
+    pub async fn educt_annotation_update(
+        &self,
+        Parameters(request): Parameters<EductAnnotationUpdateRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "educt_annotation_update", async {
+            let entry = researcher_highlight(request.start_word, request.end_word, request.label, request.note, request.user_approved)?;
+            transcript_store::mutate_user_highlight(&**self.gallery_store.driver(), &request.transcript_id, &request.annotation_id, Some(&entry)).map_err(map_store_error)?;
+            Ok(serde_json::json!({"transcript_id": request.transcript_id, "annotation_id": request.annotation_id, "highlight": entry, "provenance": "user", "word_index_basis": "immutable_source"}))
+        }).await
+    }
+
+    #[tool(
+        description = "Delete only the named researcher highlight, preserving all other annotations, model layers, transcript text, and source media. Requires user_approved=true."
+    )]
+    pub async fn educt_annotation_delete(
+        &self,
+        Parameters(request): Parameters<EductAnnotationDeleteRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "educt_annotation_delete", async {
+            super::gallery::require_annotation_approval(request.user_approved)?;
+            transcript_store::mutate_user_highlight(&**self.gallery_store.driver(), &request.transcript_id, &request.annotation_id, None).map_err(map_store_error)?;
+            Ok(serde_json::json!({"transcript_id": request.transcript_id, "annotation_id": request.annotation_id, "deleted": true}))
+        }).await
+    }
+    #[tool(
+        description = "Search content across stored recordings in explicit lexical mode. Returns bounded exact working-transcript excerpts with transcript/source identity, byte ranges, and word/time ranges only when aligned. ASCII case-insensitive literal substring (non-ASCII exact), no embeddings. Pages recordings newest first; incomplete coverage and result truncation are surfaced. Corpus export remains the semantic-search handoff."
+    )]
+    pub async fn educt_search_transcripts(
+        &self,
+        Parameters(request): Parameters<EductSearchTranscriptsRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "educt_search_transcripts", async {
+            let (limit, recording_limit, offset) = validate_transcript_search(&request)?;
+            let driver = &**self.gallery_store.driver();
+            let mut summaries = transcript_store::list_transcripts_page(driver, &TranscriptFilter {
+                media_path: None, gallery_asset_id: request.gallery_asset_id.clone(), limit: recording_limit + 1,
+            }, offset).map_err(map_store_error)?;
+            let more_recordings = summaries.len() > recording_limit;
+            summaries.truncate(recording_limit);
+            let mut hits = Vec::new();
+            let mut scanned = 0;
+            let mut result_limit_reached = false;
+            for summary in &summaries {
+                let Some((_, bundle)) = transcript_store::load_transcript(driver, &summary.id).map_err(map_store_error)? else {
+                    return Err(McpToolError::not_found(format!("transcript {} disappeared during search", summary.id)));
+                };
+                let working = working_transcript(driver, &summary.id, &bundle)?;
+                let gallery_id = match summary.gallery_asset_id.as_deref() {
+                    Some(id) => Some(self.gallery_store.get_by_id(id).map_err(map_gallery_store_error)?.gallery_id),
+                    None => None,
+                };
+                // One lookahead citation distinguishes an exact-full page from truncation.
+                let citations = lexical_citations(&working, &request.query, limit - hits.len() + 1);
+                scanned += 1;
+                for mut citation in citations {
+                    if hits.len() == limit { result_limit_reached = true; break; }
+                    citation["transcript_id"] = serde_json::json!(summary.id);
+                    citation["gallery_id"] = serde_json::json!(gallery_id);
+                    citation["media_path"] = serde_json::json!(summary.media_path);
+                    citation["gallery_asset_id"] = serde_json::json!(summary.gallery_asset_id);
+                    citation["source_gallery_asset_id"] = serde_json::json!(summary.source_gallery_asset_id);
+                    citation["source_link"] = serde_json::json!(summary.source_link);
+                    citation["source_availability"] = serde_json::json!(summary.source_availability);
+                    hits.push(citation);
+                }
+                if result_limit_reached { break; }
+            }
+            Ok(serde_json::json!({
+                "mode": "lexical", "matching": "ascii_case_insensitive_literal_substring",
+                "hits": hits, "count": hits.len(), "recordings_scanned": scanned,
+                "recording_offset": offset, "has_more_recordings": more_recordings || scanned < summaries.len(),
+                "next_recording_offset": if more_recordings || scanned < summaries.len() { Some(offset + scanned) } else { None },
+                "result_limit_reached": result_limit_reached,
+                "search_complete": !more_recordings && scanned == summaries.len() && !result_limit_reached,
+                "coverage_note": "Only this bounded recording page was searched; when result_limit_reached, increase limit or narrow the query to retain omitted matches within the last scanned recording.",
+            }))
+        }).await
+    }
+
     #[tool(
         description = "Persist a TranscriptBundle (exactly as returned by transcribe_bundle) as a queryable transcript record, keyed to its media path and an optional gallery asset. Returns the transcript summary with its ID. Transcripts without word-level timings are stored with a surfaced degradation note — text and segments remain usable, but layers cannot anchor to them."
     )]
@@ -1382,5 +1655,329 @@ impl MediaServer {
             }))
         })
         .await
+    }
+}
+
+#[cfg(test)]
+mod researcher_tests {
+    use super::*;
+    use crate::tools::gallery::tests::{payload, research_server};
+
+    fn search(query: &str) -> Parameters<EductSearchTranscriptsRequest> {
+        Parameters(EductSearchTranscriptsRequest {
+            query: query.into(),
+            mode: "lexical".into(),
+            limit: Some(20),
+            recording_limit: Some(100),
+            recording_offset: None,
+            gallery_asset_id: None,
+        })
+    }
+
+    fn recording(path: &str, words: &[&str]) -> TranscriptBundle {
+        let mut bundle = TranscriptBundle::new(path.into(), words.len() as f32, words.join(" "));
+        bundle.words = crate::test_support::timed_words(words);
+        bundle
+    }
+
+    /// expect: Content retrieval finds two independently stored recordings with
+    /// exact text and source-linked timed citations, not unrelated transcripts. [P1]
+    #[tokio::test]
+    async fn researcher_search_two_recordings_with_citations_and_bounds()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server = research_server();
+        let dir = tempfile::tempdir()?;
+        let store = &server.gallery_store;
+        let gallery = store.open(&dir.path().to_string_lossy(), GalleryMode::ReadOnly)?;
+        let mut ids = Vec::new();
+        for (name, words) in [
+            ("one.wav", vec!["We", "found", "fracture", "today"]),
+            ("two.wav", vec!["Another", "FRACTURE", "appears"]),
+            ("other.wav", vec!["No", "matching", "content"]),
+        ] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, b"unchanged source")?;
+            let asset = store.add_media(
+                &gallery.id,
+                &path.to_string_lossy(),
+                name,
+                0,
+                0,
+                "wav",
+                16,
+                "audio",
+            )?;
+            let summary = transcript_store::store_transcript(
+                &**store.driver(),
+                &recording(&path.to_string_lossy(), &words),
+                Some(&asset.id),
+            )?;
+            ids.push((summary.id, asset.id));
+        }
+        let result = payload(&server.educt_search_transcripts(search("fracture")).await?);
+        let hits = result["hits"].as_array().ok_or("hits")?;
+        assert_eq!(hits.len(), 2);
+        assert_eq!(result["search_complete"], true);
+        for (transcript_id, asset_id) in &ids[..2] {
+            let hit = hits
+                .iter()
+                .find(|hit| hit["transcript_id"] == *transcript_id)
+                .ok_or("expected recording")?;
+            assert_eq!(hit["gallery_id"], gallery.id);
+            assert_eq!(hit["gallery_asset_id"], *asset_id);
+            assert_eq!(hit["source_gallery_asset_id"], *asset_id);
+            let index = if transcript_id == &ids[0].0 { 2 } else { 1 };
+            assert_eq!(hit["word_range"]["start_word"], index);
+            assert_eq!(hit["word_range"]["end_word"], index);
+            assert_eq!(hit["time_range_ms"]["start_ms"], index * 1000);
+            assert_eq!(hit["time_range_ms"]["end_ms"], index * 1000 + 500);
+            assert!(
+                hit["matched_text"]
+                    .as_str()
+                    .ok_or("matched text")?
+                    .eq_ignore_ascii_case("fracture")
+            );
+            assert!(
+                hit["media_path"]
+                    .as_str()
+                    .ok_or("source path")?
+                    .ends_with(".wav")
+            );
+        }
+        assert!(!hits.iter().any(|hit| hit["transcript_id"] == ids[2].0));
+        assert_eq!(
+            payload(
+                &server
+                    .educt_search_transcripts(search("absent phrase"))
+                    .await?
+            )["count"],
+            0
+        );
+        let bounded = payload(
+            &server
+                .educt_search_transcripts(Parameters(EductSearchTranscriptsRequest {
+                    limit: Some(1),
+                    ..search("fracture").0
+                }))
+                .await?,
+        );
+        assert_eq!(bounded["count"], 1);
+        assert_eq!(bounded["result_limit_reached"], true);
+        assert_eq!(bounded["search_complete"], false);
+        let page = payload(
+            &server
+                .educt_search_transcripts(Parameters(EductSearchTranscriptsRequest {
+                    recording_limit: Some(1),
+                    ..search("fracture").0
+                }))
+                .await?,
+        );
+        assert_eq!(page["recordings_scanned"], 1);
+        assert_eq!(page["has_more_recordings"], true);
+        assert_eq!(page["next_recording_offset"], 1);
+        let filtered = payload(
+            &server
+                .educt_search_transcripts(Parameters(EductSearchTranscriptsRequest {
+                    gallery_asset_id: Some(ids[0].1.clone()),
+                    ..search("fracture").0
+                }))
+                .await?,
+        );
+        assert_eq!(filtered["count"], 1);
+        assert_eq!(filtered["hits"][0]["transcript_id"], ids[0].0);
+        assert!(
+            server
+                .educt_search_transcripts(Parameters(EductSearchTranscriptsRequest {
+                    limit: Some(0),
+                    ..search("fracture").0
+                }))
+                .await
+                .is_err()
+        );
+        assert!(
+            server
+                .educt_search_transcripts(Parameters(EductSearchTranscriptsRequest {
+                    mode: "semantic".into(),
+                    ..search("fracture").0
+                }))
+                .await
+                .is_err()
+        );
+        Ok(())
+    }
+
+    /// expect: Untimed text remains searchable and unaligned corrections never
+    /// inherit misleading source-word indices/times; exact corrected text wins. [P1]
+    #[tokio::test]
+    async fn researcher_search_honest_untimed_and_unaligned_views()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server = research_server();
+        let driver = &**server.gallery_store.driver();
+        let untimed = transcript_store::store_transcript(
+            driver,
+            &TranscriptBundle::new(
+                "/missing/untimed.wav".into(),
+                1.0,
+                "fracture without timings".into(),
+            ),
+            None,
+        )?;
+        let corrected = transcript_store::store_transcript(
+            driver,
+            &recording("/missing/corrected.wav", &["bad", "reading"]),
+            None,
+        )?;
+        transcript_store::store_layer(
+            driver,
+            &corrected.id,
+            &TranscriptLayer::Correction(crate::transcript_layers::CorrectionLayer {
+                provenance: LayerProvenance {
+                    model: "test".into(),
+                    prompt_template: "test".into(),
+                    created_at: hkask_types::time::now_rfc3339(),
+                },
+                edits: vec![crate::transcript_layers::CorrectionEdit {
+                    start_word: 0,
+                    end_word: 1,
+                    replacement: "fracture corrected reading".into(),
+                    reason: "test cardinality change".into(),
+                }],
+            }),
+        )?;
+        let result = payload(&server.educt_search_transcripts(search("fracture")).await?);
+        let hits = result["hits"].as_array().ok_or("hits")?;
+        assert_eq!(hits.len(), 2);
+        for (id, alignment) in [(&untimed.id, "untimed"), (&corrected.id, "unaligned")] {
+            let hit = hits
+                .iter()
+                .find(|hit| hit["transcript_id"] == *id)
+                .ok_or("expected degradation")?;
+            assert_eq!(hit["alignment"], alignment);
+            assert!(hit["word_range"].is_null());
+            assert!(hit["time_range_ms"].is_null());
+            assert!(hit["alignment_error"].is_string());
+            assert_eq!(hit["matched_text"], "fracture");
+        }
+        assert_eq!(
+            payload(
+                &server
+                    .educt_search_transcripts(search("bad reading"))
+                    .await?
+            )["count"],
+            0
+        );
+        Ok(())
+    }
+
+    /// expect: Researchers can author/read/update/delete highlights without raw
+    /// layer JSON, preserving labels/notes, identity, model layers and source text. [P1]
+    #[tokio::test]
+    async fn researcher_highlight_crud_preserves_other_layers_and_original()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server = research_server();
+        let driver = &**server.gallery_store.driver();
+        let bundle = recording("/missing/source.wav", &["a", "fracture", "here"]);
+        let summary = transcript_store::store_transcript(driver, &bundle, None)?;
+        let suggested = transcript_store::store_layer(
+            driver,
+            &summary.id,
+            &TranscriptLayer::Highlight(crate::transcript_layers::HighlightLayer {
+                provenance: LayerProvenance {
+                    model: "vision-model".into(),
+                    prompt_template: "highlight_pass".into(),
+                    created_at: hkask_types::time::now_rfc3339(),
+                },
+                highlights: vec![HighlightEntry {
+                    start_word: 0,
+                    end_word: 2,
+                    label: "suggestion".into(),
+                    note: "keep this note".into(),
+                }],
+            }),
+        )?;
+        let create = || {
+            Parameters(EductAnnotationCreateRequest {
+                transcript_id: summary.id.clone(),
+                start_word: 1,
+                end_word: 1,
+                label: "finding".into(),
+                note: "researcher's note".into(),
+                user_approved: true,
+            })
+        };
+        let result = payload(&server.educt_annotation_create(create()).await?);
+        let annotation_id = result["annotation_id"].as_str().ok_or("annotation ID")?;
+        let other = payload(&server.educt_annotation_create(create()).await?);
+        let update = Parameters(EductAnnotationUpdateRequest {
+            transcript_id: summary.id.clone(),
+            annotation_id: annotation_id.into(),
+            start_word: 0,
+            end_word: 1,
+            label: "reviewed".into(),
+            note: "changed note".into(),
+            user_approved: true,
+        });
+        server.educt_annotation_update(update).await?;
+        let listed = payload(
+            &server
+                .educt_annotation_list(Parameters(EductAnnotationListRequest {
+                    transcript_id: summary.id.clone(),
+                }))
+                .await?,
+        );
+        let annotations = listed["annotations"].as_array().ok_or("annotations")?;
+        assert_eq!(annotations.len(), 2);
+        let updated = annotations
+            .iter()
+            .find(|record| record["id"] == annotation_id)
+            .ok_or("stable annotation ID")?;
+        assert_eq!(updated["layer"]["highlights"][0]["label"], "reviewed");
+        assert_eq!(updated["layer"]["highlights"][0]["note"], "changed note");
+        assert!(
+            server
+                .educt_annotation_delete(Parameters(EductAnnotationDeleteRequest {
+                    transcript_id: summary.id.clone(),
+                    annotation_id: suggested.id.clone(),
+                    user_approved: true
+                }))
+                .await
+                .is_err()
+        );
+        server
+            .educt_annotation_delete(Parameters(EductAnnotationDeleteRequest {
+                transcript_id: summary.id.clone(),
+                annotation_id: annotation_id.into(),
+                user_approved: true,
+            }))
+            .await?;
+        let layers = transcript_store::list_layers(driver, &summary.id)?;
+        assert_eq!(layers.len(), 2);
+        assert!(layers.iter().any(|record| {
+            record.id
+                == other["annotation_id"]
+                    .as_str()
+                    .expect("other annotation ID")
+        }));
+        assert_eq!(
+            layers
+                .iter()
+                .find(|record| record.id == suggested.id)
+                .ok_or("retained suggestion")?
+                .layer,
+            suggested.layer
+        );
+        let (_, original) =
+            transcript_store::load_transcript(driver, &summary.id)?.ok_or("original bundle")?;
+        assert_eq!(original.full_text, bundle.full_text);
+        assert!(
+            server
+                .educt_annotation_create(Parameters(EductAnnotationCreateRequest {
+                    user_approved: false,
+                    ..create().0
+                }))
+                .await
+                .is_err()
+        );
+        Ok(())
     }
 }

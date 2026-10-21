@@ -352,27 +352,25 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
     BuiltinMcpServer {
         id: "media",
         binary: "hkask-mcp-media",
-        description: "Media — AI media generation (image, video, audio, gallery)",
-        // Provider keys are load-bearing in the media child: generation runs
-        // through the child-local MediaRouter, while SerpApi supplies structured
+        description: "Media — research evidence ingestion, annotation, transcription, and excerpts",
+        // Transcription uses the child-local MediaRouter; SerpApi supplies
         // YouTube discovery metadata. yt-dlp is download-only and needs no key.
         // Vision/chat/embed cross the IPC bridge to zed's LanguageModelRegistry.
         credentials: &[
             "OPENROUTER_API_KEY",
             "DEEPINFRA_API_KEY",
             "HKASK_SERPAPI_API_KEY",
-            // Read by the Reduct connection-status tool and future cloud calls.
+            // Reduct cloud recording, highlight, and reel operations.
             "REDUCT_API_KEY",
         ],
         config_env: &[
             // IPC bridge socket — required for vision/chat/embed routing
-            // through zed's LanguageModelRegistry (media generation is
-            // child-local and does not use it).
+            // through zed's LanguageModelRegistry (transcription is child-local).
             "HKASK_INFERENCE_SOCKET",
             // Data dir — needed for the gallery DB path resolution
             // (databases stay in the internal data dir).
             "HKASK_DATA_DIR",
-            // Artifacts dir — needed so generated media (user-facing outputs)
+            // Artifacts dir — needed so derived media (user-facing outputs)
             // resolve under `media-mcp/generated/` in the visible artifacts
             // dir, matching the parent process when an operator
             // `HKASK_ARTIFACTS_DIR` override is set.
@@ -380,12 +378,9 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // Gallery DB override (optional — defaults to
             // {data_dir}/mcp/media/gallery.db).
             "HKASK_MEDIA_DB",
-            // Media model overrides (all optional, default to model_constants).
-            "HKASK_MEDIA_TTS_MODEL",
+            // Research model overrides, supplied by settings-layer defaults.
             "HKASK_MEDIA_STT_MODEL",
             "HKASK_MEDIA_VISION_MODEL",
-            "HKASK_MEDIA_IMAGE_GEN_MODEL",
-            "HKASK_MEDIA_VIDEO_MODEL",
             // Embedding model — read by `embed_text` via
             // `hkask_inference::model_constants::embedding_model()`. Without
             // this entry the per-server filter drops it and media embedding
@@ -2041,10 +2036,8 @@ mod tests {
                 }
                 // Media model env constants in `hkask_mcp_media::models`.
                 for (const_ref, env_name) in [
-                    ("configured(TTS_ENV)", "HKASK_MEDIA_TTS_MODEL"),
                     ("configured(STT_ENV)", "HKASK_MEDIA_STT_MODEL"),
                     ("configured(VISION_ENV)", "HKASK_MEDIA_VISION_MODEL"),
-                    ("configured(IMAGE_GEN_ENV)", "HKASK_MEDIA_IMAGE_GEN_MODEL"),
                 ] {
                     if prod_content.contains(const_ref) {
                         read_vars.insert(env_name.to_string());

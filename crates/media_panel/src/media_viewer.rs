@@ -6,7 +6,7 @@
 //!   merged with assets surfaced by the conversation's tool results, with
 //!   delete (two-step confirm) affordances. Each fetched page reconciles
 //!   the list — assets deleted from the gallery drop out of it.
-//! - **Queue**: generation jobs (via `job_list`) with cancel affordances.
+//! - **Queue**: research jobs (via `job_list`) with cancel affordances.
 //! - **Detail**: the selected asset's inspector data (via
 //!   `gallery_asset_detail`) — record, tags, lineage.
 //!
@@ -728,7 +728,7 @@ impl MediaViewer {
         }
     }
 
-    /// Load the generation-job queue (spec: see and manage running jobs).
+    /// Load the research-operation queue (spec: see and manage running jobs).
     fn load_jobs(&mut self, cx: &mut Context<Self>) {
         let Some(epoch) = self.jobs_request.begin(RequestOwner::Jobs) else {
             return;
@@ -852,7 +852,7 @@ impl MediaViewer {
             self.detail_request.invalidate();
             self.status = Some(
                 "Asset is not in the gallery index yet — run gallery_refresh \
-                 from the director to index it."
+                 from the curator to index it."
                     .into(),
             );
             cx.notify();
@@ -1086,7 +1086,7 @@ impl MediaViewer {
             return self
                 .render_empty(
                     "No media yet",
-                    "Ask the director to generate, search, or fetch media — or open the Library.",
+                    "Ask the curator to ingest, search, or excerpt evidence — or open the Library.",
                 )
                 .into_any_element();
         };
@@ -1464,7 +1464,7 @@ impl MediaViewer {
             match &self.jobs_request.state {
                 ResourceState::Loading => {
                     return self
-                        .render_empty("Loading Queue", "Fetching generation jobs…")
+                        .render_empty("Loading Queue", "Fetching research jobs…")
                         .into_any_element();
                 }
                 ResourceState::Failed(error) => {
@@ -1484,7 +1484,7 @@ impl MediaViewer {
             return self
                 .render_empty(
                     "Queue ready — no jobs",
-                    "No generation jobs have been submitted (or process-local history restarted).",
+                    "No research jobs have been submitted (or process-local history restarted).",
                 )
                 .into_any_element();
         }

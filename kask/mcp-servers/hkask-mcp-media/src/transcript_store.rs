@@ -346,6 +346,16 @@ pub fn list_transcripts(
     driver: &dyn DatabaseDriver,
     filter: &TranscriptFilter,
 ) -> Result<Vec<TranscriptSummary>, TranscriptStoreError> {
+    list_transcripts_page(driver, filter, 0)
+}
+
+/// Deterministic bounded traversal for cross-recording search; no bundles are
+/// included in this listing and equal creation timestamps cannot shuffle pages.
+pub fn list_transcripts_page(
+    driver: &dyn DatabaseDriver,
+    filter: &TranscriptFilter,
+    offset: usize,
+) -> Result<Vec<TranscriptSummary>, TranscriptStoreError> {
     ensure_schema(driver)?;
     let mut sql = String::from(
         "SELECT id, media_path, gallery_asset_id, source_gallery_asset_id, detached_at, \
@@ -370,9 +380,11 @@ pub fn list_transcripts(
     }
     params.push(DbValue::Integer(filter.limit as i64));
     sql.push_str(&format!(
-        " ORDER BY created_at DESC LIMIT ?{}",
-        params.len()
+        " ORDER BY created_at DESC, id DESC LIMIT ?{} OFFSET ?{}",
+        params.len(),
+        params.len() + 1
     ));
+    params.push(DbValue::Integer(offset as i64));
     let rows = driver.query(&sql, &params)?;
     rows.iter().map(summary_from_row).collect()
 }
@@ -627,6 +639,57 @@ pub fn store_layer(
         layer: layer.clone(),
         created_at,
     })
+}
+
+/// Change only a single researcher-authored highlight. Compare the exact
+/// previous payload in the write so a concurrent edit is never overwritten.
+/// Existing pass-produced highlights (including all labels/notes) are inert.
+pub fn mutate_user_highlight(
+    driver: &dyn DatabaseDriver,
+    transcript_id: &str,
+    layer_id: &str,
+    replacement: Option<&crate::transcript_layers::HighlightEntry>,
+) -> Result<(), TranscriptStoreError> {
+    let missing = || TranscriptStoreError::LayerNotFound {
+        transcript_id: transcript_id.to_string(),
+        layer_id: layer_id.to_string(),
+    };
+    let row = driver.query_optional(
+        "SELECT payload_json FROM transcript_layers WHERE id = ?1 AND transcript_id = ?2 AND layer_kind = 'highlight'",
+        &[DbValue::Text(layer_id.to_string()), DbValue::Text(transcript_id.to_string())],
+    )?.ok_or_else(missing)?;
+    let previous = row.get_str(0)?.to_string();
+    let mut layer: TranscriptLayer = serde_json::from_str(&previous)
+        .map_err(|error| TranscriptStoreError::Serialization(error.to_string()))?;
+    let TranscriptLayer::Highlight(highlight) = &mut layer else {
+        return Err(missing());
+    };
+    if highlight.provenance.model != "user"
+        || highlight.provenance.prompt_template != "researcher_annotation"
+        || highlight.highlights.len() != 1
+    {
+        return Err(missing());
+    }
+    let changed = if let Some(entry) = replacement {
+        highlight.highlights[0] = entry.clone();
+        let (_, bundle) = load_transcript(driver, transcript_id)?.ok_or_else(|| {
+            TranscriptStoreError::TranscriptNotFound {
+                transcript_id: transcript_id.to_string(),
+            }
+        })?;
+        layer.validate(bundle.words.len())?;
+        let payload = serde_json::to_string(&layer)
+            .map_err(|error| TranscriptStoreError::Serialization(error.to_string()))?;
+        driver.execute("UPDATE transcript_layers SET payload_json = ?1 WHERE id = ?2 AND transcript_id = ?3 AND payload_json = ?4",
+            &[DbValue::Text(payload), DbValue::Text(layer_id.to_string()), DbValue::Text(transcript_id.to_string()), DbValue::Text(previous)])?
+    } else {
+        driver.execute("DELETE FROM transcript_layers WHERE id = ?1 AND transcript_id = ?2 AND payload_json = ?3",
+            &[DbValue::Text(layer_id.to_string()), DbValue::Text(transcript_id.to_string()), DbValue::Text(previous)])?
+    };
+    if changed == 0 {
+        return Err(missing());
+    }
+    Ok(())
 }
 
 /// List the layers stored over a transcript, oldest first.

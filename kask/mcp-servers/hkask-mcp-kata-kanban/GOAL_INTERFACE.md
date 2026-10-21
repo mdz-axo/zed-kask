@@ -11,11 +11,16 @@ supported. Direct reads reject unsupported versions, malformed records, and
 key/owner mismatches without rewriting or deleting stored bytes. Listing returns
 one `GoalListing { goals, rejected }`: `goals` contains supported caller-owned
 records; `rejected` maps omitted stored row keys to rejection reasons. Owner
-filtering happens before decoding or exposing rejections. The MCP list serializes
-both fields, including an empty rejection map for ordinary listings. The drainer
-logs each rejection with its identity and reason, then processes supported goals
-for that owner and every other owner. Database query failures remain errors. There is no legacy
-conversion, startup migration, historical-key discovery, or machine resolver.
+filtering happens before canonical decoding or exposing rejections. The MCP list
+always serializes both fields with all caller-owned rejections, including an empty
+rejection map for ordinary listings. The trusted host scans once per drain pass,
+validating owner-grouped records through the same collector. It logs each new or
+changed rejection with owner, stored row key and reason; unchanged failures do not
+repeat every tick. The diagnostic snapshot retains only current rejections, so a
+resolved problem warns again if it recurs. Accepted records and validation decisions
+are never cached. Query failures remain errors and leave the prior diagnostic
+snapshot intact. There is no legacy conversion, startup migration, historical-key
+discovery, or machine resolver.
 
 `Goal` retains the declaration/source, criterion IDs and specification digest,
 worker verdict history, original native closure, human corrections, assessment
@@ -27,7 +32,14 @@ no separate dirty flag, snapshot backlog, or per-event delivery receipt.
 ## Service operations
 
 Ordinary MCP routes are create, judge, get, and list. The service also accepts
-trusted native closure/correction and owns two complete background operations:
+trusted native closure/correction. `goal_scan_for_host()` is a native scheduling
+read, not an MCP route: it uses one full-store query and preserves the per-owner
+schema, ownership, key and duplicate-identity checks. Ordinary `goal_list(owner)`
+filters the caller's rows before the common canonical decoder. Scheduling still
+uses the same bounded, fair work loop; per-goal transitions re-read and claim
+canonical state normally rather than relying on the scan snapshot.
+
+The service owns two complete background work operations:
 
 - `goal_assess(id, owner, capture, assess)` owns claim acquisition, expiry,
   input persistence, result validation, conditional finalization, and scoring.

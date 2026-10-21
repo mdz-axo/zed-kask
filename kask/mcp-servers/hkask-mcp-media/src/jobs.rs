@@ -1,8 +1,8 @@
-//! In-memory generation job controller — tracks and bounds async media jobs.
+//! In-memory research job controller — tracks and bounds async media jobs.
 //!
-//! The controller is ephemeral (not persisted to SQLite). Persistent lineage is
-//! already handled by `gallery_record_generation` / `gallery_lineage`. A
-//! missing record is therefore surfaced as possible server restart data loss.
+//! The controller is ephemeral (not persisted to SQLite). Source-edit publication
+//! stores durable lineage, readable through `gallery_lineage`; a missing job
+//! record is therefore surfaced as possible server restart data loss.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -55,19 +55,11 @@ pub struct JobController {
     records: Mutex<HashMap<String, JobRecord>>,
     active: Mutex<HashMap<String, ActiveJob>>,
     admission: HeavyOperationAdmission,
-    #[cfg(test)]
-    publication_gate: Mutex<Option<TestPublicationGate>>,
 }
 
 struct ActiveJob {
     token: CancellationToken,
     completion: watch::Receiver<bool>,
-}
-
-#[cfg(test)]
-struct TestPublicationGate {
-    entered: Arc<Semaphore>,
-    release: Arc<Semaphore>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -115,8 +107,6 @@ impl JobController {
             records: Mutex::new(HashMap::new()),
             active: Mutex::new(HashMap::new()),
             admission: HeavyOperationAdmission::new(),
-            #[cfg(test)]
-            publication_gate: Mutex::new(None),
         }
     }
 
@@ -354,45 +344,6 @@ impl JobController {
         active.remove(job_id);
         let active_ids = active.keys().cloned().collect::<Vec<_>>();
         prune_terminal_records(&mut records, &active_ids);
-        Ok(())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn set_publication_gate_for_test(
-        &self,
-        entered: Arc<Semaphore>,
-        release: Arc<Semaphore>,
-    ) -> Result<(), JobStoreError> {
-        let mut gate =
-            self.publication_gate
-                .lock()
-                .map_err(|error| JobStoreError::LockPoisoned {
-                    part: "publication gate",
-                    detail: error.to_string(),
-                })?;
-        *gate = Some(TestPublicationGate { entered, release });
-        Ok(())
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn publication_checkpoint_for_test(&self) -> Result<(), JobStoreError> {
-        let gate = self
-            .publication_gate
-            .lock()
-            .map_err(|error| JobStoreError::LockPoisoned {
-                part: "publication gate",
-                detail: error.to_string(),
-            })?
-            .as_ref()
-            .map(|gate| (gate.entered.clone(), gate.release.clone()));
-        if let Some((entered, release)) = gate {
-            entered.add_permits(1);
-            let permit = release
-                .acquire_owned()
-                .await
-                .map_err(|_| JobStoreError::AdmissionClosed)?;
-            permit.forget();
-        }
         Ok(())
     }
 }
