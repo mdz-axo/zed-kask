@@ -10,10 +10,14 @@ use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+/// Worker-supplied manifest metadata, not trusted read receipts. After the
+/// native human approval only, the host may read the bounded local artifact.
 pub struct NativeGoalEvidence {
     pub id: String,
     pub source: String,
+    /// Absolute local file path or local file URI. No network or execution.
     pub locator: String,
+    /// Expected SHA-256 of exact bytes: 64 hex digits, optionally `sha256:`.
     pub digest: String,
     pub reliability: String,
     pub oracle: String,
@@ -22,8 +26,13 @@ pub struct NativeGoalEvidence {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+/// Ask for an actual human closure choice. The native prompt discloses local
+/// reads and sharing before approval; file contents are never worker-authored
+/// observations, and absent/unfetchable evidence is assessed as unknown.
 pub struct GoalCloseInput {
     pub goal_id: String,
+    /// At most 16 references. The human reviews exact paths/digests and the
+    /// read/sharing limits before any access; absent evidence remains unknown.
     #[serde(default)]
     pub evidence_manifest: Vec<NativeGoalEvidence>,
 }
@@ -188,7 +197,10 @@ pub async fn decide(
         .ok_or_else(|| error("Native goal decision requires a host-authenticated thread"))?;
     let interaction_id = format!("{actor}:{}", stream.tool_call_id());
     // The ACP-scoped call id includes the owning session; no worker-supplied source is used.
-    let session_id = stream.calling_session_id().ok_or_else(|| error("Native goal decision requires a captured session"))?.to_string();
+    let session_id = stream
+        .calling_session_id()
+        .ok_or_else(|| error("Native goal decision requires a captured session"))?
+        .to_string();
     let prompt = host
         .prepare(&goal_id, actor, &evidence_manifest, correction)
         .map_err(error)?;

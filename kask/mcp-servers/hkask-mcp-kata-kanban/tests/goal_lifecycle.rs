@@ -39,6 +39,7 @@ fn closure(goal: &Goal) -> NativeGoalClosure {
         occurred_at: Utc::now(),
         choice: HumanClosureChoice::StopUnknown,
         evidence_manifest: vec![],
+        artifact_access: None,
     }
 }
 #[test]
@@ -103,7 +104,12 @@ fn unresolved_forecasts_remain_pending_after_assessment_and_delivery() -> anyhow
     });
     let goal = service.goal_create(declaration, owner)?;
     service.goal_close_native(goal.id, owner, closure(&goal))?;
-    service.goal_claim_assessment(goal.id, owner, lease("attempt-1"))?;
+    service.goal_claim_assessment(
+        goal.id,
+        owner,
+        lease("attempt-1"),
+        snapshots(&service, goal.id, owner),
+    )?;
     let goal = service.goal_get(goal.id, owner)?.expect("goal");
     let attempt = goal.assessments.last().expect("attempt");
     let goal = service.goal_complete_assessment(
@@ -193,11 +199,40 @@ fn evidence() -> GoalEvidence {
         id: "evidence-1".into(),
         source: "machine".into(),
         locator: "file:///retained/check-report".into(),
-        digest: "sha256:actual-report-digest".into(),
+        digest: "42e3bdc0d187c8cbf613fcaaa452f47668db4c283ae5d767842644ccf1c0a717".into(),
         reliability: "captured machine output".into(),
         oracle: "check".into(),
         limitation: "Only the stated criterion was checked".into(),
     }
+}
+fn snapshots(
+    service: &KanbanService,
+    id: hkask_types::id::GoalID,
+    owner: WebID,
+) -> Vec<GoalArtifactSnapshot> {
+    let goal = service
+        .goal_get(id, owner)
+        .expect("goal query")
+        .expect("goal");
+    goal.closure
+        .iter()
+        .flat_map(|closure| {
+            closure
+                .input
+                .evidence_manifest
+                .iter()
+                .map(|evidence| GoalArtifactSnapshot {
+                    evidence_id: evidence.id.clone(),
+                    observed_at: closure.recorded_at,
+                    outcome: GoalArtifactReadOutcome::Fetched {
+                        source: "/retained/check-report".into(),
+                        sha256: evidence.digest.clone(),
+                        byte_count: "feature_status=disabled\n".len() as u64,
+                        content: "feature_status=disabled\n".into(),
+                    },
+                })
+        })
+        .collect()
 }
 fn completion(goal: &Goal, status: CriterionEvidenceStatus) -> AssessmentCompletion {
     let attempt = goal.assessments.last().expect("claimed attempt");
@@ -222,6 +257,7 @@ fn close_with_evidence(
     let mut input = closure(goal);
     input.choice = choice;
     input.evidence_manifest = vec![evidence()];
+    input.artifact_access = Some(LocalArtifactAccessApproval::BoundedUtf8V1);
     Ok(service.goal_close_native(goal.id, owner, input)?)
 }
 fn assessed(
@@ -230,7 +266,12 @@ fn assessed(
     owner: WebID,
     status: CriterionEvidenceStatus,
 ) -> anyhow::Result<Goal> {
-    service.goal_claim_assessment(id, owner, lease("attempt-1"))?;
+    service.goal_claim_assessment(
+        id,
+        owner,
+        lease("attempt-1"),
+        snapshots(&service, id, owner),
+    )?;
     let goal = service.goal_get(id, owner)?.expect("goal");
     Ok(service.goal_complete_assessment(id, owner, completion(&goal, status))?)
 }
@@ -386,8 +427,21 @@ fn assessor_input_excludes_labels_and_completion_requires_the_frozen_manifest() 
         HumanClosureChoice::AccomplishedAchieved,
     )?;
     let claim = lease("attempt-1");
-    let input = service.goal_claim_assessment(goal.id, owner, claim.clone())?;
-    assert_eq!(service.goal_claim_assessment(goal.id, owner, claim)?, input);
+    let input = service.goal_claim_assessment(
+        goal.id,
+        owner,
+        claim.clone(),
+        snapshots(&service, goal.id, owner),
+    )?;
+    assert_eq!(
+        service.goal_claim_assessment(
+            goal.id,
+            owner,
+            claim,
+            snapshots(&service, goal.id, owner)
+        )?,
+        input
+    );
     let wire = serde_json::to_value(&input)?;
     for forbidden in [
         "verdicts",
@@ -403,7 +457,12 @@ fn assessor_input_excludes_labels_and_completion_requires_the_frozen_manifest() 
     assert_eq!(input.evidence_manifest, vec![evidence()]);
     assert!(
         service
-            .goal_claim_assessment(goal.id, owner, lease("attempt-2"))
+            .goal_claim_assessment(
+                goal.id,
+                owner,
+                lease("attempt-2"),
+                snapshots(&service, goal.id, owner)
+            )
             .is_err()
     );
     let goal = service.goal_get(goal.id, owner)?.expect("goal");
@@ -464,7 +523,12 @@ fn failed_assessment_survives_reopen_and_can_be_retried_without_reopening_work()
     let service = open(&path)?;
     let goal = service.goal_create(declaration(), owner)?;
     close_with_evidence(&service, &goal, owner, HumanClosureChoice::StopUnknown)?;
-    service.goal_claim_assessment(goal.id, owner, lease("failed-attempt"))?;
+    service.goal_claim_assessment(
+        goal.id,
+        owner,
+        lease("failed-attempt"),
+        snapshots(&service, goal.id, owner),
+    )?;
     let retained = service.goal_get(goal.id, owner)?.expect("goal");
     let failure = AssessmentFailure {
         attempt_id: "failed-attempt".into(),
@@ -484,7 +548,12 @@ fn failed_assessment_survives_reopen_and_can_be_retried_without_reopening_work()
             .iter()
             .any(|g| g.id == goal.id)
     );
-    service.goal_claim_assessment(goal.id, owner, lease("retry"))?;
+    service.goal_claim_assessment(
+        goal.id,
+        owner,
+        lease("retry"),
+        snapshots(&service, goal.id, owner),
+    )?;
     let retained = service.goal_get(goal.id, owner)?.expect("goal");
     assert_eq!(
         retained.assessments[0]
@@ -517,13 +586,23 @@ fn expired_assessor_lease_is_preserved_as_failure_and_old_completion_is_rejected
     close_with_evidence(&service, &goal, owner, HumanClosureChoice::StopUnknown)?;
     let mut short = lease("expired");
     short.lease_until = Utc::now() + chrono::Duration::milliseconds(100);
-    service.goal_claim_assessment(goal.id, owner, short.clone())?;
+    service.goal_claim_assessment(
+        goal.id,
+        owner,
+        short.clone(),
+        snapshots(&service, goal.id, owner),
+    )?;
     let old = completion(
         &service.goal_get(goal.id, owner)?.expect("goal"),
         CriterionEvidenceStatus::Supported,
     );
     wait_until(short.lease_until);
-    service.goal_claim_assessment(goal.id, owner, lease("replacement"))?;
+    service.goal_claim_assessment(
+        goal.id,
+        owner,
+        lease("replacement"),
+        snapshots(&service, goal.id, owner),
+    )?;
     assert!(
         service
             .goal_complete_assessment(goal.id, owner, old)
@@ -716,7 +795,12 @@ fn machine_resolver_rejects_source_substitution_and_retains_unknown_disputed_cor
             .is_empty(),
         "source outcome alone does not bypass assessment attempt"
     );
-    service.goal_claim_assessment(goal.id, owner, lease("attempt-1"))?;
+    service.goal_claim_assessment(
+        goal.id,
+        owner,
+        lease("attempt-1"),
+        snapshots(&service, goal.id, owner),
+    )?;
     let retained = service.goal_get(goal.id, owner)?.expect("goal");
     let failed = service.goal_fail_assessment(
         goal.id,
@@ -1046,7 +1130,12 @@ fn explicit_criteria_are_bounded_and_assessment_cannot_precede_closure() -> anyh
     );
     assert!(
         service
-            .goal_claim_assessment(goal.id, owner, lease("premature"))
+            .goal_claim_assessment(
+                goal.id,
+                owner,
+                lease("premature"),
+                snapshots(&service, goal.id, owner)
+            )
             .is_err()
     );
     assert_eq!(service.goal_get(goal.id, owner)?.expect("unchanged"), goal);
@@ -1059,5 +1148,116 @@ fn explicit_criteria_are_bounded_and_assessment_cannot_precede_closure() -> anyh
         goal
     );
     assert!(service.goal_get(goal.id, WebID::new())?.is_none());
+    Ok(())
+}
+
+#[test]
+fn manifest_reference_alone_cannot_become_supported_or_contradicted() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let service = open(&dir.path().join("goals.sqlite"))?;
+    let owner = WebID::new();
+    let goal = service.goal_create(declaration(), owner)?;
+    close_with_evidence(
+        &service,
+        &goal,
+        owner,
+        HumanClosureChoice::AccomplishedAchieved,
+    )?;
+    service.goal_claim_assessment(goal.id, owner, lease("references-only"), vec![])?;
+    let goal = service.goal_get(goal.id, owner)?.expect("goal");
+    for status in [
+        CriterionEvidenceStatus::Supported,
+        CriterionEvidenceStatus::Contradicted,
+    ] {
+        assert!(
+            service
+                .goal_complete_assessment(goal.id, owner, completion(&goal, status))
+                .is_err(),
+            "a known manifest ID is not a fetched observation"
+        );
+    }
+    let retained = service.goal_complete_assessment(
+        goal.id,
+        owner,
+        completion(&goal, CriterionEvidenceStatus::Unknown),
+    )?;
+    assert_eq!(
+        retained.assessments[0]
+            .completion
+            .as_ref()
+            .expect("unknown")
+            .findings[0]
+            .status,
+        CriterionEvidenceStatus::Unknown
+    );
+    Ok(())
+}
+
+#[test]
+fn host_observation_requires_native_read_consent_and_exact_byte_digest() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let service = open(&dir.path().join("goals.sqlite"))?;
+    let owner = WebID::new();
+    let goal = service.goal_create(declaration(), owner)?;
+    let mut old = closure(&goal);
+    old.evidence_manifest = vec![evidence()];
+    service.goal_close_native(goal.id, owner, old)?;
+    assert!(
+        service
+            .goal_claim_assessment(
+                goal.id,
+                owner,
+                lease("unapproved"),
+                snapshots(&service, goal.id, owner)
+            )
+            .is_err(),
+        "historical closures never become read approval"
+    );
+    assert!(
+        service
+            .goal_get(goal.id, owner)?
+            .expect("goal")
+            .assessments
+            .is_empty()
+    );
+    let goal = service.goal_create(declaration(), owner)?;
+    close_with_evidence(&service, &goal, owner, HumanClosureChoice::StopUnknown)?;
+    let observed = snapshots(&service, goal.id, owner);
+    let mut changed = observed.clone();
+    if let GoalArtifactReadOutcome::Fetched { content, .. } = &mut changed[0].outcome {
+        content.push_str("tampered");
+    }
+    assert!(
+        service
+            .goal_claim_assessment(goal.id, owner, lease("tampered"), changed)
+            .is_err()
+    );
+    let original_lease = lease("original");
+    let input =
+        service.goal_claim_assessment(goal.id, owner, original_lease.clone(), observed.clone())?;
+    let mut conflicting = observed.clone();
+    conflicting[0].observed_at += chrono::Duration::nanoseconds(1);
+    assert!(
+        service
+            .goal_claim_assessment(goal.id, owner, original_lease.clone(), conflicting)
+            .is_err(),
+        "same attempt cannot acquire different observations"
+    );
+    let retained = service.goal_get(goal.id, owner)?.expect("goal");
+    service.goal_fail_assessment(
+        goal.id,
+        owner,
+        AssessmentFailure {
+            attempt_id: "original".into(),
+            input_digest: retained.assessments[0].input_digest.clone(),
+            reason: "provider unavailable".into(),
+        },
+    )?;
+    service.goal_claim_assessment(goal.id, owner, lease("next"), observed.clone())?;
+    assert_eq!(
+        service.goal_claim_assessment(goal.id, owner, original_lease, observed)?,
+        input,
+        "replaying an older claim returns that exact input, not the latest attempt"
+    );
     Ok(())
 }

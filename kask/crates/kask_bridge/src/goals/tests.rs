@@ -11,6 +11,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 struct Provider {
     fail: AtomicBool,
     bad_findings: AtomicBool,
+    artifact_findings: AtomicBool,
+    forged_evidence: AtomicBool,
     embedding_calls: AtomicUsize,
     requests: std::sync::Mutex<Vec<Vec<ChatMessage>>>,
 }
@@ -32,7 +34,7 @@ impl InferencePort for Provider {
     ) -> InferenceFuture<'_> {
         assert!(
             tools.is_none(),
-            "no independent evidence-fetch capability is present"
+            "assessor receives bounded snapshots, never executable tools"
         );
         assert_eq!(model, Some("fixture-assessor"));
         self.requests
@@ -42,6 +44,8 @@ impl InferencePort for Provider {
         let messages = messages.to_vec();
         let fail = self.fail.load(Ordering::SeqCst);
         let malformed = self.bad_findings.load(Ordering::SeqCst);
+        let artifact_findings = self.artifact_findings.load(Ordering::SeqCst);
+        let forged_evidence = self.forged_evidence.load(Ordering::SeqCst);
         Box::pin(async move {
             if fail {
                 return Err(InferenceError::Generation(
@@ -50,11 +54,38 @@ impl InferencePort for Provider {
             }
             let input: GoalAssessmentInput =
                 serde_json::from_str(&messages[1].content).expect("blinded input");
-            let findings: Vec<_> = input.criteria.iter().map(|criterion| serde_json::json!({"criterion_id":criterion.id,"status":"unknown","evidence_ids":[],"note":"No independent evidence access"})).collect();
-            let text = if malformed {
-                serde_json::json!({"findings":[],"limitations":["no evidence access"]})
+            let data: serde_json::Value =
+                serde_json::from_str(&messages[1].content).expect("request JSON");
+            let observed = data
+                .get("artifacts")
+                .and_then(|v| v.as_array())
+                .and_then(|rows| {
+                    rows.iter()
+                        .find(|row| row["outcome"]["status"] == "fetched")
+                });
+            let content = observed.and_then(|row| row["outcome"]["content"].as_str());
+            let (status, ids) = if forged_evidence {
+                ("supported", vec![serde_json::json!("missing-artifact")])
+            } else if artifact_findings {
+                match content {
+                    Some("feature_status=enabled\n") => (
+                        "supported",
+                        vec![observed.expect("observed")["evidence_id"].clone()],
+                    ),
+                    Some("feature_status=disabled\n") => (
+                        "contradicted",
+                        vec![observed.expect("observed")["evidence_id"].clone()],
+                    ),
+                    _ => ("unknown", vec![]),
+                }
             } else {
-                serde_json::json!({"findings":findings,"limitations":["no evidence access"]})
+                ("unknown", vec![])
+            };
+            let findings: Vec<_> = input.criteria.iter().map(|criterion| serde_json::json!({"criterion_id":criterion.id,"status":status,"evidence_ids":ids,"note":"Finding about the fetched file's feature_status field only; no claim that a test ran"})).collect();
+            let text = if malformed {
+                serde_json::json!({"findings":[],"limitations":["Only supplied file contents are observed; execution provenance is not established"]})
+            } else {
+                serde_json::json!({"findings":findings,"limitations":["Only supplied file contents are observed; execution provenance is not established"]})
             };
             Ok(InferenceResult {
                 text: text.to_string(),
@@ -148,6 +179,11 @@ fn declare_with_forecast(
         owner,
     )?)
 }
+fn supplied_artifact_manifest(dir: &std::path::Path) -> Vec<agent::NativeGoalEvidence> {
+    let path = dir.join("assessor-evidence.txt");
+    std::fs::write(&path, "feature_status=enabled\n").expect("real supplied bytes");
+    artifacts::manifest(&path, artifacts::ENABLED_DIGEST)
+}
 async fn decision(
     host: Arc<GoalHost>,
     goal: &Goal,
@@ -156,8 +192,6 @@ async fn decision(
     correction: bool,
     cx: &mut gpui::TestAppContext,
 ) -> agent::NativeGoalOutput {
-    let (stream, mut receiver) = agent::ToolCallEventStream::test_for_actor(owner);
-    let goal_id = goal.id.to_string();
     let evidence = if correction {
         vec![]
     } else {
@@ -170,6 +204,31 @@ async fn decision(
             oracle: "claimed command output".into(),
             limitation: "not independently fetched".into(),
         }]
+    };
+    decision_with_manifest(host, goal, owner, selection, correction, evidence, cx).await
+}
+async fn decision_with_manifest(
+    host: Arc<GoalHost>,
+    goal: &Goal,
+    owner: WebID,
+    selection: &str,
+    correction: bool,
+    evidence: Vec<agent::NativeGoalEvidence>,
+    cx: &mut gpui::TestAppContext,
+) -> agent::NativeGoalOutput {
+    let (stream, mut receiver) = agent::ToolCallEventStream::test_for_actor(owner);
+    let goal_id = goal.id.to_string();
+    let expected_locators: Vec<_> = if correction {
+        goal.closure
+            .as_ref()
+            .expect("closed goal")
+            .input
+            .evidence_manifest
+            .iter()
+            .map(|e| e.locator.clone())
+            .collect()
+    } else {
+        evidence.iter().map(|e| e.locator.clone()).collect()
     };
     use agent::AgentTool;
     static NATIVE_HOOK: futures::lock::Mutex<()> = futures::lock::Mutex::new(());
@@ -208,11 +267,18 @@ async fn decision(
     );
     let rendered = serde_json::to_string(&authorization.tool_call).expect("prompt JSON");
     assert!(rendered.contains(&goal.spec_digest));
-    assert!(rendered.contains("Exact recall retains the complete frozen criterion"));
-    assert!(
-        rendered.contains("unfetched://test-result"),
-        "correction must show the original frozen evidence, not empty correction input"
-    );
+    for criterion in &goal.criteria {
+        assert!(
+            rendered.contains(&criterion.description),
+            "human sees each original frozen criterion"
+        );
+    }
+    for locator in expected_locators {
+        assert!(
+            rendered.contains(&locator),
+            "native decision must show the reviewed evidence locator"
+        );
+    }
     if correction {
         assert!(rendered.contains("Latest human outcome: unknown"));
     }
@@ -299,7 +365,16 @@ async fn native_goal_restart_drains_blinded_assessment_and_exact_semantic_projec
         .is_err(),
         "worker cannot submit a human label"
     );
-    let _recorded = decision(host.clone(), &goal, owner, "stop_unknown", false, cx).await;
+    let _recorded = decision_with_manifest(
+        host.clone(),
+        &goal,
+        owner,
+        "stop_unknown",
+        false,
+        supplied_artifact_manifest(dir.path()),
+        cx,
+    )
+    .await;
     let closed = host
         .service
         .goal_get(goal.id, owner)
@@ -359,7 +434,7 @@ async fn native_goal_restart_drains_blinded_assessment_and_exact_semantic_projec
     for messages in provider.requests.lock().expect("captures").iter() {
         assert_eq!(messages.len(), 2, "fresh context");
         let data: serde_json::Value = serde_json::from_str(&messages[1].content).expect("JSON");
-        assert_eq!(data.as_object().expect("object").len(), 5);
+        assert_eq!(data.as_object().expect("object").len(), 6);
         for key in [
             "closure",
             "choice",
@@ -559,12 +634,13 @@ async fn native_goal_missing_criterion_is_failed_retryable_not_passed(
     let owner = WebID::new();
     let host = open(dir.path(), provider.clone()).expect("host");
     let goal = declare(&host, owner).expect("goal");
-    decision(
+    decision_with_manifest(
         host.clone(),
         &goal,
         owner,
         "accomplished_not_achieved",
         false,
+        supplied_artifact_manifest(dir.path()),
         cx,
     )
     .await;
@@ -654,7 +730,11 @@ async fn native_goal_empty_evidence_keeps_assessment_unknown_but_declared_human_
         ))
         .expect("human selection");
     task.await.expect("closure");
-    scheduled_tick(host.clone(), provider, cx).await;
+    scheduled_tick(host.clone(), provider.clone(), cx).await;
+    assert!(
+        provider.requests.lock().expect("capture").is_empty(),
+        "empty evidence is decided as unknown without an assessor model request"
+    );
     let goal = host
         .service
         .goal_get(goal.id, owner)
@@ -704,6 +784,7 @@ async fn native_goal_expired_assessment_lease_resumes_without_reopening_work(
                 tool_version: "fixture".into(),
                 lease_until: Utc::now() + Duration::seconds(2),
             },
+            Vec::new(),
         )
         .expect("persist in-flight lease before simulated restart");
     drop(host);
@@ -767,7 +848,16 @@ async fn native_goal_missing_assessor_and_projection_store_retains_a_durable_fai
     ));
     let owner = WebID::new();
     let goal = declare(&host, owner).expect("goal");
-    decision(host.clone(), &goal, owner, "stop_unknown", false, cx).await;
+    decision_with_manifest(
+        host.clone(),
+        &goal,
+        owner,
+        "stop_unknown",
+        false,
+        supplied_artifact_manifest(dir.path()),
+        cx,
+    )
+    .await;
     let runtime = tokio::runtime::Runtime::new().expect("runtime");
     let host_for_task = host.clone();
     let task = runtime.spawn(async move {
@@ -805,3 +895,5 @@ async fn native_goal_missing_assessor_and_projection_store_retains_a_durable_fai
         "an unconfigured marker is never sent as a provider model"
     );
 }
+
+mod artifacts;

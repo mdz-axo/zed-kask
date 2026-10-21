@@ -78,6 +78,10 @@ pub struct NativeGoalClosure {
     pub occurred_at: DateTime<Utc>,
     pub choice: HumanClosureChoice,
     pub evidence_manifest: Vec<GoalEvidence>,
+    /// Set only after native disclosure and an actual ActionChoice. Historical
+    /// closure is not retroactive permission to read or share local artifacts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_access: Option<LocalArtifactAccessApproval>,
 }
 /// Trusted native correction; original closure remains unchanged.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -107,6 +111,43 @@ pub struct GoalEvidence {
     pub limitation: String,
 }
 
+/// Versioned native consent freezes the limits shown before closure. A future
+/// wider reader requires a new policy and a new explicit human approval.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalArtifactAccessApproval {
+    BoundedUtf8V1,
+}
+pub const GOAL_ARTIFACT_MAX_FILES: usize = 16;
+pub const GOAL_ARTIFACT_MAX_FILE_BYTES: usize = 64 * 1024;
+pub const GOAL_ARTIFACT_MAX_TOTAL_BYTES: usize = 256 * 1024;
+
+/// Host-observed input, never accepted through a worker MCP route. Fetched
+/// content proves the bytes read, not that the worker's claimed oracle ran.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GoalArtifactSnapshot {
+    pub evidence_id: String,
+    pub observed_at: DateTime<Utc>,
+    pub outcome: GoalArtifactReadOutcome,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum GoalArtifactReadOutcome {
+    Fetched {
+        source: String,
+        sha256: String,
+        byte_count: u64,
+        content: String,
+    },
+    Unavailable {
+        source: Option<String>,
+        reason: String,
+        observed_sha256: Option<String>,
+        bytes_read: u64,
+    },
+}
+
 /// Deliberately contains no progress verdict, closure choice, forecast or score.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GoalAssessmentInput {
@@ -115,6 +156,10 @@ pub struct GoalAssessmentInput {
     pub goal_text: String,
     pub criteria: Vec<AssessmentCriterion>,
     pub evidence_manifest: Vec<GoalEvidence>,
+    /// Exact bounded content and read failures persisted before inference.
+    /// Empty historical inputs retain their original serialization/digest.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artifacts: Vec<GoalArtifactSnapshot>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AssessmentCriterion {

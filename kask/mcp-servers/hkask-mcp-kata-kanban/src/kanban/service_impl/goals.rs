@@ -59,6 +59,87 @@ fn validate_refs(ids: &[String], known: &HashSet<&str>) -> Result<(), KanbanErro
     Ok(())
 }
 
+/// Validate host observations without performing any I/O or trusting worker
+/// oracle metadata. Byte identities and consent are enforced before freezing input.
+fn validate_artifacts(
+    closure: &NativeGoalClosure,
+    artifacts: &[GoalArtifactSnapshot],
+) -> Result<(), KanbanError> {
+    if artifacts.len() > GOAL_ARTIFACT_MAX_FILES {
+        return Err(invalid("too many artifact observations"));
+    }
+    // Empty observations remain meaningful for historical/reference-only callers,
+    // but can never authorize a supported/contradicted completion.
+    if !artifacts.is_empty() && artifacts.len() != closure.evidence_manifest.len() {
+        return Err(invalid(
+            "artifact observations must cover every frozen manifest entry",
+        ));
+    }
+    let mut ids = HashSet::new();
+    let mut bytes = 0u64;
+    for artifact in artifacts {
+        let evidence = closure
+            .evidence_manifest
+            .iter()
+            .find(|evidence| evidence.id == artifact.evidence_id)
+            .ok_or_else(|| invalid("artifact observation references unknown evidence"))?;
+        if !ids.insert(&artifact.evidence_id)
+            || artifact.observed_at < closure.occurred_at
+            || artifact.observed_at > Utc::now()
+        {
+            return Err(invalid(
+                "duplicate artifact observation or invalid read time",
+            ));
+        }
+        let read = match &artifact.outcome {
+            GoalArtifactReadOutcome::Fetched {
+                source,
+                sha256,
+                byte_count,
+                content,
+            } => {
+                if closure.artifact_access != Some(LocalArtifactAccessApproval::BoundedUtf8V1) {
+                    return Err(invalid(
+                        "fetched artifacts require authenticated native read approval",
+                    ));
+                }
+                let actual = format!("{:x}", Sha256::digest(content.as_bytes()));
+                let expected = evidence
+                    .digest
+                    .strip_prefix("sha256:")
+                    .unwrap_or(&evidence.digest);
+                if !std::path::Path::new(source).is_absolute()
+                    || actual != *sha256
+                    || !actual.eq_ignore_ascii_case(expected)
+                    || *byte_count != content.len() as u64
+                    || content.len() > GOAL_ARTIFACT_MAX_FILE_BYTES
+                {
+                    return Err(invalid(
+                        "fetched artifact source, byte count or digest mismatch",
+                    ));
+                }
+                *byte_count
+            }
+            GoalArtifactReadOutcome::Unavailable {
+                reason, bytes_read, ..
+            } => {
+                nonempty(reason, "artifact read failure reason")?;
+                if *bytes_read > (GOAL_ARTIFACT_MAX_FILE_BYTES + 1) as u64 {
+                    return Err(invalid("failed artifact read exceeds per-file bound"));
+                }
+                *bytes_read
+            }
+        };
+        bytes = bytes
+            .checked_add(read)
+            .ok_or_else(|| invalid("artifact byte count overflow"))?;
+        if bytes > GOAL_ARTIFACT_MAX_TOTAL_BYTES as u64 {
+            return Err(invalid("artifact observations exceed aggregate byte bound"));
+        }
+    }
+    Ok(())
+}
+
 /// Read old records into a typed archive without reconstructing lost authority,
 /// timing or probabilities. Raw historical fields (including scores) survive.
 fn decode_goal(value: serde_json::Value) -> Result<Goal, KanbanError> {
@@ -504,6 +585,9 @@ impl KanbanService {
                     "closure occurred_at must be between declaration and receipt",
                 ));
             }
+            if input.evidence_manifest.len() > GOAL_ARTIFACT_MAX_FILES {
+                return Err(invalid("evidence manifest exceeds 16-artifact bound"));
+            }
             let mut ids = HashSet::new();
             for evidence in &input.evidence_manifest {
                 for (value, field) in [
@@ -584,14 +668,16 @@ impl KanbanService {
         id: GoalID,
         owner: WebID,
         lease: AssessmentLeaseRequest,
+        artifacts: Vec<GoalArtifactSnapshot>,
     ) -> Result<GoalAssessmentInput, KanbanError> {
+        let attempt_id = lease.attempt_id.clone();
         let goal = self.transition_goal(id, owner, true, |goal| {
             if let Some(attempt) = goal
                 .assessments
                 .iter()
                 .find(|a| a.lease.attempt_id == lease.attempt_id)
             {
-                return if attempt.lease == lease {
+                return if attempt.lease == lease && attempt.input.artifacts == artifacts {
                     Ok(false)
                 } else {
                     Err(invalid("conflicting assessment claim replay"))
@@ -625,6 +711,7 @@ impl KanbanService {
                 .closure
                 .as_ref()
                 .ok_or_else(|| invalid("assessment requires closure"))?;
+            validate_artifacts(&closure.input, &artifacts)?;
             let input = GoalAssessmentInput {
                 goal_id: id,
                 spec_digest: goal.spec_digest.clone(),
@@ -639,6 +726,7 @@ impl KanbanService {
                     })
                     .collect(),
                 evidence_manifest: closure.input.evidence_manifest.clone(),
+                artifacts,
             };
             let input_digest = digest(&input)?;
             goal.assessments.push(AssessmentAttempt {
@@ -653,7 +741,8 @@ impl KanbanService {
             Ok(true)
         })?;
         goal.assessments
-            .last()
+            .iter()
+            .find(|attempt| attempt.lease.attempt_id == attempt_id)
             .map(|a| a.input.clone())
             .ok_or_else(|| invalid("assessment input absent"))
     }
@@ -702,13 +791,14 @@ impl KanbanService {
                 ));
             }
             let known = evidence_ids(goal);
+            let fetched: HashSet<_> = attempt.input.artifacts.iter().filter_map(|artifact| match artifact.outcome { GoalArtifactReadOutcome::Fetched { .. } => Some(artifact.evidence_id.as_str()), _ => None }).collect();
             for finding in &completion.findings {
                 nonempty(&finding.note, "finding note")?;
                 validate_refs(&finding.evidence_ids, &known)?;
-                if finding.status != CriterionEvidenceStatus::Unknown
-                    && finding.evidence_ids.is_empty()
-                {
-                    return Err(invalid("supported/contradicted finding requires evidence"));
+                if finding.status != CriterionEvidenceStatus::Unknown {
+                    if finding.evidence_ids.is_empty() || finding.evidence_ids.iter().any(|id| !fetched.contains(id.as_str())) {
+                        return Err(invalid("supported/contradicted finding requires actually fetched digest-matched artifact IDs"));
+                    }
                 }
             }
             let attempt = goal
