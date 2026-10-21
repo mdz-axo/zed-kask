@@ -25,8 +25,9 @@ Reduct.video — the transcript bundled with its video as one linked artifact: c
 - The operator wants "the key 2 minutes" from a long recording.
 - A meeting/interview was recorded and needs a corrected transcript,
   speaker attribution, and a shareable clip.
-- Building a searchable archive of recordings (transcripts feed corpus
-  ingestion via educt_export).
+- Building a searchable archive of recordings: bounded lexical search uses
+  `educt_search_transcripts`; semantic retrieval hands off via `educt_export`
+  to the corpus pipeline. Search-only work does not require rendering a reel.
 
 ## When NOT to Use
 
@@ -55,6 +56,32 @@ Reduct.video — the transcript bundled with its video as one linked artifact: c
    a timing-free transcript; re-transcribe. (`transcribe_bundle` →
    `educt_store_transcript` remains available for short media when the
    caller needs the bundle in hand.)
+
+### Research retrieval and annotations (when requested)
+
+- Search existing recordings with `educt_search_transcripts`, `mode: "lexical"`
+  and a literal `query`. This is ASCII case-insensitive substring matching
+  (non-ASCII exact), not embeddings or semantic retrieval. Respect `limit`
+  and `recording_limit`; when `has_more` is true, continue with both returned
+  `next_recording_offset` and `next_start_byte`. Keep the returned source IDs,
+  excerpt, word/time ranges, and alignment/degradation alongside every citation.
+  A match with unavailable timing must not be presented as a timed quote.
+- For manually supplied research highlights use `educt_annotation_create`
+  with `transcript_id`, inclusive immutable-source `start_word` / `end_word`,
+  `label`, and `note`. List with `educt_annotation_list`; update with the same
+  transcript ID plus `annotation_id` and all replacement range/label/note
+  fields; delete with transcript ID plus annotation ID. Do not reuse corrected
+  text indices as source indices. These annotations are `researcher_supplied`,
+  not authenticated human identity or verified evidence; model suggestions stay
+  distinct. Select the returned highlight layer explicitly when composing a reel
+  from that annotation (`educt_edl_from_highlights`, `layer_id: annotation_id`).
+- For asset-level notes/tags use `gallery_annotation_create` with stable
+  `gallery_asset_id`, `kind` (`tag` or `note`), and `value`. List by asset ID;
+  update with asset ID, `annotation_id`, and replacement `value`; delete with
+  both IDs. Never substitute a positional gallery index for stable identity.
+- For search/annotation-only work, report the saved IDs and exact returned
+  citations, or surfaced missing timing/partial search; stop here. The reel
+  convergence gate applies only when a reel is requested.
 
 ### Phase 2 — Correct and structure (the passes)
 
@@ -135,10 +162,18 @@ educt tool family plus the convergence form above.
 
 ## Constraints
 
-- Never edit word timings — layers anchor to word indices; the
-  immutable transcript is the ground truth every layer derives from.
+- Never edit source word timings — layers anchor to word indices; the
+  immutable source transcript remains auditable. Re-anchored timings are
+  derived estimates, not newly observed STT timing or confidence.
 - `educt_locate` is the citation gate: no quote goes into a summary
   without a located word range.
+- Local educt never uploads to Reduct. Optional `reduct_*` upload/import
+  transfers selected media to a third party and requires an explicit operator
+  decision. Publication is a separate explicit decision: `publish: true` creates
+  public access. An acknowledgement is submission, not read-back, playback, or
+  successful ingestion; inspect cloud state before retrying an uncertain POST.
+  No automatic cloud fallback, POST retry, or cloud DELETE is part of this skill.
+- Face identification is opt-in; generic media curation never authorizes it.
 - A zero-text OCR/transcription result is an error, never a success —
   surface it.
 - If any MCP tool call fails, call `curator_report_skill_use_issue`

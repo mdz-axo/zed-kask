@@ -1,7 +1,7 @@
 ---
 title: "media_panel — Reference: Media Viewer Interaction Model"
 audience: [developers extending the media panel or media widget]
-last_updated: 2026-09-28
+last_updated: 2026-10-21
 version: "1.4.0"
 status: "Active"
 domain: "Media"
@@ -12,10 +12,46 @@ mds_categories: [domain, composition, lifecycle]
 
 The media viewer has four tabs backed by live state — Media, Library, Queue,
 and Detail (`crates/media_panel/src/media_viewer.rs:138-143`) — covering
-selected media, paginated gallery assets, process-local generation jobs, and
+selected media, paginated gallery assets, process-local research jobs, and
 selected-asset detail. All server calls route through the governed tool
 invoker to the `media` server, and pages are sized at 100 rows with a
 one-second queue poll (`crates/media_panel/src/media_viewer.rs:33-34`).
+
+## Research-curation scope
+
+The cross-domain Steer conversation drives ingestion, organization, research
+annotations, retrieval, transcription, and source-linked excerpt/reel extraction.
+Tool advertising derives from the server's generated `TOOL_NAMES`; the approved
+integration target is 91 (102 − 20 retired creative tools + 9 annotation/search
+tools), not evidence of a running deployment. No creative image/video/TTS models
+or generation recipes are offered. Settings → Kask → Media retains STT/vision
+only; explicit empty values disable the selected pipeline visibly.
+
+- `gallery_annotation_create` uses stable `gallery_asset_id`, `kind` (`tag` or
+  `note`), and `value`. List by asset ID, update with asset/annotation IDs and
+  replacement value, delete with both IDs. Positional indices are not identities.
+- `educt_annotation_create` uses `transcript_id`, inclusive immutable-source
+  `start_word` / `end_word`, `label`, and `note`; list by transcript ID, update
+  with transcript/annotation IDs and all replacement fields, delete with both
+  IDs. Supplied observations remain separate from model suggestions and are
+  not authenticated human identity or verified evidence.
+- `educt_search_transcripts` requires `query` and `mode: "lexical"`. Preserve
+  the returned source/transcript IDs, exact excerpts and available timing/
+  alignment citations. Search is bounded literal substring matching, not
+  semantic retrieval; follow both continuation offsets when `has_more` is true.
+  A truncated scan is not an exhaustive absence claim. Corpus export is the
+  semantic-search handoff; unavailable timing must remain visible.
+- Queue operations are `transcribe`, `audio_trim`, `audio_concat`, `video_clip`,
+  and `video_concat`. History is process-local, not durable transcript storage.
+- Historical media and lineage remain readable. Face identification requires
+  explicit selection; Reduct upload/import and publication are separate
+  operator decisions. Local educt never silently uploads or falls back to cloud.
+
+Annotations/search are chat-driven; no new dedicated annotation editor or search
+widget is implied. The four viewer tabs and their lifecycle/security boundaries
+below remain unchanged. The new prompt/inventory and historical-hint regression
+pins live in `crates/media_panel/src/media_panel.rs` and
+`crates/media_panel/src/media_viewer.rs`; their presence is not a test-run claim.
 
 ## Component and request map
 
@@ -187,11 +223,12 @@ The selected media entity is owned directly by the viewer so trim marks and the
 playback clock remain reachable; selection replacement resolves through the
 stable-asset weak registry (`crates/media_panel/src/media_viewer.rs:152-160`).
 The panel remains a vertically split viewer/director surface with a draggable
-split (`crates/media_panel/src/media_panel.rs:101-121,294+`).
+split (`MediaPanel`, `VerticalSplitState`, and `MediaPanel::render` in
+`crates/media_panel/src/media_panel.rs`).
 
 The viewer pane must retain `min_h_0` and `min_w_0` so media and toolbars shrink
 inside the dock instead of propagating intrinsic dimensions
-(`crates/media_panel/src/media_panel.rs:326-359`). The selected media uses the
+(`MediaPanel::render` in `crates/media_panel/src/media_panel.rs`). The selected media uses the
 shared media widget, preserving aspect ratio through the widget's contain fit.
 Playback timing is source-driven: source PTS and the audio-master clock decide
 when frames are due; a 4 ms decoder poll (`DECODE_POLL_INTERVAL`,

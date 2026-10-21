@@ -21,7 +21,7 @@ The table below is a partial quick-reference.
 | `gallery_add_media` | Import a video or audio file into the gallery whose folder contains it, not the active gallery (`media_type` selects the kind); path-identity upsert with SHA-256 change detection. The former `gallery_add_video`/`gallery_add_audio` pair, merged |
 | `gallery_refresh` | Refresh the gallery: scan for new/removed images, then update all AI metadata (objects, colors, composition, scene descriptions). Face detection is OFF by default; when include_faces=true, also scans the face reference folder (mcp/media/faces/ by default) for new reference faces, then auto-matches detected faces against the face_registry |
 | `describe_image` | Describe source content; distinguish observations from researcher interpretation |
-| `gallery_analyze` | Analyze gallery images with AI: detect faces, objects, colors, composition, and generate scene descriptions. Tags are persisted and become searchable |
+| `gallery_analyze` | Analyze source objects, colors, composition, and scenes; faces require explicit pipeline selection. Model-derived metadata stays separate from researcher annotations |
 | `gallery_name_face` | Name a face group from gallery_analyze. Provide either a free-text name or a face_id from the face registry |
 | `face_validate` | Validate a gallery image as a face reference for facial recognition. Checks: exactly 1 face, face coverage â¥15%, frontal pose, good lighting, no occlusion, sharp focus |
 | `face_register` | Register a face reference with a person's name. Auto-validates against 6 criteria. Pass --force to skip validation. Stored in the face_registry for automatic matching during gallery_refresh |
@@ -40,6 +40,48 @@ The table below is a partial quick-reference.
 | `transcribe_bundle` | Transcribe audio and return a synchronized TranscriptBundle with word-level timings (the former bare `transcribe` tool, merged) |
 | `audio_capture` | Capture audio from the default system microphone and publish a canonical durable WAV asset optimized for Whisper transcription (16kHz mono) |
 | `record_and_transcribe` | Record audio from microphone and transcribe it in one call. Returns linked audio file path and transcript |
+
+## Research annotations and recording retrieval
+
+The approved target inventory is 91 tools (102 − 20 creative operations + 9
+research operations). `TOOL_NAMES` and the live router must reconcile at
+integration; this target is not a claim about a rebuilt/running child.
+
+| Tool | Required request fields |
+|---|---|
+| `gallery_annotation_create` | `gallery_asset_id`, `kind` (`tag` or `note`), `value` |
+| `gallery_annotation_list` | `gallery_asset_id` |
+| `gallery_annotation_update` | `gallery_asset_id`, `annotation_id`, replacement `value` |
+| `gallery_annotation_delete` | `gallery_asset_id`, `annotation_id` |
+| `educt_annotation_create` | `transcript_id`, inclusive source `start_word`, `end_word`, `label`, `note` |
+| `educt_annotation_list` | `transcript_id` |
+| `educt_annotation_update` | `transcript_id`, `annotation_id`, all replacement range/label/note fields |
+| `educt_annotation_delete` | `transcript_id`, `annotation_id` |
+| `educt_search_transcripts` | `query`, `mode: "lexical"` |
+
+Annotations are supplied research observations, not authenticated human identity
+or verified evidence. They remain separate from model metadata. Use stable Asset
+IDs, not gallery positions; transcript annotation ranges index immutable source
+words, not corrected-text tokens. The annotation ID is a researcher highlight
+layer ID; select it explicitly for `educt_edl_from_highlights` with `layer_id`.
+
+Recording search is literal substring matching (ASCII case-insensitive,
+non-ASCII exact), not semantic retrieval. Optional `limit` is 1–100 (default 20),
+`recording_limit` 1–500 (default 100); `recording_offset`, `start_byte`, and
+`gallery_asset_id` scope/resume the query. Nonblank queries are capped at 256
+UTF-8 bytes and matching at 4 MiB per call (not a bound on one recording's
+load/projection). Keep each exact excerpt's source/transcript IDs and available
+word/time ranges, including missing/unaligned timing disclosures. `has_more`,
+`search_complete`, result/byte-limit flags and scan counts disclose bounded
+coverage. Resume with both `next_recording_offset` and `next_start_byte`; these
+refer to current order/working text, not a frozen snapshot. Export corpus text
+for semantic search. Search hits and annotations do not certify source truth.
+
+Creative generation/TTS/workflow execution is retired. Historical Asset records,
+lineage, OMC graphs, transcripts, and source-derived excerpts/reels remain
+readable. Reduct upload/import transfers selected media externally and requires
+an explicit operator decision; publication is a separate decision creating
+public access. Face identification is opt-in, never implied by generic analysis.
 
 ## Tool-result contracts
 
@@ -439,8 +481,9 @@ is `invalid_argument`, never a retryable outage. `model_list` / `model_info`
 discover configured STT and registry-confirmed vision models only; registry
 failures surface rather than masquerading as empty discovery.
 
-**Migration:** qualify bare/short-alias media model settings and saved replay
-overrides with a full provider name; configure that provider's key. See the
+**Migration:** configure only research STT/vision model settings with a full
+provider name and the selected provider's key; remove retired TTS/image/video
+model settings. Historical lineage does not authorize replaying creative tools. See the
 [inference routing contract](../../crates/hkask-inference/README.md#media-routing-policy--operator-decision-2026-09-06).
 
 ## Face recognition — design decision

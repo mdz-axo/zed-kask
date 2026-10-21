@@ -1,8 +1,8 @@
 ---
 title: "Agent System and Skills — Prompt Surfaces, Skill Anatomy, and Composition"
 audience: [architects, developers, agents]
-last_updated: 2026-09-28
-version: "2.3.0"
+last_updated: 2026-10-21
+version: "2.3.1"
 status: "Active"
 domain: "architecture"
 mds_categories: [composition, trust, domain, curation]
@@ -499,7 +499,7 @@ The model is the executor. Convergence is the model's judgment, optionally check
 
 | Tool | Location | Purpose |
 |------|----------|---------|
-| `lisp_eval` | `crates/agent/src/tools/lisp_eval_tool.rs` | Pure sandboxed Lisp, no I/O/`eval`/network. Defaults: 100000 steps / depth 1024 (`lisp_eval_tool.rs:280@default_max_steps,284@default_max_depth`). H4A rejects source/env above 65536/1048576 UTF-8 bytes or requested steps/depth above 2000000/8192; H4B caps the exact pretty JSON result document at 1048576 bytes, not envelopes or total heap/time. H5 titles inspect form only; typed decode and pure evaluation run in the background, while raw-output copying and bounded display formatting remain foreground. [Boundaries and deferred work](../reference/lisp-eval-dialect.md#numeric-admission-and-limits). The model calls it for skill-directed convergence, invariants and scoring. |
+| `lisp_eval` | `crates/agent/src/tools/lisp_eval_tool.rs` | Sandboxed Lisp for skill-directed convergence, invariants and scoring; no I/O/`eval`/network. Defaults 100000 steps / depth 1024 (`lisp_eval_tool.rs:291@default_max_steps`, `:295@default_max_depth`). Native typed decode/evaluation run in the background with one cooperative cancellation flag, mandatory teardown, cleanup join and publication/weak pending-owner guards (`lisp_eval_tool.rs:374@LispEvalTool::run`; `thread.rs:4326@Thread::process_tool_result`). Raw/pure APIs are unchanged; raw-output copying/display remain foreground. [Admission/output bounds, nonpreemptible phases and deferred H4C/H7/H8](../reference/lisp-eval-dialect.md#numeric-admission-and-limits); no hard time/heap/concurrency quota or H6 installed-editor validation. |
 | `render_template` | `crates/agent/src/tools/render_template_tool.rs` | Renders Jinja2 templates from `kask/registry/templates/` using `minijinja`. Strips the `[inference]`-keyed header. Path traversal protection via `canonicalize` + `starts_with` check. Template base path wired via `agent::set_template_base_path()` in `crates/zed/src/main.rs:711-729`. |
 
 ### PDCA Loops Are Model-Coordinated
@@ -807,7 +807,7 @@ Routing and discovery are model-coordinated skill behavior; they do not emit ded
 | Record key | Producer |
 |---|---|
 | `reg.skill.<skill-id>.outcome` | `SkillTool::run` and `activate_delegated_skill` record successful envelope delivery and dependency/body-resolution failures, stamped with `invoker` (`Curator`, `Zed Agent`, `delegated`); not-found and authorization denial remain request errors (`crates/agent/src/tools/skill_tool.rs:194-310`; `crates/zed/src/main.rs:988`). |
-| `reg.skill.<skill-id>.tool_failure` | `Thread::run_tool` records a non-`skill` tool failure while that skill is the thread's active skill (authorization failures excluded) — unclassified evidence (`crates/agent/src/thread.rs:4358-4512`; `crates/zed/src/main.rs:1704-1712`). |
+| `reg.skill.<skill-id>.tool_failure` | `Thread::run_tool` records a non-`skill` tool failure while that skill is the thread's active skill (authorization failures excluded) — unclassified evidence (`crates/agent/src/thread.rs:4788@Thread::run_tool`, `:4858-4861@active_skill`, `:4934-4949@record_skill_tool_failure`; `crates/zed/src/main.rs:1704-1712`). |
 | `reg.skill.<skill-id>.operator_feedback` | `record_skill_feedback` (Curator sessions only — the operator's evaluation during the algedonic review, separated from execution) is the only producer; it feeds the process-global recorder (applying curator advice records no verdict) (`crates/zed/src/main.rs:1726-1762`). |
 
 ---

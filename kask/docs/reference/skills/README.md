@@ -1,8 +1,8 @@
 ---
 title: "Skill Registry — Reference"
 audience: [developers, skill-authors, agents]
-last_updated: 2026-10-19
-version: "0.43.0"
+last_updated: 2026-10-21
+version: "0.43.1"
 status: "Active"
 domain: "Core"
 mds_categories: [domain, composition]
@@ -16,14 +16,14 @@ mds_categories: [domain, composition]
 > and follows the instructions. The agent is the executor.
 >
 > **Two tools support skill execution:**
-> - `lisp_eval` — sandboxed Lisp interpreter (`hkask_lisp::eval_sandboxed_with_budget`). No I/O,
->   no `eval`, no network. Defaults: 100000 steps / depth 1024. H4A ceilings: source/env
->   65536/1048576 UTF-8 bytes, requested steps/depth 2000000/8192. H4B caps the exact
->   pretty JSON result document at 1048576 bytes, not envelopes or total heap/time.
->   H5 titles read form only; typed decode/evaluation run in the background, not raw-output
->   copying or bounded display formatting ([boundaries/deferred work](../lisp-eval-dialect.md#numeric-admission-and-limits)).
->   (`kask/crates/hkask-lisp/src/hkask_lisp.rs:2253@eval_sandboxed_with_budget`, defaults at `crates/agent/src/tools/lisp_eval_tool.rs:280@default_max_steps,284@default_max_depth`). The model calls it when a SKILL.md instructs
->   deterministic computation (convergence signals, invariant checks, scoring).
+> - `lisp_eval` — sandboxed Lisp for skill-directed deterministic checks; no I/O/`eval`/network.
+>   Native background decode/evaluation uses `eval_sandboxed_with_cancellation`, one monotonic
+>   flag, mandatory teardown, cleanup join and publication/weak pending-owner guards; raw/pure
+>   APIs are unchanged (`kask/crates/hkask-lisp/src/hkask_lisp.rs:2505@eval_sandboxed_with_cancellation`;
+>   `crates/agent/src/tools/lisp_eval_tool.rs:374@LispEvalTool::run`). Defaults remain 100000 steps /
+>   depth 1024 (`lisp_eval_tool.rs:291@default_max_steps`, `:295@default_max_depth`). Titles read
+>   form only; copying/display stay foreground. [Bounds and nonpreemptible phases](../lisp-eval-dialect.md#numeric-admission-and-limits)
+>   are not hard time/heap/concurrency guarantees; H4C/H7/H8 remain deferred, H6 installed-editor validation unclaimed.
 > - `render_template` — renders Jinja2 templates from `kask/registry/templates/` using `minijinja`.
 >   Strips the `[inference]`-keyed header. Path traversal protection via `canonicalize` + `starts_with` check.
 >   Template base path wired via `agent::set_template_base_path()` (OnceLock) in `main.rs` at startup.

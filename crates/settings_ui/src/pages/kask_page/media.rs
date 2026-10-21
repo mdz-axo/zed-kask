@@ -23,7 +23,7 @@ pub(crate) fn render_media_page(
     let stt_input = kask_string_input(
         "kask-media-stt",
         "STT Model",
-        "Provider/model-id (required — no hidden default)",
+        "Provider/model-id (clear to disable transcription)",
         media.stt_model,
         "media",
         "stt_model",
@@ -31,7 +31,7 @@ pub(crate) fn render_media_page(
     let vision_input = kask_string_input(
         "kask-media-vision",
         "Vision Model",
-        "Provider/model-id (required — no hidden default)",
+        "Provider/model-id (clear to disable visual analysis)",
         media.vision_model,
         "media",
         "vision_model",

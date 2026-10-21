@@ -1,8 +1,8 @@
 ---
 title: "hKask Architecture Diagrams — Ontology Bridge, Skill/MCP/Lisp Seam, Credentials, Tool Port, Event Store, Viz-Core, Skill Learning Loop"
 audience: [architects, developers, agents]
-last_updated: 2026-10-19
-version: "1.2.2"
+last_updated: 2026-10-21
+version: "1.2.3"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -148,11 +148,13 @@ status: VERIFIED
 
 The three coupled surfaces: the **skill system** (D1, upstream-Zed body
 injection), the **MCP server wiring** (D3), and the **Lisp capabilities
-layer** (the `lisp_eval` tool's deterministic primitive). H5 runs agent typed
-input decoding and pure evaluation in the background; titles read form only.
-H4B caps the exact pretty JSON result document at 1 MiB, not total heap/time.
-Raw-output copying and bounded display formatting remain foreground;
-H6 cancellation and H7/H8 host/corpus offload remain deferred.
+layer** (the `lisp_eval` tool's deterministic primitive). Native background
+input decoding/evaluation uses one cooperative cancellation flag, mandatory
+teardown and cleanup join, with publication/weak pending-owner guards. Raw/pure
+APIs are unchanged; titles read form only and copying/display stay foreground.
+[Document bounds and nonpreemptible phases](../reference/lisp-eval-dialect.md#numeric-admission-and-limits)
+are not hard time/heap/concurrency guarantees. H4C measurements and H7/H8
+host/corpus cancellation/offload remain deferred; no H6 installed-editor validation.
 
 **Correction (2026-09-28):** the widget→agent compose-back seam (D21) was
 retired with commit `fa95c2b8c7` — the `hkask-conversation-injector` crate
@@ -173,7 +175,7 @@ architecture-beta
     service render_template(skill)[render_template tool<br/>crates/agent/src/tools/render_template_tool.rs]
 
     service lisp_eval(lisp)[lisp_eval tool<br/>crates/agent/src/tools/lisp_eval_tool.rs]
-    service lisp_runtime(lisp)[hkask_lisp::eval_sandboxed_with_budget<br/>hkask-lisp/]
+    service lisp_runtime(lisp)[hkask_lisp::eval_sandboxed_with_cancellation<br/>hkask-lisp/]
 
     service thread(agent)[Thread::enabled_tools<br/>crates/agent/src/thread.rs]
     service list_mcp_tools(agent)[list_mcp_tools tool<br/>crates/agent/src/tools/list_mcp_tools_tool.rs]
@@ -190,7 +192,7 @@ architecture-beta
     envelope --> agent: model reads body and follows instructions
     agent --> render_template: structured prompt scaffolding (model-coordinated)
     agent --> lisp_eval: deterministic checks (model-coordinated)
-    lisp_eval --> lisp_runtime: background typed decode and pure evaluation
+    lisp_eval --> lisp_runtime: background decode and cooperative evaluation
 
     thread --> tool_port: full registered surface every turn (D44 — no per-turn filtering)
     list_mcp_tools --> thread: enumerates registered surface on demand
@@ -202,8 +204,8 @@ architecture-beta
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ARCH-SKILL-MCP-LISP-001
-verified_date: 2026-10-20
-verified_against: crates/agent/src/tools/skill_tool.rs (SkillTool L127, run L194, render_skill_envelope L48, with_invoker L162); crates/agent_skills/agent_skills.rs (read_skill_body L841); crates/agent/src/tools/lisp_eval_tool.rs (LispEvalTool L313, raw_initial_title L350, run L362); crates/agent/src/tools/render_template_tool.rs (RenderTemplateTool L83); crates/agent/src/thread.rs (enabled_tools L5578, raw_initial_title L7151, erased title L7301); crates/agent/src/tools/list_mcp_tools_tool.rs (ListMcpToolsTool L58, enumerate_tool_listing L119); kask/crates/hkask-lisp/src/hkask_lisp.rs (eval_sandboxed_with_budget L2253, format_json_output L2230); kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort L98); kask/crates/hkask-mcp/src/runtime.rs (McpRuntime, impl ToolPort for McpRuntime, start_server_with_env, stop_server, tool_surface_changes); kask/crates/hkask-regulation/src/energy.rs (CallCapManager, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/mcp_servers.rs (BUILT_IN_MCP_SERVERS — 9 servers); crates/hkask-tool-invoker/src/hkask_tool_invoker.rs (ToolInvoker trait L131, shared_tool_invoker L158)
+verified_date: 2026-10-21
+verified_against: crates/agent/src/tools/skill_tool.rs (SkillTool L127, run L194, render_skill_envelope L48, with_invoker L162); crates/agent_skills/agent_skills.rs (read_skill_body L841); crates/agent/src/tools/lisp_eval_tool.rs (LispEvalTool L324, raw_initial_title L362, run L374, lisp_worker L418, evaluate_lisp_controlled L485); crates/agent/src/tools/render_template_tool.rs (RenderTemplateTool L83); crates/agent/src/thread.rs (Thread::enabled_tools L5624, AgentTool::raw_initial_title L7197, Erased::initial_title L7347, Thread::run_turn L3025, Thread::process_tool_result L4326, Thread::owns_pending_message L5407, ThreadEventStream::join_lisp_completions L7448); crates/agent/src/tools/list_mcp_tools_tool.rs (ListMcpToolsTool L58, enumerate_tool_listing L119); kask/crates/hkask-lisp/src/hkask_lisp.rs (eval_sandboxed_with_cancellation L2505, eval_sandboxed_with_budget L2515, format_json_output L2473); kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort L98); kask/crates/hkask-mcp/src/runtime.rs (McpRuntime, impl ToolPort for McpRuntime, start_server_with_env, stop_server, tool_surface_changes); kask/crates/hkask-regulation/src/energy.rs (CallCapManager, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/mcp_servers.rs (BUILT_IN_MCP_SERVERS — 9 servers); crates/hkask-tool-invoker/src/hkask_tool_invoker.rs (ToolInvoker trait L131, shared_tool_invoker L158)
 status: VERIFIED
 -->
 
@@ -631,7 +633,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ARCH-LEARNING-LOOP-001
 verified_date: 2026-09-28
-verified_against: crates/agent/src/tools/skill_tool.rs (with_invoker L162, activate_skill L295); crates/agent/src/agent.rs (register_session L963, activate_delegated_skill L4690, DELEGATED_SKILL_INVOKER L4716, RecorderHook L4742, record_skill_feedback tool L4814, record_skill_outcome L4853, record_skill_tool_failure L4860); crates/agent/src/thread.rs (run_tool active-skill capture L4431, L4512); crates/agent/src/kask_thread_state.rs (active_skill_handle L82); crates/zed/src/main.rs (skill outcome recorder L988, archive set L1692, tool-failure recorder L1704); kask/crates/kask_bridge/src/memory/curator_stores.rs (persist_operator_feedback L49, persist_skill_outcome L63, persist_skill_tool_failure L74); kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs (curator_report_skill_use_issue L1228, memory_insert L1334); kask/crates/hkask-regulation/src/cybernetics_loop/directive.rs (apply_evolve_mcp_tool_schema L305); kask/crates/hkask-regulation/src/metacognition.rs (sense_feedback_drift L447); crates/agent/src/curator_agent_server.rs (CURATOR_STATIC_CONTEXT L45, Learning loop section L60); .agents/skills/algedonic-review/SKILL.md (gemba walk L4, L13); .agents/skills/skill-maintenance/SKILL.md (Plan → Do → Check → Act L157)
+verified_against: crates/agent/src/tools/skill_tool.rs (with_invoker L162, activate_skill L295); crates/agent/src/agent.rs (register_session L963, activate_delegated_skill L4690, DELEGATED_SKILL_INVOKER L4716, RecorderHook L4742, record_skill_feedback tool L4814, record_skill_outcome L4853, record_skill_tool_failure L4860); crates/agent/src/thread.rs (Thread::run_tool L4788, active_skill capture L4860, record_skill_tool_failure L4943); crates/agent/src/kask_thread_state.rs (active_skill_handle L82); crates/zed/src/main.rs (skill outcome recorder L988, archive set L1692, tool-failure recorder L1704); kask/crates/kask_bridge/src/memory/curator_stores.rs (persist_operator_feedback L49, persist_skill_outcome L63, persist_skill_tool_failure L74); kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs (curator_report_skill_use_issue L1228, memory_insert L1334); kask/crates/hkask-regulation/src/cybernetics_loop/directive.rs (apply_evolve_mcp_tool_schema L305); kask/crates/hkask-regulation/src/metacognition.rs (sense_feedback_drift L447); crates/agent/src/curator_agent_server.rs (CURATOR_STATIC_CONTEXT L45, Learning loop section L60); .agents/skills/algedonic-review/SKILL.md (gemba walk L4, L13); .agents/skills/skill-maintenance/SKILL.md (Plan → Do → Check → Act L157)
 status: VERIFIED
 -->
 
