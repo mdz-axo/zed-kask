@@ -108,7 +108,135 @@ fn deserialize_env_field<'de, D>(
 where
     D: serde::Deserializer<'de>,
 {
-    hkask_types::tool_schema::deserialize_json_text_object(deserializer, "env")
+    let teaching_error = |error| {
+        serde::de::Error::custom(format!(
+            "env: expected JSON text encoding an object: {error}"
+        ))
+    };
+    let text =
+        String::deserialize(deserializer).map_err(|error| teaching_error(error.to_string()))?;
+    validate_env_json_numbers(&text)
+        .map_err(|error| teaching_error(format!("expected complete JSON text: {error}")))?;
+    hkask_types::tool_schema::deserialize_json_text_object(
+        serde::de::value::StringDeserializer::<D::Error>::new(text),
+        "env",
+    )
+}
+
+/// Validate spelling before Value can round a large integer or discard an
+/// earlier duplicate-key value. RawValue's scanner does not enforce serde's
+/// default recursion limit, so check structure first without constructing Value.
+fn validate_env_json_numbers(text: &str) -> Result<(), serde_json::Error> {
+    serde_json::from_str::<EnvJsonStructure>(text)?;
+    let root: &serde_json::value::RawValue = serde_json::from_str(text)?;
+    let mut pending = vec![root];
+    while let Some(raw) = pending.pop() {
+        let token = raw.get();
+        match token.as_bytes().first() {
+            Some(b'{') => {
+                let children: EnvJsonMembers<'_> = serde_json::from_str(token)?;
+                pending.extend(children.0);
+            }
+            Some(b'[') => {
+                let children: Vec<&serde_json::value::RawValue> = serde_json::from_str(token)?;
+                pending.extend(children);
+            }
+            Some(b'-' | b'0'..=b'9')
+                if !token.contains(['.', 'e', 'E']) && token.parse::<i64>().is_err() =>
+            {
+                return Err(serde::de::Error::custom(format!(
+                    "integer {token} is outside signed i64 range ({}..={})",
+                    i64::MIN,
+                    i64::MAX
+                )));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Keep all object values, including values overwritten by a duplicate key.
+struct EnvJsonMembers<'a>(Vec<&'a serde_json::value::RawValue>);
+
+impl<'de> Deserialize<'de> for EnvJsonMembers<'de> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct MembersVisitor;
+        impl<'de> serde::de::Visitor<'de> for MembersVisitor {
+            type Value = EnvJsonMembers<'de>;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a JSON object")
+            }
+
+            fn visit_map<M: serde::de::MapAccess<'de>>(
+                self,
+                mut map: M,
+            ) -> Result<Self::Value, M::Error> {
+                let mut values = Vec::new();
+                while map.next_key::<serde::de::IgnoredAny>()?.is_some() {
+                    values.push(map.next_value()?);
+                }
+                Ok(EnvJsonMembers(values))
+            }
+        }
+        deserializer.deserialize_map(MembersVisitor)
+    }
+}
+
+/// Unlike IgnoredAny/RawValue, recursive deserialize_any calls retain serde's
+/// default nesting checks. Numeric callbacks here discard only their temporary
+/// parsed representation; the original text remains authoritative below.
+struct EnvJsonStructure;
+
+impl<'de> Deserialize<'de> for EnvJsonStructure {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(EnvJsonStructure)
+    }
+}
+
+impl<'de> serde::de::Visitor<'de> for EnvJsonStructure {
+    type Value = Self;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a JSON value")
+    }
+
+    fn visit_bool<E: serde::de::Error>(self, _: bool) -> Result<Self, E> {
+        Ok(self)
+    }
+
+    fn visit_i64<E: serde::de::Error>(self, _: i64) -> Result<Self, E> {
+        Ok(self)
+    }
+
+    fn visit_u64<E: serde::de::Error>(self, _: u64) -> Result<Self, E> {
+        Ok(self)
+    }
+
+    fn visit_f64<E: serde::de::Error>(self, _: f64) -> Result<Self, E> {
+        Ok(self)
+    }
+
+    fn visit_str<E: serde::de::Error>(self, _: &str) -> Result<Self, E> {
+        Ok(self)
+    }
+
+    fn visit_unit<E: serde::de::Error>(self) -> Result<Self, E> {
+        Ok(self)
+    }
+
+    fn visit_seq<S: serde::de::SeqAccess<'de>>(self, mut seq: S) -> Result<Self, S::Error> {
+        while seq.next_element::<Self>()?.is_some() {}
+        Ok(self)
+    }
+
+    fn visit_map<M: serde::de::MapAccess<'de>>(self, mut map: M) -> Result<Self, M::Error> {
+        while map.next_key::<serde::de::IgnoredAny>()?.is_some() {
+            map.next_value::<Self>()?;
+        }
+        Ok(self)
+    }
 }
 
 fn deserialize_max_steps_field<'de, D>(deserializer: D) -> Result<u64, D::Error>

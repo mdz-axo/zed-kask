@@ -771,3 +771,17 @@ fn seeded_random_forms_are_total_and_deterministic() {
         }
     }
 }
+
+proptest! {
+    /// expect: "Integer literal admission matches the signed i64 domain without float fallback" [P8]
+    #[test]
+    fn integer_literal_admission_matches_rust_domain(
+        value in prop_oneof![numeric_edge().prop_map(i128::from), any::<i128>()],
+    ) {
+        let result = eval_sandboxed(&value.to_string(), &serde_json::json!({}));
+        match i64::try_from(value) {
+            Ok(expected) => prop_assert_eq!(result.expect("i64 literal evaluates"), serde_json::json!(expected)),
+            Err(_) => prop_assert!(matches!(result, Err(LispError::Parse(_)))),
+        }
+    }
+}

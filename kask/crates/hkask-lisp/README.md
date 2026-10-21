@@ -24,11 +24,9 @@ by brundonsmith, with these deviations:
   destruction protect the host stack. JSON output has a separate nesting
   boundary of 128, independent of the requested evaluation depth.
 - **No `eval` builtin**: Lisp code cannot evaluate arbitrary strings. This is
-  a deliberate security restriction — the interpreter is safe for skill
-  convergence checks.
-- **No `Hash` type**: JSON objects become association lists. This keeps the
-  interpreter small (~1000 lines) and avoids the complexity of a hash map
-  type. Users implement `map`/`filter` in Lisp itself.
+  a deliberate restriction on the language surface.
+- **No `Hash` type**: JSON objects become association lists rather than a
+  separate hash map type. Users implement `map`/`filter` in Lisp itself.
 
 ## Supported forms
 
@@ -52,6 +50,23 @@ let result = eval_sandboxed(form, &env).unwrap();
 assert_eq!(result, json!(true));
 ```
 
+## Integer admission
+
+Source tokens consisting of digits with an optional `+`/`-` sign must fit
+signed `i64`; out-of-range spellings return `LispError::Parse` rather than
+falling back to a rounded float. The sandbox also rejects already-parsed
+JSON unsigned integers outside `i64`, including nested values. It cannot
+recover an original integer spelling already rounded into a JSON float.
+
+The agent tool accepts `env` as JSON text and checks original numeric tokens
+before projection into `serde_json::Value`, including nested and duplicate-key
+values and integers beyond `u64`. It uses existing serde JSON `RawValue` and a
+structure pass retaining serde's default nesting check, not a new parser or
+dependency. Explicit finite floats (`1.0`, `1e0`) and numeric-looking strings
+remain accepted. This is integer admission, not complete numeric correctness:
+H3 non-finite arithmetic and mixed-number promotion remain deferred. Defaults,
+output conversion and infix rewriting are unchanged.
+
 ## Skill usage
 
 The `lisp_eval` agent tool calls `eval_sandboxed` with a Lisp form and a JSON
@@ -61,7 +76,7 @@ convergence checks, invariant validation, and deterministic scoring:
 ```
 Call `lisp_eval`:
   form: "(and (> (length findings) 0) (< composite 0.15))"
-  env: { "findings": <step_2_result.findings>, "composite": <step_3_result.composite> }
+  env: JSON text encoding { "findings": <step_2_result.findings>, "composite": <step_3_result.composite> }
 ```
 
 ## Dependencies
@@ -79,8 +94,19 @@ No hKask crate dependencies — this is a standalone computation library.
 - No I/O, no filesystem, no network, no environment variable access
 - Budgeted sandbox boundary (`eval_sandboxed` / `eval_sandboxed_with_budget`):
   default depth 1024 and work budget 100000; oversized work returns a limit error
-- Lower-level conversion helpers do not enforce the sandbox budget themselves
+- Lower-level `from_json` / `to_json` are unchecked conversions: they do not
+  enforce sandbox work/depth or integer-admission checks. `from_json` can
+  convert an out-of-i64 unsigned number to a float; `to_json` maps non-finite
+  floats to JSON null. Use the sandbox boundary for its admission checks.
 - Returned JSON nesting is independently bounded for caller serialization/drop
-- Environment is immutable from Lisp's perspective (define mutates a local
-  scope discarded after evaluation)
+- Stateless sandbox calls retain strong lexical captures during evaluation.
+  A private `InvocationScopes` RAII guard, held through a private field in
+  `EvalBudget`, weakly tracks root, `let` and lambda-call scopes. On drop it
+  upgrades all surviving scopes before clearing any bindings and parent links,
+  breaking closure cycles even in scopes no longer reachable from the root.
+  Cleanup covers success, returned errors and Rust unwinding, not process
+  abort or OOM. Raw `Env` / `eval` callers retain their owned environments;
+  they do not receive this automatic cleanup.
+- Step/depth accounting and cycle cleanup are not wall-clock or heap quotas,
+  nor a claim of complete sandbox or numeric correctness
 - `#![forbid(unsafe_code)]` — no unsafe blocks anywhere in the crate

@@ -51,6 +51,126 @@ fn env_json_text_is_decoded() {
 }
 
 #[test]
+fn env_raw_integer_beyond_u64_is_refused_before_rounding() {
+    let out = run(json!({"form": "n", "env": "{\"n\":184467440737095516160}"}));
+    let error = out.expect_err("out-of-i64 integer spelling must not become a float");
+    assert!(error.contains("env:"), "{error}");
+    assert!(error.contains("184467440737095516160"), "{error}");
+    assert!(error.contains("i64"), "{error}");
+}
+
+#[test]
+fn env_raw_unsafe_integers_are_refused_even_when_projection_discards_them() {
+    for integer in [
+        "9223372036854775808",
+        "18446744073709551615",
+        "184467440737095516160",
+        "-9223372036854775809",
+        "-184467440737095516160",
+    ] {
+        for env in [
+            format!(r#"{{"n":{integer}}}"#),
+            format!(r#"{{"data":{{"nested":[0,{integer}]}}}}"#),
+            format!(r#"{{"n":{integer},"n":0}}"#),
+            format!(r#"{{"n":0,"n":{integer}}}"#),
+            format!(r#"{{"data":{{"n":{integer},"n":0}},"data":null}}"#),
+        ] {
+            // The form ignores env: admission must inspect even unused data.
+            let error = run(json!({"form": "42", "env": env}))
+                .expect_err("every original integer value must be admitted before projection");
+            assert!(error.contains("env:"), "{env}: {error}");
+            assert!(error.contains(integer), "{env}: {error}");
+            assert!(error.contains("i64"), "{env}: {error}");
+        }
+    }
+}
+
+#[test]
+fn env_raw_i64_endpoints_and_neighbors_above_two_to_53_stay_exact() {
+    for integer in [i64::MIN, i64::MAX, 9007199254740992, 9007199254740993] {
+        assert_eq!(
+            run(json!({"form": "n", "env": format!(r#"{{"n":{integer}}}"#)})),
+            Ok(json!(integer))
+        );
+    }
+    assert_eq!(
+        run(json!({
+            "form": "(= a b)",
+            "env": r#"{"a":9007199254740992,"b":9007199254740993}"#
+        })),
+        Ok(json!(false))
+    );
+}
+
+#[test]
+fn env_raw_explicit_float_spellings_stay_floats() {
+    for spelling in ["1.0", "1e0", "1E+0", "-2.5e-1", "184467440737095516160.0"] {
+        let result = run(json!({"form": "n", "env": format!(r#"{{"n":{spelling}}}"#)}))
+            .expect("finite explicit floats are accepted");
+        let expected: Value = serde_json::from_str(spelling).expect("finite float oracle");
+        assert_eq!(result, expected, "{spelling}");
+        assert!(result.is_f64(), "{spelling}: {result}");
+    }
+}
+
+#[test]
+fn env_raw_quoted_numeric_and_nested_json_text_stay_strings() {
+    for text in [
+        "184467440737095516160",
+        "-9223372036854775809",
+        "1/3",
+        "1.0",
+        "1e0",
+    ] {
+        let data = json!({"nested": [text, {"text": text}], "numeric": text});
+        assert_eq!(
+            run(json!({"form": "data", "env": json!({"data": data}).to_string()})),
+            Ok(data)
+        );
+    }
+    assert_eq!(
+        run(json!({
+            "form": "n",
+            "env": r#"{"n":"{\"n\":184467440737095516160}","discarded":1,"discarded":2}"#
+        })),
+        Ok(json!(r#"{"n":184467440737095516160}"#))
+    );
+    assert_eq!(
+        run(json!({"form": "n", "env": r#"{"n":1,"n":2}"#})),
+        Ok(json!(2))
+    );
+}
+
+#[test]
+fn env_raw_validation_keeps_complete_json_teaching_errors() {
+    for env in [
+        r#"{"n":01}"#,
+        r#"{"n":1e}"#,
+        r#"{"n":[1,]}"#,
+        r#"{"n":1} trailing"#,
+        r#"{"n":1e999}"#,
+    ] {
+        let error = run(json!({"form": "42", "env": env}))
+            .expect_err("malformed env JSON must be rejected");
+        assert!(error.contains("env:"), "{env}: {error}");
+        assert!(
+            error.contains("expected complete JSON text"),
+            "{env}: {error}"
+        );
+        assert!(error.contains("line 1 column"), "{env}: {error}");
+    }
+}
+
+#[test]
+fn env_raw_validation_retains_serde_default_nesting_refusal() {
+    let env = format!(r#"{{"n":{}0{}}}"#, "[".repeat(256), "]".repeat(256));
+    let error = run(json!({"form": "42", "env": env}))
+        .expect_err("RawValue validation must not bypass serde's nesting limit");
+    assert!(error.contains("env:"), "{error}");
+    assert!(error.contains("recursion limit exceeded"), "{error}");
+}
+
+#[test]
 fn env_json_text_with_surrounding_whitespace_is_decoded() {
     assert_eq!(
         run(json!({"form": "(+ a 1)", "env": "  {\"a\": 1}  "})),

@@ -61,7 +61,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use serde_json::Value;
 use thiserror::Error;
@@ -430,25 +430,33 @@ fn parse_form<'a>(
         ]));
         return Ok((quoted, next));
     }
-    Ok((parse_atom(tok), rest))
+    Ok((parse_atom(tok)?, rest))
 }
 
-fn parse_atom(tok: &str) -> LispValue {
+fn parse_atom(tok: &str) -> Result<LispValue, LispError> {
     if tok.starts_with('"') && tok.ends_with('"') && tok.len() >= 2 {
-        return LispValue::String(unescape_string(&tok[1..tok.len() - 1]));
+        return Ok(LispValue::String(unescape_string(&tok[1..tok.len() - 1])));
     }
     if let Ok(i) = tok.parse::<i64>() {
-        return LispValue::Int(i);
+        return Ok(LispValue::Int(i));
+    }
+    let digits = tok.strip_prefix(['+', '-']).unwrap_or(tok);
+    if !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(LispError::Parse(format!(
+            "integer literal {tok} is outside signed i64 range ({}..={})",
+            i64::MIN,
+            i64::MAX
+        )));
     }
     if let Ok(f) = tok.parse::<f64>() {
-        return LispValue::Float(f);
+        return Ok(LispValue::Float(f));
     }
-    match tok {
+    Ok(match tok {
         "true" => LispValue::Bool(true),
         "false" => LispValue::Bool(false),
         "nil" => LispValue::Nil,
         _ => LispValue::Symbol(tok.to_string()),
-    }
+    })
 }
 
 fn unescape_string(s: &str) -> String {
@@ -477,12 +485,37 @@ fn unescape_string(s: &str) -> String {
 
 // ── Evaluator ───────────────────────────────────────────────────────────────
 
+#[derive(Debug, Default)]
+struct InvocationScopes {
+    scopes: RefCell<Vec<Weak<RefCell<Env>>>>,
+}
+
+impl Drop for InvocationScopes {
+    fn drop(&mut self) {
+        // Hold every survivor before breaking any links, including cycles in
+        // child scopes no longer reachable from the root. Weak tracking lets
+        // acyclic call scopes release their payloads during evaluation.
+        let survivors: Vec<_> = self
+            .scopes
+            .get_mut()
+            .iter()
+            .filter_map(Weak::upgrade)
+            .collect();
+        for scope in &survivors {
+            let mut scope = scope.borrow_mut();
+            scope.vars.clear();
+            scope.parent = None;
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct EvalBudget {
     pub max_steps: u64,
     pub max_depth: u64,
     steps_used: u64,
     depth_current: u64,
+    invocation_scopes: Option<Rc<InvocationScopes>>,
 }
 
 impl EvalBudget {
@@ -492,7 +525,18 @@ impl EvalBudget {
             max_depth,
             steps_used: 0,
             depth_current: 0,
+            invocation_scopes: None,
         }
+    }
+
+    fn new_scope(&self, env: Env) -> Rc<RefCell<Env>> {
+        let scope = Rc::new(RefCell::new(env));
+        if let Some(registry) = &self.invocation_scopes {
+            registry.scopes.borrow_mut().push(Rc::downgrade(&scope));
+        }
+        #[cfg(test)]
+        tests::observe_scope(&scope);
+        scope
     }
 
     fn tick(&mut self) -> Result<(), LispError> {
@@ -622,7 +666,7 @@ fn eval_special_form(
                 LispValue::List(b) => b.to_vec(),
                 _ => return Err(LispError::Runtime("let bindings must be a list".into())),
             };
-            let child_env = Rc::new(RefCell::new(Env::child(env)));
+            let child_env = budget.new_scope(Env::child(env));
             for binding in bindings {
                 let pair = match &binding {
                     LispValue::List(p) => p.to_vec(),
@@ -779,7 +823,7 @@ fn apply(
                     args.len()
                 )));
             }
-            let call_env = Rc::new(RefCell::new(Env::child(closure_env)));
+            let call_env = budget.new_scope(Env::child(closure_env));
             for (param, arg) in params.iter().zip(args.iter()) {
                 call_env.borrow_mut().define(param.clone(), arg.clone());
             }
@@ -1919,6 +1963,13 @@ fn charge_json(value: &Value, budget: &mut EvalBudget, depth: u64) -> Result<(),
     budget.tick()?;
     match value {
         Value::String(text) => budget.charge(text.len())?,
+        Value::Number(number) if number.as_i64().is_none() && number.as_u64().is_some() => {
+            return Err(LispError::Runtime(format!(
+                "JSON integer {number} is outside signed i64 range ({}..={})",
+                i64::MIN,
+                i64::MAX
+            )));
+        }
         Value::Array(values) => {
             for value in values {
                 charge_json(value, budget, depth.saturating_add(1))?;
@@ -2104,12 +2155,15 @@ pub fn eval_sandboxed_with_budget(
     max_depth: u64,
 ) -> Result<Value, LispError> {
     let mut budget = EvalBudget::new(max_steps, max_depth);
+    // This guard belongs only to the stateless JSON boundary. Raw eval callers
+    // retain ownership of their environments and may reuse escaping closures.
+    budget.invocation_scopes = Some(Rc::new(InvocationScopes::default()));
     let parsed = parse_with_budget(form, &mut budget)?;
     charge_json(env_json, &mut budget, 0)?;
     if parsed.is_empty() {
         return Ok(Value::Null);
     }
-    let env = Rc::new(RefCell::new(Env::new_root()));
+    let env = budget.new_scope(Env::new_root());
     if let Value::Object(obj) = env_json {
         for (k, v) in obj {
             env.borrow_mut().define(k.clone(), from_json(v));
@@ -2136,6 +2190,250 @@ mod property_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::rc::Weak;
+
+    #[derive(Default)]
+    struct ScopeObservation {
+        scopes: Vec<Weak<RefCell<Env>>>,
+        panic_at: Option<usize>,
+    }
+
+    thread_local! {
+        static OBSERVED_SCOPES: RefCell<Option<ScopeObservation>> = const { RefCell::new(None) };
+    }
+
+    pub(super) fn observe_scope(scope: &Rc<RefCell<Env>>) {
+        let inject_panic = OBSERVED_SCOPES.with_borrow_mut(|observation| {
+            let Some(observation) = observation else {
+                return false;
+            };
+            observation.scopes.push(Rc::downgrade(scope));
+            observation.panic_at == Some(observation.scopes.len())
+        });
+        assert!(!inject_panic, "injected scope-allocation unwind");
+    }
+
+    struct ScopeProbe;
+
+    impl ScopeProbe {
+        fn start(panic_at: Option<usize>) -> Self {
+            OBSERVED_SCOPES.with_borrow_mut(|observation| {
+                assert!(observation.is_none(), "scope probes cannot overlap");
+                *observation = Some(ScopeObservation {
+                    scopes: Vec::new(),
+                    panic_at,
+                });
+            });
+            Self
+        }
+
+        fn assert_reclaimed(&self) {
+            OBSERVED_SCOPES.with_borrow(|observation| {
+                let scopes = &observation.as_ref().expect("active scope probe").scopes;
+                assert!(!scopes.is_empty(), "probe must observe real evaluation");
+                assert!(
+                    scopes.iter().all(|scope| scope.upgrade().is_none()),
+                    "sandbox invocation retained an environment after completion"
+                );
+            });
+        }
+    }
+
+    impl Drop for ScopeProbe {
+        fn drop(&mut self) {
+            OBSERVED_SCOPES.with_borrow_mut(|observation| drop(observation.take()));
+        }
+    }
+
+    /// expect: "Completed sandbox calls release all invocation environments, including cycles" [P4]
+    #[test]
+    fn sandbox_reclaims_scopes_on_every_exit() {
+        let output_failure = format!(
+            "(define f (lambda (x) x)) '{}1{}",
+            "(".repeat(128),
+            ")".repeat(128)
+        );
+        let cases = [
+            (
+                "(define f (lambda (x) x)) (let () (begin (define g (lambda () 1)) 0))",
+                100_000,
+                1024,
+                "success",
+            ),
+            (
+                "(define f (lambda (x) x)) (let () (begin (define g (lambda () 1)) missing))",
+                100_000,
+                1024,
+                "runtime",
+            ),
+            ("(define f (lambda (x) (f x))) (f 1)", 200, 1024, "steps"),
+            ("(define f (lambda (x) (f x))) (f 1)", 100_000, 8, "depth"),
+            (output_failure.as_str(), 100_000, 256, "output"),
+        ];
+        for (source, steps, depth, exit) in cases {
+            let probe = ScopeProbe::start(None);
+            let result = eval_sandboxed_with_budget(source, &serde_json::json!({}), steps, depth);
+            match exit {
+                "success" => {
+                    assert_eq!(result.expect("legitimate invocation"), serde_json::json!(0))
+                }
+                "runtime" => assert!(matches!(result, Err(LispError::UnboundSymbol(_)))),
+                "steps" => assert!(matches!(result, Err(LispError::StepLimitExceeded(_)))),
+                "depth" => assert!(matches!(result, Err(LispError::DepthLimitExceeded(_)))),
+                "output" => assert!(matches!(
+                    result,
+                    Err(LispError::OutputDepthLimitExceeded(_))
+                )),
+                _ => panic!("unknown exit fixture"),
+            }
+            probe.assert_reclaimed();
+        }
+    }
+
+    /// expect: "Repeated stateless invocations leave no cumulative scope retention" [P4]
+    #[test]
+    fn repeated_invocations_release_all_scopes() {
+        for _ in 0..100 {
+            let probe = ScopeProbe::start(None);
+            let output = eval_sandboxed(
+                "(define make (lambda (x) (lambda (y) (+ x y)))) (define add (make 40)) (add 2)",
+                &serde_json::json!({}),
+            )
+            .expect("repeated escaping-closure invocation");
+            assert_eq!(output, serde_json::json!(42));
+            probe.assert_reclaimed();
+        }
+    }
+
+    /// expect: "Unwinding a sandbox invocation releases scopes after temporary borrows end" [P4]
+    #[test]
+    fn sandbox_reclaims_scopes_during_unwind() {
+        let probe = ScopeProbe::start(Some(2));
+        let result = std::panic::catch_unwind(|| {
+            eval_sandboxed(
+                "(define f (lambda (x) x)) (let () 0)",
+                &serde_json::json!({}),
+            )
+        });
+        assert!(
+            result.is_err(),
+            "the fixture must unwind after forming a cycle"
+        );
+        probe.assert_reclaimed();
+    }
+
+    /// expect: "Invocation cleanup preserves recursive and escaping lexical closures" [P3]
+    #[test]
+    fn sandbox_preserves_lexical_closure_behavior() {
+        for (source, expected) in [
+            (
+                "(define f (lambda (n) (if (= n 0) 0 (+ 1 (f (- n 1)))))) (f 5)",
+                serde_json::json!(5),
+            ),
+            (
+                "(define even (lambda (n) (if (= n 0) true (odd (- n 1))))) (define odd (lambda (n) (if (= n 0) false (even (- n 1))))) (even 6)",
+                serde_json::json!(true),
+            ),
+            (
+                "(define make (lambda (x) (lambda (y) (+ x y)))) (define add (make 40)) (add 2)",
+                serde_json::json!(42),
+            ),
+            (
+                "(let ((x 1) (f (lambda () x))) (begin (define x 2) (f)))",
+                serde_json::json!(2),
+            ),
+            ("(list (lambda (x) x))", serde_json::json!(["<lambda>"])),
+        ] {
+            let probe = ScopeProbe::start(None);
+            assert_eq!(
+                eval_sandboxed(source, &serde_json::json!({})).expect("lexical closure fixture"),
+                expected
+            );
+            probe.assert_reclaimed();
+        }
+    }
+
+    /// expect: "Integer source tokens outside i64 fail instead of silently rounding to floats" [P8]
+    #[test]
+    fn integer_source_tokens_do_not_fall_back_to_float() {
+        for token in [
+            "9223372036854775808",
+            "-9223372036854775809",
+            "+9223372036854775808",
+            "184467440737095516160",
+        ] {
+            let error = eval_sandboxed(token, &serde_json::json!({}))
+                .expect_err("out-of-range integer spelling must be rejected");
+            assert!(matches!(error, LispError::Parse(_)), "{token}: {error}");
+            assert!(error.to_string().contains(token), "error must name {token}");
+        }
+    }
+
+    /// expect: "Numeric admission preserves exact i64 endpoints and explicit float or text values" [P3]
+    #[test]
+    fn numeric_admission_preserves_legitimate_spellings() {
+        for (source, expected) in [
+            ("-9223372036854775808", serde_json::json!(i64::MIN)),
+            ("9223372036854775807", serde_json::json!(i64::MAX)),
+            (
+                "9007199254740993",
+                serde_json::json!(9_007_199_254_740_993_i64),
+            ),
+            ("(eq 1.0 1)", serde_json::json!(false)),
+            ("(eq 1e0 1.0)", serde_json::json!(true)),
+            ("1e100", serde_json::json!(1e100)),
+            (
+                "\"184467440737095516160\"",
+                serde_json::json!("184467440737095516160"),
+            ),
+        ] {
+            assert_eq!(
+                eval_sandboxed(source, &serde_json::json!({}))
+                    .expect("legitimate numeric spelling"),
+                expected
+            );
+        }
+    }
+
+    /// expect: "Parsed JSON integers outside i64 are refused at the sandbox boundary" [P8]
+    #[test]
+    fn parsed_json_integers_require_i64_at_sandbox_boundary() {
+        for input in [
+            serde_json::json!({"value": u64::MAX}),
+            serde_json::json!({"nested": [{"value": u64::MAX}]}),
+        ] {
+            let error = eval_sandboxed("1", &input).expect_err("unrepresentable JSON integer");
+            assert!(error.to_string().contains("integer"));
+            assert!(error.to_string().contains("i64"));
+        }
+        for value in [
+            serde_json::json!(i64::MIN),
+            serde_json::json!(i64::MAX),
+            serde_json::json!(1.0),
+            serde_json::json!(1e100),
+        ] {
+            assert_eq!(
+                eval_sandboxed("value", &serde_json::json!({"value": value}))
+                    .expect("representable parsed number"),
+                value
+            );
+        }
+    }
+
+    /// expect: "Raw eval callers keep their own environments usable across calls" [P3]
+    #[test]
+    fn raw_evaluation_keeps_caller_owned_environments() {
+        let env = Rc::new(RefCell::new(Env::new_root()));
+        for form in parse("(define f (lambda (x) (+ x 1)))").expect("definition parses") {
+            eval(env.clone(), &form).expect("definition evaluates");
+        }
+        let form = parse("(f 2)").expect("call parses").remove(0);
+        assert_eq!(
+            to_json(&eval(env.clone(), &form).expect("retained raw closure works")),
+            serde_json::json!(3)
+        );
+        env.borrow_mut().vars.clear();
+    }
 
     /// expect: "Malformed or oversized Lisp work returns an error instead of killing the host" [P4]
     #[test]

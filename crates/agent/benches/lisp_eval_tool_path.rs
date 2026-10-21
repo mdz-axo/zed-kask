@@ -1,11 +1,11 @@
 //! Whole-tool-path bench for `lisp_eval` — lisp-repair L3.
 //!
-//! Measures the exact per-call sequence `LispEvalTool` performs: deserialize
-//! the tool arguments through the teaching deserialization path
-//! (`LispEvalToolInput` via `serde_json::from_value`), evaluate
-//! (`evaluate_lisp` — env canonicalization + the engine), and serialize the
-//! result. Production path, no test doubles; fixtures are the real gate
-//! shapes, and each expected result is asserted once outside timing.
+//! Compares the tool's teaching decode + `evaluate_lisp` path with the engine
+//! over the same forms and bindings. Both timings include compact result
+//! serialization (not the editor's pretty document or protocol envelope).
+//! Production evaluators, no test doubles; each expected result is asserted
+//! on both paths outside timing. Authored fixtures preserve H0 compatibility;
+//! test-profile measurements are not release-performance or heap-quota claims.
 
 use std::hint::black_box;
 use std::time::Duration;
