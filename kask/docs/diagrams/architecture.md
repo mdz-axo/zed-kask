@@ -148,7 +148,11 @@ status: VERIFIED
 
 The three coupled surfaces: the **skill system** (D1, upstream-Zed body
 injection), the **MCP server wiring** (D3), and the **Lisp capabilities
-layer** (the `lisp_eval` tool's deterministic primitive).
+layer** (the `lisp_eval` tool's deterministic primitive). H5 runs agent typed
+input decoding and pure evaluation in the background; titles read form only.
+H4B caps the exact pretty JSON result document at 1 MiB, not total heap/time.
+Raw-output copying and bounded display formatting remain foreground;
+H6 cancellation and H7/H8 host/corpus offload remain deferred.
 
 **Correction (2026-09-28):** the widget→agent compose-back seam (D21) was
 retired with commit `fa95c2b8c7` — the `hkask-conversation-injector` crate
@@ -186,7 +190,7 @@ architecture-beta
     envelope --> agent: model reads body and follows instructions
     agent --> render_template: structured prompt scaffolding (model-coordinated)
     agent --> lisp_eval: deterministic checks (model-coordinated)
-    lisp_eval --> lisp_runtime: eval_sandboxed_with_budget
+    lisp_eval --> lisp_runtime: background typed decode and pure evaluation
 
     thread --> tool_port: full registered surface every turn (D44 — no per-turn filtering)
     list_mcp_tools --> thread: enumerates registered surface on demand
@@ -198,8 +202,8 @@ architecture-beta
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ARCH-SKILL-MCP-LISP-001
-verified_date: 2026-10-19
-verified_against: crates/agent/src/tools/skill_tool.rs (SkillTool L127, run L194, render_skill_envelope L48, with_invoker L162); crates/agent_skills/agent_skills.rs (read_skill_body L841); crates/agent/src/tools/lisp_eval_tool.rs (LispEvalTool L308); crates/agent/src/tools/render_template_tool.rs (RenderTemplateTool L94); crates/agent/src/thread.rs (enabled_tools L5156); crates/agent/src/tools/list_mcp_tools_tool.rs (ListMcpToolsTool L58, enumerate_tool_listing L119); kask/crates/hkask-lisp/src/hkask_lisp.rs (eval_sandboxed_with_budget L2176); kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort L89); kask/crates/hkask-mcp/src/runtime.rs (McpRuntime, impl ToolPort for McpRuntime, start_server_with_env, stop_server, tool_surface_changes); kask/crates/hkask-regulation/src/energy.rs (CallCapManager, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/mcp_servers.rs (BUILT_IN_MCP_SERVERS — 9 servers); crates/hkask-tool-invoker/src/hkask_tool_invoker.rs (ToolInvoker trait L121, shared_tool_invoker L148)
+verified_date: 2026-10-20
+verified_against: crates/agent/src/tools/skill_tool.rs (SkillTool L127, run L194, render_skill_envelope L48, with_invoker L162); crates/agent_skills/agent_skills.rs (read_skill_body L841); crates/agent/src/tools/lisp_eval_tool.rs (LispEvalTool L313, raw_initial_title L350, run L362); crates/agent/src/tools/render_template_tool.rs (RenderTemplateTool L83); crates/agent/src/thread.rs (enabled_tools L5578, raw_initial_title L7151, erased title L7301); crates/agent/src/tools/list_mcp_tools_tool.rs (ListMcpToolsTool L58, enumerate_tool_listing L119); kask/crates/hkask-lisp/src/hkask_lisp.rs (eval_sandboxed_with_budget L2253, format_json_output L2230); kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort L98); kask/crates/hkask-mcp/src/runtime.rs (McpRuntime, impl ToolPort for McpRuntime, start_server_with_env, stop_server, tool_surface_changes); kask/crates/hkask-regulation/src/energy.rs (CallCapManager, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/mcp_servers.rs (BUILT_IN_MCP_SERVERS — 9 servers); crates/hkask-tool-invoker/src/hkask_tool_invoker.rs (ToolInvoker trait L131, shared_tool_invoker L158)
 status: VERIFIED
 -->
 

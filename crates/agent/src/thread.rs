@@ -7147,6 +7147,11 @@ where
 
     fn kind() -> acp_v2::ToolKind;
 
+    /// Optional title from raw input, avoiding typed decoding for display only.
+    fn raw_initial_title(&self, _input: &serde_json::Value) -> Option<SharedString> {
+        None
+    }
+
     /// The initial tool title to display. Can be updated during the tool run.
     fn initial_title(
         &self,
@@ -7294,6 +7299,9 @@ where
     }
 
     fn initial_title(&self, input: serde_json::Value, _cx: &mut App) -> SharedString {
+        if let Some(title) = self.0.raw_initial_title(&input) {
+            return title;
+        }
         let parsed_input = serde_json::from_value(input.clone()).map_err(|_| input);
         self.0.initial_title(parsed_input, _cx)
     }
@@ -9075,6 +9083,71 @@ mod tests {
     use serde_json::json;
     use settings::LanguageModelProviderSetting;
     use std::sync::Arc;
+
+    /// expect: "Tools without raw titles retain one serde decode and one typed callback, including malformed input" [H5]
+    #[gpui::test]
+    fn h5_default_title_keeps_typed_path(cx: &mut TestAppContext) {
+        use std::{cell::Cell, rc::Rc};
+        thread_local! {
+            static DECODES: Cell<usize> = const { Cell::new(0) };
+        }
+        #[derive(Serialize, JsonSchema)]
+        struct CountedInput(u32);
+        impl<'de> Deserialize<'de> for CountedInput {
+            fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                DECODES.with(|count| count.set(count.get() + 1));
+                u32::deserialize(deserializer).map(Self)
+            }
+        }
+        struct TestTool(Rc<Cell<usize>>);
+        impl AgentTool for TestTool {
+            type Input = CountedInput;
+            type Output = String;
+            const NAME: &'static str = "h5_typed_title_test";
+            fn kind() -> acp_v2::ToolKind {
+                acp_v2::ToolKind::Other
+            }
+            fn initial_title(
+                &self,
+                input: Result<CountedInput, serde_json::Value>,
+                _: &mut App,
+            ) -> SharedString {
+                self.0.set(self.0.get() + 1);
+                match input {
+                    Ok(CountedInput(number)) => format!("Typed {number}").into(),
+                    Err(raw) => {
+                        assert_eq!(raw, json!({"malformed": true}), "original raw fallback");
+                        "Typed fallback".into()
+                    }
+                }
+            }
+            fn run(
+                self: Arc<Self>,
+                _: ToolInput<CountedInput>,
+                _: ToolCallEventStream,
+                _: &mut App,
+            ) -> Task<Result<String, String>> {
+                Task::ready(Ok(String::new()))
+            }
+        }
+        let callbacks = Rc::new(Cell::new(0));
+        let tool = TestTool(callbacks.clone()).erase();
+        DECODES.with(|count| count.set(0));
+        for (index, (input, expected)) in [
+            (json!(7), "Typed 7"),
+            (json!({"malformed": true}), "Typed fallback"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_eq!(
+                cx.update(|cx| tool.initial_title(input, cx)).as_ref(),
+                expected
+            );
+            assert_eq!(DECODES.with(|count| count.get()), index + 1);
+            assert_eq!(callbacks.get(), index + 1);
+        }
+    }
 
     // ── D43: turn-end failure visibility ────────────────────────────────
 

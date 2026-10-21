@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
 use agent_client_protocol::schema::v2 as acp;
 use anyhow::Result;
-use gpui::{App, Task};
+use gpui::{App, AppContext, Task};
 use language_model::LanguageModelToolResultContent;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -21,7 +21,8 @@ use ui::SharedString;
 /// Evaluation is bounded by `max_steps` and `max_depth` to prevent infinite loops.
 ///
 /// JSON objects become association lists — use `(assoc "key" alist)` to access
-/// fields. The result is returned as JSON.
+/// fields. Pretty JSON results are capped at 1048576 UTF-8 bytes, excluding envelopes. Its pretty-printed UTF-8 document
+/// is limited to 1048576 bytes, excluding tool/MCP envelopes.
 ///
 /// Example: count open threats from a prior step's output:
 /// ```text
@@ -112,6 +113,8 @@ fn deserialize_env_field<'de, D>(
 where
     D: serde::Deserializer<'de>,
 {
+    #[cfg(test)]
+    ENV_DECODE_COUNT.with(|count| count.set(count.get() + 1));
     let teaching_error = |error| {
         serde::de::Error::custom(format!(
             "env: expected JSON text encoding an object: {error}"
@@ -297,15 +300,38 @@ pub enum LispEvalToolOutput {
 impl From<LispEvalToolOutput> for LanguageModelToolResultContent {
     fn from(value: LispEvalToolOutput) -> Self {
         match value {
-            LispEvalToolOutput::Success { result } => serde_json::to_string_pretty(&result)
-                .unwrap_or_else(|_| "null".into())
-                .into(),
+            LispEvalToolOutput::Success { result } => match hkask_lisp::format_json_output(&result)
+            {
+                Ok(text) => text.into(),
+                Err(error) => error.to_string().into(),
+            },
             LispEvalToolOutput::Error { error } => error.into(),
         }
     }
 }
 
 pub struct LispEvalTool;
+
+fn title_for_form(form: Option<&str>) -> SharedString {
+    match form {
+        Some(form) => format!("Evaluating: {}", form.chars().take(80).collect::<String>()).into(),
+        None => "Lisp Evaluation".into(),
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static ENV_DECODE_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static RUN_PROBE: std::cell::RefCell<Option<RunProbe>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+struct RunProbe {
+    executor: gpui::BackgroundExecutor,
+    entered: futures::channel::oneshot::Sender<bool>,
+    release: futures::channel::oneshot::Receiver<()>,
+    decoded: futures::channel::oneshot::Sender<(bool, usize)>,
+}
 
 impl AgentTool for LispEvalTool {
     type Input = LispEvalToolInput;
@@ -321,18 +347,16 @@ impl AgentTool for LispEvalTool {
         acp::ToolKind::Other
     }
 
+    fn raw_initial_title(&self, input: &Value) -> Option<SharedString> {
+        Some(title_for_form(input.get("form").and_then(Value::as_str)))
+    }
+
     fn initial_title(
         &self,
         input: Result<Self::Input, serde_json::Value>,
         _cx: &mut App,
     ) -> SharedString {
-        match input {
-            Ok(input) => {
-                let form = input.form.chars().take(80).collect::<String>();
-                format!("Evaluating: {form}").into()
-            }
-            Err(_) => "Lisp Evaluation".into(),
-        }
+        title_for_form(input.as_ref().ok().map(|input| input.form.as_str()))
     }
 
     fn run(
@@ -341,10 +365,33 @@ impl AgentTool for LispEvalTool {
         _event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
-        cx.spawn(async move |_cx| {
+        #[cfg(test)]
+        let probe = RUN_PROBE.with(|probe| probe.take());
+        cx.background_spawn(async move {
+            #[cfg(test)]
+            let decoded_probe = if let Some(probe) = probe {
+                probe
+                    .entered
+                    .send(probe.executor.is_main_thread())
+                    .expect("entry observer");
+                probe.release.await.expect("release real evaluation");
+                ENV_DECODE_COUNT.with(|count| count.set(0));
+                Some((probe.executor, probe.decoded))
+            } else {
+                None
+            };
             let input = input.recv().await.map_err(|e| LispEvalToolOutput::Error {
                 error: format!("failed to receive input: {e}"),
             })?;
+            #[cfg(test)]
+            if let Some((executor, decoded)) = decoded_probe {
+                decoded
+                    .send((
+                        executor.is_main_thread(),
+                        ENV_DECODE_COUNT.with(|count| count.get()),
+                    ))
+                    .expect("decode observer");
+            }
             evaluate_lisp(input)
                 .map(|result| LispEvalToolOutput::Success { result })
                 .map_err(|error| LispEvalToolOutput::Error { error })
@@ -455,6 +502,120 @@ pub fn evaluate_lisp(input: LispEvalToolInput) -> Result<Value, String> {
 mod tests {
     use super::LispEvalToolInput;
     use serde_json::json;
+
+    /// expect: "Erased partial and full titles inspect form only, never decode env" [H5]
+    #[gpui::test]
+    fn h5_raw_title_skips_env_decode(cx: &mut gpui::TestAppContext) {
+        use crate::{AgentTool, ToolInputPayload};
+        let tool = super::LispEvalTool.erase();
+        let long_form = "é🙂".repeat(50);
+        for form in ["(+ a b)", long_form.as_str()] {
+            for env in [json!("{unfinished"), json!(false), json!("{\"a\":2}")] {
+                let raw = json!({"form": form, "env": env});
+                for payload in [
+                    ToolInputPayload::Partial(raw.clone()),
+                    ToolInputPayload::Full(raw.clone()),
+                ] {
+                    let (ToolInputPayload::Partial(raw) | ToolInputPayload::Full(raw)) = payload
+                    else {
+                        unreachable!()
+                    };
+                    super::ENV_DECODE_COUNT.with(|count| count.set(0));
+                    let title = cx.update(|cx| tool.initial_title(raw, cx));
+                    assert_eq!(
+                        super::ENV_DECODE_COUNT.with(|count| count.get()),
+                        0,
+                        "title must not enter the environment decoder"
+                    );
+                    assert_eq!(
+                        title.as_ref(),
+                        format!("Evaluating: {}", form.chars().take(80).collect::<String>())
+                    );
+                }
+            }
+        }
+        for raw in [
+            json!({}),
+            json!({"form": 7}),
+            json!({"form": null}),
+            json!(null),
+        ] {
+            super::ENV_DECODE_COUNT.with(|count| count.set(0));
+            assert_eq!(
+                cx.update(|cx| tool.initial_title(raw, cx)).as_ref(),
+                "Lisp Evaluation"
+            );
+            assert_eq!(super::ENV_DECODE_COUNT.with(|count| count.get()), 0);
+        }
+    }
+
+    /// expect: "Real erased run decodes and evaluates on the background executor while foreground progresses" [H5]
+    #[gpui::test]
+    async fn h5_run_dispatches_decode_and_evaluation(cx: &mut gpui::TestAppContext) {
+        use crate::{AgentTool, ToolCallEventStream, ToolInputSender};
+        use futures::{FutureExt, channel::oneshot};
+        use std::{cell::Cell, rc::Rc};
+
+        let (entered_tx, mut entered_rx) = oneshot::channel();
+        let (release_tx, release_rx) = oneshot::channel();
+        let (decoded_tx, decoded_rx) = oneshot::channel();
+        let tool = super::LispEvalTool.erase();
+        let (mut sender, input) = ToolInputSender::channel();
+        sender.send_partial(json!({"form": "(+ a b)", "env": "{unfinished"}));
+        sender.send_full(json!({"form": "(+ a b)", "env": "{\"a\":2,\"b\":3}"}));
+        let (events, _rx) = ToolCallEventStream::test();
+        let mut task = cx.update(|cx| {
+            super::RUN_PROBE.with(|probe| {
+                assert!(
+                    probe
+                        .borrow_mut()
+                        .replace(super::RunProbe {
+                            executor: cx.background_executor().clone(),
+                            entered: entered_tx,
+                            release: release_rx,
+                            decoded: decoded_tx,
+                        })
+                        .is_none()
+                );
+            });
+            tool.run(input, events, cx)
+        });
+        cx.executor().run_until_parked();
+        let entered_on_main = entered_rx
+            .try_recv()
+            .expect("entry channel")
+            .expect("worker entered");
+        assert!(
+            (&mut task).now_or_never().is_none(),
+            "real run held before decoding"
+        );
+        let foreground_ran = Rc::new(Cell::new(false));
+        cx.spawn({
+            let foreground_ran = foreground_ran.clone();
+            async move |_| foreground_ran.set(true)
+        })
+        .detach();
+        cx.executor().run_until_parked();
+        assert!(
+            foreground_ran.get(),
+            "foreground callback while worker held"
+        );
+        release_tx.send(()).expect("release worker");
+        let output = task
+            .await
+            .unwrap_or_else(|error| panic!("real evaluator failed: {}", error.raw_output));
+        let (decoded_on_main, decode_count) = decoded_rx.await.expect("decode provenance");
+        assert!(!entered_on_main, "worker entry must not be foreground");
+        assert!(!decoded_on_main, "typed decode must not be foreground");
+        assert_eq!(decode_count, 1, "only Full input is decoded");
+        assert_eq!(output.raw_output, json!({"result": 5}));
+        let [language_model::LanguageModelToolResultContent::Text(text)] =
+            output.llm_output.as_slice()
+        else {
+            panic!("generic wrapper must produce one text result")
+        };
+        assert_eq!(text.as_ref(), "5");
+    }
 
     #[test]
     fn env_wire_schema_and_decoder_preserve_scalar_bindings() {

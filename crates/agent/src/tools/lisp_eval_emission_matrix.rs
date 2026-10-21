@@ -34,6 +34,151 @@ fn run(args: Value) -> Result<Value, String> {
     evaluate_lisp(input)
 }
 
+/// expect: "Background live decode and evaluation preserve env and budget failures through the erased wire" [H5]
+#[gpui::test]
+async fn h5_live_run_preserves_input_and_budget_errors(cx: &mut gpui::TestAppContext) {
+    use super::lisp_eval_tool::LispEvalTool;
+    use crate::{AgentTool, ToolCallEventStream, ToolInput};
+    use language_model::LanguageModelToolResultContent;
+
+    for (input, expected) in [
+        (json!({"form": "(+ a b)", "env": "{unfinished"}), "env"),
+        (json!({"form": "(+ a b)", "env": {"a": 2}}), "env"),
+        (json!({"form": "(+ a b)", "env": "[]"}), "env"),
+        (
+            json!({"form": "(+ 2 3)", "max_steps": 2_000_001}),
+            "max_steps",
+        ),
+        (json!({"form": "(+ 2 3)", "max_depth": 8193}), "max_depth"),
+        (json!({"form": "(+ 2 3)", "max_steps": 0}), "max_steps"),
+    ] {
+        let (events, _rx) = ToolCallEventStream::test();
+        let result = cx
+            .update(|cx| {
+                LispEvalTool
+                    .erase()
+                    .run(ToolInput::ready(input), events, cx)
+            })
+            .await;
+        let Err(error) = result else {
+            panic!("invalid live input must fail")
+        };
+        let message = error.raw_output["error"]
+            .as_str()
+            .expect("unchanged error wire");
+        assert!(message.contains(expected), "{message}");
+        let [LanguageModelToolResultContent::Text(text)] = error.llm_output.as_slice() else {
+            panic!("unchanged text error content")
+        };
+        assert_eq!(text.as_ref(), message);
+    }
+}
+
+/// expect: "Actual tool run and content conversion enforce pretty bytes without null substitution" [H4B]
+#[gpui::test]
+async fn h4b_tool_output_document_limit(cx: &mut gpui::TestAppContext) {
+    use super::lisp_eval_tool::{LispEvalTool, LispEvalToolOutput};
+    use crate::{AgentTool, ToolCallEventStream, ToolInput};
+    use language_model::LanguageModelToolResultContent;
+    use std::sync::Arc;
+
+    for result in [
+        Value::Null,
+        json!(-7),
+        json!({"é\n": [true, "\0\\\"", 2.5]}),
+    ] {
+        let expected = serde_json::to_string_pretty(&result).expect("serde oracle");
+        let output = LispEvalToolOutput::Success {
+            result: result.clone(),
+        };
+        assert_eq!(
+            serde_json::to_value(&output).expect("success shape"),
+            json!({"result": result})
+        );
+        let content: LanguageModelToolResultContent = output.into();
+        let LanguageModelToolResultContent::Text(text) = content else {
+            panic!("text result")
+        };
+        assert_eq!(text.as_ref(), expected);
+    }
+    let error = LispEvalToolOutput::Error {
+        error: "visible error".into(),
+    };
+    assert_eq!(
+        serde_json::to_value(&error).expect("error shape"),
+        json!({"error": "visible error"})
+    );
+    let content: LanguageModelToolResultContent = error.into();
+    let LanguageModelToolResultContent::Text(text) = content else {
+        panic!("text error")
+    };
+    assert_eq!(text.as_ref(), "visible error");
+
+    let env = json!({"seed": "\0".repeat(174_759)}).to_string();
+    assert!(env.len() < hkask_lisp::MAX_ENV_JSON_BYTES);
+    for padding in [20, 21] {
+        let input: LispEvalToolInput = serde_json::from_value(json!({
+            "form": format!("(concat seed \"{}\")", "x".repeat(padding)),
+            "env": env,
+            "maxSteps": 2_000_000
+        }))
+        .expect("real JSON-text decoder admits fixture");
+        let (events, _rx) = ToolCallEventStream::test();
+        let output = cx
+            .update(|cx| Arc::new(LispEvalTool).run(ToolInput::resolved(input), events, cx))
+            .await;
+        let output = if padding == 20 {
+            let output = output.expect("exact boundary succeeds");
+            assert!(matches!(output, LispEvalToolOutput::Success { .. }));
+            assert!(
+                serde_json::to_value(&output)
+                    .expect("wire output")
+                    .get("result")
+                    .is_some()
+            );
+            output
+        } else {
+            let Err(error) = output else {
+                panic!("oversized actual run must return Err")
+            };
+            assert!(matches!(&error, LispEvalToolOutput::Error { error }
+                if error.contains("max_output_bytes") && error.contains("1048576")));
+            assert!(
+                serde_json::to_value(&error)
+                    .expect("wire error")
+                    .get("error")
+                    .is_some()
+            );
+            error
+        };
+        let content: LanguageModelToolResultContent = output.into();
+        let LanguageModelToolResultContent::Text(text) = content else {
+            panic!("text result")
+        };
+        if padding == 20 {
+            assert_eq!(text.len(), 1_048_576);
+            assert_eq!(
+                serde_json::from_str::<Value>(&text).expect("legal JSON"),
+                json!(format!("{}{}", "\0".repeat(174_759), "x".repeat(padding)))
+            );
+        } else {
+            assert!(text.contains("max_output_bytes"));
+        }
+    }
+    let content: LanguageModelToolResultContent = LispEvalToolOutput::Success {
+        result: json!("x".repeat(1_048_575)),
+    }
+    .into();
+    let LanguageModelToolResultContent::Text(text) = content else {
+        panic!("text result")
+    };
+    assert!(
+        text.contains("max_output_bytes"),
+        "direct conversion must not bypass bound"
+    );
+    assert_ne!(text.as_ref(), "null");
+}
+
 /// expect: "Tool numeric errors name the operation/input instead of returning null or rounded success" [P8]
 #[test]
 fn h3_numeric_failures_surface_through_real_tool_decode() {

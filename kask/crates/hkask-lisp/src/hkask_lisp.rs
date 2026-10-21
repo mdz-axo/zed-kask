@@ -57,8 +57,8 @@
 //! No `eval` builtin (Lisp code cannot evaluate arbitrary strings). No
 //! `load` or `require`. The environment is immutable from Lisp's perspective
 //! (define mutates a local scope discarded after evaluation). Bounded by
-//! `max_steps` and `max_depth`. Safe for infrastructure manifests provided
-//! the caller respects the `category: skill` gate.
+//! `max_steps` and `max_depth` at the sandbox entry points; lower-level raw
+//! APIs remain caller-managed.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -75,6 +75,8 @@ pub const MAX_ENV_JSON_BYTES: usize = 1_048_576;
 pub const MAX_STEPS: u64 = 2_000_000;
 /// Provisional H4A requested-depth ceiling; the default remains 1,024.
 pub const MAX_DEPTH: u64 = 8192;
+/// H4B ceiling for the pretty JSON result document, excluding tool/MCP envelopes.
+pub const MAX_OUTPUT_BYTES: usize = 1_048_576;
 
 // ── Error type ─────────────────────────────────────────────────────────────
 
@@ -2161,14 +2163,89 @@ fn is_alist(items: &[LispValue]) -> bool {
     })
 }
 
+// The counting pass retains no document bytes. Serde remains authoritative for
+// UTF-8, escaping, indentation and the already-projected object's keys.
+#[derive(Default)]
+struct OutputByteCounter {
+    bytes: usize,
+    exceeded: bool,
+}
+
+impl std::io::Write for OutputByteCounter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if bytes.len() > MAX_OUTPUT_BYTES - self.bytes {
+            self.exceeded = true;
+            return Err(std::io::Error::other("max_output_bytes exceeded"));
+        }
+        self.bytes += bytes.len();
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn check_output_json_depth(value: &Value, depth: u64) -> Result<(), LispError> {
+    if depth >= MAX_JSON_DEPTH {
+        return Err(LispError::OutputDepthLimitExceeded(MAX_JSON_DEPTH));
+    }
+    match value {
+        Value::Array(values) => {
+            for value in values {
+                check_output_json_depth(value, depth + 1)?;
+            }
+        }
+        Value::Object(values) => {
+            for value in values.values() {
+                check_output_json_depth(value, depth + 1)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn pretty_json_output_size(value: &Value) -> Result<usize, LispError> {
+    // Public formatting also accepts Rust-created Values, not just sandbox
+    // results. Bound recursion before entering serde's recursive serializer.
+    check_output_json_depth(value, 0)?;
+    let mut counter = OutputByteCounter::default();
+    serde_json::to_writer_pretty(&mut counter, value).map_err(|error| {
+        if counter.exceeded {
+            LispError::Runtime(format!(
+                "max_output_bytes exceeded; allowed {MAX_OUTPUT_BYTES} pretty JSON UTF-8 bytes"
+            ))
+        } else {
+            LispError::Runtime(format!("failed to count pretty JSON output: {error}"))
+        }
+    })?;
+    Ok(counter.bytes)
+}
+
+/// Format a result as pretty JSON, admitting at most [`MAX_OUTPUT_BYTES`] UTF-8
+/// bytes before requesting the final document buffer. Also enforces the JSON
+/// nesting boundary for raw Rust-created Values; no trusted-Value exemption.
+/// This is a document bound, not a tool-envelope, total-heap or time quota.
+pub fn format_json_output(value: &Value) -> Result<String, LispError> {
+    let size = pretty_json_output_size(value)?;
+    #[cfg(test)]
+    tests::observe_output_allocation(size);
+    let mut bytes = Vec::with_capacity(size);
+    serde_json::to_writer_pretty(&mut bytes, value).map_err(|error| {
+        LispError::Runtime(format!("failed to format pretty JSON output: {error}"))
+    })?;
+    String::from_utf8(bytes)
+        .map_err(|error| LispError::Runtime(format!("pretty JSON output is not UTF-8: {error}")))
+}
+
 // ── Public API ──────────────────────────────────────────────────────────────
 
 /// Evaluate a Lisp form against a JSON environment, returning a JSON result.
 ///
-/// This is the entry point called by `dispatch_compute` for
-/// `compute_ref: "lisp.eval"`. The `form` is the Lisp source; `env_json`
-/// is a JSON object whose keys become top-level bindings (values converted
-/// to Lisp values via `from_json` — objects become association lists).
+/// Shared by the agent tool and corpus Lisp query parser. `form` is Lisp
+/// source; `env_json` keys become top-level bindings, with values converted
+/// via `from_json` (objects become association lists).
 pub fn eval_sandboxed(form: &str, env_json: &Value) -> Result<Value, LispError> {
     eval_sandboxed_with_budget(form, env_json, 100000, 1024)
 }
@@ -2196,6 +2273,7 @@ pub fn eval_sandboxed_with_budget(
     let parsed = parse_with_budget(form, &mut budget)?;
     charge_json(env_json, &mut budget, 0)?;
     if parsed.is_empty() {
+        pretty_json_output_size(&Value::Null)?;
         return Ok(Value::Null);
     }
     let env = budget.new_scope(Env::new_root())?;
@@ -2210,13 +2288,14 @@ pub fn eval_sandboxed_with_budget(
     }
     charge_value(&result, &mut budget, 0)?;
     charge_output_layout(&result, &mut budget, 0)?;
-    Ok(to_json(&result))
+    let result = to_json(&result);
+    pretty_json_output_size(&result)?;
+    Ok(result)
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
-// The tests module header above was a placeholder — the sandbox-budget
-// contract is pinned below. These tests guard the `lisp_eval` tool's safety
-// envelope: an LLM-supplied form cannot loop forever (step budget), blow the
+// These tests guard the `lisp_eval` tool's sandbox boundaries:
+// an LLM-supplied form cannot loop forever (step budget), blow the
 // stack (depth budget), or escape the environment (no ambient access).
 
 #[cfg(test)]
@@ -2226,6 +2305,196 @@ mod property_tests;
 mod tests {
     use super::*;
     use std::rc::Weak;
+
+    /// expect: "Escaping amplification hits the pretty-document cap, not input/work admission" [H4B]
+    #[test]
+    fn h4b_sandbox_pretty_document_limit() {
+        let env = serde_json::json!({"seed": "\0".repeat(174_759)});
+        assert!(serde_json::to_vec(&env).expect("env JSON").len() < MAX_ENV_JSON_BYTES);
+        for padding in [20, 21] {
+            let form = format!(
+                "(define f (lambda () f)) (concat seed \"{}\")",
+                "x".repeat(padding)
+            );
+            let expected =
+                Value::String(format!("{}{}", "\0".repeat(174_759), "x".repeat(padding)));
+            assert_eq!(
+                serde_json::to_vec_pretty(&expected).expect("oracle").len(),
+                1_048_556 + padding
+            );
+            let probe = ScopeProbe::start(None);
+            let result = eval_sandboxed_with_budget(&form, &env, 2_000_000, 1024);
+            if padding == 20 {
+                assert_eq!(result.expect("exact boundary must fit"), expected);
+            } else {
+                assert!(
+                    matches!(result, Err(LispError::Runtime(ref error))
+                    if error.contains("max_output_bytes") && error.contains("1048576")),
+                    "cap+1 must fail at the output-byte limit"
+                );
+            }
+            probe.assert_reclaimed();
+        }
+    }
+
+    /// expect: "Pretty-byte admission includes UTF-8, escapes, keys and layout exactly as serde emits" [H4B]
+    #[test]
+    fn h4b_formatter_boundaries_and_compatibility() {
+        for value in [
+            Value::Null,
+            serde_json::json!([true, false, -7, 2.5, [], {}]),
+            serde_json::json!({"é\n\"": ["\0\u{001f}\n\r\t\u{0008}\u{000c}\\\"", "🦎"]}),
+        ] {
+            let oracle = serde_json::to_string_pretty(&value).expect("serde oracle");
+            assert_eq!(
+                pretty_json_output_size(&value).expect("count"),
+                oracle.len()
+            );
+            assert_eq!(format_json_output(&value).expect("format"), oracle);
+        }
+        for (unit, repeats, padding) in [
+            ("x", MAX_OUTPUT_BYTES - 2, 0),
+            ("é", (MAX_OUTPUT_BYTES - 2) / 2, 0),
+            ("\0", 174_759, 20),
+        ] {
+            for extra in [0, 1] {
+                let value = Value::String(format!(
+                    "{}{}",
+                    unit.repeat(repeats),
+                    "x".repeat(padding + extra)
+                ));
+                let oracle = serde_json::to_string_pretty(&value).expect("serde oracle");
+                assert_eq!(oracle.len(), MAX_OUTPUT_BYTES + extra);
+                OUTPUT_BUFFER_REQUESTS.with_borrow_mut(|requests| *requests = Some(Vec::new()));
+                let result = format_json_output(&value);
+                let requests = OUTPUT_BUFFER_REQUESTS
+                    .with_borrow_mut(|requests| requests.take().expect("allocation observation"));
+                if extra == 0 {
+                    assert_eq!(requests, [MAX_OUTPUT_BYTES]);
+                    assert_eq!(result.expect("exact boundary"), oracle);
+                } else {
+                    assert!(requests.is_empty(), "refusal must precede the final buffer");
+                    assert!(matches!(result, Err(LispError::Runtime(ref error))
+                        if error.contains("max_output_bytes") && error.contains("1048576")));
+                }
+            }
+        }
+        for mut value in [serde_json::json!([[""]]), serde_json::json!({"é\n": ""})] {
+            let overhead = serde_json::to_vec_pretty(&value)
+                .expect("empty layout")
+                .len();
+            for extra in [0, 1] {
+                let text = "x".repeat(MAX_OUTPUT_BYTES - overhead + extra);
+                match &mut value {
+                    Value::Array(values) => values[0][0] = Value::String(text),
+                    Value::Object(values) => {
+                        *values.values_mut().next().expect("one key") = Value::String(text)
+                    }
+                    _ => unreachable!("fixture container"),
+                }
+                assert_eq!(
+                    serde_json::to_vec_pretty(&value)
+                        .expect("layout oracle")
+                        .len(),
+                    MAX_OUTPUT_BYTES + extra
+                );
+                assert_eq!(format_json_output(&value).is_ok(), extra == 0);
+            }
+        }
+        for form in ["", "; no program", "nil"] {
+            let result = eval_sandboxed(form, &serde_json::json!({})).expect("null result");
+            assert_eq!(format_json_output(&result).expect("null text"), "null");
+        }
+    }
+
+    /// expect: "Only the final alist key projection counts, while existing work guards still apply" [H4B]
+    #[test]
+    fn h4b_output_duplicate_key_projection() {
+        let seed = "\0".repeat(90_000);
+        let env = serde_json::json!({"seed": seed});
+        assert!(serde_json::to_vec(&env).expect("raw env").len() < MAX_ENV_JSON_BYTES);
+        let form = "(list (list \"same\" seed) (list \"same\" seed) (list \"same\" 1))";
+        let raw = serde_json::json!([["same", seed], ["same", seed], ["same", 1]]);
+        assert!(
+            serde_json::to_vec_pretty(&raw)
+                .expect("preprojection oracle")
+                .len()
+                > MAX_OUTPUT_BYTES
+        );
+        let result = eval_sandboxed_with_budget(form, &env, MAX_STEPS, 1024)
+            .expect("small projected result");
+        assert_eq!(result, serde_json::json!({"same": 1}));
+        assert_eq!(
+            format_json_output(&result).expect("object text"),
+            "{\n  \"same\": 1\n}"
+        );
+        assert!(matches!(
+            eval_sandboxed_with_budget(form, &env, 100, 1024),
+            Err(LispError::StepLimitExceeded(100))
+        ));
+    }
+
+    /// expect: "Counting is per-call, stops before accepting cap+1, and formatting guards raw Value depth" [H4B]
+    #[test]
+    fn h4b_counter_isolation_and_depth() {
+        use std::io::Write;
+        let mut counter = OutputByteCounter {
+            bytes: MAX_OUTPUT_BYTES - 1,
+            exceeded: false,
+        };
+        counter.write_all(b"x").expect("last byte fits");
+        assert!(counter.write_all(b"x").is_err());
+        assert_eq!(counter.bytes, MAX_OUTPUT_BYTES);
+        assert!(counter.exceeded);
+        let mut fresh = OutputByteCounter::default();
+        fresh.write_all(b"null").expect("new counter");
+        assert_eq!(fresh.bytes, 4);
+        assert!(!fresh.exceeded);
+        std::thread::scope(|scope| {
+            for extra in [0, 1, 0, 1] {
+                scope.spawn(move || {
+                    let value = Value::String("x".repeat(MAX_OUTPUT_BYTES - 2 + extra));
+                    assert_eq!(format_json_output(&value).is_ok(), extra == 0);
+                    assert_eq!(
+                        format_json_output(&Value::Null).expect("fresh call"),
+                        "null"
+                    );
+                });
+            }
+        });
+        for containers in [127, 128, 1024] {
+            let mut value = Value::Null;
+            for _ in 0..containers {
+                value = Value::Array(vec![value]);
+            }
+            OUTPUT_BUFFER_REQUESTS.with_borrow_mut(|requests| *requests = Some(Vec::new()));
+            let result = format_json_output(&value);
+            let requests = OUTPUT_BUFFER_REQUESTS
+                .with_borrow_mut(|requests| requests.take().expect("allocation observation"));
+            if containers == 127 {
+                let text = result.expect("legal depth");
+                assert_eq!(requests, [text.len()]);
+                assert_eq!(
+                    text,
+                    serde_json::to_string_pretty(&value).expect("serde oracle")
+                );
+            } else {
+                assert!(
+                    requests.is_empty(),
+                    "depth refusal must precede the final buffer"
+                );
+                assert!(matches!(
+                    result,
+                    Err(LispError::OutputDepthLimitExceeded(128))
+                ));
+            }
+            // The helper borrows raw Values; their owner still controls dropping
+            // arbitrarily deep Rust-created data. Peel this fixture iteratively.
+            while let Value::Array(mut values) = value {
+                value = values.pop().expect("one child");
+            }
+        }
+    }
 
     /// expect: "Source admission counts UTF-8 bytes and precedes tokenization" [H4A]
     #[test]
@@ -2349,6 +2618,15 @@ mod tests {
 
     thread_local! {
         static OBSERVED_SCOPES: RefCell<Option<ScopeObservation>> = const { RefCell::new(None) };
+        static OUTPUT_BUFFER_REQUESTS: RefCell<Option<Vec<usize>>> = const { RefCell::new(None) };
+    }
+
+    pub(super) fn observe_output_allocation(capacity: usize) {
+        OUTPUT_BUFFER_REQUESTS.with_borrow_mut(|requests| {
+            if let Some(requests) = requests {
+                requests.push(capacity);
+            }
+        });
     }
 
     pub(super) fn observe_scope(scope: &Rc<RefCell<Env>>) {

@@ -454,6 +454,31 @@ mod tests {
             .expect("completed-context deterministic formatter renders");
         let artifact: serde_json::Value = serde_json::from_str(&output)
             .expect("the render itself is the JSON artifact, not a generation prompt");
+        let template = read_template_file(
+            &registry_template_base(),
+            "mcp-tool-review/findings-artifact",
+        )
+        .expect("artifact template exists");
+        let metadata: serde_yaml::Value = serde_yaml::from_str(
+            template_metadata_header(&template).expect("artifact declares its contract"),
+        )
+        .expect("artifact metadata is valid YAML");
+        let declared_fields = metadata["contract"]["output"]
+            .as_mapping()
+            .expect("artifact output contract is a mapping")
+            .keys()
+            .map(|key| key.as_str().expect("output names are strings"))
+            .collect::<std::collections::BTreeSet<_>>();
+        let rendered_fields = artifact
+            .as_object()
+            .expect("artifact is a flat JSON object")
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            declared_fields, rendered_fields,
+            "output contract matches the artifact"
+        );
         assert_eq!(artifact["capability"], "mcp-tool-review");
         for key in [
             "server",

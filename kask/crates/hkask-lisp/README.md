@@ -105,7 +105,14 @@ No hKask crate dependencies — this is a standalone computation library.
 - Raw `from_json` / `to_json` bypass sandbox work/depth and admission checks:
   unsigned integers can become floats; non-finite floats become JSON null.
   Use the sandbox boundary for its checks.
-- Returned JSON nesting is independently bounded for caller serialization/drop
+- H4B caps the exact serde-pretty JSON **result document** at `MAX_OUTPUT_BYTES` =
+  1048576 (1 MiB), including UTF-8, escaping, indentation and projected object keys
+  with duplicate-key last-value semantics. After work/output-depth checks and
+  `to_json`, the core counts without retaining JSON bytes before publishing the `Value`,
+  including empty-program null. Public `format_json_output` checks raw `Value` depth
+  (128) and counts before requesting the exact-size final buffer; agent display reuses it.
+  Legal success/error shapes remain; oversized evaluation returns an error, not success-null.
+  Final-buffer test observations are not global allocator/heap measurements.
 - Strong lexical captures survive evaluation. `EvalBudget`'s private
   `InvocationScopes` RAII guard weakly tracks root, `let` and lambda-call
   scopes; each tracked entry prepays two ticks for registration and cleanup before
@@ -114,7 +121,15 @@ No hKask crate dependencies — this is a standalone computation library.
   parent links, breaking even disconnected closure cycles. Cleanup covers
   success, errors and Rust unwinding, not abort/OOM. Raw `Env` / `eval`
   callers retain ownership without automatic cleanup.
-- Outer provider/MCP JSON parsing, typed tool-input decoding and env sorting are
-  outside core budget caps; these are not heap, wall-clock or output quotas,
-  nor a claim of complete sandbox or numeric correctness. H4B output/scheduling/cancellation is unchanged.
+- Outer provider/MCP parsing, typed input decoding and env sorting remain outside
+  core work caps. The output cap excludes envelopes, error strings and intermediate
+  `Value` heap; it is not a total-heap, time or concurrency quota. Large intermediate
+  values can exist before refusal. H4C operating measurements remain pending.
+- H5 agent titles inspect only the first 80 Unicode form characters, never env,
+  including partial input. Typed decoding and pure evaluation run via
+  `cx.background_spawn`; evaluator `Rc`s live only within synchronous worker evaluation.
+  Generic raw-output copying and bounded display formatting remain foreground;
+  normal engine-to-display processing counts twice and emits once. Host/corpus
+  offload (H7/H8) and cancellation/Task-drop joining (H6) remain deferred; no new
+  runtime or result cache is introduced.
 - `#![forbid(unsafe_code)]` — no unsafe blocks anywhere in the crate
