@@ -8,6 +8,8 @@ use hkask_types::{
 use hkask_types::{InferencePort, template::LLMParameters};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+mod drain;
+
 #[derive(Default)]
 struct Provider {
     fail: AtomicBool,
@@ -143,6 +145,14 @@ fn open_with_provider(
     provider: Arc<dyn InferencePort>,
     embedding_model: &str,
 ) -> anyhow::Result<Arc<GoalHost>> {
+    open_for_owner(dir, provider, embedding_model, WebID::anonymous())
+}
+fn open_for_owner(
+    dir: &std::path::Path,
+    provider: Arc<dyn InferencePort>,
+    embedding_model: &str,
+    execution_owner: WebID,
+) -> anyhow::Result<Arc<GoalHost>> {
     let ledger_path = dir.join("kanban.db");
     let pool = hkask_storage::SqliteDriver::file_pool_with_schema(
         ledger_path.to_str().expect("test path"),
@@ -154,6 +164,7 @@ fn open_with_provider(
         hkask_storage::embedding_dim(),
     )?);
     Ok(Arc::new(GoalHost::new(
+        execution_owner,
         ledger,
         Some(memory),
         {
@@ -273,7 +284,7 @@ async fn decision_with_manifest(
             agent::set_native_goal_host(None);
         }
     }
-    agent::set_native_goal_host(Some(host));
+    agent::set_native_goal_host(Some(host.clone()));
     let _hook = HookGuard;
     let task = cx.update(|cx| {
         if correction {
@@ -293,7 +304,23 @@ async fn decision_with_manifest(
             )
         }
     });
-    let authorization = receiver.expect_authorization().await;
+    let (authorization, task) =
+        match futures::future::select(task, Box::pin(receiver.expect_authorization())).await {
+            futures::future::Either::Right((authorization, task)) => (authorization, task),
+            futures::future::Either::Left((result, _)) => {
+                panic!("native tool completed before ActionChoice: {result:?}")
+            }
+        };
+    let before_selection = host
+        .service
+        .goal_get(goal.id, goal.owner)
+        .expect("canonical read")
+        .expect("goal");
+    assert_eq!(
+        serde_json::to_value(before_selection).expect("canonical state"),
+        serde_json::to_value(goal).expect("state before prompt"),
+        "presenting ActionChoice must not change canonical state"
+    );
     assert_eq!(
         authorization.kind,
         acp_thread::AuthorizationKind::ActionChoice
@@ -395,7 +422,7 @@ async fn native_stop_unknown_restart_recall_and_optional_human_forecast_correcti
         let clock = clock.clone();
         Arc::new(move || *clock.lock().expect("clock"))
     });
-    let owner = WebID::new();
+    let owner = host.execution_owner;
     let now = host.service.goal_now();
     let forecast = GoalForecast {
         proposition: "Human accepts original requirements".into(),
@@ -490,7 +517,7 @@ async fn native_invalid_choice_cannot_supply_human_authority(cx: &mut gpui::Test
     let dir = tempfile::tempdir().expect("directory");
     let provider = Arc::new(Provider::default());
     let host = open(dir.path(), provider).expect("host");
-    let owner = WebID::new();
+    let owner = host.execution_owner;
     let goal = declare(&host, owner).expect("goal");
     let (stream, mut receiver) = agent::ToolCallEventStream::test_for_actor(owner);
     let id = goal.id.to_string();
@@ -535,7 +562,7 @@ async fn native_drainers_share_private_claim_and_late_result_cannot_replace_new_
         let clock = clock.clone();
         Arc::new(move || *clock.lock().expect("clock"))
     });
-    let owner = WebID::new();
+    let owner = first.execution_owner;
     let goal = declare(&first, owner).expect("goal");
     decision_with_manifest(
         first.clone(),
@@ -631,6 +658,225 @@ async fn native_drainers_share_private_claim_and_late_result_cannot_replace_new_
     .await;
 }
 
+async fn mcp_declare(
+    host: &GoalHost,
+    owner: WebID,
+    dir: &std::path::Path,
+    source: GoalSource,
+    cx: &mut gpui::TestAppContext,
+) -> Goal {
+    use hkask_mcp_kata_kanban::types::{GoalCreateRequest, GoalCriterionInput};
+    use rmcp::handler::server::wrapper::Parameters;
+    let idempotency = Arc::new(
+        idempotency::IdempotencyStore::with_driver(host.ledger.driver().clone())
+            .expect("idempotency schema"),
+    );
+    let server = KanbanServer::new(
+        owner,
+        KanbanService::new(host.ledger.clone()),
+        Arc::new(hkask_mcp_swarm::LocalAgentRegistry::new(
+            dir.to_str().expect("registry path"),
+        )),
+        Arc::new(test_support::UnavailableWorktreeSpawn),
+        idempotency.clone(),
+        idempotency,
+    );
+    cx.executor().allow_parking();
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    let task = runtime.spawn(async move {
+        let output = server
+            .kanban_goal_create(Parameters(GoalCreateRequest {
+                goal_text: "The user can close an MCP-created goal through native consent".into(),
+                criteria: vec![GoalCriterionInput {
+                    description: "Explicit native selection records closure".into(),
+                }],
+                source,
+                forecast: None,
+                supersedes: None,
+                task_id: None,
+                idempotency_key: None,
+            }))
+            .await
+            .expect("public MCP create");
+        test_support::parse(&output)
+    });
+    let response = cx
+        .background_spawn(async move { task.await.expect("MCP create task") })
+        .await;
+    assert_eq!(response["owner"], owner.to_string());
+    let id = response["id"]
+        .as_str()
+        .expect("MCP goal id")
+        .parse()
+        .expect("goal id");
+    let goal = host
+        .service
+        .goal_get(id, owner)
+        .expect("canonical read")
+        .expect("MCP-created goal");
+    assert_eq!(goal.owner, owner);
+    goal
+}
+
+/// Crosses public MCP create and actual native tools with distinct identities.
+#[gpui::test]
+async fn mcp_created_goal_closes_from_distinct_native_session(cx: &mut gpui::TestAppContext) {
+    let managed = crate::mcp_servers::BUILT_IN_MCP_SERVERS
+        .iter()
+        .find(|server| server.id == "kata-kanban")
+        .expect("managed kanban");
+    assert!(!managed.config_env.contains(&"HKASK_WEBID"));
+    assert!(!managed.credentials.contains(&"HKASK_WEBID"));
+    let owner = WebID::anonymous();
+    let actor = WebID::for_agent_name("native-thread:goal-mcp-boundary-session");
+    assert_ne!(owner, actor, "production identities must not be collapsed");
+    let dir = tempfile::tempdir().expect("directory");
+    let provider = Arc::new(Provider::default());
+    let host = open(dir.path(), provider.clone()).expect("file-backed host");
+    let goal = mcp_declare(
+        &host,
+        owner,
+        dir.path(),
+        GoalSource {
+            interaction_id: "worker-declared-turn".into(),
+            session_id: "worker-declared-session".into(),
+            source: "worker-declared-source".into(),
+        },
+        cx,
+    )
+    .await;
+    decision(host.clone(), &goal, actor, "stop_unknown", false, cx).await;
+    let closed = host
+        .service
+        .goal_get(goal.id, owner)
+        .expect("read")
+        .expect("goal");
+    let closure = &closed
+        .closure
+        .as_ref()
+        .expect("explicit selection closes")
+        .input;
+    assert_eq!(closure.choice, HumanClosureChoice::StopUnknown);
+    assert_eq!(closure.source.session_id, format!("test-session:{actor}"));
+    assert!(
+        closure
+            .source
+            .interaction_id
+            .starts_with(&format!("{actor}:"))
+    );
+    assert_eq!(closure.source.source, "native-action-choice");
+    assert_ne!(
+        closure.source, goal.source,
+        "worker source cannot supply native provenance"
+    );
+    decision(host.clone(), &closed, actor, "correct_unknown", true, cx).await;
+    scheduled_tick(host.clone(), provider, cx).await;
+    let current = host
+        .service
+        .goal_get(goal.id, owner)
+        .expect("read")
+        .expect("goal");
+    assert_eq!(current.human_corrections.len(), 1);
+    assert_eq!(current.assessments.len(), 1);
+    assert_eq!(current.indexed_revision, current.revision);
+}
+
+#[gpui::test]
+async fn foreign_goal_denied_before_prompt_despite_forged_native_source(
+    cx: &mut gpui::TestAppContext,
+) {
+    use futures::FutureExt;
+    let dir = tempfile::tempdir().expect("directory");
+    let provider = Arc::new(Provider::default());
+    let host = open(dir.path(), provider.clone()).expect("host");
+    let foreign = WebID::for_agent_name("foreign-kanban-owner");
+    let actor = WebID::for_agent_name("native-thread:goal-mcp-boundary-session");
+    let (stream, mut receiver) = agent::ToolCallEventStream::test_for_actor(actor);
+    let source = GoalSource {
+        interaction_id: format!("{actor}:{}", stream.tool_call_id()),
+        session_id: stream
+            .calling_session_id()
+            .expect("captured session")
+            .into(),
+        source: "native-action-choice".into(),
+    };
+    let goal = mcp_declare(&host, foreign, dir.path(), source.clone(), cx).await;
+    let keepalive = stream.clone();
+    let native_host = host.clone();
+    let id = goal.id.to_string();
+    let result = cx
+        .spawn(async move |mut cx| {
+            agent::decide(id, vec![], false, stream, native_host, &mut cx).await
+        })
+        .await;
+    assert!(
+        matches!(result, Err(agent::NativeGoalOutput::Error { error }) if error.contains("permission denied"))
+    );
+    assert!(
+        receiver.expect_authorization().now_or_never().is_none(),
+        "foreign goal must not prompt"
+    );
+    drop(keepalive);
+    let foreign_host =
+        open_for_owner(dir.path(), provider, "fixture-embedding", foreign).expect("foreign host");
+    for correction in [false, true] {
+        assert!(
+            host.prepare(&goal.id.to_string(), foreign, &[], correction)
+                .err()
+                .expect("session actor cannot impersonate owner")
+                .contains("permission denied")
+        );
+    }
+    for decision in [Decision::StopUnknown, Decision::CorrectUnknown] {
+        let mut prompt = foreign_host
+            .prepare(&goal.id.to_string(), actor, &[], false)
+            .expect("foreign host owns goal");
+        prompt.supersedes_event_id = Some("forged-target".into());
+        assert!(
+            host.submit(NativeGoalSubmission {
+                goal_id: goal.id.to_string(),
+                actor: foreign,
+                interaction_id: source.interaction_id.clone(),
+                session_id: source.session_id.clone(),
+                prompt,
+                decision,
+                evidence_manifest: vec![],
+            })
+            .expect_err("submit must independently enforce host owner")
+            .contains("permission denied")
+        );
+    }
+    let retained = host
+        .service
+        .goal_get(goal.id, foreign)
+        .expect("foreign read")
+        .expect("goal");
+    assert_eq!(
+        serde_json::to_value(retained).expect("retained state"),
+        serde_json::to_value(goal).expect("original state"),
+        "denial must not mutate the foreign goal"
+    );
+}
+
+#[test]
+fn native_goal_inputs_reject_worker_identity_and_source_fields() {
+    let base = serde_json::json!({"goal_id": "fixture-goal"});
+    assert!(serde_json::from_value::<agent::GoalCloseInput>(base.clone()).is_ok());
+    assert!(serde_json::from_value::<agent::GoalCorrectInput>(base.clone()).is_ok());
+    for field in ["actor", "owner", "source", "interaction_id", "session_id"] {
+        let mut forged = base.clone();
+        forged[field] = serde_json::json!("worker-forged");
+        assert!(
+            serde_json::from_value::<agent::GoalCloseInput>(forged.clone()).is_err(),
+            "close rejects {field}"
+        );
+        assert!(
+            serde_json::from_value::<agent::GoalCorrectInput>(forged).is_err(),
+            "correction rejects {field}"
+        );
+    }
+}
+
 // Observe actual drainer warnings without adding another logging dependency.
 struct RejectionWarnings(Arc<std::sync::Mutex<Vec<String>>>);
 impl tracing::Subscriber for RejectionWarnings {
@@ -664,7 +910,7 @@ async fn unsupported_goal_warns_without_blocking_same_or_other_owner_draining(
     let dir = tempfile::tempdir().expect("directory");
     let provider = Arc::new(Provider::default());
     let host = open(dir.path(), provider.clone()).expect("file-backed host");
-    let owner = WebID::new();
+    let owner = host.execution_owner;
     let other_owner = WebID::new();
     let unsupported_id = hkask_types::GoalID::new();
     let raw = format!(
@@ -691,7 +937,9 @@ async fn unsupported_goal_warns_without_blocking_same_or_other_owner_draining(
     let mut goals = Vec::new();
     for actor in [owner, other_owner] {
         let goal = declare(&host, actor).expect("supported declaration");
-        decision(host.clone(), &goal, actor, "stop_unknown", false, cx).await;
+        let owner_host = open_for_owner(dir.path(), provider.clone(), "fixture-embedding", actor)
+            .expect("host configured for this owner");
+        decision(owner_host, &goal, actor, "stop_unknown", false, cx).await;
         goals.push((goal.id, actor));
     }
     let warnings = Arc::new(std::sync::Mutex::new(Vec::new()));

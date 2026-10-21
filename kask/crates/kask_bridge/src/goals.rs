@@ -16,6 +16,8 @@ const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 pub const GOAL_DRAIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 
 pub struct GoalHost {
+    // Trusted composition identity, not the initiating session's attribution.
+    execution_owner: WebID,
     service: KanbanService,
     ledger: HMemStore,
     memory: Option<Arc<hkask_memory::MemoryStore>>,
@@ -30,6 +32,7 @@ pub struct GoalHost {
 }
 impl GoalHost {
     fn new(
+        execution_owner: WebID,
         ledger: HMemStore,
         memory: Option<Arc<hkask_memory::MemoryStore>>,
         chat: impl Fn(Vec<ChatMessage>, String) -> hkask_types::InferenceFuture<'static>
@@ -42,6 +45,7 @@ impl GoalHost {
         embedding_dim: u32,
     ) -> Self {
         Self {
+            execution_owner,
             service: KanbanService::new(ledger.clone()),
             ledger,
             memory,
@@ -54,8 +58,9 @@ impl GoalHost {
         }
     }
 
-    /// Uses the same env override and standardized layout as kata-kanban startup.
+    /// Uses kata-kanban's DB layout and a caller-injected trusted execution owner.
     pub fn open(
+        execution_owner: WebID,
         passphrase: &str,
         memory: Option<Arc<hkask_memory::MemoryStore>>,
         chat: impl Fn(Vec<ChatMessage>, String) -> hkask_types::InferenceFuture<'static>
@@ -80,6 +85,7 @@ impl GoalHost {
         let db = hkask_storage::open_or_repair(&path.to_string_lossy(), passphrase)?;
         let driver = Arc::new(hkask_storage::SqliteDriver::new(db.sqlite_pool()?));
         let host = Self::new(
+            execution_owner,
             HMemStore::from_driver(driver)?,
             memory,
             chat,
@@ -323,7 +329,7 @@ impl NativeGoalHost for GoalHost {
     fn prepare(
         &self,
         id: &str,
-        actor: WebID,
+        _actor: WebID,
         evidence: &[agent::NativeGoalEvidence],
         correction: bool,
     ) -> Result<NativeGoalPrompt, String> {
@@ -333,7 +339,7 @@ impl NativeGoalHost for GoalHost {
         let id = id.parse().map_err(|e| format!("invalid goal ID: {e}"))?;
         let goal = self
             .service
-            .goal_get(id, actor)
+            .goal_get(id, self.execution_owner)
             .map_err(|e| e.to_string())?
             .ok_or_else(|| "goal not found".to_string())?;
         let supersedes_event_id = if correction {
@@ -431,7 +437,7 @@ impl NativeGoalHost for GoalHost {
             Decision::CorrectAchieved | Decision::CorrectNotAchieved | Decision::CorrectUnknown => {
                 self.service.goal_correct_human_outcome(
                     id,
-                    input.actor,
+                    self.execution_owner,
                     NativeGoalOutcomeCorrection {
                         event_id,
                         expected_spec_digest: input.prompt.spec_digest,
@@ -452,7 +458,7 @@ impl NativeGoalHost for GoalHost {
             }
             decision => self.service.goal_close_native(
                 id,
-                input.actor,
+                self.execution_owner,
                 NativeGoalClosure {
                     event_id,
                     expected_spec_digest: input.prompt.spec_digest,

@@ -63,6 +63,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde_json::Value;
 use thiserror::Error;
@@ -98,6 +100,8 @@ pub enum LispError {
     UnboundSymbol(String),
     #[error("arity error: {0}")]
     Arity(String),
+    #[error("Lisp evaluation cancelled")]
+    Cancelled,
 }
 
 // ── Lisp value ──────────────────────────────────────────────────────────────
@@ -180,17 +184,14 @@ impl List {
         self.is_nil()
     }
 
+    fn iter(&self) -> impl Iterator<Item = &LispValue> {
+        std::iter::successors(Some(self), |node| node.tail.as_deref())
+            .take_while(|node| !node.is_nil())
+            .map(|node| &node.head)
+    }
+
     pub fn to_vec(&self) -> Vec<LispValue> {
-        let mut out = Vec::new();
-        let mut cursor: Option<&List> = Some(self);
-        while let Some(node) = cursor {
-            if node.is_nil() {
-                break;
-            }
-            out.push(node.head.clone());
-            cursor = node.tail.as_deref();
-        }
-        out
+        self.iter().cloned().collect()
     }
 
     pub fn from_vec(items: Vec<LispValue>) -> Rc<List> {
@@ -284,8 +285,8 @@ fn parse_with_budget(source: &str, budget: &mut EvalBudget) -> Result<Vec<LispVa
         )));
     }
     budget.charge(source.len())?;
-    let tokens = tokenize(source);
-    let tokens = expand_infix(&tokens);
+    let tokens = tokenize(source, budget)?;
+    let tokens = expand_infix(&tokens, budget)?;
     let mut forms = Vec::new();
     let mut rest: &[String] = &tokens;
     while !rest.is_empty() {
@@ -309,10 +310,11 @@ const INFIX_OPERATORS: &[&str] = &["+", "-", "*", "/", "=", "!=", "<", "<=", ">"
 ///
 /// This is a pre-processing step before `parse_form` — the evaluator sees
 /// only standard prefix S-expressions.
-fn expand_infix(tokens: &[String]) -> Vec<String> {
+fn expand_infix(tokens: &[String], budget: &EvalBudget) -> Result<Vec<String>, LispError> {
     let mut out = Vec::with_capacity(tokens.len());
     let mut i = 0;
     while i < tokens.len() {
+        check_cancellation(budget.cancellation.as_deref(), "infix", 1)?;
         // Check if tokens[i] is an atom (not a paren or quote) followed by
         // an operator followed by another atom.
         if i + 2 < tokens.len()
@@ -325,6 +327,7 @@ fn expand_infix(tokens: &[String]) -> Vec<String> {
             let mut operands = vec![tokens[i].clone()];
             let mut j = i + 1;
             while j + 1 < tokens.len() && tokens[j] == op && is_infix_context(&tokens[j + 1]) {
+                check_cancellation(budget.cancellation.as_deref(), "infix", 2)?;
                 operands.push(tokens[j + 1].clone());
                 j += 2;
             }
@@ -332,6 +335,7 @@ fn expand_infix(tokens: &[String]) -> Vec<String> {
             out.push("(".to_string());
             out.push(op);
             for operand in &operands {
+                check_cancellation(budget.cancellation.as_deref(), "infix", 1)?;
                 out.push(operand.clone());
             }
             out.push(")".to_string());
@@ -341,7 +345,7 @@ fn expand_infix(tokens: &[String]) -> Vec<String> {
             i += 1;
         }
     }
-    out
+    Ok(out)
 }
 
 /// Check if a token is a valid context for infix transformation — it's an
@@ -350,16 +354,18 @@ fn is_infix_context(tok: &str) -> bool {
     tok != "(" && tok != ")" && tok != "'"
 }
 
-fn tokenize(source: &str) -> Vec<String> {
+fn tokenize(source: &str, budget: &EvalBudget) -> Result<Vec<String>, LispError> {
     let mut tokens = Vec::new();
     let mut chars = source.chars().peekable();
     while let Some(&c) = chars.peek() {
+        check_cancellation(budget.cancellation.as_deref(), "source", c.len_utf8())?;
         if c.is_whitespace() {
             chars.next();
             continue;
         }
         if c == ';' {
             for c in chars.by_ref() {
+                check_cancellation(budget.cancellation.as_deref(), "source", c.len_utf8())?;
                 if c == '\n' {
                     break;
                 }
@@ -375,10 +381,12 @@ fn tokenize(source: &str) -> Vec<String> {
             chars.next();
             let mut s = String::from("\"");
             while let Some(&c) = chars.peek() {
+        check_cancellation(budget.cancellation.as_deref(), "source", c.len_utf8())?;
                 chars.next();
                 s.push(c);
                 if c == '\\' {
                     if let Some(&next) = chars.peek() {
+                        check_cancellation(budget.cancellation.as_deref(), "source", next.len_utf8())?;
                         chars.next();
                         s.push(next);
                     }
@@ -393,6 +401,7 @@ fn tokenize(source: &str) -> Vec<String> {
         }
         let mut atom = String::new();
         while let Some(&c) = chars.peek() {
+        check_cancellation(budget.cancellation.as_deref(), "source", c.len_utf8())?;
             if c.is_whitespace() || c == '(' || c == ')' || c == ';' || c == '\'' {
                 break;
             }
@@ -403,7 +412,7 @@ fn tokenize(source: &str) -> Vec<String> {
             tokens.push(atom);
         }
     }
-    tokens
+    Ok(tokens)
 }
 
 #[stacksafe::stacksafe]
@@ -428,7 +437,7 @@ fn parse_form<'a>(
             }
             if remaining[0] == ")" {
                 budget.exit();
-                return Ok((LispValue::List(List::from_vec(items)), &remaining[1..]));
+                return Ok((LispValue::List(budget.make_list(items)?), &remaining[1..]));
             }
             let (form, next) = parse_form(remaining, budget)?;
             items.push(form);
@@ -442,24 +451,33 @@ fn parse_form<'a>(
         budget.enter()?;
         let (form, next) = parse_form(rest, budget)?;
         budget.exit();
-        let quoted = LispValue::List(List::from_vec(vec![
+        let quoted = LispValue::List(budget.make_list(vec![
             LispValue::Symbol("quote".into()),
             form,
-        ]));
+        ])?);
         return Ok((quoted, next));
     }
-    Ok((parse_atom(tok)?, rest))
+    Ok((parse_atom(tok, budget)?, rest))
 }
 
-fn parse_atom(tok: &str) -> Result<LispValue, LispError> {
+fn parse_atom(tok: &str, budget: &EvalBudget) -> Result<LispValue, LispError> {
+    budget.check_cancelled()?;
     if tok.starts_with('"') && tok.ends_with('"') && tok.len() >= 2 {
-        return Ok(LispValue::String(unescape_string(&tok[1..tok.len() - 1])));
+        return Ok(LispValue::String(unescape_string(&tok[1..tok.len() - 1], budget)?));
     }
     if let Ok(i) = tok.parse::<i64>() {
         return Ok(LispValue::Int(i));
     }
     let digits = tok.strip_prefix(['+', '-']).unwrap_or(tok);
-    if !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit()) {
+    let mut integer_spelling = !digits.is_empty();
+    for byte in digits.bytes() {
+        check_cancellation(budget.cancellation.as_deref(), "numeric-source", 1)?;
+        if !byte.is_ascii_digit() {
+            integer_spelling = false;
+            break;
+        }
+    }
+    if integer_spelling {
         return Err(LispError::Parse(format!(
             "integer literal {tok} is outside signed i64 range ({}..={})",
             i64::MIN,
@@ -482,10 +500,12 @@ fn parse_atom(tok: &str) -> Result<LispValue, LispError> {
     })
 }
 
-fn unescape_string(s: &str) -> String {
+fn unescape_string(s: &str, budget: &EvalBudget) -> Result<String, LispError> {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars();
     while let Some(c) = chars.next() {
+        // One iteration consumes at most two UTF-8 scalars (eight bytes).
+        check_cancellation(budget.cancellation.as_deref(), "unescape", c.len_utf8() + 4)?;
         if c == '\\' {
             match chars.next() {
                 Some('n') => out.push('\n'),
@@ -503,7 +523,23 @@ fn unescape_string(s: &str) -> String {
             out.push(c);
         }
     }
-    out
+    Ok(out)
+}
+
+// The caller stores true with Release; no invocation clears or resets it.
+// Test observers run before the load, so a parked real worker resumes into the
+// same checkpoint that must observe the caller's cancellation request.
+fn check_cancellation(
+    cancellation: Option<&AtomicBool>,
+    _phase: &'static str,
+    _units: usize,
+) -> Result<(), LispError> {
+    #[cfg(test)]
+    tests::observe_checkpoint(_phase, _units);
+    if cancellation.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+        return Err(LispError::Cancelled);
+    }
+    Ok(())
 }
 
 // ── Evaluator ───────────────────────────────────────────────────────────────
@@ -539,6 +575,7 @@ pub struct EvalBudget {
     steps_used: u64,
     depth_current: u64,
     invocation_scopes: Option<Rc<InvocationScopes>>,
+    cancellation: Option<Arc<AtomicBool>>,
 }
 
 impl EvalBudget {
@@ -549,6 +586,40 @@ impl EvalBudget {
             steps_used: 0,
             depth_current: 0,
             invocation_scopes: None,
+            cancellation: None,
+        }
+    }
+
+    fn check_cancelled(&self) -> Result<(), LispError> {
+        check_cancellation(self.cancellation.as_deref(), "work", 0)
+    }
+
+    fn collect_list(&self, list: &List) -> Result<Vec<LispValue>, LispError> {
+        list.iter()
+            .map(|value| {
+                check_cancellation(self.cancellation.as_deref(), "list", 1)?;
+                Ok(value.clone())
+            })
+            .collect()
+    }
+
+    fn make_list(&self, items: Vec<LispValue>) -> Result<Rc<List>, LispError> {
+        let mut list = List::nil();
+        for item in items.into_iter().rev() {
+            check_cancellation(self.cancellation.as_deref(), "list-build", 1)?;
+            list = List::cons(item, list);
+        }
+        Ok(list)
+    }
+
+    fn lookup(&self, env: &Env, symbol: &str) -> Result<Option<LispValue>, LispError> {
+        check_cancellation(self.cancellation.as_deref(), "lookup", 1)?;
+        if let Some(value) = env.vars.get(symbol) {
+            return Ok(Some(value.clone()));
+        }
+        match &env.parent {
+            Some(parent) => self.lookup(&parent.borrow(), symbol),
+            None => Ok(None),
         }
     }
 
@@ -572,6 +643,7 @@ impl EvalBudget {
     }
 
     fn charge(&mut self, work: usize) -> Result<(), LispError> {
+        self.check_cancelled()?;
         let work = u64::try_from(work).map_err(|_| LispError::StepLimitExceeded(self.max_steps))?;
         if work > self.max_steps.saturating_sub(self.steps_used) {
             return Err(LispError::StepLimitExceeded(self.max_steps));
@@ -638,13 +710,11 @@ fn eval_inner(
         | LispValue::Float(_)
         | LispValue::String(_) => Ok(form.clone()),
 
-        LispValue::Symbol(s) => env
-            .borrow()
-            .lookup(s)
+        LispValue::Symbol(s) => budget.lookup(&env.borrow(), s)?
             .ok_or_else(|| LispError::UnboundSymbol(s.clone())),
 
         LispValue::List(list) => {
-            let items = list.to_vec();
+            let items = budget.collect_list(list)?;
             if items.is_empty() || list.is_nil() {
                 return Ok(LispValue::Nil);
             }
@@ -695,13 +765,13 @@ fn eval_special_form(
                 return Err(LispError::Arity("let expects (bindings body)".into()));
             }
             let bindings = match &args[0] {
-                LispValue::List(b) => b.to_vec(),
+                LispValue::List(b) => budget.collect_list(b)?,
                 _ => return Err(LispError::Runtime("let bindings must be a list".into())),
             };
             let child_env = budget.new_scope(Env::child(env))?;
             for binding in bindings {
                 let pair = match &binding {
-                    LispValue::List(p) => p.to_vec(),
+                    LispValue::List(p) => budget.collect_list(p)?,
                     _ => return Err(LispError::Runtime("let binding must be a list".into())),
                 };
                 if pair.len() != 2 {
@@ -725,12 +795,14 @@ fn eval_special_form(
                 return Err(LispError::Arity("lambda expects (params body)".into()));
             }
             let params: Vec<String> = match &args[0] {
-                LispValue::List(p) => p
-                    .to_vec()
+                LispValue::List(p) => budget.collect_list(p)?
                     .iter()
-                    .map(|v| match v {
-                        LispValue::Symbol(s) => Ok(s.clone()),
-                        _ => Err(LispError::Runtime("lambda param must be a symbol".into())),
+                    .map(|v| {
+                        budget.check_cancelled()?;
+                        match v {
+                            LispValue::Symbol(s) => Ok(s.clone()),
+                            _ => Err(LispError::Runtime("lambda param must be a symbol".into())),
+                        }
                     })
                     .collect::<Result<_, _>>()?,
                 _ => return Err(LispError::Runtime("lambda params must be a list".into())),
@@ -799,7 +871,7 @@ fn eval_special_form(
         "cond" => {
             for clause in args {
                 let clause_items = match clause {
-                    LispValue::List(cl) => cl.to_vec(),
+                    LispValue::List(cl) => budget.collect_list(cl)?,
                     _ => {
                         return Err(LispError::Runtime("cond clause must be a list".into()));
                     }
@@ -819,9 +891,7 @@ fn eval_special_form(
             Ok(LispValue::Nil)
         }
         _ => {
-            let func = env
-                .borrow()
-                .lookup(name)
+            let func = budget.lookup(&env.borrow(), name)?
                 .ok_or_else(|| LispError::UnboundSymbol(name.to_string()))?;
             let args_eval: Result<Vec<LispValue>, LispError> = args
                 .iter()
@@ -841,7 +911,10 @@ fn apply(
     match func {
         LispValue::NativeFunc(f) => {
             charge_native_arguments(args, budget)?;
-            f(&env, args, budget)
+            budget.check_cancelled()?;
+            let result = f(&env, args, budget);
+            budget.check_cancelled()?;
+            result
         }
         LispValue::Lambda {
             params,
@@ -857,6 +930,7 @@ fn apply(
             }
             let call_env = budget.new_scope(Env::child(closure_env))?;
             for (param, arg) in params.iter().zip(args.iter()) {
+                budget.check_cancelled()?;
                 call_env.borrow_mut().define(param.clone(), arg.clone());
             }
             eval_with_budget(call_env, &body, budget)
@@ -1037,12 +1111,14 @@ fn arithmetic_fold(
     args: &[LispValue],
     integer_op: fn(i64, i64) -> Option<i64>,
     float_op: fn(f64, f64) -> f64,
+    budget: &EvalBudget,
 ) -> Result<LispValue, LispError> {
     if let LispValue::Int(initial) = initial
-        && args.iter().all(|arg| matches!(arg, LispValue::Int(_)))
+        && all_integers(args, budget)?
     {
         let mut acc = *initial;
         for arg in args {
+        budget.check_cancelled()?;
             if let LispValue::Int(value) = arg {
                 acc = integer_op(acc, *value).ok_or_else(|| {
                     LispError::Runtime(format!(
@@ -1057,9 +1133,11 @@ fn arithmetic_fold(
     // Validate every operand before folding, preserving error precedence when
     // an early operation would overflow but a later operand is invalid.
     for arg in args {
+        budget.check_cancelled()?;
         as_f64(arg, name)?;
     }
     for arg in args {
+        budget.check_cancelled()?;
         acc = finite_number(float_op(acc, as_f64(arg, name)?), name)?;
     }
     Ok(LispValue::Float(acc))
@@ -1068,17 +1146,17 @@ fn arithmetic_fold(
 fn add(
     _env: &Rc<RefCell<Env>>,
     args: &[LispValue],
-    _budget: &mut EvalBudget,
+    budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
     arithmetic_fold("+", &LispValue::Int(0), args, i64::checked_add, |a, b| {
         a + b
-    })
+    }, budget)
 }
 
 fn sub(
     _env: &Rc<RefCell<Env>>,
     args: &[LispValue],
-    _budget: &mut EvalBudget,
+    budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
     let Some((first, rest)) = args.split_first() else {
         return Err(LispError::Arity("- expects at least 1 arg".into()));
@@ -1095,29 +1173,30 @@ fn sub(
             }),
         };
     }
-    arithmetic_fold("-", first, rest, i64::checked_sub, |a, b| a - b)
+    arithmetic_fold("-", first, rest, i64::checked_sub, |a, b| a - b, budget)
 }
 
 fn mul(
     _env: &Rc<RefCell<Env>>,
     args: &[LispValue],
-    _budget: &mut EvalBudget,
+    budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
     arithmetic_fold("*", &LispValue::Int(1), args, i64::checked_mul, |a, b| {
         a * b
-    })
+    }, budget)
 }
 
 fn div(
     _env: &Rc<RefCell<Env>>,
     args: &[LispValue],
-    _budget: &mut EvalBudget,
+    budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
     if args.is_empty() {
         return Err(LispError::Arity("/ expects at least 1 arg".into()));
     }
     let mut acc = as_f64(&args[0], "/")?;
     for a in &args[1..] {
+        budget.check_cancelled()?;
         let f = as_f64(a, "/")?;
         if f == 0.0 {
             return Err(LispError::Runtime("division by zero".into()));
@@ -1130,17 +1209,17 @@ fn div(
 fn num_eq(
     _env: &Rc<RefCell<Env>>,
     args: &[LispValue],
-    _budget: &mut EvalBudget,
+    budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
-    compare_chain("=", args, |a, b| a == b, |a, b| a == b)
+    compare_chain("=", args, |a, b| a == b, |a, b| a == b, budget)
 }
 
 fn num_ne(
     _env: &Rc<RefCell<Env>>,
     args: &[LispValue],
-    _budget: &mut EvalBudget,
+    budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
-    compare_chain("!=", args, |a, b| a != b, |a, b| a != b)
+    compare_chain("!=", args, |a, b| a != b, |a, b| a != b, budget)
 }
 
 /// Comparison helper for every numeric comparator (=, !=, <, <=, >, >=):
@@ -1157,19 +1236,25 @@ fn compare_chain(
     args: &[LispValue],
     ord: fn(i64, i64) -> bool,
     ford: fn(f64, f64) -> bool,
+    budget: &EvalBudget,
 ) -> Result<LispValue, LispError> {
     if args.len() < 2 {
         return Err(LispError::Arity(format!("{name} expects at least 2 args")));
     }
-    if args.iter().all(|arg| matches!(arg, LispValue::Int(_))) {
-        return Ok(LispValue::Bool(args.windows(2).all(
-            |pair| matches!(pair, [LispValue::Int(a), LispValue::Int(b)] if ord(*a, *b)),
-        )));
+    if all_integers(args, budget)? {
+        for pair in args.windows(2) {
+            budget.check_cancelled()?;
+            if !matches!(pair, [LispValue::Int(a), LispValue::Int(b)] if ord(*a, *b)) {
+                return Ok(LispValue::Bool(false));
+            }
+        }
+        return Ok(LispValue::Bool(true));
     }
     let mut previous = as_f64(&args[0], name)?;
     let mut result = true;
     // A false comparison must not hide an invalid later operand.
     for arg in &args[1..] {
+        budget.check_cancelled()?;
         let current = as_f64(arg, name)?;
         result &= ford(previous, current);
         previous = current;
@@ -1180,33 +1265,33 @@ fn compare_chain(
 fn lt(
     _env: &Rc<RefCell<Env>>,
     args: &[LispValue],
-    _budget: &mut EvalBudget,
+    budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
-    compare_chain("<", args, |a, b| a < b, |a, b| a < b)
+    compare_chain("<", args, |a, b| a < b, |a, b| a < b, budget)
 }
 
 fn le(
     _env: &Rc<RefCell<Env>>,
     args: &[LispValue],
-    _budget: &mut EvalBudget,
+    budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
-    compare_chain("<=", args, |a, b| a <= b, |a, b| a <= b)
+    compare_chain("<=", args, |a, b| a <= b, |a, b| a <= b, budget)
 }
 
 fn gt(
     _env: &Rc<RefCell<Env>>,
     args: &[LispValue],
-    _budget: &mut EvalBudget,
+    budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
-    compare_chain(">", args, |a, b| a > b, |a, b| a > b)
+    compare_chain(">", args, |a, b| a > b, |a, b| a > b, budget)
 }
 
 fn ge(
     _env: &Rc<RefCell<Env>>,
     args: &[LispValue],
-    _budget: &mut EvalBudget,
+    budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
-    compare_chain(">=", args, |a, b| a >= b, |a, b| a >= b)
+    compare_chain(">=", args, |a, b| a >= b, |a, b| a >= b, budget)
 }
 
 fn car(
@@ -1254,9 +1339,14 @@ fn cons(
 fn list_fn(
     _env: &Rc<RefCell<Env>>,
     args: &[LispValue],
-    _budget: &mut EvalBudget,
+    budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
-    Ok(LispValue::List(List::from_vec(args.to_vec())))
+    let mut items = Vec::with_capacity(args.len());
+    for arg in args {
+        budget.check_cancelled()?;
+        items.push(arg.clone());
+    }
+    Ok(LispValue::List(budget.make_list(items)?))
 }
 
 fn length(
@@ -1272,14 +1362,23 @@ fn length(
         // chars().count() walks every byte — one step per unit of work,
         // charged where the traversal happens, never at argument pass.
         LispValue::List(l) => {
-            let count = l.len();
+            let mut count = 0;
+            for _ in l.iter() {
+                budget.check_cancelled()?;
+                count += 1;
+            }
             budget.charge(count)?;
             Ok(LispValue::Int(count as i64))
         }
         LispValue::Nil => Ok(LispValue::Int(0)),
         LispValue::String(s) => {
             budget.charge(s.len())?;
-            Ok(LispValue::Int(s.chars().count() as i64))
+            let mut count = 0;
+            for character in s.chars() {
+                check_cancellation(budget.cancellation.as_deref(), "string-length", character.len_utf8())?;
+                count += 1;
+            }
+            Ok(LispValue::Int(count))
         }
         _ => Err(LispError::TypeError {
             expected: "list/string".into(),
@@ -1314,7 +1413,7 @@ fn nth(
     // to_vec clones the spine and every string head — charge that walk
     // before cloning (lisp-repair L3: traversal pays, not argument pass).
     charge_list_spine(&list, budget)?;
-    let items = list.to_vec();
+    let items = budget.collect_list(&list)?;
     Ok(if idx >= items.len() {
         LispValue::Nil
     } else {
@@ -1335,9 +1434,9 @@ fn reverse(
     // (lisp-repair L3).
     let list = as_list(&args[0])?;
     charge_list_spine(&list, budget)?;
-    let mut items = list.to_vec();
+    let mut items = budget.collect_list(&list)?;
     items.reverse();
-    Ok(LispValue::List(List::from_vec(items)))
+    Ok(LispValue::List(budget.make_list(items)?))
 }
 
 fn is_null(
@@ -1458,6 +1557,7 @@ fn assoc_strict_fn(
         if node.is_nil() {
             break;
         }
+        budget.check_cancelled()?;
         cursor = node.tail.as_deref();
         if let LispValue::List(pair) = &node.head {
             if let Some(value) = pair.tail.as_deref() {
@@ -1469,16 +1569,18 @@ fn assoc_strict_fn(
             }
         }
     }
+    budget.check_cancelled()?;
     available_keys.sort();
     available_keys.dedup();
+    budget.check_cancelled()?;
     let key_display = match key {
         LispValue::String(s) => format!("{s:?}"),
         LispValue::Symbol(s) => s.clone(),
         other => format!("{other:?}"),
     };
-    Err(LispError::Runtime(format!(
-        "assoc!: key {key_display} not found — available keys: {available_keys:?}"
-    )))
+    let message = format!("assoc!: key {key_display} not found — available keys: {available_keys:?}");
+    budget.check_cancelled()?;
+    Err(LispError::Runtime(message))
 }
 
 fn lookup_alist(
@@ -1491,6 +1593,7 @@ fn lookup_alist(
         if node.is_nil() {
             break;
         }
+        budget.check_cancelled()?;
         cursor = node.tail.as_deref();
         if let LispValue::List(pair) = &node.head {
             let Some(value) = pair.tail.as_deref() else {
@@ -1502,7 +1605,7 @@ fn lookup_alist(
             }
             charge_value(&pair.head, budget, 0)?;
             charge_value(key, budget, 0)?;
-            if pair.head == *key {
+            if equal_with_budget(&pair.head, key, budget)? {
                 if let LispValue::String(text) | LispValue::Symbol(text) = &value.head {
                     budget.charge(text.len())?;
                 }
@@ -1523,6 +1626,7 @@ fn append_fn(
 ) -> Result<LispValue, LispError> {
     let mut combined: Vec<LispValue> = Vec::new();
     for arg in args {
+        budget.check_cancelled()?;
         match arg {
             // to_vec clones the spine and every string head; from_vec
             // allocates a new cons per output element — charge per input
@@ -1530,7 +1634,10 @@ fn append_fn(
             // argument pass).
             LispValue::List(l) => {
                 charge_list_spine(l, budget)?;
-                combined.extend(l.to_vec());
+                for value in l.iter() {
+                    budget.check_cancelled()?;
+                    combined.push(value.clone());
+                }
             }
             LispValue::Nil => {}
             _ => {
@@ -1541,7 +1648,7 @@ fn append_fn(
             }
         }
     }
-    Ok(LispValue::List(List::from_vec(combined)))
+    Ok(LispValue::List(budget.make_list(combined)?))
 }
 
 /// String equality: `(string= a b)` returns true iff both args are strings
@@ -1573,10 +1680,11 @@ fn string_eq_fn(
 fn concat_fn(
     _env: &Rc<RefCell<Env>>,
     args: &[LispValue],
-    _budget: &mut EvalBudget,
+    budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
     let mut combined = String::new();
     for arg in args {
+        budget.check_cancelled()?;
         match arg {
             LispValue::String(s) => combined.push_str(s),
             _ => {
@@ -1827,6 +1935,7 @@ fn extremum(
     args: &[LispValue],
     prefer: fn(f64, f64) -> bool,
     iprefer: fn(i64, i64) -> bool,
+    budget: &EvalBudget,
 ) -> Result<LispValue, LispError> {
     let Some((first, rest)) = args.split_first() else {
         return Err(LispError::Arity(format!("{name} expects at least 1 arg")));
@@ -1834,6 +1943,7 @@ fn extremum(
     // Validate even a sole argument, without promoting an integer that never
     // participates in a mixed comparison.
     for arg in args {
+        budget.check_cancelled()?;
         match arg {
             LispValue::Int(_) => {}
             LispValue::Float(value) => {
@@ -1849,6 +1959,7 @@ fn extremum(
     }
     let mut best = first;
     for arg in rest {
+        budget.check_cancelled()?;
         let wins = match (best, arg) {
             (LispValue::Int(b), LispValue::Int(a)) => iprefer(*a, *b),
             _ => prefer(as_f64(arg, name)?, as_f64(best, name)?),
@@ -1864,13 +1975,14 @@ fn extremum(
 fn max_fn(
     _env: &Rc<RefCell<Env>>,
     args: &[LispValue],
-    _budget: &mut EvalBudget,
+    budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
     extremum(
         "max",
         args,
         |candidate, best| candidate > best,
         |a, b| a > b,
+        budget,
     )
 }
 
@@ -1878,13 +1990,14 @@ fn max_fn(
 fn min_fn(
     _env: &Rc<RefCell<Env>>,
     args: &[LispValue],
-    _budget: &mut EvalBudget,
+    budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
     extremum(
         "min",
         args,
         |candidate, best| candidate < best,
         |a, b| a < b,
+        budget,
     )
 }
 
@@ -1903,7 +2016,7 @@ fn eq_fn(
     }
     charge_value(&args[0], budget, 0)?;
     charge_value(&args[1], budget, 0)?;
-    Ok(LispValue::Bool(args[0] == args[1]))
+    Ok(LispValue::Bool(equal_with_budget(&args[0], &args[1], budget)?))
 }
 
 /// List membership: `(member x list)` returns true iff `x` is structurally
@@ -1921,10 +2034,11 @@ fn member_fn(
     if list.is_nil() {
         return Ok(LispValue::Bool(false));
     }
-    for item in list.to_vec() {
+    for item in list.iter() {
+        budget.check_cancelled()?;
         charge_value(&item, budget, 0)?;
         charge_value(&args[0], budget, 0)?;
-        if item == args[0] {
+        if equal_with_budget(item, &args[0], budget)? {
             return Ok(LispValue::Bool(true));
         }
     }
@@ -2166,13 +2280,20 @@ fn is_alist(items: &[LispValue]) -> bool {
 // The counting pass retains no document bytes. Serde remains authoritative for
 // UTF-8, escaping, indentation and the already-projected object's keys.
 #[derive(Default)]
-struct OutputByteCounter {
+struct OutputByteCounter<'a> {
     bytes: usize,
     exceeded: bool,
+    cancellation: Option<&'a AtomicBool>,
+    cancelled: bool,
 }
 
-impl std::io::Write for OutputByteCounter {
+impl std::io::Write for OutputByteCounter<'_> {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if check_cancellation(self.cancellation, "output-write", 0).is_err() {
+            self.cancelled = true;
+            // Interrupted is retried by write_all, so it cannot mean cancelled.
+            return Err(std::io::Error::other("Lisp evaluation cancelled"));
+        }
         if bytes.len() > MAX_OUTPUT_BYTES - self.bytes {
             self.exceeded = true;
             return Err(std::io::Error::other("max_output_bytes exceeded"));
@@ -2186,19 +2307,24 @@ impl std::io::Write for OutputByteCounter {
     }
 }
 
-fn check_output_json_depth(value: &Value, depth: u64) -> Result<(), LispError> {
+fn check_output_json_depth(
+    value: &Value,
+    depth: u64,
+    cancellation: Option<&AtomicBool>,
+) -> Result<(), LispError> {
+    check_cancellation(cancellation, "output-depth", 1)?;
     if depth >= MAX_JSON_DEPTH {
         return Err(LispError::OutputDepthLimitExceeded(MAX_JSON_DEPTH));
     }
     match value {
         Value::Array(values) => {
             for value in values {
-                check_output_json_depth(value, depth + 1)?;
+                check_output_json_depth(value, depth + 1, cancellation)?;
             }
         }
         Value::Object(values) => {
             for value in values.values() {
-                check_output_json_depth(value, depth + 1)?;
+                check_output_json_depth(value, depth + 1, cancellation)?;
             }
         }
         _ => {}
@@ -2207,12 +2333,25 @@ fn check_output_json_depth(value: &Value, depth: u64) -> Result<(), LispError> {
 }
 
 fn pretty_json_output_size(value: &Value) -> Result<usize, LispError> {
+    pretty_json_output_size_with_cancellation(value, None)
+}
+
+fn pretty_json_output_size_with_cancellation(
+    value: &Value,
+    cancellation: Option<&AtomicBool>,
+) -> Result<usize, LispError> {
     // Public formatting also accepts Rust-created Values, not just sandbox
     // results. Bound recursion before entering serde's recursive serializer.
-    check_output_json_depth(value, 0)?;
-    let mut counter = OutputByteCounter::default();
+    check_output_json_depth(value, 0, cancellation)?;
+    check_cancellation(cancellation, "output-count-before", 0)?;
+    let mut counter = OutputByteCounter {
+        cancellation,
+        ..OutputByteCounter::default()
+    };
     serde_json::to_writer_pretty(&mut counter, value).map_err(|error| {
-        if counter.exceeded {
+        if counter.cancelled {
+            LispError::Cancelled
+        } else if counter.exceeded {
             LispError::Runtime(format!(
                 "max_output_bytes exceeded; allowed {MAX_OUTPUT_BYTES} pretty JSON UTF-8 bytes"
             ))
@@ -2220,6 +2359,7 @@ fn pretty_json_output_size(value: &Value) -> Result<usize, LispError> {
             LispError::Runtime(format!("failed to count pretty JSON output: {error}"))
         }
     })?;
+    check_cancellation(cancellation, "output-count-after", 0)?;
     Ok(counter.bytes)
 }
 
@@ -2250,12 +2390,34 @@ pub fn eval_sandboxed(form: &str, env_json: &Value) -> Result<Value, LispError> 
     eval_sandboxed_with_budget(form, env_json, 100000, 1024)
 }
 
+/// Evaluate with an invocation-owned, monotonic cancellation flag.
+pub fn eval_sandboxed_with_cancellation(
+    form: &str,
+    env_json: &Value,
+    max_steps: u64,
+    max_depth: u64,
+    cancellation: Arc<AtomicBool>,
+) -> Result<Value, LispError> {
+    eval_sandboxed_inner(form, env_json, max_steps, max_depth, Some(cancellation))
+}
+
 pub fn eval_sandboxed_with_budget(
     form: &str,
     env_json: &Value,
     max_steps: u64,
     max_depth: u64,
 ) -> Result<Value, LispError> {
+    eval_sandboxed_inner(form, env_json, max_steps, max_depth, None)
+}
+
+fn eval_sandboxed_inner(
+    form: &str,
+    env_json: &Value,
+    max_steps: u64,
+    max_depth: u64,
+    cancellation: Option<Arc<AtomicBool>>,
+) -> Result<Value, LispError> {
+    check_cancellation(cancellation.as_deref(), "entry", 0)?;
     for (field, requested, allowed) in [
         ("max_steps", max_steps, MAX_STEPS),
         ("max_depth", max_depth, MAX_DEPTH),
@@ -2267,19 +2429,25 @@ pub fn eval_sandboxed_with_budget(
         }
     }
     let mut budget = EvalBudget::new(max_steps, max_depth);
+    budget.cancellation = cancellation;
     // This guard belongs only to the stateless JSON boundary. Raw eval callers
     // retain ownership of their environments and may reuse escaping closures.
     budget.invocation_scopes = Some(Rc::new(InvocationScopes::default()));
     let parsed = parse_with_budget(form, &mut budget)?;
     charge_json(env_json, &mut budget, 0)?;
     if parsed.is_empty() {
-        pretty_json_output_size(&Value::Null)?;
+        pretty_json_output_size_with_cancellation(&Value::Null, budget.cancellation.as_deref())?;
+        budget.check_cancelled()?;
         return Ok(Value::Null);
     }
     let env = budget.new_scope(Env::new_root())?;
     if let Value::Object(obj) = env_json {
         for (k, v) in obj {
+            // charge_json bounds this raw conversion by max_steps/max_depth.
+            // Copying/JSON conversion is nonpreemptible, bracketed per binding.
+            check_cancellation(budget.cancellation.as_deref(), "json-input-before", 0)?;
             env.borrow_mut().define(k.clone(), from_json(v));
+            check_cancellation(budget.cancellation.as_deref(), "json-input-after", 0)?;
         }
     }
     let mut result = LispValue::Nil;
@@ -2288,8 +2456,12 @@ pub fn eval_sandboxed_with_budget(
     }
     charge_value(&result, &mut budget, 0)?;
     charge_output_layout(&result, &mut budget, 0)?;
+    // charge_value/layout bound expanded copying by max_steps and JSON depth.
+    check_cancellation(budget.cancellation.as_deref(), "json-output-before", 0)?;
     let result = to_json(&result);
-    pretty_json_output_size(&result)?;
+    check_cancellation(budget.cancellation.as_deref(), "json-output-after", 0)?;
+    pretty_json_output_size_with_cancellation(&result, budget.cancellation.as_deref())?;
+    check_cancellation(budget.cancellation.as_deref(), "publish", 0)?;
     Ok(result)
 }
 
@@ -2305,6 +2477,48 @@ mod property_tests;
 mod tests {
     use super::*;
     use std::rc::Weak;
+
+    type CheckpointObserver = Box<dyn FnMut(&'static str, usize)>;
+    thread_local! {
+        static CHECKPOINT_OBSERVER: RefCell<Option<CheckpointObserver>> = RefCell::new(None);
+    }
+
+    pub(super) fn observe_checkpoint(phase: &'static str, units: usize) {
+        CHECKPOINT_OBSERVER.with_borrow_mut(|observer| {
+            if let Some(observer) = observer {
+                observer(phase, units);
+            }
+        });
+    }
+
+    struct CheckpointProbe;
+
+    impl CheckpointProbe {
+        fn start(observer: impl FnMut(&'static str, usize) + 'static) -> Self {
+            CHECKPOINT_OBSERVER.with_borrow_mut(|slot| {
+                assert!(slot.is_none(), "observer must not nest");
+                *slot = Some(Box::new(observer));
+            });
+            Self
+        }
+    }
+
+    impl Drop for CheckpointProbe {
+        fn drop(&mut self) {
+            CHECKPOINT_OBSERVER.with_borrow_mut(|slot| *slot = None);
+        }
+    }
+
+    /// expect: "A pre-cancelled public invocation allocates no scopes" [H6A]
+    #[test]
+    fn h6a_pre_cancelled_public_entry() {
+        let flag = Arc::new(AtomicBool::new(false));
+        flag.store(true, Ordering::Release);
+        let probe = ScopeProbe::start(None);
+        let result = eval_sandboxed_with_cancellation("42", &Value::Null, 100_000, 1024, flag);
+        assert!(result.is_err(), "pre-cancelled evaluation must not succeed");
+        probe.assert_reclaimed();
+    }
 
     /// expect: "Escaping amplification hits the pretty-document cap, not input/work admission" [H4B]
     #[test]
@@ -2440,7 +2654,7 @@ mod tests {
         use std::io::Write;
         let mut counter = OutputByteCounter {
             bytes: MAX_OUTPUT_BYTES - 1,
-            exceeded: false,
+            ..OutputByteCounter::default()
         };
         counter.write_all(b"x").expect("last byte fits");
         assert!(counter.write_all(b"x").is_err());

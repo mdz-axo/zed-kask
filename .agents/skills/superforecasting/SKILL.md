@@ -43,7 +43,7 @@ Every stage heading below carries its label. **D**: the nine `lisp_eval` forms
 weighted average, the stage-5/stage-6 compensation-masking and defensible-range gate `SF-2`, the
 quality-gate weighted totals and pass rule `SF-3`, the market-prior gate); the
 `scenario_*` server oracles (triage classification, quantify rejection,
-calibration); `forecast_persist`; and Brier at resolution. **P**: triage,
+calibration); `forecast_persist`; Brier at resolution; and the authored jq record-binding/assembly and raw-quality-shape filters below. **P**: triage,
 Fermi decomposition, outside-view comparability, and dragonfly-eye
 synthesis — each names its critique (`scenario_triage` cross-check,
 falsifiability delegation, the gate's steelman step, the operator). The forecast probability itself is P — calibrated
@@ -53,7 +53,7 @@ one outcome.
 ## Initial and target condition
 
 - **Initial condition (T1):** the admitted question, its resolution criteria and deadline, any sourced historical observations, `market_context` / `expert_prior`, the optional EQM-derived `overconfidence_bias`, and — when resolved forecasts exist — the `scenario_calibration` curve for the bucket. A historical base rate is not presumed to exist.
-- **Target condition (T2):** either a sourced starting anchor followed by a probability with a defensible range and a record preserving the stage-0 resolution criteria/deadline, or an explicit evidence-gap exit with no numeric forecast. For a produced forecast, `SF-3`'s `gate_pass = true` (over `forecast-quality-gate`'s four dimension scores) is the local target; accuracy is judged only by Brier over resolved forecasts, never by one outcome.
+- **Target condition (T2):** either a sourced starting anchor followed by a probability with a defensible range and a record preserving the stage-0 resolution criteria/deadline, or an explicit evidence-gap exit with no numeric forecast. For a produced forecast, `SF-3`'s `gate_pass = true` (over `forecast-quality-gate`'s raw criterion judgments) is the local target; accuracy is judged only by Brier over resolved forecasts, never by one outcome.
 
 ## When to Use
 
@@ -124,7 +124,7 @@ The former single inside-view step is split into three steps. Generation and cou
    - form: "(/ (* prior likelihood_ratio) (+ (* prior likelihood_ratio) (- 1 prior)))"
    - env: `{ "prior": <current prior>, "likelihood_ratio": <P(E|H) / P(E|~H)> }`
 
-   > **MCP tool step (when the forecast is tracked in the scenarios server's tree — call `scenario_update` directly):** pass the prior, the template's `evidence_likelihood` (P(E|H)) and `evidence_base_rate` (P(E)), and an evidence description — the server journals the update; its Bayes is the same computation as the `lisp_eval` form, and the journal is the durable record.
+   > **MCP tool step (when the forecast is tracked in the scenarios server's tree — call `scenario_update` directly):** pass the prior, the template's `evidence_likelihood` (P(E|H)) and `evidence_base_rate` (P(E)), and an evidence description — this returns a calculation only, not a forecast-store write. Retain its evidence and calculation as working artifacts. A changed admitted probability needs a new declaration identity. The two Bayesian parameterizations agree only for coherent evidence probabilities.
 5. Make many small updates most of the time, and occasional large updates when evidence is very strong.
 6. Update the prior probability to the posterior probability based on the accumulated evidence.
 
@@ -152,15 +152,51 @@ The former single inside-view step is split into three steps. Generation and cou
 6. Define a defensible range of probabilities (`[range_low, range_high]`) that would also be reasonable, and verify Stage 5 compensation-masking detection plus Stage 6 defensible-range containment deterministically via `lisp_eval` gate **`SF-2`**:
    - form: `(list (or (< min_criterion_score 4) (> (- max_criterion_score min_criterion_score) 5)) (and (<= range_low final_probability) (<= final_probability range_high) (< range_low range_high)))`
    - env: `{ "min_criterion_score": <lowest criterion score 1..10 on a model>, "max_criterion_score": <highest criterion score 1..10 on that model>, "range_low": <defensible range lower bound>, "final_probability": <stage 6 final_probability>, "range_high": <defensible range upper bound> }`
-   The first element flags compensation masking on the evaluated model; the second must be `true` (`final_probability` strictly inside a non-degenerate `[range_low, range_high]`) before proceeding to stage 7.
+   The first element flags compensation masking on the evaluated model; the second must be `true` (`final_probability` within the inclusive bounds of a non-degenerate `[range_low, range_high]`) before proceeding to stage 7.
 
-### stage_7_record (P content; envelope fields D-interpolated from stage inputs)
+### stage_7_record (P narrative; caller-owned record and admission)
 
-1. Create a structured record of the forecast for later tracking, scoring, and post-mortem analysis.
-2. `stage_7_record.j2` D-interpolates the envelope fields (`question`, `probability`, `confidence`, `resolution_criteria`, `expiration_date`) directly from the stage inputs, while the model synthesizes `reasoning_summary`, `key_assumptions`, `timestamp`, and `tracking_id`.
-3. Summarize the reasoning and list key assumptions made.
-4. Define what would count as resolution and what evidence will determine the outcome.
-5. Set an expiration date for when the forecast should be evaluated.
+1. Render stage 7 for only `reasoning_summary` and `key_assumptions`, passing the actual stage 0–6 outputs/evidence in `pipeline_summary`, not counts. The caller owns the admitted question, criteria/deadline, final probability/confidence and new `forecast_id`; never regenerate them through a model. `scenario_update` does not persist them.
+2. Bind the following handoff directly from held originals and tool call/results; `stage0` is the caller's admitted frame, not a rewritten question. Run each headed jq filter below with `jq -ce '<filter>'` on this object. A nonzero exit blocks the handoff; never manufacture missing data. `quantify.response` and `receipt` are unwrapped tool content, not model output.
+   ```json
+   {"stage0":{"forecasting_question":"<original question>","resolution_criteria":"<stage-0 criteria>","resolution_deadline":"<stage-0 ISO date>"},
+    "stage6":{"final_probability":0.42,"confidence_level":"medium"},
+    "narrative":{"reasoning_summary":"<actual stage-7 summary>","key_assumptions":[]},
+    "outcome_node_id":"<selected outcome ID>",
+    "quantify":{"arguments":{"events":[]},"response":{"nodes":[]}},
+    "declaration":{"forecast_id":"<caller ID>","events":[],"resolution_at":{},"resolver":"<named source>"},"receipt":null}
+   ```
+   The numeric example and empty collections show types, not defaults: replace them from the actual stage/tool objects before execution. Before declaration, `Record assembly` must bind the exact final events. `scenario_quantify` persists a tree: do not invoke it as a read-only audit probe. A changed final estimate requires a coherent revised tree or an explicit binding-gap exit, never silent replacement of p or its conditional table.
+3. Run `Record assembly` with `receipt:null` for a working record, then the quality gate. A passing quality gate is not admission. Only then call `scenario_declare` with the assembly filter's exact `declaration` output; replace null only with its actual successful receipt and rerun assembly. Missing discovery or failed declaration stays explicitly unadmitted; never substitute `scenario_score`. Retain exact successful arguments/receipt for later scoring. Gate-driven revisions need a new identity.
+
+### Record assembly
+
+```jq
+def text: type == "string" and length > 0;
+. as $input | .stage0 as $s | .stage6 as $c | .narrative as $n | .declaration as $d | .receipt as $r |
+[.quantify.response.nodes[] | select(.id == $input.outcome_node_id)] as $nodes |
+[$d.events[] | select(.id == $input.outcome_node_id)] as $events |
+if (.quantify.arguments.events == $d.events) and ($nodes | length) == 1 and ($events | length) == 1 and
+   $nodes[0].marginal_probability == $c.final_probability and
+   $nodes[0].question == $s.forecasting_question and $events[0].question == $s.forecasting_question and
+   $nodes[0].deadline == $s.resolution_deadline and $events[0].deadline == $s.resolution_deadline and
+   has("receipt") and ($s.forecasting_question | text) and ($s.resolution_criteria | text) and
+   ($s.resolution_deadline | text) and ($d.forecast_id | text) and
+   ($c.final_probability | type == "number" and . >= 0 and . <= 1) and
+   ($c.confidence_level | IN("low","medium","high")) and
+   ($n | type == "object" and keys == ["key_assumptions","reasoning_summary"]) and
+   ($n.reasoning_summary | text) and ($n.key_assumptions | type == "array" and all(.[]; text)) and
+   ($r == null or ($r.status == "declared" and $r.forecast_id == $d.forecast_id and
+     $r.resolver == $d.resolver and $r.resolution_at == $d.resolution_at and
+     $r.event_count == ($d.events | length)))
+then {declaration:$d, record_result:{forecast_record:{question:$s.forecasting_question, probability:$c.final_probability,
+      confidence:$c.confidence_level, resolution_criteria:$s.resolution_criteria,
+      expiration_date:$s.resolution_deadline, reasoning_summary:$n.reasoning_summary,
+      key_assumptions:$n.key_assumptions}, tracking_id:$d.forecast_id, admission_receipt:$r}}
+else error("forecast/tree mismatch, invalid narrative or declaration receipt") end
+```
+
+Receipt matching verifies supplied fields, not authenticity: only the caller's real tool result may supply it. Admission time belongs to the store; no model timestamp is recorded.
 
 > **Declare before resolution.** A template record is not durable admission. Call `scenario_declare` with a new `forecast_id`, complete `events`, exact event-ID → UTC timestamp `resolution_at` map and named `resolver` before outcome visibility; it freezes tree marginals, propositions and deadlines. At resolution `scenario_score` requires the same ID, exact frozen events and resolver plus observed outcomes. A revised forecast needs a new identity. For equity questions, `forecast_persist` freezes the return-accuracy target; missing `forecast_probability` remains unscored, never a synthetic prior.
 
@@ -173,12 +209,22 @@ Changed declarations conflict; old date-only records are unscored, not retrofitt
 ### forecast-quality-gate (P — decoupled critic: a separate render that evaluates, never generates; pass rule D)
 
 1. Evaluate the forecast across four independent dimensions: calibration realism, confidence justification, evidence trail, and record completeness.
-2. Score each dimension on a 0–1 scale with specific evidence from the calibration and record outputs.
-3. Compute the per-criterion weighted totals and the pass rule deterministically via `lisp_eval` gate **`SF-3`** — the template emits the four dimension scores and the criterion judgments; it never emits `gate_pass`:
-   - form: `(begin (define wsum (lambda (s w) (+ (* (nth 0 s) (nth 0 w)) (* (nth 1 s) (nth 1 w)) (* (nth 2 s) (nth 2 w)) (* (nth 3 s) (nth 3 w))))) (let ((cr (wsum (assoc "calibration_realism" crit) (list 0.30 0.25 0.20 0.25))) (cj (wsum (assoc "confidence_justification" crit) (list 0.35 0.30 0.20 0.15))) (et (wsum (assoc "evidence_trail" crit) (list 0.35 0.30 0.20 0.15))) (rc (wsum (assoc "record_completeness" crit) (list 0.35 0.25 0.20 0.20)))) (list cr cj et rc (and (>= cr 0.6) (>= cj 0.6) (>= et 0.6) (>= rc 0.6)))))`
-   - env: `{ "crit": [ {"calibration_realism": [1.0, 1.0, 1.0, 1.0]}, {"confidence_justification": [1.0, 1.0, 1.0, 1.0]}, {"evidence_trail": [1.0, 1.0, 1.0, 1.0]}, {"record_completeness": [1.0, 1.0, 1.0, 1.0]} ] }` — each list holds the four criterion judgments (0–1) for that dimension, in the table order above. Returns `[cr, cj, et, rc, gate_pass]`; `gate_pass` is the conjunction of all four weighted totals ≥ 0.60.
-4. If `gate_pass` is false, each failing dimension must have a specific, actionable fix note.
-5. You are evaluating, not generating — do not rewrite or improve the forecast.
+2. Emit only raw criterion scores (0–1), in one `crit` object with four named arrays of four scores in table order, plus specific evidence-backed findings. No aggregate dimension score is an independent judgment.
+3. Compute the per-criterion weighted totals and the pass rule deterministically via `lisp_eval` gate **`SF-3`** — the template emits only raw criterion scores and findings; it never emits `gate_pass`:
+   - form: `(begin (define valid-scores (lambda (xs) (if (is_null xs) true (and (numberp (car xs)) (<= 0 (car xs)) (<= (car xs) 1) (valid-scores (cdr xs)))))) (define valid-dimension (lambda (xs) (and (listp xs) (= (length xs) 4) (valid-scores xs)))) (define wsum (lambda (s w) (/ (+ (* (nth 0 s) (nth 0 w)) (* (nth 1 s) (nth 1 w)) (* (nth 2 s) (nth 2 w)) (* (nth 3 s) (nth 3 w))) 100))) (if (and (listp crit) (= (length crit) 4) (valid-dimension (assoc "calibration_realism" crit)) (valid-dimension (assoc "confidence_justification" crit)) (valid-dimension (assoc "evidence_trail" crit)) (valid-dimension (assoc "record_completeness" crit))) (let ((cr (wsum (assoc "calibration_realism" crit) (list 30 25 20 25))) (cj (wsum (assoc "confidence_justification" crit) (list 35 30 20 15))) (et (wsum (assoc "evidence_trail" crit) (list 35 30 20 15))) (rc (wsum (assoc "record_completeness" crit) (list 35 25 20 20)))) (list cr cj et rc (and (>= cr 0.6) (>= cj 0.6) (>= et 0.6) (>= rc 0.6)))) (list nil "invalid_criteria")))`
+   - env: `{ "crit": {"calibration_realism": [1.0, 1.0, 1.0, 1.0], "confidence_justification": [1.0, 1.0, 1.0, 1.0], "evidence_trail": [1.0, 1.0, 1.0, 1.0], "record_completeness": [1.0, 1.0, 1.0, 1.0]} }` — each list holds the four criterion judgments (0–1) for that dimension, in the table order above. Returns `[cr, cj, et, rc, gate_pass]` on valid input; `[null, "invalid_criteria"]` blocks delivery on malformed scores; `gate_pass` is the conjunction of all four weighted totals ≥ 0.60.
+4. First run `Quality input shape` below on the raw critic object; feed only its emitted `crit` to SF-3 (no retyped scores). Percentage-integer weights preserve the same table weights without an epsilon at the inclusive .60 boundary. Missing/invalid input blocks delivery, never defaults to a passing score. JSON parsing is lossy for repeated object keys; do not claim this shape gate detects duplicate raw JSON keys after parsing.
+5. Map computed failing dimensions to the critic's specific fix notes, never its aggregate verdict. Evaluation remains separate from forecast generation.
+
+### Quality input shape
+
+```jq
+if type == "object" and (.crit | type == "object" and
+   keys == ["calibration_realism","confidence_justification","evidence_trail","record_completeness"]) and
+   all(.crit[]; type == "array" and length == 4 and all(.[]; type == "number" and . >= 0 and . <= 1)) and
+   (.gate_findings | type == "array")
+then .crit else error("quality critic must emit four named arrays of four scores and findings") end
+```
 
 ### Loop (PDCA over the gate)
 
@@ -271,7 +317,7 @@ normalized weights and synthesized probability for valid 3-, 4- and 5-model
 arrays, and returns `[null, "invalid_models"]` for an out-of-range score,
 probability, blank model name or wrong model count; `SF-2` flags compensation masking and verifies `range_low <= final_probability <= range_high` with `range_low < range_high`; `SF-3` computes the four weighted dimension totals from the criterion judgments and passes only
 when all four are >= 0.60 (a below-threshold dimension returns `gate_pass` false); the market-prior gate requires
-`stale_buckets = 0` and `without_snapshot_rate < 0.2`.
+`stale_buckets = 0` and `without_snapshot_rate < 0.2`. SF-3 also refuses malformed/out-of-range scores and preserves the exact .60 boundary. Run both authored jq filters on positive and negative handoffs: source-bound dependent marginal, stale events/changed final estimate, metadata injection, null versus mismatched receipts, and wrong raw critic shapes. Native renderer and authored-rule tests pin these boundaries; they do not certify semantic forecasting quality.
 
 ## Registry Templates
 
@@ -284,8 +330,8 @@ when all four are >= 0.60 (a below-threshold dimension returns `gate_pass` false
 | `stage_4_evidence_update.j2` | Incorporate new evidence via Bayesian updating with likelihood ratios. Revise the prior probability based on evidence strength. |
 | `stage_5_synthesis.j2` | Synthesize a dragonfly-eye view by integrating multiple causal models and perspectives. Steel-man dissenting views and produce a synthesized probability. |
 | `stage_6_calibration.j2` | Calibrate the final probability using the full 0-100% scale. Justify precision against known calibration principles and the pipeline's evidence trail. |
-| `stage_7_record.j2` | Create a structured forecast record with resolution criteria and expiration date for later tracking, Brier scoring, and post-mortem analysis. |
-| `forecast-quality-gate.j2` | Independent quality gate that evaluates forecast calibration realism, confidence justification, evidence trail completeness, and record quality without self-assessment bias. Receives calibration and record outputs and emits the four 0-1 dimension scores plus the criterion judgments; `SF-3` (`lisp_eval`) computes the weighted totals and the pass rule, never the model. |
+| `stage_7_record.j2` | Synthesize reasoning and assumptions; the caller assembles the original record fields and actual declaration evidence deterministically. |
+| `forecast-quality-gate.j2` | Independent quality gate that evaluates forecast calibration realism, confidence justification, evidence trail completeness, and record quality without self-assessment bias. Receives calibration and record outputs and emits only raw criterion scores plus findings; `SF-3` (`lisp_eval`) computes the weighted totals and the pass rule, never the model. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `superforecasting/stage_0_triage`) and a context object with the required variables.
 
@@ -370,7 +416,7 @@ Copyable `render_template` context blocks (variable names from each template's `
   "forecasting_question": "<the question being forecast>",
   "final_probability": 0.42,
   "confidence_level": "<low|medium|high>",
-  "pipeline_summary": { "triage_difficulty": "goldilocks", "sub_question_count": 4, "reference_class_count": 2, "hypothesis_count": 3, "evidence_count": 5 },
+  "pipeline_summary": { "stage0": {}, "stage1": {}, "stage2": {}, "stage3": {}, "stage4": {}, "stage5": {}, "stage6": {} },
   "resolution_criteria": "<observable rule for yes/no resolution>",
   "expiration_date": "<ISO date the forecast should be evaluated>"
 }
@@ -381,7 +427,7 @@ Copyable `render_template` context blocks (variable names from each template's `
 {
   "forecasting_question": "<the question being forecast>",
   "calibration_result": { "final_probability": 0.42, "confidence_level": "<low|medium|high>", "precision_justification": "<justification>", "defensible_range": { "lower": 0.35, "upper": 0.5 } },
-  "record_result": { "forecast_record": { "question": "<question>", "probability": 0.42, "resolution_criteria": "<criteria>", "expiration_date": "<date>" }, "tracking_id": "<id>" },
+  "record_result": { "forecast_record": { "question": "<original question>", "probability": 0.42, "resolution_criteria": "<stage-0 criteria>", "expiration_date": "<stage-0 date>", "reasoning_summary": "<stage-7 narrative>", "key_assumptions": [] }, "tracking_id": "<caller ID>", "admission_receipt": null },
   "synthesis_output": { "causal_models": [{ "model_name": "<model>" }], "dissenting_views": [{ "view": "<view>" }] }
 }
 ```

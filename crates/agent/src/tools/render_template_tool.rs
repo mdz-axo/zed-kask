@@ -516,10 +516,20 @@ mod tests {
 
     // Run the authored filters, not a Rust translation of the decision rules.
     fn grill_jq(section: &str, input: serde_json::Value) -> Result<serde_json::Value, String> {
+        authored_jq("grill-me", section, input)
+    }
+
+    fn authored_jq(
+        skill: &str,
+        section: &str,
+        input: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
         use smol::{io::AsyncWriteExt, process::Command};
         use std::process::Stdio;
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.agents/skills/grill-me/SKILL.md");
+            .join("../../.agents/skills")
+            .join(skill)
+            .join("SKILL.md");
         let source = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
         let filter = source
             .split_once(&format!("### {section}\n"))
@@ -545,6 +555,149 @@ mod tests {
             }
             serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())
         })
+    }
+
+    #[test]
+    fn superforecasting_record_and_admission_preserve_source_ownership() {
+        use serde_json::json;
+        let events = json!([
+            {"id":"root", "question":"Root", "deadline":"2027-01-01", "probability":0.6, "depends_on":[]},
+            {"id":"outcome", "question":"QUESTION_SENTINEL", "deadline":"2027-01-01", "probability":0.5,
+             "depends_on":[{"parent_event_ids":["root"],"conditionals":[0.2,0.8]}]}
+        ]);
+        let mut input = json!({
+            "stage0":{"forecasting_question":"QUESTION_SENTINEL", "resolution_criteria":"CRITERIA_SENTINEL", "resolution_deadline":"2027-01-01"},
+            "stage6":{"final_probability":0.56,"confidence_level":"medium"},
+            "outcome_node_id":"outcome",
+            "quantify":{"arguments":{"events":events},"response":{"nodes":[
+                {"id":"root","question":"Root","deadline":"2027-01-01","marginal_probability":0.6},
+                {"id":"outcome","question":"QUESTION_SENTINEL","deadline":"2027-01-01","marginal_probability":0.56}
+            ]}},
+            "declaration":{"forecast_id":"caller-owned","events":events,"resolver":"declared-test-source",
+                "resolution_at":{"root":"2027-01-01T12:00:00Z","outcome":"2027-01-01T12:00:00Z"}},
+            "narrative":{"reasoning_summary":"EVIDENCE_SENTINEL","key_assumptions":["ASSUMPTION_SENTINEL"]},
+            "receipt":null
+        });
+        let binding = authored_jq("superforecasting", "Record assembly", input.clone())
+            .expect("dependent marginal, not raw prior, binds");
+        assert_eq!(
+            binding["declaration"], input["declaration"],
+            "pass exact arguments, not a reconstructed tree"
+        );
+        let record = &binding["record_result"];
+        assert_eq!(record["admission_receipt"], json!(null));
+        assert_eq!(record["forecast_record"]["probability"], 0.56);
+        assert_eq!(
+            record["forecast_record"]["resolution_criteria"],
+            "CRITERIA_SENTINEL"
+        );
+        assert_eq!(record["tracking_id"], "caller-owned");
+        assert!(record["forecast_record"].get("timestamp").is_none());
+        for (path, value) in [
+            ("final_probability", json!(0.42)),
+            ("final_probability", json!(null)),
+        ] {
+            let mut bad = input.clone();
+            bad["stage6"][path] = value;
+            assert!(authored_jq("superforecasting", "Record assembly", bad).is_err());
+        }
+        let mut stale = input.clone();
+        stale["declaration"]["events"][1]["probability"] = json!(0.42);
+        assert!(authored_jq("superforecasting", "Record assembly", stale).is_err());
+        for key in ["question", "deadline", "id"] {
+            let mut bad = input.clone();
+            bad["quantify"]["response"]["nodes"][1][key] = json!("changed");
+            assert!(
+                authored_jq("superforecasting", "Record assembly", bad).is_err(),
+                "changed {key}"
+            );
+        }
+        let mut duplicate = input.clone();
+        let node = duplicate["quantify"]["response"]["nodes"][1].clone();
+        duplicate["quantify"]["response"]["nodes"]
+            .as_array_mut()
+            .expect("nodes")
+            .push(node);
+        assert!(authored_jq("superforecasting", "Record assembly", duplicate).is_err());
+        for key in ["probability", "timestamp", "tracking_id"] {
+            let mut injected = input.clone();
+            injected["narrative"][key] = json!("injected");
+            assert!(
+                authored_jq("superforecasting", "Record assembly", injected).is_err(),
+                "reject narrative {key}"
+            );
+        }
+        for malformed in [
+            json!(null),
+            json!({}),
+            json!({"reasoning_summary":"ok","key_assumptions":"not an array"}),
+        ] {
+            let mut bad = input.clone();
+            bad["narrative"] = malformed;
+            assert!(authored_jq("superforecasting", "Record assembly", bad).is_err());
+        }
+        let mut omitted = input.clone();
+        omitted.as_object_mut().expect("handoff").remove("receipt");
+        assert!(authored_jq("superforecasting", "Record assembly", omitted).is_err());
+        let quality_rows = json!({"crit":{"calibration_realism":[1,1,1,1],"confidence_justification":[1,1,1,1],"evidence_trail":[1,1,1,1],"record_completeness":[1,1,1,1]},"gate_findings":[]});
+        assert_eq!(
+            authored_jq(
+                "superforecasting",
+                "Quality input shape",
+                quality_rows.clone()
+            )
+            .expect("raw critic object"),
+            quality_rows["crit"]
+        );
+        for malformed in [
+            json!([]),
+            json!([["calibration_realism", [1, 1, 1, 1]]]),
+            json!({"calibration_realism":[1,1,1,1]}),
+        ] {
+            let mut bad = quality_rows.clone();
+            bad["crit"] = malformed;
+            assert!(authored_jq("superforecasting", "Quality input shape", bad).is_err());
+        }
+        input["receipt"] = json!({"forecast_id":"caller-owned","status":"declared","event_count":2,
+            "resolver":"declared-test-source","resolution_at":input["declaration"]["resolution_at"]});
+        let admitted = authored_jq("superforecasting", "Record assembly", input.clone())
+            .expect("actual receipt shape");
+        let admitted = &admitted["record_result"];
+        assert_eq!(admitted["admission_receipt"], input["receipt"]);
+        for key in [
+            "forecast_id",
+            "status",
+            "resolver",
+            "resolution_at",
+            "event_count",
+        ] {
+            let mut bad = input.clone();
+            bad["receipt"][key] = json!(null);
+            assert!(
+                authored_jq("superforecasting", "Record assembly", bad).is_err(),
+                "receipt {key}"
+            );
+        }
+        let prompt = render_template_for_test("superforecasting/stage_7_record", json!({
+            "forecasting_question":"QUESTION_SENTINEL","final_probability":0.56,"confidence_level":"medium",
+            "pipeline_summary":{"stage0":input["stage0"],"stage6":input["stage6"],"evidence":["EVIDENCE_SENTINEL"]},
+            "resolution_criteria":"CRITERIA_SENTINEL","expiration_date":"2027-01-01"
+        })).expect("real narrative renderer");
+        assert!(
+            prompt.contains("EVIDENCE_SENTINEL"),
+            "raw evidence survives rather than only counts"
+        );
+        assert!(!prompt.contains("<ISO 8601 timestamp>"));
+        let quality = render_template_for_test(
+            "superforecasting/forecast-quality-gate",
+            json!({
+                "forecasting_question":"QUESTION_SENTINEL","calibration_result":input["stage6"],
+                "record_result":admitted,"synthesis_output":{"evidence":["EVIDENCE_SENTINEL"]}
+            }),
+        )
+        .expect("assembled record feeds real quality renderer");
+        assert!(quality.contains("CRITERIA_SENTINEL") && quality.contains("caller-owned"));
+        assert!(quality.contains("\"crit\"") && !quality.contains("\"calibration_realism_score\""));
     }
 
     fn grill_input() -> serde_json::Value {

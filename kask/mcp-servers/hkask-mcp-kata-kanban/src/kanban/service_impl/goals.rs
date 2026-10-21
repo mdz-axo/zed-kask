@@ -7,7 +7,7 @@ use hkask_storage::HMem;
 use hkask_types::{WebID, id::GoalID};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 const GOAL_ENTITY: &str = "kanban:goal";
 impl From<hkask_storage::HMemError> for KanbanError {
@@ -152,6 +152,33 @@ fn decode_goal(value: serde_json::Value) -> Result<Goal, KanbanError> {
     }
     serde_json::from_value(value).map_err(|e| KanbanError::Internal(format!("goal decode: {e}")))
 }
+fn owned_goal_listing(owner: WebID, rows: impl IntoIterator<Item = HMem>) -> GoalListing {
+    let mut listing = GoalListing::default();
+    let mut ids = HashSet::new();
+    for row in rows {
+        if row.access.owner_webid != owner {
+            continue;
+        }
+        let decoded = decode_goal(row.value).and_then(|goal| {
+            require_owner(&goal, owner)?;
+            if row.attribute != goal.id.to_string() || !ids.insert(goal.id) {
+                return Err(invalid("goal key mismatch or duplicate canonical identity"));
+            }
+            Ok(goal)
+        });
+        match decoded {
+            Ok(goal) => listing.goals.push(goal),
+            Err(error) => {
+                listing.rejected.insert(row.attribute, error.to_string());
+            }
+        }
+    }
+    listing
+        .goals
+        .sort_by_key(|goal| std::cmp::Reverse(goal.created_at));
+    listing
+}
+
 fn publish(goal: &mut Goal, now: DateTime<Utc>) -> Result<(), KanbanError> {
     goal.revision = goal
         .revision
@@ -375,30 +402,26 @@ impl KanbanService {
             .transpose()
     }
     pub fn goal_list(&self, owner: &WebID) -> Result<GoalListing, KanbanError> {
-        let mut listing = GoalListing::default();
-        let mut ids = HashSet::new();
+        Ok(owned_goal_listing(
+            *owner,
+            self.store.query_by_entity(GOAL_ENTITY)?,
+        ))
+    }
+
+    /// Trusted native-host scheduling scan, not an MCP route. Validate each
+    /// owner's records through the same collector as caller-scoped listing.
+    pub fn goal_scan_for_host(&self) -> Result<HashMap<WebID, GoalListing>, KanbanError> {
+        let mut rows_by_owner: HashMap<WebID, Vec<HMem>> = HashMap::new();
         for row in self.store.query_by_entity(GOAL_ENTITY)? {
-            if row.access.owner_webid != *owner {
-                continue;
-            }
-            let decoded = decode_goal(row.value).and_then(|goal| {
-                require_owner(&goal, *owner)?;
-                if row.attribute != goal.id.to_string() || !ids.insert(goal.id) {
-                    return Err(invalid("goal key mismatch or duplicate canonical identity"));
-                }
-                Ok(goal)
-            });
-            match decoded {
-                Ok(goal) => listing.goals.push(goal),
-                Err(error) => {
-                    listing.rejected.insert(row.attribute, error.to_string());
-                }
-            }
+            rows_by_owner
+                .entry(row.access.owner_webid)
+                .or_default()
+                .push(row);
         }
-        listing
-            .goals
-            .sort_by_key(|g| std::cmp::Reverse(g.created_at));
-        Ok(listing)
+        Ok(rows_by_owner
+            .into_iter()
+            .map(|(owner, rows)| (owner, owned_goal_listing(owner, rows)))
+            .collect())
     }
     fn transition_goal(
         &self,

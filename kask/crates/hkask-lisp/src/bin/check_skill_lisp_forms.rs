@@ -493,6 +493,74 @@ mod tests {
     }
 
     #[test]
+    fn superforecasting_quality_uses_raw_bounded_criteria() {
+        let form = skill_candidate("superforecasting", "define wsum");
+        let dimensions = [
+            "calibration_realism",
+            "confidence_justification",
+            "evidence_trail",
+            "record_completeness",
+        ];
+        let criteria = |score: f64| {
+            let rows = dimensions
+                .iter()
+                .map(|name| ((*name).to_string(), json!(vec![score; 4])))
+                .collect::<serde_json::Map<_, _>>();
+            json!({"crit": rows})
+        };
+        for (score, pass) in [(1.0, true), (0.6, true), (0.599999, false), (0.0, false)] {
+            let result = eval_sandboxed(&form, &criteria(score)).expect("authored SF-3 evaluates");
+            assert_eq!(result[4], pass, "inclusive threshold for {score}: {result}");
+            for total in result
+                .as_array()
+                .expect("totals and verdict")
+                .iter()
+                .take(4)
+            {
+                assert!((total.as_f64().expect("numeric total") - score).abs() < 1e-12);
+            }
+        }
+        for (index, weights) in [
+            ([1.0, 0.0, 0.0, 0.0], [0.30, 0.35, 0.35, 0.35]),
+            ([0.0, 1.0, 0.0, 0.0], [0.25, 0.30, 0.30, 0.25]),
+            ([0.0, 0.0, 1.0, 0.0], [0.20; 4]),
+            ([0.0, 0.0, 0.0, 1.0], [0.25, 0.15, 0.15, 0.20]),
+        ] {
+            let mut env = criteria(0.0);
+            for name in dimensions {
+                env["crit"][name] = json!(index);
+            }
+            let result = eval_sandboxed(&form, &env).expect("one-hot criterion weights");
+            for (i, expected) in weights.iter().enumerate() {
+                assert!((result[i].as_f64().expect("weighted total") - expected).abs() < 1e-12);
+            }
+        }
+        for value in [
+            json!(null),
+            json!([]),
+            json!([1, 1, 1]),
+            json!([1, 1, 1, 1, 1]),
+            json!([2, 1, 1, 1]),
+            json!([-0.1, 1, 1, 1]),
+            json!(["1", 1, 1, 1]),
+            json!([true, 1, 1, 1]),
+        ] {
+            let mut env = criteria(1.0);
+            env["crit"]["evidence_trail"] = value;
+            assert_eq!(
+                eval_sandboxed(&form, &env).expect("invalid scores are explicit"),
+                json!([null, "invalid_criteria"])
+            );
+        }
+        let mut extra = criteria(1.0);
+        extra["crit"]["invented_dimension"] = json!([1, 1, 1, 1]);
+        assert_eq!(
+            eval_sandboxed(&form, &extra).expect("extra dimension refused"),
+            json!([null, "invalid_criteria"])
+        );
+    }
+
+    #[test]
     fn mcp_inventory_reconciliation_uses_exact_raw_names() {
         let form = skill_candidate("mcp-tool-review", "define mtr-reconcile");
         let base = json!({

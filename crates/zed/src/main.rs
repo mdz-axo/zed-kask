@@ -2180,7 +2180,11 @@ fn main() {
                             }
                         });
                         let goal_embedding = embedding_port_for_ipc.clone();
+                        // Managed kata-kanban excludes HKASK_WEBID from its child
+                        // env, so bootstrap uses this canonical process default.
+                        // Pinned by mcp_created_goal_closes_from_distinct_native_session.
                         match kask_bridge::GoalHost::open(
+                            hkask_types::WebID::anonymous(),
                             &passphrase, projection_store,
                             |messages, model| Box::pin(async move {
                                 let port = kask_bridge::global_inference_port().ok_or_else(|| hkask_types::InferenceError::Generation("Goal assessor inference unavailable".into()))?;

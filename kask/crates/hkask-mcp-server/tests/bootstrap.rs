@@ -98,6 +98,39 @@ async fn missing_required_credentials_refuse_before_factory() {
     );
 }
 
+/// expect: "Absent or invalid process WebID uses the canonical anonymous owner"
+#[tokio::test]
+async fn default_and_invalid_webid_use_canonical_anonymous_owner() {
+    let test = "default_and_invalid_webid_use_canonical_anonymous_owner";
+    if std::env::var(CHILD).as_deref() != Ok(test) {
+        run_child(test, &[]);
+        run_child(test, &[("HKASK_WEBID", "not-a-webid")]);
+        return;
+    }
+    let mut captured = None;
+    let result = run_stdio_server::<NeverServed, _>(
+        "bootstrap-regression",
+        env!("CARGO_PKG_VERSION"),
+        |context| {
+            captured = Some(context.webid);
+            Err(McpError::UnexpectedResponse {
+                context: "identity captured".into(),
+                detail: "intentionally not serving".into(),
+            })
+        },
+        vec![],
+    )
+    .await;
+    let owner = captured.expect("production bootstrap reaches factory");
+    assert_eq!(owner, hkask_types::WebID::anonymous());
+    assert_eq!(
+        owner.to_string(),
+        "ee27e819-68c2-5d33-9289-3443fce69c0a",
+        "default identity must remain stable for persisted ownership"
+    );
+    assert!(matches!(result, Err(McpError::UnexpectedResponse { .. })));
+}
+
 /// expect: "Injected credentials and WebID reach the factory without an available keychain"
 #[tokio::test]
 async fn injected_credentials_and_webid_reach_factory() {

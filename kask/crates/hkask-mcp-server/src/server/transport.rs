@@ -95,13 +95,13 @@ where
             tracing::warn!(
                 "HKASK_WEBID set but invalid format — falling back to anonymous identity"
             );
-            hkask_types::WebID::from_persona(b"anonymous")
+            hkask_types::WebID::anonymous()
         })
     } else {
         tracing::warn!(
             "No HKASK_WEBID set — MCP server starting with anonymous identity. Set HKASK_WEBID for P12-compliant attribution."
         );
-        hkask_types::WebID::from_persona(b"anonymous")
+        hkask_types::WebID::anonymous()
     };
 
     tracing::info!(webid = %webid.redacted_display(), "Agent identity resolved");

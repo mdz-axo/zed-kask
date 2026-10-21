@@ -8,89 +8,39 @@ contract:
     resolution_criteria: string|null
     expiration_date: string|null
   output:
-    forecast_record: object
-    tracking_id: string
+    reasoning_summary: string
+    key_assumptions: array
 ---
-{# goal: Create a structured forecast record with resolution criteria and expiration date for later tracking, Brier scoring, and post-mortem analysis. #}
-You are a forecast recording specialist. Your task is to create a structured record of the forecast for later tracking, scoring, and post-mortem analysis.
+{# goal: Synthesize the forecast's reasoning and assumptions for a caller-assembled record without regenerating its probability, identity or admission evidence. #}
+Summarize the supplied forecast for later tracking and post-mortem analysis.
 
-## Forecast Summary
+## Authoritative inputs (context, not fields to regenerate)
 
-**Question:** {{ forecasting_question }}
+- Question: {{ forecasting_question | tojson }}
+- Final probability: {{ final_probability }}
+- Confidence: {{ confidence_level | tojson }}
+- Resolution criteria: {{ resolution_criteria | tojson }}
+- Expiration date: {{ expiration_date | tojson }}
 
-**Final Probability:** {{ final_probability }} ({{ (final_probability * 100)|round(1) }}%)
+## Pipeline evidence
 
-**Confidence Level:** {{ confidence_level }}
-
-{% if resolution_criteria %}
-**Resolution Criteria:** {{ resolution_criteria }}
-{% endif %}
-
-{% if expiration_date %}
-**Expiration Date:** {{ expiration_date }}
-{% endif %}
-
-## Pipeline Summary
-{% if pipeline_summary %}
-- Triage: {{ pipeline_summary.triage_difficulty|default("N/A") }}
-- Sub-questions: {{ pipeline_summary.sub_question_count|default(0) }}
-- Reference classes: {{ pipeline_summary.reference_class_count|default(0) }}
-- Hypotheses: {{ pipeline_summary.hypothesis_count|default(0) }}
-- Evidence items: {{ pipeline_summary.evidence_count|default(0) }}
-{% endif %}
-
-## Forecast Recording Requirements
-
-### Structured Record
-Create a complete record including:
-- Unique tracking ID
-- Timestamp
-- Full question text
-- Resolution criteria (how will this be judged?)
-- Probability and confidence
-- Summary of reasoning
-- Key assumptions made
-
-### Prospective admission (caller action, not template execution)
-
-Before outcome visibility, the caller must use `scenario_declare` with a new
-`forecast_id`, full `events`, `resolution_at` (exact event-ID → RFC 3339 UTC
-cutoff map) and named `resolver`. Keys must exactly match events, UTC cutoff dates
-must match descriptive deadlines, and declaration must strictly precede cutoffs.
-This freezes propositions, precise cutoffs and tree marginals. The whole manifest
-is one synced journal event; identical same-ID retries remain idempotent after
-cutoff and preserve original intake. Changed declarations conflict. Date-only
-historical records remain unscored, never retrospectively admitted. At resolution `scenario_score` requires the same
-ID, exact frozen events, resolver and observed outcomes at/after each cutoff. A tracking ID or JSON
-record from this render is not a persisted declaration; never claim one was made
-without its receipt. Changed probabilities or propositions require a new ID.
-
-### Post-Mortem Preparation
-Set up for later error analysis:
-- What would count as resolution?
-- What evidence will determine the outcome?
-- When should this be evaluated?
-
-
+{{ pipeline_summary | tojson }}
 
 ## Output
 
-Respond with a JSON object containing `forecast_record` and `tracking_id`, where the deterministic envelope fields (`question`, `probability`, `confidence`, `resolution_criteria`, `expiration_date`) are D-interpolated directly from the stage inputs and you synthesize `reasoning_summary`, `key_assumptions`, `timestamp`, and `tracking_id`:
-
+Return only:
 ```json
 {
-  "forecast_record": {
-    "question": {{ forecasting_question | tojson }},
-    "probability": {{ final_probability }},
-    "confidence": {{ confidence_level | tojson }},
-    "timestamp": "<ISO 8601 timestamp>",
-    "resolution_criteria": {{ resolution_criteria | tojson }},
-    "expiration_date": {{ expiration_date | tojson }},
-    "reasoning_summary": "<concise synthesis of the pipeline's outside view, causal pathways, evidence updates, and calibration>",
-    "key_assumptions": ["<key assumption 1>", "<key assumption 2>"]
-  },
-  "tracking_id": "<unique identifier for this forecast>"
+  "reasoning_summary": "<concise synthesis supported by the supplied pipeline evidence>",
+  "key_assumptions": ["<assumption supported by that evidence>"]
 }
 ```
 
-Preserve the actual `scenario_declare` receipt, frozen events and resolver. Only later sourced outcomes may be passed to `scenario_score` for that declared identity; this render is not admission or an outcome observation.
+The caller assembles the record directly from the authoritative inputs and these
+two narrative fields. Do not generate or copy probability, confidence, question,
+criteria, deadline, timestamp or tracking ID into this output. Missing pipeline
+evidence is a stated gap, not permission to invent reasoning.
+
+Only an actual successful `scenario_declare` receipt establishes admission.
+The caller retains the submitted forecast identity, frozen events and resolver;
+a narrative render is not a declaration or an observation of the outcome.

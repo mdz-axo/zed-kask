@@ -51,8 +51,15 @@ artifact-access consent. Changed requirements declare a successor goal.
 ## Native authority and evidence
 
 `NativeGoalHost` is a native-only dependency boundary, not an MCP route.
-`goal_tools.rs` captures the actual actor/session and requires a concrete
-human `ActionChoice`; workers supply only goal identity and evidence references.
+The host receives the trusted kanban execution owner at composition and uses it
+for both preparation and submission ownership checks. Managed kata-kanban's
+child configuration excludes `HKASK_WEBID`, so bootstrap and native composition
+share `WebID::anonymous()`; a regression pins that allowlist assumption. This
+preserves process-scoped ownership, not per-session or authenticated-human ownership.
+Neither requested goal contents nor worker-supplied source fields grant ownership.
+`goal_tools.rs` separately captures the initiating actor/session for native
+interaction provenance and requires a concrete human `ActionChoice`; workers
+supply only goal identity and evidence references.
 The six closure choices preserve accomplished/stop independently of
 achieved/not-achieved/unknown. Corrections are separate human interactions.
 
@@ -105,5 +112,9 @@ active producer. Canonical goals are never deleted by successful indexing.
 
 The scheduled host remains gated by `curator.always_on`; disabling it warns and
 retains work. Missing inference/indexing capabilities are visible and retryable.
-Tests drive the actual native tools, service and drainer with file-backed stores;
-these are not claims of a deployed-editor end-to-end run.
+Tests cross public MCP create, distinct native-session attribution, actual native
+tools and the drainer with file-backed stores. Foreign ownership is denied before
+prompting and again at submission, even with forged native-looking declaration
+source. Native inputs reject identity/source fields; only an offered explicit
+selection records a decision. These are not deployed-editor end-to-end claims;
+changed native assembly still requires rebuild, restart and actual human interaction.

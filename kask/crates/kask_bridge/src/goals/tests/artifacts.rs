@@ -64,7 +64,7 @@ async fn fetched_local_bytes_support_and_contradict_without_overwriting_human_la
         let provider = Arc::new(Provider::default());
         provider.artifact_findings.store(true, Ordering::SeqCst);
         let host = open(&case, provider.clone()).expect("file-backed host");
-        let owner = WebID::new();
+        let owner = host.execution_owner;
         let goal = feature_goal(&host, owner);
         let (stream, mut receiver) = agent::ToolCallEventStream::test_for_actor(owner);
         let id = goal.id.to_string();
@@ -214,7 +214,7 @@ async fn mismatched_and_missing_artifacts_are_unknown_without_a_model_call_and_s
     let provider = Arc::new(Provider::default());
     provider.artifact_findings.store(true, Ordering::SeqCst);
     let host = open(dir.path(), provider.clone()).expect("host");
-    let owner = WebID::new();
+    let owner = host.execution_owner;
     let goal = feature_goal(&host, owner);
     decision_with_manifest(
         host.clone(),
@@ -335,7 +335,7 @@ async fn unsafe_sources_withhold_contents_and_never_execute_or_become_support(
     let provider = Arc::new(Provider::default());
     provider.artifact_findings.store(true, Ordering::SeqCst);
     let host = open(dir.path(), provider.clone()).expect("host");
-    let owner = WebID::new();
+    let owner = host.execution_owner;
     let goal = feature_goal(&host, owner);
     decision_with_manifest(
         host.clone(),
@@ -419,7 +419,7 @@ async fn file_uri_and_aggregate_byte_cap_are_enforced_on_actual_read_snapshots(
     let dir = tempfile::tempdir().expect("directory");
     let provider = Arc::new(Provider::default());
     let host = open(dir.path(), provider.clone()).expect("host");
-    let owner = WebID::new();
+    let owner = host.execution_owner;
     let goal = feature_goal(&host, owner);
     let bytes = vec![b'x'; 65536];
     let digest = format!("{:x}", Sha256::digest(&bytes));
@@ -523,7 +523,7 @@ async fn forged_unfetched_citation_is_a_durable_assessor_failure_then_retries(
     provider.artifact_findings.store(true, Ordering::SeqCst);
     provider.forged_evidence.store(true, Ordering::SeqCst);
     let host = open(dir.path(), provider.clone()).expect("host");
-    let owner = WebID::new();
+    let owner = host.execution_owner;
     let goal = feature_goal(&host, owner);
     decision_with_manifest(
         host.clone(),
@@ -608,7 +608,7 @@ async fn closure_without_read_approval_never_gains_local_access(cx: &mut gpui::T
     let provider = Arc::new(Provider::default());
     provider.artifact_findings.store(true, Ordering::SeqCst);
     let host = open(dir.path(), provider.clone()).expect("host");
-    let owner = WebID::new();
+    let owner = host.execution_owner;
     let goal = feature_goal(&host, owner);
     let native = manifest(&artifact, ENABLED_DIGEST).remove(0);
     let closure = NativeGoalClosure {
@@ -668,7 +668,7 @@ async fn native_manifest_rejects_seventeen_artifacts_before_any_access(
     std::fs::write(&path, "feature_status=enabled\n").expect("real file");
     let provider = Arc::new(Provider::default());
     let host = open(dir.path(), provider.clone()).expect("host");
-    let owner = WebID::new();
+    let owner = host.execution_owner;
     let goal = feature_goal(&host, owner);
     for (forbidden, otherwise_valid_value) in [
         ("artifact_access", serde_json::json!("bounded_utf8_v1")),
@@ -768,7 +768,7 @@ async fn regular_file_read_permissions_produce_real_fetched_or_unavailable_recei
     let provider = Arc::new(Provider::default());
     provider.artifact_findings.store(true, Ordering::SeqCst);
     let host = open(dir.path(), provider.clone()).expect("host");
-    let owner = WebID::new();
+    let owner = host.execution_owner;
     let goal = feature_goal(&host, owner);
     decision_with_manifest(
         host.clone(),

@@ -9,6 +9,11 @@ use super::core::BotID;
 pub struct WebID(Uuid);
 
 impl WebID {
+    /// Canonical process identity when MCP bootstrap has no valid WebID override.
+    pub fn anonymous() -> Self {
+        Self::from_persona(b"anonymous")
+    }
+
     /// expect: "System types preserve semantic identity and are provenance-aware"
     /// pre:  (no inputs)
     /// post: returns a unique WebID wrapping a random UUID v4
