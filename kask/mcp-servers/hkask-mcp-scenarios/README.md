@@ -38,7 +38,7 @@ Twenty-two registered tools (pinned against the live `combined_router()` by
 
 | Tool | Description |
 |---|---|
-| `scenario_declare` | Freeze prospective events, marginal probabilities, deadlines, and a named caller-reported resolver before outcomes. |
+| `scenario_declare` | Freeze the complete event set, marginal probabilities, exact `resolution_at` timestamp per event ID, and named caller-reported resolver. Identical retries retain the original declaration; changed membership or terms conflict. |
 | `scenario_score` | Resolve an existing declaration, scoring its frozen marginals. Reject duplicate outcomes, changed targets/resolvers, early resolution, and conflicting replays. |
 | `scenario_calibration` | Calculate a calibration curve from stored forecasts. |
 | `scenario_triage` | Classify a question as well_specified, goldilocks, or needs_refinement. |
@@ -53,12 +53,13 @@ Twenty-two registered tools (pinned against the live `combined_router()` by
 
 ## Forecast eligibility and interpretation
 
-- Declaration freezes one event/version per identity. Revisions use a new `forecast_id`; `scenario_update` remains a stateless calculation, not a rewrite of a declared forecast.
-- Scenario resolution reads stored probabilities. Nonmatching outcomes are listed explicitly, not scored. Legacy records without declarations remain readable and unscored; no retrospective declaration is invented.
+- Declaration requires `resolution_at: {event_id: RFC3339 timestamp}` with exactly the declared IDs. Its UTC date must match the event's descriptive `deadline`. Admission requires `declared_at < resolution_at`; resolution requires `now >= resolution_at`. Legitimate subsecond and same-day horizons are allowed. A server-owned clock timestamps admission; callers cannot backdate it.
+- The complete declaration is synced as one journal event before any membership is published. Automatic compaction failure may return an error after that durable admission; identical same-ID retry finishes snapshot publication, even after cutoff, without changing the original timestamp, event set or probabilities. Changed membership, cutoff, resolver or probabilities conflict. Revisions use a new `forecast_id`; `scenario_update` remains a stateless calculation.
+- Scenario resolution reads stored probabilities and checks the stored admission timestamp against the cutoff. Nonmatching outcomes are listed explicitly, not scored. Legacy records without precise cutoffs (including date-only v4 declarations) remain readable and unscored; no retrospective eligibility is invented. New records use schema version 5; historical single-record journal entries remain readable alongside complete-batch journal events.
 - Equity `forecast_persist` admits scoring only with a declared probability on the forecast date. The return-accuracy proposition uses a frozen 20% relative tolerance (absolute return band for a zero target), calendar-month horizon, and caller-reported return at that horizon. Resolution must occur after that horizon and match the frozen target/date. No-id `forecast_record` still reports observed gaps, unscored.
 - Resolver names document source rules; caller tools do not authenticate independent evidence. Eligibility is not proof the outcome is true, probabilities are calibrated, or forecasting is useful.
 - Loss uses the binary convention `mean((p-y)^2)` on eligible resolved declarations, one weight per event/version. No matched reference is declared, so no skill comparison is claimed. History counts remain distinct from eligible sample counts.
-- Calibration bins retain counts, mean probabilities and observed frequencies. Empty bins and absent qualifying signed means are explicitly insufficient. A signed mean can cancel; it is not a calibration certificate. No universal raw-loss quality labels or automatic historical correction is deployed.
+- Calibration bins retain counts, mean probabilities and observed frequencies. `signed_probability_error` is `mean(p) - frequency`, not overconfidence: complementing an event flips its sign without changing confidence. The overall value averages only bins with at least five observations; `signed_probability_error_sample_count`, `signed_probability_error_qualifying_bins` and `signed_probability_error_bin_min_count` disclose that scope. Empty bins and absent qualifying means are explicitly insufficient. Zero can reflect cancellation and is not a calibration certificate. These are computed outputs, not stored historical score fields; there is no obsolete-key alias or data migration. No universal raw-loss quality labels or automatic historical correction is deployed.
 
 ## Operational boundaries
 

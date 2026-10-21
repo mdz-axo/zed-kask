@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 #[derive(Default)]
 struct Provider {
     fail: AtomicBool,
+    block_assessor: AtomicBool,
     bad_findings: AtomicBool,
     artifact_findings: AtomicBool,
     forged_evidence: AtomicBool,
@@ -43,10 +44,14 @@ impl InferencePort for Provider {
             .push(messages.to_vec());
         let messages = messages.to_vec();
         let fail = self.fail.load(Ordering::SeqCst);
+        let blocked = self.block_assessor.load(Ordering::SeqCst);
         let malformed = self.bad_findings.load(Ordering::SeqCst);
         let artifact_findings = self.artifact_findings.load(Ordering::SeqCst);
         let forged_evidence = self.forged_evidence.load(Ordering::SeqCst);
         Box::pin(async move {
+            if blocked {
+                return futures::future::pending().await;
+            }
             if fail {
                 return Err(InferenceError::Generation(
                     "injected assessor outage".into(),
@@ -128,6 +133,13 @@ impl InferencePort for Provider {
     }
 }
 fn open(dir: &std::path::Path, provider: Arc<Provider>) -> anyhow::Result<Arc<GoalHost>> {
+    open_with_provider(dir, provider, "fixture-embedding")
+}
+fn open_with_provider(
+    dir: &std::path::Path,
+    provider: Arc<dyn InferencePort>,
+    embedding_model: &str,
+) -> anyhow::Result<Arc<GoalHost>> {
     let ledger_path = dir.join("kanban.db");
     let pool = hkask_storage::SqliteDriver::file_pool_with_schema(
         ledger_path.to_str().expect("test path"),
@@ -143,7 +155,7 @@ fn open(dir: &std::path::Path, provider: Arc<Provider>) -> anyhow::Result<Arc<Go
         Some(memory),
         provider,
         "fixture-assessor".into(),
-        "fixture-embedding".into(),
+        embedding_model.into(),
         hkask_storage::embedding_dim() as u32,
     )))
 }
@@ -267,6 +279,27 @@ async fn decision_with_manifest(
     );
     let rendered = serde_json::to_string(&authorization.tool_call).expect("prompt JSON");
     assert!(rendered.contains(&goal.spec_digest));
+    if let Some(GoalForecast {
+        resolver:
+            GoalForecastResolver::MachineArtifactDigest {
+                locator,
+                expected_sha256,
+            },
+        ..
+    }) = &goal.forecast
+    {
+        assert!(
+            rendered.contains(locator) && rendered.contains(expected_sha256),
+            "native approval discloses the exact resolver source and oracle even without a manifest entry"
+        );
+        assert!(rendered.contains("separate from assessment manifest"));
+        if correction {
+            assert!(rendered.contains("This correction grants no scheduled source access"));
+        } else {
+            assert!(rendered.contains("ONE scheduled bounded local UTF-8 regular-file read"));
+        }
+        assert!(rendered.contains("File bytes not execution authenticity"));
+    }
     for criterion in &goal.criteria {
         assert!(
             rendered.contains(&criterion.description),
@@ -897,3 +930,7 @@ async fn native_goal_missing_assessor_and_projection_store_retains_a_durable_fai
 }
 
 mod artifacts;
+
+mod model_identity;
+
+mod machine_digest;

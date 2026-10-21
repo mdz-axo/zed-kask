@@ -364,8 +364,25 @@ When the goal tools are available, run the loop on the native system:
 The host orchestrates a fresh blinded assessment from the frozen spec and evidence
 manifest, initially excluding worker verdicts, human labels, probabilities and scores.
 Keep human judgment, worker claims, machine evidence and assessor findings separate;
-unknown is not pass and disagreement must remain visible. The current assessor has
-no evidence-fetch tools and must report unknown rather than certify unseen evidence.
+unknown is not pass and disagreement must remain visible. Native consent discloses
+exact paths/hashes, sharing with the configured assessor (including retries), retention
+in attempts/recall and sharing projections with the configured semantic-indexing provider.
+The host reads at most 16 local artifacts, 64 KiB UTF-8 content each and 256 KiB aggregate
+per attempt including growth probes: nofollow regular files only, no network, crawling
+or execution. Exact contents and failure receipts are frozen before inference. With no
+fetched contents, record unknown without a model call. Supported/contradicted findings
+must cite fetched digest-matched evidence IDs; file bytes do not prove producer
+authenticity or that claimed tests ran.
+Only HumanAcceptance or MachineArtifactDigest { locator, expected_sha256 } may resolve
+an eligible goal forecast. The latter needs separate native consent bound to the full
+frozen forecast/spec; manifest consent alone is insufficient. Its first actual bounded
+read at/after horizon and at/before deadline yields true for hash equality, false for a
+successful different hash; failed/unsafe/late reads are unknown, unscored. Do not use
+assessment snapshots, worker labels or model findings as digest observations. Retain
+only the resolver receipt, not resolver-only contents; no later reread changes it.
+Historical MachineEvidence is unsupported. Corrections grant no new read consent.
+ActionChoice needs a concrete offered option ID; generic authorization/granularity
+shortcuts require PermissionGrant and cannot choose a goal outcome.
 Only eligible optional forecasts are scored under their frozen resolver after an
 assessment attempt; closure alone is neither success nor a scored outcome.
 Canonical goals persist after receipt-validated memory projection. The durable

@@ -1310,6 +1310,8 @@
           "lean_check": true,
           "onto_anchor": true,
           "render_template": true,
+          "kanban_goal_close": true,
+          "kanban_goal_correct_outcome": true,
           "write_file": true,
         },
       },

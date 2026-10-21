@@ -20,11 +20,17 @@ root). Unique `DIAGRAM_ALIGNMENT` IDs are preserved from the originals.
 ## Scenario evidence status — 2026-10-20
 
 `crates/hkask-scenarios-widget/src/block.rs::CalibrationSummary` carries optional
-`overall_brier`, signed `overconfidence_score`, counts and `evidence_status`.
+`overall_brier`, `signed_probability_error`, and
+`signed_probability_error_sample_count`,
+`signed_probability_error_qualifying_bins`,
+`signed_probability_error_bin_min_count`, plus `evidence_status`.
+The signed statistic is mean p−outcome over qualifying bins, not a confidence
+measurement; complementing events flips its sign and errors can cancel.
 `view.rs::render_calibration` displays absence and defaults the evidence-status
 text to insufficient; it does not certify calibration from raw loss or signed
 cancellation. Action guidance declares prospective identities with
-`scenario_declare` before resolving exact frozen events/resolver with
+`scenario_declare` with an exact event-ID → UTC `resolution_at` map before
+cutoffs, then resolves exact frozen events/resolver at/after cutoffs with
 `scenario_score`; legacy records remain unscored. Other widget maps below are
 unchanged. This source map is not an editor deployment receipt.
 
@@ -518,8 +524,11 @@ classDiagram
         +total_forecasts: usize
         +resolved_forecasts: usize
         +overall_brier: Option~f64~
-        +overconfidence_score: Option~f64~
-        +interpretation: Option~String~
+        +signed_probability_error: Option~f64~
+        +signed_probability_error_sample_count: Option~usize~
+        +signed_probability_error_qualifying_bins: Option~Vec~String~~
+        +signed_probability_error_bin_min_count: Option~usize~
+        +evidence_status: Option~String~
     }
     class EventTreeSummary {
         +subject: String

@@ -37,6 +37,7 @@ use crate::kanban::{
 #[derive(Clone)]
 pub struct KanbanService {
     pub(crate) store: HMemStore,
+    pub(super) goal_clock: std::sync::Arc<dyn Fn() -> chrono::DateTime<chrono::Utc> + Send + Sync>,
     /// One-shot fault injection for the replay-protection integration
     /// suite: the next N `task_comment` calls fail instead of writing
     /// (`#[doc(hidden)]` arm below). Arc-shared across clones so a test can
@@ -63,10 +64,26 @@ impl KanbanService {
     pub fn new(store: HMemStore) -> Self {
         Self {
             store,
+            goal_clock: std::sync::Arc::new(chrono::Utc::now),
             comment_faults: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             #[cfg(test)]
             before_task_write: Default::default(),
         }
+    }
+
+    /// Goal lifecycle clock boundary; production defaults to UTC. An injected
+    /// clock is shared across declaration, native ingress and scheduled reads,
+    /// never used to mutate a frozen horizon after admission.
+    #[doc(hidden)]
+    pub fn with_goal_clock(
+        mut self,
+        clock: std::sync::Arc<dyn Fn() -> chrono::DateTime<chrono::Utc> + Send + Sync>,
+    ) -> Self {
+        self.goal_clock = clock;
+        self
+    }
+    pub fn goal_now(&self) -> chrono::DateTime<chrono::Utc> {
+        (self.goal_clock)()
     }
 
     /// Arm a one-shot `task_comment` fault for the replay-protection

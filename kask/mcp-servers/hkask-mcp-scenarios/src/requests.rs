@@ -187,6 +187,9 @@ pub struct OutcomeEntry {
 pub struct DeclareRequest {
     pub forecast_id: String,
     pub events: Vec<ScenarioEvent>,
+    /// Exact RFC 3339 outcome cutoff for every event ID, with no missing or
+    /// extra IDs. Declaration must precede it; resolution cannot precede it.
+    pub resolution_at: std::collections::BTreeMap<String, chrono::DateTime<chrono::Utc>>,
     /// Named source responsible for the caller-reported boolean outcomes.
     /// This records a rule, not authentication of that source.
     pub resolver: String,

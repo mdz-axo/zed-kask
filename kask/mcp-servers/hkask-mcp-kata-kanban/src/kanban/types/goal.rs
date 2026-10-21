@@ -20,7 +20,9 @@ pub struct Goal {
     pub assessment_pending: bool,
     pub assessments: Vec<AssessmentAttempt>,
     pub forecast: Option<GoalForecast>,
-    pub observations: Vec<ForecastObservation>,
+    pub observations: Vec<HistoricalForecastObservation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine_artifact_observation: Option<MachineArtifactDigestReceipt>,
     pub forecast_status: ForecastStatus,
     pub scores: Vec<GoalForecastScore>,
     pub projections: Vec<GoalProjection>,
@@ -82,6 +84,10 @@ pub struct NativeGoalClosure {
     /// closure is not retroactive permission to read or share local artifacts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artifact_access: Option<LocalArtifactAccessApproval>,
+    /// Separate native grant for the exact frozen forecast, never inferred
+    /// from manifest consent or accepted from ordinary MCP arguments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine_artifact_access: Option<MachineArtifactDigestApproval>,
 }
 /// Trusted native correction; original closure remains unchanged.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -229,15 +235,67 @@ pub struct GoalForecast {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum GoalForecastResolver {
     HumanAcceptance,
-    MachineEvidence { source: String, oracle: String },
+    /// SHA-256 equality of this exact local UTF-8 regular artifact on the first
+    /// native-approved read within the frozen horizon/deadline window.
+    MachineArtifactDigest {
+        locator: String,
+        expected_sha256: String,
+    },
+    /// Historical arbitrary-label wire shape only; new declarations remain
+    /// rejected. The sole supported machine source is MachineArtifactDigest.
+    MachineEvidence {
+        source: String,
+        oracle: String,
+    },
 }
+/// Authenticated native closure binds the complete immutable declaration, not
+/// merely an arbitrary source label or another manifest's approval.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MachineArtifactDigestApproval {
+    pub spec_digest: String,
+    pub forecast: GoalForecast,
+}
+pub const MACHINE_ARTIFACT_DIGEST_RELIABILITY: &str =
+    "host-generated bounded local-file read receipt; availability is explicit";
+pub const MACHINE_ARTIFACT_DIGEST_LIMITATION: &str =
+    "File bytes only; not execution or producer authenticity";
+/// Source-specific host receipt. There is deliberately no caller-supplied
+/// outcome boolean: the service derives equality against the frozen oracle.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MachineArtifactDigestReceipt {
+    pub event_id: String,
+    pub spec_digest: String,
+    pub locator: String,
+    pub observed_at: DateTime<Utc>,
+    pub read: MachineArtifactDigestRead,
+    pub reliability: String,
+    pub limitation: String,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum MachineArtifactDigestRead {
+    Observed {
+        canonical_path: String,
+        actual_sha256: String,
+        byte_count: u64,
+    },
+    Unavailable {
+        reason: String,
+        observed_sha256: Option<String>,
+        bytes_read: u64,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ForecastUpdatePolicy {
     FixedAtDeclaration,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ForecastObservation {
+/// Read-only provenance from previously admitted machine forecasts. No writer
+/// or resolver capability is exposed; these records never authorize new scores.
+pub struct HistoricalForecastObservation {
     pub event_id: String,
     pub source: String,
     pub oracle: String,
@@ -251,6 +309,7 @@ pub struct ForecastObservation {
 #[serde(rename_all = "snake_case")]
 pub enum ForecastStatus {
     NotDeclared,
+    UnsupportedResolver,
     PendingAssessment,
     PendingOutcome,
     Unknown,
@@ -334,4 +393,30 @@ pub struct GoalVerdict {
     pub criterion_results: Vec<CriterionJudgment>,
     pub reasoning: String,
     pub judged_at: DateTime<Utc>,
+}
+
+/// Parse only; safe to display before approval. Never touches the filesystem.
+pub fn local_artifact_path(locator: &str) -> Result<std::path::PathBuf, String> {
+    let path = if locator.starts_with("file:") {
+        let url = url::Url::parse(locator).map_err(|error| format!("invalid file URI: {error}"))?;
+        if !matches!(url.host_str(), None | Some("localhost")) {
+            return Err("file URI must name the local host, never a remote authority".into());
+        }
+        if url.query().is_some()
+            || url.fragment().is_some()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.port().is_some()
+        {
+            return Err("file URI must not contain credentials, port, query or fragment".into());
+        }
+        url.to_file_path()
+            .map_err(|_| "only local file URIs are supported".to_string())?
+    } else {
+        std::path::PathBuf::from(locator)
+    };
+    if !path.is_absolute() || path.to_str().is_none() {
+        return Err("artifact must be an absolute UTF-8 local path or local file URI".into());
+    }
+    Ok(path)
 }

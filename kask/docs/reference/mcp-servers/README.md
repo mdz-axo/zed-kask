@@ -189,13 +189,18 @@ asserts:[^fagan-inspection]
 ### Prospective forecasts and separate interpretation
 
 1. **Declare:** `scenario_declare` freezes `forecast_id`, full events/marginals,
-   deadline and named `resolver` before outcome visibility; a template ID is not
-   durable admission. Revised forecasts need a new identity.
+   required `resolution_at` mapping every event ID exactly to an RFC 3339 UTC
+   cutoff and named `resolver`. UTC cutoff dates match descriptive deadlines;
+   declaration strictly precedes them. Whole manifest journals as one synced
+   event; identical same-ID retries remain idempotent after cutoff, changed
+   declarations conflict. A template ID is not admission.
 2. **Resolve:** `scenario_score` requires exact frozen events/resolver and scores
-   stored probabilities. Undeclared legacy records are unscored history. The
+   stored probabilities at/after each cutoff. Date-only/undeclared legacy records
+   are unscored history. The
    caller-reported resolver name is not authenticated evidence.
 3. **Describe:** `scenario_calibration` reports eligible-history bins/counts.
-   Signed bias can cancel and raw loss is not calibration (Murphy 1973,
+   `signed_probability_error` includes sample/qualifying-bin/min-count scope; it
+   can cancel and does not diagnose confidence. Raw loss is not calibration (Murphy 1973,
    DOI `10.1175/1520-0450(1973)012<0595:ANVPOT>2.0.CO;2`). No universal bands,
    synthetic historical priors, inverse-loss weights or automatic bias correction.
 4. **Compare:** use declared references on matched events/weights/lead times,
@@ -316,7 +321,13 @@ The Kata-Kanban server persists boards, tasks and canonical functional goals in
 its DB-backed `HMemStore`. MCP create/judge/get/list are worker surfaces; native
 host closure/correction obtain real human ActionChoice, never model-authored
 outcomes. A fresh blinded assessor initially sees spec/evidence only; the current
-host has no evidence-fetch tools and returns unknown. Durable assessment/projection
+host supplies approved bounded nofollow UTF-8 file snapshots frozen before
+inference: 16 artifacts, 64 KiB each, 256 KiB aggregate including probes. Native
+consent discloses paths/hashes, assessor sharing/retries, retention and indexer
+sharing; no fetched contents means unknown without a model call. Findings cite
+fetched IDs, not producer authenticity. Optional `MachineArtifactDigest` uses
+separate native consent and its own first in-window file read; failures remain
+unknown/unscored, and digest equality never proves tests ran. Durable assessment/projection
 jobs retry without a model turn and validate event/revision/digest receipts;
 acknowledgment never deletes canonical history. Ordinary goals require no forecast.
 See `kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md` for exact types and

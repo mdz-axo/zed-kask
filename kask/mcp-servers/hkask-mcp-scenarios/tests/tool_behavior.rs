@@ -34,8 +34,43 @@ fn equity_forecast_store() -> Arc<Mutex<JournalStore<StoredEquityForecast>>> {
 
 /// Build a server backed by an empty in-memory store and empty caches — the
 /// clean-slate state every test starts from.
+fn before_cutoff() -> chrono::DateTime<chrono::Utc> {
+    "2026-10-20T12:00:00Z".parse().expect("clock")
+}
+fn at_cutoff() -> chrono::DateTime<chrono::Utc> {
+    "2026-10-20T12:00:01Z".parse().expect("clock")
+}
+fn clocked_store(path: Option<std::path::PathBuf>) -> ForecastStore {
+    let mut store = ForecastStore::new(path);
+    store.set_clock(at_cutoff);
+    store
+}
+fn cutoffs(
+    events: &[ScenarioEvent],
+) -> std::collections::BTreeMap<String, chrono::DateTime<chrono::Utc>> {
+    events
+        .iter()
+        .map(|e| {
+            (
+                e.id.clone(),
+                e.deadline
+                    .and_hms_opt(12, 0, 1)
+                    .expect("cutoff time")
+                    .and_utc(),
+            )
+        })
+        .collect()
+}
+fn set_clock(server: &ScenariosServer, clock: fn() -> chrono::DateTime<chrono::Utc>) {
+    server
+        .forecast_store
+        .lock()
+        .expect("forecast store")
+        .set_clock(clock);
+}
+
 fn make_server() -> ScenariosServer {
-    let forecast_store = Arc::new(Mutex::new(ForecastStore::new(None)));
+    let forecast_store = Arc::new(Mutex::new(clocked_store(None)));
     let tree_cache = Mutex::new(None);
     let project_store = Mutex::new(ProjectStore::new(None));
     ScenariosServer::new(
@@ -50,7 +85,7 @@ fn make_server() -> ScenariosServer {
 fn file_backed_server(path: &std::path::Path) -> ScenariosServer {
     ScenariosServer::new(
         WebID::new(),
-        Arc::new(Mutex::new(ForecastStore::new(Some(path.to_path_buf())))),
+        Arc::new(Mutex::new(clocked_store(Some(path.to_path_buf())))),
         equity_forecast_store(),
         Mutex::new(None),
         Mutex::new(ProjectStore::new(None)),
@@ -62,7 +97,7 @@ fn file_backed_server(path: &std::path::Path) -> ScenariosServer {
 fn project_backed_server(path: &std::path::Path) -> ScenariosServer {
     ScenariosServer::new(
         WebID::new(),
-        Arc::new(Mutex::new(ForecastStore::new(None))),
+        Arc::new(Mutex::new(clocked_store(None))),
         equity_forecast_store(),
         Mutex::new(None),
         Mutex::new(ProjectStore::new(Some(path.to_path_buf()))),
@@ -74,14 +109,17 @@ fn project_backed_server(path: &std::path::Path) -> ScenariosServer {
 const REGRESSION_KEY: &str = "persistence-regression:event";
 
 async fn declare(server: &ScenariosServer, forecast_id: &str, events: Vec<ScenarioEvent>) {
+    set_clock(server, before_cutoff);
     server
         .scenario_declare(Parameters(DeclareRequest {
             forecast_id: forecast_id.into(),
+            resolution_at: cutoffs(&events),
             events,
             resolver: "test-source".into(),
         }))
         .await
         .expect("prospective declaration");
+    set_clock(server, at_cutoff);
 }
 
 fn persistence_score_request(probability: f64, occurred: bool) -> ScoreRequest {
@@ -318,9 +356,11 @@ async fn journal_failure_is_surfaced_before_memory_changes()
     let snapshot_path = directory.path().join("forecasts.json");
     let server = file_backed_server(&snapshot_path);
     std::fs::create_dir(snapshot_path.with_extension("json.journal"))?;
+    set_clock(&server, before_cutoff);
     let result = server
         .scenario_declare(Parameters(DeclareRequest {
             forecast_id: "persistence-regression".into(),
+            resolution_at: cutoffs(&[independent_event("event", "durable event", 0.9)]),
             events: vec![independent_event("event", "durable event", 0.9)],
             resolver: "test-source".into(),
         }))
@@ -347,7 +387,7 @@ fn independent_event(identifier: &str, name: &str, probability: f64) -> Scenario
         id: identifier.to_string(),
         name: name.to_string(),
         question: format!("Will {name} occur by 2027-12-31?"),
-        deadline: chrono::Utc::now().date_naive(),
+        deadline: before_cutoff().date_naive(),
         time_horizon: TimeHorizon::Strategic,
         scenario_type: ScenarioType::CompanyAnalysis,
         subject: "ACME".to_string(),
@@ -1167,8 +1207,8 @@ async fn scenario_score_scores_the_tree_marginal_not_the_prior() {
     );
     assert_eq!(
         resolved["schema_version"].as_u64(),
-        Some(4),
-        "schema v4, got: {resolved}"
+        Some(5),
+        "schema v5, got: {resolved}"
     );
 }
 
@@ -1372,23 +1412,25 @@ async fn scenario_resolution_requires_frozen_identity_and_unique_outcomes() {
 async fn scenario_declaration_rejects_late_scaffolds_and_early_outcomes() {
     let server = make_server();
     let mut event = independent_event("evt", "future", 0.5);
-    event.deadline = chrono::Utc::now().date_naive() - chrono::Duration::days(1);
+    event.deadline = before_cutoff().date_naive() - chrono::Duration::days(1);
     assert!(
         server
             .scenario_declare(Parameters(DeclareRequest {
                 forecast_id: "late".into(),
+                resolution_at: cutoffs(&[event.clone()]),
                 events: vec![event.clone()],
                 resolver: "source".into()
             }))
             .await
             .is_err()
     );
-    event.deadline = chrono::Utc::now().date_naive() + chrono::Duration::days(1);
+    event.deadline = before_cutoff().date_naive() + chrono::Duration::days(1);
     event.basis = Some("prediction_market:kalshi".into());
     assert!(
         server
             .scenario_declare(Parameters(DeclareRequest {
                 forecast_id: "scaffold".into(),
+                resolution_at: cutoffs(&[event.clone()]),
                 events: vec![event.clone()],
                 resolver: "source".into()
             }))
@@ -1451,11 +1493,11 @@ async fn unmatched_outcomes_are_explicit_and_empty_bins_are_insufficient() {
         curve["evidence_status"], "insufficient",
         "no bin has five observations"
     );
-    assert!(curve["overconfidence_score"].is_null());
+    assert!(curve["signed_probability_error"].is_null());
     let bins = curve["bins"].as_array().expect("bins");
     let empty = bins.iter().find(|b| b["count"] == 0).expect("empty bin");
     assert_eq!(empty["evidence_status"], "insufficient");
-    for field in ["hit_rate", "expected_rate", "bias"] {
+    for field in ["hit_rate", "expected_rate", "signed_probability_error"] {
         assert!(empty[field].is_null(), "empty {field}: {empty}");
     }
     let occupied = bins.iter().find(|b| b["count"] == 1).expect("occupied bin");
@@ -1531,7 +1573,7 @@ async fn signed_cancellation_is_descriptive_not_calibration_certification() {
             .expect("curve"),
     );
     assert!(
-        curve["overconfidence_score"]
+        curve["signed_probability_error"]
             .as_f64()
             .expect("signed bias")
             .abs()
@@ -1575,6 +1617,426 @@ async fn legacy_scenario_history_survives_without_becoming_score_eligible() {
         status["pipeline"]["recent_forecasts"][0]["probability"],
         0.8
     );
+    assert_eq!(
+        status["pipeline"]["recent_forecasts"][0]["scoring_eligible"],
+        false
+    );
+}
+
+/// Review e6f64bcc: a calendar date cannot establish that declaration
+/// preceded the same-day outcome; no exact cutoff means no eligible intake.
+#[tokio::test]
+async fn date_only_same_day_declaration_cannot_be_admitted() {
+    let server = make_server();
+    let request = serde_json::from_value::<DeclareRequest>(serde_json::json!({
+        "forecast_id":"date-only", "events":[independent_event("event", "observed", 0.99)],
+        "resolver":"test-source"
+    }));
+    assert!(
+        request
+            .expect_err("precise cutoff is required")
+            .to_string()
+            .contains("resolution_at")
+    );
+    let status = parse(
+        &server
+            .scenario_status(Parameters(StatusRequest {}))
+            .await
+            .expect("status"),
+    );
+    assert_eq!(status["pipeline"]["forecast_count"], 0);
+}
+
+fn immediately_before_cutoff() -> chrono::DateTime<chrono::Utc> {
+    "2026-10-20T12:00:00.999999999Z".parse().expect("clock")
+}
+fn immediately_after_cutoff() -> chrono::DateTime<chrono::Utc> {
+    "2026-10-20T12:00:01.000000001Z".parse().expect("clock")
+}
+fn declaration_request(id: &str, events: Vec<ScenarioEvent>) -> DeclareRequest {
+    DeclareRequest {
+        forecast_id: id.into(),
+        resolution_at: cutoffs(&events),
+        events,
+        resolver: "test-source".into(),
+    }
+}
+
+#[tokio::test]
+async fn exact_cutoff_admits_short_horizon_but_not_hindsight_or_early_resolution() {
+    let event = independent_event("event", "durable event", 0.8);
+    for clock in [at_cutoff as fn() -> _, immediately_after_cutoff] {
+        let server = make_server();
+        set_clock(&server, clock);
+        assert!(
+            server
+                .scenario_declare(Parameters(declaration_request("late", vec![event.clone()])))
+                .await
+                .is_err()
+        );
+        let status = parse(
+            &server
+                .scenario_status(Parameters(StatusRequest {}))
+                .await
+                .expect("status"),
+        );
+        assert_eq!(status["pipeline"]["forecast_count"], 0);
+    }
+    let server = make_server();
+    set_clock(&server, immediately_before_cutoff);
+    server
+        .scenario_declare(Parameters(declaration_request(
+            "persistence-regression",
+            vec![event.clone()],
+        )))
+        .await
+        .expect("one nanosecond is a legitimate prospective horizon");
+    assert!(
+        server
+            .scenario_score(Parameters(persistence_score_request(0.8, true)))
+            .await
+            .is_err()
+    );
+    set_clock(&server, at_cutoff);
+    let body = parse(
+        &server
+            .scenario_score(Parameters(persistence_score_request(0.8, true)))
+            .await
+            .expect("resolution at exact cutoff"),
+    );
+    assert!((body["aggregate"]["brier_score"].as_f64().expect("score") - 0.04).abs() < 1e-12);
+    set_clock(&server, immediately_after_cutoff);
+    server
+        .scenario_score(Parameters(persistence_score_request(0.8, true)))
+        .await
+        .expect("later replay");
+    // A corrupt/hindsight history row cannot bypass the declaration-time check.
+    {
+        let mut store = server.forecast_store.lock().expect("store");
+        let mut record = store.get(REGRESSION_KEY).expect("record").clone();
+        record
+            .declaration
+            .as_mut()
+            .expect("declaration")
+            .declared_at = at_cutoff().to_rfc3339();
+        store
+            .insert(REGRESSION_KEY.into(), record)
+            .expect("history fixture");
+    }
+    assert!(
+        server
+            .scenario_score(Parameters(persistence_score_request(0.8, true)))
+            .await
+            .expect_err("declared_at must be checked")
+            .to_string()
+            .contains("declared_at")
+    );
+}
+
+#[tokio::test]
+async fn compaction_fault_restarts_and_retries_the_complete_101_event_declaration() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("forecasts.json");
+    let events: Vec<_> = (0..101)
+        .map(|i| {
+            independent_event(
+                &format!("event-{i}"),
+                "batch",
+                if i == 100 { 0.3 } else { 0.8 },
+            )
+        })
+        .collect();
+    let server = file_backed_server(&path);
+    set_clock(&server, before_cutoff);
+    // This hits the real >=100 automatic compaction path, not a mocked port.
+    std::fs::create_dir(&path).expect("block snapshot publication");
+    assert!(
+        server
+            .scenario_declare(Parameters(declaration_request("complete", events.clone())))
+            .await
+            .is_err()
+    );
+    let status = parse(
+        &server
+            .scenario_status(Parameters(StatusRequest {}))
+            .await
+            .expect("read after fault"),
+    );
+    assert_eq!(
+        status["pipeline"]["forecast_count"], 101,
+        "the durable declaration must never expose a partial membership"
+    );
+    assert_eq!(status["pipeline"]["pending_count"], 101);
+    let journal =
+        std::fs::read_to_string(path.with_extension("json.journal")).expect("durable journal");
+    assert_eq!(
+        journal.lines().count(),
+        1,
+        "membership must be one atomic journal event, not 101 individually durable rows"
+    );
+    let event: serde_json::Value =
+        serde_json::from_str(journal.trim()).expect("complete journal event");
+    assert_eq!(
+        event["records"].as_array().expect("batch membership").len(),
+        101
+    );
+    std::fs::remove_dir(&path).expect("clear snapshot fault");
+    drop(server);
+    // Retry after the cutoff must retain the original admission timestamp,
+    // not reject an already admitted forecast or declare it retrospectively.
+    let restarted = file_backed_server(&path);
+    let status = parse(
+        &restarted
+            .scenario_status(Parameters(StatusRequest {}))
+            .await
+            .expect("replayed journal"),
+    );
+    assert_eq!(status["pipeline"]["forecast_count"], 101);
+    let retried = parse(
+        &restarted
+            .scenario_declare(Parameters(declaration_request("complete", events.clone())))
+            .await
+            .expect("identical retry completes publication"),
+    );
+    assert_eq!(retried["replayed"], true);
+    let mut changed = events.clone();
+    changed[100].probability = 0.99;
+    assert!(
+        restarted
+            .scenario_declare(Parameters(declaration_request("complete", changed)))
+            .await
+            .is_err()
+    );
+    let mut missing = events.clone();
+    missing.pop();
+    assert!(
+        restarted
+            .scenario_declare(Parameters(declaration_request("complete", missing)))
+            .await
+            .is_err()
+    );
+    let snapshot: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("snapshot published"))
+            .expect("snapshot");
+    assert_eq!(snapshot.as_object().expect("members").len(), 101);
+    for record in snapshot.as_object().expect("records").values() {
+        let declared: chrono::DateTime<chrono::Utc> = record["declaration"]["declared_at"]
+            .as_str()
+            .expect("timestamp")
+            .parse()
+            .expect("RFC3339");
+        assert_eq!(
+            declared,
+            before_cutoff(),
+            "retry must not re-time the forecast"
+        );
+    }
+    let outcomes = events
+        .iter()
+        .map(|event| OutcomeEntry {
+            event_id: event.id.clone(),
+            occurred: false,
+        })
+        .collect();
+    let scored = parse(
+        &restarted
+            .scenario_score(Parameters(ScoreRequest {
+                forecast_id: "complete".into(),
+                events: events.clone(),
+                resolver: "test-source".into(),
+                outcomes,
+            }))
+            .await
+            .expect("score original complete set"),
+    );
+    assert_eq!(scored["scored_count"], 101);
+    let rows = scored["per_event"].as_array().expect("per event");
+    assert_eq!(rows.len(), 101);
+    for event in &events {
+        let row = rows
+            .iter()
+            .find(|r| r["event_id"] == event.id)
+            .expect("every original ID");
+        assert_eq!(
+            row["forecast_probability"], event.probability,
+            "original p is frozen"
+        );
+    }
+    assert!(
+        (scored["aggregate"]["brier_score"].as_f64().expect("score") - 64.09 / 101.0).abs() < 1e-12
+    );
+    let reopened = file_backed_server(&path);
+    let status = parse(
+        &reopened
+            .scenario_status(Parameters(StatusRequest {}))
+            .await
+            .expect("resolved restart"),
+    );
+    assert_eq!(status["pipeline"]["forecast_count"], 101);
+    assert_eq!(status["pipeline"]["eligible_resolved_count"], 101);
+}
+
+#[tokio::test]
+async fn complementary_probabilities_report_signed_error_not_overconfidence() {
+    use hkask_mcp_scenarios::requests::CalibrationRequest;
+    let server = make_server();
+    let events: Vec<_> = (0..10)
+        .map(|i| {
+            independent_event(
+                &format!("complement-{i}"),
+                "complement",
+                if i < 5 { 0.1 } else { 0.9 },
+            )
+        })
+        .collect();
+    let outcomes = events
+        .iter()
+        .enumerate()
+        .map(|(i, e)| OutcomeEntry {
+            event_id: e.id.clone(),
+            occurred: i >= 5,
+        })
+        .collect();
+    declare(&server, "complements", events.clone()).await;
+    server
+        .scenario_score(Parameters(ScoreRequest {
+            forecast_id: "complements".into(),
+            events,
+            resolver: "test-source".into(),
+            outcomes,
+        }))
+        .await
+        .expect("resolve");
+    let body = parse(
+        &server
+            .scenario_calibration(Parameters(CalibrationRequest { subject: None }))
+            .await
+            .expect("curve"),
+    );
+    assert!(
+        body["signed_probability_error"]
+            .as_f64()
+            .expect("named signed error")
+            .abs()
+            < 1e-12
+    );
+    assert_eq!(body["signed_probability_error_sample_count"], 10);
+    assert_eq!(
+        body["signed_probability_error_qualifying_bins"]
+            .as_array()
+            .expect("qualifying bins")
+            .len(),
+        2
+    );
+    assert!(body.get("overconfidence_score").is_none());
+    let bins = body["bins"].as_array().expect("bins");
+    for (probability, expected_error) in [(0.1, 0.1), (0.9, -0.1)] {
+        let bin = bins
+            .iter()
+            .find(|b| b["expected_rate"] == probability)
+            .expect("probability bin");
+        assert!(
+            (bin["signed_probability_error"]
+                .as_f64()
+                .expect("bin signed error")
+                - expected_error)
+                .abs()
+                < 1e-12
+        );
+        assert!(bin.get("bias").is_none());
+    }
+    let status = parse(
+        &server
+            .scenario_status(Parameters(StatusRequest {}))
+            .await
+            .expect("status"),
+    );
+    assert!(status["calibration"].get("overconfidence_score").is_none());
+    assert_eq!(
+        status["calibration"]["signed_probability_error_sample_count"],
+        10
+    );
+}
+
+#[tokio::test]
+async fn exact_cutoff_map_must_match_membership_and_retries_cannot_change_it() {
+    let server = make_server();
+    set_clock(&server, before_cutoff);
+    let event = independent_event("event", "durable event", 0.8);
+    let mut request = declaration_request("persistence-regression", vec![event.clone()]);
+    request.resolution_at.clear();
+    assert!(server.scenario_declare(Parameters(request)).await.is_err());
+    let mut request = declaration_request("persistence-regression", vec![event.clone()]);
+    request.resolution_at.insert("extra".into(), at_cutoff());
+    assert!(server.scenario_declare(Parameters(request)).await.is_err());
+    server
+        .scenario_declare(Parameters(declaration_request(
+            "persistence-regression",
+            vec![event.clone()],
+        )))
+        .await
+        .expect("precise declaration");
+    let mut request = declaration_request("persistence-regression", vec![event.clone()]);
+    request
+        .resolution_at
+        .insert("event".into(), immediately_after_cutoff());
+    assert!(server.scenario_declare(Parameters(request)).await.is_err());
+    let mut request = declaration_request("persistence-regression", vec![event.clone()]);
+    request.resolver = "another-source".into();
+    assert!(server.scenario_declare(Parameters(request)).await.is_err());
+    set_clock(&server, immediately_after_cutoff);
+    let replay = parse(
+        &server
+            .scenario_declare(Parameters(declaration_request(
+                "persistence-regression",
+                vec![event],
+            )))
+            .await
+            .expect("identical normal retry after cutoff"),
+    );
+    assert_eq!(replay["replayed"], true);
+    assert_eq!(replay["event_count"], 1);
+}
+
+#[tokio::test]
+async fn date_only_v4_declaration_is_preserved_but_never_reclassified_as_prospective() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("forecasts.json");
+    let event = independent_event("event", "durable event", 0.8);
+    std::fs::write(&path, serde_json::to_vec(&serde_json::json!({
+        "date-only:event": {"schema_version":4,"forecast_id":"date-only","event_id":"event", "event_name":"durable event", "subject":"ACME", "probability":0.8, "scored_from_marginal":true,"created_at":"2026-10-20","outcome":null,"resolved_at":null,"declaration":{"event":event,"resolver":"test-source","declared_at":"2026-10-20T12:00:00Z"}}
+    })).expect("fixture")).expect("historical snapshot");
+    let server = file_backed_server(&path);
+    assert!(
+        server
+            .scenario_declare(Parameters(declaration_request(
+                "date-only",
+                vec![event.clone()]
+            )))
+            .await
+            .is_err(),
+        "no retrospective cutoff can be attached to history"
+    );
+    let mut request = persistence_score_request(0.8, true);
+    request.forecast_id = "date-only".into();
+    let scored = parse(
+        &server
+            .scenario_score(Parameters(request))
+            .await
+            .expect("record unscored history"),
+    );
+    assert_eq!(scored["scored_count"], 0);
+    assert_eq!(scored["per_event"][0]["scoring_status"], "unscored");
+    let restarted = file_backed_server(&path);
+    let status = parse(
+        &restarted
+            .scenario_status(Parameters(StatusRequest {}))
+            .await
+            .expect("historical restart"),
+    );
+    assert_eq!(status["pipeline"]["resolved_count"], 1);
+    assert_eq!(status["pipeline"]["eligible_resolved_count"], 0);
+    assert!(status["pipeline"]["overall_brier"].is_null());
     assert_eq!(
         status["pipeline"]["recent_forecasts"][0]["scoring_eligible"],
         false

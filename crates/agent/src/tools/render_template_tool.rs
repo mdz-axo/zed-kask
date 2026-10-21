@@ -431,6 +431,65 @@ mod tests {
     }
 
     #[test]
+    fn mcp_review_artifact_serializes_supplied_evidence_without_reconstruction() {
+        let context = serde_json::json!({
+            "server": "fixture-server", "run_date": "2026-10-20",
+            "tools": [{"name": "wire_alias", "status": "pending-rulings", "anchor": "unresolved"}],
+            "findings": [{"id": "F1", "tool": "wire_alias", "claim": "Quoted \"evidence\"\nnext line", "status": "pending-rulings"}],
+            "reconciliation": {
+                "input_valid": true, "source_count": 3, "live_count": 3, "reviewed_count": 1,
+                "source_live_match": false, "review_complete": false,
+                "source_only_names": ["old"], "live_only_names": ["new"],
+                "not_reviewed_names": ["old", "other"], "unknown_reviewed_names": [],
+                "result": "source_live_drift"
+            },
+            "gated_pending": ["The source ruling remains open"],
+            "notes": ["Not a complete server review", "Unicode: λ; braces: {x}"],
+            "efficiency_metric_space": {"harness": "fixture", "axes": [{"axis": "tokens", "type": "blocked"}]},
+            "anchor_registry": {"ruled": [], "pending": ["unresolved"]},
+            "citation_check": {"result": "not_run", "checked": null},
+            "ask_first": {"batched_ask_presented": false, "defaults_applied": ["flagged technical default"]}
+        });
+        let output = render_template_for_test("mcp-tool-review/findings-artifact", context.clone())
+            .expect("completed-context deterministic formatter renders");
+        let artifact: serde_json::Value = serde_json::from_str(&output)
+            .expect("the render itself is the JSON artifact, not a generation prompt");
+        assert_eq!(artifact["capability"], "mcp-tool-review");
+        for key in [
+            "server",
+            "run_date",
+            "tools",
+            "findings",
+            "reconciliation",
+            "notes",
+            "efficiency_metric_space",
+            "anchor_registry",
+            "citation_check",
+            "ask_first",
+        ] {
+            assert_eq!(artifact[key], context[key], "lossless {key} handoff");
+        }
+        assert_eq!(artifact["gated_pending_rulings"], context["gated_pending"]);
+        assert_eq!(artifact["reconciliation"]["review_complete"], false);
+        assert_eq!(artifact["citation_check"]["result"], "not_run");
+        for key in [
+            "reconciliation",
+            "efficiency_metric_space",
+            "anchor_registry",
+            "citation_check",
+            "ask_first",
+        ] {
+            let mut missing = context.clone();
+            missing.as_object_mut().expect("context object").remove(key);
+            assert!(
+                render_template_for_test("mcp-tool-review/findings-artifact", missing)
+                    .expect_err("missing evidence must not be reconstructed")
+                    .contains(key)
+            );
+        }
+    }
+
+    #[test]
     fn grill_round_separates_identified_grading_from_next_questions() {
         let mut context = serde_json::json!({
             "topic": "fixture arithmetic", "phase": "grade", "mode": "interrogate",

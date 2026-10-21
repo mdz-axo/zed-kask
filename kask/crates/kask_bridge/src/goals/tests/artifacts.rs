@@ -484,7 +484,7 @@ async fn file_uri_and_aggregate_byte_cap_are_enforced_on_actual_read_snapshots(
     assert_eq!(provider.requests.lock().expect("capture").len(), 1);
 }
 
-async fn bounded_tick(host: Arc<GoalHost>, cx: &mut gpui::TestAppContext) {
+pub(super) async fn bounded_tick(host: Arc<GoalHost>, cx: &mut gpui::TestAppContext) {
     cx.executor().allow_parking();
     let runtime = tokio::runtime::Runtime::new().expect("runtime");
     let task = runtime.spawn(async move {
@@ -613,6 +613,7 @@ async fn historical_closure_without_read_approval_never_gains_local_access(
             limitation: native.limitation,
         }],
         artifact_access: None,
+        machine_artifact_access: None,
     };
     let old_json = serde_json::to_value(&closure).expect("historical shape");
     assert!(old_json.get("artifact_access").is_none());
@@ -642,89 +643,6 @@ async fn historical_closure_without_read_approval_never_gains_local_access(
             .status,
         CriterionEvidenceStatus::Unknown
     );
-}
-
-#[gpui::test]
-async fn fetched_support_and_human_acceptance_do_not_forge_machine_forecast_observations(
-    cx: &mut gpui::TestAppContext,
-) {
-    let dir = tempfile::tempdir().expect("directory");
-    let artifact = dir.path().join("enabled.txt");
-    std::fs::write(&artifact, "feature_status=enabled\n").expect("real bytes");
-    let provider = Arc::new(Provider::default());
-    provider.artifact_findings.store(true, Ordering::SeqCst);
-    let host = open(dir.path(), provider.clone()).expect("host");
-    let owner = WebID::new();
-    let mut declaration = feature_declaration();
-    declaration.forecast = Some(GoalForecast {
-        proposition: "The declared independent machine oracle observes the configured feature"
-            .into(),
-        probability: 0.8,
-        horizon: Utc::now() + Duration::milliseconds(100),
-        resolution_deadline: Utc::now() + Duration::hours(2),
-        execution_policy: "fixed machine measurement".into(),
-        resources: "test fixture".into(),
-        resolver: GoalForecastResolver::MachineEvidence {
-            source: "separate-machine-sensor".into(),
-            oracle: "actual-live-feature-check".into(),
-        },
-        baseline_probability: 0.5,
-        cohort: "machine-fixture".into(),
-        update_policy: ForecastUpdatePolicy::FixedAtDeclaration,
-    });
-    let goal = host
-        .service
-        .goal_create(declaration, owner)
-        .expect("prospective machine forecast");
-    cx.executor().allow_parking();
-    let runtime = tokio::runtime::Runtime::new().expect("runtime");
-    let wait = runtime.spawn(async {
-        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
-    });
-    cx.background_spawn(async move {
-        wait.await.expect("declared horizon elapsed");
-    })
-    .await;
-    let mut evidence = manifest(&artifact, ENABLED_DIGEST);
-    evidence[0].source = "separate-machine-sensor".into();
-    evidence[0].oracle = "actual-live-feature-check".into();
-    decision_with_manifest(
-        host.clone(),
-        &goal,
-        owner,
-        "accomplished_achieved",
-        false,
-        evidence,
-        cx,
-    )
-    .await;
-    scheduled_tick(host.clone(), provider, cx).await;
-    let goal = host
-        .service
-        .goal_get(goal.id, owner)
-        .expect("get")
-        .expect("goal");
-    assert_eq!(
-        goal.assessments[0]
-            .completion
-            .as_ref()
-            .expect("finding")
-            .findings[0]
-            .status,
-        CriterionEvidenceStatus::Supported
-    );
-    let closure = goal.closure.as_ref().expect("human label");
-    assert!(
-        closure.input.occurred_at >= goal.forecast.as_ref().expect("forecast").horizon,
-        "the test is inside the resolution window, not protected only by an early timestamp"
-    );
-    assert_eq!(closure.input.choice.outcome(), Some(true));
-    assert!(
-        goal.observations.is_empty(),
-        "file read and model finding are not the declared machine observation"
-    );
-    assert!(goal.scores.is_empty());
-    assert_eq!(goal.forecast_status, ForecastStatus::PendingOutcome);
 }
 
 #[gpui::test]

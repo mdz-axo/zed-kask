@@ -106,7 +106,13 @@ IDs/digest, worker progress, human closure, blinded findings, optional forecast
 versions and projection receipts. MCP offers create/judge/get/list only. Native
 closure obtains accomplished/stop × achieved/not-achieved/unknown via actual human
 ActionChoice; correction is a separate interaction. Task Done is not achievement.
-The host assessor currently cannot fetch evidence and must return unknown.
+Native consent permits bounded host-read local snapshots (16 nofollow UTF-8
+regular files, 64 KiB each, 256 KiB aggregate including probes), with disclosed
+assessor/indexer sharing and retention. Freeze contents and failure receipts
+before inference. No fetched contents means unknown without a model call;
+findings cite fetched IDs, not authentic test execution. The optional digest
+forecast has separate consent and a first actual in-window read, not reuse of
+assessment snapshots; failed reads are unknown/unscored.
 
 ```mermaid
 flowchart TD
@@ -114,7 +120,7 @@ flowchart TD
     B --> C[Worker progress and evidence]
     C --> D[Native human ActionChoice]
     D --> E[Retained closure and pending assessment]
-    E --> F[Fresh blinded spec and evidence assessment]
+    E --> F[Fresh assessment of spec and consented snapshots]
     F --> G[Separate findings or visible retryable failure]
     G --> H[Optional frozen-resolver forecast resolution]
     G --> I[Durable canonical snapshot outbox]

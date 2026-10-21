@@ -236,7 +236,13 @@ Parent `lisp_eval` receipt: retained partition61=52+9+0 true; union311=61+305−
 
 Concrete same-population calibration control for later tests: outcomes `[0,0,0,1,0,1,1,1]`. Forecast A=.5 throughout: BS=.25, REL0, RES0, UNC.25. Forecast B=`[0,0,0,0,1,1,1,1]`: BS=.25, REL.0625, RES.0625, UNC.25, signed bias0. This refutes raw score or zero signed bias as a sufficient calibration diagnostic without changing the outcome population. The reviewer checked this construction mathematically; it is an acceptance-fixture design, not an executed production test.
 
-## Approved cutover implementation result — 2026-10-20
+## Historical first-cutover implementation checkpoint — 2026-10-20
+
+This checkpoint and its receipts describe the first cutover, not the latest
+implementation. Its reference-only assessor limit, date-only scenario admission
+and remaining wire-type note are superseded by the appended bounded-artifact/
+precise-cutoff follow-up. Original observations and run receipts remain unchanged.
+
 
 Operator approval covers all P1–P6; no pending functional-policy vote remains.
 The canonical implemented contract is
@@ -269,7 +275,7 @@ not current operational instructions.
   describe this separation. This replaces obsolete score/prune instructions,
   tests and comments; it does not alter unrelated code or `.rules`.
 
-### This docs/prompt pass: checks and owner follow-up
+### Historical first docs/prompt pass: checks and owner follow-up
 
 `bash kask/scripts/cargo-test-nonzero.sh -p agent --lib templates::tests::test_goal_ -- --nocapture`
 ran 2 tests, both passed (nonzero wrapper confirmed coverage).
@@ -290,7 +296,7 @@ any prospective benefit study remain owner acceptance work, not a fabricated hum
 outcome or task-completion claim. Learning: freshness of assessor context does not
 supply evidence access, and arithmetic correctness does not establish calibration.
 
-### Final docs/prompt verification receipt
+### Historical first docs/prompt verification receipt
 
 - Wrapped command: `bash kask/scripts/cargo-test-nonzero.sh -p agent --lib templates::tests -- --nocapture` — **31 passed**, 0 failed; wrapper confirmed 31 executed. The corpus pin walks live skills/templates rather than a handpicked file list. No broad build was run for this docs/prompt scope.
 - `bash kask/scripts/check-skill-crossrefs.sh` — passed. `bash kask/scripts/audit/skill-corpus-prescreen.sh` — 222 templates / 59 skills; only the unchanged 22% overlap advisory described above. `git --no-pager diff --check` — passed.
@@ -298,3 +304,87 @@ supply evidence access, and arithmetic correctness does not establish calibratio
 - Full exact-symbol sweep: 285 live skill/template/system-prompt files have zero retired score-route, receipt-ack route, interpretation-helper or calibration-note tokens. The 80 owned doc/map files retain one occurrence of each retired goal route on the same explicitly historical L9 audit line; no helper or note-field occurrences remain there. Whole-repository residuals additionally comprise negative/provenance fixtures, the out-of-scope historical `kask/docs-alignment-run.md`, and unchanged root `.rules:73`.
 - Warning routing receipt: parent task comment `21b8455a-0ee8-43f2-a3f8-042a23b56d94` assigns the prescreen advisory to skill-maintenance review, ontology gloss to its implementation owner, and the contradictory root rule to the principal/host for a dedicated rules-only disposition. None was suppressed or silently called fixed.
 - Shared-tree checkpoint: the owner captured earlier slices in `05a9ffbe73` and `0b40eca775`. This agent issued no commit, stash or reset. Later reference-map/wording/receipt edits remain uncommitted for the owner. The type map explicitly marks the still-exported `GoalEvent` as historical-only with no host-ingestion consumer; removing that out-of-scope wire type remains the code owner's work, not a deletion claimed by this docs pass.
+
+## Latest approved implementation follow-up — bounded sources and precise cutoffs
+
+P1–P6 remain approved. This is a new source-inspection/update receipt, not a
+rewrite of the original inquiry's findings or a claim of editor redeployment.
+Authority: current `kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md`,
+`kask/crates/kask_bridge/src/goals.rs`, `goals/artifacts.rs`, native
+`crates/agent/src/tools/goal_tools.rs`, scenarios `requests.rs`,
+`hkask_mcp_scenarios.rs` and `superforecast/store.rs`. The latest request explicitly
+supersedes the earlier no-fetch and date-only limitations. Integration acceptance
+belongs to the parent; this docs pass does not manufacture human outcomes.
+
+### Bounded independent artifact observations and consent
+
+Native closure discloses exact paths/hashes, configured assessor sharing including
+scheduled retries, retention in canonical attempts/curator recall and sharing
+retained projection contents with the configured semantic-indexing provider.
+Approval permits only absolute canonical local paths/local file URIs and nofollow
+UTF-8 regular-file reads: at most 16 artifacts, 64 KiB content each, 256 KiB total
+reads per attempt including growth probes. No crawling, network retrieval,
+symlink traversal or commands. Historical absent approval stays absent; corrections
+grant no new access. These are host consent fields, never worker inputs.
+
+The host freezes exact fetched contents or unavailable/mismatch read receipts
+with the spec/manifest and input digest before inference. With no fetched contents
+it records deterministic unknown findings without a model call. Otherwise supported/
+contradicted findings require actual fetched, digest-matched evidence IDs; missing
+or failed evidence stays unknown. A fresh blinded request excludes human/worker
+labels and forecast probabilities/scores, while keeping untrusted contents as data.
+This verifies observed bytes, not producer authenticity or that alleged tests ran.
+
+### Narrow machine forecast source, not an arbitrary outcome writer
+
+Supported resolvers are HumanAcceptance and exactly
+`MachineArtifactDigest { locator, expected_sha256 }`. The native prompt separately
+discloses the machine locator/hash/window even with an unrelated/empty assessment
+manifest. `MachineArtifactDigestApproval` binds the complete frozen forecast/spec;
+manifest approval alone is insufficient. The first actual scheduled bounded read
+in inclusive `[horizon, resolution_deadline]` derives true for SHA-256 equality,
+false for a successful different digest. Missing/denied/unsafe/non-UTF-8/oversized/
+late reads produce unknown, unscored; the first receipt including unknown is
+immutable. No pre-horizon assessment snapshot, worker label or model finding can
+supply this observation. Resolver-only contents are discarded, not sent to assessor/
+indexer; retain only typed source/time/digest/count receipts. Equality means file
+bytes match, never that tests ran. Scoring still waits for an assessment attempt.
+Arbitrary old MachineEvidence forecasts reconcile to UnsupportedResolver with
+historical observations/scores preserved, not newly eligible or silently erased.
+
+### Prospective scenario identity and descriptive metrics
+
+`scenario_declare` now requires `resolution_at`, exactly every event ID mapped to
+an RFC 3339 UTC timestamp; no missing/extra keys. Cutoff UTC dates match descriptive
+deadlines. Admission is strictly `declared_at < cutoff`; scoring is `now >= cutoff`.
+The complete manifest is one synced journal batch before any member is admitted.
+Identical same-ID retries preserve original timestamps/probabilities even after
+cutoff; changed membership/proposition/probability/cutoff/resolver conflicts. Old
+date-only/undeclared records stay unscored history. A named resolver remains a
+caller-reported source rule, not authenticated evidence.
+
+The current diagnostic is `signed_probability_error` (mean p−outcome over
+qualifying bins), with `signed_probability_error_sample_count`,
+`signed_probability_error_qualifying_bins` and
+`signed_probability_error_bin_min_count`. Null/insufficient is not zero. Signed
+cancellation and event complementation prevent interpreting it as confidence or
+calibration certification. The widget map now carries those actual fields and
+`evidence_status`, not the retired confidence/interpretation fields.
+
+### Native authorization and source-map reconciliation
+
+D58 records `crates/agent_ui/src/conversation_view.rs`: generic authorization and
+granularity shortcuts require PermissionGrant; ActionChoice needs a concrete
+offered ID. Source pins are `test_action_choice_requires_an_explicit_offered_option`
+and `test_permission_shortcuts_preserve_permission_grants` (inspected here, not run
+by this docs pass). Native write-profile entries in `assets/settings/default.json`
+and permission-setup exclusions in `crates/settings_ui/src/pages/tool_permissions_setup.rs`
+are mapped without editing those files. D6/type maps reflect the parent's removal
+of the obsolete goal-event type/re-export. Other streams' existing modifications,
+including review-skill/template and unrelated divergence edits, are preserved.
+
+This follow-up replaces stale live limitation/admission/metric copy and extends
+prompt pins only; no production code, settings, `.rules`, or scripts are edited.
+Validation and exact residual counts follow below; no running editor redeployment,
+real user acceptance, actual test execution by an artifact producer, or prospective
+benefit/calibration experiment is claimed.

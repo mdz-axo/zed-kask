@@ -1407,6 +1407,10 @@ mod tests {
             // Interactive prompt: always asks the user via prompt_for_decision,
             // so it has no settings-driven permission rules.
             "ask_user",
+            // Native outcome decisions always require a fresh ActionChoice;
+            // configurable permission grants cannot supply a human judgment.
+            "kanban_goal_close",
+            "kanban_goal_correct_outcome",
             // Read-only view of the single in-process metacognition provider;
             // no directive or log-mutation authority follows from visibility.
             "curator_status",

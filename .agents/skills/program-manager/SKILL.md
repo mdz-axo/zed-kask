@@ -27,16 +27,42 @@ or automatically close work because a check passed. Native
 `kanban_goal_correct_outcome` is a separate authenticated correction interaction;
 it appends history rather than rewriting the original closure.
 
-The host schedules a fresh blinded assessment of the frozen spec and evidence
-manifest, excluding worker verdicts, human choice, forecast probabilities and scores.
-Keep worker claims, human labels, machine evidence and assessor findings separate,
-including disagreement. The current host assessor has no evidence-fetch tools:
-it must return unknown, not supported/contradicted from locators alone. Failures
-remain visible and retryable. Canonical history and the durable projection outbox
-survive delivery; receipt acknowledgment never deletes the goal. Optional forecasts
-resolve only under their frozen source rule after an assessment attempt. Unknown,
-disputed and ineligible cases stay explicit; versions do not add independent cases.
+The host schedules a fresh blinded assessment of the frozen spec, manifest and
+host-read artifact snapshots, excluding worker verdicts, human choice, probabilities
+and scores. Native closure consent discloses exact paths/hashes, configured assessor
+sharing (including retries), canonical attempt/recall retention and projection sharing
+with the configured semantic-indexing provider. The host reads only absolute local
+paths/local file URIs: canonical, nofollow, UTF-8 regular files; at most 16 artifacts,
+64 KiB content each and 256 KiB aggregate read budget per attempt, including growth
+probes. No network fetching, directory crawling, symlink traversal or execution.
 
+Exact fetched contents and unavailable/mismatch failure receipts are frozen with the
+spec/manifest input and digest before inference. No fetched contents means deterministic
+unknown findings and no model call. Otherwise support/contradiction must cite actual
+fetched, digest-matched evidence IDs; missing evidence stays unknown. Contents remain
+untrusted data, not instructions. A claimed test log proves only the bytes read, not
+producer authenticity or that tests ran. Keep all labels and limitations separate.
+
+Only `HumanAcceptance` and `MachineArtifactDigest { locator, expected_sha256 }`
+are supported goal forecast resolvers. Arbitrary historical `MachineEvidence` is
+unsupported, retained as provenance-limited history, never a new scoring capability.
+The digest resolver is frozen with the complete forecast/spec and needs a separately
+disclosed native `machine_artifact_access` approval; manifest consent alone is not
+permission. Workers cannot supply either approval. Corrections grant no new reads.
+The first actual bounded file read at/after horizon and at/before resolution deadline
+produces true for matching SHA-256, false for a successful different digest; failed,
+unsafe, unavailable, non-UTF-8 or late reads are unknown and unscored. The first receipt
+is immutable; no later reread or pre-horizon assessment snapshot can replace it.
+Resolver-only contents are discarded, not sent to assessor/indexer; retain the typed
+digest/path/time/count receipt only. This source proves file-byte equality, not tests ran.
+Scoring still requires an assessment attempt, independently of read timing.
+
+Native `ActionChoice` requires a concrete offered option ID. Generic authorization
+and permission-granularity shortcuts apply only to `PermissionGrant`, never supply a
+goal choice. Canonical history and the durable projection outbox survive delivery;
+receipt acknowledgment never deletes the goal. Unknown/disputed/ineligible remain
+visible; score versions never add independent event weight. See the pact for exact
+wire types, read bounds and model-aware projection recovery.
 ## Ontological Anchors
 
 - **Technical Program Management** (industry TPM practice): the TPM

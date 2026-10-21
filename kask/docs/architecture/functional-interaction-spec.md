@@ -217,11 +217,24 @@ The interaction is implemented as two coupled layers.[^kata]
   append provenance and preserve the original choice. No inferred success from
   task status, test results or a model-authored human receipt.
 - **Independent assessment and custody.** A fresh blinded request receives only
-  the frozen spec and evidence manifest initially, not worker verdict/human
-  label/forecast p/score. Findings and all labels stay separate. The current
-  assessor cannot fetch evidence and reports unknown; failure stays retryable.
+the frozen spec, manifest and consented host-read snapshots, not worker verdict/
+human label/forecast p/score. The native prompt discloses paths/hashes, configured
+assessor sharing/retries, retention and semantic-indexer projection sharing.
+Reads are bounded to 16 nofollow UTF-8 regular local files, 64 KiB each and
+256 KiB aggregate per attempt including probes; no network/crawling/execution.
+Exact contents and failure receipts freeze before inference. No fetched contents
+means deterministic unknown without a model call. Supported/contradicted findings
+cite fetched digest-matched IDs, never alleged test-producer authenticity.
   Canonical history survives receipt-validated memory projection; a persistent
   outbox drains independently of turn completion. See `kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md`.
+- **Machine source authority.** The optional `MachineArtifactDigest` forecast
+  needs separate native consent for its full frozen forecast/spec. Its first
+  actual in-window file read yields true for hash equality, false for a successful
+  mismatch, unknown/unscored for read failure; it does not establish tests ran.
+  Assessment snapshots/model findings cannot supply that source observation.
+- **Native choice gate.** Generic authorization and granularity helpers require
+  `PermissionGrant`; `ActionChoice` needs a concrete offered option ID. Native
+  close/correction stay interactive even when exposed by the write profile.
 - **Criterion coupling.** Progress covers every criterion exactly once. Task
   `advances` citations bind technical work to the original criterion and remain
   captured task data. They do not prove achievement or supply human acceptance.

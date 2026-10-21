@@ -34,6 +34,44 @@ fn run(args: Value) -> Result<Value, String> {
     evaluate_lisp(input)
 }
 
+/// expect: "Tool numeric errors name the operation/input instead of returning null or rounded success" [P8]
+#[test]
+fn h3_numeric_failures_surface_through_real_tool_decode() {
+    for (form, message) in [
+        ("1e309", "1e309"),
+        ("NaN", "NaN"),
+        ("(* 1e308 2.0)", "*"),
+        ("(/ 9223372036854775807 1)", "9223372036854775807"),
+        (
+            "(= 9007199254740993 9007199254740992.0)",
+            "9007199254740993",
+        ),
+        ("(sqrt 9007199254740993)", "sqrt"),
+    ] {
+        let error = run(json!({"form": form})).expect_err("unsafe numeric result must fail");
+        assert!(error.contains(message), "{form}: {error}");
+    }
+    let error = run(json!({"form": "(+ n 0.0)", "env": r#"{"n":9007199254740993}"#}))
+        .expect_err("exact input integer cannot be rounded during promotion");
+    assert!(
+        error.contains("9007199254740993") && error.contains("exact"),
+        "{error}"
+    );
+    assert_eq!(
+        run(json!({"form": "(+ n 0.0)", "env": r#"{"n":9007199254740994}"#}))
+            .expect("representable large integer"),
+        json!(9007199254740994.0)
+    );
+    assert_eq!(
+        run(json!({"form": "n", "env": r#"{"n":1e100}"#})).expect("explicit large finite float"),
+        json!(1e100)
+    );
+    assert_eq!(
+        run(json!({"form": "(/ 5 2)"})).expect("float division"),
+        json!(2.5)
+    );
+}
+
 // ── env: tolerated variants ──────────────────────────────────────────────────
 
 #[test]

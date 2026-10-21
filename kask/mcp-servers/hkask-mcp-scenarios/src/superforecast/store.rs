@@ -1,11 +1,11 @@
 //! File-backed persistence for records — append-only journal + periodic
 //! snapshot compaction.
 //!
-//! Extracted from `superforecast.rs` (deep-module split). Each mutation appends
-//! one JSON line to the journal (O(1) write). On load, the snapshot is loaded
-//! first, then journal entries are replayed on top (last write wins). After
-//! `JOURNAL_COMPACT_THRESHOLD` entries, the journal is compacted into a full
-//! snapshot.
+//! Each mutation appends one JSON event to the journal. A complete declaration
+//! occupies one event regardless of member count: replay decodes every member
+//! before publishing any. Snapshot plus journal replay remains last-write-wins.
+//! After `JOURNAL_COMPACT_THRESHOLD` record mutations, automatic compaction
+//! publishes a full snapshot; failure leaves the complete journal recoverable.
 //!
 //! The generic `JournalStore<T>` core (Phase A P1 of the
 //! companies/FMP/EODHD/FIBO removal plan) is the one implementation of the
@@ -20,19 +20,51 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+/// Existing single-record history and whole-declaration journal events.
+/// A batch is deserialized completely before any member becomes visible.
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum JournalEntry<T> {
+    Record { key: String, record: T },
+    Batch { records: Vec<(String, T)> },
+}
+
 const JOURNAL_COMPACT_THRESHOLD: usize = 100;
 /// File-backed persistence using append-only journal + periodic snapshot compaction.
-/// Each mutation appends one JSON line to the journal (O(1) write). On load, the
-/// snapshot is loaded first, then journal entries are replayed on top (last write wins).
-/// After JOURNAL_COMPACT_THRESHOLD entries, the journal is compacted into a full snapshot.
-#[derive(Debug, Default)]
+/// Each mutation appends one complete event. A batch publishes all members
+/// together after syncing the event; loading decodes the entire batch first.
+/// Compaction counts record mutations, not independent forecast outcomes.
+#[derive(Debug)]
 pub struct JournalStore<T> {
     pub(crate) records: HashMap<String, T>,
     pub(crate) data_path: Option<PathBuf>,
     journal_path: Option<PathBuf>,
     journal_count: usize,
+    clock: fn() -> chrono::DateTime<chrono::Utc>,
 }
+
+impl<T> Default for JournalStore<T> {
+    fn default() -> Self {
+        Self {
+            records: HashMap::new(),
+            data_path: None,
+            journal_path: None,
+            journal_count: 0,
+            clock: chrono::Utc::now,
+        }
+    }
+}
+
 impl<T: for<'de> serde::Deserialize<'de> + serde::Serialize> JournalStore<T> {
+    /// Inject the external clock boundary without changing tool request data.
+    #[doc(hidden)]
+    pub fn set_clock(&mut self, clock: fn() -> chrono::DateTime<chrono::Utc>) {
+        self.clock = clock;
+    }
+
+    pub(crate) fn now(&self) -> chrono::DateTime<chrono::Utc> {
+        (self.clock)()
+    }
     /// Create a new store, loading snapshot + journal replay from disk.
     pub fn new(data_path: Option<PathBuf>) -> Self {
         let journal_path = data_path.as_ref().map(|p| {
@@ -41,10 +73,9 @@ impl<T: for<'de> serde::Deserialize<'de> + serde::Serialize> JournalStore<T> {
             jp
         });
         let mut store = Self {
-            records: HashMap::new(),
             data_path,
             journal_path,
-            journal_count: 0,
+            ..Self::default()
         };
         store.load();
         store
@@ -86,17 +117,16 @@ impl<T: for<'de> serde::Deserialize<'de> + serde::Serialize> JournalStore<T> {
                         if trimmed.is_empty() {
                             continue;
                         }
-                        if let Ok(entry) = serde_json::from_str::<serde_json::Value>(trimmed)
-                            && let (Some(key), Some(record)) = (
-                                entry.get("key").and_then(|v| v.as_str()),
-                                entry.get("record"),
-                            )
-                            && let Ok(rec) = serde_json::from_value::<T>(record.clone())
-                        {
-                            self.records.insert(key.to_string(), rec);
-                            self.journal_count += 1;
-                        } else {
-                            skipped_lines += 1;
+                        match serde_json::from_str::<JournalEntry<T>>(trimmed) {
+                            Ok(JournalEntry::Record { key, record }) => {
+                                self.records.insert(key, record);
+                                self.journal_count += 1;
+                            }
+                            Ok(JournalEntry::Batch { records }) => {
+                                self.journal_count += records.len();
+                                self.records.extend(records);
+                            }
+                            Err(_) => skipped_lines += 1,
                         }
                     }
                     if skipped_lines > 0 {
@@ -117,9 +147,8 @@ impl<T: for<'de> serde::Deserialize<'de> + serde::Serialize> JournalStore<T> {
             }
         }
     }
-    /// Append a single record entry to the journal (O(1) write per mutation).
-    /// Only writes the changed record, not the full dataset.
-    fn save_entry(&self, key: &str, record: &T) -> io::Result<()> {
+    /// Append a complete mutation; a declaration batch occupies one journal line.
+    fn save_entries(&self, records: &[(String, T)]) -> io::Result<()> {
         if let Some(journal_path) = &self.journal_path {
             if let Some(parent) = journal_path
                 .parent()
@@ -127,10 +156,11 @@ impl<T: for<'de> serde::Deserialize<'de> + serde::Serialize> JournalStore<T> {
             {
                 fs::create_dir_all(parent)?;
             }
-            let mut line = serde_json::to_vec(&serde_json::json!({
-                "key": key,
-                "record": record
-            }))?;
+            let event = match records {
+                [(key, record)] => serde_json::json!({"key": key, "record": record}),
+                _ => serde_json::json!({"records": records}),
+            };
+            let mut line = serde_json::to_vec(&event)?;
             line.push(b'\n');
             let mut file = fs::OpenOptions::new()
                 .create(true)
@@ -141,11 +171,20 @@ impl<T: for<'de> serde::Deserialize<'de> + serde::Serialize> JournalStore<T> {
         }
         Ok(())
     }
-    /// Insert a record and persist via single-entry journal append.
+    /// Insert one record through the same durable publication boundary.
     pub fn insert(&mut self, key: String, record: T) -> io::Result<()> {
-        self.save_entry(&key, &record)?;
-        self.records.insert(key, record);
-        self.journal_count += 1;
+        self.insert_batch(vec![(key, record)])
+    }
+    /// Sync the complete set in one journal event before publishing membership.
+    /// Compaction may fail after publication; all members remain recoverable,
+    /// so the caller can finish snapshot publication with an identical retry.
+    pub(crate) fn insert_batch(&mut self, records: Vec<(String, T)>) -> io::Result<()> {
+        if records.is_empty() {
+            return Ok(());
+        }
+        self.save_entries(&records)?;
+        self.journal_count += records.len();
+        self.records.extend(records);
         if self.journal_count >= JOURNAL_COMPACT_THRESHOLD {
             self.compact()?;
         }
@@ -220,7 +259,7 @@ mod forecast_accessors {
         pub(crate) fn eligible_resolved(&self) -> Vec<&StoredForecastRecord> {
             self.resolved()
                 .into_iter()
-                .filter(|r| r.declaration.is_some())
+                .filter(|r| r.declaration.as_ref().is_some_and(|d| d.is_prospective()))
                 .collect()
         }
         pub(crate) fn filtered_by_subject(&self, subject: &str) -> Self {
@@ -234,6 +273,7 @@ mod forecast_accessors {
                 data_path: None,
                 journal_path: None,
                 journal_count: 0,
+                clock: self.clock,
             }
         }
     }

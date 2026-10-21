@@ -732,6 +732,10 @@ mod tests {
                 "calibration_note",
                 "excellent < 0.05",
                 "inverse-Brier weighting).",
+                "assessor cannot fetch evidence",
+                "assessor has no evidence-fetch",
+                "no evidence-fetch tools and must report unknown",
+                "overconfidence_score",
             ] {
                 assert!(
                     !text.contains(retired),
@@ -751,6 +755,15 @@ mod tests {
             "blinded",
             "unknown",
             "never deletes",
+            "16 artifacts",
+            "64 KiB",
+            "256 KiB",
+            "before inference",
+            "semantic-indexing provider",
+            "MachineArtifactDigest",
+            "machine_artifact_access",
+            "PermissionGrant",
+            "not tests ran",
         ] {
             assert!(
                 governance.contains(requirement),
@@ -762,6 +775,10 @@ mod tests {
                 .expect("read forecasting protocol");
         for requirement in [
             "scenario_declare",
+            "resolution_at",
+            "one synced journal event",
+            "after cutoff",
+            "date-only",
             "resolver",
             "Murphy (1973)",
             "not calibration",
@@ -773,6 +790,49 @@ mod tests {
                 "forecast guidance missing {requirement}"
             );
         }
+    }
+
+    #[test]
+    fn test_goal_prompt_discloses_local_read_consent_and_narrow_source_authority() {
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["kanban_goal_create".into(), "kanban_goal_close".into()],
+            model_name: None,
+            date: "2026-10-20".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+            mcp_tools_hidden: 0,
+        };
+        let rendered = template
+            .render(&Templates::new())
+            .expect("render consent-aware goal prompt");
+        for requirement in [
+            "exact paths/hashes",
+            "configured assessor",
+            "semantic-indexing provider",
+            "16 local artifacts",
+            "64 KiB",
+            "256 KiB",
+            "nofollow regular files",
+            "frozen before inference",
+            "without a model call",
+            "MachineArtifactDigest",
+            "separate native consent",
+            "failed/unsafe/late reads are unknown, unscored",
+            "PermissionGrant",
+            "concrete offered option ID",
+            "that claimed tests ran",
+        ] {
+            assert!(
+                rendered.contains(requirement),
+                "missing native consent/source limit: {requirement}"
+            );
+        }
+        assert!(!rendered.contains("assessor cannot fetch evidence"));
     }
 
     #[test]

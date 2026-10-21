@@ -606,25 +606,28 @@ pub fn compute_calibration_curve(store: &ForecastStore) -> Result<CalibrationCur
                 forecast_count: count,
                 hit_rate,
                 expected_rate: expected,
-                bias: expected
+                signed_probability_error: expected
                     .zip(hit_rate)
                     .map(|(expected, actual)| expected - actual),
             }
         })
         .collect();
 
-    let mut weighted_bias = 0.0;
-    let mut bias_weight = 0.0;
+    let mut weighted_error = 0.0;
+    let mut sample_count = 0;
+    let mut qualifying_bins = Vec::new();
     for bin in &calibration_bins {
-        if bin.forecast_count >= 5
-            && let Some(bias) = bin.bias
+        if bin.forecast_count >= crate::types::SIGNED_PROBABILITY_ERROR_MIN_BIN_COUNT
+            && let Some(error) = bin.signed_probability_error
         {
-            weighted_bias += bias * bin.forecast_count as f64;
-            bias_weight += bin.forecast_count as f64;
+            weighted_error += error * bin.forecast_count as f64;
+            sample_count += bin.forecast_count;
+            qualifying_bins.push(bin.probability_range.clone());
         }
     }
-    // Signed errors can cancel; this descriptive mean is not reliability.
-    let overconfidence = (bias_weight > 0.0).then_some(weighted_bias / bias_weight);
+    // Complementing an event flips its signed error without changing confidence.
+    // Cancellation is not a calibration or confidence certificate.
+    let signed_error = (sample_count > 0).then_some(weighted_error / sample_count as f64);
 
     Ok(CalibrationCurve {
         bins: calibration_bins,
@@ -632,7 +635,9 @@ pub fn compute_calibration_curve(store: &ForecastStore) -> Result<CalibrationCur
         resolved_forecasts: resolved.len() as u64,
         unscored_resolved_forecasts: (store.resolved().len() - resolved.len()) as u64,
         overall_brier,
-        overconfidence_score: overconfidence,
+        signed_probability_error: signed_error,
+        signed_probability_error_sample_count: sample_count,
+        signed_probability_error_qualifying_bins: qualifying_bins,
     })
 }
 

@@ -11,7 +11,7 @@ General multi-purpose self-improvement skill for FM-based agents. Implements the
 
 ## Goal evidence, closure and optional forecasts
 
-Use `program-manager`'s goal contract and the [canonical pact](../../../kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md): create requires a real specification `source` and returns the full goal's `id`; ordinary goals omit `forecast`. Worker progress is not human closure. Native `kanban_goal_close` obtains human ActionChoice, never a model-supplied outcome; `kanban_goal_correct_outcome` is separate. Keep blinded assessment findings and human labels distinct, unknown visible, canonical history retained. The current assessor cannot fetch evidence and cannot certify unseen references. No automatic success closure or routine goal probability.
+Use `program-manager`'s goal contract and the [canonical pact](../../../kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md): create requires a real specification `source` and returns the full goal's `id`; ordinary goals omit `forecast`. Worker progress is not human closure. Native `kanban_goal_close` obtains human ActionChoice, never a model-supplied outcome; `kanban_goal_correct_outcome` is separate. Keep blinded assessment findings and human labels distinct, unknown visible, canonical history retained. The host freezes consented bounded local file snapshots before fresh assessment; missing contents stay unknown without inference, and fetched bytes do not authenticate claimed test execution. See the program-manager contract for read/sharing limits and the separately approved digest-only machine forecast. No automatic success closure or routine goal probability.
 
 ## Initial and target condition
 

@@ -44,14 +44,6 @@ pub struct TurnRecord {
     pub agent_id: Option<String>,
 }
 
-/// Historical wire type retained only until the parent removes the out-of-scope
-/// ports.rs re-export. No host ingestion path consumes this type.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct GoalEvent {
-    pub tool_name: String,
-    pub output: serde_json::Value,
-}
-
 /// A recalled memory snippet for context injection.
 ///
 /// Lightweight representation of a stored memory — just enough to format
@@ -99,10 +91,7 @@ pub trait MemoryPort: Send + Sync {
     /// This is fire-and-forget from the caller's perspective — the memory system
     /// handles classification, confidence scoring, and consolidation asynchronously.
     ///
-    fn ingest_turn<'a>(
-        &'a self,
-        record: TurnRecord,
-    ) -> MemoryFuture<'a, Result<(), MemoryError>>;
+    fn ingest_turn<'a>(&'a self, record: TurnRecord) -> MemoryFuture<'a, Result<(), MemoryError>>;
 
     /// Recall memory snippets relevant to a query for context injection.
     ///

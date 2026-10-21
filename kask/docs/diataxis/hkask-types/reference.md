@@ -193,7 +193,7 @@ status: VERIFIED
 | Inference values | `ChatMessage`, `InferenceError`, `InferenceUsage` (with the `reported` flag), `ChatToolDefinition`, `ChatToolFunction`, `StructuredToolCall`, `InferenceResult`, `InferenceStreamChunk` | `kask/crates/hkask-types/src/ports/inference_types.rs:15-164` |
 | Inference port | `EmbedFuture`, `EmbedWithIdentityFuture`, `MediaFuture`, `RerankFuture`, `MediaGenerateParams`, `ModelEntry`, `InferencePort` | `kask/crates/hkask-types/src/ports/inference_port.rs:11-113,184-431` |
 | Tool/worktree ports | `ToolDispatchPort`, `WorktreeSpawnPort` | `kask/crates/hkask-types/src/ports/inference_port.rs:115-183` |
-| Memory | `TurnRecord`, `MemorySnippet`, `MemoryError`, `MemoryPort`; `GoalEvent` remains a historical wire type only, with no host-ingestion consumer | `kask/crates/hkask-types/src/ports/memory_port.rs` (current goal custody is the separate canonical pact and host drainer, not this turn port) |
+| Memory | `TurnRecord`, `MemorySnippet`, `MemoryError`, `MemoryPort`; the obsolete goal-event wire type/re-export is removed | `kask/crates/hkask-types/src/ports/memory_port.rs` (current goal custody is the separate canonical pact and host drainer, not this turn port) |
 | Embedding | `EmbeddingBatch`, `EmbeddingGenerationError` | `kask/crates/hkask-types/src/ports/embedding.rs:3-26` |
 | Consolidation | `ConsolidationOutcome` (`deleted_count`, `failed_count`) | `kask/crates/hkask-types/src/ports/regulation.rs::ConsolidationOutcome` |
 

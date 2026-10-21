@@ -17,8 +17,9 @@
 //!     ends-with, concat, boundary-ok, abs, sqrt, max, min, eq, member
 //!
 //! Integer arithmetic is checked (overflow is a typed `Runtime` error, never
-//! a silent wrap), and all-Int comparisons are exact i64 (never coerced
-//! through f64 — lisp-repair L2).
+//! a silent wrap), and all-Int comparisons/extrema are exact i64. Float
+//! operations require finite operands/results and exact integer-to-f64
+//! promotion; division still returns a Float.
 //!
 //! `assoc` is defensive on `Nil` and `String` (LLM step outputs that reached
 //! forms as JSON strings return nil so `is_null` guards work), while
@@ -449,6 +450,11 @@ fn parse_atom(tok: &str) -> Result<LispValue, LispError> {
         )));
     }
     if let Ok(f) = tok.parse::<f64>() {
+        if !f.is_finite() {
+            return Err(LispError::Parse(format!(
+                "non-finite numeric literal {tok}; use a finite f64 value"
+            )));
+        }
         return Ok(LispValue::Float(f));
     }
     Ok(match tok {
@@ -591,7 +597,7 @@ pub fn eval_with_budget(
     if track_depth {
         budget.exit();
     }
-    result
+    result.and_then(|value| finite_value(value, "evaluation"))
 }
 
 fn eval_inner(
@@ -953,10 +959,39 @@ fn default_builtins() -> Vec<(&'static str, NativeFn)> {
     ]
 }
 
-fn as_f64(v: &LispValue) -> Result<f64, LispError> {
+fn finite_number(value: f64, operation: &str) -> Result<f64, LispError> {
+    if value.is_finite() {
+        Ok(value)
+    } else {
+        Err(LispError::Runtime(format!(
+            "non-finite number {value} in {operation}; use finite operands and a result within f64 range"
+        )))
+    }
+}
+
+fn finite_value(value: LispValue, operation: &str) -> Result<LispValue, LispError> {
+    if let LispValue::Float(number) = &value {
+        finite_number(*number, operation)?;
+    }
+    Ok(value)
+}
+
+fn as_f64(v: &LispValue, operation: &str) -> Result<f64, LispError> {
     match v {
-        LispValue::Int(i) => Ok(*i as f64),
-        LispValue::Float(f) => Ok(*f),
+        LispValue::Int(i) => {
+            // Binary64 has 53 significant bits. Bits discarded above that
+            // precision must all be zero; unsigned_abs also handles i64::MIN.
+            let magnitude = i.unsigned_abs();
+            let discarded =
+                (u64::BITS - magnitude.leading_zeros()).saturating_sub(f64::MANTISSA_DIGITS);
+            if magnitude.trailing_zeros() < discarded {
+                return Err(LispError::Runtime(format!(
+                    "integer {i} in {operation} cannot be represented exactly as f64; keep integer-only operations or use an exactly representable operand"
+                )));
+            }
+            Ok(*i as f64)
+        }
+        LispValue::Float(f) => finite_number(*f, operation),
         _ => Err(LispError::TypeError {
             expected: "number".into(),
             actual: type_of(v),
@@ -975,42 +1010,49 @@ fn as_list(v: &LispValue) -> Result<Rc<List>, LispError> {
     }
 }
 
+/// Choose the numeric path before accumulating: a later Float must not make
+/// a mixed operation overflow an otherwise irrelevant integer prefix.
+fn arithmetic_fold(
+    name: &str,
+    initial: &LispValue,
+    args: &[LispValue],
+    integer_op: fn(i64, i64) -> Option<i64>,
+    float_op: fn(f64, f64) -> f64,
+) -> Result<LispValue, LispError> {
+    if let LispValue::Int(initial) = initial
+        && args.iter().all(|arg| matches!(arg, LispValue::Int(_)))
+    {
+        let mut acc = *initial;
+        for arg in args {
+            if let LispValue::Int(value) = arg {
+                acc = integer_op(acc, *value).ok_or_else(|| {
+                    LispError::Runtime(format!(
+                        "integer overflow in {name}: {acc} {name} {value} exceeds i64"
+                    ))
+                })?;
+            }
+        }
+        return Ok(LispValue::Int(acc));
+    }
+    let mut acc = as_f64(initial, name)?;
+    let numbers = args
+        .iter()
+        .map(|arg| as_f64(arg, name))
+        .collect::<Result<Vec<_>, _>>()?;
+    for value in numbers {
+        acc = finite_number(float_op(acc, value), name)?;
+    }
+    Ok(LispValue::Float(acc))
+}
+
 fn add(
     _env: &Rc<RefCell<Env>>,
     args: &[LispValue],
     _budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
-    let mut acc_int: Option<i64> = Some(0);
-    let mut acc_float: f64 = 0.0;
-    for a in args {
-        match a {
-            LispValue::Int(i) => {
-                // Checked, not wrapping: a silent i64 wrap is the `lie` failure
-                // class (a wrong answer with no error — lisp-repair L2; the
-                // wrapped specimen is pinned in the agent emission matrix).
-                acc_int = match acc_int {
-                    Some(v) => Some(v.checked_add(*i).ok_or_else(|| {
-                        LispError::Runtime(format!("integer overflow in +: {v} + {i} exceeds i64"))
-                    })?),
-                    None => None,
-                };
-                acc_float += *i as f64;
-            }
-            LispValue::Float(f) => {
-                acc_int = None;
-                acc_float += *f;
-            }
-            _ => {
-                return Err(LispError::TypeError {
-                    expected: "number".into(),
-                    actual: type_of(a),
-                });
-            }
-        }
-    }
-    Ok(acc_int
-        .map(LispValue::Int)
-        .unwrap_or(LispValue::Float(acc_float)))
+    arithmetic_fold("+", &LispValue::Int(0), args, i64::checked_add, |a, b| {
+        a + b
+    })
 }
 
 fn sub(
@@ -1018,42 +1060,22 @@ fn sub(
     args: &[LispValue],
     _budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
-    if args.is_empty() {
+    let Some((first, rest)) = args.split_first() else {
         return Err(LispError::Arity("- expects at least 1 arg".into()));
-    }
-    if args.len() == 1 {
-        // Unary negation matches the arg directly — no f64 round-trip (the
-        // former `-f as i64` lost precision above 2^53 and wrapped i64::MIN).
-        return match &args[0] {
+    };
+    if rest.is_empty() {
+        return match first {
             LispValue::Int(i) => Ok(LispValue::Int(i.checked_neg().ok_or_else(|| {
                 LispError::Runtime(format!("integer overflow in -: -{i} exceeds i64"))
             })?)),
-            LispValue::Float(f) => Ok(LispValue::Float(-f)),
+            LispValue::Float(f) => Ok(LispValue::Float(-finite_number(*f, "-")?)),
             other => Err(LispError::TypeError {
                 expected: "number".into(),
                 actual: type_of(other),
             }),
         };
     }
-    let mut acc_int: Option<i64> = match &args[0] {
-        LispValue::Int(i) => Some(*i),
-        _ => None,
-    };
-    let mut acc_float = as_f64(&args[0])?;
-    for a in &args[1..] {
-        let f = as_f64(a)?;
-        acc_float -= f;
-        if let (Some(i), LispValue::Int(ai)) = (acc_int, a) {
-            acc_int = Some(i.checked_sub(*ai).ok_or_else(|| {
-                LispError::Runtime(format!("integer overflow in -: {i} - {ai} exceeds i64"))
-            })?);
-        } else {
-            acc_int = None;
-        }
-    }
-    Ok(acc_int
-        .map(LispValue::Int)
-        .unwrap_or(LispValue::Float(acc_float)))
+    arithmetic_fold("-", first, rest, i64::checked_sub, |a, b| a - b)
 }
 
 fn mul(
@@ -1061,34 +1083,9 @@ fn mul(
     args: &[LispValue],
     _budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
-    let mut acc_int: Option<i64> = Some(1);
-    let mut acc_float: f64 = 1.0;
-    for a in args {
-        match a {
-            LispValue::Int(i) => {
-                acc_int = match acc_int {
-                    Some(v) => Some(v.checked_mul(*i).ok_or_else(|| {
-                        LispError::Runtime(format!("integer overflow in *: {v} * {i} exceeds i64"))
-                    })?),
-                    None => None,
-                };
-                acc_float *= *i as f64;
-            }
-            LispValue::Float(f) => {
-                acc_int = None;
-                acc_float *= *f;
-            }
-            _ => {
-                return Err(LispError::TypeError {
-                    expected: "number".into(),
-                    actual: type_of(a),
-                });
-            }
-        }
-    }
-    Ok(acc_int
-        .map(LispValue::Int)
-        .unwrap_or(LispValue::Float(acc_float)))
+    arithmetic_fold("*", &LispValue::Int(1), args, i64::checked_mul, |a, b| {
+        a * b
+    })
 }
 
 fn div(
@@ -1099,13 +1096,13 @@ fn div(
     if args.is_empty() {
         return Err(LispError::Arity("/ expects at least 1 arg".into()));
     }
-    let mut acc = as_f64(&args[0])?;
+    let mut acc = as_f64(&args[0], "/")?;
     for a in &args[1..] {
-        let f = as_f64(a)?;
+        let f = as_f64(a, "/")?;
         if f == 0.0 {
             return Err(LispError::Runtime("division by zero".into()));
         }
-        acc /= f;
+        acc = finite_number(acc / f, "/")?;
     }
     Ok(LispValue::Float(acc))
 }
@@ -1130,8 +1127,9 @@ fn num_ne(
 /// when every arg is an Int, compare as exact i64 — the f64 coercion lost
 /// every integer above 2^53 ((= 2^53+1 2^53) silently returned true;
 /// lisp-repair L2, pinned in the agent emission matrix). Otherwise fall
-/// back to f64 with type errors PROPAGATED — a non-number anywhere is a
-/// type error, never a silent false (the former `.ok()` swallow made
+/// back to finite f64 with exact integer promotion and type errors
+/// PROPAGATED — a non-number anywhere is a type error, never a silent false
+/// (the former `.ok()` swallow made
 /// (= 1 "x") silently false). Comparison runs over adjacent pairs, the
 /// documented 3+ arg contract for every numeric comparator.
 fn compare_chain(
@@ -1153,7 +1151,10 @@ fn compare_chain(
     if let Some(ints) = ints {
         return Ok(LispValue::Bool(ints.windows(2).all(|w| ord(w[0], w[1]))));
     }
-    let nums: Vec<f64> = args.iter().map(as_f64).collect::<Result<_, _>>()?;
+    let nums: Vec<f64> = args
+        .iter()
+        .map(|arg| as_f64(arg, name))
+        .collect::<Result<_, _>>()?;
     Ok(LispValue::Bool(nums.windows(2).all(|w| ford(w[0], w[1]))))
 }
 
@@ -1771,7 +1772,7 @@ fn abs_fn(
                 LispError::Runtime(format!("integer overflow in abs: |{i}| exceeds i64"))
             })?,
         )),
-        LispValue::Float(f) => Ok(LispValue::Float(f.abs())),
+        LispValue::Float(f) => Ok(LispValue::Float(finite_number(*f, "abs")?.abs())),
         _ => Err(LispError::TypeError {
             expected: "number".into(),
             actual: type_of(&args[0]),
@@ -1790,7 +1791,7 @@ fn sqrt_fn(
     if args.len() != 1 {
         return Err(LispError::Arity("sqrt expects 1 arg".into()));
     }
-    let f = as_f64(&args[0])?;
+    let f = as_f64(&args[0], "sqrt")?;
     if f < 0.0 {
         return Err(LispError::Runtime(format!("sqrt of negative number {f}")));
     }
@@ -1801,7 +1802,7 @@ fn sqrt_fn(
 /// representation (Int or Float). `prefer` decides whether a candidate
 /// replaces the current best. Int-vs-Int comparisons are exact i64 (the
 /// f64 coercion misordered integers above 2^53 — lisp-repair L2); mixed
-/// numeric args compare as f64.
+/// numeric pairs compare as finite f64 only when both conversions are exact.
 fn extremum(
     name: &str,
     args: &[LispValue],
@@ -1811,26 +1812,30 @@ fn extremum(
     let Some((first, rest)) = args.split_first() else {
         return Err(LispError::Arity(format!("{name} expects at least 1 arg")));
     };
+    // Validate even a sole argument, without promoting an integer that never
+    // participates in a mixed comparison.
+    for arg in args {
+        match arg {
+            LispValue::Int(_) => {}
+            LispValue::Float(value) => {
+                finite_number(*value, name)?;
+            }
+            _ => {
+                return Err(LispError::TypeError {
+                    expected: "number".into(),
+                    actual: type_of(arg),
+                });
+            }
+        }
+    }
     let mut best = first;
-    let mut best_value = as_f64(first)?;
-    let mut best_int = match first {
-        LispValue::Int(i) => Some(*i),
-        _ => None,
-    };
     for arg in rest {
-        let value = as_f64(arg)?;
-        let arg_int = match arg {
-            LispValue::Int(i) => Some(*i),
-            _ => None,
-        };
-        let wins = match (best_int, arg_int) {
-            (Some(b), Some(a)) => iprefer(a, b),
-            _ => prefer(value, best_value),
+        let wins = match (best, arg) {
+            (LispValue::Int(b), LispValue::Int(a)) => iprefer(*a, *b),
+            _ => prefer(as_f64(arg, name)?, as_f64(best, name)?),
         };
         if wins {
             best = arg;
-            best_value = value;
-            best_int = arg_int;
         }
     }
     Ok(best.clone())
@@ -1940,6 +1945,9 @@ fn charge_value(value: &LispValue, budget: &mut EvalBudget, depth: u64) -> Resul
     budget.tick()?;
     match value {
         LispValue::String(text) | LispValue::Symbol(text) => budget.charge(text.len())?,
+        LispValue::Float(number) => {
+            finite_number(*number, "sandbox result")?;
+        }
         LispValue::List(list) => {
             let mut cursor = Some(list.as_ref());
             while let Some(node) = cursor {
@@ -2286,6 +2294,25 @@ mod tests {
                 )),
                 _ => panic!("unknown exit fixture"),
             }
+            probe.assert_reclaimed();
+        }
+    }
+
+    /// expect: "Numeric errors reclaim invocation scopes even after creating closure cycles" [P4]
+    #[test]
+    fn h3_numeric_errors_reclaim_scopes() {
+        for expression in ["(* 1e308 2.0)", "(/ 9223372036854775807 1)", "(sqrt -1)"] {
+            let probe = ScopeProbe::start(None);
+            let source = format!(
+                "(define f (lambda (x) (f x))) (let () (begin (define g (lambda () 1)) {expression}))"
+            );
+            assert!(
+                matches!(
+                    eval_sandboxed(&source, &serde_json::json!({})),
+                    Err(LispError::Runtime(_))
+                ),
+                "{expression}"
+            );
             probe.assert_reclaimed();
         }
     }

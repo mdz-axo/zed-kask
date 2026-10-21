@@ -21,6 +21,169 @@
 use super::*;
 use proptest::prelude::*;
 
+/// expect: "Nonfinite literals, evaluated operands, native math and sandbox output fail explicitly" [P8]
+#[test]
+fn h3_nonfinite_numbers_are_errors_not_null() {
+    for token in ["1e309", "-1e309", "NaN", "inf", "-inf"] {
+        let error = parse(token).expect_err("nonfinite literal must fail parsing");
+        assert!(matches!(error, LispError::Parse(_)), "{token}: {error}");
+        assert!(error.to_string().contains(token), "{error}");
+    }
+    for form in [
+        "(+ 1e308 1e308)",
+        "(* 1e308 2.0)",
+        "(- -1e308 1e308)",
+        "(/ 1e308 1e-308)",
+        "(list (* 1e308 2.0))",
+    ] {
+        let error = eval_sandboxed(form, &serde_json::json!({}))
+            .expect_err("nonfinite math must not serialize to null");
+        assert!(error.to_string().contains("non-finite"), "{form}: {error}");
+    }
+    let env = Rc::new(RefCell::new(Env::new_root()));
+    env.borrow_mut()
+        .define("bad".into(), LispValue::Float(f64::NAN));
+    assert!(eval(env.clone(), &LispValue::Symbol("bad".into())).is_err());
+    assert!(eval(env.clone(), &LispValue::Float(f64::INFINITY)).is_err());
+    for (name, builtin) in default_builtins() {
+        let args = match name {
+            "+" | "-" | "*" | "/" | "=" | "!=" | "<" | "<=" | ">" | ">=" | "min" | "max" => {
+                vec![LispValue::Float(f64::INFINITY), LispValue::Int(1)]
+            }
+            "abs" | "sqrt" => vec![LispValue::Float(f64::NAN)],
+            // Nonnumeric operations have their semantic witnesses in the
+            // registry specimen test. A new builtin must be classified here.
+            "car" | "cdr" | "cons" | "list" | "length" | "nth" | "reverse" | "is_null"
+            | "numberp" | "listp" | "stringp" | "assoc" | "assoc!" | "append" | "string="
+            | "concat" | "string-contains" | "starts-with" | "ends-with" | "eq" | "member"
+            | "boundary-ok" => continue,
+            _ => panic!("classify new registry builtin {name} for numeric coverage"),
+        };
+        let (finite_source, expected) = match name {
+            "+" => ("(+ 4 2.0)", serde_json::json!(6.0)),
+            "-" => ("(- 4 2.0)", serde_json::json!(2.0)),
+            "*" => ("(* 4 2.0)", serde_json::json!(8.0)),
+            "/" => ("(/ 4 2.0)", serde_json::json!(2.0)),
+            "=" => ("(= 4 2.0)", serde_json::json!(false)),
+            "!=" => ("(!= 4 2.0)", serde_json::json!(true)),
+            "<" => ("(< 4 2.0)", serde_json::json!(false)),
+            "<=" => ("(<= 4 2.0)", serde_json::json!(false)),
+            ">" => ("(> 4 2.0)", serde_json::json!(true)),
+            ">=" => ("(>= 4 2.0)", serde_json::json!(true)),
+            "abs" => ("(abs -4.0)", serde_json::json!(4.0)),
+            "sqrt" => ("(sqrt 4.0)", serde_json::json!(2.0)),
+            "min" => ("(min 4 2.0)", serde_json::json!(2.0)),
+            "max" => ("(max 4 2.0)", serde_json::json!(4)),
+            _ => unreachable!("numeric classification above"),
+        };
+        assert_eq!(
+            eval_sandboxed(finite_source, &serde_json::json!({})).expect("finite numeric witness"),
+            expected,
+            "{name}"
+        );
+        let error = builtin(&env, &args, &mut EvalBudget::new(100_000, 1024))
+            .expect_err("every numeric builtin must reject nonfinite operands");
+        let message = error.to_string();
+        assert!(
+            message.contains(name) && message.contains("non-finite"),
+            "{name}: {message}"
+        );
+    }
+    let mut budget = EvalBudget::new(100_000, 1024);
+    assert!(
+        charge_value(&LispValue::Float(f64::NAN), &mut budget, 0).is_err(),
+        "sandbox result validation must reject nonfinite values"
+    );
+}
+
+/// Independent oracle: f64 -> i128 has room for every rounded i64 value,
+/// including +2^63, so this does not confuse saturation with exactness.
+fn exactly_representable_as_f64(value: i64) -> bool {
+    (value as f64) as i128 == i128::from(value)
+}
+
+/// expect: "Only required, exact integer promotions are admitted; integer math stays checked" [P8]
+#[test]
+fn h3_promotion_is_exact_and_only_when_needed() {
+    let env = serde_json::json!({});
+    for operation in [
+        "+", "-", "*", "/", "=", "!=", "<", "<=", ">", ">=", "min", "max",
+    ] {
+        for operands in ["9007199254740993 1.0", "1.0 9007199254740993"] {
+            let form = format!("({operation} {operands})");
+            let error =
+                eval_sandboxed(&form, &env).expect_err("lossy promotion is a numeric error");
+            let message = error.to_string();
+            assert!(
+                message.contains(operation)
+                    && message.contains("9007199254740993")
+                    && message.contains("exact"),
+                "{form}: {message}"
+            );
+        }
+    }
+    for form in [
+        "(sqrt 9007199254740993)",
+        "(/ 9223372036854775807)",
+        "(= 9007199254740993 9007199254740992.0)",
+        "(+ 9223372036854775807 1 0.0)",
+    ] {
+        let error = eval_sandboxed(form, &env).expect_err("required lossy conversion fails");
+        assert!(error.to_string().contains("exact"), "{form}: {error}");
+    }
+    for (form, expected) in [
+        (
+            "(+ 9007199254740994 0.0)",
+            serde_json::json!(9007199254740994.0),
+        ),
+        (
+            "(+ -9223372036854775808 0.0)",
+            serde_json::json!(-9223372036854775808.0),
+        ),
+        (
+            "(+ 4611686018427387904 4611686018427387904 0.0)",
+            serde_json::json!(9223372036854775808.0),
+        ),
+        (
+            "(* 4611686018427387904 2 1.0)",
+            serde_json::json!(9223372036854775808.0),
+        ),
+        (
+            "(- -4611686018427387904 4611686018427387904 0.0)",
+            serde_json::json!(-9223372036854775808.0),
+        ),
+        ("(/ 6 3)", serde_json::json!(2.0)),
+        ("(/ 5 2)", serde_json::json!(2.5)),
+        ("(/ 6)", serde_json::json!(6.0)),
+        ("(= 1 1.0)", serde_json::json!(true)),
+        ("(eq 1 1.0)", serde_json::json!(false)),
+        (
+            "(max 9007199254740993 9007199254740992)",
+            serde_json::json!(9007199254740993_i64),
+        ),
+        ("(min 9223372036854775807)", serde_json::json!(i64::MAX)),
+        (
+            "(max 9007199254740993 9007199254740994 0.0)",
+            serde_json::json!(9007199254740994_i64),
+        ),
+        ("(min 9007199254740993 0 0.0)", serde_json::json!(0)),
+        ("(max 1 2.0)", serde_json::json!(2.0)),
+        ("(min 1 2.0)", serde_json::json!(1)),
+    ] {
+        assert_eq!(eval_sandboxed(form, &env).expect(form), expected, "{form}");
+    }
+    for form in [
+        "(+ 9223372036854775807 1 -1)",
+        "(* 9223372036854775807 2 0)",
+        "(* 1e308 2.0 0.0)",
+    ] {
+        assert!(
+            eval_sandboxed(form, &env).is_err(),
+            "checked left accumulation: {form}"
+        );
+    }
+}
+
 /// Edge-weighted i64 pool: the corners where the historical lies lived —
 /// i64 bounds (the wrap class), 2^53±1 (the f64-blindness class) — plus
 /// arbitrary values.
@@ -83,8 +246,8 @@ proptest! {
 
     /// Hypothesis (L2 lie-fix 1): binary Int arithmetic matches the std
     /// checked-op oracle exactly — every representable result is the right
-    /// i64, every overflow is a typed Runtime error, and division always
-    /// produces a Float or a typed division-by-zero error.
+    /// i64, every overflow is a typed Runtime error. Division requires exact
+    /// operand promotion, then produces a Float or a division-by-zero error.
     #[test]
     fn checked_binary_arithmetic_matches_std_oracles(
         a in numeric_edge(),
@@ -112,7 +275,12 @@ proptest! {
             }
         }
         let div = format!("(/ {a} {b})");
-        if b == 0 {
+        if !exactly_representable_as_f64(a) || !exactly_representable_as_f64(b) {
+            prop_assert!(
+                matches!(eval_sandboxed(&div, &serde_json::json!({})), Err(LispError::Runtime(ref msg)) if msg.contains("exact")),
+                "{} must refuse lossy operand promotion", div
+            );
+        } else if b == 0 {
             prop_assert!(
                 matches!(
                     eval_sandboxed(&div, &serde_json::json!({})),
@@ -124,6 +292,40 @@ proptest! {
         } else {
             let got = eval_sandboxed(&div, &serde_json::json!({})).expect("division evaluates");
             prop_assert_eq!(got, serde_json::json!((a as f64) / (b as f64)), "{}", div);
+        }
+    }
+
+    /// expect: "Mixed numeric promotion agrees with an independent widened integer oracle" [P8]
+    #[test]
+    fn h3_mixed_numeric_domain_matches_independent_oracle(a in numeric_edge()) {
+        let env = serde_json::json!({});
+        for (op, want) in [
+            ("+", serde_json::json!(a as f64 + 1.0)),
+            ("-", serde_json::json!(a as f64 - 1.0)),
+            ("*", serde_json::json!(a as f64)),
+            ("/", serde_json::json!(a as f64)),
+            ("=", serde_json::json!(a == 1)),
+            ("!=", serde_json::json!(a != 1)),
+            ("<", serde_json::json!(a < 1)),
+            ("<=", serde_json::json!(a <= 1)),
+            (">", serde_json::json!(a > 1)),
+            (">=", serde_json::json!(a >= 1)),
+            ("min", if a <= 1 { serde_json::json!(a) } else { serde_json::json!(1.0) }),
+            ("max", if a >= 1 { serde_json::json!(a) } else { serde_json::json!(1.0) }),
+        ] {
+            let form = format!("({op} {a} 1.0)");
+            let result = eval_sandboxed(&form, &env);
+            if exactly_representable_as_f64(a) {
+                prop_assert_eq!(result.expect("exact promotion evaluates"), want, "{}", form);
+            } else {
+                prop_assert!(matches!(result, Err(LispError::Runtime(ref msg)) if msg.contains("exact")), "{} must refuse lossy promotion", form);
+            }
+        }
+        let result = eval_sandboxed(&format!("(sqrt {a})"), &env);
+        if exactly_representable_as_f64(a) && a >= 0 {
+            prop_assert_eq!(result.expect("finite nonnegative exact operand"), serde_json::json!((a as f64).sqrt()));
+        } else {
+            prop_assert!(matches!(result, Err(LispError::Runtime(_))));
         }
     }
 

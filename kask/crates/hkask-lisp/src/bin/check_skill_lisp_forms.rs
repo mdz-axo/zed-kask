@@ -492,6 +492,87 @@ mod tests {
             .source
     }
 
+    #[test]
+    fn mcp_inventory_reconciliation_uses_exact_raw_names() {
+        let form = skill_candidate("mcp-tool-review", "define mtr-reconcile");
+        let base = json!({
+            "source_names": ["direct", "wire_alias", "wrapped"],
+            "live_names": ["wrapped", "direct", "wire_alias"],
+            "reviewed_names": ["wire_alias", "wrapped", "direct"]
+        });
+        let complete = eval_sandboxed(&form, &base).expect("authored name reconciliation");
+        assert_eq!(complete["input_valid"], true);
+        assert_eq!(complete["source_live_match"], true);
+        assert_eq!(complete["review_complete"], true);
+        assert_eq!(complete["source_count"], 3);
+        assert_eq!(complete["live_count"], 3);
+        assert_eq!(complete["reviewed_count"], 3);
+        assert_eq!(complete["result"], "pass");
+
+        let drift = eval_sandboxed(
+            &form,
+            &scientific_env(
+                &base,
+                json!({
+                    "live_names": ["direct", "renamed", "wrapped"],
+                    "source_count": 3, "live_count": 3, "reviewed_count": 3, "missing_in_source": 0
+                }),
+            ),
+        )
+        .expect("same-count rename cannot hide behind supplied counts");
+        assert_eq!(drift["source_live_match"], false);
+        assert_eq!(drift["review_complete"], false);
+        assert_eq!(drift["source_only_names"], json!(["wire_alias"]));
+        assert_eq!(drift["live_only_names"], json!(["renamed"]));
+        assert_eq!(drift["result"], "source_live_drift");
+
+        let partial = eval_sandboxed(
+            &form,
+            &scientific_env(
+                &base,
+                json!({
+                    "reviewed_names": ["direct"]
+                }),
+            ),
+        )
+        .expect("bounded review is incomplete, not inventory drift");
+        assert_eq!(partial["source_live_match"], true);
+        assert_eq!(partial["review_complete"], false);
+        assert_eq!(partial["reviewed_count"], 1);
+        assert_eq!(
+            partial["not_reviewed_names"],
+            json!(["wire_alias", "wrapped"])
+        );
+        assert_eq!(partial["result"], "review_incomplete");
+        let foreign_review = eval_sandboxed(
+            &form,
+            &scientific_env(
+                &base,
+                json!({
+                    "reviewed_names": ["direct", "wire_alias", "unknown"]
+                }),
+            ),
+        )
+        .expect("unknown reviewed identity");
+        assert_eq!(foreign_review["review_complete"], false);
+        assert_eq!(foreign_review["unknown_reviewed_names"], json!(["unknown"]));
+
+        for changes in [
+            json!({"source_names": []}),
+            json!({"source_names": "direct"}),
+            json!({"live_names": ["direct", "direct", "wrapped"]}),
+            json!({"reviewed_names": ["direct", "direct", "wrapped"]}),
+            json!({"source_names": ["direct", "", "wrapped"]}),
+            json!({"live_names": ["direct", 7, "wrapped"]}),
+        ] {
+            let invalid = eval_sandboxed(&form, &scientific_env(&base, changes))
+                .expect("invalid names have a fail-visible result");
+            assert_eq!(invalid["input_valid"], false);
+            assert_eq!(invalid["review_complete"], false);
+            assert_eq!(invalid["result"], "invalid_names");
+        }
+    }
+
     fn grill_state_env() -> serde_json::Value {
         json!({
             "question_bank": [

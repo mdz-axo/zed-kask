@@ -138,8 +138,8 @@ SKILL.md's stage instructions are the operating procedure):
   it — the per-node before/after record of a prior revision;
   `scenario_update` itself is stateless: it computes and returns the
   posterior, and the durable record is the forecast journal below)
-- Prospective `scenario_declare` (`forecast_id`, full `events`, named `resolver`) freezes the event/probability/deadline before outcome visibility.
-- `scenario_score` accepts only matching frozen events/resolver and scores stored marginals; a template tracking ID is not admission. Legacy undeclared records remain unscored history.
+- Prospective `scenario_declare` (`forecast_id`, full `events`, exact event-ID → UTC cutoff `resolution_at` map, named `resolver`) freezes events/marginals/cutoffs before outcome visibility. Map keys exactly match events, UTC dates match descriptive deadlines, and declaration precedes each cutoff. The whole manifest is one synced journal event; identical same-ID retries are idempotent even after cutoff, changed declarations conflict.
+- `scenario_score` accepts only matching frozen events/resolver and scores stored marginals; a template tracking ID is not admission. Old date-only/undeclared records remain unscored history; score only at/after frozen cutoffs.
 
 (An earlier revision of this README described a flow engine emitting
 `hkask.template.*` Regulation spans, variety counters, an algedonic alert,

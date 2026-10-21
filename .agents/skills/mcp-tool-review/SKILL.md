@@ -40,7 +40,7 @@ Utility tools (`scenario_status` and the `*_status` / `ping` family) have no pub
 
 ## Initial and target condition
 
-- **Initial:** a server name from the operator's sweep order (scenarios → prediction-markets → companies → swarm → kata-kanban → media → remaining; reorder only with a stated connectedness rationale); the source tree at `kask/mcp-servers/<server>/`; the live surface via `list_mcp_tools`; any saved inventory artifact.
+- **Initial:** a server name from the operator's sweep order (scenarios → prediction-markets → swarm → kata-kanban → media → remaining; reorder only with a stated connectedness rationale); the source tree at `kask/mcp-servers/<server>/`; the live surface via `list_mcp_tools`; any saved inventory artifact.
 - **Target:** a findings artifact for the server where enumerated tool count == reviewed count (per server and total, `lisp_eval`-reconciled), every finding cites tool + file:line verified by `kask/scripts/check-mcp-review-citations.sh`, efficiency numbers come from measured invocations with the harness named (a blocked axis is recorded as a harness-gap finding, never an asserted number), every tool carries an anchor + fidelity label (or a flagged default), and every finding routes to a named actuator.
 
 ## When to Use
@@ -63,9 +63,46 @@ Utility tools (`scenario_status` and the `*_status` / `ping` family) have no pub
 
 ### Phase B — Inventory [D; oracle: grep walk + `list_mcp_tools` + `lisp_eval`]
 
-4. Walk `kask/mcp-servers/<server>/src/` for `execute_tool(` registrations (grep; record file:line per tool). The pattern must tolerate line-wrapped call layouts — rustfmt wraps long registrations so the tool name sits on its own line (observed 2026-10-02: 4 of 32 prediction-markets registrations are multi-line; a single-line pattern undercounts and produced the skeleton's stale 28). A saved inventory artifact is re-verified against the current tree and live surface, never rebuilt — drift is a finding.
+4. Resolve the server through the canonical build list and runtime registry, then derive membership from `#[tool]` declarations (including wire-name overrides), generated router groups and the selected `ServerHandler`/`tool_handler` router. Trace conditional composition and record the build/configuration used, file:line and source hashes. `execute_tool` wraps execution/response behavior; neither its string arguments nor a bare declaration establish registration. Before trusting an extractor, exercise routed direct/wrapped/aliased/conditional controls and unrouted/comment/string/wrapper-only decoys; `bash kask/scripts/cargo-test-nonzero.sh -p hkask-mcp-server --test tool_discovery` is the compiled rmcp metadata control, not a stdio/runtime proof. Run each server's existing `tool_names_match_live_router` test through the same nonzero wrapper. Generated names and lexical scans remain candidates until reconciled to the selected router; compile-only conditional coverage is limited to the tested build/configuration. Re-verify saved inventories, retain their history and report drift rather than overwriting it.
 5. Cross-check the live surface (`list_mcp_tools`, grouped by server id). Record ACTUAL server membership — tool names do not respect server boundaries.
-6. Reconcile in `lisp_eval` (`MTR-1`: `(and (> source_count 0) (= source_count live_count) (= live_count reviewed_count) (= missing_in_source 0))`): source count == live count == reviewed count AND every live-registered name present in the source list. A server that fails enumeration is a finding, not a gap.
+6. Reconcile raw `source_names`, `live_names` and `reviewed_names` with **MTR-1** below; never supply model-counted cardinalities or a claimed missing-name count. Extract names deterministically from the source/live inventories and the exact artifact tool rows (for JSON, `jq -c '[.tools[].name]'`), not by retyping a projection. Preserve server membership; use consistently server-qualified identities for a multi-server run. A same-count rename or duplicate cannot pass. `source_live_match` establishes only inventory agreement; `review_complete` additionally requires exact review-name coverage. A bounded family may have matching inventories yet `review_incomplete`; that is unfinished server coverage, not a tool defect. Source/deployed drift is reported with both identities/builds, not silently fixed by treating a compiled router as the running server.
+
+MTR-1 env (JSON-encode this object for `lisp_eval.env`; substitute actual name arrays):
+```json
+{"source_names":["server/tool_a"],"live_names":["server/tool_a"],"reviewed_names":["server/tool_a"]}
+```
+```lisp
+(begin
+  (define names-ok (lambda (xs seen)
+    (if (is_null xs) true
+      (and (stringp (car xs)) (> (length (car xs)) 0) (not (member (car xs) seen))
+        (names-ok (cdr xs) (cons (car xs) seen))))))
+  (define difference (lambda (xs ys)
+    (if (is_null xs) (list)
+      (if (member (car xs) ys) (difference (cdr xs) ys)
+        (cons (car xs) (difference (cdr xs) ys))))))
+  (define mtr-reconcile (lambda ()
+    (if (not (and (listp source_names) (listp live_names) (listp reviewed_names)
+      (> (length source_names) 0) (names-ok source_names (list))
+      (names-ok live_names (list)) (names-ok reviewed_names (list))))
+      (list (list "input_valid" false) (list "source_live_match" false)
+        (list "review_complete" false) (list "result" "invalid_names"))
+      (let ((source_only (difference source_names live_names))
+            (live_only (difference live_names source_names))
+            (unreviewed (difference source_names reviewed_names))
+            (unknown (difference reviewed_names source_names)))
+        (let ((inventory_ok (and (is_null source_only) (is_null live_only))))
+          (let ((complete (and inventory_ok (is_null unreviewed) (is_null unknown))))
+            (list (list "input_valid" true) (list "source_count" (length source_names))
+              (list "live_count" (length live_names)) (list "reviewed_count" (length reviewed_names))
+              (list "source_live_match" inventory_ok) (list "review_complete" complete)
+              (list "source_only_names" source_only) (list "live_only_names" live_only)
+              (list "not_reviewed_names" unreviewed) (list "unknown_reviewed_names" unknown)
+              (list "result" (cond ((not inventory_ok) "source_live_drift")
+                (complete "pass") (true "review_incomplete"))))))))))
+  (mtr-reconcile))
+```
+An invalid result or a missing-binding/type/budget error blocks a pass. Name-set agreement does not prove semantic/reference review occurred. Append instrument/build provenance without changing the computed object; the findings template serializes it directly.
 
 ### Phase C — Metric space [D; oracle: declared before measuring]
 
@@ -80,7 +117,7 @@ One pass per tool per cycle. For each tool:
 10. **Cybernetics**: every finding routes to an actuator (`curator_directive` `evolve_mcp_tool_schema` for input-schema evolution; kanban / algedonic review for code changes; `skill-maintenance` for process). Ashby check: the review's variety must cover the failure modes that matter — the `.rules` traps are the prior distribution. Sense inputs never `unwrap_or(0)` — a broken sense is a finding.
 11. **Loops**: one pass per tool per cycle; cycle budget declared before the run; progress signal emitted per server.
 12. **Use patterns** [D]: dead-surface walk — fixed-string grep over `rs`/`md`/`j2`/`yml`, excluding the server crate; STATE THE SCOPE; distinguish "no callers found" (a scope-limited search result) from "no callers" (a claim). Corroborate with curator skill-use records, research-run ledgers, kanban histories.
-13. **Observability**: per-tool findings with severity; per-server summary; total-surface manifest; artifacts durable (kanban, research-run ledger, or direct write to the companies-mcp reports directory for live probes).
+13. **Observability**: per-tool findings with severity; per-server summary; total-surface manifest; artifacts durable (kanban, research-run ledger, or `~/Documents/zk-data/skills/mcp-tool-review/{YYYY-MM-DD}-{server}/` via terminal). Retain historical report paths as provenance, not as the destination for new runs.
 14. **Traceability**: every finding cites tool + file:line + verbatim excerpt; count reconciliation at every seam (verify stage N's output shape is what stage N+1 consumes before running the chain).
 15. **Integration** [D]: credential resolution (`resolve_db_passphrase`, env injection, `nudge_mcp_servers`), response envelopes (`unwrap_tool_envelope`), settings defaults location, model-name constants. Integration defects are findings.
 16. **Divergence** [D]: name every DIVERGENCE.md seam the review touches; propose removal or minimization where the user-visible purpose no longer needs divergence; prefer `kask/`-side fixes; any unavoidable zed-side edit carries its D-seam entry + test in the same change. The review's own proposals create NO new divergences — a proposal requiring a zed-side edit without a seam entry + test is a defect in the proposal.
@@ -91,7 +128,7 @@ One pass per tool per cycle. For each tool:
 
 ### Phase F — Findings assembly and verification [P + D gates]
 
-18. Assemble the artifact per the contract — render `mcp-tool-review/findings-artifact` (or read `kask/registry/templates/mcp-tool-review/findings-artifact.j2`). Gated checks appear as `pending-rulings` entries.
+18. Assemble the completed semantic records, then render `mcp-tool-review/findings-artifact` with the full context below. The template is a deterministic JSON formatter: save/parse its exact output, never send it through a model to reconstruct counts, lists or a wrapper object. Pass MTR-1's computed reconciliation unchanged. Gated checks remain `pending-rulings`; use explicit not-run/blocked evidence metadata where checks have not run, not fabricated success. After the citation check, re-render with its actual receipt and retain the prior artifact as history.
 19. Run `bash kask/scripts/check-mcp-review-citations.sh <artifact.json>` — every citation must exist (file present, line in range, excerpt within ±3 lines). Fix and re-run at most twice; a third failure stops the run with the failures listed.
 20. Run the routing invariant in `lisp_eval`: `(and (= unclassified 0) (= ungated 0) (= bad_region 0) (>= operator_roles 1) (>= other_roles 1))` over the run's step classification, and verify citation-check exit and actuator-routing completeness via `MTR-2`: `(and (= citation_script_exit 0) (= unrouted_findings 0) (= unanchored_tools 0))`.
 21. Critic pass [P; decoupled by rubric]: re-read each finding against its citation — would a reviewer checking the cited line see the claimed behavior? Drop or amend what fails; record the pass in the artifact.
@@ -120,7 +157,7 @@ One pass per tool per cycle. For each tool:
 | D15 Integration | D | source read (passphrase helper, envelope, settings defaults, model constants) |
 | D16 Divergence | D | DIVERGENCE.md seam entries |
 | E17 Probes | D calls + P classification | static/live reconciliation (second channel); `curator_report_skill_use_issue` on tool defects |
-| F18 Artifact assembly | P (the render itself is D) | the `findings-artifact` contract render |
+| F18 Artifact assembly | D | direct JSON serialization of supplied records and MTR-1 output; semantic records were judged in D9/F21 |
 | F19 Citation check | D | `check-mcp-review-citations.sh` exit code |
 | F20 Routing invariant | D | `lisp_eval` over the step classification |
 | F21 Critic pass | P | decoupled-by-rubric re-read of each finding against its citation |
@@ -139,11 +176,11 @@ One pass per tool per cycle. For each tool:
 
 ## Findings artifact contract
 
-Render `mcp-tool-review/findings-artifact` for the JSON shape. Load-bearing fields: `reconciliation` (counts + instrument + result), `tools[]` (name, file, line, anchor, fidelity_label, dp_character, axes, probe, status), `findings[]` (id, tool, axis, severity, claim, citations[{file, line, excerpt}], evidence, proposal, actuator, status), `gated_pending_rulings[]`, `citation_check`, `ask_first`. Save durably by direct write to the companies-mcp reports directory (`~/Documents/zk-data/companies-mcp/reports/`) — for payloads exceeding comfortable single-call size (large slices, 60+ tools), write in chunks (each chunk independently valid JSON, merged with jq, validated, then the citation script run): same artifact, same checks, no truncation risk.
+Render `mcp-tool-review/findings-artifact` for the JSON shape. Load-bearing fields: `reconciliation` (counts + instrument + result), `tools[]` (name, file, line, anchor, fidelity_label, dp_character, axes, probe, status), `findings[]` (id, tool, axis, severity, claim, citations[{file, line, excerpt}], evidence, proposal, actuator, status), `gated_pending_rulings[]`, `citation_check`, `ask_first`. Save new runs under `~/Documents/zk-data/skills/mcp-tool-review/{YYYY-MM-DD}-{server}/` via terminal — for payloads exceeding comfortable single-call size (large slices, 60+ tools), write in chunks (each chunk independently valid JSON, merged with jq, validated, then the citation script run): same artifact, same checks, no truncation risk.
 
 ## Acceptance checks (executed, not proposed)
 
-1. Enumerated tool count == reviewed count, per server and total — `lisp_eval` reconciliation executed and shown.
+1. MTR-1 returns `review_complete: true` on raw exact-name sets, per server and total — executed and shown. Partial cohorts retain the full parent denominator and an explicit incomplete state, not a full-server pass.
 2. Every finding cites tool + file:line; `kask/scripts/check-mcp-review-citations.sh` verifies each citation exists — executed.
 3. Efficiency numbers come from measured invocations with the harness named — blocked axes recorded as harness-gap findings, never asserted numbers.
 4. Every reference model carries a functional/technical/both fidelity label with its consequence; unclear labels were asked (batched) or proceeded with the flagged default.
@@ -175,12 +212,24 @@ Render `mcp-tool-review/findings-artifact` for the JSON shape. Load-bearing fiel
 |---|---|
 | `findings-artifact.j2` | The findings artifact contract: renders the JSON skeleton (reconciliation, per-tool records, findings with citations, gated-pending list, citation-check receipt, ask-first record) that the review fills and the citation script verifies. |
 
-Template context variables (from the template's `[inference]` contract): `server`, `run_date`, `tools`, `findings`, `reconciliation`, `gated_pending`, `notes`.
+Copyable `mcp-tool-review/findings-artifact` context (JSON-encode as the outer context string; replace these initial/not-run values with actual records and receipts):
+```json
+{
+  "server":"<server id>", "run_date":"<YYYY-MM-DD>",
+  "tools":[], "findings":[], "reconciliation":{}, "gated_pending":[], "notes":[],
+  "efficiency_metric_space":{"harness":"<named instrument>","axes":[]},
+  "anchor_registry":{"ruled":[],"pending":[]},
+  "citation_check":{"script":"kask/scripts/check-mcp-review-citations.sh","result":"not_run","checked":null},
+  "ask_first":{"batched_ask_presented":false,"defaults_applied":[]}
+}
+```
+The generator does not decide fidelity labels, fabricate receipts or grade missing records. Empty arrays/objects above are intake shapes, not passing evidence. A final artifact needs actual tool dispositions and the executed MTR-1 result.
 
 ## Regression case
 
-- Reconciliation form over `{src: 19, live: 19, reviewed: 19}` with matching name lists → `true`; a drifted count (`live: 18`) → `false`.
+- Run `bash kask/scripts/cargo-test-nonzero.sh -p hkask-lisp --bin check-skill-lisp-forms mcp_inventory_reconciliation_uses_exact_raw_names`: the authored MTR-1 must pass reordered equal sets, reject same-count renames/duplicates/invalid names, and distinguish partial review from source/live drift. Supplied scalar counts cannot override its raw-list result.
+- Run the compiled `tool_discovery` fixture from Phase B and each real server's name pin. Actual registry rendering must preserve the exact supplied reconciliation/tool/finding objects, including incomplete/blocked metadata; these are structural/finite checks, not semantic-effectiveness evidence.
 - `check-mcp-review-citations.sh` over an artifact with one good citation and one citing a nonexistent file → exit 1 naming the bad citation.
 - Routing invariant over `{unclassified: 0, ungated: 0, bad_region: 0, operator_roles: 2, other_roles: 3}` → `true`; `ungated: 1` → `false`.
 
-All receipts executed live through `lisp_eval` / the script at pilot time.
+Historical citation/routing pilot receipts remain historical. Current discovery/raw-name/formatter regressions are the mandatory checks above; passing them does not establish the semantic quality of every tool review.

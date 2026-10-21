@@ -40,6 +40,7 @@ fn closure(goal: &Goal) -> NativeGoalClosure {
         choice: HumanClosureChoice::StopUnknown,
         evidence_manifest: vec![],
         artifact_access: None,
+        machine_artifact_access: None,
     }
 }
 #[test]
@@ -81,73 +82,6 @@ fn stop_unknown_survives_reopen_and_delivery_never_deletes_the_goal() -> anyhow:
     Ok(())
 }
 
-#[test]
-fn unresolved_forecasts_remain_pending_after_assessment_and_delivery() -> anyhow::Result<()> {
-    let dir = tempfile::tempdir()?;
-    let service = open(&dir.path().join("goals.sqlite"))?;
-    let owner = WebID::new();
-    let mut declaration = declaration();
-    declaration.forecast = Some(GoalForecast {
-        proposition: "Declared machine condition at horizon".into(),
-        probability: 0.8,
-        horizon: Utc::now() + chrono::Duration::hours(1),
-        resolution_deadline: Utc::now() + chrono::Duration::hours(2),
-        execution_policy: "fixed procedure".into(),
-        resources: "declared budget".into(),
-        resolver: GoalForecastResolver::MachineEvidence {
-            source: "machine".into(),
-            oracle: "check".into(),
-        },
-        baseline_probability: 0.5,
-        cohort: "same-policy".into(),
-        update_policy: ForecastUpdatePolicy::FixedAtDeclaration,
-    });
-    let goal = service.goal_create(declaration, owner)?;
-    service.goal_close_native(goal.id, owner, closure(&goal))?;
-    service.goal_claim_assessment(
-        goal.id,
-        owner,
-        lease("attempt-1"),
-        snapshots(&service, goal.id, owner),
-    )?;
-    let goal = service.goal_get(goal.id, owner)?.expect("goal");
-    let attempt = goal.assessments.last().expect("attempt");
-    let goal = service.goal_complete_assessment(
-        goal.id,
-        owner,
-        AssessmentCompletion {
-            attempt_id: "attempt-1".into(),
-            input_digest: attempt.input_digest.clone(),
-            findings: vec![CriterionFinding {
-                criterion_id: "criterion-1".into(),
-                status: CriterionEvidenceStatus::Unknown,
-                evidence_ids: vec![],
-                note: "no evidence yet".into(),
-            }],
-            limitations: vec!["no observation".into()],
-        },
-    )?;
-    for projection in goal.projections {
-        service.goal_mark_projection_delivered(
-            goal.id,
-            owner,
-            GoalProjectionReceipt {
-                event_id: projection.event_id,
-                revision: projection.revision,
-                payload_digest: projection.payload_digest,
-                receipt_id: "receipt".into(),
-            },
-        )?;
-    }
-    assert!(
-        service
-            .goal_pending_work(&owner)?
-            .iter()
-            .any(|g| g.id == goal.id),
-        "unresolved forecast must remain discoverable by the restart drainer"
-    );
-    Ok(())
-}
 fn lease(id: &str) -> AssessmentLeaseRequest {
     AssessmentLeaseRequest {
         attempt_id: id.into(),
@@ -735,134 +669,7 @@ fn human_forecast_scores_only_after_assessor_attempt_and_keeps_contradiction() -
     );
     Ok(())
 }
-fn observation(
-    id: &str,
-    outcome: Option<bool>,
-    correction_of: Option<&str>,
-) -> ForecastObservation {
-    ForecastObservation {
-        event_id: id.into(),
-        source: "machine".into(),
-        oracle: "check".into(),
-        occurred_at: Utc::now(),
-        outcome,
-        evidence_ids: vec!["evidence-1".into()],
-        correction_of: correction_of.map(str::to_string),
-        reason: "Actual source observation retained by host".into(),
-    }
-}
-#[test]
-fn machine_resolver_rejects_source_substitution_and_retains_unknown_disputed_corrections()
--> anyhow::Result<()> {
-    let dir = tempfile::tempdir()?;
-    let path = dir.path().join("goals.sqlite");
-    let service = open(&path)?;
-    let owner = WebID::new();
-    let mut declared = declaration();
-    declared.forecast = Some(forecast(GoalForecastResolver::MachineEvidence {
-        source: "machine".into(),
-        oracle: "check".into(),
-    }));
-    let goal = service.goal_create(declared, owner)?;
-    wait_until(goal.forecast.as_ref().expect("forecast").horizon);
-    close_with_evidence(&service, &goal, owner, HumanClosureChoice::StopNotAchieved)?;
-    let first = observation("actual-1", Some(true), None);
-    let mut wrong = first.clone();
-    wrong.source = "assessor-opinion".into();
-    assert!(
-        service
-            .goal_record_forecast_observation(goal.id, owner, wrong)
-            .is_err()
-    );
-    let mut wrong = first.clone();
-    wrong.evidence_ids = vec!["not-retained".into()];
-    assert!(
-        service
-            .goal_record_forecast_observation(goal.id, owner, wrong)
-            .is_err()
-    );
-    let mut wrong = first.clone();
-    wrong.occurred_at = goal.created_at;
-    assert!(
-        service
-            .goal_record_forecast_observation(goal.id, owner, wrong)
-            .is_err()
-    );
-    assert!(
-        service
-            .goal_record_forecast_observation(goal.id, owner, first.clone())?
-            .scores
-            .is_empty(),
-        "source outcome alone does not bypass assessment attempt"
-    );
-    service.goal_claim_assessment(
-        goal.id,
-        owner,
-        lease("attempt-1"),
-        snapshots(&service, goal.id, owner),
-    )?;
-    let retained = service.goal_get(goal.id, owner)?.expect("goal");
-    let failed = service.goal_fail_assessment(
-        goal.id,
-        owner,
-        AssessmentFailure {
-            attempt_id: "attempt-1".into(),
-            input_digest: retained.assessments[0].input_digest.clone(),
-            reason: "provider failed; not a pass".into(),
-        },
-    )?;
-    assert!((failed.scores[0].brier - 0.04).abs() < 1e-12);
-    assert!(failed.assessment_pending);
-    assert_eq!(
-        service
-            .goal_record_forecast_observation(goal.id, owner, first.clone())?
-            .scores
-            .len(),
-        1
-    );
-    let mut conflict = first;
-    conflict.outcome = Some(false);
-    assert!(
-        service
-            .goal_record_forecast_observation(goal.id, owner, conflict)
-            .is_err()
-    );
-    let disputed = service.goal_record_forecast_observation(
-        goal.id,
-        owner,
-        observation("contradictory-source", Some(false), None),
-    )?;
-    assert_eq!(disputed.forecast_status, ForecastStatus::Disputed);
-    assert_eq!(
-        disputed.scores.len(),
-        1,
-        "disagreement does not invent a new score"
-    );
-    let corrected = service.goal_record_forecast_observation(
-        goal.id,
-        owner,
-        observation("corrected-1", Some(false), Some("actual-1")),
-    )?;
-    assert_eq!(corrected.forecast_status, ForecastStatus::Resolved);
-    assert!((corrected.scores.last().expect("score correction").brier - 0.64).abs() < 1e-12);
-    let unknown = service.goal_record_forecast_observation(
-        goal.id,
-        owner,
-        observation("unknown", None, Some("corrected-1")),
-    )?;
-    assert_eq!(unknown.forecast_status, ForecastStatus::Unknown);
-    drop(service);
-    let retained = open(&path)?
-        .goal_get(goal.id, owner)?
-        .expect("full history survives");
-    assert_eq!(retained.observations.len(), 4);
-    assert_eq!(retained.forecast_status, ForecastStatus::Unknown);
-    assert_eq!(
-        retained.closure.expect("human preserved").input.choice,
-        HumanClosureChoice::StopNotAchieved
-    );
-    Ok(())
-}
+
 #[test]
 fn forecast_admission_rejects_late_nonfinite_and_incomplete_declarations() -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
@@ -1084,10 +891,7 @@ fn forecast_deadline_refresh_records_expiry_without_fabricating_failure() -> any
     let service = open(&dir.path().join("goals.sqlite"))?;
     let owner = WebID::new();
     let mut declared = declaration();
-    let mut forecast = forecast(GoalForecastResolver::MachineEvidence {
-        source: "machine".into(),
-        oracle: "check".into(),
-    });
+    let mut forecast = forecast(GoalForecastResolver::HumanAcceptance);
     forecast.resolution_deadline = forecast.horizon;
     let deadline = forecast.resolution_deadline;
     declared.forecast = Some(forecast);
@@ -1258,6 +1062,149 @@ fn host_observation_requires_native_read_consent_and_exact_byte_digest() -> anyh
         service.goal_claim_assessment(goal.id, owner, original_lease, observed)?,
         input,
         "replaying an older claim returns that exact input, not the latest attempt"
+    );
+    Ok(())
+}
+
+#[test]
+fn machine_forecast_declaration_requires_a_real_supported_source_capability() -> anyhow::Result<()>
+{
+    let dir = tempfile::tempdir()?;
+    let service = open(&dir.path().join("goals.sqlite"))?;
+    let owner = WebID::new();
+    for (source, oracle) in [
+        ("machine", "check"),
+        (
+            "file:///absolute/report.txt",
+            "sha256:4c34bb5402a70378b57765e0226203d3879a1caf74675e74634f11172ea6ca98",
+        ),
+    ] {
+        let mut declared = declaration();
+        declared.forecast = Some(forecast(GoalForecastResolver::MachineEvidence {
+            source: source.into(),
+            oracle: oracle.into(),
+        }));
+        let error = service
+            .goal_create(declared, owner)
+            .expect_err("no production machine adapter exists");
+        assert!(
+            error
+                .to_string()
+                .contains("no production machine observation adapter"),
+            "admission must explain the missing capability: {error}"
+        );
+    }
+    assert!(
+        service.goal_list(&owner)?.is_empty(),
+        "rejected declarations create no phantom forecast records"
+    );
+    let mut declared = declaration();
+    declared.forecast = Some(forecast(GoalForecastResolver::HumanAcceptance));
+    assert!(
+        service.goal_create(declared, owner)?.forecast.is_some(),
+        "supported human forecasts remain admitted"
+    );
+    Ok(())
+}
+
+#[test]
+fn startup_reconciles_historical_machine_records_without_a_pretend_producer() -> anyhow::Result<()>
+{
+    let dir = tempfile::tempdir()?;
+    let pool = SqliteDriver::file_pool_with_schema(
+        dir.path().join("goals.sqlite").to_str().expect("path"),
+    )?;
+    let store = HMemStore::from_driver(Arc::new(SqliteDriver::new(pool)))?;
+    let service = KanbanService::new(store.clone());
+    let owner = WebID::new();
+    let mut declared = declaration();
+    declared.forecast = Some(forecast(GoalForecastResolver::HumanAcceptance));
+    let goal = service.goal_create(declared, owner)?;
+    // Historical fixture only: preserve a record produced by the removed
+    // protocol, not an assertion that a current machine adapter exists.
+    let mut historical = serde_json::to_value(&goal)?;
+    historical["forecast"]["resolver"] =
+        serde_json::json!({"kind":"machine_evidence","source":"old-machine","oracle":"old-oracle"});
+    historical["forecast_status"] = serde_json::json!("resolved");
+    historical["observations"] = serde_json::json!([{"event_id":"historical-event","source":"old-machine","oracle":"old-oracle","occurred_at":Utc::now(),"outcome":true,"evidence_ids":["old-evidence"],"correction_of":null,"reason":"historical claim, not current supported capability"}]);
+    historical["scores"] = serde_json::json!([{"version":1,"outcome_event_id":"historical-event","outcome":true,"brier":0.04,"baseline_brier":0.25,"skill":0.84,"supersedes_version":null,"recorded_at":Utc::now()}]);
+    let observations = historical["observations"].clone();
+    let scores = historical["scores"].clone();
+    store
+        .update_value_atomic("kanban:goal", &goal.id.to_string(), |_| {
+            Ok::<_, hkask_storage::HMemError>((Some(historical), ()))
+        })?
+        .expect("fixture row");
+    assert_eq!(service.goal_archive_legacy(owner)?, 1);
+    let reconciled = service.goal_get(goal.id, owner)?.expect("retained history");
+    assert_eq!(
+        reconciled.forecast_status,
+        ForecastStatus::UnsupportedResolver
+    );
+    assert_eq!(
+        serde_json::to_value(&reconciled.observations)?,
+        observations
+    );
+    assert_eq!(serde_json::to_value(&reconciled.scores)?, scores);
+    let refreshed = service.goal_refresh_forecast(goal.id, owner)?;
+    assert_eq!(
+        refreshed.forecast_status,
+        ForecastStatus::UnsupportedResolver
+    );
+    assert_eq!(
+        refreshed.scores.len(),
+        1,
+        "no new score from historical observation data"
+    );
+    assert_eq!(service.goal_archive_legacy(owner)?, 0);
+    Ok(())
+}
+
+#[test]
+fn typed_machine_artifact_digest_is_prospective_and_not_a_generic_oracle() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let service = open(&dir.path().join("goals.sqlite"))?;
+    let owner = WebID::new();
+    let resolver:GoalForecastResolver=serde_json::from_value(serde_json::json!({"kind":"machine_artifact_digest","locator":"file:///absolute/declared-artifact.txt","expected_sha256":"4c34bb5402a70378b57765e0226203d3879a1caf74675e74634f11172ea6ca98"})).expect("the one supported typed machine source must decode");
+    let mut declared = declaration();
+    declared.forecast = Some(forecast(resolver));
+    assert!(
+        service
+            .goal_create(declared.clone(), owner)?
+            .forecast
+            .is_some()
+    );
+    for (locator, hash) in [
+        (
+            "https://example.invalid/artifact",
+            "4c34bb5402a70378b57765e0226203d3879a1caf74675e74634f11172ea6ca98",
+        ),
+        (
+            "relative/artifact",
+            "4c34bb5402a70378b57765e0226203d3879a1caf74675e74634f11172ea6ca98",
+        ),
+        (
+            "file://remote-host/artifact",
+            "4c34bb5402a70378b57765e0226203d3879a1caf74675e74634f11172ea6ca98",
+        ),
+        ("file:///absolute/artifact", "not-a-sha256"),
+    ] {
+        let mut unsupported = declared.clone();
+        unsupported.forecast.as_mut().expect("forecast").resolver =
+            GoalForecastResolver::MachineArtifactDigest {
+                locator: locator.into(),
+                expected_sha256: hash.into(),
+            };
+        assert!(
+            service.goal_create(unsupported, owner).is_err(),
+            "source admission is the concrete local digest capability, not arbitrary labels"
+        );
+    }
+    declared.forecast.as_mut().expect("forecast").horizon =
+        Utc::now() - chrono::Duration::seconds(1);
+    assert!(
+        service.goal_create(declared, owner).is_err(),
+        "no late probability or horizon rewrite"
     );
     Ok(())
 }

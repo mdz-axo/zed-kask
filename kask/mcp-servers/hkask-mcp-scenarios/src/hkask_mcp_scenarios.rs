@@ -26,7 +26,7 @@
 //! - `scenario_synthesize` — Dragonfly-eye multi-perspective aggregation
 //! - `scenario_declare` — Freeze prospective event/probability/horizon/resolver identity
 //! - `scenario_score` — Record outcomes against frozen declarations; legacy history stays unscored
-//! - `scenario_calibration` — Calibration curve + overconfidence detection
+//! - `scenario_calibration` — Frequencies and descriptive signed probability error
 //! - `scenario_cross_validate` — LLM vs computation cross-validation
 //! - `scenario_assess` — Chermack five-phase project evaluation, anchored on the project record
 //! - `scenario_from_markets_set` — Bridge from prediction-markets (multi-record EventTree)
@@ -261,8 +261,11 @@ impl ScenariosServer {
                 "resolved_forecasts": c.resolved_forecasts,
                 "unscored_resolved_forecasts": c.unscored_resolved_forecasts,
                 "overall_brier": c.overall_brier,
-                "overconfidence_score": c.overconfidence_score,
-                "evidence_status": if c.overconfidence_score.is_some() { "descriptive_only" } else { "insufficient" },
+                "signed_probability_error": c.signed_probability_error,
+                "signed_probability_error_sample_count": c.signed_probability_error_sample_count,
+                "signed_probability_error_qualifying_bins": c.signed_probability_error_qualifying_bins,
+                "signed_probability_error_bin_min_count": types::SIGNED_PROBABILITY_ERROR_MIN_BIN_COUNT,
+                "evidence_status": if c.signed_probability_error.is_some() { "descriptive_only" } else { "insufficient" },
                 "score_convention": "binary_mean_squared_error",
                 "baseline": null,
             }));
@@ -274,8 +277,8 @@ impl ScenariosServer {
                 "subject": r.subject,
                 "probability": r.probability,
                 "created_at": r.created_at.to_string(),
-                "scoring_eligible": r.declaration.is_some(),
-                "eligibility_note": if r.declaration.is_some() { "prospective declaration" } else { "legacy: no prospective declaration" },
+                "scoring_eligible": r.declaration.as_ref().is_some_and(|d| d.is_prospective()),
+                "eligibility_note": if r.declaration.as_ref().is_some_and(|d| d.is_prospective()) { "precise prospective declaration" } else { "legacy: no precise prospective declaration" },
                 "outcome": r.outcome,
             })).collect();
 
@@ -1108,7 +1111,7 @@ impl ScenariosServer {
 
     /// Freeze a prospective scenario forecast in the existing journal.
     #[tool(
-        description = "Declare a prospective scenario forecast before resolution. Freezes each full event, resolved tree marginal, deadline and named outcome-source rule. Scaffold probabilities with withheld market base rates are ineligible. New probabilities or propositions require a new forecast_id. The resolver is a declared caller-reported source, not authenticated evidence."
+        description = "Declare a prospective scenario forecast before resolution. Requires resolution_at mapping exactly every event ID to an RFC 3339 timestamp. Freezes each full event, marginal, precise cutoff and resolver. Admission is strictly before cutoff; the UTC cutoff date must match the descriptive deadline. Complete declarations journal atomically; identical retries preserve original timestamps and p, including after cutoff. Scaffold probabilities with withheld market base rates are ineligible. New probabilities or propositions require a new forecast_id. The resolver is a declared caller-reported source, not authenticated evidence."
     )]
     pub async fn scenario_declare(
         &self,
@@ -1119,26 +1122,55 @@ impl ScenariosServer {
                 return Err(McpToolError::invalid_argument("forecast_id and resolver must be nonempty"));
             }
             let tree = superforecast::build_event_tree(&req.events).map_err(map_scenario_error)?;
-            let today = chrono::Utc::now().date_naive();
+            let mut store = self.forecast_store.lock().unwrap_or_else(|e| e.into_inner());
+            let now = store.now();
+            let today = now.date_naive();
+            if req.resolution_at.len() != tree.nodes.len() || tree.nodes.iter().any(|n| !req.resolution_at.contains_key(&n.event.id)) {
+                return Err(McpToolError::invalid_argument("resolution_at must contain exactly the declared event IDs"));
+            }
+            let existing: Vec<_> = store.values().filter(|r| r.forecast_id == req.forecast_id).collect();
+            if !existing.is_empty() {
+                if existing.len() != tree.nodes.len() {
+                    return Err(McpToolError::invalid_argument("declaration replay conflicts with frozen membership"));
+                }
+                for node in &tree.nodes {
+                    let record = existing.iter().find(|r| r.event_id == node.event.id)
+                        .ok_or_else(|| McpToolError::invalid_argument("declaration replay conflicts with frozen event IDs"))?;
+                    let declaration = record.declaration.as_ref()
+                        .ok_or_else(|| McpToolError::invalid_argument("legacy identity cannot be redeclared as prospective"))?;
+                    if !declaration.is_prospective() || declaration.resolver != req.resolver
+                        || declaration.resolution_at != Some(req.resolution_at[&node.event.id])
+                        || record.probability != node.marginal_probability
+                        || serde_json::to_value(&declaration.event).map_err(|e| McpToolError::internal(e.to_string()))?
+                            != serde_json::to_value(&node.event).map_err(|e| McpToolError::internal(e.to_string()))?
+                    {
+                        return Err(McpToolError::invalid_argument("declaration replay conflicts with frozen proposition, probability, cutoff or resolver"));
+                    }
+                }
+                // The original admission remains authoritative even after cutoff.
+                // A previous compaction failure may need publication, not a new intake.
+                store.persist().map_err(|e| McpToolError::internal(format!("declaration snapshot retry failed; complete journal remains recoverable: {e}")))?;
+                return Ok(serde_json::json!({"forecast_id": req.forecast_id, "status": "declared", "replayed": true, "event_count": tree.nodes.len(), "resolver": req.resolver, "resolution_at": req.resolution_at, "score_convention": "binary_mean_squared_error"}));
+            }
             for node in &tree.nodes {
                 let event = &node.event;
-                if event.id.trim().is_empty() || event.question.trim().is_empty() || event.deadline < today || event.brier_score.is_some()
+                let cutoff = req.resolution_at[&event.id];
+                if now >= cutoff || event.deadline != cutoff.date_naive() {
+                    return Err(McpToolError::invalid_argument("declaration must precede its exact resolution_at cutoff, whose UTC date must match deadline"));
+                }
+                if event.id.trim().is_empty() || event.question.trim().is_empty() || event.brier_score.is_some()
                     || (event.basis.as_deref().is_some_and(|b| b.starts_with("prediction_market:")) && event.base_rate.is_none())
                 {
-                    return Err(McpToolError::invalid_argument("declaration requires an unresolved prospective proposition, deadline and declared probability; withheld market scaffolds are ineligible"));
+                    return Err(McpToolError::invalid_argument("declaration requires an unresolved prospective proposition and declared probability; withheld market scaffolds are ineligible"));
+                }
+                if store.get(&format!("{}:{}", req.forecast_id, event.id)).is_some() {
+                    return Err(McpToolError::invalid_argument("composite forecast identity conflicts with existing history"));
                 }
             }
-            let mut store = self.forecast_store.lock().unwrap_or_else(|e| e.into_inner());
-            if store.values().any(|r| r.forecast_id == req.forecast_id) {
-                return Err(McpToolError::invalid_argument("forecast_id already exists; declare a new version"));
-            }
-            if tree.nodes.iter().any(|n| store.get(&format!("{}:{}", req.forecast_id, n.event.id)).is_some()) {
-                return Err(McpToolError::invalid_argument("composite forecast identity conflicts with existing history"));
-            }
-            for node in &tree.nodes {
+            let records = tree.nodes.iter().map(|node| {
                 let event = &node.event;
-                store.insert(format!("{}:{}", req.forecast_id, event.id), types::StoredForecastRecord {
-                    schema_version: 4,
+                (format!("{}:{}", req.forecast_id, event.id), types::StoredForecastRecord {
+                    schema_version: 5,
                     forecast_id: req.forecast_id.clone(),
                     event_id: event.id.clone(),
                     event_name: event.name.clone(),
@@ -1152,11 +1184,13 @@ impl ScenariosServer {
                     declaration: Some(types::ScenarioDeclaration {
                         event: event.clone(),
                         resolver: req.resolver.clone(),
-                        declared_at: hkask_types::time::now_rfc3339(),
+                        declared_at: now.to_rfc3339(),
+                        resolution_at: Some(req.resolution_at[&event.id]),
                     }),
-                }).map_err(|e| McpToolError::internal(format!("declaration journal failed; earlier records may be durable: {e}")))?;
-            }
-            Ok(serde_json::json!({"forecast_id": req.forecast_id, "status": "declared", "event_count": tree.nodes.len(), "resolver": req.resolver, "score_convention": "binary_mean_squared_error"}))
+                })
+            }).collect();
+            store.insert_batch(records).map_err(|e| McpToolError::internal(format!("declaration persistence failed; if the journal synced, the complete declaration is recoverable by identical retry: {e}")))?;
+            Ok(serde_json::json!({"forecast_id": req.forecast_id, "status": "declared", "replayed": false, "event_count": tree.nodes.len(), "resolver": req.resolver, "resolution_at": req.resolution_at, "score_convention": "binary_mean_squared_error"}))
         }).await
     }
 
@@ -1184,7 +1218,8 @@ impl ScenariosServer {
             if records.len() != req.events.len() {
                 return Err(McpToolError::invalid_argument("events must exactly match the frozen declaration"));
             }
-            let today = chrono::Utc::now().date_naive();
+            let now = store.now();
+            let today = now.date_naive();
             // Validate the complete request before any mutation, including replay conflicts.
             for record in &records {
                 let event = req.events.iter().find(|e| e.id == record.event_id)
@@ -1196,8 +1231,13 @@ impl ScenariosServer {
                     {
                         return Err(McpToolError::invalid_argument("proposition, horizon, probability or resolver differs from declaration"));
                     }
-                    if req.outcomes.iter().any(|o| o.event_id == record.event_id) && today < declaration.event.deadline {
-                        return Err(McpToolError::invalid_argument("outcome cannot resolve before the declared deadline"));
+                    if declaration.resolution_at.is_some() && !declaration.is_prospective() {
+                        return Err(McpToolError::invalid_argument("stored declared_at must precede resolution_at; hindsight declarations cannot be scored"));
+                    }
+                    if req.outcomes.iter().any(|o| o.event_id == record.event_id)
+                        && declaration.resolution_at.is_some_and(|cutoff| now < cutoff)
+                    {
+                        return Err(McpToolError::invalid_argument("outcome cannot resolve before the declared resolution_at deadline"));
                     }
                 }
                 if let Some(outcome) = req.outcomes.iter().find(|o| o.event_id == record.event_id)
@@ -1211,9 +1251,9 @@ impl ScenariosServer {
             let mut scores = Vec::new();
             for mut record in records {
                 if let Some(outcome) = req.outcomes.iter().find(|o| o.event_id == record.event_id) {
-                    let score = record.declaration.as_ref().map(|_| superforecast::brier_score(record.probability, outcome.occurred));
+                    let score = record.declaration.as_ref().filter(|d| d.is_prospective()).map(|_| superforecast::brier_score(record.probability, outcome.occurred));
                     if let Some(score) = score { scores.push(score); }
-                    per_event.push(serde_json::json!({"event_id": record.event_id, "forecast_probability": record.probability, "outcome": outcome.occurred, "brier_score": score, "scoring_status": if score.is_some() { "scored" } else { "unscored" }, "unscored_reason": if score.is_none() { Some("legacy record lacks prospective declaration") } else { None }}));
+                    per_event.push(serde_json::json!({"event_id": record.event_id, "forecast_probability": record.probability, "outcome": outcome.occurred, "brier_score": score, "scoring_status": if score.is_some() { "scored" } else { "unscored" }, "unscored_reason": if score.is_none() { Some("legacy record lacks a precise prospective declaration") } else { None }}));
                     if record.outcome.is_none() {
                         record.outcome = Some(outcome.occurred);
                         record.resolved_at = Some(today);
@@ -1347,7 +1387,7 @@ impl ScenariosServer {
 
     /// Compute a calibration curve from stored forecasts.
     #[tool(
-        description = "Compute a calibration curve from stored forecasts, optionally filtered by subject. It groups resolved forecasts into 10 probability bins and compares each bin's actual hit rate with its mean forecast probability. Positive bias means forecasts were too high; negative means too low. Use after scenario_score to build calibration history."
+        description = "Compute a calibration curve from stored forecasts, optionally filtered by subject. It groups resolved forecasts into 10 probability bins and compares each bin's actual hit rate with its mean forecast probability. signed_probability_error is mean declared p minus observed frequency, not overconfidence; its sign flips under event complementation. Qualifying bins and their sample count are reported. Use after scenario_score to build calibration history."
     )]
     pub async fn scenario_calibration(
         &self,
@@ -1372,8 +1412,10 @@ impl ScenariosServer {
                 "pending_forecasts": curve.total_forecasts - curve.resolved_forecasts - curve.unscored_resolved_forecasts,
                 "unscored_resolved_forecasts": curve.unscored_resolved_forecasts,
                 "overall_brier": curve.overall_brier,
-                "overconfidence_score": curve.overconfidence_score,
-                "evidence_status": if curve.overconfidence_score.is_some() { "descriptive_only" } else { "insufficient" },
+                "signed_probability_error": curve.signed_probability_error,
+                "signed_probability_error_sample_count": curve.signed_probability_error_sample_count,
+                "signed_probability_error_qualifying_bins": curve.signed_probability_error_qualifying_bins,
+                "evidence_status": if curve.signed_probability_error.is_some() { "descriptive_only" } else { "insufficient" },
                 "score_convention": "binary_mean_squared_error",
                 "weighting": "one_per_declared_event_version",
                 "baseline": null,
@@ -1399,14 +1441,14 @@ impl ScenariosServer {
                         "hit_rate_pct": b.hit_rate.filter(|_| b.forecast_count >= hkask_forecast::MIN_N_FOR_HEADLINE as u64).map(|rate| format!("{:.0}%", rate * 100.0)),
                         "hit_rate_ci": hit_rate_ci,
                         "expected_rate": b.expected_rate,
-                        "bias": b.bias,
+                        "signed_probability_error": b.signed_probability_error,
                         "evidence_status": if b.forecast_count == 0 { "insufficient" } else { "descriptive_only" },
                     })
                 }).collect::<Vec<_>>(),
                 "guidance": "Descriptive frequencies and raw loss only. Signed errors can cancel; neither zero signed bias nor a sample-count threshold certifies calibration. Compare methods on matched events, lead times and weights against a declared reference. No automatic correction is applied.",
                 "sample_unit": "declared_event_version; independent outcome count is not established",
                 "binning": "ten equal-width probability bins; expected_rate is the observed mean declared p",
-                "signed_bias_min_bin_count": 5,
+                "signed_probability_error_bin_min_count": types::SIGNED_PROBABILITY_ERROR_MIN_BIN_COUNT,
                 "headline_min_bin_count": hkask_forecast::MIN_N_FOR_HEADLINE,
                 "interval_note": "Wilson binomial intervals assume independent trials; these intervals do not adjust for dependent events or repeated forecast versions.",
                 "reference": "Brier (1950); Murphy (1973) — decomposition of Brier score into reliability, resolution, and uncertainty components"

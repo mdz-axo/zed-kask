@@ -10,7 +10,7 @@ Superforecasting pipeline following Tetlock's Good Judgment Project methodology.
 
 ## Goal evidence, closure and optional forecasts
 
-Use `program-manager`'s goal contract and the [canonical pact](../../../kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md): create requires a real specification `source` and returns the full goal's `id`; ordinary goals omit `forecast`. Worker progress is not human closure. Native `kanban_goal_close` obtains human ActionChoice, never a model-supplied outcome; `kanban_goal_correct_outcome` is separate. Keep blinded assessment findings and human labels distinct, unknown visible, canonical history retained. The current assessor cannot fetch evidence and cannot certify unseen references. No automatic success closure or routine goal probability.
+Use `program-manager`'s goal contract and the [canonical pact](../../../kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md): create requires a real specification `source` and returns the full goal's `id`; ordinary goals omit `forecast`. Worker progress is not human closure. Native `kanban_goal_close` obtains human ActionChoice, never a model-supplied outcome; `kanban_goal_correct_outcome` is separate. Keep blinded assessment findings and human labels distinct, unknown visible, canonical history retained. The host freezes consented bounded local file snapshots before fresh assessment; missing contents stay unknown without inference, and fetched bytes do not authenticate claimed test execution. See the program-manager contract for read/sharing limits and the separately approved digest-only machine forecast. No automatic success closure or routine goal probability.
 
 ## Forecast interpretation and evidence limits
 
@@ -161,7 +161,13 @@ The former single inside-view step is split into three steps. Generation and cou
 4. Define what would count as resolution and what evidence will determine the outcome.
 5. Set an expiration date for when the forecast should be evaluated.
 
-> **Declare before resolution.** A template record is not durable admission. Call `scenario_declare` with a new `forecast_id`, complete `events` and named `resolver` before outcome visibility; it freezes tree marginals, propositions and deadlines. At resolution `scenario_score` requires the same ID, exact frozen events and resolver plus observed outcomes. A revised forecast needs a new identity. For equity questions, `forecast_persist` freezes the return-accuracy target; missing `forecast_probability` remains unscored, never a synthetic prior.
+> **Declare before resolution.** A template record is not durable admission. Call `scenario_declare` with a new `forecast_id`, complete `events`, exact event-ID → UTC timestamp `resolution_at` map and named `resolver` before outcome visibility; it freezes tree marginals, propositions and deadlines. At resolution `scenario_score` requires the same ID, exact frozen events and resolver plus observed outcomes. A revised forecast needs a new identity. For equity questions, `forecast_persist` freezes the return-accuracy target; missing `forecast_probability` remains unscored, never a synthetic prior.
+
+Scenario admission must precede each exact `resolution_at` cutoff; map keys must
+match event IDs exactly, and the UTC cutoff date must match descriptive deadline.
+Score only at/after cutoff. The whole manifest is one synced journal event;
+identical same-ID retries, including after cutoff, preserve original intake.
+Changed declarations conflict; old date-only records are unscored, not retrofitted.
 
 ### forecast-quality-gate (P — decoupled critic: a separate render that evaluates, never generates; pass rule D)
 

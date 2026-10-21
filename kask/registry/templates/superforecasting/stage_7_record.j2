@@ -54,9 +54,14 @@ Create a complete record including:
 ### Prospective admission (caller action, not template execution)
 
 Before outcome visibility, the caller must use `scenario_declare` with a new
-`forecast_id`, full `events` and named `resolver`. This freezes propositions,
-deadlines and tree marginals. At resolution `scenario_score` requires the same
-ID, exact frozen events, resolver and observed outcomes. A tracking ID or JSON
+`forecast_id`, full `events`, `resolution_at` (exact event-ID → RFC 3339 UTC
+cutoff map) and named `resolver`. Keys must exactly match events, UTC cutoff dates
+must match descriptive deadlines, and declaration must strictly precede cutoffs.
+This freezes propositions, precise cutoffs and tree marginals. The whole manifest
+is one synced journal event; identical same-ID retries remain idempotent after
+cutoff and preserve original intake. Changed declarations conflict. Date-only
+historical records remain unscored, never retrospectively admitted. At resolution `scenario_score` requires the same
+ID, exact frozen events, resolver and observed outcomes at/after each cutoff. A tracking ID or JSON
 record from this render is not a persisted declaration; never claim one was made
 without its receipt. Changed probabilities or propositions require a new ID.
 

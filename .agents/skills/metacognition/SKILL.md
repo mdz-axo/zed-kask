@@ -13,7 +13,7 @@ of object-space (Dublin Core) and process-space (PKO) gaps; an optional forecast
 
 ## Goal evidence, closure and optional forecasts
 
-Use `program-manager`'s goal contract and the [canonical pact](../../../kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md): create requires a real specification `source` and returns the full goal's `id`; ordinary goals omit `forecast`. Worker progress is not human closure. Native `kanban_goal_close` obtains human ActionChoice, never a model-supplied outcome; `kanban_goal_correct_outcome` is separate. Keep blinded assessment findings and human labels distinct, unknown visible, canonical history retained. The current assessor cannot fetch evidence and cannot certify unseen references. No automatic success closure or routine goal probability.
+Use `program-manager`'s goal contract and the [canonical pact](../../../kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md): create requires a real specification `source` and returns the full goal's `id`; ordinary goals omit `forecast`. Worker progress is not human closure. Native `kanban_goal_close` obtains human ActionChoice, never a model-supplied outcome; `kanban_goal_correct_outcome` is separate. Keep blinded assessment findings and human labels distinct, unknown visible, canonical history retained. The host freezes consented bounded local file snapshots before fresh assessment; missing contents stay unknown without inference, and fetched bytes do not authenticate claimed test execution. See the program-manager contract for read/sharing limits and the separately approved digest-only machine forecast. No automatic success closure or routine goal probability.
 
 ## Reference models
 
@@ -33,7 +33,7 @@ returned analyses and the engine's `hypothesis_verified` gate. The gap
 arithmetic is D: the guarded normalization, the hypotenuse, the reduction,
 and the convergence checks run in `lisp_eval`
 over cited receipts — an uncited model status leaves the after-gap
-unmeasured, not zero. The goal-tool calls are D recordings of specification and worker progress; their semantic content is P. Native human closure and blinded assessment are distinct. The current assessor has no evidence-fetch capability and must report unknown rather than certify unseen evidence.
+unmeasured, not zero. The goal-tool calls are D recordings of specification and worker progress; their semantic content is P. Native human closure and blinded assessment are distinct. The host supplies native-approved bounded file snapshots frozen before inference; fetched evidence IDs may support or contradict a criterion, while unavailable evidence is unknown without a wasted model call. File bytes do not authenticate producer claims.
 
 ## When to Use
 

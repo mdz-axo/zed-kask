@@ -111,8 +111,8 @@ full derivation is in git history — see the Redesign record):
 | DependencyEdge | parent ids + bitmap-ordered conditional table, length 2^\|parents\| | MAIA path dependence; Bayesian-network CPT | `depends_on` |
 | EventTree | marginals, topological order, joint = P(all events occur) | MAIA template; Tetlock inside view | `scenario_quantify` and the market bridges |
 | Perspective + Synthesis | explicitly equal-weight aggregation with disagreement score | Tetlock dragonfly-eye | `scenario_synthesize` |
-| ForecastRecord + journal | append-only journal + snapshot; prospectively frozen tree marginals (schema v4) | Tetlock record/score | `ForecastStore` — `scenario_declare` freezes records; `scenario_score` records matching outcomes |
-| CalibrationObservation | descriptive eligible-history bins, signed bias and isotonic diagnostic; no calibration certificate | Tetlock calibration | `scenario_calibration` |
+| ForecastRecord + journal | append-only journal + snapshot; prospectively frozen tree marginals and timestamp cutoffs (schema v5) | Tetlock record/score | `ForecastStore` — `scenario_declare` freezes records; `scenario_score` records matching outcomes |
+| CalibrationObservation | eligible-history bins, signed probability error with sample/bin scope and isotonic diagnostic; no confidence or calibration certificate | Tetlock calibration | `scenario_calibration` |
 | ScenarioProject | the spine: framing document, trees, assessment history, journal linkage | Chermack's unit of assessment | `ProjectStore` (see Project persistence) |
 | Narrative / Implications / Indicators | quadrant stories, strategies, early-warning indicators | Schwartz steps 5–8 | the skill layer (`scenario-planning` templates) — a ruled contract, not a server primitive |
 | ImpactMapping | per-node yes/no DCF deltas; 2^N paths weighted by probability | MAIA "events drive the financial forecast" | caller-authored impact mappings consumed by the skill layer (the former `scenario_impact_valuation` tool retired with the companies server; the shared `hkask_forecast` risk core survives) |
@@ -167,8 +167,8 @@ full derivation is in git history — see the Redesign record):
 
 | Tool | Description | Key params |
 |------|-------------|------------|
-| `scenario_declare` | Before outcome visibility, freeze full events, tree marginals, deadline and named caller-reported outcome source. New probabilities/propositions need a new ID; withheld-market scaffolds are ineligible. A source name is not authenticated evidence. | `forecast_id`, `events`, `resolver` |
-| `scenario_score` | Resolve only an existing prospective declaration with exact frozen events and resolver; score stored marginals. Duplicate/conflicting outcomes fail; unmatched outcomes are listed and ignored. Undeclared legacy history is unscored. Raw loss has no quality bands. | `forecast_id`, `events`, `resolver`, `outcomes` |
+| `scenario_declare` | Freeze full events/marginals, exact event-ID → RFC 3339 UTC cutoff map and caller-reported resolver. Keys exactly match events; cutoff UTC dates match descriptive deadlines; declared_at is strictly before cutoff. Whole manifest journals atomically; identical same-ID retries are idempotent even after cutoff, changed declarations conflict. Withheld-market scaffolds are ineligible. | `forecast_id`, `events`, `resolution_at`, `resolver` |
+| `scenario_score` | Resolve only a timestamped prospective declaration at/after the frozen cutoff, with exact events/resolver; score stored marginals. Duplicate/conflicting outcomes fail; unmatched outcomes are listed and ignored. Old date-only/undeclared history is unscored. Raw loss has no quality bands. | `forecast_id`, `events`, `resolver`, `outcomes` |
 | `scenario_calibration` | Calibration curve from stored forecasts (10 probability bins, actual hit rate vs mean forecast), optionally filtered by subject. | `subject` |
 
 ### Assessment (2)
@@ -201,16 +201,22 @@ and unscored, never a default .7. `forecast_record` resolves a stored declaratio
 not a return target reconstructed after observing the result. Report raw loss and
 eligibility/source limits, not score labels.
 
-`scenario_declare` prospectively freezes each full event, marginal probability,
-deadline and named resolver under a new `forecast_id`. `scenario_score` requires
-that ID, the exact frozen events/resolver and observed outcomes; it never creates
-a forecast at resolution. It scores stored marginals, not submitted probabilities.
-The named resolver is a caller-reported source rule, not authenticated evidence.
+`scenario_declare` freezes full events/marginals and named resolver, plus required
+`resolution_at: { event_id: RFC3339_UTC_timestamp }`. Keys exactly match event IDs;
+each cutoff's UTC date matches its descriptive `deadline`. Admission requires
+`declared_at < cutoff`; scoring requires `now >= cutoff`. A resolver name records
+a caller-reported source rule, not authenticated evidence.
 
-`ForecastStore` (`src/superforecast/store.rs`) retains an append-only JSON-line
-journal plus compacted snapshot, replayed on reopen. Schema v4 carries the
-prospective declaration; older records remain provenance-limited unscored history.
-Replays do not add independent event weight; changed forecasts need new IDs.
+`ForecastStore` (`src/superforecast/store.rs`) writes the complete declaration
+manifest as ONE synced journal batch before publishing any member. Identical
+same-ID retries preserve original timestamps/probabilities even after cutoff;
+changed event membership/proposition/probability/cutoff/resolver conflicts. Snapshot
+failure leaves the complete journal recoverable by identical retry, never a partly
+admitted manifest. `scenario_score` only resolves exact frozen events/resolver;
+it never creates a forecast at resolution or scores submitted probabilities.
+Schema v5 carries precise timestamps. Older date-only/undeclared records stay
+provenance-limited unscored history; no retrospective admission. Replays do not
+add independent event weight; changed forecasts need new IDs.
 Raw binary Brier loss is not calibration, and no automatic historical-bias
 correction is applied. Murphy (1973), DOI
 `10.1175/1520-0450(1973)012<0595:ANVPOT>2.0.CO;2`, separates reliability,
@@ -327,8 +333,11 @@ reference on 2026-10-07 and live in git history
 
 **Accepted limitations (ruled, watched):**
 
-- The calibration curve's empty bins surface as `null` hit rates with
-  bin-midpoint expecteds — cosmetic, surfaced rather than hidden.
+- Empty bins have null observed and expected rates. `signed_probability_error`
+  is descriptive p−outcome, with sample_count/qualifying_bins/bin_min_count
+  metadata (full wire fields use the `signed_probability_error_` prefix); no
+  qualifying bins means null/insufficient. Signed cancellation or complementing
+  an event cannot establish confidence or calibration.
 - `scenario_declare` journals prospective records; `scenario_score` snapshots matching resolution updates — a
   minor durability-ordering cost, accepted.
 - `hkask_forecast::marginalize` zero-fills missing table entries while

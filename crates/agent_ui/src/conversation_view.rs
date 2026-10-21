@@ -566,6 +566,11 @@ impl Conversation {
         cx: &mut Context<Self>,
     ) -> Option<()> {
         let (authorize_session_id, request) = self.pending_permission_request(session_id, cx)?;
+        // zed-kask: ActionChoice requires an explicit offered ID, never a
+        // permission-kind default (which could invent a human goal outcome).
+        if request.legacy_kind()? != acp_thread::AuthorizationKind::PermissionGrant {
+            return None;
+        }
         let option = permission_option_for_action(request.legacy_options()?, kind)?;
         self.authorize_permission_request(
             authorize_session_id,
@@ -584,6 +589,9 @@ impl Conversation {
         cx: &mut Context<Self>,
     ) -> Option<()> {
         let request = self.permission_request(&session_id, request_id, cx)?;
+        if request.legacy_kind()? != acp_thread::AuthorizationKind::PermissionGrant {
+            return None;
+        }
         let outcome = resolve_outcome_from_selection(
             request.legacy_options()?,
             self.permission_selections.get(&request_id),
@@ -15100,19 +15108,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn permission_option_for_action_prefers_explicit_sandbox_allow_always() {
-        let options = sandbox_permission_options();
-
-        let option = super::permission_option_for_action(
-            &options,
-            acp_v2::PermissionOptionKind::AllowAlways,
-        )
-        .unwrap();
-
-        assert_eq!(option.option_id.0.as_ref(), "allow_always");
-    }
-
-    #[test]
     fn permission_option_for_action_preserves_other_kind() {
         let kind = acp_v2::PermissionOptionKind::Other("custom_permission".into());
         let options = PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
@@ -15128,29 +15123,6 @@ pub(crate) mod tests {
         assert_eq!(outcome.option_id, acp_v2::PermissionOptionId::new("custom"));
         assert_eq!(outcome.option_kind, kind);
         assert!(super::resolve_outcome_from_selection(&options, None, true).is_none());
-    }
-
-    #[test]
-    fn resolve_outcome_from_selection_flat_allow_picks_allow_once() {
-        let options = flat_allow_deny_options();
-
-        let outcome = super::resolve_outcome_from_selection(&options, None, true).unwrap();
-
-        assert_eq!(outcome.option_id.0.as_ref(), "allow");
-        assert_eq!(outcome.option_kind, acp_v2::PermissionOptionKind::AllowOnce);
-    }
-
-    #[test]
-    fn resolve_outcome_from_selection_flat_deny_picks_reject_once() {
-        let options = flat_allow_deny_options();
-
-        let outcome = super::resolve_outcome_from_selection(&options, None, false).unwrap();
-
-        assert_eq!(outcome.option_id.0.as_ref(), "deny");
-        assert_eq!(
-            outcome.option_kind,
-            acp_v2::PermissionOptionKind::RejectOnce
-        );
     }
 
     #[test]
@@ -16934,6 +16906,218 @@ pub(crate) mod tests {
             acp_v2::RequestPermissionOutcome::Cancelled
         );
         drop(original_root);
+    }
+
+    #[gpui::test]
+    async fn test_action_choice_requires_an_explicit_offered_option(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let (thread, conversation) = thread_view.read_with(cx, |view, _| {
+            (view.thread.clone(), view.conversation.clone())
+        });
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+
+        // These are the actual native goal closure/correction choices. A third
+        // action pins that the boundary is about authority, not goal option IDs.
+        for (tool_call_id, options, selected, selected_kind) in [
+            (
+                "kanban_goal_close",
+                vec![
+                    ("accomplished_achieved", "AllowOnce"),
+                    ("accomplished_not_achieved", "AllowOnce"),
+                    ("accomplished_unknown", "AllowOnce"),
+                    ("stop_achieved", "AllowOnce"),
+                    ("stop_not_achieved", "AllowOnce"),
+                    ("stop_unknown", "AllowOnce"),
+                ],
+                "stop_unknown",
+                "AllowOnce",
+            ),
+            (
+                "kanban_goal_correct_outcome",
+                vec![
+                    ("correct_achieved", "AllowOnce"),
+                    ("correct_not_achieved", "AllowOnce"),
+                    ("correct_unknown", "AllowOnce"),
+                ],
+                "correct_not_achieved",
+                "AllowOnce",
+            ),
+            (
+                "other_action_choice",
+                vec![
+                    ("once", "AllowOnce"),
+                    ("always", "AllowAlways"),
+                    ("reject", "RejectOnce"),
+                    ("reject_always", "RejectAlways"),
+                ],
+                "reject",
+                "RejectOnce",
+            ),
+        ] {
+            let options = PermissionOptions::Flat(
+                options
+                    .into_iter()
+                    .map(|(id, kind)| {
+                        let kind = match kind {
+                            "AllowOnce" => acp_v2::PermissionOptionKind::AllowOnce,
+                            "AllowAlways" => acp_v2::PermissionOptionKind::AllowAlways,
+                            "RejectOnce" => acp_v2::PermissionOptionKind::RejectOnce,
+                            "RejectAlways" => acp_v2::PermissionOptionKind::RejectAlways,
+                            _ => unreachable!("literal fixture permission kind"),
+                        };
+                        acp_v2::PermissionOption::new(id, id, kind)
+                    })
+                    .collect(),
+            );
+            let (request_id, mut response) = thread.update(cx, |thread, cx| {
+                thread
+                    .request_tool_call_authorization_with_id(
+                        acp_v1::ToolCall::new(tool_call_id, tool_call_id).into(),
+                        options.clone(),
+                        acp_thread::AuthorizationKind::ActionChoice,
+                        cx,
+                    )
+                    .expect("native action choice request")
+            });
+            cx.run_until_parked();
+            cx.focus(&thread_view);
+            cx.dispatch_action(crate::AllowOnce);
+            cx.run_until_parked();
+            assert!(
+                futures::poll!(&mut response).is_pending(),
+                "{tool_call_id}: generic AllowOnce must not select a human outcome"
+            );
+            cx.dispatch_action(crate::AllowAlways);
+            cx.dispatch_action(crate::RejectOnce);
+            cx.run_until_parked();
+            for kind in [
+                acp_v2::PermissionOptionKind::AllowOnce,
+                acp_v2::PermissionOptionKind::AllowAlways,
+                acp_v2::PermissionOptionKind::RejectOnce,
+                acp_v2::PermissionOptionKind::RejectAlways,
+            ] {
+                thread_view.update_in(cx, |view, window, cx| {
+                    assert!(view.authorize_pending_tool_call(kind, window, cx).is_none());
+                });
+            }
+            assert!(futures::poll!(&mut response).is_pending());
+            assert!(thread.read_with(cx, |thread, _| {
+                thread.permission_request(request_id).is_some()
+            }));
+
+            // An ID that was never offered cannot resolve the waiting decision.
+            cx.dispatch_action(crate::AuthorizeToolCall {
+                tool_call_id: tool_call_id.into(),
+                request_id: Some(request_id),
+                session_id: Some(session_id.0.to_string()),
+                option_id: "not-offered".into(),
+                option_kind: "AllowOnce".into(),
+            });
+            cx.run_until_parked();
+            assert!(futures::poll!(&mut response).is_pending());
+            cx.dispatch_action(crate::AuthorizeToolCall {
+                tool_call_id: tool_call_id.into(),
+                request_id: Some(request_id),
+                session_id: Some(session_id.0.to_string()),
+                option_id: selected.into(),
+                option_kind: selected_kind.into(),
+            });
+            cx.run_until_parked();
+            let acp_thread::RequestPermissionOutcome::Selected(outcome) = response.await else {
+                panic!("explicit offered action must resolve the decision");
+            };
+            assert_eq!(outcome.option_id.0.as_ref(), selected);
+            assert!(thread.read_with(cx, |thread, _| {
+                thread.permission_request(request_id).is_none()
+            }));
+            conversation.read_with(cx, |conversation, cx| {
+                assert!(
+                    conversation
+                        .pending_permission_request(&session_id, cx)
+                        .is_none()
+                );
+            });
+
+            let (cancel_id, cancelled) = thread.update(cx, |thread, cx| {
+                let request = thread
+                    .request_tool_call_authorization_with_id(
+                        acp_v1::ToolCall::new(tool_call_id, tool_call_id).into(),
+                        options,
+                        acp_thread::AuthorizationKind::ActionChoice,
+                        cx,
+                    )
+                    .expect("fresh action choice can be cancelled");
+                thread.cancel_permission_request(request.0, cx);
+                request
+            });
+            assert!(matches!(
+                cancelled.await,
+                acp_thread::RequestPermissionOutcome::Cancelled
+            ));
+            assert!(thread.read_with(cx, |thread, _| {
+                thread.permission_request(cancel_id).is_none()
+            }));
+        }
+    }
+
+    #[gpui::test]
+    async fn test_permission_shortcuts_preserve_permission_grants(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        for direct in [false, true] {
+            for (kind, expected) in [
+                (acp_v2::PermissionOptionKind::AllowOnce, "allow"),
+                (acp_v2::PermissionOptionKind::AllowAlways, "allow_always"),
+                (acp_v2::PermissionOptionKind::RejectOnce, "deny"),
+            ] {
+                let (request_id, response) = request_test_tool_authorization_with_options(
+                    &thread,
+                    "ordinary-permission",
+                    sandbox_permission_options(),
+                    cx,
+                );
+                cx.run_until_parked();
+                cx.focus(&thread_view);
+                if direct {
+                    thread_view.update_in(cx, |view, window, cx| {
+                        assert!(
+                            view.authorize_pending_tool_call(kind.clone(), window, cx)
+                                .is_some()
+                        );
+                    });
+                } else {
+                    match kind {
+                        acp_v2::PermissionOptionKind::AllowOnce => {
+                            cx.dispatch_action(crate::AllowOnce)
+                        }
+                        acp_v2::PermissionOptionKind::AllowAlways => {
+                            cx.dispatch_action(crate::AllowAlways)
+                        }
+                        acp_v2::PermissionOptionKind::RejectOnce => {
+                            cx.dispatch_action(crate::RejectOnce)
+                        }
+                        _ => unreachable!("literal fixture shortcut kind"),
+                    }
+                }
+                cx.run_until_parked();
+                let acp_thread::RequestPermissionOutcome::Selected(outcome) = response.await else {
+                    panic!("ordinary permission shortcut must resolve its request");
+                };
+                assert_eq!(outcome.option_id.0.as_ref(), expected);
+                assert_eq!(outcome.option_kind, kind);
+                assert!(thread.read_with(cx, |thread, _| {
+                    thread.permission_request(request_id).is_none()
+                }));
+            }
+        }
     }
 
     #[gpui::test]

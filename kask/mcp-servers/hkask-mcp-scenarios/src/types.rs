@@ -342,12 +342,14 @@ pub(crate) struct DragonflySynthesis {
 /// A single stored forecast awaiting or having received an outcome.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredForecastRecord {
-    /// Schema version for deserialization (current: 4).
+    /// Schema version for deserialization (current: 5).
     /// Old files without this field default to 0.
     /// v2 adds `category` for per-domain calibration.
     /// v3 scores the tree MARGINAL (PR-02): `probability` is the node's
     /// resolved marginal at scoring time, marked by `scored_from_marginal`.
     /// v2-and-earlier records hold the caller-supplied prior.
+    /// v5 admits complete declarations with exact resolution timestamps.
+    /// Date-only v4 declarations remain history, not prospective evidence.
     #[serde(default)]
     pub schema_version: u32,
     pub forecast_id: String,
@@ -379,6 +381,18 @@ pub struct ScenarioDeclaration {
     pub event: ScenarioEvent,
     pub resolver: String,
     pub declared_at: String,
+    /// Missing on date-only history, which is not retrospectively eligible.
+    #[serde(default)]
+    pub resolution_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl ScenarioDeclaration {
+    pub(crate) fn is_prospective(&self) -> bool {
+        self.resolution_at.is_some_and(|cutoff| {
+            chrono::DateTime::parse_from_rfc3339(&self.declared_at)
+                .is_ok_and(|declared| declared < cutoff)
+        })
+    }
 }
 
 /// One bin in a calibration curve — forecasts in a probability range
@@ -389,13 +403,17 @@ pub(crate) struct CalibrationBin {
     pub probability_range: String,
     /// How many forecasts fall in this bin
     pub forecast_count: u64,
-    /// Actual frequency of occurrence (should match bin midpoint if calibrated)
+    /// Observed occurrence frequency in this bin.
     pub hit_rate: Option<f64>,
     /// Mean declared probability; absent for an empty bin.
     pub expected_rate: Option<f64>,
-    /// expected_rate - hit_rate: positive = overconfident, negative = underconfident
-    pub bias: Option<f64>,
+    /// Mean declared p minus observed occurrence frequency. Its sign depends
+    /// on event orientation, not the forecaster's degree of confidence.
+    pub signed_probability_error: Option<f64>,
 }
+
+/// Display convention for the descriptive signed mean, not a sufficiency claim.
+pub(crate) const SIGNED_PROBABILITY_ERROR_MIN_BIN_COUNT: u64 = 5;
 
 /// Full calibration curve across all stored forecasts.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -408,7 +426,9 @@ pub(crate) struct CalibrationCurve {
     pub overall_brier: f64,
     /// Signed mean error over bins with at least five observations.
     /// Missing means insufficient qualifying data; zero may reflect cancellation.
-    pub overconfidence_score: Option<f64>,
+    pub signed_probability_error: Option<f64>,
+    pub signed_probability_error_sample_count: u64,
+    pub signed_probability_error_qualifying_bins: Vec<String>,
 }
 
 // ── Triage (P4) ────────────────────────────────────────────────────────────

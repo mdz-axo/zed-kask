@@ -13,7 +13,7 @@ this skill is the operating procedure for that pipeline.
 
 ## Goal evidence, closure and optional forecasts
 
-Use `program-manager`'s goal contract and the [canonical pact](../../../kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md): create requires a real specification `source` and returns the full goal's `id`; ordinary goals omit `forecast`. Worker progress is not human closure. Native `kanban_goal_close` obtains human ActionChoice, never a model-supplied outcome; `kanban_goal_correct_outcome` is separate. Keep blinded assessment findings and human labels distinct, unknown visible, canonical history retained. The current assessor cannot fetch evidence and cannot certify unseen references. No automatic success closure or routine goal probability.
+Use `program-manager`'s goal contract and the [canonical pact](../../../kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md): create requires a real specification `source` and returns the full goal's `id`; ordinary goals omit `forecast`. Worker progress is not human closure. Native `kanban_goal_close` obtains human ActionChoice, never a model-supplied outcome; `kanban_goal_correct_outcome` is separate. Keep blinded assessment findings and human labels distinct, unknown visible, canonical history retained. The host freezes consented bounded local file snapshots before fresh assessment; missing contents stay unknown without inference, and fetched bytes do not authenticate claimed test execution. See the program-manager contract for read/sharing limits and the separately approved digest-only machine forecast. No automatic success closure or routine goal probability.
 
 ## Reference models
 
@@ -139,7 +139,7 @@ quantified backbone.
    takes the project-wide `forecast_id`) and then `scenario_propagate`
    with the full event list and the event's new prior to recompute
    descendants and the joint (propagate takes events, event_id, new_prior
-   — no forecast_id). Mint a `forecast_id` for each frozen prospective declaration. Call `scenario_declare` with `forecast_id`, full `events` and a named `resolver` before outcome visibility. Revised probabilities, propositions or horizons require a new identity; calibrate and propagate do not declare a forecast. The propagation
+   — no forecast_id). Mint a `forecast_id` for each frozen prospective declaration. Call `scenario_declare` with `forecast_id`, full `events`, exact event-ID → UTC timestamp `resolution_at` map and a named `resolver` before outcome visibility. Revised probabilities, propositions or horizons require a new identity; calibrate and propagate do not declare a forecast. The propagation
    journal is the audit
    record — report the deltas. When the evidence is an OBSERVATION (an
    observed probability, an occurred/not-occurred outcome, or a likelihood
@@ -159,11 +159,21 @@ quantified backbone.
 
 ### Phase 4 — Resolve and learn (the Brier loop)
 
-17. Before resolution, call `scenario_declare` with `forecast_id`, full events and a named outcome-source `resolver` if not already declared. Never declare after observing the outcome. At resolution call `scenario_score` with the same ID, exact frozen events and resolver plus observed outcomes. The server scores stored tree marginals, not resolution-time inputs; duplicate/conflicting outcomes are refused. Report raw loss, event counts, convention and limitations, not universal bands. Declaration records a caller-reported source rule, not authentication. A score is evidence for Review, never automatic task verification or human goal closure.
-18. Call `scenario_calibration` to compute the calibration curve over
-    resolved forecasts. Report bias direction (too high / too low);
-    below 10 resolved forecasts, say the curve is thin — the server
-    itself recommends at least 10.
+Prospective admission requires `declared_at < resolution_at` for every event;
+the map keys must exactly match event IDs and each cutoff's UTC date must match
+its descriptive `deadline`. `scenario_score` cannot resolve before the cutoff.
+The entire declaration is one synced journal event: same-ID identical retries
+are idempotent even after cutoff, preserving original timestamps/probabilities;
+changed membership/proposition/probability/cutoff/resolver conflicts. Old date-only
+declarations remain unscored history; never repair them by post-outcome admission.
+
+17. Before resolution, call `scenario_declare` with `forecast_id`, full events, exact event-ID → UTC timestamp `resolution_at` map and a named outcome-source `resolver` if not already declared. Never declare after observing the outcome. At resolution call `scenario_score` with the same ID, exact frozen events and resolver plus observed outcomes. The server scores stored tree marginals, not resolution-time inputs; duplicate/conflicting outcomes are refused. Report raw loss, event counts, convention and limitations, not universal bands. Declaration records a caller-reported source rule, not authentication. A score is evidence for Review, never automatic task verification or human goal closure.
+18. Call `scenario_calibration` for descriptive eligible-history bins. Report
+    `signed_probability_error` (mean p−outcome in qualifying bins) with
+    `signed_probability_error_sample_count`, `signed_probability_error_qualifying_bins`
+    and `signed_probability_error_bin_min_count`. Empty/unqualified evidence is
+    null/insufficient, not zero. Signed errors can cancel and flip when the event
+    is complemented: they do not diagnose confidence or certify calibration.
 
 ### Phase 5 — Assess (Chermack)
 

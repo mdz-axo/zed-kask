@@ -16,8 +16,8 @@ use theme::ActiveTheme;
 use ui::{Color, Label, LabelCommon, LabelSize, prelude::*};
 
 use crate::block::{
-    ANCHOR_BRIER_SCORE, ANCHOR_FORECAST_ID, ANCHOR_SCENARIO_PROBABILITY, EventNode,
-    ScenariosBlockBody,
+    ANCHOR_BRIER_SCORE, ANCHOR_FORECAST_ID, ANCHOR_SCENARIO_PROBABILITY, CalibrationSummary,
+    EventNode, ScenariosBlockBody,
 };
 
 fn probability_text(probability: Option<f64>) -> String {
@@ -25,6 +25,30 @@ fn probability_text(probability: Option<f64>) -> String {
         .filter(|p| p.is_finite())
         .map(|p| format!("{:.0}%", p * 100.0))
         .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn signed_probability_error_text(calibration: &CalibrationSummary) -> String {
+    match calibration.signed_probability_error {
+        Some(error) => {
+            let samples = calibration
+                .signed_probability_error_sample_count
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "unknown".into());
+            let minimum = calibration
+                .signed_probability_error_bin_min_count
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "unknown".into());
+            let bins = calibration
+                .signed_probability_error_qualifying_bins
+                .as_ref()
+                .map(|bins| bins.len().to_string())
+                .unwrap_or_else(|| "unknown".into());
+            format!(
+                "Signed probability error: {error:+.3} ({samples} samples, {bins} qualifying bins, min {minimum}/bin)"
+            )
+        }
+        None => "Signed probability error: insufficient".into(),
+    }
 }
 
 /// Server that hosts the scenario pipeline tools. Used as the fallback dispatch
@@ -217,10 +241,7 @@ impl ScenariosWidget {
             .overall_brier
             .map(|b| format!("{b:.3}"))
             .unwrap_or_else(|| "—".to_string());
-        let overconf_text = cal
-            .overconfidence_score
-            .map(|o| format!("{o:+.3}"))
-            .unwrap_or_else(|| "—".to_string());
+        let signed_error_text = signed_probability_error_text(cal);
         let interp = cal.evidence_status.as_deref().unwrap_or("insufficient");
 
         v_flex()
@@ -243,7 +264,7 @@ impl ScenariosWidget {
                             .color(Color::Default),
                     )
                     .child(
-                        Label::new(format!("Overconfidence: {overconf_text}"))
+                        Label::new(signed_error_text)
                             .size(LabelSize::XSmall)
                             .color(Color::Default),
                     )
@@ -764,6 +785,30 @@ mod tests {
     }
 
     #[test]
+    fn signed_probability_error_label_preserves_sample_scope_without_confidence_claim() {
+        let calibration: CalibrationSummary = serde_json::from_value(serde_json::json!({
+            "signed_probability_error": 0.0,
+            "signed_probability_error_sample_count": 10,
+            "signed_probability_error_qualifying_bins": ["10–20%", "90–100%"],
+            "signed_probability_error_bin_min_count": 5,
+        }))
+        .expect("summary");
+        let label = signed_probability_error_text(&calibration);
+        assert_eq!(
+            label,
+            "Signed probability error: +0.000 (10 samples, 2 qualifying bins, min 5/bin)"
+        );
+        let incomplete: CalibrationSummary = serde_json::from_value(serde_json::json!({
+            "signed_probability_error": 0.0
+        }))
+        .expect("incomplete summary");
+        assert!(
+            signed_probability_error_text(&incomplete)
+                .contains("unknown samples, unknown qualifying bins")
+        );
+    }
+
+    #[test]
     fn absent_probability_renders_unknown_and_present_zero_remains_zero() {
         assert_eq!(probability_text(None), "unknown");
         assert_eq!(probability_text(Some(0.0)), "0%");
@@ -802,8 +847,11 @@ mod tests {
                 total_forecasts: 5,
                 resolved_forecasts: 3,
                 overall_brier: Some(0.12),
-                overconfidence_score: Some(0.05),
-                evidence_status: Some("descriptive_only".to_string()),
+                signed_probability_error: None,
+                signed_probability_error_sample_count: Some(0),
+                signed_probability_error_qualifying_bins: Some(Vec::new()),
+                signed_probability_error_bin_min_count: Some(5),
+                evidence_status: Some("insufficient".to_string()),
             }),
             ..Default::default()
         };

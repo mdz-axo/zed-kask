@@ -1,61 +1,34 @@
 //! Bounded, consent-gated local artifact snapshots. No execution, network,
 //! directory enumeration or symlink traversal. These receipts establish file
 //! bytes, not that the producer's claimed command, test or oracle actually ran.
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use hkask_mcp_kata_kanban::{
     GOAL_ARTIFACT_MAX_FILE_BYTES, GOAL_ARTIFACT_MAX_FILES, GOAL_ARTIFACT_MAX_TOTAL_BYTES,
     GoalArtifactReadOutcome as Outcome, GoalArtifactSnapshot, GoalEvidence,
     LocalArtifactAccessApproval,
 };
 use sha2::{Digest, Sha256};
-use std::{
-    fs::File,
-    io::Read,
-    path::{Path, PathBuf},
-};
+use std::{fs::File, io::Read, path::Path};
 
-/// Parse only; safe to display before approval. Never touches the filesystem.
-pub(super) fn local_path(locator: &str) -> Result<PathBuf, String> {
-    let path = if locator.starts_with("file:") {
-        let url = url::Url::parse(locator).map_err(|error| format!("invalid file URI: {error}"))?;
-        if !matches!(url.host_str(), None | Some("localhost")) {
-            return Err("file URI must name the local host, never a remote authority".into());
-        }
-        if url.query().is_some()
-            || url.fragment().is_some()
-            || !url.username().is_empty()
-            || url.password().is_some()
-            || url.port().is_some()
-        {
-            return Err("file URI must not contain credentials, port, query or fragment".into());
-        }
-        url.to_file_path()
-            .map_err(|_| "only local file URIs are supported".to_string())?
-    } else {
-        PathBuf::from(locator)
-    };
-    if !path.is_absolute() || path.to_str().is_none() {
-        return Err("artifact must be an absolute UTF-8 local path or local file URI".into());
-    }
-    Ok(path)
-}
+pub(super) use hkask_mcp_kata_kanban::local_artifact_path as local_path;
 
 pub(super) fn capture(
     manifest: &[GoalEvidence],
     approval: Option<LocalArtifactAccessApproval>,
+    now: &dyn Fn() -> DateTime<Utc>,
 ) -> Result<Vec<GoalArtifactSnapshot>, String> {
     if manifest.len() > GOAL_ARTIFACT_MAX_FILES {
         return Err("artifact manifest exceeds the approved 16-file bound; no files read".into());
     }
     let mut remaining = GOAL_ARTIFACT_MAX_TOTAL_BYTES;
     Ok(manifest.iter().map(|evidence| {
-        let observed_at = Utc::now();
+
         let outcome = if approval != Some(LocalArtifactAccessApproval::BoundedUtf8V1) {
             unavailable(None, "not_approved: original native closure did not authorize local artifact reads/sharing".into(), None, 0)
         } else { read(evidence, remaining) };
         let count = match &outcome { Outcome::Fetched { byte_count, .. } => *byte_count, Outcome::Unavailable { bytes_read, .. } => *bytes_read };
         remaining = remaining.saturating_sub(count as usize);
-        GoalArtifactSnapshot { evidence_id:evidence.id.clone(), observed_at, outcome }
+        GoalArtifactSnapshot { evidence_id:evidence.id.clone(), observed_at: now(), outcome }
     }).collect())
 }
 fn unavailable(
@@ -72,26 +45,46 @@ fn unavailable(
     }
 }
 fn read(evidence: &GoalEvidence, remaining: usize) -> Outcome {
-    let path = match local_path(&evidence.locator) {
-        Ok(path) => path,
-        Err(reason) => return unavailable(None, format!("invalid_locator: {reason}"), None, 0),
-    };
-    let source = path.to_str().map(ToOwned::to_owned);
-    if !cfg!(unix) {
-        return unavailable(source, "unsupported_platform: no descriptor-relative no-symlink reader is implemented; no filesystem access attempted".into(), None, 0);
-    }
     let expected = evidence
         .digest
         .strip_prefix("sha256:")
         .unwrap_or(&evidence.digest);
     if expected.len() != 64 || !expected.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return unavailable(
-            source,
+            None,
             "invalid_digest: expected SHA-256 must be 64 hex digits, optionally prefixed sha256:"
                 .into(),
             None,
             0,
         );
+    }
+    match read_utf8(&evidence.locator, remaining) {
+        Outcome::Fetched {
+            source,
+            sha256,
+            byte_count,
+            content: _,
+        } if !sha256.eq_ignore_ascii_case(expected) => unavailable(
+            Some(source),
+            format!("digest_mismatch: expected {expected}; observed {sha256}; contents withheld"),
+            Some(sha256),
+            byte_count as usize,
+        ),
+        outcome => outcome,
+    }
+}
+/// One bounded complete UTF-8 read, without imposing an expected digest. The
+/// caller must have source-specific native consent. Assessment applies its
+/// expected-hash filter separately; the machine adapter needs real mismatch
+/// evidence rather than a fabricated failure or pre-horizon snapshot.
+pub(super) fn read_utf8(locator: &str, remaining: usize) -> Outcome {
+    let path = match local_path(locator) {
+        Ok(path) => path,
+        Err(reason) => return unavailable(None, format!("invalid_locator: {reason}"), None, 0),
+    };
+    let source = path.to_str().map(ToOwned::to_owned);
+    if !cfg!(unix) {
+        return unavailable(source, "unsupported_platform: no descriptor-relative no-symlink reader is implemented; no filesystem access attempted".into(), None, 0);
     }
     if remaining == 0 {
         return unavailable(
@@ -200,14 +193,6 @@ fn read(evidence: &GoalEvidence, remaining: usize) -> Outcome {
         );
     }
     let actual = format!("{:x}", Sha256::digest(&bytes));
-    if !actual.eq_ignore_ascii_case(expected) {
-        return unavailable(
-            source,
-            format!("digest_mismatch: expected {expected}; observed {actual}; contents withheld"),
-            Some(actual),
-            bytes.len(),
-        );
-    }
     match String::from_utf8(bytes) {
         Ok(content) => Outcome::Fetched {
             source: canonical.to_string_lossy().into_owned(),

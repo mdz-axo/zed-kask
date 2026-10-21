@@ -3,7 +3,7 @@
 use super::{service::KanbanService, types::KanbanError};
 use crate::kanban::VerificationCriterion;
 use crate::kanban::types::goal::*;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use hkask_storage::HMem;
 use hkask_types::{WebID, id::GoalID};
 use serde::Serialize;
@@ -28,6 +28,12 @@ fn nonempty(value: &str, field: &str) -> Result<(), KanbanError> {
 fn digest(value: &impl Serialize) -> Result<String, KanbanError> {
     let bytes = serde_json::to_vec(value).map_err(|e| KanbanError::Internal(e.to_string()))?;
     Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+fn validate_digest_hex(value: &str) -> Result<(), KanbanError> {
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(invalid("expected_sha256 must be exactly 64 hex digits"));
+    }
+    Ok(())
 }
 fn validate_source(source: &GoalSource) -> Result<(), KanbanError> {
     nonempty(&source.interaction_id, "interaction_id")?;
@@ -64,6 +70,7 @@ fn validate_refs(ids: &[String], known: &HashSet<&str>) -> Result<(), KanbanErro
 fn validate_artifacts(
     closure: &NativeGoalClosure,
     artifacts: &[GoalArtifactSnapshot],
+    now: DateTime<Utc>,
 ) -> Result<(), KanbanError> {
     if artifacts.len() > GOAL_ARTIFACT_MAX_FILES {
         return Err(invalid("too many artifact observations"));
@@ -85,7 +92,7 @@ fn validate_artifacts(
             .ok_or_else(|| invalid("artifact observation references unknown evidence"))?;
         if !ids.insert(&artifact.evidence_id)
             || artifact.observed_at < closure.occurred_at
-            || artifact.observed_at > Utc::now()
+            || artifact.observed_at > now
         {
             return Err(invalid(
                 "duplicate artifact observation or invalid read time",
@@ -169,18 +176,18 @@ fn decode_goal(value: serde_json::Value) -> Result<Goal, KanbanError> {
         criterion_ids: (1..=old.criteria.len()).map(|n| format!("criterion-{n}")).collect(),
         criteria: old.criteria, task_id: old.task_id, source: None, supersedes: None,
         spec_digest, verdicts: old.verdicts, closure: None, human_corrections: vec![], assessment_pending: false,
-        assessments: vec![], forecast: None, observations: vec![],
+        assessments: vec![], forecast: None, observations: vec![], machine_artifact_observation: None,
         forecast_status: ForecastStatus::LegacyUnscored, scores: vec![], projections: vec![], revision: 0,
         legacy: Some(LegacyGoalArchive { raw: value, limitation: "Historical provenance-limited archive; original human receipt and prospective forecast eligibility not established. Unscored; no reconstructed outcomes.".into() }),
         owner: old.owner, created_at: old.created_at, updated_at: old.updated_at,
     })
 }
-fn publish(goal: &mut Goal) -> Result<(), KanbanError> {
+fn publish(goal: &mut Goal, now: DateTime<Utc>) -> Result<(), KanbanError> {
     goal.revision = goal
         .revision
         .checked_add(1)
         .ok_or_else(|| invalid("goal revision overflow"))?;
-    goal.updated_at = Utc::now();
+    goal.updated_at = now;
     let mut snapshot = goal.clone();
     snapshot.projections.clear();
     let payload =
@@ -194,7 +201,7 @@ fn publish(goal: &mut Goal) -> Result<(), KanbanError> {
     });
     Ok(())
 }
-fn validate_forecast(forecast: &GoalForecast) -> Result<(), KanbanError> {
+fn validate_forecast(forecast: &GoalForecast, now: DateTime<Utc>) -> Result<(), KanbanError> {
     for (value, field) in [
         (&forecast.proposition, "proposition"),
         (&forecast.execution_policy, "execution_policy"),
@@ -210,24 +217,40 @@ fn validate_forecast(forecast: &GoalForecast) -> Result<(), KanbanError> {
             "forecast and baseline probabilities must be finite and in [0,1]",
         ));
     }
-    if forecast.horizon <= Utc::now() || forecast.resolution_deadline < forecast.horizon {
+    if forecast.horizon <= now || forecast.resolution_deadline < forecast.horizon {
         return Err(invalid(
             "forecast must be declared before horizon; resolution_deadline must not precede horizon",
         ));
     }
+    if let GoalForecastResolver::MachineArtifactDigest {
+        locator,
+        expected_sha256,
+    } = &forecast.resolver
+    {
+        local_artifact_path(locator).map_err(invalid)?;
+        validate_digest_hex(expected_sha256)?;
+    }
     if let GoalForecastResolver::MachineEvidence { source, oracle } = &forecast.resolver {
-        nonempty(source, "resolver source")?;
-        nonempty(oracle, "resolver oracle")?;
+        return Err(invalid(format!(
+            "machine_evidence is ineligible: no production machine observation adapter is implemented for source {source:?}, oracle {oracle:?}; supported resolvers: human_acceptance, machine_artifact_digest"
+        )));
     }
     Ok(())
 }
 
 /// Resolve only the frozen target, after an assessor attempt. Unknown and
 /// disputed records never synthesize y. Prior score versions remain auditable.
-fn resolve_forecast(goal: &mut Goal) -> Result<(), KanbanError> {
+fn resolve_forecast(goal: &mut Goal, now: DateTime<Utc>) -> Result<(), KanbanError> {
     let Some(forecast) = &goal.forecast else {
         return Ok(());
     };
+    if matches!(
+        forecast.resolver,
+        GoalForecastResolver::MachineEvidence { .. }
+    ) {
+        goal.forecast_status = ForecastStatus::UnsupportedResolver;
+        return Ok(());
+    }
     if !goal
         .assessments
         .iter()
@@ -257,35 +280,30 @@ fn resolve_forecast(goal: &mut Goal) -> Result<(), KanbanError> {
                     .then_some((event_id, outcome))
             })
         }
-        GoalForecastResolver::MachineEvidence { .. } => {
-            let superseded: HashSet<_> = goal
-                .observations
-                .iter()
-                .filter_map(|o| o.correction_of.as_ref())
-                .collect();
-            let active: Vec<_> = goal
-                .observations
-                .iter()
-                .filter(|o| !superseded.contains(&o.event_id))
-                .collect();
-            let known: HashSet<_> = active.iter().filter_map(|o| o.outcome).collect();
-            if known.len() > 1 {
-                goal.forecast_status = ForecastStatus::Disputed;
-                return Ok(());
-            }
-            // A later unknown does not erase an unresolved disagreement.
-            if active.iter().any(|o| o.outcome.is_none()) {
-                active
-                    .iter()
-                    .find(|o| o.outcome.is_none())
-                    .map(|o| (o.event_id.clone(), None))
+        GoalForecastResolver::MachineArtifactDigest {
+            expected_sha256, ..
+        } => goal.machine_artifact_observation.as_ref().map(|receipt| {
+            let within_window = receipt.observed_at >= forecast.horizon
+                && receipt.observed_at <= forecast.resolution_deadline
+                && goal.closure.as_ref().is_some_and(|closure| {
+                    closure.input.occurred_at <= forecast.resolution_deadline
+                });
+            let outcome = if within_window {
+                match &receipt.read {
+                    MachineArtifactDigestRead::Observed { actual_sha256, .. } => {
+                        Some(expected_sha256.eq_ignore_ascii_case(actual_sha256))
+                    }
+                    MachineArtifactDigestRead::Unavailable { .. } => None,
+                }
             } else {
-                active.last().map(|o| (o.event_id.clone(), o.outcome))
-            }
-        }
+                None
+            };
+            (receipt.event_id.clone(), outcome)
+        }),
+        GoalForecastResolver::MachineEvidence { .. } => None,
     };
     let Some((event_id, outcome)) = outcome else {
-        goal.forecast_status = if Utc::now() > forecast.resolution_deadline {
+        goal.forecast_status = if now > forecast.resolution_deadline {
             ForecastStatus::DeadlineElapsed
         } else {
             ForecastStatus::PendingOutcome
@@ -319,7 +337,7 @@ fn resolve_forecast(goal: &mut Goal) -> Result<(), KanbanError> {
         baseline_brier,
         skill: (baseline_brier > 0.0).then(|| 1.0 - brier / baseline_brier),
         supersedes_version: previous,
-        recorded_at: Utc::now(),
+        recorded_at: now,
     });
     Ok(())
 }
@@ -339,7 +357,7 @@ impl KanbanService {
         }
         validate_source(&declaration.source)?;
         if let Some(forecast) = &declaration.forecast {
-            validate_forecast(forecast)?;
+            validate_forecast(forecast, self.goal_now())?;
         }
         if let Some(id) = declaration.supersedes {
             self.goal_get(id, owner)?
@@ -364,7 +382,7 @@ impl KanbanService {
             &declaration.source,
             declaration.supersedes,
         ))?;
-        let now = Utc::now();
+        let now = self.goal_now();
         let mut goal = Goal {
             schema_version: 2,
             id: GoalID::new(),
@@ -389,6 +407,7 @@ impl KanbanService {
             },
             forecast: declaration.forecast,
             observations: vec![],
+            machine_artifact_observation: None,
             scores: vec![],
             projections: vec![],
             revision: 0,
@@ -397,7 +416,7 @@ impl KanbanService {
             created_at: now,
             updated_at: now,
         };
-        publish(&mut goal)?;
+        publish(&mut goal, self.goal_now())?;
         let value =
             serde_json::to_value(&goal).map_err(|e| KanbanError::Internal(e.to_string()))?;
         let ontology = hkask_types::HMemOntology {
@@ -457,23 +476,40 @@ impl KanbanService {
         goals.sort_by_key(|g| std::cmp::Reverse(g.created_at));
         Ok(goals)
     }
-    /// Re-encode original legacy rows as explicit typed archives atomically.
-    /// No old prediction or result is admitted to the new scoring population.
+    /// Reconcile stored history atomically: archive legacy rows and mark older
+    /// machine forecasts unsupported without deleting their observations/scores.
+    /// No old claim becomes an eligible current producer or new scored case.
     pub fn goal_archive_legacy(&self, owner: WebID) -> Result<usize, KanbanError> {
         let mut count = 0;
         for (row, _) in self.goal_rows(owner)? {
-            let changed = self
-                .store
-                .update_value_atomic(GOAL_ENTITY, &row.attribute, |value| {
-                    if value.get("schema_version").is_some() {
-                        return Ok::<_, KanbanError>((None, false));
-                    }
-                    let goal = decode_goal(value)?;
-                    require_owner(&goal, owner)?;
-                    let value = serde_json::to_value(goal)
-                        .map_err(|e| KanbanError::Internal(e.to_string()))?;
-                    Ok((Some(value), true))
-                })?;
+            let changed =
+                self.store
+                    .update_value_atomic(GOAL_ENTITY, &row.attribute, |value| {
+                        if value.get("schema_version").is_some() {
+                            let mut goal = decode_goal(value)?;
+                            require_owner(&goal, owner)?;
+                            if matches!(
+                                goal.forecast.as_ref().map(|forecast| &forecast.resolver),
+                                Some(GoalForecastResolver::MachineEvidence { .. })
+                            ) && goal.forecast_status != ForecastStatus::UnsupportedResolver
+                            {
+                                goal.forecast_status = ForecastStatus::UnsupportedResolver;
+                                publish(&mut goal, self.goal_now())?;
+                                return Ok((
+                                    Some(serde_json::to_value(goal).map_err(|error| {
+                                        KanbanError::Internal(error.to_string())
+                                    })?),
+                                    true,
+                                ));
+                            }
+                            return Ok::<_, KanbanError>((None, false));
+                        }
+                        let goal = decode_goal(value)?;
+                        require_owner(&goal, owner)?;
+                        let value = serde_json::to_value(goal)
+                            .map_err(|e| KanbanError::Internal(e.to_string()))?;
+                        Ok((Some(value), true))
+                    })?;
             if changed == Some(true) {
                 count += 1;
             }
@@ -507,7 +543,7 @@ impl KanbanService {
                 }
                 let changed = change(&mut goal)?;
                 if changed && project {
-                    publish(&mut goal)?;
+                    publish(&mut goal, self.goal_now())?;
                 }
                 let value = if changed {
                     Some(
@@ -580,13 +616,19 @@ impl KanbanService {
             if input.expected_spec_digest != goal.spec_digest {
                 return Err(invalid("closure specification digest mismatch"));
             }
-            if input.occurred_at < goal.created_at || input.occurred_at > Utc::now() {
+            if input.occurred_at < goal.created_at || input.occurred_at > self.goal_now() {
                 return Err(invalid(
                     "closure occurred_at must be between declaration and receipt",
                 ));
             }
             if input.evidence_manifest.len() > GOAL_ARTIFACT_MAX_FILES {
                 return Err(invalid("evidence manifest exceeds 16-artifact bound"));
+            }
+            if let Some(approval) = &input.machine_artifact_access {
+                let forecast = goal.forecast.as_ref().ok_or_else(|| invalid("machine artifact approval requires a forecast"))?;
+                if !matches!(forecast.resolver, GoalForecastResolver::MachineArtifactDigest { .. }) || approval.spec_digest != goal.spec_digest || &approval.forecast != forecast {
+                    return Err(invalid("native machine artifact consent must match the exact frozen specification and resolver"));
+                }
             }
             let mut ids = HashSet::new();
             for evidence in &input.evidence_manifest {
@@ -607,7 +649,7 @@ impl KanbanService {
             goal.closure = Some(GoalClosure {
                 input,
                 payload_digest,
-                recorded_at: Utc::now(),
+                recorded_at: self.goal_now(),
             });
             goal.assessment_pending = true;
             Ok(true)
@@ -630,11 +672,11 @@ impl KanbanService {
             nonempty(&correction.event_id, "correction event_id")?;
             nonempty(&correction.reason, "correction reason")?;
             validate_source(&correction.source)?;
-            if correction.event_id == closure.input.event_id || correction.supersedes_event_id != *previous.0 || correction.occurred_at < previous.1 || correction.occurred_at > Utc::now() || correction.expected_spec_digest != goal.spec_digest {
+            if correction.event_id == closure.input.event_id || correction.supersedes_event_id != *previous.0 || correction.occurred_at < previous.1 || correction.occurred_at > self.goal_now() || correction.expected_spec_digest != goal.spec_digest {
                 return Err(invalid("correction must reference latest outcome and original specification with valid source time"));
             }
             goal.human_corrections.push(correction);
-            resolve_forecast(goal)?;
+            resolve_forecast(goal, self.goal_now())?;
             Ok(true)
         })
     }
@@ -655,11 +697,56 @@ impl KanbanService {
             })
             .collect())
     }
+    /// Trusted ingress for the ONE production digest source adapter. Never a
+    /// worker MCP route; no caller-supplied outcome boolean is accepted.
+    #[doc(hidden)]
+    pub fn goal_observe_machine_artifact_digest(
+        &self,
+        id: GoalID,
+        owner: WebID,
+        receipt: MachineArtifactDigestReceipt,
+    ) -> Result<Goal, KanbanError> {
+        self.transition_goal(id, owner, true, |goal| {
+            if let Some(existing) = &goal.machine_artifact_observation {
+                return if existing == &receipt { Ok(false) } else { Err(invalid("conflicting immutable machine artifact observation replay")) };
+            }
+            let forecast = goal.forecast.as_ref().ok_or_else(|| invalid("digest observation requires a declared forecast"))?;
+            let GoalForecastResolver::MachineArtifactDigest { locator, .. } = &forecast.resolver else { return Err(invalid("digest observation requires the machine_artifact_digest source capability")); };
+            let closure = goal.closure.as_ref().ok_or_else(|| invalid("digest observation requires native closure"))?;
+            if receipt.event_id != format!("{}:machine-artifact-digest:v1", goal.id) || receipt.spec_digest != goal.spec_digest || &receipt.locator != locator {
+                return Err(invalid("digest receipt does not match the exact frozen source, specification and event"));
+            }
+            if receipt.observed_at < forecast.horizon || receipt.observed_at < closure.input.occurred_at || receipt.observed_at > self.goal_now() {
+                return Err(invalid("digest observation is premature or future-dated"));
+            }
+            if receipt.reliability != MACHINE_ARTIFACT_DIGEST_RELIABILITY || receipt.limitation != MACHINE_ARTIFACT_DIGEST_LIMITATION {
+                return Err(invalid("digest receipt must retain file-byte-only authority limits"));
+            }
+            match &receipt.read {
+                MachineArtifactDigestRead::Observed { canonical_path, actual_sha256, byte_count } => {
+                    let approval = closure.input.machine_artifact_access.as_ref().ok_or_else(|| invalid("digest read requires separate native forecast-source consent"))?;
+                    if approval.spec_digest != goal.spec_digest || &approval.forecast != forecast { return Err(invalid("digest read consent does not match the frozen resolver")); }
+                    let path = local_artifact_path(locator).map_err(invalid)?;
+                    if path.as_os_str() != std::path::Path::new(canonical_path).as_os_str() || *byte_count > GOAL_ARTIFACT_MAX_FILE_BYTES as u64 { return Err(invalid("digest read source or byte bound mismatch")); }
+                    validate_digest_hex(actual_sha256)?;
+                }
+                MachineArtifactDigestRead::Unavailable { reason, observed_sha256, bytes_read } => {
+                    nonempty(reason, "digest read limitation")?;
+                    if *bytes_read > (GOAL_ARTIFACT_MAX_FILE_BYTES + 1) as u64 { return Err(invalid("failed digest read exceeded the bounded source capability")); }
+                    if let Some(hash) = observed_sha256 { validate_digest_hex(hash)?; }
+                }
+            }
+            goal.machine_artifact_observation = Some(receipt);
+            resolve_forecast(goal, self.goal_now())?;
+            Ok(true)
+        })
+    }
+
     /// Reconcile deadlines without a model turn; elapsed is not a false outcome.
     pub fn goal_refresh_forecast(&self, id: GoalID, owner: WebID) -> Result<Goal, KanbanError> {
         self.transition_goal(id, owner, true, |goal| {
             let old = goal.forecast_status.clone();
-            resolve_forecast(goal)?;
+            resolve_forecast(goal, self.goal_now())?;
             Ok(old != goal.forecast_status)
         })
     }
@@ -690,7 +777,7 @@ impl KanbanService {
             nonempty(&lease.assessor_id, "assessor_id")?;
             nonempty(&lease.model_version, "model_version")?;
             nonempty(&lease.tool_version, "tool_version")?;
-            if lease.lease_until <= Utc::now() {
+            if lease.lease_until <= self.goal_now() {
                 return Err(invalid("assessment lease must expire in the future"));
             }
             if let Some(active) = goal
@@ -698,7 +785,7 @@ impl KanbanService {
                 .last_mut()
                 .filter(|a| a.completion.is_none() && a.failure.is_none())
             {
-                if active.lease.lease_until > Utc::now() {
+                if active.lease.lease_until > self.goal_now() {
                     return Err(invalid("assessment lease is already held"));
                 }
                 active.failure = Some(AssessmentFailure {
@@ -711,7 +798,7 @@ impl KanbanService {
                 .closure
                 .as_ref()
                 .ok_or_else(|| invalid("assessment requires closure"))?;
-            validate_artifacts(&closure.input, &artifacts)?;
+            validate_artifacts(&closure.input, &artifacts, self.goal_now())?;
             let input = GoalAssessmentInput {
                 goal_id: id,
                 spec_digest: goal.spec_digest.clone(),
@@ -733,11 +820,11 @@ impl KanbanService {
                 lease,
                 input,
                 input_digest,
-                started_at: Utc::now(),
+                started_at: self.goal_now(),
                 completion: None,
                 failure: None,
             });
-            resolve_forecast(goal)?;
+            resolve_forecast(goal, self.goal_now())?;
             Ok(true)
         })?;
         goal.assessments
@@ -767,7 +854,7 @@ impl KanbanService {
                 };
             }
             if attempt.failure.is_some()
-                || attempt.lease.lease_until <= Utc::now()
+                || attempt.lease.lease_until <= self.goal_now()
                 || attempt.input_digest != completion.input_digest
             {
                 return Err(invalid(
@@ -808,7 +895,7 @@ impl KanbanService {
                 .ok_or_else(|| invalid("assessment disappeared"))?;
             attempt.completion = Some(completion);
             goal.assessment_pending = false;
-            resolve_forecast(goal)?;
+            resolve_forecast(goal, self.goal_now())?;
             Ok(true)
         })
     }
@@ -837,80 +924,7 @@ impl KanbanService {
             nonempty(&failure.reason, "assessment failure reason")?;
             attempt.failure = Some(failure);
             goal.assessment_pending = true;
-            resolve_forecast(goal)?;
-            Ok(true)
-        })
-    }
-
-    pub fn goal_record_forecast_observation(
-        &self,
-        id: GoalID,
-        owner: WebID,
-        observation: ForecastObservation,
-    ) -> Result<Goal, KanbanError> {
-        self.transition_goal(id, owner, true, |goal| {
-            if let Some(existing) = goal
-                .observations
-                .iter()
-                .find(|o| o.event_id == observation.event_id)
-            {
-                return if existing == &observation {
-                    Ok(false)
-                } else {
-                    Err(invalid("conflicting forecast observation replay"))
-                };
-            }
-            let forecast = goal
-                .forecast
-                .as_ref()
-                .ok_or_else(|| invalid("no declared forecast"))?;
-            let GoalForecastResolver::MachineEvidence { source, oracle } = &forecast.resolver
-            else {
-                return Err(invalid(
-                    "human acceptance resolver cannot use machine observations",
-                ));
-            };
-            if source != &observation.source || oracle != &observation.oracle {
-                return Err(invalid("observation does not match frozen resolver"));
-            }
-            nonempty(&observation.event_id, "observation event_id")?;
-            nonempty(&observation.reason, "observation reason")?;
-            if observation.occurred_at < forecast.horizon
-                || observation.occurred_at > forecast.resolution_deadline
-                || observation.occurred_at > Utc::now()
-            {
-                return Err(invalid(
-                    "observation outside declared horizon/deadline or in future",
-                ));
-            }
-            if observation.evidence_ids.is_empty() {
-                return Err(invalid("machine observation requires actual evidence"));
-            }
-            validate_refs(&observation.evidence_ids, &evidence_ids(goal))?;
-            for evidence in goal
-                .closure
-                .iter()
-                .flat_map(|c| &c.input.evidence_manifest)
-                .filter(|e| observation.evidence_ids.contains(&e.id))
-            {
-                if evidence.source != *source || evidence.oracle != *oracle {
-                    return Err(invalid("evidence does not match frozen source/oracle"));
-                }
-            }
-            if let Some(previous) = &observation.correction_of {
-                if !goal.observations.iter().any(|o| &o.event_id == previous)
-                    || goal
-                        .observations
-                        .iter()
-                        .any(|o| o.correction_of.as_ref() == Some(previous))
-                {
-                    return Err(invalid(
-                        "correction must supersede one existing unsuperseded observation",
-                    ));
-                }
-            }
-            goal.observations.push(observation);
-            resolve_forecast(goal)?;
+            resolve_forecast(goal, self.goal_now())?;
             Ok(true)
         })
     }

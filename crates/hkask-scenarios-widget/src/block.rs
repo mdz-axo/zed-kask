@@ -89,7 +89,13 @@ pub struct CalibrationSummary {
     #[serde(default)]
     pub overall_brier: Option<f64>,
     #[serde(default)]
-    pub overconfidence_score: Option<f64>,
+    pub signed_probability_error: Option<f64>,
+    #[serde(default)]
+    pub signed_probability_error_sample_count: Option<usize>,
+    #[serde(default)]
+    pub signed_probability_error_qualifying_bins: Option<Vec<String>>,
+    #[serde(default)]
+    pub signed_probability_error_bin_min_count: Option<usize>,
     #[serde(default)]
     pub evidence_status: Option<String>,
 }
@@ -155,7 +161,10 @@ mod tests {
             },
             "calibration": {
                 "total_forecasts": 5, "resolved_forecasts": 2,
-                "overall_brier": 0.15, "overconfidence_score": 0.03,
+                "overall_brier": 0.15, "signed_probability_error": null,
+                "signed_probability_error_sample_count": 0,
+                "signed_probability_error_qualifying_bins": [],
+                "signed_probability_error_bin_min_count": 5,
                 "evidence_status": "insufficient"
             },
             "event_tree": {

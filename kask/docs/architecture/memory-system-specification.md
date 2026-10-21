@@ -475,9 +475,21 @@ Memory is a rebuildable projection, not the only surviving structured record.
 
 The bridge `goals.rs` startup/timer drainer leases assessments, records failures,
 refreshes optional forecast status and publishes snapshots with event ID/revision/
-digest receipt validation. A fresh blinded assessor sees spec and evidence
-manifest only; currently it has no evidence-fetch capability and must return
-unknown. Machine checks, human labels, worker claims and findings stay distinct.
+digest receipt validation. A fresh blinded assessor sees the frozen spec, manifest
+and native-approved host-read snapshots, not human/worker labels or p/score.
+`goals/artifacts.rs` captures up to 16 nofollow UTF-8 regular local files, at most
+64 KiB content each and 256 KiB aggregate reads including probes per attempt.
+Native consent discloses paths/hashes, configured assessor sharing including retries,
+canonical attempt/recall retention and semantic-indexer projection sharing. Exact
+contents and read/failure receipts freeze before inference. No fetched contents
+means unknown without a model call; support/contradiction cite fetched IDs. Alleged
+test reports remain untrusted bytes, not authenticated execution evidence.
+The optional separately consented `MachineArtifactDigest` forecast reads its own
+frozen source at the first in-window observation: equality true, successful mismatch
+false, read failure unknown/unscored. It never reuses assessment snapshots. Resolver-
+only contents are discarded; only the typed receipt is retained/indexed. Old
+arbitrary `MachineEvidence` remains unsupported historical data. Machine checks,
+human labels, worker claims and findings stay distinct.
 
 Optional forecast arithmetic runs only for a valid frozen declaration and its
 resolver after an assessment attempt. Unknown/disputed stays explicit; corrections

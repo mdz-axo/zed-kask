@@ -482,6 +482,32 @@ impl EmbeddingStore {
         Ok(!rows.is_empty())
     }
 
+    /// True only when the exact passage has a vector-index row from the
+    /// specified producer model and the freshly generated vector. Comparing
+    /// the producer output also detects a retargeted alias echoed as actual.
+    /// Callers resolving aliases must pass the
+    /// provider-confirmed identity, not assume equal widths or alias names
+    /// establish semantic compatibility.
+    pub fn contains_entity_passage_with_model(
+        &self,
+        entity_ref: &str,
+        passage_text: &str,
+        producer_model: &str,
+        fresh_vector: &[f32],
+    ) -> Result<bool, EmbeddingError> {
+        self.validate_dim(fresh_vector)?;
+        let rows = self.query_driver(
+            "SELECT 1 FROM embeddings e JOIN vec_embeddings v ON v.rowid = e.rowid WHERE e.entity_ref = ?1 AND e.passage_text = ?2 AND e.model = ?3 AND e.vector = ?4 LIMIT 1",
+            &[
+                DbValue::Text(entity_ref.to_string()),
+                DbValue::Text(passage_text.to_string()),
+                DbValue::Text(producer_model.to_string()),
+                DbValue::Blob(Self::encode_vector(fresh_vector)),
+            ],
+        )?;
+        Ok(!rows.is_empty())
+    }
+
     /// KNN search using sqlite-vec MATCH operator, gated on model identity.
     ///
     /// Returns up to `limit` nearest embeddings by cosine distance whose

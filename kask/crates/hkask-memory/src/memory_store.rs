@@ -791,6 +791,26 @@ impl MemoryStore {
             .contains_entity_passage(entity_ref, passage_text)?)
     }
 
+    /// Check exact-passage semantic eligibility for a resolved active producer.
+    /// Unlike the model-agnostic existence check, this also requires the vector
+    /// index row, producer model and freshly generated vector to match. An
+    /// alias can retarget even when echoed as actual: stale vectors must be
+    /// repaired, not re-labelled.
+    pub fn has_embedding_for_passage_with_model(
+        &self,
+        entity_ref: &str,
+        passage_text: &str,
+        producer_model: &str,
+        fresh_vector: &[f32],
+    ) -> Result<bool, MemoryStoreError> {
+        Ok(self.embedding.contains_entity_passage_with_model(
+            entity_ref,
+            passage_text,
+            producer_model,
+            fresh_vector,
+        )?)
+    }
+
     /// Delete one exact embedding ID without touching sibling passages that
     /// share the same entity_ref.
     pub fn delete_embedding_by_id(&self, id: &str) -> Result<(), MemoryStoreError> {
