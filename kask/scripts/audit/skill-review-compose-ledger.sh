@@ -51,7 +51,7 @@ pragmatic-cybernetics|aligned|clean|clean|Beer/Ashby; PC-1/PC-2 D
 pragmatic-semantics|aligned|clean|repaired|Modifier prose in two templates stated FIBO +0.10 / SUMO +0.05 against the PS-1 gate's +0.05 / +0.03. Prose bound to the gate by a derived pin
 product-manager|aligned|clean|clean|PMB-1/PMB-2 D
 program-manager|aligned|clean|clean|PM-1 D; dod-checklist to closeout-report handoff repaired earlier (3b3688a8ae) and verified live
-prompt-enhance|aligned|clean|clean|PE-2 derives blocking_defects from structured findings (verified four branches)
+prompt-enhance|aligned|clean|clean|2026-10-18 receipt: PE-2 derived blocking_defects from structured findings (verified four branches). Current replacement: PE-State with raw-shape preflight and scalar selected_attempt_id into the original raw log; this annotation is not a new measurement
 provider-audit|aligned|clean|clean|PA-1/PA-2 D
 refactor-architecture|aligned|clean|clean|RA-1/RA-2 D; Fowler strangler verified present
 region-routing|aligned|clean|clean|RR-1 D
