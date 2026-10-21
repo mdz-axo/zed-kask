@@ -5,295 +5,131 @@ description: "Socratic interrogation skill. Tests deep understanding through esc
 
 # Grill Me
 
-Socratic interrogation skill. Tests deep understanding through escalating difficulty (Recall → Mechanism → Rationale → Edge Cases → Synthesis). Probes gaps, challenges assumptions, produces gap analysis.
-
-
 ## Reference model
 
-Socratic questioning (Paul & Elder, *The Art of Socratic Questioning*, 2006 → `onto_anchor` `derived:socratic_method`), with a local 5-level adaptation (Recall → Mechanism → Rationale → Edge Cases → Synthesis) of Bloom's taxonomy (Bloom et al., 1956; Krathwohl, 2002 `doi:10.1207/s15430421tip4104_2` → `onto_anchor` `derived:bloom_taxonomy`) and adaptive difficulty scaffolding across the Zone of Proximal Development (Vygotsky, 1978 → `onto_anchor` `derived:zone_of_proximal_development`). The five-level ladder is not the revised taxonomy's six categories. The thresholds, round bound and retirement policy below are project rules, not claims from those publications. Existing corpus carrier retrieval does not establish primary-book inclusion or complete method fidelity.
+Paul & Elder, *The Art of Socratic Questioning* (2006), anchors questioning (`derived:socratic_method`). The five-level ladder is a local adaptation of Bloom (1956) / Krathwohl (2002, doi:10.1207/s15430421tip4104_2), not the revised taxonomy's six categories. Vygotsky (1978) anchors adaptive scaffolding (`derived:zone_of_proximal_development`). The 80%/40% thresholds, three-failure retirement and five-batch bound are project rules, not published-model clauses. Carrier retrieval is not proof of primary-book inclusion or complete fidelity.
 
-Initial condition: a topic, an empty question/answer/grading ledger and a calibration round. Target condition: level-5 completion or round 5, then an assessment grounded in actual answers, with unanswered areas explicitly Unassessed. Failed identity/grade gates stop admission; repair the named malformed batch once and recheck, then report the gap rather than fabricate evidence. The five-round bound cannot reset on a repair or regrade.
+**Initial condition:** topic, empty question bank and answer ledger, round/level 1, calibrate mode. **Target condition:** level-5 completion or batch 5, then an evidence-linked assessment; unanswered areas are Unassessed. On invalid data repair once and recheck, then report the gap. A repair/regrade never resets the bound.
 
 ## D/P labelling
 
-Question generation and answer grading (Solid/Partial/Gap) are P — the round
-render's judgment, critiqued by the learner's next answer and the operator.
-Identity assignment, grade-batch admission, latest-grade joins, distinct failed-answer counts, retirement, feedback and final evidence-reference checks are D: the authored `lisp_eval` forms below own them. Question drafting, semantic grading, initial calibrated level and final synthesis remain P. Rendering does not execute the prompt. The caller executes each rendered phase, validates its output, then invokes the next phase; no model-emitted count or positional join supplies a gate.
+Drafting, grading and recommendations are P, open to learner/operator challenge. Ledger updates, counts, feedback, IDs and evidence-reference checks are D. Use the authored jq filters below through `terminal` (`jq -ce` with JSON on stdin); jq is already a repository tool. No custom recursive helpers, event store or Rust controller. Keep the transcript in the conversation or name its deliberately retained artifact; no extra persistence service is required.
 
 ## When to Use
 
-- When testing deep understanding of a topic through Socratic interrogation with escalating difficulty (Recall → Mechanism → Rationale → Edge Cases → Synthesis).
-- When calibrating a user's baseline knowledge on a specific topic.
-- When dynamically adapting question difficulty based on answer quality ratios.
-- When probing for knowledge gaps and challenging assumptions during an oral examination.
-- When synthesizing a final gap analysis with per-area ratings and prioritized study recommendations.
+- Test existing understanding, calibrate a baseline, or expose assumptions through progressively harder questions.
 
 ## When NOT to Use
 
-- Teaching new material — grill-me tests understanding that exists; it does not deliver a lesson.
-- Reviewing a code change — use `code-review`.
-- Adversarial self-review of one's own reasoning — use `falsifiability`'s eliminative inference (the admissibility gate and the discriminating tests challenge your own hypotheses); grill-me interrogates a learner about a topic, decoupled from authorship.
+- Teaching new material; use another method. Code review belongs to `code-review`; self-adversarial reasoning to `falsifiability`.
 
 ## Instructions
 
-### 1. Own the raw records (D)
+1. Keep `question_bank: [{id,question,level,area}]` and one `answers: [{id,question_id,text,round,rating,failed,note}]` ledger. Append actual learner answers with `rating:null, failed:false, note:null`; assign each distinct submission the next answer ID (`length + 1` deterministically). Regrading reuses that ID. Never join answers by position. `failed` means this answer has ever received Gap: later corrections change its latest rating, not its historical contribution (operator ruling 2026-10-20, proposal3568842d).
+2. Render `grill-me/grill-me-round` in ask mode, execute drafting, and run **Question delivery** before showing the resulting records/explanations. Retain each newly assigned question once; retries reuse the original record. Wait until the batch is answered or explicitly skipped. A skip/hint is not an answer.
+3. For grade mode, pass the requested `answer_ids`: normally the update's `pending_ids`, or existing IDs explicitly requested for regrading. The renderer selects rows from `feedback.answers`; do not build another answer-record copy. Execute grading. Pass those `answer_ids` and returned `evaluations` to **Feedback/update**. A failed command admits nothing; otherwise replace the ledger with its returned `answers`, not an appended grading history.
+4. Use returned level/direction before asking again. Calibration requires actual graded answers and a proposed level 1–5; it seeds the first interrogate level without an extra escalation. Preserve that initial `calibrated_level` for final comparison. Then use interrogate mode. Complete/stop → assess; await_grades → grade; otherwise advance the batch, at most five including calibration. Regrades alone neither advance the batch nor ask questions. Zero answers holds, but batch 5 still stops.
+5. Render `grill-me/grill-me-assess` on the exact bank/ledger and initial calibrated level. Execute synthesis, then run **Final evidence** on its summary. This checks references/coverage, not semantic wisdom. Deliver the assessment and prioritized recommendations, with unresolved limitations visible.
 
-Keep one session ledger; do not create a Rust controller or a parallel persistent store:
-
-- `question_bank`: unique `{id, question, level, area}` rows. GM-1 assigns integer IDs to new questions from round/slot; a retry retains its original ID and text. Append only newly assigned IDs, not retry copies.
-- `answers`: unique `{id, question_id, text, round}` rows from actual learner replies. Allocate the next integer answer ID with `lisp_eval` `(+ (length answers) 1)`; append once per distinct submitted answer, never once per grading. A new submission, even identical text, is a distinct answer; a regrade reuses its existing ID. Never attach a reply by array position or infer an answer to a different question.
-- `grade_events`: append accepted `{answer_id, rating, note}` rows in execution order. Ratings are exactly `Solid`, `Partial`, `Gap`. Regrading appends an event for the same answer ID. The latest event supplies current feedback/assessment; distinct answers with any accepted Gap event supply cumulative failed-attempt history. This retains the existing monotonic failure-history policy: a later grade correction does not erase a recorded failed attempt, but cannot add a second one for that answer (operator approval 2026-10-20, proposal `3568842d`).
-
-Start with all three arrays empty, `round=1`, `level=1`, `mode="calibrate"`. Track running semantic `assessment` separately; it is not an authoritative counter. Keep the calibration's actual graded output separately as `calibration`, null until answers have been graded. Retain these records as the examination transcript; list its artifact location if persisted, otherwise state that it remains in the conversation.
-
-### 2. Ask → wait → grade → gate (D/P)
-
-1. Before asking, run GM-STATE below. If any actual current answer is ungraded, grade it first. Do not generate another batch while awaiting learner replies; advance a round only after the current batch has been answered or explicitly skipped by the learner. Skip is not an answer or a grade.
-2. Render `grill-me/grill-me-round`, `phase="ask"`, and execute its question-drafting instructions. GM-1 validates/stamps its `question_drafts` and reconciles `retired_explanations` to the computed retired IDs; display only the admitted question records and explanations. It admits 2–3 questions, preserves legitimate retries, and refuses retired IDs. A new paraphrase of a retired question is also prohibited; detecting that semantic equivalence remains P, not a claim made by the ID check.
-3. Wait for actual answers, append their identified rows, and rerun GM-STATE. Select the requested answer records by their IDs from its `answer_records`, not by reconstructing their text. Normally grade `ungraded_answer_ids`; an explicit regrade request selects existing IDs instead. Never allocate another answer ID for a regrade.
-4. Render the same template with `phase="grade"` and only those `answers_to_grade`. Execute grading, then run GM-G with their exact `answer_ids` and the returned `evaluations`. False or a tool error blocks the batch; do not append partial/malformed grades. For calibration, accept `calibrated_level` only from this answered grade phase and seed the first interrogate level from it. In interrogate mode the caller supplies null to GM-G; the grader does not echo that constant. Ask output contains question drafts and, when needed, semantic retired-question explanations, not copied assessment/empty grading fields; the caller retains inactive-phase state directly. Ask phases cannot calibrate from unasked/unanswered questions.
-5. Append accepted evaluations to `grade_events`, update the semantic assessment, then run GM-STATE. In interrogate mode use its returned `next_level` and `direction`, not a model-typed ratio. After the calibration batch, seed the first interrogate level with `calibrated_level` without another escalation; still honor GM-STATE's pending-grade and stop checks. On `await_grades`, return to step 4. On `stop`, assess; otherwise advance the round (at most five question batches total), use mode `interrogate`, and return to step 1. Calibration consumes the first batch. A zero-answer batch holds; at round 5 it still ends the examination. A regrade never resets/increments the round or generates questions on its own.
-6. At completion or a learner stop, render `grill-me/grill-me-assess` with GM-STATE's joined `answer_records`, the question bank, calibration and running assessment. Execute synthesis and validate its raw `summary` through GM-2. Keep recommendations and grading semantic; GM-2 checks vocabulary, area coverage and actual evidence references, not whether a judgment is wise. Empty/unanswered areas must be `Unassessed`, not `Gap`.
-
-Copyable `render_template.context` shapes (JSON-encode the object as the outer tool's context string; substitute complete recorded values, never stringify the inner arrays):
-
-`grill-me/grill-me-round` — ask or grade uses the same required fields; unused arrays remain explicit `[]`:
+Copyable round context (JSON-encode the outer `render_template.context`; keep inner arrays structured):
 ```json
-{
-  "topic": "<learner topic>", "phase": "ask", "mode": "calibrate",
-  "current_level": 1, "round_number": 1,
-  "question_bank": [], "answers_to_grade": [], "assessment_so_far": {},
-  "gate_result": {"direction": "hold", "retired_ids": [], "stop": false}
-}
+{"topic":"<topic>","phase":"ask","mode":"calibrate","current_level":1,"round_number":1,"question_bank":[],"answer_ids":[],"feedback":{"answers":[],"direction":"hold","retired_ids":[],"stop":false}}
 ```
-For grade, set `phase="grade"`, preserve topic/mode/level/round/bank/assessment and replace `answers_to_grade` with the exact selected GM-STATE records. For subsequent ask, pass the actual GM-STATE result and its level/direction; never supply a fabricated pass object.
-
-`grill-me/grill-me-assess`:
+For grade, change phase and pass the exact selected IDs with actual feedback. For subsequent ask, use that feedback and its level with `answer_ids:[]`. Do not maintain a second running assessment. Final context:
 ```json
-{
-  "topic": "<learner topic>", "question_bank": [],
-  "answer_records": [], "assessment": {}, "calibration": null
-}
+{"topic":"<topic>","question_bank":[],"answers":[],"calibrated_level":null}
 ```
 
-### GM-G — admit one complete semantic grading batch (D)
+### Feedback/update
 
-Env: `{"answer_ids": [1,2], "evaluations": [{"answer_id":2,"rating":"Solid","note":"..."},{"answer_id":1,"rating":"Gap","note":"..."}], "mode":"interrogate", "calibrated_level":null}`. IDs come from the actual selected answer records. Out-of-order grading is valid; missing, duplicate, extra or invented IDs are not.
-
-```lisp
-(begin
-  (define gm-grade-batch (lambda (ids rows)
-    (if (is_null rows) (is_null ids)
-      (let ((row (car rows)) (id (assoc! "answer_id" (car rows))))
-        (and (numberp id) (eq (- id id) 0) (member id ids)
-          (member (assoc! "rating" row) (list "Solid" "Partial" "Gap"))
-          (stringp (assoc! "note" row))
-          (gm-grade-batch (remove-id ids id) (cdr rows)))))))
-  (define remove-id (lambda (ids id)
-    (if (is_null ids) (list)
-      (if (= (car ids) id) (cdr ids) (cons (car ids) (remove-id (cdr ids) id))))))
-  (define ids-ok (lambda (ids seen)
-    (if (is_null ids) true
-      (and (numberp (car ids)) (eq (- (car ids) (car ids)) 0) (> (car ids) 0)
-        (not (member (car ids) seen)) (ids-ok (cdr ids) (cons (car ids) seen))))))
-  (and (listp answer_ids) (listp evaluations) (> (length answer_ids) 0)
-    (ids-ok answer_ids (list)) (= (length answer_ids) (length evaluations))
-    (gm-grade-batch answer_ids evaluations)
-    (cond ((string= mode "interrogate") (is_null calibrated_level))
-      ((string= mode "calibrate")
-        (and (numberp calibrated_level) (eq (- calibrated_level calibrated_level) 0)
-          (>= calibrated_level 1) (<= calibrated_level 5)))
-      (true false))))
+Input shape (substitute current records; empty IDs/evaluations queries without regrading):
+```json
+{"question_bank":[],"answers":[],"answer_ids":[],"evaluations":[],"level":1,"round":1,"mode":"calibrate","calibrated_level":null}
+```
+Execute this filter with `jq -ce` on that JSON. Only its output replaces state. It rejects missing/duplicate/unknown grade identities; current grades are overwritten in place while `failed` can only become true.
+```jq
+. as $s | [.question_bank[].id] as $qids | [.answers[].id] as $ids
+| [.evaluations[].answer_id] as $gids
+| if (([.level,.round] | all(. >= 1 and . <= 5 and floor == .))
+  and (.mode == "calibrate" or .mode == "interrogate")
+  and ($qids|unique|length) == ($qids|length) and ($ids|unique|length) == ($ids|length)
+  and ($gids|unique|length) == ($gids|length) and ($gids|sort) == (.answer_ids|sort)
+  and all(($qids+$ids+$gids)[]; type == "number" and floor == . and . > 0)
+  and all(.answers[]; . as $a | ($qids|index($a.question_id)) != null
+    and (.text|type) == "string" and (.text|length) > 0
+    and .round >= 1 and .round <= $s.round and (.round|floor) == .round
+    and (.failed|type) == "boolean" and ([null,"Solid","Partial","Gap"]|index($a.rating)) != null
+    and (.rating != "Gap" or .failed))
+  and all(.evaluations[]; . as $g | ($ids|index($g.answer_id)) != null
+    and (["Solid","Partial","Gap"]|index($g.rating)) != null and (.note|type) == "string")
+  and ((.answer_ids|length) == 0 or (if .mode == "calibrate" then
+    .calibrated_level >= 1 and .calibrated_level <= 5 and (.calibrated_level|floor) == .calibrated_level
+    else .calibrated_level == null end))) then . else error("invalid session or grade batch") end
+| INDEX(.evaluations[]; .answer_id|tostring) as $grades
+| (.answers | map($grades[(.id|tostring)] as $g | if $g == null then . else
+    . + {rating:$g.rating, note:$g.note, failed:(.failed or $g.rating == "Gap")} end)) as $rows
+| (.question_bank | map(.id as $q | [$q, ([$rows[]|select(.question_id == $q and .failed)]|length)])) as $counts
+| [$rows[]|select(.round == $s.round)] as $batch
+| [$batch[]|select(.rating == null)|.id] as $pending
+| ($batch|length) as $n | ([$batch[]|select(.rating == "Solid")]|length) as $solid
+| (if ($pending|length) > 0 then "await_grades" elif $n == 0 then "hold"
+   elif .round >= 5 then "complete" elif .mode == "calibrate" and (.answer_ids|length) > 0 then "hold"
+   elif $solid*5 >= $n*4 then (if .level == 5 then "complete" else "escalate" end)
+   elif $solid*5 >= $n*2 then "hold" else "reprobe" end) as $direction
+| {answers:$rows, attempt_counts:$counts, retired_ids:[$counts[]|select(.[1] >= 3)|.[0]],
+   pending_ids:$pending, answered_count:$n, solid_count:$solid, direction:$direction,
+   next_level:(if .mode == "calibrate" and (.answer_ids|length) > 0 then .calibrated_level
+     elif $direction == "escalate" then .level+1 else .level end),
+   stop:(.round >= 5 or $direction == "complete")}
 ```
 
-### GM-STATE — derive feedback and retirement from raw records (D)
+### Question delivery
 
-Env is exactly `{"question_bank":[], "answers":[], "grade_events":[], "level":1, "round":1}` with the current ledger substituted. Unknown/duplicate IDs, invalid grades or out-of-bound levels/rounds return `invalid_state`; missing fields/type errors are tool refusals. No such result permits progression. Objects/arrays share Lisp's list representation: these checks are not full JSON Schema validation.
-
-```lisp
-(begin
-  (define integer-between (lambda (x lo hi)
-    (and (numberp x) (eq (- x x) 0) (>= x lo) (<= x hi))))
-  (define text-ok (lambda (x) (and (stringp x) (> (length x) 0))))
-  (define find-id (lambda (rows id)
-    (if (is_null rows) nil (if (= (assoc! "id" (car rows)) id) (car rows) (find-id (cdr rows) id)))))
-  (define unique-ids (lambda (rows seen)
-    (if (is_null rows) true
-      (let ((id (assoc! "id" (car rows))))
-        (and (integer-between id 1 9223372036854775807) (not (member id seen))
-          (unique-ids (cdr rows) (cons id seen)))))))
-  (define questions-ok (lambda (rows)
-    (if (is_null rows) true
-      (and (text-ok (assoc! "question" (car rows))) (text-ok (assoc! "area" (car rows)))
-        (integer-between (assoc! "level" (car rows)) 1 5) (questions-ok (cdr rows))))))
-  (define answers-ok (lambda (rows)
-    (if (is_null rows) true
-      (and (integer-between (assoc! "question_id" (car rows)) 1 9223372036854775807)
-        (not (is_null (find-id question_bank (assoc! "question_id" (car rows)))))
-        (text-ok (assoc! "text" (car rows)))
-        (integer-between (assoc! "round" (car rows)) 1 round) (answers-ok (cdr rows))))))
-  (define events-ok (lambda (rows)
-    (if (is_null rows) true
-      (and (integer-between (assoc! "answer_id" (car rows)) 1 9223372036854775807)
-        (not (is_null (find-id answers (assoc! "answer_id" (car rows)))))
-        (member (assoc! "rating" (car rows)) (list "Solid" "Partial" "Gap"))
-        (stringp (assoc! "note" (car rows))) (events-ok (cdr rows))))))
-  (define latest (lambda (rows id)
-    (if (is_null rows) nil
-      (let ((later (latest (cdr rows) id)))
-        (if (not (is_null later)) later
-          (if (= (assoc! "answer_id" (car rows)) id) (car rows) nil))))))
-  (define failed (lambda (rows id)
-    (if (is_null rows) false
-      (or (and (= (assoc! "answer_id" (car rows)) id) (string= (assoc! "rating" (car rows)) "Gap"))
-        (failed (cdr rows) id)))))
-  (define failures (lambda (rows qid)
-    (if (is_null rows) 0
-      (+ (if (and (= (assoc! "question_id" (car rows)) qid) (failed grade_events (assoc! "id" (car rows)))) 1 0)
-        (failures (cdr rows) qid)))))
-  (define attempts (lambda (rows)
-    (if (is_null rows) (list)
-      (cons (list (assoc! "id" (car rows)) (failures answers (assoc! "id" (car rows)))) (attempts (cdr rows))))))
-  (define retired (lambda (rows)
-    (if (is_null rows) (list)
-      (if (>= (nth 1 (car rows)) 3) (cons (car (car rows)) (retired (cdr rows))) (retired (cdr rows))))))
-  (define records (lambda (rows)
-    (if (is_null rows) (list)
-      (let ((a (car rows)) (g (latest grade_events (assoc! "id" (car rows))))
-            (q (find-id question_bank (assoc! "question_id" (car rows)))))
-        (cons (list (list "id" (assoc! "id" a)) (list "question_id" (assoc! "id" q))
-          (list "question" (assoc! "question" q)) (list "area" (assoc! "area" q))
-          (list "text" (assoc! "text" a)) (list "round" (assoc! "round" a))
-          (list "rating" (if (is_null g) nil (assoc! "rating" g)))
-          (list "note" (if (is_null g) nil (assoc! "note" g)))) (records (cdr rows)))))))
-  (define current (lambda (rows)
-    (if (is_null rows) (list)
-      (if (= (assoc! "round" (car rows)) round) (cons (car rows) (current (cdr rows))) (current (cdr rows))))))
-  (define pending (lambda (rows)
-    (if (is_null rows) (list)
-      (if (is_null (assoc! "rating" (car rows))) (cons (assoc! "id" (car rows)) (pending (cdr rows))) (pending (cdr rows))))))
-  (define solids (lambda (rows)
-    (if (is_null rows) 0 (+ (if (string= (assoc! "rating" (car rows)) "Solid") 1 0) (solids (cdr rows))))))
-  (define gm-state (lambda ()
-    (if (not (and (integer-between level 1 5) (integer-between round 1 5)
-      (listp question_bank) (listp answers) (listp grade_events)
-      (unique-ids question_bank (list)) (unique-ids answers (list))
-      (questions-ok question_bank) (answers-ok answers) (events-ok grade_events))) "invalid_state"
-      (let ((joined (records answers)) (counts (attempts question_bank)))
-        (let ((batch (current joined)))
-          (let ((n (length batch)) (s (solids batch)) (missing (pending batch)))
-            (let ((direction (cond ((> (length missing) 0) "await_grades") ((= n 0) "hold")
-              ((>= round 5) "complete") ((>= (* s 5) (* n 4)) (if (= level 5) "complete" "escalate"))
-              ((>= (* s 5) (* n 2)) "hold") (true "reprobe"))))
-              (list (list "answer_records" joined) (list "attempt_counts" counts)
-                (list "retired_ids" (retired counts)) (list "ungraded_answer_ids" missing)
-                (list "answered_this_round" n) (list "solid_this_round" s)
-                (list "next_level" (if (string= direction "escalate") (+ level 1) level))
-                (list "direction" direction) (list "stop" (or (>= round 5) (string= direction "complete")))))))))))
-  (gm-state))
+Input: `{"drafts":[],"explanations":[],"question_bank":[],"retired_ids":[],"level":1}`. Bind drafts/explanations from the ask output; only when the retired set is empty may the caller supply explanations `[]` directly. New IDs follow the bank's maximum; a retry uses its original ID/text. Semantic paraphrase detection and explanation correctness remain P.
+```jq
+. as $s | INDEX(.question_bank[]; .id|tostring) as $bank
+| ((.question_bank|map(.id)|max // 0)+1) as $next
+| if ((.drafts|length) >= 2 and (.drafts|length) <= 3
+  and (.explanations|map(.question_id)|sort) == (.retired_ids|sort)
+  and all(.explanations[]; (.explanation|type) == "string" and (.explanation|length) > 0))
+  then .drafts|to_entries|map(.key as $slot | .value |
+    if .retry_id == null then
+      if (.question|type) != "string" or (.question|length) == 0 or (.area|type) != "string" or (.area|length) == 0
+        or (.question as $text | any($s.question_bank[]; .question == $text)) then error("invalid new question")
+      else {id:($next+$slot),question:.question,area:.area,level:$s.level} end
+    else $bank[(.retry_id|tostring)] as $q |
+      if $q == null or ($s.retired_ids|index($q.id)) != null or $q.level != $s.level
+        or .question != null or .area != null then error("invalid retry") else $q end end)
+  else error("invalid question count or retired explanations") end
+| if (map(.id)|unique|length) == length and (map(.question)|unique|length) == length
+  then . else error("duplicate question") end
 ```
 
-### GM-1 — validate question drafts and assign identities (D)
+### Final evidence
 
-Env: `{"drafts":[], "explanations":[], "question_bank":[], "retired_ids":[], "level":1, "round":1}`. Supply `drafts` and `explanations` from the ask output (`question_drafts`, `retired_explanations`); only when the computed retired set is empty does the caller bind explanations to `[]` without a model echo. Other fields come from the current ledger/GM-STATE. New IDs are `10*round + slot` (slots 1–3); retries return the original question record. `invalid_questions` or tool errors block delivery.
-
-```lisp
-(begin
-  (define lookup (lambda (rows id)
-    (if (is_null rows) nil (if (= (assoc! "id" (car rows)) id) (car rows) (lookup (cdr rows) id)))))
-  (define has-question (lambda (rows text)
-    (if (is_null rows) false (or (string= (assoc! "question" (car rows)) text) (has-question (cdr rows) text)))))
-  (define draft-ok (lambda (d slot)
-    (let ((retry (assoc! "retry_id" d)))
-      (if (is_null retry)
-        (and (stringp (assoc! "question" d)) (> (length (assoc! "question" d)) 0)
-          (stringp (assoc! "area" d)) (> (length (assoc! "area" d)) 0)
-          (not (has-question question_bank (assoc! "question" d)))
-          (is_null (lookup question_bank (+ (* round 10) slot))))
-        (and (numberp retry) (eq (- retry retry) 0) (not (is_null (lookup question_bank retry)))
-          (not (member retry retired_ids)) (= (assoc! "level" (lookup question_bank retry)) level)
-          (is_null (assoc! "question" d)) (is_null (assoc! "area" d)))))))
-  (define build (lambda (rows slot seen texts)
-    (if (is_null rows) (list)
-      (let ((d (car rows)))
-        (if (not (draft-ok d slot)) "invalid_questions"
-          (let ((q (if (is_null (assoc! "retry_id" d))
-            (list (list "id" (+ (* round 10) slot)) (list "question" (assoc! "question" d))
-              (list "level" level) (list "area" (assoc! "area" d)))
-            (lookup question_bank (assoc! "retry_id" d)))))
-            (if (or (member (assoc! "id" q) seen) (member (assoc! "question" q) texts)) "invalid_questions"
-              (let ((rest (build (cdr rows) (+ slot 1) (cons (assoc! "id" q) seen) (cons (assoc! "question" q) texts))))
-                (if (stringp rest) rest (cons q rest))))))))))
-  (define remove-retired (lambda (ids id)
-    (if (is_null ids) (list)
-      (if (= (car ids) id) (cdr ids) (cons (car ids) (remove-retired (cdr ids) id))))))
-  (define explanations-ok (lambda (rows remaining)
-    (if (is_null rows) (is_null remaining)
-      (let ((id (assoc! "question_id" (car rows))) (text (assoc! "explanation" (car rows))))
-        (and (numberp id) (eq (- id id) 0) (member id remaining)
-          (not (is_null (lookup question_bank id))) (stringp text) (> (length text) 0)
-          (explanations-ok (cdr rows) (remove-retired remaining id)))))))
-  (define gm-question-plan (lambda ()
-    (if (and (listp explanations) (explanations-ok explanations retired_ids)
-      (numberp round) (eq (- round round) 0) (>= round 1) (<= round 5)
-      (numberp level) (eq (- level level) 0) (>= level 1) (<= level 5)
-      (listp drafts) (>= (length drafts) 2) (<= (length drafts) 3))
-      (build drafts 1 (list) (list)) "invalid_questions")))
-  (gm-question-plan))
-```
-
-### GM-2 — validate assessment evidence, not semantic quality (D)
-
-Env: `{"question_bank":[], "answer_records":[], "summary":[]}`; records are GM-STATE's exact output and `summary` is the final synthesis. Every asked area must occur once. Graded summaries reference actual graded answer IDs in that area; areas without graded evidence are `Unassessed` with `answer_ids: []`.
-
-```lisp
-(begin
-  (define find-answer (lambda (rows id)
-    (if (is_null rows) nil (if (= (assoc! "id" (car rows)) id) (car rows) (find-answer (cdr rows) id)))))
-  (define area-exists (lambda (rows area)
-    (if (is_null rows) false (or (string= (assoc! "area" (car rows)) area) (area-exists (cdr rows) area)))))
-  (define graded-area (lambda (rows area)
-    (if (is_null rows) false
-      (or (and (string= (assoc! "area" (car rows)) area) (not (is_null (assoc! "rating" (car rows)))))
-        (graded-area (cdr rows) area)))))
-  (define refs-ok (lambda (ids area seen)
-    (if (is_null ids) true
-      (and (numberp (car ids)) (eq (- (car ids) (car ids)) 0) (not (member (car ids) seen))
-        (not (is_null (find-answer answer_records (car ids))))
-        (not (is_null (assoc! "rating" (find-answer answer_records (car ids)))))
-        (string= (assoc! "area" (find-answer answer_records (car ids))) area)
-        (refs-ok (cdr ids) area (cons (car ids) seen))))))
-  (define rows-ok (lambda (rows seen)
-    (if (is_null rows) true
-      (let ((r (car rows)) (area (assoc! "area" (car rows))))
-        (and (stringp area) (not (member area seen)) (area-exists question_bank area)
-          (stringp (assoc! "notes" r)) (listp (assoc! "answer_ids" r))
-          (if (string= (assoc! "rating" r) "Unassessed")
-            (and (is_null (assoc! "answer_ids" r)) (not (graded-area answer_records area)))
-            (and (member (assoc! "rating" r) (list "Solid" "Partial" "Gap"))
-              (> (length (assoc! "answer_ids" r)) 0) (refs-ok (assoc! "answer_ids" r) area (list))))
-          (rows-ok (cdr rows) (cons area seen)))))))
-  (define coverage (lambda (rows)
-    (if (is_null rows) true
-      (and (area-exists summary (assoc! "area" (car rows))) (coverage (cdr rows))))))
-  (define gm-assessment (lambda ()
-    (and (listp summary) (rows-ok summary (list)) (coverage question_bank))))
-  (gm-assessment))
+Input: `{"question_bank":[],"answers":[],"summary":[]}` using the exact latest ledger and generated summary. Each asked area occurs once; graded summaries cite actual graded answers in that area, while areas without such evidence are Unassessed. Run with `jq -ce`; false/error blocks delivery.
+```jq
+. as $s | INDEX(.question_bank[]; .id|tostring) as $bank
+| ((.summary|map(.area)|sort) == (.question_bank|map(.area)|unique|sort))
+and all(.summary[]; . as $r |
+  [$s.answers[]|select(.rating != null and $bank[(.question_id|tostring)].area == $r.area)|.id] as $eligible |
+  if .rating == "Unassessed" then .answer_ids == [] and $eligible == []
+  else (["Solid","Partial","Gap"]|index($r.rating)) != null and (.answer_ids|length) > 0
+    and (.answer_ids|unique|length) == (.answer_ids|length)
+    and all(.answer_ids[]; . as $id | ($eligible|index($id)) != null) end)
 ```
 
 ## Registry Templates
 
-| Template | Purpose |
-|----------|---------|
-| `grill-me-round.j2` | Draft questions OR grade identified actual answers; a deterministic gate separates the phases. |
-| `grill-me-assess.j2` | Synthesize evidence-linked final area ratings and recommendations; unanswered areas are Unassessed. |
+- `grill-me-round.j2`: ask or grade, with feedback between executions; no counters or copied assessments.
+- `grill-me-assess.j2`: final evidence-linked area judgments and recommendations.
 
 ## Regression case
 
-`check-skill-lisp-forms.sh` parses these authored forms; run `bash kask/scripts/cargo-test-nonzero.sh -p hkask-lisp --bin check-skill-lisp-forms grill_` for their decision regressions against production evaluation, not Rust copies. Pin repeated Gap grading of one answer (one failure), latest-grade feedback, three distinct failed answers (retirement), exact 80%/40% boundaries, no answers, pending grades, level/round bounds, unknown/duplicate IDs, lowercase grades, out-of-order complete grade batches, missing batches, legal retry versus retired retry, new question IDs, complete retired-answer explanation handoffs and evidence-linked/Unassessed final areas. Registry-render tests pin grade/ask separation and record delivery. These are finite computation/handoff checks, not evidence of improved learner outcomes or primary-source fidelity.
+The native renderer tests run these exact authored jq filters, not translated formulas: `bash kask/scripts/cargo-test-nonzero.sh -p agent --lib grill_`. Cover regrades versus distinct failures, latest-grade changes, threshold/batch boundaries, bad/missing IDs, legal/retired retries, explanation coverage and Unassessed evidence. These are computation/handoff checks, not a learner-effectiveness study.
 
 ## Constraints
 
-- Never let a regrade create an answer or reset a question/answer ID, round, failure history or loop bound.
-- Never deliver a next question before the preceding grades pass GM-G and GM-STATE; hints do not count as answers.
-- Escalation, retirement and counts belong to authored Lisp; semantic grades and final recommendations remain open to the learner's and operator's judgment.
+- A regrade never creates an answer or resets its failed flag, ID or batch count.
+- Grade before asking again; deliver only admitted questions/explanations and evidence-linked final ratings.
+- Keep human judgment over semantic grades and recommendations. Do not recreate removed event histories, shadow summaries or general-purpose validators.

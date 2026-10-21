@@ -106,7 +106,13 @@ async fn fetched_local_bytes_support_and_contradict_without_overwriting_human_la
             .expect("get")
             .expect("goal");
         let attempt = closed.assessments.last().expect("canonical assessment");
-        let completion = attempt.completion.as_ref().expect("completion");
+        let completion = attempt
+            .result
+            .as_ref()
+            .expect("assessment finished")
+            .as_ref()
+            .ok()
+            .expect("completion");
         assert_eq!(
             serde_json::to_value(&completion.findings[0].status).expect("status"),
             expected
@@ -229,8 +235,11 @@ async fn mismatched_and_missing_artifacts_are_unknown_without_a_model_call_and_s
     let attempt = &closed.assessments[0];
     assert_eq!(
         attempt
-            .completion
+            .result
             .as_ref()
+            .expect("assessment finished")
+            .as_ref()
+            .ok()
             .expect("unknown finding")
             .findings[0]
             .status,
@@ -390,8 +399,11 @@ async fn unsafe_sources_withhold_contents_and_never_execute_or_become_support(
     ));
     assert_eq!(
         goal.assessments[0]
-            .completion
+            .result
             .as_ref()
+            .expect("assessment finished")
+            .as_ref()
+            .ok()
             .expect("finding")
             .findings[0]
             .status,
@@ -529,17 +541,22 @@ async fn forged_unfetched_citation_is_a_durable_assessor_failure_then_retries(
         .goal_get(goal.id, owner)
         .expect("get")
         .expect("goal");
-    assert!(failed.assessment_pending);
+    assert!(failed.needs_assessment(host.service.goal_now()));
     assert!(
         failed.assessments[0]
-            .failure
+            .result
             .as_ref()
-            .expect("durable failure")
-            .reason
+            .expect("finished")
+            .as_ref()
+            .expect_err("durable failure")
             .contains("actually fetched")
     );
     assert!(
-        failed.assessments[0].completion.is_none(),
+        failed.assessments[0]
+            .result
+            .as_ref()
+            .expect("finished")
+            .is_err(),
         "reference-only finding never becomes support"
     );
     assert!(matches!(
@@ -562,8 +579,11 @@ async fn forged_unfetched_citation_is_a_durable_assessor_failure_then_retries(
     assert_eq!(recovered.assessments.len(), 2);
     assert_eq!(
         recovered.assessments[1]
-            .completion
+            .result
             .as_ref()
+            .expect("assessment finished")
+            .as_ref()
+            .ok()
             .expect("retry")
             .findings[0]
             .status,
@@ -581,9 +601,7 @@ async fn forged_unfetched_citation_is_a_durable_assessor_failure_then_retries(
 }
 
 #[gpui::test]
-async fn historical_closure_without_read_approval_never_gains_local_access(
-    cx: &mut gpui::TestAppContext,
-) {
+async fn closure_without_read_approval_never_gains_local_access(cx: &mut gpui::TestAppContext) {
     let dir = tempfile::tempdir().expect("directory");
     let artifact = dir.path().join("enabled.txt");
     std::fs::write(&artifact, "feature_status=enabled\n").expect("real bytes");
@@ -613,17 +631,10 @@ async fn historical_closure_without_read_approval_never_gains_local_access(
             limitation: native.limitation,
         }],
         artifact_access: None,
-        machine_artifact_access: None,
     };
-    let old_json = serde_json::to_value(&closure).expect("historical shape");
-    assert!(old_json.get("artifact_access").is_none());
     host.service
-        .goal_close_native(
-            goal.id,
-            owner,
-            serde_json::from_value(old_json).expect("old closure decodes"),
-        )
-        .expect("historical canonical fixture");
+        .goal_close_native(goal.id, owner, closure)
+        .expect("closure with no approval");
     scheduled_tick(host.clone(), provider.clone(), cx).await;
     let goal = host
         .service
@@ -636,8 +647,11 @@ async fn historical_closure_without_read_approval_never_gains_local_access(
     assert!(provider.requests.lock().expect("capture").is_empty());
     assert_eq!(
         goal.assessments[0]
-            .completion
+            .result
             .as_ref()
+            .expect("assessment finished")
+            .as_ref()
+            .ok()
             .expect("unknown")
             .findings[0]
             .status,
@@ -787,8 +801,11 @@ async fn regular_file_read_permissions_produce_real_fetched_or_unavailable_recei
         assert!(provider.requests.lock().expect("capture").is_empty());
         assert_eq!(
             goal.assessments[0]
-                .completion
+                .result
                 .as_ref()
+                .expect("assessment finished")
+                .as_ref()
+                .ok()
                 .expect("finding")
                 .findings[0]
                 .status,

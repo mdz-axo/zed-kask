@@ -5,12 +5,14 @@ use hkask_types::{
     EmbeddingBatch, EmbeddingGenerationError, InferenceError, InferenceFuture, InferenceResult,
     InferenceUsage,
 };
+use hkask_types::{InferencePort, template::LLMParameters};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 #[derive(Default)]
 struct Provider {
     fail: AtomicBool,
     block_assessor: AtomicBool,
+    resume_assessor: Arc<tokio::sync::Notify>,
     bad_findings: AtomicBool,
     artifact_findings: AtomicBool,
     forged_evidence: AtomicBool,
@@ -45,12 +47,13 @@ impl InferencePort for Provider {
         let messages = messages.to_vec();
         let fail = self.fail.load(Ordering::SeqCst);
         let blocked = self.block_assessor.load(Ordering::SeqCst);
+        let resume = self.resume_assessor.clone();
         let malformed = self.bad_findings.load(Ordering::SeqCst);
         let artifact_findings = self.artifact_findings.load(Ordering::SeqCst);
         let forged_evidence = self.forged_evidence.load(Ordering::SeqCst);
         Box::pin(async move {
             if blocked {
-                return futures::future::pending().await;
+                resume.notified().await;
             }
             if fail {
                 return Err(InferenceError::Generation(
@@ -153,7 +156,30 @@ fn open_with_provider(
     Ok(Arc::new(GoalHost::new(
         ledger,
         Some(memory),
-        provider,
+        {
+            let provider = provider.clone();
+            move |messages, model| {
+                let provider = provider.clone();
+                Box::pin(async move {
+                    provider
+                        .generate_with_messages(
+                            &messages,
+                            &LLMParameters::default(),
+                            Some(&model),
+                            None,
+                        )
+                        .await
+                })
+            }
+        },
+        move |model, passage, dimensions| {
+            let provider = provider.clone();
+            Box::pin(async move {
+                provider
+                    .embed_with_dimensions(&model, &[passage], Some(dimensions))
+                    .await
+            })
+        },
         "fixture-assessor".into(),
         embedding_model.into(),
         hkask_storage::embedding_dim() as u32,
@@ -190,11 +216,6 @@ fn declare_with_forecast(
         },
         owner,
     )?)
-}
-fn supplied_artifact_manifest(dir: &std::path::Path) -> Vec<agent::NativeGoalEvidence> {
-    let path = dir.join("assessor-evidence.txt");
-    std::fs::write(&path, "feature_status=enabled\n").expect("real supplied bytes");
-    artifacts::manifest(&path, artifacts::ENABLED_DIGEST)
 }
 async fn decision(
     host: Arc<GoalHost>,
@@ -279,27 +300,6 @@ async fn decision_with_manifest(
     );
     let rendered = serde_json::to_string(&authorization.tool_call).expect("prompt JSON");
     assert!(rendered.contains(&goal.spec_digest));
-    if let Some(GoalForecast {
-        resolver:
-            GoalForecastResolver::MachineArtifactDigest {
-                locator,
-                expected_sha256,
-            },
-        ..
-    }) = &goal.forecast
-    {
-        assert!(
-            rendered.contains(locator) && rendered.contains(expected_sha256),
-            "native approval discloses the exact resolver source and oracle even without a manifest entry"
-        );
-        assert!(rendered.contains("separate from assessment manifest"));
-        if correction {
-            assert!(rendered.contains("This correction grants no scheduled source access"));
-        } else {
-            assert!(rendered.contains("ONE scheduled bounded local UTF-8 regular-file read"));
-        }
-        assert!(rendered.contains("File bytes not execution authenticity"));
-    }
     for criterion in &goal.criteria {
         assert!(
             rendered.contains(&criterion.description),
@@ -313,7 +313,7 @@ async fn decision_with_manifest(
         );
     }
     if correction {
-        assert!(rendered.contains("Latest human outcome: unknown"));
+        assert!(rendered.contains("Latest human outcome:"));
     }
     let acp_thread::PermissionOptions::Flat(options) = &authorization.options else {
         panic!("explicit flat choices required")
@@ -349,16 +349,14 @@ async fn scheduled_tick(
             let goals = host
                 .service
                 .goal_list(&host.owners().expect("owners")[0])
-                .expect("goals");
+                .expect("goals")
+                .goals;
             let done = if provider.fail.load(Ordering::SeqCst) {
                 provider.embedding_calls.load(Ordering::SeqCst) > before
             } else {
                 goals.iter().all(|goal| {
-                    !goal.assessment_pending
-                        && goal
-                            .projections
-                            .iter()
-                            .all(|p| p.delivered_receipt.is_some())
+                    !goal.needs_assessment(host.service.goal_now())
+                        && goal.indexed_revision == goal.revision
                 })
             };
             if done {
@@ -381,142 +379,100 @@ async fn scheduled_tick(
         .await;
 }
 
+mod artifacts;
+mod model_identity;
+
 #[gpui::test]
-async fn native_goal_restart_drains_blinded_assessment_and_exact_semantic_projection(
+async fn native_stop_unknown_restart_recall_and_optional_human_forecast_corrections(
     cx: &mut gpui::TestAppContext,
 ) {
-    let dir = tempfile::tempdir().expect("test directory");
+    let dir = tempfile::tempdir().expect("directory");
     let provider = Arc::new(Provider::default());
-    provider.fail.store(true, Ordering::SeqCst);
+    let mut host = open(dir.path(), provider.clone()).expect("host");
+    let clock = Arc::new(std::sync::Mutex::new(Utc::now()));
+    let host_mut = Arc::get_mut(&mut host).expect("sole host");
+    host_mut.service = host_mut.service.clone().with_goal_clock({
+        let clock = clock.clone();
+        Arc::new(move || *clock.lock().expect("clock"))
+    });
     let owner = WebID::new();
-    let host = open(dir.path(), provider.clone()).expect("file-backed host");
-    let goal = declare(&host, owner).expect("declare original requirement");
-    assert!(
-        serde_json::from_value::<agent::GoalCloseInput>(
-            serde_json::json!({"goal_id":goal.id,"choice":"accomplished_achieved","actor":"human"})
-        )
-        .is_err(),
-        "worker cannot submit a human label"
-    );
-    let _recorded = decision_with_manifest(
-        host.clone(),
-        &goal,
-        owner,
-        "stop_unknown",
-        false,
-        supplied_artifact_manifest(dir.path()),
-        cx,
-    )
-    .await;
+    let now = host.service.goal_now();
+    let forecast = GoalForecast {
+        proposition: "Human accepts original requirements".into(),
+        probability: 0.8,
+        horizon: now + chrono::Duration::seconds(1),
+        resolution_deadline: now + chrono::Duration::seconds(10),
+        execution_policy: "this task".into(),
+        resources: "this session".into(),
+        resolver: GoalForecastResolver::HumanAcceptance {},
+        baseline_probability: 0.0,
+        cohort: "features".into(),
+        update_policy: ForecastUpdatePolicy::FixedAtDeclaration,
+    };
+    let goal = declare_with_forecast(&host, owner, Some(forecast)).expect("declare");
+    *clock.lock().expect("clock") += chrono::Duration::seconds(2);
+    decision(host.clone(), &goal, owner, "stop_unknown", false, cx).await;
+    scheduled_tick(host.clone(), provider.clone(), cx).await;
     let closed = host
         .service
         .goal_get(goal.id, owner)
         .expect("get")
-        .expect("goal");
+        .expect("closed");
+    assert_eq!(closed.forecast_status, ForecastStatus::Unknown);
+    assert!(closed.scores.is_empty());
     assert_eq!(
         closed.closure.as_ref().expect("closure").input.choice,
         HumanClosureChoice::StopUnknown
     );
-    assert!(closed.assessment_pending);
-    scheduled_tick(host.clone(), provider.clone(), cx).await;
-    let failed = host
+    assert!(provider.requests.lock().expect("capture").is_empty());
+    *clock.lock().expect("clock") += chrono::Duration::seconds(20);
+    decision(host.clone(), &closed, owner, "correct_achieved", true, cx).await;
+    let corrected = host
         .service
         .goal_get(goal.id, owner)
         .expect("get")
         .expect("goal");
-    assert!(
-        failed.assessments[0]
-            .failure
-            .as_ref()
-            .expect("durable failure")
-            .reason
-            .contains("injected assessor outage")
-    );
-    assert!(
-        failed
-            .projections
-            .iter()
-            .all(|p| p.delivered_receipt.is_none())
-    );
-    drop(host);
-    provider.fail.store(false, Ordering::SeqCst);
-    let host = open(dir.path(), provider.clone()).expect("restart host and both stores");
+    assert_eq!(corrected.scores.len(), 1);
+    assert!(corrected.scores[0].outcome);
+    decision(host.clone(), &corrected, owner, "correct_unknown", true, cx).await;
     scheduled_tick(host.clone(), provider.clone(), cx).await;
-    let goal = host
+    let retained = host
         .service
         .goal_get(goal.id, owner)
         .expect("get")
-        .expect("canonical record never pruned");
-    assert_eq!(goal.assessments.len(), 2);
-    assert!(!goal.assessment_pending);
-    let completion = goal.assessments[1]
-        .completion
-        .as_ref()
-        .expect("assessment complete");
-    assert_eq!(completion.findings.len(), 2);
-    assert!(
-        completion
-            .findings
-            .iter()
-            .all(|f| f.status == CriterionEvidenceStatus::Unknown)
-    );
-    assert_eq!(
-        goal.closure.as_ref().expect("closure").input.choice,
-        HumanClosureChoice::StopUnknown
-    );
-    for messages in provider.requests.lock().expect("captures").iter() {
-        assert_eq!(messages.len(), 2, "fresh context");
-        let data: serde_json::Value = serde_json::from_str(&messages[1].content).expect("JSON");
-        assert_eq!(data.as_object().expect("object").len(), 6);
-        for key in [
-            "closure",
-            "choice",
-            "verdicts",
-            "forecast",
-            "probability",
-            "scores",
-            "human_corrections",
-        ] {
-            assert!(data.get(key).is_none(), "blinded request leaked {key}");
-        }
-    }
-    let memory = host.memory.as_ref().expect("projection store");
+        .expect("goal");
+    assert_eq!(retained.forecast_status, ForecastStatus::Unknown);
+    assert_eq!(retained.scores.len(), 1);
+    assert_eq!(retained.human_corrections.len(), 2);
+    drop(host);
+    let restarted = open(dir.path(), provider).expect("restart");
+    let recovered = restarted
+        .service
+        .goal_get(goal.id, owner)
+        .expect("get")
+        .expect("canonical survives");
+    assert_eq!(recovered, retained);
+    let memory = restarted.memory.as_ref().expect("memory");
     let entity = format!("curator:goal:{}", goal.id);
     let rows = memory
         .h_mems_by_entity_prefix(&entity)
         .expect("exact recall");
+    assert_eq!(rows.len(), 1, "one current recall record, no snapshot tail");
     assert_eq!(
-        rows.len(),
-        goal.projections.len(),
-        "no hand-inserted memory or duplicate retries"
+        rows[0].value["human_corrections"]
+            .as_array()
+            .expect("history")
+            .len(),
+        2
     );
-    for projection in &goal.projections {
-        let row = rows
-            .iter()
-            .find(|r| r.attribute == format!("projection:{}", projection.event_id))
-            .expect("event recall");
-        assert_eq!(
-            row.value, projection.payload,
-            "complete original payload retained"
-        );
-        assert_eq!(
-            projection.delivered_receipt.as_deref(),
-            Some(row.id.to_string().as_str())
-        );
-        assert_eq!(
-            row.confidence.value(),
-            0.5,
-            "outcomes never mutate memory confidence"
-        );
-    }
     let hits = memory
         .search_similar(
             &vec![0.5; hkask_storage::embedding_dim()],
-            100,
+            10,
             "fixture-embedding",
             Some("fixture-embedding"),
         )
-        .expect("semantic recall");
+        .expect("KNN");
     assert!(!hits.results.is_empty());
     for hit in hits.results {
         assert_eq!(hit.embedding.entity_ref, entity);
@@ -524,53 +480,33 @@ async fn native_goal_restart_drains_blinded_assessment_and_exact_semantic_projec
             rows.iter()
                 .any(|row| hkask_memory::semantic_passage_for_h_mem(row)
                     == hit.embedding.passage_text),
-            "semantic result joins the exact h_mem"
+            "KNN result joins the exact current memory passage"
         );
     }
-    let count = rows.len();
-    scheduled_tick(host.clone(), provider.clone(), cx).await;
-    assert_eq!(
-        memory
-            .h_mems_by_entity_prefix(&entity)
-            .expect("replay recall")
-            .len(),
-        count
-    );
-    let _corrected = decision(host.clone(), &goal, owner, "correct_achieved", true, cx).await;
-    let corrected = host
-        .service
-        .goal_get(goal.id, owner)
-        .expect("get")
-        .expect("goal");
-    assert_eq!(corrected.human_corrections.len(), 1);
-    assert_eq!(corrected.human_corrections[0].outcome, Some(true));
-    assert_eq!(
-        corrected.closure, goal.closure,
-        "correction never rewrites original closure"
-    );
 }
 
 #[gpui::test]
-async fn native_goal_invalid_choice_cannot_authorize_a_closure(cx: &mut gpui::TestAppContext) {
-    let dir = tempfile::tempdir().expect("test directory");
-    let host = open(dir.path(), Arc::new(Provider::default())).expect("host");
+async fn native_invalid_choice_cannot_supply_human_authority(cx: &mut gpui::TestAppContext) {
+    let dir = tempfile::tempdir().expect("directory");
+    let provider = Arc::new(Provider::default());
+    let host = open(dir.path(), provider).expect("host");
     let owner = WebID::new();
     let goal = declare(&host, owner).expect("goal");
     let (stream, mut receiver) = agent::ToolCallEventStream::test_for_actor(owner);
     let id = goal.id.to_string();
-    let host_for_task = host.clone();
+    let native_host = host.clone();
     let task = cx.spawn(async move |mut cx| {
-        agent::decide(id, vec![], false, stream, host_for_task, &mut cx).await
+        agent::decide(id, vec![], false, stream, native_host, &mut cx).await
     });
-    let prompt = receiver.expect_authorization().await;
-    assert_eq!(prompt.kind, acp_thread::AuthorizationKind::ActionChoice);
-    prompt
+    receiver
+        .expect_authorization()
+        .await
         .response
         .send(acp_thread::SelectedPermissionOutcome::new(
             acp::PermissionOptionId::new("allow"),
             acp::PermissionOptionKind::AllowAlways,
         ))
-        .expect("callback");
+        .expect("invalid generic grant");
     assert!(task.await.is_err());
     assert!(
         host.service
@@ -583,354 +519,252 @@ async fn native_goal_invalid_choice_cannot_authorize_a_closure(cx: &mut gpui::Te
 }
 
 #[gpui::test]
-async fn native_goal_restart_after_publication_before_ack_reuses_exact_receipt(
+async fn native_drainers_share_private_claim_and_late_result_cannot_replace_new_assessment(
     cx: &mut gpui::TestAppContext,
 ) {
-    let dir = tempfile::tempdir().expect("test directory");
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("enabled.txt");
+    std::fs::write(&path, "feature_status=enabled\n").expect("artifact");
     let provider = Arc::new(Provider::default());
-    let owner = WebID::new();
-    let host = open(dir.path(), provider.clone()).expect("host");
-    let goal = declare(&host, owner).expect("goal");
-    decision(
-        host.clone(),
-        &goal,
-        owner,
-        "accomplished_achieved",
-        false,
-        cx,
-    )
-    .await;
-    cx.executor().allow_parking();
-    let runtime = tokio::runtime::Runtime::new().expect("runtime");
-    let host_for_task = host.clone();
-    let task = runtime.spawn(async move {
-        let mut work = Box::pin(host_for_task.drain_once());
-        assert!(
-            futures::poll!(work.as_mut()).is_pending(),
-            "production drainer yields after durable publication before receipt"
-        );
-        drop(work); // Model a host interruption at the actual publication/ack boundary.
+    provider.block_assessor.store(true, Ordering::SeqCst);
+    provider.artifact_findings.store(true, Ordering::SeqCst);
+    let clock = Arc::new(std::sync::Mutex::new(Utc::now()));
+    let mut first = open(dir.path(), provider.clone()).expect("first host");
+    let first_mut = Arc::get_mut(&mut first).expect("sole host");
+    first_mut.service = first_mut.service.clone().with_goal_clock({
+        let clock = clock.clone();
+        Arc::new(move || *clock.lock().expect("clock"))
     });
-    cx.background_spawn(async move { task.await.expect("interrupt production drainer") })
-        .await;
-    let entity = format!("curator:goal:{}", goal.id);
-    let rows = host
-        .memory
-        .as_ref()
-        .expect("memory")
-        .h_mems_by_entity_prefix(&entity)
-        .expect("published row");
-    assert_eq!(rows.len(), 1);
-    let original_id = rows[0].id;
-    assert!(
-        host.service
-            .goal_get(goal.id, owner)
-            .expect("get")
-            .expect("goal")
-            .projections
-            .iter()
-            .all(|p| p.delivered_receipt.is_none())
-    );
-    drop(host);
-    let host = open(dir.path(), provider.clone()).expect("reopen after interruption");
-    scheduled_tick(host.clone(), provider, cx).await;
-    let goal = host
-        .service
-        .goal_get(goal.id, owner)
-        .expect("get")
-        .expect("canonical goal retained");
-    let rows = host
-        .memory
-        .as_ref()
-        .expect("memory")
-        .h_mems_by_entity_prefix(&entity)
-        .expect("recall");
-    assert_eq!(rows.len(), goal.projections.len());
-    assert_eq!(
-        rows.iter().filter(|r| r.id == original_id).count(),
-        1,
-        "replay does not replace or duplicate the already-published event"
-    );
-    assert_eq!(
-        goal.projections[0].delivered_receipt,
-        Some(original_id.to_string())
-    );
-}
-
-#[gpui::test]
-async fn native_goal_missing_criterion_is_failed_retryable_not_passed(
-    cx: &mut gpui::TestAppContext,
-) {
-    let dir = tempfile::tempdir().expect("test directory");
-    let provider = Arc::new(Provider::default());
-    provider.bad_findings.store(true, Ordering::SeqCst);
     let owner = WebID::new();
-    let host = open(dir.path(), provider.clone()).expect("host");
-    let goal = declare(&host, owner).expect("goal");
+    let goal = declare(&first, owner).expect("goal");
     decision_with_manifest(
-        host.clone(),
+        first.clone(),
         &goal,
         owner,
         "accomplished_not_achieved",
         false,
-        supplied_artifact_manifest(dir.path()),
+        artifacts::manifest(&path, artifacts::ENABLED_DIGEST),
         cx,
     )
     .await;
+    let second_provider = Arc::new(Provider::default());
+    second_provider
+        .artifact_findings
+        .store(true, Ordering::SeqCst);
+    let mut second = open(dir.path(), second_provider.clone()).expect("separate host connections");
+    let second_mut = Arc::get_mut(&mut second).expect("sole host");
+    second_mut.service = second_mut.service.clone().with_goal_clock({
+        let clock = clock.clone();
+        Arc::new(move || *clock.lock().expect("clock"))
+    });
     cx.executor().allow_parking();
     let runtime = tokio::runtime::Runtime::new().expect("runtime");
-    let host_for_task = host.clone();
     let task = runtime.spawn(async move {
-        host_for_task.drain_once().await.expect("scan");
-    });
-    cx.background_spawn(async move { task.await.expect("bounded drain") })
-        .await;
-    let failed = host
-        .service
-        .goal_get(goal.id, owner)
-        .expect("get")
-        .expect("goal");
-    assert!(failed.assessment_pending);
-    assert!(failed.assessments[0].completion.is_none());
-    assert!(
-        failed.assessments[0].failure.is_some(),
-        "missing exact criterion coverage is a durable failure"
-    );
-    provider.bad_findings.store(false, Ordering::SeqCst);
-    drop(host);
-    let host = open(dir.path(), provider.clone()).expect("restart");
-    scheduled_tick(host.clone(), provider, cx).await;
-    let recovered = host
-        .service
-        .goal_get(goal.id, owner)
-        .expect("get")
-        .expect("goal");
-    assert_eq!(recovered.assessments.len(), 2);
-    assert!(recovered.assessments[1].completion.is_some());
-    assert_eq!(
-        recovered.closure.expect("closure").input.choice,
-        HumanClosureChoice::AccomplishedNotAchieved
-    );
-}
-
-#[gpui::test]
-async fn native_goal_empty_evidence_keeps_assessment_unknown_but_declared_human_forecast_scores(
-    cx: &mut gpui::TestAppContext,
-) {
-    let dir = tempfile::tempdir().expect("test directory");
-    let provider = Arc::new(Provider::default());
-    let host = open(dir.path(), provider.clone()).expect("host");
-    let owner = WebID::new();
-    let now = Utc::now();
-    let goal = declare_with_forecast(
-        &host,
-        owner,
-        Some(GoalForecast {
-            proposition: "The human accepts the original goal under the declared execution policy"
-                .into(),
-            probability: 0.8,
-            horizon: now + Duration::milliseconds(50),
-            resolution_deadline: now + Duration::minutes(5),
-            execution_policy: "Native host integration test".into(),
-            resources: "Disposable file-backed fixture".into(),
-            resolver: GoalForecastResolver::HumanAcceptance,
-            baseline_probability: 0.5,
-            cohort: "host-integration-fixture".into(),
-            update_policy: ForecastUpdatePolicy::FixedAtDeclaration,
-        }),
-    )
-    .expect("prospective forecast");
-    cx.executor().allow_parking();
-    let runtime = tokio::runtime::Runtime::new().expect("runtime");
-    let wait = runtime.spawn(async {
-        tokio::time::sleep(std::time::Duration::from_millis(60)).await;
-    });
-    cx.background_spawn(async move { wait.await.expect("horizon elapsed") })
-        .await;
-    let (stream, mut receiver) = agent::ToolCallEventStream::test_for_actor(owner);
-    let host_for_task = host.clone();
-    let id = goal.id.to_string();
-    let task = cx.spawn(async move |mut cx| {
-        agent::decide(id, vec![], false, stream, host_for_task, &mut cx).await
-    });
-    let prompt = receiver.expect_authorization().await;
-    assert_eq!(prompt.kind, acp_thread::AuthorizationKind::ActionChoice);
-    prompt
-        .response
-        .send(acp_thread::SelectedPermissionOutcome::new(
-            acp::PermissionOptionId::new("accomplished_achieved"),
-            acp::PermissionOptionKind::AllowOnce,
-        ))
-        .expect("human selection");
-    task.await.expect("closure");
-    scheduled_tick(host.clone(), provider.clone(), cx).await;
-    assert!(
-        provider.requests.lock().expect("capture").is_empty(),
-        "empty evidence is decided as unknown without an assessor model request"
-    );
-    let goal = host
-        .service
-        .goal_get(goal.id, owner)
-        .expect("get")
-        .expect("goal");
-    assert!(
-        goal.closure
-            .as_ref()
-            .expect("closure")
-            .input
-            .evidence_manifest
-            .is_empty()
-    );
-    assert!(
-        goal.assessments[0]
-            .completion
-            .as_ref()
-            .expect("assessment")
-            .findings
-            .iter()
-            .all(|f| f.status == CriterionEvidenceStatus::Unknown)
-    );
-    assert_eq!(goal.forecast_status, ForecastStatus::Resolved);
-    assert_eq!(goal.scores.len(), 1);
-    assert!((goal.scores[0].brier - 0.04).abs() < 1e-12);
-    assert_eq!(goal.scores[0].baseline_brier, 0.25);
-}
-
-#[gpui::test]
-async fn native_goal_expired_assessment_lease_resumes_without_reopening_work(
-    cx: &mut gpui::TestAppContext,
-) {
-    let dir = tempfile::tempdir().expect("test directory");
-    let provider = Arc::new(Provider::default());
-    let host = open(dir.path(), provider.clone()).expect("host");
-    let owner = WebID::new();
-    let goal = declare(&host, owner).expect("goal");
-    decision(host.clone(), &goal, owner, "stop_not_achieved", false, cx).await;
-    host.service
-        .goal_claim_assessment(
-            goal.id,
-            owner,
-            AssessmentLeaseRequest {
-                attempt_id: "interrupted-host".into(),
-                assessor_id: "host-blinded-assessor".into(),
-                model_version: "fixture-assessor".into(),
-                tool_version: "fixture".into(),
-                lease_until: Utc::now() + Duration::seconds(2),
-            },
-            Vec::new(),
-        )
-        .expect("persist in-flight lease before simulated restart");
-    drop(host);
-    let host = open(dir.path(), provider.clone()).expect("restart");
-    cx.executor().allow_parking();
-    let runtime = tokio::runtime::Runtime::new().expect("runtime");
-    let host_for_task = host.clone();
-    let provider_for_task = provider.clone();
-    let task = runtime.spawn(async move {
-        host_for_task
-            .drain_once()
-            .await
-            .expect("startup scan with live lease");
-        assert!(
-            provider_for_task
-                .requests
-                .lock()
-                .expect("capture")
-                .is_empty(),
-            "startup must not steal a live lease"
+        let older = tokio::spawn({
+            let first = first.clone();
+            async move { first.drain_once().await }
+        });
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        while provider.requests.lock().expect("capture").is_empty() {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "assessor did not start"
+            );
+            tokio::task::yield_now().await;
+        }
+        let frozen = first
+            .service
+            .goal_get(goal.id, owner)
+            .expect("get")
+            .expect("goal");
+        assert_eq!(
+            frozen.assessments[0].input.artifacts[0].outcome,
+            serde_json::from_str::<GoalAssessmentInput>(
+                &provider.requests.lock().expect("capture")[0][1].content
+            )
+            .expect("exact input")
+            .artifacts[0]
+                .outcome
         );
-        tokio::time::sleep(std::time::Duration::from_millis(2100)).await;
-        host_for_task
-            .drain_once()
+        second.drain_once().await.expect("live claim skipped");
+        assert!(second_provider.requests.lock().expect("capture").is_empty());
+        *clock.lock().expect("clock") += chrono::Duration::seconds(91);
+        second.drain_once().await.expect("expiry retry");
+        provider.resume_assessor.notify_one();
+        older
             .await
-            .expect("next scheduled work scan after expiration");
+            .expect("older drainer")
+            .expect("late failure is surfaced, siblings continue");
+        let retained = second
+            .service
+            .goal_get(goal.id, owner)
+            .expect("get")
+            .expect("goal");
+        assert_eq!(retained.assessments.len(), 2);
+        assert!(
+            retained.assessments[0]
+                .result
+                .as_ref()
+                .expect("expired")
+                .is_err()
+        );
+        assert!(
+            retained.assessments[1]
+                .result
+                .as_ref()
+                .expect("current")
+                .is_ok()
+        );
+        assert_eq!(
+            retained
+                .closure
+                .expect("human label retained")
+                .input
+                .choice
+                .outcome(),
+            Some(false)
+        );
     });
-    cx.background_spawn(async move { task.await.expect("lease recovery") })
-        .await;
-    let recovered = host
-        .service
-        .goal_get(goal.id, owner)
-        .expect("get")
-        .expect("goal");
-    assert_eq!(recovered.assessments.len(), 2);
-    assert!(
-        recovered.assessments[0].failure.is_some(),
-        "expired attempt remains failure history"
-    );
-    assert!(recovered.assessments[1].completion.is_some());
-    assert_eq!(
-        recovered.closure.expect("closure retained").input.choice,
-        HumanClosureChoice::StopNotAchieved
-    );
+    cx.background_spawn(async move {
+        task.await.expect("production concurrency path");
+    })
+    .await;
+}
+
+// Observe actual drainer warnings without adding another logging dependency.
+struct RejectionWarnings(Arc<std::sync::Mutex<Vec<String>>>);
+impl tracing::Subscriber for RejectionWarnings {
+    fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
+        *metadata.level() == tracing::Level::WARN
+    }
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+    fn event(&self, event: &tracing::Event<'_>) {
+        let mut fields = String::new();
+        event.record(
+            &mut |field: &tracing::field::Field, value: &dyn std::fmt::Debug| {
+                use std::fmt::Write;
+                write!(&mut fields, "{field}={value:?};").expect("string formatting");
+            },
+        );
+        self.0.lock().expect("warnings").push(fields);
+    }
+    fn enter(&self, _: &tracing::span::Id) {}
+    fn exit(&self, _: &tracing::span::Id) {}
 }
 
 #[gpui::test]
-async fn native_goal_missing_assessor_and_projection_store_retains_a_durable_failure(
+async fn unsupported_goal_warns_without_blocking_same_or_other_owner_draining(
     cx: &mut gpui::TestAppContext,
 ) {
-    let dir = tempfile::tempdir().expect("test directory");
+    use tracing::instrument::WithSubscriber;
+    let dir = tempfile::tempdir().expect("directory");
     let provider = Arc::new(Provider::default());
-    let configured = open(dir.path(), provider.clone()).expect("canonical ledger");
-    let host = Arc::new(GoalHost::new(
-        configured.ledger.clone(),
-        None,
-        provider.clone(),
-        String::new(),
-        "fixture-embedding".into(),
-        hkask_storage::embedding_dim() as u32,
-    ));
+    let host = open(dir.path(), provider.clone()).expect("file-backed host");
     let owner = WebID::new();
-    let goal = declare(&host, owner).expect("goal");
-    decision_with_manifest(
-        host.clone(),
-        &goal,
+    let other_owner = WebID::new();
+    let unsupported_id = hkask_types::GoalID::new();
+    let raw = format!(
+        " {{ \"schema_version\": 2, \"id\": \"{unsupported_id}\", \"history\": \"retain bytes\" }}\n"
+    );
+    let row = HMem::new(
+        "kanban:goal",
+        &unsupported_id.to_string(),
+        serde_json::from_str(&raw).expect("unsupported JSON"),
         owner,
-        "stop_unknown",
-        false,
-        supplied_artifact_manifest(dir.path()),
-        cx,
-    )
-    .await;
+    );
+    host.ledger.insert(&row).expect("unsupported row");
+    host.ledger
+        .driver()
+        .sqlite_pool()
+        .expect("pool")
+        .get()
+        .expect("connection")
+        .execute(
+            "UPDATE hmems SET value = ?1 WHERE id = ?2",
+            [&raw, &row.id.to_string()],
+        )
+        .expect("retain noncanonical JSON whitespace");
+    let mut goals = Vec::new();
+    for actor in [owner, other_owner] {
+        let goal = declare(&host, actor).expect("supported declaration");
+        decision(host.clone(), &goal, actor, "stop_unknown", false, cx).await;
+        goals.push((goal.id, actor));
+    }
+    let warnings = Arc::new(std::sync::Mutex::new(Vec::new()));
+    cx.executor().allow_parking();
     let runtime = tokio::runtime::Runtime::new().expect("runtime");
-    let host_for_task = host.clone();
+    let captured = warnings.clone();
     let task = runtime.spawn(async move {
-        host_for_task.drain_once().await.expect("scan");
+        host.drain_once()
+            .with_subscriber(RejectionWarnings(captured))
+            .await
+            .expect("unsupported row cannot abort the production scan");
+        for (id, actor) in goals {
+            let retained = host
+                .service
+                .goal_get(id, actor)
+                .expect("supported read")
+                .expect("retained");
+            assert_eq!(retained.assessments.len(), 1, "both owners assessed");
+            assert!(
+                retained.assessments[0]
+                    .result
+                    .as_ref()
+                    .expect("finished")
+                    .is_ok()
+            );
+            assert_eq!(
+                retained.indexed_revision, retained.revision,
+                "both owners indexed"
+            );
+            let rows = host
+                .memory
+                .as_ref()
+                .expect("memory")
+                .h_mems_by_entity_prefix(&format!("curator:goal:{id}"))
+                .expect("recall");
+            assert_eq!(rows.len(), 1);
+        }
+        assert!(
+            host.service
+                .goal_get(unsupported_id, owner)
+                .expect_err("direct unsupported read")
+                .to_string()
+                .contains("expected version 3")
+        );
+        let retained: String = host
+            .ledger
+            .driver()
+            .sqlite_pool()
+            .expect("pool")
+            .get()
+            .expect("connection")
+            .query_row(
+                "SELECT value FROM hmems WHERE id = ?1",
+                [row.id.to_string()],
+                |row| row.get(0),
+            )
+            .expect("raw bytes");
+        assert_eq!(retained, raw, "unsupported row stays byte-identical");
+        assert!(
+            provider.requests.lock().expect("capture").is_empty(),
+            "unfetched evidence remains deterministic unknown"
+        );
     });
-    cx.background_spawn(async move { task.await.expect("bounded drain") })
-        .await;
-    let pending = host
-        .service
-        .goal_get(goal.id, owner)
-        .expect("get")
-        .expect("canonical goal retained");
+    cx.background_spawn(async move {
+        task.await.expect("production drainer test");
+    })
+    .await;
+    let warnings = warnings.lock().expect("warnings");
     assert!(
-        pending.closure.is_some(),
-        "missing background capabilities never block human closure"
-    );
-    assert!(pending.assessment_pending);
-    assert_eq!(pending.assessments.len(), 1);
-    assert!(
-        pending.assessments[0]
-            .failure
-            .as_ref()
-            .expect("persisted configuration failure")
-            .reason
-            .contains("kask.models.classifier_model")
-    );
-    assert!(
-        pending
-            .projections
+        warnings
             .iter()
-            .all(|projection| projection.delivered_receipt.is_none())
-    );
-    assert!(
-        provider.requests.lock().expect("capture").is_empty(),
-        "an unconfigured marker is never sent as a provider model"
+            .any(|message| message.contains(&unsupported_id.to_string())
+                && message.contains("expected version 3")),
+        "rejection identity and reason must be logged: {warnings:?}"
     );
 }
-
-mod artifacts;
-
-mod model_identity;
-
-mod machine_digest;

@@ -44,12 +44,14 @@ pub struct LispEvalToolInput {
     /// and comparison operators (`a + b` → `(+ a b)`; same-operator chains
     /// fold; mixed operators do not associate; a parenthesized `(a + b)`
     /// is NOT equivalent — it errors).
+    /// Source is limited to 65536 raw UTF-8 bytes before tokenization.
     #[serde(deserialize_with = "deserialize_form_field")]
     form: String,
     /// JSON text encoding an object whose keys become Lisp bindings, for
     /// example `"{\"a\":1,\"b\":true}"`. Values retain their JSON types:
     /// objects become association lists, arrays become lists, numbers stay
     /// numbers and strings stay strings. Do not wrap scalars in objects.
+    /// At most 1048576 raw UTF-8 bytes; size is checked before inner JSON decoding.
     /// Malformed JSON or a non-object document is rejected before evaluation.
     #[serde(
         default,
@@ -58,7 +60,8 @@ pub struct LispEvalToolInput {
     )]
     #[schemars(schema_with = "hkask_types::tool_schema::json_text_schema")]
     env: std::collections::HashMap<String, serde_json::Value>,
-    /// Maximum evaluation steps (default 100000). Prevents infinite loops.
+    /// Maximum evaluation steps (default 100000, ceiling 2000000).
+    /// Requests above the provisional ceiling are rejected, not clamped.
     /// The `maxSteps` alias tolerates camelCase emissions so an explicit budget
     /// is applied rather than silently dropped (a silently-dropped budget was
     /// an unteachable failure: the eval failed with the DEFAULT limit while
@@ -69,7 +72,8 @@ pub struct LispEvalToolInput {
         deserialize_with = "deserialize_max_steps_field"
     )]
     max_steps: u64,
-    /// Maximum evaluation depth (default 1024). Prevents infinite recursion.
+    /// Maximum evaluation depth (default 1024, ceiling 8192).
+    /// Requests above the provisional ceiling are rejected, not clamped.
     /// Recursive helper forms over lists consume roughly 2–4 depth frames
     /// per element, so the former default of 64 overflowed at ~16 elements —
     /// real-scale validation lists (100+ claims) failed on the first attempt
@@ -115,6 +119,13 @@ where
     };
     let text =
         String::deserialize(deserializer).map_err(|error| teaching_error(error.to_string()))?;
+    if text.len() > hkask_lisp::MAX_ENV_JSON_BYTES {
+        return Err(serde::de::Error::custom(format!(
+            "env requested {} raw JSON UTF-8 bytes; allowed {}",
+            text.len(),
+            hkask_lisp::MAX_ENV_JSON_BYTES
+        )));
+    }
     validate_env_json_numbers(&text)
         .map_err(|error| teaching_error(format!("expected complete JSON text: {error}")))?;
     hkask_types::tool_schema::deserialize_json_text_object(

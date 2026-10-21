@@ -7668,6 +7668,7 @@ dependencies = [
  "criterion",
  "proptest",
  "serde_json",
+ "smol",
  "stacksafe",
  "thiserror 2.0.17",
 ]

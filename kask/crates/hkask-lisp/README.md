@@ -93,18 +93,28 @@ No hKask crate dependencies — this is a standalone computation library.
 - No `eval` builtin (Lisp code cannot evaluate arbitrary strings)
 - No `load` or `require`
 - No I/O, no filesystem, no network, no environment variable access
-- Budgeted sandbox boundary (`eval_sandboxed` / `eval_sandboxed_with_budget`):
-  default depth 1024 and work budget 100000; oversized work returns a limit error
+- Sandbox defaults remain 100000 steps / depth 1024; corpus queries retain 100000 / 100.
+- Provisional H4A admission ceilings (approved plan, not an H4C safe-memory/latency envelope):
+  `MAX_SOURCE_BYTES` = 65536; `MAX_ENV_JSON_BYTES` = 1048576;
+  `MAX_STEPS` = 2000000; `MAX_DEPTH` = 8192.
+  Source UTF-8 length is checked before tokenization (including standalone `parse`);
+  requested budgets before parsing/`Value` traversal; tool raw-env UTF-8 length before inner JSON validation.
+  Oversized requests reject, never clamp, naming field, requested and allowed values.
+  Already-parsed `Value` has no recoverable wire length; work/depth guards still apply.
+  Zero and budget aliases are unchanged: depth-zero atoms pass, compound forms refuse.
 - Raw `from_json` / `to_json` bypass sandbox work/depth and admission checks:
   unsigned integers can become floats; non-finite floats become JSON null.
   Use the sandbox boundary for its checks.
 - Returned JSON nesting is independently bounded for caller serialization/drop
 - Strong lexical captures survive evaluation. `EvalBudget`'s private
   `InvocationScopes` RAII guard weakly tracks root, `let` and lambda-call
-  scopes; on drop it upgrades all survivors before clearing bindings and
+  scopes; each tracked entry prepays two ticks for registration and cleanup before
+  `Rc` allocation/registry push. The fallible private factory's three callers propagate
+  refusal; infallible drop upgrades all survivors before clearing bindings and
   parent links, breaking even disconnected closure cycles. Cleanup covers
   success, errors and Rust unwinding, not abort/OOM. Raw `Env` / `eval`
   callers retain ownership without automatic cleanup.
-- Step/depth accounting and cycle cleanup are not wall-clock or heap quotas,
-  nor a claim of complete sandbox or numeric correctness
+- Outer provider/MCP JSON parsing, typed tool-input decoding and env sorting are
+  outside core budget caps; these are not heap, wall-clock or output quotas,
+  nor a claim of complete sandbox or numeric correctness. H4B output/scheduling/cancellation is unchanged.
 - `#![forbid(unsafe_code)]` — no unsafe blocks anywhere in the crate

@@ -2179,11 +2179,20 @@ fn main() {
                                 Err(error) => { log::warn!("Goal projection unavailable: {error}"); None }
                             }
                         });
-                        let goal_inference = std::sync::Arc::new(kask_bridge::GoalInference {
-                            embedding: embedding_port_for_ipc.clone(),
-                        });
+                        let goal_embedding = embedding_port_for_ipc.clone();
                         match kask_bridge::GoalHost::open(
-                            &passphrase, projection_store, goal_inference,
+                            &passphrase, projection_store,
+                            |messages, model| Box::pin(async move {
+                                let port = kask_bridge::global_inference_port().ok_or_else(|| hkask_types::InferenceError::Generation("Goal assessor inference unavailable".into()))?;
+                                port.generate_with_messages(&messages, &hkask_types::template::LLMParameters::default(), Some(&model), None).await
+                            }),
+                            move |model, passage, dimensions| {
+                                let port = goal_embedding.clone();
+                                Box::pin(async move {
+                                    let port = port.ok_or_else(|| hkask_types::EmbeddingGenerationError::NotConfigured("goal recall embedding unavailable".into()))?;
+                                    port.embed_with_dimensions(&model, &[passage], Some(dimensions)).await
+                                })
+                            },
                             kask_settings.models.classifier_model_for_host().unwrap_or_default(),
                             kask_settings.effective_embedding_model(), embedding_dim as u32,
                         ) {

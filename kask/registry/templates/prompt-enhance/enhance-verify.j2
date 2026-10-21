@@ -19,9 +19,15 @@ contract:
     checkability_map:
       type: array
       description: Candidate checks from classification, including assumptions
+    attempt_id:
+      type: integer
+      description: One-based pending attempt identity owned by the invoking log
+    reviewed_revision:
+      type: integer
+      description: Frozen prompt revision (0 initial, 1 single correction)
     round:
       type: integer
-      description: Grill round (1 at medium; 1-3 escalating at high)
+      description: Admitted review level (initial 1 at medium/high; exact-next escalation at high; current level for reprobe/correction)
     unfold_mode_resolved:
       type: string
       default: rewrite_only
@@ -40,7 +46,7 @@ contract:
   output:
     ratings:
       type: array
-      description: Per-area Solid/Partial/Gap ratings
+      description: Exactly one Solid/Partial/Gap row per cumulative area for the admitted round; no duplicate or unknown area
     findings:
       type: array
       description: Specific gaps to surface in the single-pass change log
@@ -85,10 +91,10 @@ For each level, generate 2-3 sharp questions and evaluate the prompt against the
 ### Round scaling
 
 - **Round 1** (medium and high): Recall + Mechanism only.
-- **Round 2** (high only): + Rationale. The invoking skill admits this level only when PE-3 returns `escalate: true` from the previous recorded ratings (the existing ≥80% rule).
-- **Round 3** (high only): + Edge Cases + Synthesis. The invoking skill again requires PE-3 admission.
+- **Round 2** (high only): + Rationale. The invoking skill admits this exact-next level only through PE-State from the previous accepted review (the existing ≥80% rule).
+- **Round 3** (high only): + Edge Cases + Synthesis. The invoking skill again requires PE-State exact-next-level admission.
 
-Supply semantic Solid/Partial/Gap ratings only. Do not calculate counts, ratios, escalation or re-probe eligibility. The invoking skill computes both threshold decisions and the remaining three-execution budget with PE-3; `reprobe: true` means the same level with different angles under the existing <40% rule. Empty/invalid ratings never admit another level. A re-probe is not an extra execution allowance.
+Supply semantic Solid/Partial/Gap ratings only. Do not calculate counts, ratios, escalation or re-probe eligibility. The invoking skill computes threshold admission and the remaining three-attempt high-tier budget with PE-State; a re-probe means the same level with different angles under the existing <40% rule. Failed calls, in-flight calls and correction rechecks consume that same budget. Empty/invalid ratings never admit another level. A re-probe is not an extra attempt allowance. Emit exactly the cumulative area set for the admitted round: round 1 Recall/Mechanism; round 2 adds Rationale; round 3 adds Edge Cases/Synthesis. Never emit rows for higher levels. The invoking pending log owns attempt/revision identity and attaches this raw result to that dispatch; do not invent or reset an execution count.
 
 ## Evaluation Against Acceptance Criteria
 
@@ -136,6 +142,8 @@ Re-scan the enhanced prompt for unresolved template placeholders (`<UPPERCASE_NA
   "unfold_mode_resolved": {{ unfold_mode_resolved | default("rewrite_only") | tojson }},
   "reference_models": {{ reference_models | default([]) | tojson }},
   "unfolded_plan": {{ unfolded_plan | default([]) | tojson }},
+  "attempt_id": {{ attempt_id | tojson }},
+  "reviewed_revision": {{ reviewed_revision | tojson }},
   "round": {{ round | tojson }}
 }
 ```
@@ -147,10 +155,10 @@ Return JSON only:
 {
   "ratings": [
     {"area": "Recall", "rating": "Solid|Partial|Gap", "evidence": "specific observation"},
-    {"area": "Mechanism", "rating": "Solid|Partial|Gap", "evidence": "specific observation"},
-    {"area": "Rationale", "rating": "Solid|Partial|Gap", "evidence": "specific observation (high tier only)"},
+    {"area": "Mechanism", "rating": "Solid|Partial|Gap", "evidence": "specific observation"}{% if round >= 2 %},
+    {"area": "Rationale", "rating": "Solid|Partial|Gap", "evidence": "specific observation"}{% endif %}{% if round >= 3 %},
     {"area": "Edge Cases", "rating": "Solid|Partial|Gap", "evidence": "specific observation (high tier only)"},
-    {"area": "Synthesis", "rating": "Solid|Partial|Gap", "evidence": "specific observation (high tier only)"}
+    {"area": "Synthesis", "rating": "Solid|Partial|Gap", "evidence": "specific observation (high tier only)"}{% endif %}
   ],
   "findings": [
     {"area": "the area", "gap": "what's missing or wrong", "severity": "Prohibition|Guardrail|Guideline", "suggested_fix_direction": "what remains to be addressed (not the fix itself)"}

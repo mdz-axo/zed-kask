@@ -9,9 +9,10 @@ General multi-purpose self-improvement skill for FM-based agents. Implements the
 
 **Scope boundary (operator ruling 2026-10-17):** the paper's Foundation Model Improvement pathway (θ — parameter updates via fine-tuning) is **out of scope for the co-researcher mandate** and has no executor in this system: the training server, the lora-training skill and the adapter lifecycle were removed. A task that genuinely requires a parameter update is reported as out of scope with its measured evidence — never simulated through a scaffold change presented as a fine-tune.
 
-## Goal evidence, closure and optional forecasts
+## Goal responsibilities
 
-Use `program-manager`'s goal contract and the [canonical pact](../../../kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md): create requires a real specification `source` and returns the full goal's `id`; ordinary goals omit `forecast`. Worker progress is not human closure. Native `kanban_goal_close` obtains human ActionChoice, never a model-supplied outcome; `kanban_goal_correct_outcome` is separate. Keep blinded assessment findings and human labels distinct, unknown visible, canonical history retained. The host freezes consented bounded local file snapshots before fresh assessment; missing contents stay unknown without inference, and fetched bytes do not authenticate claimed test execution. See the program-manager contract for read/sharing limits and the separately approved digest-only machine forecast. No automatic success closure or routine goal probability.
+Follow [GOAL_INTERFACE.md](../../../kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md).
+Measured rollout improvement supports a proposal, not human acceptance or permission to promote it. Preserve the operator review gate.
 
 ## Initial and target condition
 

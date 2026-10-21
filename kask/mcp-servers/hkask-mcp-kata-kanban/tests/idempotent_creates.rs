@@ -1400,3 +1400,91 @@ async fn pre_effect_failure_releases_the_claim_for_a_clean_retry() {
     );
     assert_eq!(port.spawns.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
+
+#[tokio::test]
+async fn goal_listing_reports_owner_scoped_rejections_without_hiding_supported_goals() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("goals.db");
+    let pool = SqliteDriver::file_pool_with_schema(path.to_str().expect("path")).expect("pool");
+    let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
+        Arc::new(SqliteDriver::new(pool));
+    let owner = WebID::new();
+    let foreign_owner = WebID::new();
+    let server = make_server_over_driver(driver.clone(), owner);
+    let foreign = make_server_over_driver(driver.clone(), foreign_owner);
+    let supported = create_goal(&server, "Supported", None).await;
+    let foreign_supported = create_goal(&foreign, "Foreign supported", None).await;
+    let ordinary = parse(
+        &server
+            .kanban_goal_list(Parameters(GoalListRequest {}))
+            .await
+            .expect("ordinary listing"),
+    );
+    assert_eq!(
+        ordinary["rejected"],
+        serde_json::json!({}),
+        "ordinary listing explicitly has no omissions"
+    );
+    assert_eq!(ordinary["goals"].as_array().expect("goals").len(), 1);
+    assert_eq!(ordinary["goals"][0]["id"], supported["id"]);
+    let store = HMemStore::from_driver(driver.clone()).expect("store");
+    let unsupported_id = hkask_types::GoalID::new().to_string();
+    let raw = serde_json::json!({"schema_version":2,"id":unsupported_id,"history":"must remain untouched"});
+    let row = hkask_storage::HMem::new("kanban:goal", &unsupported_id, raw.clone(), owner);
+    store.insert(&row).expect("unsupported fixture");
+    let listed = parse(
+        &server
+            .kanban_goal_list(Parameters(GoalListRequest {}))
+            .await
+            .expect("partial listing is explicit"),
+    );
+    assert_eq!(listed["goals"][0]["id"], supported["id"]);
+    assert_eq!(listed["goals"].as_array().expect("goals").len(), 1);
+    assert!(
+        listed["rejected"][&unsupported_id]
+            .as_str()
+            .expect("visible reason")
+            .contains("expected version 3")
+    );
+    assert_eq!(listed["rejected"].as_object().expect("rejections").len(), 1);
+    let isolated = parse(
+        &foreign
+            .kanban_goal_list(Parameters(GoalListRequest {}))
+            .await
+            .expect("foreign listing"),
+    );
+    assert_eq!(isolated["goals"][0]["id"], foreign_supported["id"]);
+    assert_eq!(
+        isolated["rejected"],
+        serde_json::json!({}),
+        "another owner's identity/reason must not be disclosed"
+    );
+    assert!(
+        server
+            .kanban_goal_get(Parameters(GoalGetRequest {
+                goal_id: unsupported_id.clone()
+            }))
+            .await
+            .expect_err("direct unsupported read still rejects")
+            .to_string()
+            .contains("expected version 3")
+    );
+    let denied = foreign
+        .kanban_goal_get(Parameters(GoalGetRequest {
+            goal_id: unsupported_id,
+        }))
+        .await
+        .expect_err("foreign direct read is unauthorized");
+    assert!(
+        !denied.to_string().contains("schema"),
+        "foreign caller cannot inspect the unsupported schema"
+    );
+    assert_eq!(
+        store
+            .get_by_id(&row.id)
+            .expect("raw read")
+            .expect("row retained")
+            .value,
+        raw
+    );
+}

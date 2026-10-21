@@ -41,7 +41,7 @@ General-purpose prompt enhancement skill for the zed-kask platform. Classifies p
 | -------- | ---------------------------------------------------------- | --------- | ----------- |
 | `low`    | classify → rewrite → output (one hard-defect correction if needed) | 2–3 | 1× baseline on first-pass success |
 | `medium` | classify → rewrite → verify → output (one focused correction + recheck if needed) | 3–5 | ~1.5× on first-pass success |
-| `high`   | classify → rewrite → verify (PE-3 admits higher-level or same-level review within the three-execution cap) → output (one focused correction; recheck only within that cap) | bounded; re-probes/rechecks share the verify budget | ~2.5× target, not measured usage |
+| `high`   | classify → rewrite → verify (PE-State admits exact-next-level or current-level review within the three-attempt cap) → output (one focused correction; recheck only within that same attempt cap) | bounded; re-probes/rechecks share the verify budget | ~2.5× target, not measured usage |
 
 ## The 7-Type Taxonomy
 
@@ -64,7 +64,7 @@ The *Taxonomy anchor* column uses the four aspects of Liu et al., "A comprehensi
 | 1 Classify (`pragmatic-semantics` + `hypothesis-framer` + `metacognition`) | P | decoupled critic in step 3 (medium/high); none at low, reported `skipped` |
 | 1.5 Anchor (`onto_anchor` + `zk-ref-open` via `curator_federated_search`) | D+P | `onto_anchor` (D) + `curator_federated_search` filtered to `source_id == "zk-ref-open"` / `source_kind == "corpus"` (D retrieval, P selection); skipped at `low` or `rewrite_only`/`clarify_first` |
 | 2 Rewrite & Unfold (`pragmatic-cybernetics` + `improv` + `essentialist`) | P | decoupled critic in step 3 (medium/high); none at low, reported `skipped` |
-| 3 Verify (`grill-me`) | P + D | critic grades are P; PE-3 counts and threshold admission and PE-2 bounds are D; verdict is reported, never upgraded |
+| 3 Verify (`grill-me`) | P + D | critic grades are P; PE-State validates attempt/revision history, counts and threshold admission (D); verdict is reported, never upgraded |
 | 4 Output render (`kata-improvement`) | D | `render_template` (no model call) |
 | File write (`file`/`both`) | D | the write tool's success receipt |
 | Local PDCA Check (`kata-improvement`) | P | medium/high: the verify verdict; low: generator self-inspection of the inline audit — no independent critic, the independent verdict stays `skipped` |
@@ -119,36 +119,166 @@ Array-valued context fields are plain JSON arrays — never stringified JSON. A 
    ```
    On a corrective re-render, `prior_enhanced_prompt` carries the previous rewrite and `critic_feedback` the verify step's `findings`. Produce `enhanced_prompt`, `unfolded_plan`, `acceptance_criteria`, `mutations_applied`, `mutations_deferred`, and `audit_findings` before proceeding. Assign checks only where they serve the request; proof does not establish that a proposition captures user intent, and computation depends on input provenance. Unrun checks remain explicitly proposed.
 
+### Raw JSON preflight (before every PE-State evaluation)
+
+PE-State is a two-part gate over the SAME raw env, not two state owners. First run `jq -e -f .agents/skills/prompt-enhance/raw-shape.jq` with the saved NEW review-state JSON file supplied on stdin, using its actual discovered invocation artifact path. Refuse on nonzero status; only then pass that exact parsed object as JSON text in `lisp_eval.env`. No filtered log, reconstructed findings or separately normalized arrays may cross this seam. The filter below is the exact companion resource proposed in this draft:
+
+```jq
+# Preserve raw JSON identity before the lossy JSON -> Lisp bridge.
+# No review echo, scoring, call counter or shadow admission state.
+def request_shape:
+  type == "object" and
+  keys == ["attempt_id","kind","level","reviewed_prompt","reviewed_revision"] and
+  (.attempt_id | type == "number" and floor == .) and
+  (.level | type == "number" and floor == .) and
+  (.reviewed_revision | type == "number" and floor == .) and
+  (.reviewed_prompt | type == "string") and
+  (.kind | IN("initial","escalate","reprobe","correction","retry"));
+type == "object" and has("effort_tier") and has("request") and
+(.prompt_revisions | type == "array") and
+(.critique_runs | type == "array") and
+(.request == null or (.request | request_shape)) and
+all(.critique_runs[];
+  type == "object" and has("status") and has("outcome") and
+  (if .status == "pending" then .outcome == null
+   elif .status == "completed" then
+    (.outcome | type == "object") and
+    (.outcome.ratings | type == "array") and
+    (.outcome.findings | type == "array") and
+    all(.outcome.ratings[]; type == "object") and
+    all(.outcome.findings[]; type == "object")
+   else true end))
+
+```
+
+This preflight is necessary because the Lisp JSON bridge represents `null`, `[]` and `{}` identically when empty. It cannot recover their original JSON types. The raw filter requires pending `outcome` to be EXACT JSON null and distinguishes snapshot `request: null` from a complete known five-field request object. Empty objects/arrays are neither pending null nor snapshot null. Its numeric request fields must be integer-valued; the Lisp gate still checks legal level/revision/identity values. Other than these producer-boundary shape checks, PE-State owns record admission, identity, threshold arithmetic and budgets. Interpreter errors or raw shape refusal mean incomplete/invalid review, never another free critique. Neither component establishes semantic quality, actual dispatch provenance, independence, or that the agent appended before sending; the executor must obey that ordering and retain its tool receipts.
+
 ### Step 3 — Verify (enhance-verify.j2, medium/high only)
 
-1. Run `grill-me` self-challenge across Recall → Mechanism → Rationale → Edge Cases → Synthesis, plus the **Reference-Model Governance & Unfolding Challenge** (verifying that cited `zk-ref-open` models govern tasks rather than decorative name-dropping, that `coarse_anchor` fallbacks are unfabricated, and that `unfolded_plan` is acyclic and ≤ 7 items).
-2. Decoupled from step 2 — do not defend the prompt you (didn't) write (self-improvement §9.1).
-3. Tier-scaled rounds: 1 (Recall+Mechanism) at medium; up to 3 verification executions at high, with the existing ≥80% escalation and <40% re-probe thresholds computed by **PE-3**, never by the critic. Initialize `critique_runs = []` and append each actual completed verify result (its `ratings`, `findings`, and verdict), not planned calls. Re-probes and an Act recheck share this log and PE-2's existing three-execution bound.
-   Before a possible round 2/3 or same-level re-probe, run PE-3 with the planned higher `next_round` (2 or 3), current effort and the unchanged log:
-   - form: `(begin (define pe-ratings-valid (lambda (rs) (if (is_null rs) true (and (listp (car rs)) (stringp (assoc "rating" (car rs))) (member (assoc "rating" (car rs)) (quote ("Solid" "Partial" "Gap"))) (pe-ratings-valid (cdr rs)))))) (define pe-solid-count (lambda (rs) (if (is_null rs) 0 (+ (if (string= "Solid" (assoc "rating" (car rs))) 1 0) (pe-solid-count (cdr rs)))))) (if (not (and (listp critique_runs) (> (length critique_runs) 0) (member effort_tier (quote ("low" "medium" "high"))) (numberp next_round) (or (= next_round 2) (= next_round 3)))) (list (list "input_valid" false) (list "error" "invalid_review_state") (list "escalate" false) (list "reprobe" false)) (let ((rounds (length critique_runs)) (ratings (assoc! "ratings" (nth (- (length critique_runs) 1) critique_runs)))) (if (not (and (listp ratings) (> (length ratings) 0) (pe-ratings-valid ratings))) (list (list "input_valid" false) (list "error" "invalid_ratings") (list "escalate" false) (list "reprobe" false)) (let ((solid (pe-solid-count ratings)) (total (length ratings))) (list (list "input_valid" true) (list "escalate" (and (string= effort_tier "high") (< rounds 3) (>= (* 5 solid) (* 4 total)))) (list "reprobe" (and (string= effort_tier "high") (< rounds 3) (< (* 5 solid) (* 2 total)))) (list "solid_count" solid) (list "rating_count" total) (list "rounds_executed" rounds)))))))`
-   - env: `{ "effort_tier": <classified effort>, "next_round": <2 or 3>, "critique_runs": <actual ordered verify results> }`.
-   Require `input_valid`; invalid or absent ratings are an incomplete review, not evidence to escalate. `escalate` alone admits a higher level; `reprobe` admits the same level with different angles. When both are false, do not invent an extra review or promote the level. These flags establish arithmetic/budget eligibility only, not rating correctness or independence. The thresholds are this project's existing adaptation, not prescribed by the published reference models.
-4. Render with the full context shape — copy it, do not reconstruct it from prose:
+1. Use the decoupled `grill-me` critic, preserving the existing challenge, verdict and findings policy. `low` skips the critic (`skipped`, empty ratings/findings); `medium` and `high` both start at level 1 (Recall + Mechanism). Level 2 adds Rationale; level 3 adds Edge Cases + Synthesis. Ratings contain exactly one row for each cumulative area at that level, no duplicate or unknown area; row order is irrelevant. Keep `Solid|Partial|Gap` unchanged. The independent critic supplies ratings, not threshold arithmetic.
+2. Initialize `critique_runs = []` and `prompt_revisions = [enhanced_prompt]` after the first rewrite. `prompt_revisions` freezes the exact initial text and, only after the one named-gap correction, its revised text. No separate critique execution count or completed-results list exists. Each attempt is one record:
    ```json
-   { "enhanced_prompt": "<from step 2>", "original_prompt": "<the original prompt>",
-     "prompt_type": "<from step 1>", "effort_tier": "<from step 1>",
-     "proxy_eval_set": <from step 1>, "acceptance_criteria": <from step 2>,
-     "checkability_map": <from step 1>, "unfold_mode_resolved": "<from step 1>",
-     "reference_models": <from step 1.5>, "unfolded_plan": <from step 2>, "round": 1 }
+   { "attempt_id": 1, "kind": "initial", "level": 1,
+     "reviewed_revision": 0, "reviewed_prompt": "<exact initial rewrite text>",
+     "status": "pending", "outcome": null }
    ```
-   `round` is 1 at medium, 1–3 escalating at high. Produce `ratings`, `findings` (the failed-gap list that feeds a corrective Act), and `verdict` (`pass`, `rewrite_needed`, or `fail`). Challenge whether each proposed check actually establishes its claim and whether unrun checks are mislabeled as verified.
-5. Preserve the critic's specific failed checks and verdict. Skip this stage at low effort and set `grill_verdict = "skipped"`, `grill_ratings = []`, `grill_findings = []`; a skipped critic is not a `pass`.
-6. Run deterministic `lisp_eval` gate `PE-2` after the critique step to enforce the escalation bound. `blocking_defects` is **computed from the critic's structured `findings`**, never typed as a count — `enhance-verify.j2` emits a `severity` field (`Prohibition|Guardrail|Guideline`) per finding, so the count is deterministic and a `pass` cannot be self-certified over an unresolved Prohibition:
-   - form: `(let ((count-prohibitions (lambda (items) (if (= 0 (length items)) 0 (+ (if (string= "Prohibition" (assoc "severity" (car items))) 1 0) (count-prohibitions (cdr items))))))) (let ((blocking_defects (count-prohibitions findings))) (list blocking_defects (and (listp critique_runs) (<= (length critique_runs) 3) (<= pdca_corrections 1) (if (string= verdict "pass") (= blocking_defects 0) true)))))`
-   - env: `{ "critique_runs": <actual ordered verify results, including re-probes/rechecks>, "pdca_corrections": <0..1>, "verdict": "<pass|rewrite_needed|fail|skipped>", "findings": <the final critic's findings array unchanged> }`. Do not hand-type an execution count; PE-2 counts the same log as PE-3. If three verifications have already executed, do not issue another recheck; report its absence and retain the failed/gapped verdict rather than claiming verification.
-   - Returns `[blocking_defects, gate_result]`. A `false` gate result on a `pass` verdict means the critic passed a prompt carrying an unresolved Prohibition-tier defect — the verdict does not stand; carry the failed verdict and the remaining gap into the output.
+   `attempt_id` is the one-based log position, never reused. `kind` is `initial|escalate|reprobe|correction|retry`; `status` is `pending|completed|failed`. Only status/outcome change after dispatch; identity, level, kind and reviewed revision/text are immutable. Bind the returned raw outcome to the captured pending attempt, not a later prompt or caller-typed count. Completed outcomes retain the full critic result, including ratings, findings and verdict unchanged. On transport failure or invalid critic output, keep that SAME attempt as `failed`, preserving its raw outcome/error; never delete it from the budget.
+3. **PE-State replaces both old PE-3 and PE-2 forms.** Run the exact form below with JSON-text env `{ "effort_tier": <classified tier>, "prompt_revisions": <frozen texts>, "critique_runs": <all attempts>, "request": <planned attempt identity or null for snapshot> }`. A planned request contains the identity fields and `kind`, not a model-typed count. Require `input_valid: true` AND `admit: true`; interpreter errors also refuse dispatch. Then append the request with `status: "pending", outcome: null` BEFORE dispatch, and snapshot-check that log. A pending attempt blocks concurrent dispatch and counts toward exhaustion. Never append a completed result as a new attempt. Snapshot-check again after settling it.
+
+   ```lisp
+(begin
+  (define pe-get (lambda (r k) (assoc! k r)))
+  (define pe-level (lambda (n) (and (numberp n) (or (= n 1) (= n 2) (= n 3)))))
+  (define pe-revision (lambda (n) (and (numberp n) (or (= n 0) (= n 1)))))
+  (define pe-areas (lambda (n) (if (= n 1) (quote ("Recall" "Mechanism")) (if (= n 2) (quote ("Recall" "Mechanism" "Rationale")) (quote ("Recall" "Mechanism" "Rationale" "Edge Cases" "Synthesis"))))))
+  (define pe-rating-rows (lambda (rs remaining)
+    (if (is_null rs) (= (length remaining) 0)
+      (let ((r (car rs)))
+        (and (listp r) (stringp (pe-get r "area")) (member (pe-get r "area") remaining)
+          (member (pe-get r "rating") (quote ("Solid" "Partial" "Gap")))
+          (stringp (pe-get r "evidence"))
+          (pe-rating-rows (cdr rs) (pe-remove remaining (pe-get r "area"))))))))
+  (define pe-remove (lambda (xs value) (if (is_null xs) (list) (if (string= (car xs) value) (cdr xs) (cons (car xs) (pe-remove (cdr xs) value))))))
+  (define pe-ratings (lambda (rs level) (and (listp rs) (= (length rs) (length (pe-areas level))) (pe-rating-rows rs (pe-areas level)))))
+  (define pe-solid (lambda (rs) (if (is_null rs) 0 (+ (if (string= (pe-get (car rs) "rating") "Solid") 1 0) (pe-solid (cdr rs))))))
+  (define pe-findings (lambda (xs) (and (listp xs) (if (is_null xs) true
+    (and (listp (car xs)) (stringp (pe-get (car xs) "area")) (> (length (pe-get (car xs) "area")) 0)
+      (stringp (pe-get (car xs) "gap")) (> (length (pe-get (car xs) "gap")) 0)
+      (member (pe-get (car xs) "severity") (quote ("Prohibition" "Guardrail" "Guideline")))
+      (stringp (pe-get (car xs) "suggested_fix_direction")) (pe-findings (cdr xs)))))))
+  (define pe-blocking (lambda (xs) (if (is_null xs) 0 (+ (if (string= (pe-get (car xs) "severity") "Prohibition") 1 0) (pe-blocking (cdr xs))))))
+  (define pe-outcome (lambda (r)
+    (let ((o (pe-get r "outcome")))
+      (and (listp o) (pe-ratings (pe-get o "ratings") (pe-get r "level"))
+        (pe-findings (pe-get o "findings"))
+        (member (pe-get o "verdict") (quote ("pass" "rewrite_needed" "fail")))
+        (if (string= (pe-get o "verdict") "pass") (and (= (pe-solid (pe-get o "ratings")) (length (pe-get o "ratings"))) (= (pe-blocking (pe-get o "findings")) 0)) true)))))
+  (define pe-last (lambda (xs) (nth (- (length xs) 1) xs)))
+  (define pe-limit (if (string= effort_tier "low") 0 3))
+  (define pe-identity (lambda (r index)
+    (and (listp r) (= (pe-get r "attempt_id") (+ index 1))
+      (pe-level (pe-get r "level")) (pe-revision (pe-get r "reviewed_revision"))
+      (< (pe-get r "reviewed_revision") (length prompt_revisions))
+      (stringp (pe-get r "reviewed_prompt"))
+      (string= (pe-get r "reviewed_prompt") (nth (pe-get r "reviewed_revision") prompt_revisions)))))
+  (define pe-transition (lambda (prior r)
+    (and (< (length prior) pe-limit) (pe-identity r (length prior))
+      (if (is_null prior)
+        (and (string= (pe-get r "kind") "initial") (= (pe-get r "level") 1) (= (pe-get r "reviewed_revision") 0))
+        (let ((p (pe-last prior)))
+          (and (= (pe-get p "reviewed_revision") 0) (not (string= (pe-get p "status") "pending"))
+            (if (string= (pe-get r "kind") "retry")
+              (and (string= (pe-get p "status") "failed")
+                (= (pe-get r "level") (pe-get p "level"))
+                (= (pe-get r "reviewed_revision") (pe-get p "reviewed_revision")))
+              (and (string= (pe-get p "status") "completed")
+                (not (string= (pe-get (pe-get p "outcome") "verdict") "pass"))
+                (if (string= (pe-get r "kind") "correction")
+                  (and (= (pe-get p "reviewed_revision") 0) (= (pe-get r "reviewed_revision") 1)
+                    (= (pe-get r "level") (pe-get p "level"))
+                    (> (length (pe-get (pe-get p "outcome") "findings")) 0))
+                  (and (string= effort_tier "high")
+                    (= (pe-get r "reviewed_revision") (pe-get p "reviewed_revision"))
+                    (let ((rs (pe-get (pe-get p "outcome") "ratings")))
+                      (if (string= (pe-get r "kind") "escalate")
+                        (and (= (pe-get r "level") (+ 1 (pe-get p "level"))) (>= (* 5 (pe-solid rs)) (* 4 (length rs))))
+                        (and (string= (pe-get r "kind") "reprobe") (= (pe-get r "level") (pe-get p "level"))
+                          (< (* 5 (pe-solid rs)) (* 2 (length rs))))))))))))))))
+  (define pe-history (lambda (remaining prior)
+    (if (is_null remaining) true
+      (let ((r (car remaining)))
+        (and (pe-transition prior r)
+          (member (pe-get r "status") (quote ("pending" "failed" "completed")))
+          (if (string= (pe-get r "status") "completed") (pe-outcome r)
+            (if (string= (pe-get r "status") "pending") (and (is_null (cdr remaining)) (is_null (pe-get r "outcome"))) true))
+          (pe-history (cdr remaining) (append prior (list r))))))))
+  (define pe-last-completed (lambda (xs found)
+    (if (is_null xs) found (pe-last-completed (cdr xs) (if (string= (pe-get (car xs) "status") "completed") (car xs) found)))))
+  (define pe-input (and (member effort_tier (quote ("low" "medium" "high")))
+    (listp prompt_revisions) (or (= (length prompt_revisions) 1) (= (length prompt_revisions) 2))
+    (stringp (car prompt_revisions)) (> (length (car prompt_revisions)) 0)
+    (if (= (length prompt_revisions) 2) (and (stringp (nth 1 prompt_revisions)) (> (length (nth 1 prompt_revisions)) 0) (not (string= (car prompt_revisions) (nth 1 prompt_revisions)))) true)
+    (listp critique_runs) (<= (length critique_runs) pe-limit)
+    (pe-history critique_runs (list))))
+  (if (not pe-input)
+    (list (list "input_valid" false) (list "admit" false) (list "verified_current_revision" false) (list "attempts_used" (if (listp critique_runs) (length critique_runs) 0)) (list "selected_attempt_id" 0) (list "delivery_verdict" "fail") (list "error" "invalid_review_state"))
+    (let ((review (pe-last-completed critique_runs (list))))
+      (let ((verified (and (> (length critique_runs) 0)
+              (string= (pe-get (pe-last critique_runs) "status") "completed")
+              (= (pe-get (pe-last critique_runs) "reviewed_revision") (- (length prompt_revisions) 1))
+              (string= (pe-get (pe-get (pe-last critique_runs) "outcome") "verdict") "pass"))))
+        (list (list "input_valid" true)
+          (list "admit" (and (not (is_null request))
+            (pe-transition critique_runs request)
+            (= (pe-get request "reviewed_revision") (- (length prompt_revisions) 1))))
+          (list "attempts_used" (length critique_runs))
+          (list "attempts_remaining" (- pe-limit (length critique_runs)))
+          (list "verified_current_revision" verified)
+          (list "selected_attempt_id" (if (is_null review) 0 (pe-get review "attempt_id")))
+          (list "delivery_verdict" (if (string= effort_tier "low") "skipped" (if verified "pass" (if (is_null review) "fail" (if (string= (pe-get (pe-get review "outcome") "verdict") "pass") "fail" (pe-get (pe-get review "outcome") "verdict"))))))
+          (list "verification_gap" (if (or verified (string= effort_tier "low")) "" "Current prompt has no final accepted clean pass; report failed, pending, invalid, stale or budget-exhausted review explicitly.")))))))
+
+   ```
+
+   The form replays every recorded admission before accepting the current state. Medium and high share the existing maximum of THREE critic attempts per invocation; low permits zero. Medium still has one completed primary review and at most one correction recheck, never semantic escalation/reprobe; failed-primary retries spend that same three-attempt budget, not a new allowance. Failed and in-flight attempts, same-level re-probes, and correction verification consume those same allowances. A failed attempt may retry only the same revision/level with remaining budget; no hidden recovery call. After a correction recheck, deliver; do not restart escalation, retry or reprobe.
+   At high, a valid non-pass review with >=80% Solid admits ONLY `level = previous level + 1`; <40% admits ONLY a same-level re-probe with different angles. Exact 40% does not admit a reprobe. Invalid/empty ratings and failed/pending outcomes cannot authorize semantic escalation. A `pass` already satisfies the target and admits no extra call. These are the existing project threshold adaptations, not a new semantic scoring policy. Arithmetic eligibility says nothing about rating correctness or actual critic independence.
+4. Dispatch `enhance-verify` with its full existing context, adding `attempt_id` and `reviewed_revision` from the pending record; `round` is that record's `level` and `enhanced_prompt` is its `reviewed_prompt`. The original prompt, acceptance criteria, proxy set and checkability context stay frozen across reviews and the correction:
+   ```json
+   { "enhanced_prompt": "<pending reviewed_prompt>", "original_prompt": "<original prompt>",
+     "prompt_type": "<step 1>", "effort_tier": "<step 1>",
+     "proxy_eval_set": [], "acceptance_criteria": [], "checkability_map": [],
+     "unfold_mode_resolved": "<step 1>", "reference_models": [], "unfolded_plan": [],
+     "round": 1, "attempt_id": 1, "reviewed_revision": 0 }
+   ```
+   The empty arrays above illustrate types, not permission to discard populated stage outputs: carry the actual stage arrays. Critic output remains the current `ratings`, `findings`, `verdict` plus its other existing fields. Validate it before marking completed. A claimed `pass` requires ALL required area ratings to be `Solid` AND no Prohibition findings, matching the existing producer verdict contract. A pass with Partial/Gap or a Prohibition is inconsistent: keep that same consumed attempt as `failed` with the raw outcome intact; never delete/refund it or claim verified. A mistakenly completed inconsistent record is rejected with consumed attempts and failed delivery visible. Finding `area` and `gap` must be nonempty strings to support a named-gap correction; this is a length check, not a semantic scorer or a new finding-area taxonomy. Empty suggested-fix text alone is not a new rejection policy.
+5. Before output, use a snapshot (`request: null`). The gate returns only `selected_attempt_id` (0 means none), NEVER a review echo. For a positive ID, select `critique_runs[id - 1]` from the ORIGINAL raw JSON object that passed preflight, confirm its `attempt_id` equals the selected ID, and take ratings/findings from that raw record's `outcome` unchanged. Do not serialize them through Lisp, reconstruct them from ratings, or reject otherwise allowed nested extra data. For ID 0 use empty ratings/findings and keep the gate's failed/skipped delivery status. Set `grill_verdict` to `delivery_verdict`, never manufacture a pass from an old-revision review or pending/failed attempt. Keep any original raw critic verdict in the same log. Deliver `verification_gap` and the attempt status/revision/budget alongside the rendered result when current verification is missing, invalid or exhausted. No accepted result is not a skipped critic at medium/high; it is an unresolved failure. Invalid history blocks further calls and any verification claim; deliver the last prompt with the state error visible, not a repaired or fabricated history.
 
 ### Local PDCA — Check and Act before output
 
 1. **Plan/Do:** use the initial condition and target above; classify and rewrite once, then run the tier's verification stage. Do not call a model again when the target is already satisfied.
 2. **Check:** at medium/high, a `pass` with no unresolved Prohibition-tier issue meets the local target; `rewrite_needed` or `fail` carries the critic's specific gaps. At low, inspect the inline audit for unresolved Prohibition-tier issues, but keep the independent verdict `skipped` even when none is visible. A proposed `lisp_eval`, Lean, or empirical check in the prompt is not evidence it ran.
-3. **Act (one correction maximum):** on a named gap, rerender `enhance-rewrite` with the *original* `prompt`/`task`, previous `enhanced_prompt` as `prior_enhanced_prompt`, and the verify step's `findings` as `critic_feedback`. Preserve already satisfied constraints. At medium/high, re-run `enhance-verify` once against the revised prompt and the same acceptance criteria; at low, recheck only the hard issue and retain `skipped`. If the target still fails, deliver with the failed verdict and remaining gap visible—never turn a failure into a `pass`. Do not loop on new stylistic suggestions or perform a second correction.
-4. **Post-delivery user amendment (new invocation, not Act re-entry):** Step 4 delivery terminates this invocation. If a later user message explicitly changes or adds a requirement, begin a new prompt-enhance invocation: pass the prior delivered enhanced prompt as `prompt`, pass the user's literal follow-on as `task`, and reset `critique_runs` to `[]` and `pdca_corrections` to zero. Preserve the prior run's verdict and change log as provenance. Only an explicit user turn may open this path; critic feedback, stylistic suggestions, or agent initiative never do. The new invocation retains its own one-correction maximum and independent verification.
+3. **Act (one correction maximum):** on a named gap, rerender `enhance-rewrite` with the *original* `prompt`/`task`, previous `enhanced_prompt` as `prior_enhanced_prompt`, and the verify step's `findings` as `critic_feedback`. Preserve already satisfied constraints. Append the exact revised text as `prompt_revisions[1]` (only one correction). At medium/high, request a `correction` attempt at the last completed review's level, binding revision 1 and that exact text; run it only if PE-State admits it within the existing attempt budget. If exhausted or a prior attempt is still pending, do not dispatch: deliver the unresolved/unreviewed correction visibly, never reuse revision 0's pass. At low, recheck only the hard issue and retain `skipped`. If the target still fails, deliver with the failed verdict and remaining gap visible—never turn a failure into a `pass`. Do not loop on new stylistic suggestions or perform a second correction.
+4. **Post-delivery user amendment (new invocation, not Act re-entry):** Step 4 delivery terminates this invocation. If a later user message explicitly changes or adds a requirement, begin a new prompt-enhance invocation: pass the prior delivered enhanced prompt as `prompt`, pass the user's literal follow-on as `task`, and reset `critique_runs` to `[]` and start a fresh one-text `prompt_revisions` after its first rewrite. Preserve the prior run's verdict and change log as provenance. Only an explicit user turn may open this path; critic feedback, stylistic suggestions, or agent initiative never do. The new invocation retains its own one-correction maximum and independent verification.
 
 ### Step 4 — Output (enhance-output-render.j2, deterministic render)
 
@@ -162,9 +292,9 @@ Array-valued context fields are plain JSON arrays — never stringified JSON. A 
      "unfold_mode_resolved": "<from step 1>", "reference_models": <from step 1.5>,
      "unfolded_plan": <from step 2> }
    ```
-   Encode this whole context object once as JSON text for `render_template.context`; keep its seven array fields (`audit_findings`, `grill_ratings`, `grill_findings`, `mutations_applied`, `mutations_deferred`, `reference_models`, `unfolded_plan`) as arrays inside that object, never individually stringified. Pass the final verify step's `findings` unchanged as `grill_findings`, including on `rewrite_needed` or `fail`; do not reconstruct them from ratings or the verdict. At low effort pass `grill_verdict: "skipped"`, `grill_ratings: []`, `grill_findings: []`, `reference_models: []`, and `unfolded_plan: []` (if `rewrite_only`). A missing `grill_findings` field fails admission; a non-array value surfaces as `input_errors` and requires a corrected render. Do not pass a nested `verification` object or the retired `schema_defects` and `convergence_metric` fields.
+   Encode this whole context object once as JSON text for `render_template.context`; keep its seven array fields (`audit_findings`, `grill_ratings`, `grill_findings`, `mutations_applied`, `mutations_deferred`, `reference_models`, `unfolded_plan`) as arrays inside that object, never individually stringified. Use PE-State's scalar selected ID to select the ORIGINAL raw JSON review, and pass that raw review's `findings` unchanged as `grill_findings`, including on `rewrite_needed` or `fail`; do not reconstruct them from ratings or the verdict. At low effort pass `grill_verdict: "skipped"`, `grill_ratings: []`, `grill_findings: []`, `reference_models: []`, and `unfolded_plan: []` (if `rewrite_only`). A missing `grill_findings` field fails admission; a non-array value surfaces as `input_errors` and requires a corrected render. Do not pass a nested `verification` object or the retired `schema_defects` and `convergence_metric` fields.
 2. Deliver the rendered `delivered_output` to the user. `inline` displays it; `file` and `both` additionally require a separate file-write action. A render-only step NEVER writes a file (`output_path_written` stays empty). Report a path only after a successful write.
-3. Always include the change log: audit findings, critique verdict, ratings and specific findings, applied and deferred mutations. Preserve the critic's complete structured findings in both `delivered_output` and `change_log.grill_findings`; a `rewrite_needed` or `fail` verdict must remain visible, never upgraded to verified.
+3. Always include the change log: audit findings, critique verdict, ratings and specific findings, applied and deferred mutations. Preserve the selected critic's complete structured findings in both `delivered_output` and `change_log.grill_findings`; disclose PE-State's verification gap and selected review revision separately, never by rewriting or erasing those findings; a `rewrite_needed` or `fail` verdict must remain visible, never upgraded to verified.
 4. This step makes no LLM call. The skill is not complete until its enhanced prompt is delivered, not merely rendered.
 
 ## Executor discipline (operator-approved 2026-10-19, from the live lockout run)
@@ -177,7 +307,7 @@ Array-valued context fields are plain JSON arrays — never stringified JSON. A 
 
 ## Regression case
 
-Run a mixed request (for example: improve a proof skill, check a finite invariant with `lisp_eval`, check an example with Lean, and decide which additions are useful) through classify → rewrite → verify → output at `medium` effort. Include one run whose verify verdict is `rewrite_needed`: it must drive exactly one corrective re-render (`prior_enhanced_prompt` plus `critic_feedback` taken from the verify `findings`) and one re-verify. Check that the classifier emits distinct `finite`, `formal`, `empirical`, and `judgment` obligations; the rewrite proposes checks without claiming they ran; the critic challenges whether those checks establish the claims; and the final `delivered_output` contains the enhanced prompt and an honest verdict. Exercise low-effort `file` output separately: `grill_verdict` must be `skipped` and `output_path_written` must remain empty until a separate write succeeds. A failed verdict must remain visible, not be silently changed to `pass`. Exercise the post-delivery boundary: (a) an agent-generated extra suggestion after one correction does not reopen the loop; (b) an explicit user amendment starts a new invocation with fresh counters and the prior delivered prompt as baseline; (c) `PE-2` uses `string=` and passes corrections 0/1 while rejecting correction 2 within one invocation.
+Run a mixed request (for example: improve a proof skill, check a finite invariant with `lisp_eval`, check an example with Lean, and decide which additions are useful) through classify → rewrite → verify → output at `medium` effort. Include one run whose verify verdict is `rewrite_needed`: it must drive exactly one corrective re-render (`prior_enhanced_prompt` plus `critic_feedback` taken from the verify `findings`) and one re-verify. Check that the classifier emits distinct `finite`, `formal`, `empirical`, and `judgment` obligations; the rewrite proposes checks without claiming they ran; the critic challenges whether those checks establish the claims; and the final `delivered_output` contains the enhanced prompt and an honest verdict. Exercise low-effort `file` output separately: `grill_verdict` must be `skipped` and `output_path_written` must remain empty until a separate write succeeds. A failed verdict must remain visible, not be silently changed to `pass`. Exercise the post-delivery boundary: (a) an agent-generated extra suggestion after one correction does not reopen the loop; (b) an explicit user amendment starts a new invocation with fresh counters and the prior delivered prompt as baseline; (c) PE-State replays NEW-data attempt logs: initial low/medium/high routing, exact-next escalation, same-level reprobe, failed/pending exhaustion, one revision-bound correction, exact area coverage, invalid vocabulary and inclusive/exclusive threshold boundaries. Snapshot-derived findings still reach the actual finalizer unchanged; no malformed or stale result certifies the current prompt.
 
 ## Registry Templates
 

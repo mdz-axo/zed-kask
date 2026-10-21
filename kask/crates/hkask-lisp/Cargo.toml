@@ -16,6 +16,7 @@ stacksafe.workspace = true
 [dev-dependencies]
 proptest = { workspace = true }
 criterion = { workspace = true }
+smol = { workspace = true }
 
 [[bin]]
 name = "check-skill-lisp-forms"

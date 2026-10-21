@@ -1,71 +1,36 @@
-{# goal: Synthesize an evidence-linked final assessment from actual identified answers, marking unanswered areas Unassessed and prioritizing study recommendations. #}
+{# goal: Assess actual learner answers with explicit evidence IDs, leaving unanswered areas Unassessed and prioritizing study recommendations. #}
 [inference]
 contract:
   input:
     topic: string
     question_bank: array
-    answer_records: array
-    assessment: object
-    calibration: object|null
+    answers: array
+    calibrated_level: integer|null
   output:
     summary: array
     recommendations: array
     overall_assessment: string
 ---
-
-You are synthesizing a final knowledge assessment for **{{ topic }}**.
-
-## Actual Answer Records and Asked Areas
-
-GM-STATE joined these records by identity, using each answer's latest grade:
-```json
-{{ answer_records | tojson }}
-```
-Question bank (covers unanswered areas too):
-```json
+Synthesize a final knowledge assessment for **{{ topic }}**.
+Question bank, including unanswered areas:
 {{ question_bank | tojson }}
-```
-Actual calibration output, or null if no calibration answers were graded:
-```json
-{{ calibration | tojson }}
-```
+Actual answer ledger, with latest grades (failed is historical bookkeeping):
+{{ answers | tojson }}
+Initial calibrated level: {{ calibrated_level | tojson }}.
 
-## Running Assessment
+Cover each asked area once. Grade it Solid, Partial or Gap only with actual graded
+answer_ids from that area. Without graded evidence use Unassessed and answer_ids:[];
+an unanswered question is not evidence of a Gap. Compare the final evidence with
+the initial calibrated level; null means calibration was unassessed.
 
-```json
-{{ assessment | tojson }}
-```
-
-## Assessment Task
-
-Produce a comprehensive gap analysis. Reconcile the supplied calibration against the actual answers; if calibration is null, state that it is unassessed. Cover each asked area exactly once. Every graded summary row cites actual graded `answer_ids` from that area; never cite question IDs as answer evidence. Rate each knowledge area using:
-- 🟢 **Solid** — Deep, accurate understanding
-- 🟡 **Partial** — Some understanding, significant gaps
-- 🔴 **Gap** — Missing or incorrect understanding evidenced by an actual answer
-- **Unassessed** — No graded answer in this area; `answer_ids` must be `[]`, never a fabricated Gap
-
-## Output Requirements
-
-Respond with a JSON object:
-
+Return:
 ```json
 {
-  "summary": [
-    {"area": "topic area name", "rating": "Solid", "answer_ids": [1], "notes": "specific observations grounded in answer 1"}
-  ],
-  "recommendations": [
-    "Study recommendation 1",
-    "Study recommendation 2"
-  ],
-  "overall_assessment": "Brief narrative summary of knowledge depth and breadth"
+  "summary": [{"area":"area","rating":"Solid","answer_ids":[1],"notes":"answer-specific evidence"}],
+  "recommendations": ["Specific study recommendation"],
+  "overall_assessment": "Brief narrative"
 }
 ```
-
-## Constraints
-
-- Be specific in recommendations — point to exact areas to study.
-- Don't sugarcoat gaps, but don't be demoralizing.
-- Prioritize recommendations by impact (most critical evidenced gaps first).
-- Use exactly `Solid`, `Partial`, `Gap`, or `Unassessed`; the example ID is schematic, not permission to invent evidence.
-- GM-2 checks the actual summary's area coverage and evidence references before delivery. It does not prove semantic quality.
-
+The example ID is schematic, not permission to invent an answer. Prioritize
+recommendations by impact; be candid without demoralizing. The caller checks
+summary references before delivery; that check does not establish semantic quality.

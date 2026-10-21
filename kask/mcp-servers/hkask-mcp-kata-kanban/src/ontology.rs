@@ -61,7 +61,7 @@ pub(crate) fn tool_to_pko(tool_name: &str) -> Option<PkoConcept> {
         | "kanban_board_list"
         | "kanban_board_update" => Some(STEP_EXECUTION),
         // Worker declaration/progress are verification steps; native closure
-        // and delivery receipts are intentionally outside the tool surface.
+        // and recall indexing are intentionally outside the tool surface.
         "kanban_goal_create" | "kanban_goal_judge" | "kanban_goal_list" | "kanban_goal_get" => {
             Some(STEP_VERIFICATION)
         }

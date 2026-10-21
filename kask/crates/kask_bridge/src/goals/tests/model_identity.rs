@@ -4,7 +4,9 @@ struct Producer {
     actual: Option<&'static str>,
     wrong_requested: bool,
     axis: usize,
-    calls: AtomicUsize,
+    paused: AtomicBool,
+    started: Arc<tokio::sync::Notify>,
+    resume: Arc<tokio::sync::Notify>,
 }
 impl Producer {
     fn new(actual: Option<&'static str>, axis: usize) -> Arc<Self> {
@@ -12,7 +14,9 @@ impl Producer {
             actual,
             wrong_requested: false,
             axis,
-            calls: AtomicUsize::new(0),
+            paused: AtomicBool::new(false),
+            started: Arc::new(tokio::sync::Notify::new()),
+            resume: Arc::new(tokio::sync::Notify::new()),
         })
     }
     fn vector(&self) -> Vec<f32> {
@@ -41,18 +45,20 @@ impl InferencePort for Producer {
         dimensions: Option<u32>,
     ) -> hkask_types::EmbedFuture<'a> {
         assert_eq!(dimensions, Some(hkask_storage::embedding_dim() as u32));
-        self.calls.fetch_add(1, Ordering::SeqCst);
         let requested = if self.wrong_requested {
-            "another-request".to_string()
+            "wrong-request".into()
         } else {
             model.to_string()
         };
         let actual = self.actual.map(str::to_string);
-        let vector = self.vector();
-        let count = texts.len();
+        let vectors = vec![self.vector(); texts.len()];
         Box::pin(async move {
+            if self.paused.load(Ordering::SeqCst) {
+                self.started.notify_one();
+                self.resume.notified().await;
+            }
             Ok(EmbeddingBatch {
-                vectors: vec![vector; count],
+                vectors,
                 requested_model: requested,
                 actual_model: actual,
                 usage: InferenceUsage::default(),
@@ -61,308 +67,233 @@ impl InferencePort for Producer {
         })
     }
 }
-async fn interrupt_after_publish(host: Arc<GoalHost>, cx: &mut gpui::TestAppContext) {
-    cx.executor().allow_parking();
-    let runtime = tokio::runtime::Runtime::new().expect("runtime");
-    let task = runtime.spawn(async move {
-        let mut work = Box::pin(host.drain_once());
-        assert!(
-            futures::poll!(work.as_mut()).is_pending(),
-            "actual drainer publication/receipt boundary"
-        );
-        drop(work);
-    });
-    cx.background_spawn(async move {
-        task.await.expect("interrupted production drain");
-    })
-    .await;
+fn block_ack(host: &GoalHost) {
+    host.ledger.driver().execute_batch("CREATE TRIGGER fail_goal_ack BEFORE UPDATE ON hmems WHEN NEW.entity = 'kanban:goal' AND json_extract(NEW.value, '$.indexed_revision') > json_extract(OLD.value, '$.indexed_revision') BEGIN SELECT RAISE(FAIL, 'interruption after memory publication'); END;").expect("install canonical commit fault");
 }
-async fn resume_startup(
-    host: Arc<GoalHost>,
-    id: hkask_types::id::GoalID,
-    owner: WebID,
-    cx: &mut gpui::TestAppContext,
-) {
-    cx.executor().allow_parking();
-    let runtime = tokio::runtime::Runtime::new().expect("runtime");
-    let task = runtime.spawn(async move {
-        let runner = tokio::spawn(host.clone().run());
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
-        loop {
-            let goal = host
-                .service
-                .goal_get(id, owner)
-                .expect("get")
-                .expect("goal");
-            if goal
-                .projections
-                .iter()
-                .all(|p| p.delivered_receipt.is_some())
-            {
-                break;
-            }
-            assert!(
-                tokio::time::Instant::now() < deadline,
-                "startup drainer did not finish"
-            );
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        }
-        runner.abort();
-        assert!(runner.await.expect_err("aborted").is_cancelled());
-    });
-    cx.background_spawn(async move {
-        task.await.expect("startup recovery");
-    })
-    .await;
+fn unblock_ack(host: &GoalHost) {
+    host.ledger
+        .driver()
+        .execute_batch("DROP TRIGGER fail_goal_ack;")
+        .expect("restore canonical commits");
 }
-
-#[gpui::test]
-async fn restart_model_switch_repairs_same_width_vectors_before_ack_and_active_knn(
-    cx: &mut gpui::TestAppContext,
-) {
-    for (same_alias, prior_confirmed, current_echoes_alias) in [
-        (false, true, false),
-        (true, true, false),
-        (true, false, false),
-        (true, false, true),
+#[tokio::test]
+async fn publication_before_mark_restart_reuses_one_current_record_and_repairs_active_model() {
+    for (prior, actual) in [
+        (Some("producer/a"), Some("producer/b")),
+        (None, Some("alias/current")),
+        (None, None),
     ] {
         let dir = tempfile::tempdir().expect("directory");
+        let old = Producer::new(prior, 0);
+        let host = open_with_provider(dir.path(), old.clone(), "alias/current").expect("host");
         let owner = WebID::new();
-        let a = Producer::new(
-            if prior_confirmed {
-                Some("producer/a-v1")
-            } else {
-                None
-            },
-            0,
-        );
-        let first_request = if same_alias {
-            "alias/current"
-        } else {
-            "alias/a"
-        };
-        let active_request = if same_alias {
-            "alias/current"
-        } else {
-            "alias/b"
-        };
-        let host = open_with_provider(dir.path(), a.clone(), first_request).expect("first host");
         let goal = declare(&host, owner).expect("goal");
-        decision(host.clone(), &goal, owner, "stop_unknown", false, cx).await;
-        interrupt_after_publish(host.clone(), cx).await;
+        block_ack(&host);
+        host.drain_once()
+            .await
+            .expect("failed goal retained, siblings continue");
         let entity = format!("curator:goal:{}", goal.id);
-        let old = host
-            .memory
-            .as_ref()
-            .expect("memory")
-            .h_mems_by_entity_prefix(&entity)
-            .expect("first publication");
-        assert_eq!(old.len(), 1);
-        let old_passage = hkask_memory::semantic_passage_for_h_mem(&old[0]).expect("passage");
-        let old_producer = if prior_confirmed {
-            "producer/a-v1"
-        } else {
-            first_request
-        };
-        assert!(
-            host.memory
-                .as_ref()
-                .expect("memory")
-                .has_embedding_for_passage_with_model(
-                    &entity,
-                    &old_passage,
-                    old_producer,
-                    &a.vector()
-                )
-                .expect("positive model/index existence")
-        );
-        assert!(
-            !host
-                .memory
-                .as_ref()
-                .expect("memory")
-                .has_embedding_for_passage_with_model(
-                    &entity,
-                    &old_passage,
-                    "producer/b-v2",
-                    &a.vector()
-                )
-                .expect("negative model existence")
-        );
-        let old_id = old[0].id;
-        let first_attribute = old[0].attribute.clone();
-        assert!(
+        let memory = host.memory.as_ref().expect("memory");
+        let before = memory.h_mems_by_entity_prefix(&entity).expect("published");
+        assert_eq!(before.len(), 1);
+        assert_eq!(
             host.service
                 .goal_get(goal.id, owner)
                 .expect("get")
                 .expect("goal")
-                .projections
-                .iter()
-                .all(|p| p.delivered_receipt.is_none())
+                .indexed_revision,
+            0
         );
+        unblock_ack(&host);
         drop(host);
-        let active_producer = if current_echoes_alias {
-            "alias/current"
-        } else {
-            "producer/b-v2"
-        };
-        let b = Producer::new(Some(active_producer), 1);
-        let host = open_with_provider(dir.path(), b.clone(), active_request)
-            .expect("reopened with active producer");
-        resume_startup(host.clone(), goal.id, owner, cx).await;
+        let active = Producer::new(actual, 1);
+        let host =
+            open_with_provider(dir.path(), active.clone(), "alias/current").expect("restart");
+        host.drain_once().await.expect("repair and mark");
+        let retained = host
+            .service
+            .goal_get(goal.id, owner)
+            .expect("get")
+            .expect("goal");
+        assert_eq!(retained.indexed_revision, retained.revision);
         let memory = host.memory.as_ref().expect("memory");
-        let rows = memory
-            .h_mems_by_entity_prefix(&entity)
-            .expect("exact recall");
-        let repaired = rows
-            .iter()
-            .find(|row| row.attribute == first_attribute)
-            .expect("same payload identity");
-        assert_ne!(
-            repaired.id, old_id,
-            "incompatible producer is repaired, never merely acknowledged or relabelled"
-        );
-        assert_eq!(repaired.value, old[0].value);
-        let query = b
-            .embed_with_dimensions(
-                active_request,
-                &["original frozen requirement".into()],
-                Some(hkask_storage::embedding_dim() as u32),
-            )
-            .await
-            .expect("active producer query");
-        let hits = memory
-            .search_similar(
-                &query.vectors[0],
-                100,
-                &query.requested_model,
-                query.actual_model.as_deref(),
-            )
-            .expect("active KNN");
-        assert!(!hits.results.is_empty());
-        assert!(
-            hits.results.iter().any(|hit| hit.embedding.passage_text
-                == hkask_memory::semantic_passage_for_h_mem(repaired)),
-            "exact and semantic recall join after model change"
-        );
-        for hit in &hits.results {
-            assert_eq!(
-                hit.embedding.model, active_producer,
-                "record the freshly reported producer identity"
-            );
-            assert_eq!(
-                hit.embedding.vector,
-                b.vector(),
-                "the new producer actually generated the vector"
-            );
-            assert!(hit.distance.abs() < 1e-6);
-        }
-        let current = host
-            .service
-            .goal_get(goal.id, owner)
-            .expect("get")
-            .expect("goal");
-        assert_eq!(rows.len(), current.projections.len());
+        let rows = memory.h_mems_by_entity_prefix(&entity).expect("recall");
         assert_eq!(
-            current.projections[0].delivered_receipt,
-            Some(repaired.id.to_string())
+            rows.len(),
+            1,
+            "revision replaces, never appends snapshot history"
         );
-    }
-}
-
-#[gpui::test]
-async fn projection_rejects_wrong_requested_identity_and_blank_actual_identity(
-    cx: &mut gpui::TestAppContext,
-) {
-    for (actual, wrong_requested) in [(Some("producer/b-v2"), true), (Some(""), false)] {
-        let dir = tempfile::tempdir().expect("directory");
-        let producer = Arc::new(Producer {
-            actual,
-            wrong_requested,
-            axis: 1,
-            calls: AtomicUsize::new(0),
-        });
-        let host = open_with_provider(dir.path(), producer, "alias/b").expect("host");
-        let owner = WebID::new();
-        let goal = declare(&host, owner).expect("goal");
-        decision(host.clone(), &goal, owner, "stop_unknown", false, cx).await;
-        super::artifacts::bounded_tick(host.clone(), cx).await;
-        let current = host
-            .service
-            .goal_get(goal.id, owner)
-            .expect("get")
-            .expect("goal");
+        let passage = hkask_memory::semantic_passage_for_h_mem(&rows[0]).expect("passage");
+        let producer = actual.unwrap_or("alias/current");
         assert!(
-            current
-                .projections
+            memory
+                .has_embedding_for_passage_with_model(&entity, &passage, producer, &active.vector())
+                .expect("active row and index")
+        );
+        assert!(
+            !memory
+                .has_embedding_for_passage_with_model(
+                    &entity,
+                    &passage,
+                    prior.unwrap_or("alias/current"),
+                    &old.vector()
+                )
+                .expect("stale vector excluded")
+        );
+        assert_eq!(memory.embedding_count().expect("one vector"), 1);
+        assert!(
+            memory
+                .search_similar(&active.vector(), 5, "alias/current", actual)
+                .expect("active KNN")
+                .results
                 .iter()
-                .all(|p| p.delivered_receipt.is_none()),
-            "inconsistent source identity never acknowledges delivery"
+                .any(|hit| hit.embedding.entity_ref == entity)
         );
-        assert!(
-            host.memory
-                .as_ref()
-                .expect("memory")
-                .h_mems_by_entity_prefix(&format!("curator:goal:{}", goal.id))
-                .expect("exact")
-                .is_empty(),
-            "bad batch publishes no projection row"
+        // Repeated scans do not mint another memory row or rotate its identity.
+        let stable = rows[0].id;
+        host.drain_once().await.expect("already indexed");
+        assert_eq!(
+            memory.h_mems_by_entity_prefix(&entity).expect("recall")[0].id,
+            stable
         );
     }
 }
-
-#[gpui::test]
-async fn unconfirmed_producer_alias_is_regenerated_not_assumed_compatible(
-    cx: &mut gpui::TestAppContext,
-) {
+#[tokio::test]
+async fn same_producer_retry_after_publication_before_mark_reuses_exact_row() {
     let dir = tempfile::tempdir().expect("directory");
+    let provider = Producer::new(Some("producer/current"), 0);
+    let host = open_with_provider(dir.path(), provider.clone(), "alias/current").expect("host");
     let owner = WebID::new();
-    let a = Producer::new(None, 0);
-    let host = open_with_provider(dir.path(), a, "unconfirmed-alias").expect("host");
     let goal = declare(&host, owner).expect("goal");
-    decision(host.clone(), &goal, owner, "stop_unknown", false, cx).await;
-    interrupt_after_publish(host.clone(), cx).await;
+    block_ack(&host);
+    host.drain_once().await.expect("backlog retained");
     let entity = format!("curator:goal:{}", goal.id);
-    let old = host
+    let before = host
         .memory
         .as_ref()
         .expect("memory")
         .h_mems_by_entity_prefix(&entity)
         .expect("published");
-    assert_eq!(old.len(), 1);
-    let old_id = old[0].id;
-    let attribute = old[0].attribute.clone();
+    unblock_ack(&host);
     drop(host);
-    let b = Producer::new(None, 1);
-    let host = open_with_provider(dir.path(), b.clone(), "unconfirmed-alias").expect("restart");
-    resume_startup(host.clone(), goal.id, owner, cx).await;
-    let memory = host.memory.as_ref().expect("memory");
-    let rows = memory.h_mems_by_entity_prefix(&entity).expect("exact");
-    let repaired = rows
-        .iter()
-        .find(|row| row.attribute == attribute)
-        .expect("repaired");
-    assert_ne!(repaired.id, old_id);
-    let query = b
-        .embed_with_dimensions(
-            "unconfirmed-alias",
-            &["frozen requirement".into()],
-            Some(hkask_storage::embedding_dim() as u32),
-        )
-        .await
-        .expect("active unconfirmed producer query");
-    let hits = memory
-        .search_similar(
-            &query.vectors[0],
-            100,
-            &query.requested_model,
-            query.actual_model.as_deref(),
-        )
-        .expect("active KNN");
-    assert!(!hits.results.is_empty());
-    for hit in hits.results {
-        assert_eq!(hit.embedding.model, "unconfirmed-alias");
-        assert_eq!(hit.embedding.vector, b.vector());
-        assert!(hit.distance.abs() < 1e-6);
+    let host = open_with_provider(dir.path(), provider, "alias/current").expect("restart");
+    host.drain_once().await.expect("retry");
+    let after = host
+        .memory
+        .as_ref()
+        .expect("memory")
+        .h_mems_by_entity_prefix(&entity)
+        .expect("recalled");
+    assert_eq!(before.len(), 1);
+    assert_eq!(after.len(), 1);
+    assert_eq!(
+        before[0].id, after[0].id,
+        "crash replay converges without another row"
+    );
+}
+#[tokio::test]
+async fn newer_revision_or_producer_wins_over_older_inflight_preparation() {
+    for advance_revision in [false, true] {
+        let dir = tempfile::tempdir().expect("directory");
+        let old = Producer::new(Some("producer/old"), 0);
+        old.paused.store(true, Ordering::SeqCst);
+        let first = open_with_provider(dir.path(), old.clone(), "alias/current").expect("old host");
+        let owner = WebID::new();
+        let goal = declare(&first, owner).expect("goal");
+        let started = old.started.notified();
+        let task = tokio::spawn({
+            let first = first.clone();
+            async move { first.drain_once().await }
+        });
+        started.await;
+        let active = Producer::new(Some("producer/current"), 1);
+        let second = open_with_provider(dir.path(), active.clone(), "alias/current")
+            .expect("second process-equivalent connection");
+        if advance_revision {
+            second
+                .service
+                .goal_judge(
+                    goal.id,
+                    GoalVerdict {
+                        verdict: GoalVerdictValue::Continue,
+                        confidence: 0.5,
+                        criterion_results: goal
+                            .criteria
+                            .iter()
+                            .enumerate()
+                            .map(|(index, _)| CriterionJudgment {
+                                index,
+                                passed: false,
+                                note: "Work remains".into(),
+                            })
+                            .collect(),
+                        reasoning: "Newer worker observation".into(),
+                        judged_at: Utc::now(),
+                    },
+                    owner,
+                )
+                .expect("new revision");
+        }
+        second.drain_once().await.expect("current revision indexed");
+        old.resume.notify_one();
+        task.await
+            .expect("older task")
+            .expect("stale goal retained, not acknowledged");
+        let retained = second
+            .service
+            .goal_get(goal.id, owner)
+            .expect("get")
+            .expect("goal");
+        assert_eq!(retained.indexed_revision, retained.revision);
+        let entity = format!("curator:goal:{}", goal.id);
+        let memory = second.memory.as_ref().expect("memory");
+        let rows = memory.h_mems_by_entity_prefix(&entity).expect("recall");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].value["revision"], retained.revision);
+        assert_eq!(
+            rows[0].value["verdicts"].as_array().expect("history").len(),
+            usize::from(advance_revision)
+        );
+        let passage = hkask_memory::semantic_passage_for_h_mem(&rows[0]).expect("passage");
+        assert!(
+            memory
+                .has_embedding_for_passage_with_model(
+                    &entity,
+                    &passage,
+                    "producer/current",
+                    &active.vector()
+                )
+                .expect("newer index intact")
+        );
+    }
+}
+#[tokio::test]
+async fn wrong_requested_or_blank_actual_producer_never_marks_goal_indexed() {
+    for (requested_wrong, actual) in [(true, Some("producer")), (false, Some(""))] {
+        let dir = tempfile::tempdir().expect("directory");
+        let mut provider = Producer::new(actual, 0);
+        Arc::get_mut(&mut provider)
+            .expect("sole provider")
+            .wrong_requested = requested_wrong;
+        let host = open_with_provider(dir.path(), provider, "alias/current").expect("host");
+        let owner = WebID::new();
+        let goal = declare(&host, owner).expect("goal");
+        host.drain_once().await.expect("failed projection retained");
+        assert_eq!(
+            host.service
+                .goal_get(goal.id, owner)
+                .expect("get")
+                .expect("goal")
+                .indexed_revision,
+            0
+        );
+        assert_eq!(
+            host.memory
+                .as_ref()
+                .expect("memory")
+                .h_mem_count()
+                .expect("rows"),
+            0
+        );
     }
 }

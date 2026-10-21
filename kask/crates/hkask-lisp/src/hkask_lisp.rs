@@ -67,6 +67,15 @@ use std::rc::{Rc, Weak};
 use serde_json::Value;
 use thiserror::Error;
 
+/// Provisional H4A source admission ceiling in UTF-8 bytes, not an H4C safety measurement.
+pub const MAX_SOURCE_BYTES: usize = 65_536;
+/// Provisional H4A raw JSON env ceiling; enforced by the tool before decoding.
+pub const MAX_ENV_JSON_BYTES: usize = 1_048_576;
+/// Provisional H4A requested-work ceiling; the default remains 100,000.
+pub const MAX_STEPS: u64 = 2_000_000;
+/// Provisional H4A requested-depth ceiling; the default remains 1,024.
+pub const MAX_DEPTH: u64 = 8192;
+
 // ── Error type ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Error)]
@@ -266,6 +275,12 @@ pub fn parse(source: &str) -> Result<Vec<LispValue>, LispError> {
 
 fn parse_with_budget(source: &str, budget: &mut EvalBudget) -> Result<Vec<LispValue>, LispError> {
     // Refuse oversized input before tokenization allocates a copy of every token.
+    if source.len() > MAX_SOURCE_BYTES {
+        return Err(LispError::Parse(format!(
+            "source requested {} UTF-8 bytes; allowed {MAX_SOURCE_BYTES}",
+            source.len()
+        )));
+    }
     budget.charge(source.len())?;
     let tokens = tokenize(source);
     let tokens = expand_infix(&tokens);
@@ -535,14 +550,19 @@ impl EvalBudget {
         }
     }
 
-    fn new_scope(&self, env: Env) -> Rc<RefCell<Env>> {
+    fn new_scope(&mut self, env: Env) -> Result<Rc<RefCell<Env>>, LispError> {
+        if self.invocation_scopes.is_some() {
+            // Prepay registration and cleanup traversal before allocating or
+            // tracking the scope. Drop stays infallible; this is not a heap quota.
+            self.charge(2)?;
+        }
         let scope = Rc::new(RefCell::new(env));
         if let Some(registry) = &self.invocation_scopes {
             registry.scopes.borrow_mut().push(Rc::downgrade(&scope));
         }
         #[cfg(test)]
         tests::observe_scope(&scope);
-        scope
+        Ok(scope)
     }
 
     fn tick(&mut self) -> Result<(), LispError> {
@@ -676,7 +696,7 @@ fn eval_special_form(
                 LispValue::List(b) => b.to_vec(),
                 _ => return Err(LispError::Runtime("let bindings must be a list".into())),
             };
-            let child_env = budget.new_scope(Env::child(env));
+            let child_env = budget.new_scope(Env::child(env))?;
             for binding in bindings {
                 let pair = match &binding {
                     LispValue::List(p) => p.to_vec(),
@@ -833,7 +853,7 @@ fn apply(
                     args.len()
                 )));
             }
-            let call_env = budget.new_scope(Env::child(closure_env));
+            let call_env = budget.new_scope(Env::child(closure_env))?;
             for (param, arg) in params.iter().zip(args.iter()) {
                 call_env.borrow_mut().define(param.clone(), arg.clone());
             }
@@ -2159,6 +2179,16 @@ pub fn eval_sandboxed_with_budget(
     max_steps: u64,
     max_depth: u64,
 ) -> Result<Value, LispError> {
+    for (field, requested, allowed) in [
+        ("max_steps", max_steps, MAX_STEPS),
+        ("max_depth", max_depth, MAX_DEPTH),
+    ] {
+        if requested > allowed {
+            return Err(LispError::Runtime(format!(
+                "{field} requested {requested}; allowed {allowed}"
+            )));
+        }
+    }
     let mut budget = EvalBudget::new(max_steps, max_depth);
     // This guard belongs only to the stateless JSON boundary. Raw eval callers
     // retain ownership of their environments and may reuse escaping closures.
@@ -2168,7 +2198,7 @@ pub fn eval_sandboxed_with_budget(
     if parsed.is_empty() {
         return Ok(Value::Null);
     }
-    let env = budget.new_scope(Env::new_root());
+    let env = budget.new_scope(Env::new_root())?;
     if let Value::Object(obj) = env_json {
         for (k, v) in obj {
             env.borrow_mut().define(k.clone(), from_json(v));
@@ -2196,6 +2226,120 @@ mod property_tests;
 mod tests {
     use super::*;
     use std::rc::Weak;
+
+    /// expect: "Source admission counts UTF-8 bytes and precedes tokenization" [H4A]
+    #[test]
+    fn h4a_source_admission_precedes_parsing() {
+        for padding in ["x", "é"] {
+            let source = format!("1;{}", padding.repeat((65_536 - 2) / padding.len()));
+            assert_eq!(source.len(), 65_536);
+            assert_eq!(
+                eval_sandboxed_with_budget(&source, &serde_json::json!({}), 2_000_000, 8192)
+                    .expect("exact source ceiling is admitted"),
+                serde_json::json!(1)
+            );
+            assert!(
+                parse(&source).is_ok(),
+                "standalone parser admits the ceiling"
+            );
+            let malformed = format!("({source}");
+            for result in [
+                parse(&malformed).map(|_| ()),
+                eval_sandboxed_with_budget(&malformed, &Value::Null, 2_000_000, 8192).map(|_| ()),
+            ] {
+                assert!(
+                    matches!(result, Err(LispError::Parse(ref error))
+                    if error.contains("source") && error.contains("65537") && error.contains("65536")),
+                    "source cap must precede malformed syntax: {result:?}"
+                );
+            }
+        }
+    }
+
+    /// expect: "Requested budgets are rejected, not clamped, before source or env work" [H4A]
+    #[test]
+    fn h4a_requested_budget_admission() {
+        let empty = serde_json::json!({});
+        assert_eq!(
+            eval_sandboxed_with_budget("1", &empty, 2_000_000, 8192)
+                .expect("explicit ceilings are admitted"),
+            serde_json::json!(1)
+        );
+        for (steps, depth, field, requested, allowed) in [
+            (2_000_001, 1024, "max_steps", 2_000_001, 2_000_000),
+            (u64::MAX, 1024, "max_steps", u64::MAX, 2_000_000),
+            (100_000, 8193, "max_depth", 8193, 8192),
+            (100_000, u64::MAX, "max_depth", u64::MAX, 8192),
+        ] {
+            let result = eval_sandboxed_with_budget("(", &Value::from(u64::MAX), steps, depth);
+            assert!(
+                matches!(result, Err(LispError::Runtime(ref error))
+                if error.contains(field) && error.contains(&requested.to_string())
+                    && error.contains(&allowed.to_string())),
+                "{result:?}"
+            );
+        }
+        assert!(matches!(
+            eval_sandboxed_with_budget("1", &empty, 0, 1024),
+            Err(LispError::StepLimitExceeded(0))
+        ));
+        assert_eq!(
+            eval_sandboxed_with_budget("1", &empty, 100_000, 0)
+                .expect("atoms do not consume recursion depth"),
+            serde_json::json!(1)
+        );
+        assert!(matches!(
+            eval_sandboxed_with_budget("(+ 1 2)", &empty, 100_000, 0),
+            Err(LispError::DepthLimitExceeded(0))
+        ));
+    }
+
+    /// expect: "Tracked registrations prepay cleanup work even when the result is tiny" [H4A]
+    #[test]
+    fn h4a_registry_work_is_budgeted() {
+        let mut tracked = EvalBudget::new(2, 1024);
+        tracked.invocation_scopes = Some(Rc::new(InvocationScopes::default()));
+        let scope = tracked
+            .new_scope(Env::new_root())
+            .expect("two ticks admit one entry");
+        assert_eq!(tracked.steps_used, 2);
+        assert!(matches!(
+            tracked.new_scope(Env::new_root()),
+            Err(LispError::StepLimitExceeded(2))
+        ));
+        assert_eq!(
+            tracked
+                .invocation_scopes
+                .as_ref()
+                .expect("registry")
+                .scopes
+                .borrow()
+                .len(),
+            1
+        );
+        drop(scope);
+        drop(tracked);
+
+        let source = "(define f (lambda (n) (if (= n 0) 1 (let () (f (- n 1)))))) (f 100)";
+        let empty = serde_json::json!({});
+        let mut untracked = EvalBudget::new(0, 1024);
+        untracked
+            .new_scope(Env::new_root())
+            .expect("raw scopes have no registry charge");
+        assert_eq!(untracked.steps_used, 0);
+        // Measured through the public entry: 1,406 ticks without registry
+        // charging, 1,810 with it. This budget separates those behaviors.
+        let probe = ScopeProbe::start(None);
+        assert!(matches!(
+            eval_sandboxed_with_budget(source, &empty, 1600, 1024),
+            Err(LispError::StepLimitExceeded(_))
+        ));
+        probe.assert_reclaimed();
+        assert_eq!(
+            eval_sandboxed(source, &empty).expect("default budget still fits"),
+            serde_json::json!(1)
+        );
+    }
 
     #[derive(Default)]
     struct ScopeObservation {

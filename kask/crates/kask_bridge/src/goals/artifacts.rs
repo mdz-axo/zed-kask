@@ -73,11 +73,8 @@ fn read(evidence: &GoalEvidence, remaining: usize) -> Outcome {
         outcome => outcome,
     }
 }
-/// One bounded complete UTF-8 read, without imposing an expected digest. The
-/// caller must have source-specific native consent. Assessment applies its
-/// expected-hash filter separately; the machine adapter needs real mismatch
-/// evidence rather than a fabricated failure or pre-horizon snapshot.
-pub(super) fn read_utf8(locator: &str, remaining: usize) -> Outcome {
+/// Bounded nofollow UTF-8 read. Capture applies the declared digest before sharing.
+fn read_utf8(locator: &str, remaining: usize) -> Outcome {
     let path = match local_path(locator) {
         Ok(path) => path,
         Err(reason) => return unavailable(None, format!("invalid_locator: {reason}"), None, 0),

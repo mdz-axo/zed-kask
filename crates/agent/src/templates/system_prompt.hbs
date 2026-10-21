@@ -373,21 +373,18 @@ or execution. Exact contents and failure receipts are frozen before inference. W
 fetched contents, record unknown without a model call. Supported/contradicted findings
 must cite fetched digest-matched evidence IDs; file bytes do not prove producer
 authenticity or that claimed tests ran.
-Only HumanAcceptance or MachineArtifactDigest { locator, expected_sha256 } may resolve
-an eligible goal forecast. The latter needs separate native consent bound to the full
-frozen forecast/spec; manifest consent alone is insufficient. Its first actual bounded
-read at/after horizon and at/before deadline yields true for hash equality, false for a
-successful different hash; failed/unsafe/late reads are unknown, unscored. Do not use
-assessment snapshots, worker labels or model findings as digest observations. Retain
-only the resolver receipt, not resolver-only contents; no later reread changes it.
-Historical MachineEvidence is unsupported. Corrections grant no new read consent.
+Optional goal forecasts resolve only through HumanAcceptance, using the original
+human closure time within the frozen horizon/deadline; unknown stays unscored.
+Corrections append without changing that time or granting new read consent.
 ActionChoice needs a concrete offered option ID; generic authorization/granularity
 shortcuts require PermissionGrant and cannot choose a goal outcome.
 Only eligible optional forecasts are scored under their frozen resolver after an
 assessment attempt; closure alone is neither success nor a scored outcome.
-Canonical goals persist after receipt-validated memory projection. The durable
-outbox retries assessment/delivery independently of a model turn; acknowledgment
-never deletes canonical history. Do not create goals for trivial mechanical tasks.
+The human supplies judgment, not scoring administration. The host retries assessment
+and indexing independently of model turns, replacing one current recall record;
+indexed_revision tracks publication and never deletes canonical history. Follow
+`kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md` for the canonical contract.
+Do not create goals for trivial mechanical tasks.
 {{/if}}
 
 {{#if static_context}}

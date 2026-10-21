@@ -72,6 +72,74 @@ fn h3_numeric_failures_surface_through_real_tool_decode() {
     );
 }
 
+/// expect: "Raw env admission counts bytes before structure, numeric, and shared decoding" [H4A]
+#[test]
+fn h4a_raw_env_byte_admission() {
+    for object in [r#"{"n":1}"#, r#"{"é":1}"#] {
+        let env = format!("{object}{}", " ".repeat(1_048_576 - object.len()));
+        assert_eq!(env.len(), 1_048_576);
+        assert_eq!(
+            run(json!({"form": "1", "env": env, "max_steps": 2_000_000})),
+            Ok(json!(1))
+        );
+        let malformed = format!("{env}!");
+        let error = run(json!({"form": "1", "env": malformed}))
+            .expect_err("cap+1 must be refused before parsing invalid tail");
+        assert!(
+            error.contains("env") && error.contains("1048577") && error.contains("1048576"),
+            "{error}"
+        );
+        let multibyte_over = format!("{object}{}", " ".repeat(1_048_577 - object.len()));
+        if !object.is_ascii() {
+            assert_eq!(multibyte_over.chars().count(), 1_048_576);
+        }
+        let error = run(json!({"form": "1", "env": multibyte_over}))
+            .expect_err("valid cap+1 must also be refused");
+        assert!(
+            error.contains("1048577") && error.contains("1048576"),
+            "{error}"
+        );
+    }
+}
+
+/// expect: "Explicit maxima survive tool serialization; over-cap snake/camel budgets refuse" [H4A]
+#[test]
+fn h4a_tool_budget_admission() {
+    for (steps_key, depth_key) in [("max_steps", "max_depth"), ("maxSteps", "maxDepth")] {
+        let args = json!({"form": "1", steps_key: 2_000_000, depth_key: 8192});
+        let input: LispEvalToolInput =
+            serde_json::from_value(args).expect("explicit maxima decode");
+        let serialized = serde_json::to_value(&input).expect("maxima serialize");
+        assert_eq!(serialized["max_steps"], json!(2_000_000));
+        assert_eq!(serialized["max_depth"], json!(8192));
+        assert_eq!(evaluate_lisp(input), Ok(json!(1)));
+        for (key, requested, allowed, field) in [
+            (steps_key, 2_000_001, 2_000_000, "max_steps"),
+            (steps_key, u64::MAX, 2_000_000, "max_steps"),
+            (depth_key, 8193, 8192, "max_depth"),
+            (depth_key, u64::MAX, 8192, "max_depth"),
+        ] {
+            let error = run(json!({"form": "(", key: requested}))
+                .expect_err("request ceiling must precede source parse");
+            assert!(
+                error.contains(field)
+                    && error.contains(&requested.to_string())
+                    && error.contains(&allowed.to_string()),
+                "{error}"
+            );
+        }
+    }
+    let defaults: LispEvalToolInput =
+        serde_json::from_value(json!({"form": "1"})).expect("defaults decode");
+    let defaults = serde_json::to_value(defaults).expect("defaults serialize");
+    assert_eq!(defaults["max_steps"], json!(100_000));
+    assert_eq!(defaults["max_depth"], json!(1024));
+    for key in ["max_steps", "maxSteps", "max_depth", "maxDepth"] {
+        let error = run(json!({"form": "(+ 1 2)", key: 0})).expect_err("zero is not defaulted");
+        assert!(error.contains("(0)"), "{error}");
+    }
+}
+
 // ── env: tolerated variants ──────────────────────────────────────────────────
 
 #[test]

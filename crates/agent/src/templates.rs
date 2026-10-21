@@ -736,6 +736,22 @@ mod tests {
                 "assessor has no evidence-fetch",
                 "no evidence-fetch tools and must report unknown",
                 "overconfidence_score",
+                "MachineArtifactDigest",
+                "MachineEvidence",
+                "machine_artifact_access",
+                "machine_artifact_digest",
+                "goal_archive_legacy",
+                "goal_observe_machine_artifact_digest",
+                "goal_refresh_forecast",
+                "goal_pending_work",
+                "goal_claim_assessment",
+                "goal_complete_assessment",
+                "goal_fail_assessment",
+                "goal_mark_projection_delivered",
+                "projection:{event_id}",
+                "GoalProjectionReceipt",
+                "LegacyGoalArchive",
+                "machine_artifact_observation",
             ] {
                 assert!(
                     !text.contains(retired),
@@ -746,24 +762,18 @@ mod tests {
         }
         let governance =
             std::fs::read_to_string(root.join(".agents/skills/program-manager/SKILL.md"))
-                .expect("read canonical skill governance");
+                .expect("read canonical skill governance")
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
         for requirement in [
             "interaction_id",
             "spec_digest",
-            "ActionChoice",
+            "GOAL_INTERFACE.md",
+            "HumanAcceptance",
             "forecast",
-            "blinded",
-            "unknown",
-            "never deletes",
-            "16 artifacts",
-            "64 KiB",
-            "256 KiB",
-            "before inference",
-            "semantic-indexing provider",
-            "MachineArtifactDigest",
-            "machine_artifact_access",
-            "PermissionGrant",
-            "not tests ran",
+            "worker `done` is not human acceptance",
+            "not scoring administration",
         ] {
             assert!(
                 governance.contains(requirement),
@@ -820,9 +830,13 @@ mod tests {
             "nofollow regular files",
             "frozen before inference",
             "without a model call",
-            "MachineArtifactDigest",
-            "separate native consent",
-            "failed/unsafe/late reads are unknown, unscored",
+            "only through HumanAcceptance",
+            "original\nhuman closure time",
+            "unknown stays unscored",
+            "not scoring administration",
+            "one current recall record",
+            "indexed_revision",
+            "GOAL_INTERFACE.md",
             "PermissionGrant",
             "concrete offered option ID",
             "that claimed tests ran",

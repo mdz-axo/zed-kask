@@ -101,18 +101,10 @@ status: VERIFIED
 
 ## Goal Lifecycle
 
-The canonical aggregate preserves immutable specification/source, stable criterion
-IDs/digest, worker progress, human closure, blinded findings, optional forecast
-versions and projection receipts. MCP offers create/judge/get/list only. Native
-closure obtains accomplished/stop × achieved/not-achieved/unknown via actual human
-ActionChoice; correction is a separate interaction. Task Done is not achievement.
-Native consent permits bounded host-read local snapshots (16 nofollow UTF-8
-regular files, 64 KiB each, 256 KiB aggregate including probes), with disclosed
-assessor/indexer sharing and retention. Freeze contents and failure receipts
-before inference. No fetched contents means unknown without a model call;
-findings cite fetched IDs, not authentic test execution. The optional digest
-forecast has separate consent and a first actual in-window read, not reuse of
-assessment snapshots; failed reads are unknown/unscored.
+[GOAL_INTERFACE.md](../../mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md)
+is the contract for consent, evidence bounds and recovery. Task Done is not
+human acceptance; the host administers assessment, optional human-outcome forecast
+scoring and one current recall record without deleting canonical history.
 
 ```mermaid
 flowchart TD
@@ -120,13 +112,13 @@ flowchart TD
     B --> C[Worker progress and evidence]
     C --> D[Native human ActionChoice]
     D --> E[Retained closure and pending assessment]
-    E --> F[Fresh assessment of spec and consented snapshots]
+    E --> F[goal_assess - blinded exact-input assessment]
     F --> G[Separate findings or visible retryable failure]
-    G --> H[Optional frozen-resolver forecast resolution]
-    G --> I[Durable canonical snapshot outbox]
+    G --> H[Optional HumanAcceptance forecast resolution]
+    G --> I[goal_index_current - revision check]
     H --> I
-    I --> J[Exact and semantic memory projection]
-    J --> K[Validate receipt - retain canonical history]
+    I --> J[Replace current recall record and vector]
+    J --> K[Record indexed_revision - retain canonical history]
     D --> L[Separate native human correction]
     L --> E
 ```

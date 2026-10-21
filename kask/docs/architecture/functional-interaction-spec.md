@@ -216,22 +216,12 @@ The interaction is implemented as two coupled layers.[^kata]
   achieved/not-achieved/unknown. Corrections use `kanban_goal_correct_outcome`,
   append provenance and preserve the original choice. No inferred success from
   task status, test results or a model-authored human receipt.
-- **Independent assessment and custody.** A fresh blinded request receives only
-the frozen spec, manifest and consented host-read snapshots, not worker verdict/
-human label/forecast p/score. The native prompt discloses paths/hashes, configured
-assessor sharing/retries, retention and semantic-indexer projection sharing.
-Reads are bounded to 16 nofollow UTF-8 regular local files, 64 KiB each and
-256 KiB aggregate per attempt including probes; no network/crawling/execution.
-Exact contents and failure receipts freeze before inference. No fetched contents
-means deterministic unknown without a model call. Supported/contradicted findings
-cite fetched digest-matched IDs, never alleged test-producer authenticity.
-  Canonical history survives receipt-validated memory projection; a persistent
-  outbox drains independently of turn completion. See `kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md`.
-- **Machine source authority.** The optional `MachineArtifactDigest` forecast
-  needs separate native consent for its full frozen forecast/spec. Its first
-  actual in-window file read yields true for hash equality, false for a successful
-  mismatch, unknown/unscored for read failure; it does not establish tests ran.
-  Assessment snapshots/model findings cannot supply that source observation.
+- **Independent assessment and custody.** The [canonical goal contract](../../mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md)
+  defines bounded evidence consent, blinded exact-input assessment and retries.
+  Findings never replace the human outcome. The host handles scoring and indexing,
+  publishing one current recall record without deleting canonical history;
+  the human supplies judgment, not scoring administration. Optional forecasts
+  resolve only through `HumanAcceptance`.
 - **Native choice gate.** Generic authorization and granularity helpers require
   `PermissionGrant`; `ActionChoice` needs a concrete offered option ID. Native
   close/correction stay interactive even when exposed by the write profile.
@@ -255,17 +245,17 @@ The current definition of done is structural and falsifiable:
    goal after a server restart
    (`kask/mcp-servers/hkask-mcp-kata-kanban/tests/idempotent_creates.rs`).
 3. Goal lifecycle tests exercise immutable source/specification, owner isolation,
-   authenticated closure ingress, assessment leases and complete findings,
-   receipt validation, append-only corrections and retained legacy history
+   authenticated closure ingress, private assessment coordination and complete
+   findings, revision-safe indexing, append-only corrections and visible rejection
+   of unsupported schema versions without rewriting bytes
    (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs`).
 4. Host integration fixtures in `kask/crates/kask_bridge/src/goals/tests.rs`
    drive native ActionChoice, retry/restart, exact and semantic projection, and
    missing evidence/configuration. A fixture run proves its assertions, not that
    the editor was deployed or real evidence independently assessed.
-5. Forecasts are optional prospective declarations with frozen resolver,
-   baseline, horizon, cohort and execution policy. Only the declared source
-   resolves them after an assessment attempt. Unknown is unscored; stop is not
-   automatically failure. No raw loss changes memory confidence.
+5. Optional prospective `HumanAcceptance` forecasts use the frozen window and
+   original human closure time after an assessment attempt. Unknown is unscored;
+   stop is not automatically failure. No raw loss changes memory confidence.
 *Scope-exempt from the Sourced-Ideas Mandate: this section indexes executable
 verification for the design in §§3–6.*
 

@@ -51,10 +51,10 @@ The ontology is re-anchored to the **17 surviving kask crates** (16 `hkask-*` + 
 | `Priority` | Task urgency level | `Low \| Medium \| High \| Critical` |
 | `TaskStatus` | Strict column-ordered lifecycle state (defined in `hkask-types`, not the server) | `Backlog → Ready → InProgress → Review → Done` (`kask/crates/hkask-types/src/kanban_status.rs:24`) |
 | `VerificationCriterion` | Acceptance spec with optional LLM evaluation prompt | `description: String`, `llm_prompt: Option<String>` |
-| `Goal` | Retained canonical functional target; immutable specification/source, worker progress, human closure and independent findings remain separate | `id`, `goal_text`, `criteria`, `criterion_ids`, `spec_digest`, `source`, optional typed `forecast`, closure/assessments/projections; canonical pact: `kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md` |
+| `Goal` | Retained canonical functional target; immutable specification/source, worker progress, human closure and independent findings remain separate | `id`, `goal_text`, `criteria`, `criterion_ids`, `spec_digest`, `source`, optional typed `forecast`, closure/assessments, `revision`, `indexed_revision`; canonical pact: `kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md` |
 | `GoalVerdict` | Worker progress verdict with complete criterion coverage, never human acceptance | `kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/goal.rs` |
 | `NativeGoalClosure` / `NativeGoalOutcomeCorrection` | Host-authenticated human ActionChoice and separate append-only correction; no automatic success | Canonical pact; native ingress `crates/agent/src/tools/goal_tools.rs` |
-| `GoalForecast` / projection | Optional prospective frozen resolver and retained score versions; receipt-validated full snapshot delivery never deletes canonical history | Canonical pact; scheduled host drainer `kask/crates/kask_bridge/src/goals.rs` |
+| `GoalForecast` / current recall | Optional prospective `HumanAcceptance` resolver and retained scores; one current row/vector indexed by revision, canonical history retained | Canonical pact; scheduled host drainer `kask/crates/kask_bridge/src/goals.rs` |
 
 **5 coaching kata questions:** (1) Target condition? (2) Actual condition now? (3) What obstacles? Which ONE? (4) Next step? What do you expect? (5) How quickly can we go and see? — carried by the `kata-improvement` skill (`.agents/skills/kata-improvement/`; the Coaching Kata was folded into it from `kata-coaching`, 2026-09-28, commit `ebcd901c80`); the former server-side `KataEngine`/`KataState`/`KataManifest`/`KataStep` entities are deleted (zero hits in `hkask-mcp-kata-kanban/src/`, verified 2026-09-04).
 
@@ -445,7 +445,7 @@ Cross-references are verified by the link checker in CI (relative links within t
 
 ---
 
-*MDS v0.42.3 — five categories. Re-anchored to the 17 surviving kask crates (16 `hkask-*` + `kask_bridge`) loaded into the editor process and 9 governed MCP child binaries. Goal entities live in `hkask-mcp-kata-kanban` and persist through resolution until curator-memory acknowledgment. The SpecStore surface in §4 is not implemented.*
+*MDS v0.42.3 — five categories. Re-anchored to the 17 surviving kask crates (16 `hkask-*` + `kask_bridge`) loaded into the editor process and 9 governed MCP child binaries. Goal entities live in `hkask-mcp-kata-kanban` and remain canonical after current-state memory indexing. The SpecStore surface in §4 is not implemented.*
 
 ---
 

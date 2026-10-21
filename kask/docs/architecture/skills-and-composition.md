@@ -499,7 +499,7 @@ The model is the executor. Convergence is the model's judgment, optionally check
 
 | Tool | Location | Purpose |
 |------|----------|---------|
-| `lisp_eval` | `crates/agent/src/tools/lisp_eval_tool.rs` | Sandboxed Lisp interpreter (`hkask_lisp::eval_sandboxed_with_budget`). No I/O, no `eval`, no network. Bounded by `max_steps` (default 100000) and `max_depth` (default 1024; `lisp_eval_tool.rs:266@default_max_steps,270@default_max_depth`). The model calls it when a SKILL.md instructs deterministic computation (convergence signals, invariant checks, scoring). |
+| `lisp_eval` | `crates/agent/src/tools/lisp_eval_tool.rs` | Sandboxed Lisp interpreter (`hkask_lisp::eval_sandboxed_with_budget`). No I/O, no `eval`, no network. Defaults: 100000 steps / depth 1024 (`lisp_eval_tool.rs:277@default_max_steps,281@default_max_depth`). Provisional H4A ceilings reject above 65536 source UTF-8 bytes, 1048576 tool raw-env UTF-8 bytes, 2000000 requested steps or depth 8192; see [boundary exemptions](../reference/lisp-eval-dialect.md#numeric-admission-and-limits), not heap/time/output quotas. The model calls it when a SKILL.md instructs deterministic computation (convergence signals, invariant checks, scoring). |
 | `render_template` | `crates/agent/src/tools/render_template_tool.rs` | Renders Jinja2 templates from `kask/registry/templates/` using `minijinja`. Strips the `[inference]`-keyed header. Path traversal protection via `canonicalize` + `starts_with` check. Template base path wired via `agent::set_template_base_path()` in `crates/zed/src/main.rs:711-729`. |
 
 ### PDCA Loops Are Model-Coordinated

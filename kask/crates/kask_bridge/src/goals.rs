@@ -1,28 +1,17 @@
-//! Trusted native ingress and restart-safe goal outbox consumer.
-//!
-//! Native approval permits only the disclosed bounded local UTF-8 artifact
-//! reader. Exact host-read snapshots and failure receipts are frozen with the
-//! canonical attempt before blinded inference. Files establish contents, not
-//! command execution or producer authenticity. The ONE typed digest resolver
-//! separately derives SHA-256 equality from its native-approved scheduled read;
-//! it never uses assessment snapshots, human labels or model verdicts.
+//! Native goal decisions, bounded evidence capture and current-state recall.
 mod artifacts;
 use agent::{
     NativeGoalDecision as Decision, NativeGoalHost, NativeGoalPrompt, NativeGoalSubmission,
 };
-use chrono::Duration;
 #[cfg(test)]
 use chrono::Utc;
 use hkask_mcp_kata_kanban::*;
 use hkask_storage::{HMem, HMemStore, Provenance};
-use hkask_types::template::LLMParameters;
-use hkask_types::{ChatMessage, Confidence, InferencePort, Visibility, WebID};
-use serde::Deserialize;
+use hkask_types::{ChatMessage, Confidence, Visibility, WebID};
 use std::sync::Arc;
 
 // Resource bounds, not outcome policy. One tick never dispatches an unbounded backlog.
 const GOALS_PER_TICK: usize = 8;
-const PROJECTIONS_PER_GOAL_TICK: usize = 8;
 const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 pub const GOAL_DRAIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 
@@ -30,17 +19,24 @@ pub struct GoalHost {
     service: KanbanService,
     ledger: HMemStore,
     memory: Option<Arc<hkask_memory::MemoryStore>>,
-    inference: Arc<dyn InferencePort>,
+    chat: Arc<
+        dyn Fn(Vec<ChatMessage>, String) -> hkask_types::InferenceFuture<'static> + Send + Sync,
+    >,
+    embed: Arc<dyn Fn(String, String, u32) -> hkask_types::EmbedFuture<'static> + Send + Sync>,
     assessor_model: String,
     embedding_model: String,
     embedding_dim: u32,
     drain: tokio::sync::Mutex<usize>,
 }
 impl GoalHost {
-    pub fn new(
+    fn new(
         ledger: HMemStore,
         memory: Option<Arc<hkask_memory::MemoryStore>>,
-        inference: Arc<dyn InferencePort>,
+        chat: impl Fn(Vec<ChatMessage>, String) -> hkask_types::InferenceFuture<'static>
+        + Send
+        + Sync
+        + 'static,
+        embed: impl Fn(String, String, u32) -> hkask_types::EmbedFuture<'static> + Send + Sync + 'static,
         assessor_model: String,
         embedding_model: String,
         embedding_dim: u32,
@@ -49,7 +45,8 @@ impl GoalHost {
             service: KanbanService::new(ledger.clone()),
             ledger,
             memory,
-            inference,
+            chat: Arc::new(chat),
+            embed: Arc::new(embed),
             assessor_model,
             embedding_model,
             embedding_dim,
@@ -61,7 +58,11 @@ impl GoalHost {
     pub fn open(
         passphrase: &str,
         memory: Option<Arc<hkask_memory::MemoryStore>>,
-        inference: Arc<dyn InferencePort>,
+        chat: impl Fn(Vec<ChatMessage>, String) -> hkask_types::InferenceFuture<'static>
+        + Send
+        + Sync
+        + 'static,
+        embed: impl Fn(String, String, u32) -> hkask_types::EmbedFuture<'static> + Send + Sync + 'static,
         assessor_model: String,
         embedding_model: String,
         embedding_dim: u32,
@@ -81,14 +82,12 @@ impl GoalHost {
         let host = Self::new(
             HMemStore::from_driver(driver)?,
             memory,
-            inference,
+            chat,
+            embed,
             assessor_model,
             embedding_model,
             embedding_dim,
         );
-        for owner in host.owners()? {
-            host.service.goal_archive_legacy(owner)?;
-        }
         Ok(host)
     }
     fn owners(&self) -> anyhow::Result<Vec<WebID>> {
@@ -112,13 +111,24 @@ impl GoalHost {
             }
         }
     }
-    pub async fn drain_once(&self) -> anyhow::Result<()> {
+    async fn drain_once(&self) -> anyhow::Result<()> {
         let Ok(mut cursor) = self.drain.try_lock() else {
             return Ok(());
         };
         let mut pending = Vec::new();
         for owner in self.owners()? {
-            pending.extend(self.service.goal_pending_work(&owner)?);
+            let listing = self.service.goal_list(&owner)?;
+            for (id, reason) in listing.rejected {
+                tracing::warn!(goal_id = %id, %reason, "Goal row rejected; supported siblings continue");
+            }
+            pending.extend(listing.goals.into_iter().filter(|g| {
+                g.needs_assessment(self.service.goal_now())
+                    || g.indexed_revision != g.revision
+                    || matches!(
+                        g.forecast_status,
+                        ForecastStatus::PendingAssessment | ForecastStatus::PendingOutcome
+                    )
+            }));
         }
         pending.sort_by_key(|goal| goal.id.to_string());
         if pending.is_empty() {
@@ -137,199 +147,28 @@ impl GoalHost {
         Ok(())
     }
     async fn drain_goal(&self, goal: &Goal) -> anyhow::Result<()> {
-        // Source timing is independent of assessment latency and labels. It is
-        // never satisfied by an assessment snapshot captured before the horizon.
-        self.observe_machine_artifact_digest(goal)?;
-        if goal.assessment_pending {
-            let live = goal.assessments.last().is_some_and(|attempt| {
-                attempt.completion.is_none()
-                    && attempt.failure.is_none()
-                    && attempt.lease.lease_until > self.service.goal_now()
-            });
-            if !live {
-                self.assess(goal).await?;
-            }
-        }
-        let current = self.service.goal_refresh_forecast(goal.id, goal.owner)?;
-        for projection in current
-            .projections
-            .iter()
-            .filter(|p| p.delivered_receipt.is_none())
-            .take(PROJECTIONS_PER_GOAL_TICK)
-        {
-            self.project(goal, projection).await?;
-        }
-        Ok(())
-    }
-    fn observe_machine_artifact_digest(&self, goal: &Goal) -> anyhow::Result<()> {
-        if goal.machine_artifact_observation.is_some() {
-            return Ok(());
-        }
-        let Some(forecast) = &goal.forecast else {
-            return Ok(());
-        };
-        let GoalForecastResolver::MachineArtifactDigest { locator, .. } = &forecast.resolver else {
-            return Ok(());
-        };
-        let Some(closure) = &goal.closure else {
-            return Ok(());
-        };
-        let now = self.service.goal_now();
-        if now < forecast.horizon {
-            return Ok(());
-        }
-        let approved = closure
-            .input
-            .machine_artifact_access
-            .as_ref()
-            .is_some_and(|approval| {
-                approval.spec_digest == goal.spec_digest && &approval.forecast == forecast
-            });
-        let read = if now > forecast.resolution_deadline
-            || closure.input.occurred_at > forecast.resolution_deadline
-        {
-            MachineArtifactDigestRead::Unavailable {
-                reason: "resolution_window_elapsed: no source read performed".into(),
-                observed_sha256: None,
-                bytes_read: 0,
-            }
-        } else if !approved {
-            MachineArtifactDigestRead::Unavailable { reason: "not_approved: no native grant for this exact frozen forecast source; manifest consent is insufficient".into(), observed_sha256: None, bytes_read: 0 }
-        } else {
-            match artifacts::read_utf8(locator, GOAL_ARTIFACT_MAX_FILE_BYTES + 1) {
-                GoalArtifactReadOutcome::Fetched {
-                    source,
-                    sha256,
-                    byte_count,
-                    ..
-                } => MachineArtifactDigestRead::Observed {
-                    canonical_path: source,
-                    actual_sha256: sha256,
-                    byte_count,
-                },
-                GoalArtifactReadOutcome::Unavailable {
-                    reason,
-                    observed_sha256,
-                    bytes_read,
-                    ..
-                } => MachineArtifactDigestRead::Unavailable {
-                    reason,
-                    observed_sha256,
-                    bytes_read,
-                },
-            }
-        };
-        self.service.goal_observe_machine_artifact_digest(
-            goal.id,
-            goal.owner,
-            MachineArtifactDigestReceipt {
-                event_id: format!("{}:machine-artifact-digest:v1", goal.id),
-                spec_digest: goal.spec_digest.clone(),
-                locator: locator.clone(),
-                observed_at: self.service.goal_now(),
-                read,
-                reliability: MACHINE_ARTIFACT_DIGEST_RELIABILITY.into(),
-                limitation: MACHINE_ARTIFACT_DIGEST_LIMITATION.into(),
-            },
-        )?;
-        Ok(())
-    }
-    async fn assess(&self, goal: &Goal) -> anyhow::Result<()> {
-        let attempt_id = uuid::Uuid::new_v4().to_string();
-        let closure = goal
-            .closure
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("assessment requires closure"))?;
-        let (snapshots, capture_error) = match artifacts::capture(
-            &closure.input.evidence_manifest,
-            closure.input.artifact_access,
-            &|| self.service.goal_now(),
-        ) {
-            Ok(snapshots) => (snapshots, None),
-            Err(error) => (Vec::new(), Some(error)),
-        };
-        let input = self.service.goal_claim_assessment(
-            goal.id,
-            goal.owner,
-            AssessmentLeaseRequest {
-                attempt_id: attempt_id.clone(),
-                assessor_id: "host-blinded-assessor".into(),
-                // Name absent configuration in the failed attempt; this is
-                // never used as a provider model or a fallback dispatch.
-                model_version: if self.assessor_model.trim().is_empty() {
-                    "unconfigured:kask.models.classifier_model".into()
-                } else {
-                    self.assessor_model.clone()
-                },
-                tool_version: concat!(env!("CARGO_PKG_VERSION"), ":goal-local-artifacts-v1").into(),
-                lease_until: self.service.goal_now() + Duration::seconds(90),
-            },
-            snapshots,
-        )?;
-        let claimed = self
-            .service
-            .goal_get(goal.id, goal.owner)?
-            .ok_or_else(|| anyhow::anyhow!("claimed goal disappeared"))?;
-        let attempt = claimed
-            .assessments
-            .iter()
-            .find(|attempt| attempt.lease.attempt_id == attempt_id)
-            .ok_or_else(|| anyhow::anyhow!("assessment claim did not persist"))?;
-        let input_digest = attempt.input_digest.clone();
-        let result = match capture_error {
-            Some(error) => Err(anyhow::anyhow!(error)),
-            None => self.assessor_request(&input).await,
-        };
-        let completion = result.map(|reply| AssessmentCompletion {
-            attempt_id: attempt_id.clone(),
-            input_digest: input_digest.clone(),
-            findings: reply
-                .findings
-                .into_iter()
-                .map(|finding| CriterionFinding {
-                    criterion_id: finding.criterion_id,
-                    status: finding.status,
-                    evidence_ids: finding.evidence_ids,
-                    note: finding.note,
-                })
-                .collect(),
-            limitations: reply.limitations,
-        });
-        let completed = completion.and_then(|value| {
-            self.service
-                .goal_complete_assessment(goal.id, goal.owner, value)
-                .map_err(Into::into)
-        });
-        if let Err(error) = completed {
-            self.service.goal_fail_assessment(
+        self.service
+            .goal_assess(
                 goal.id,
                 goal.owner,
-                AssessmentFailure {
-                    attempt_id,
-                    input_digest,
-                    reason: error.to_string(),
+                |closure| {
+                    artifacts::capture(&closure.evidence_manifest, closure.artifact_access, &|| {
+                        self.service.goal_now()
+                    })
                 },
-            )?;
-        }
-        Ok(())
+                |input| async move {
+                    self.assessor_request(&input)
+                        .await
+                        .map_err(|e| e.to_string())
+                },
+            )
+            .await?;
+        self.project(goal).await
     }
-    async fn assessor_request(&self, input: &GoalAssessmentInput) -> anyhow::Result<AssessorReply> {
-        if !input
-            .artifacts
-            .iter()
-            .any(|artifact| matches!(artifact.outcome, GoalArtifactReadOutcome::Fetched { .. }))
-        {
-            let mut limitations = vec!["No approved digest-matched UTF-8 artifact contents are available; no model request was made".into()];
-            limitations.extend(input.artifacts.iter().filter_map(
-                |artifact| match &artifact.outcome {
-                    GoalArtifactReadOutcome::Unavailable { reason, .. } => {
-                        Some(format!("{}: {reason}", artifact.evidence_id))
-                    }
-                    _ => None,
-                },
-            ));
-            return Ok(AssessorReply { findings: input.criteria.iter().map(|criterion| AssessorFinding { criterion_id: criterion.id.clone(), status: CriterionEvidenceStatus::Unknown, evidence_ids: Vec::new(), note: "No independently fetched artifact establishes or contradicts this criterion".into() }).collect(), limitations });
-        }
+    async fn assessor_request(
+        &self,
+        input: &GoalAssessmentInput,
+    ) -> anyhow::Result<AssessmentResult> {
         anyhow::ensure!(
             !self.assessor_model.trim().is_empty(),
             "Goal assessor not configured: set kask.models.classifier_model"
@@ -342,19 +181,14 @@ impl GoalHost {
         ];
         let response = tokio::time::timeout(
             REQUEST_TIMEOUT,
-            self.inference.generate_with_messages(
-                &messages,
-                &LLMParameters::default(),
-                Some(&self.assessor_model),
-                None,
-            ),
+            (self.chat)(messages.to_vec(), self.assessor_model.clone()),
         )
         .await??;
         anyhow::ensure!(
             response.tool_calls.is_empty(),
             "assessor returned tool calls; only supplied host-read snapshots are permitted"
         );
-        let mut reply: AssessorReply = serde_json::from_str(&response.text)?;
+        let mut reply: AssessmentResult = serde_json::from_str(&response.text)?;
         anyhow::ensure!(
             !reply.limitations.is_empty(),
             "assessor omitted evidence-access limitations"
@@ -372,151 +206,118 @@ impl GoalHost {
         ));
         Ok(reply)
     }
-    async fn project(&self, goal: &Goal, projection: &GoalProjection) -> anyhow::Result<()> {
+    async fn project(&self, goal: &Goal) -> anyhow::Result<()> {
         let memory = self.memory.as_ref().ok_or_else(|| {
             anyhow::anyhow!("curator projection store unavailable; backlog retained")
         })?;
-        let entity = format!("curator:goal:{}", goal.id);
-        let attribute = format!("projection:{}", projection.event_id);
-        let rows = memory.h_mems_by_entity_prefix(&entity)?;
-        let existing = rows
-            .iter()
-            .find(|row| row.entity == entity && row.attribute == attribute);
-        let candidate = existing.cloned().unwrap_or_else(|| {
-            let mut row = HMem::new(
-                &entity,
-                &attribute,
-                projection.payload.clone(),
-                WebID::from_persona(b"curator"),
-            )
-            .with_visibility(Visibility::Shared)
-            .with_confidence(Confidence::new(0.5))
-            .with_provenance(Provenance::ToolObserved);
-            row.id = hkask_storage::HMemId::from_uuid(uuid::Uuid::new_v5(
-                &uuid::Uuid::NAMESPACE_URL,
-                format!("{entity}:{attribute}:{}", projection.payload_digest).as_bytes(),
-            ));
-            row
-        });
-        anyhow::ensure!(
-            candidate.value == projection.payload,
-            "projection identity conflict: {}",
-            projection.event_id
-        );
-        let passage = hkask_memory::semantic_passage_for_h_mem(&candidate)
-            .ok_or_else(|| anyhow::anyhow!("projection missing recall text"))?;
-        // Resolve the producer on this delivery attempt, including after a
-        // restart or alias retarget. Same-dimensional old vectors prove nothing.
-        let batch = tokio::time::timeout(
-            REQUEST_TIMEOUT,
-            self.inference.embed_with_dimensions(
-                &self.embedding_model,
-                std::slice::from_ref(&passage),
-                Some(self.embedding_dim),
-            ),
-        )
-        .await??;
-        anyhow::ensure!(
-            batch.requested_model == self.embedding_model,
-            "projection embedding request identity mismatch: requested {}, batch bound to {}",
-            self.embedding_model,
-            batch.requested_model
-        );
-        anyhow::ensure!(
-            batch.vectors.len() == 1,
-            "projection embedding response count mismatch"
-        );
-        let producer = batch
-            .actual_model
-            .as_deref()
-            .unwrap_or(&batch.requested_model);
-        anyhow::ensure!(
-            !producer.trim().is_empty(),
-            "projection embedding producer identity is empty"
-        );
-        // Without a confirmed producer identity, never trust a cached alias:
-        // publish the freshly generated vector under the requested identity.
-        let reusable = existing.is_some()
-            && batch.actual_model.is_some()
-            && memory.has_embedding_for_passage_with_model(
-                &entity,
-                &passage,
-                producer,
-                &batch.vectors[0],
-            )?;
-        let receipt_id = if reusable {
-            candidate.id.to_string()
-        } else {
-            let write = if existing.is_some() {
-                memory.prepare_semantic_repair(&candidate.id)?
-            } else {
-                memory.prepare_semantic_write(candidate)?
-            };
-            write.publish(&batch.vectors[0], producer)?.to_string()
-        };
-        let stored = memory.h_mems_by_entity_prefix(&entity)?;
-        let row = stored
-            .iter()
-            .find(|row| row.id.to_string() == receipt_id)
-            .ok_or_else(|| anyhow::anyhow!("projection write not readable"))?;
-        anyhow::ensure!(
-            row.value == projection.payload,
-            "projection readback payload differs"
-        );
-        anyhow::ensure!(
-            memory.has_embedding_for_passage_with_model(
-                &entity,
-                &passage,
-                producer,
-                &batch.vectors[0]
-            )?,
-            "projection readback missing active producer embedding/index row"
-        );
-        // Separate durable operations: interruption here leaves a replayable
-        // publication. Recheck eligibility after yielding before the receipt.
-        tokio::task::yield_now().await;
-        anyhow::ensure!(
-            memory.has_embedding_for_passage_with_model(
-                &entity,
-                &passage,
-                producer,
-                &batch.vectors[0]
-            )?,
-            "projection producer changed before acknowledgment"
-        );
-        anyhow::ensure!(
-            memory
-                .h_mems_by_entity_prefix(&entity)?
-                .iter()
-                .any(|row| row.id.to_string() == receipt_id && row.value == projection.payload),
-            "projection row changed before acknowledgment"
-        );
-        self.service.goal_mark_projection_delivered(
-            goal.id,
-            goal.owner,
-            GoalProjectionReceipt {
-                event_id: projection.event_id.clone(),
-                revision: projection.revision,
-                payload_digest: projection.payload_digest.clone(),
-                receipt_id,
-            },
-        )?;
+        self.service
+            .goal_index_current(goal.id, goal.owner, |snapshot| async move {
+                let entity = format!("curator:goal:{}", snapshot.id);
+                let mut payload = serde_json::to_value(&snapshot).map_err(|e| e.to_string())?;
+                // Delivery and live coordination are not recall history. Their values
+                // must not make publication itself change the indexed passage.
+                if let Some(object) = payload.as_object_mut() {
+                    object.remove("indexed_revision");
+                    object.remove("assessment_claim");
+                }
+                let mut candidate = HMem::new(
+                    &entity,
+                    "current",
+                    payload.clone(),
+                    WebID::from_persona(b"curator"),
+                )
+                .with_visibility(Visibility::Shared)
+                .with_confidence(Confidence::new(0.5))
+                .with_provenance(Provenance::ToolObserved);
+                candidate.id = hkask_storage::HMemId::from_uuid(uuid::Uuid::new_v5(
+                    &uuid::Uuid::NAMESPACE_URL,
+                    entity.as_bytes(),
+                ));
+                let passage = hkask_memory::semantic_passage_for_h_mem(&candidate)
+                    .ok_or_else(|| "projection missing recall text".to_string())?;
+                // Always ask the current provider. A same-width vector under an old
+                // alias is not evidence of active producer identity.
+                let batch = tokio::time::timeout(
+                    REQUEST_TIMEOUT,
+                    (self.embed)(
+                        self.embedding_model.clone(),
+                        passage.clone(),
+                        self.embedding_dim,
+                    ),
+                )
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())?;
+                if batch.requested_model != self.embedding_model || batch.vectors.len() != 1 {
+                    return Err("projection embedding request identity or count mismatch".into());
+                }
+                let confirmed = batch.actual_model.is_some();
+                let producer = batch.actual_model.unwrap_or(batch.requested_model);
+                if producer.trim().is_empty() {
+                    return Err("projection embedding producer identity is empty".into());
+                }
+                let vector = batch
+                    .vectors
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| "embedding absent".to_string())?;
+                Ok(move || {
+                    // Runs under the canonical revision lock, not against a row
+                    // captured before embedding. Competing hosts cannot publish an
+                    // older revision over a newer acknowledged one.
+                    let rows = memory
+                        .h_mems_by_entity_prefix(&entity)
+                        .map_err(|e| e.to_string())?;
+                    let current: Vec<_> = rows
+                        .iter()
+                        .filter(|r| r.entity == entity && r.attribute == "current")
+                        .collect();
+                    if current.len() > 1 {
+                        return Err("duplicate current goal recall record".into());
+                    }
+                    let existing = current.first();
+                    let exact = confirmed
+                        && existing.is_some_and(|r| r.value == payload)
+                        && memory
+                            .has_embedding_for_passage_with_model(
+                                &entity, &passage, &producer, &vector,
+                            )
+                            .map_err(|e| e.to_string())?;
+                    if !exact {
+                        let write = match existing {
+                            Some(row) => memory.prepare_semantic_revision(
+                                &row.id,
+                                payload.clone(),
+                                row.confidence,
+                            ),
+                            None => memory.prepare_semantic_write(candidate),
+                        }
+                        .map_err(|e| e.to_string())?;
+                        write
+                            .publish(&vector, &producer)
+                            .map_err(|e| e.to_string())?;
+                    }
+                    if !memory
+                        .has_embedding_for_passage_with_model(&entity, &passage, &producer, &vector)
+                        .map_err(|e| e.to_string())?
+                        || !memory
+                            .h_mems_by_entity_prefix(&entity)
+                            .map_err(|e| e.to_string())?
+                            .iter()
+                            .any(|r| {
+                                r.entity == entity && r.attribute == "current" && r.value == payload
+                            })
+                    {
+                        return Err(
+                            "current goal recall row/vector not visible after publication".into(),
+                        );
+                    }
+                    Ok(())
+                })
+            })
+            .await?;
         Ok(())
     }
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct AssessorReply {
-    findings: Vec<AssessorFinding>,
-    limitations: Vec<String>,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct AssessorFinding {
-    criterion_id: String,
-    status: CriterionEvidenceStatus,
-    evidence_ids: Vec<String>,
-    note: String,
 }
 impl NativeGoalHost for GoalHost {
     fn prepare(
@@ -595,36 +396,8 @@ impl NativeGoalHost for GoalHost {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        let machine_forecast_disclosure = match goal.forecast.as_ref() {
-            Some(
-                forecast @ GoalForecast {
-                    resolver:
-                        GoalForecastResolver::MachineArtifactDigest {
-                            locator,
-                            expected_sha256,
-                        },
-                    ..
-                },
-            ) => format!(
-                "\nMachine forecast resolver (separate from assessment manifest): machine_artifact_digest\nLocator: {locator}\nDecoded path: {}\nExpected SHA-256: {expected_sha256}\nFixed horizon: {}\nResolution deadline: {}\n{} At the first drainer observation at/after the horizon and at/before the deadline, SHA-256 equality is true and a successful different digest is false. Missing/denied/unsafe/truncated/non-UTF8 or out-of-window observations are unknown, unscored. The first receipt is immutable; later file changes are not re-read. The 64 KiB content bound and nofollow/no-execution/no-URL-fetch rules apply. Only the digest/time/path/byte-count receipt, not resolver-only file contents, is retained and indexed. File bytes not execution authenticity.{}",
-                local_artifact_path(locator)?.display(),
-                forecast.horizon,
-                forecast.resolution_deadline,
-                if correction {
-                    "This correction grants no scheduled source access; original consent is unchanged."
-                } else {
-                    "Approving this closure grants ONE scheduled bounded local UTF-8 regular-file read for this exact frozen specification and resolver, even when absent from the evidence manifest."
-                },
-                if correction {
-                    " This outcome correction does not grant or expand source-read consent."
-                } else {
-                    ""
-                }
-            ),
-            _ => String::new(),
-        };
         let message = format!(
-            "Goal: {}\nFrozen specification: {}\nCriteria:\n{}\nEvidence manifest (worker-supplied references, not verified support):\n{}\nDecoded local targets (path parsing only; no files read yet):\n{}\nApproving closure authorizes bounded local reads of ONLY these listed paths to verify the declared SHA-256. The host will send their bounded UTF-8 contents to the configured assessor only when the digest matches, including scheduled retries. At most 16 artifacts, 64 KiB of content per regular file (at most one extra growth-probe byte, counted in the 256 KiB aggregate read limit per attempt); absolute paths/local file URIs only, no symlinks, no execution, no network/URL artifact fetching. Artifact contents and read/failure receipts are retained in canonical attempts and curator recall; the configured semantic-indexing provider also receives the retained projection contents for recall. Reading a file does not prove a claimed command or test ran. Unavailable or mismatched evidence stays unknown. Closing or stopping does not imply achievement.{}{}",
+            "Goal: {}\nFrozen specification: {}\nCriteria:\n{}\nEvidence manifest (worker-supplied references, not verified support):\n{}\nDecoded local targets (path parsing only; no files read yet):\n{}\nApproving closure authorizes bounded local reads of ONLY these listed paths to verify the declared SHA-256. The host will send their bounded UTF-8 contents to the configured assessor only when the digest matches, including scheduled retries. At most 16 artifacts, 64 KiB of content per regular file (at most one extra growth-probe byte, counted in the 256 KiB aggregate read limit per attempt); absolute paths/local file URIs only, no symlinks, no execution, no network/URL artifact fetching. Artifact contents and read/failure receipts are retained in canonical attempts and curator recall; the configured semantic-indexing provider also receives the retained projection contents for recall. Reading a file does not prove a claimed command or test ran. Unavailable or mismatched evidence stays unknown. Closing or stopping does not imply achievement.{}",
             goal.goal_text,
             goal.spec_digest,
             goal.criteria
@@ -634,8 +407,7 @@ impl NativeGoalHost for GoalHost {
                 .join("\n"),
             displayed_evidence,
             decoded_targets,
-            correction_context,
-            machine_forecast_disclosure
+            correction_context
         );
         Ok(NativeGoalPrompt {
             spec_digest: goal.spec_digest,
@@ -698,23 +470,6 @@ impl NativeGoalHost for GoalHost {
                         _ => return Err("invalid closure choice".into()),
                     },
                     artifact_access: Some(LocalArtifactAccessApproval::BoundedUtf8V1),
-                    machine_artifact_access: self
-                        .service
-                        .goal_get(id, input.actor)
-                        .map_err(|error| error.to_string())?
-                        .and_then(|goal| {
-                            goal.forecast
-                                .filter(|forecast| {
-                                    matches!(
-                                        forecast.resolver,
-                                        GoalForecastResolver::MachineArtifactDigest { .. }
-                                    )
-                                })
-                                .map(|forecast| MachineArtifactDigestApproval {
-                                    spec_digest: goal.spec_digest,
-                                    forecast,
-                                })
-                        }),
                     evidence_manifest: input
                         .evidence_manifest
                         .into_iter()
@@ -733,65 +488,6 @@ impl NativeGoalHost for GoalHost {
         }
         .map_err(|e| e.to_string())?;
         serde_json::to_value(result).map_err(|e| e.to_string())
-    }
-}
-
-/// Composition of the existing chat and embedding provider boundaries. Tests
-/// inject InferencePort instead; neither canonical service nor memory is mocked.
-pub struct GoalInference {
-    pub embedding: Option<crate::LanguageModelEmbeddingPort>,
-}
-impl InferencePort for GoalInference {
-    fn generate(
-        &self,
-        prompt: &str,
-        parameters: &LLMParameters,
-        tools: Option<&[hkask_types::ChatToolDefinition]>,
-    ) -> hkask_types::InferenceFuture<'_> {
-        let port =
-            crate::global_inference_port().unwrap_or_else(|| Arc::new(crate::NoModelInferencePort));
-        let prompt = prompt.to_string();
-        let parameters = parameters.clone();
-        let tools = tools.map(|t| t.to_vec());
-        Box::pin(async move { port.generate(&prompt, &parameters, tools.as_deref()).await })
-    }
-    fn generate_with_messages(
-        &self,
-        messages: &[ChatMessage],
-        parameters: &LLMParameters,
-        model: Option<&str>,
-        tools: Option<&[hkask_types::ChatToolDefinition]>,
-    ) -> hkask_types::InferenceFuture<'_> {
-        let port =
-            crate::global_inference_port().unwrap_or_else(|| Arc::new(crate::NoModelInferencePort));
-        let messages = messages.to_vec();
-        let parameters = parameters.clone();
-        let model = model.map(str::to_string);
-        let tools = tools.map(|t| t.to_vec());
-        Box::pin(async move {
-            port.generate_with_messages(&messages, &parameters, model.as_deref(), tools.as_deref())
-                .await
-        })
-    }
-    fn embed_with_dimensions<'a>(
-        &'a self,
-        model: &str,
-        texts: &[String],
-        dimensions: Option<u32>,
-    ) -> hkask_types::EmbedFuture<'a> {
-        let model = model.to_string();
-        let texts = texts.to_vec();
-        Box::pin(async move {
-            self.embedding
-                .as_ref()
-                .ok_or_else(|| {
-                    hkask_types::EmbeddingGenerationError::NotConfigured(
-                        "goal projection embedding capability unavailable".into(),
-                    )
-                })?
-                .embed_with_dimensions(&model, &texts, dimensions)
-                .await
-        })
     }
 }
 

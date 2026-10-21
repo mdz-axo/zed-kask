@@ -169,7 +169,7 @@ For each consequential claim or requested outcome, decide whether it is a finite
 
 ## Step 4 — Effort Tier Validation
 
-Validate `effort` (default `medium`). The skill runs classify → rewrite → (verify at medium/high) → deterministic output. Medium runs one primary critique; high runs up to three verification executions, with escalation and re-probe admission computed by the invoking skill's PE-3 gate. Re-probes/rechecks share the existing PE-2 bound. There is no evolution phase in this single-pass skill.
+Validate `effort` (default `medium`). The skill runs classify → rewrite → (verify at medium/high) → deterministic output. Medium runs one primary critique; high runs up to three verification attempts, with exact-next-level escalation and current-level re-probe admission computed by the invoking skill's PE-State gate. Medium and high both start at round 1. Failed/in-flight attempts, re-probes and correction rechecks share the same attempt log and budget; no recovery call is free. There is no evolution phase in this single-pass skill.
 
 Do not silently downgrade `high` to `medium` to save inference cost — surface the cost estimate in `risks` and let the orchestrator decide.
 

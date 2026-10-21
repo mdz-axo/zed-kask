@@ -489,96 +489,254 @@ mod tests {
         }
     }
 
-    #[test]
-    fn grill_round_separates_identified_grading_from_next_questions() {
-        let mut context = serde_json::json!({
-            "topic": "fixture arithmetic", "phase": "grade", "mode": "interrogate",
-            "current_level": 2, "round_number": 1,
-            "question_bank": [{"id": 11, "question": "QUESTION_SENTINEL", "level": 2, "area": "math"}],
-            "answers_to_grade": [{"id": 7, "question_id": 11, "question": "QUESTION_SENTINEL", "text": "ANSWER_SENTINEL", "rating": null}],
-            "assessment_so_far": {},
-            "gate_result": {"direction": "await_grades", "retired_ids": [], "stop": false}
-        });
-        let grade = render_template_for_test("grill-me/grill-me-round", context.clone())
-            .expect("identified grade phase renders");
-        assert!(grade.contains("## Grade Identified Answers Only"));
-        assert!(grade.contains("ANSWER_SENTINEL"));
-        assert!(grade.contains("QUESTION_SENTINEL"));
-        assert!(grade.contains("\"question_id\":11"));
-        assert!(grade.contains("existing answer ID"));
-        assert!(!grade.contains("## Draft Next Questions Only"));
-        assert!(!grade.contains("Accumulate `attempt_counts`"));
+    // Run the authored filters, not a Rust translation of the decision rules.
+    fn grill_jq(section: &str, input: serde_json::Value) -> Result<serde_json::Value, String> {
+        use smol::{io::AsyncWriteExt, process::Command};
+        use std::process::Stdio;
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../.agents/skills/grill-me/SKILL.md");
+        let source = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        let filter = source
+            .split_once(&format!("### {section}\n"))
+            .and_then(|(_, tail)| tail.split_once("```jq\n"))
+            .and_then(|(_, tail)| tail.split_once("\n```"))
+            .map(|(filter, _)| filter)
+            .ok_or_else(|| format!("missing authored {section} filter"))?;
+        let mut child = Command::new("jq")
+            .args(["-ce", filter])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("jq required: {e}"))?;
+        smol::block_on(async {
+            let bytes = serde_json::to_vec(&input).map_err(|e| e.to_string())?;
+            let mut stdin = child.stdin.take().expect("piped input");
+            stdin.write_all(&bytes).await.map_err(|e| e.to_string())?;
+            drop(stdin);
+            let output = child.output().await.map_err(|e| e.to_string())?;
+            if !output.status.success() {
+                return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+            }
+            serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())
+        })
+    }
 
-        context["phase"] = serde_json::json!("ask");
-        context["answers_to_grade"] = serde_json::json!([]);
-        context["gate_result"] =
-            serde_json::json!({"direction": "escalate", "retired_ids": [11], "stop": false});
-        context["current_level"] = serde_json::json!(3);
-        let ask = render_template_for_test("grill-me/grill-me-round", context.clone())
-            .expect("next-question phase renders after the gate");
-        assert!(ask.contains("## Draft Next Questions Only"));
-        assert!(ask.contains("supplied level 3"));
-        assert!(ask.contains("\"retired_ids\":[11]"));
-        assert!(ask.contains("retired_explanations"));
-        assert!(!ask.contains("## Grade Identified Answers Only"));
-        assert!(
-            !ask.contains("\"assessment\":"),
-            "ask must not regenerate unchanged state"
-        );
-        assert!(
-            !ask.contains("\"evaluations\": []"),
-            "inactive outputs are caller-owned"
-        );
-        for direction in ["await_grades", "complete"] {
-            context["gate_result"] = serde_json::json!({
-                "direction": direction, "retired_ids": [], "stop": direction == "complete"
-            });
-            let blocked = render_template_for_test("grill-me/grill-me-round", context.clone())
-                .expect("blocked ask is explicit");
-            assert!(blocked.contains("ask_blocked"));
-            assert!(!blocked.contains("## Draft Next Questions Only"));
+    fn grill_input() -> serde_json::Value {
+        serde_json::json!({
+            "question_bank": [
+                {"id":11,"question":"QUESTION_SENTINEL","level":2,"area":"math"},
+                {"id":12,"question":"When may an answer be graded?","level":2,"area":"evidence"}
+            ],
+            "answers": [
+                {"id":1,"question_id":11,"text":"ANSWER_SENTINEL","round":1,"rating":null,"failed":false,"note":null},
+                {"id":2,"question_id":12,"text":"After it exists","round":1,"rating":null,"failed":false,"note":null}
+            ],
+            "answer_ids":[],"evaluations":[],"level":2,"round":1,"mode":"interrogate","calibrated_level":null
+        })
+    }
+
+    #[test]
+    fn grill_feedback_counts_distinct_answers_not_regrades() {
+        let mut input = grill_input();
+        input["answer_ids"] = serde_json::json!([2, 1]);
+        input["evaluations"] = serde_json::json!([
+            {"answer_id":2,"rating":"Solid","note":"Correct"},
+            {"answer_id":1,"rating":"Gap","note":"Incorrect"}
+        ]);
+        for rating in ["Gap", "Gap", "Solid"] {
+            let result = grill_jq("Feedback/update", input.clone()).expect("accepted grading");
+            assert_eq!(
+                result["attempt_counts"],
+                serde_json::json!([[11, 1], [12, 0]])
+            );
+            assert_eq!(result["retired_ids"], serde_json::json!([]));
+            input["answers"] = result["answers"].clone();
+            input["answer_ids"] = serde_json::json!([1]);
+            input["evaluations"] =
+                serde_json::json!([{"answer_id":1,"rating":rating,"note":"Regrade"}]);
         }
-        context["phase"] = serde_json::json!("unknown");
-        let invalid = render_template_for_test("grill-me/grill-me-round", context.clone())
-            .expect("invalid phase is explicit");
-        assert!(invalid.contains("invalid_phase_or_mode"));
-        context
-            .as_object_mut()
-            .expect("context object")
-            .remove("answers_to_grade");
+        let corrected =
+            grill_jq("Feedback/update", input.clone()).expect("latest grade changes feedback");
+        assert_eq!(corrected["direction"], "escalate");
+        assert_eq!(corrected["answers"][0]["rating"], "Solid");
+        assert_eq!(corrected["answers"][0]["failed"], true);
+        input["answers"] = corrected["answers"].clone();
+        for (id, round) in [(3, 2), (4, 3)] {
+            input["answers"]
+                .as_array_mut()
+                .expect("ledger")
+                .push(serde_json::json!({
+                    "id":id,"question_id":11,"text":"same text, distinct submission","round":round,
+                    "rating":null,"failed":false,"note":null
+                }));
+            input["round"] = serde_json::json!(round);
+            input["answer_ids"] = serde_json::json!([id]);
+            input["evaluations"] =
+                serde_json::json!([{"answer_id":id,"rating":"Gap","note":"New attempt"}]);
+            let result = grill_jq("Feedback/update", input.clone()).expect("distinct attempt");
+            input["answers"] = result["answers"].clone();
+            assert_eq!(result["attempt_counts"][0][1], id - 1);
+            assert_eq!(
+                result["retired_ids"],
+                if id == 4 {
+                    serde_json::json!([11])
+                } else {
+                    serde_json::json!([])
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn grill_feedback_preserves_boundaries_and_rejects_bad_batches() {
+        for (solid, level, round, direction) in [
+            (4, 2, 1, "escalate"),
+            (3, 2, 1, "hold"),
+            (2, 2, 1, "hold"),
+            (1, 2, 1, "reprobe"),
+            (4, 5, 1, "complete"),
+            (0, 2, 5, "complete"),
+        ] {
+            let mut input = grill_input();
+            input["level"] = serde_json::json!(level);
+            input["round"] = serde_json::json!(round);
+            input["answers"] = serde_json::json!((1..=5).map(|id| serde_json::json!({
+                "id":id,"question_id":11,"text":"Fixture","round":round,"rating":null,"failed":false,"note":null
+            })).collect::<Vec<_>>());
+            input["answer_ids"] = serde_json::json!([1, 2, 3, 4, 5]);
+            input["evaluations"] =
+                serde_json::json!((1..=5).map(|id| serde_json::json!({
+                "answer_id":id,"rating":if id<=solid {"Solid"} else {"Gap"},"note":"Fixture"
+            })).collect::<Vec<_>>());
+            assert_eq!(
+                grill_jq("Feedback/update", input).expect("threshold")["direction"],
+                direction
+            );
+        }
+        let input = grill_input();
+        assert_eq!(
+            grill_jq("Feedback/update", input.clone()).expect("pending")["pending_ids"],
+            serde_json::json!([1, 2])
+        );
+        for (key, value) in [
+            ("level", serde_json::json!(0)),
+            ("round", serde_json::json!(6)),
+            ("round", serde_json::json!(1.5)),
+            ("answer_ids", serde_json::json!([1])),
+        ] {
+            let mut bad = input.clone();
+            bad[key] = value;
+            assert!(grill_jq("Feedback/update", bad).is_err(), "bad {key}");
+        }
+        let mut unknown = input.clone();
+        unknown["answer_ids"] = serde_json::json!([99]);
+        unknown["evaluations"] =
+            serde_json::json!([{"answer_id":99,"rating":"Gap","note":"Unknown"}]);
         assert!(
-            render_template_for_test("grill-me/grill-me-round", context)
-                .expect_err("old positional contract is no longer accepted")
-                .contains("answers_to_grade")
+            grill_jq("Feedback/update", unknown).is_err(),
+            "matching batch IDs must still reference an actual answer"
+        );
+        let mut empty = input;
+        empty["answers"] = serde_json::json!([]);
+        empty["round"] = serde_json::json!(5);
+        let end = grill_jq("Feedback/update", empty).expect("empty fifth batch");
+        assert_eq!(end["direction"], "hold");
+        assert_eq!(end["stop"], true);
+    }
+
+    #[test]
+    fn grill_delivery_preserves_retries_explanations_and_final_evidence() {
+        let session = grill_input();
+        let mut delivery = serde_json::json!({"question_bank":session["question_bank"],"retired_ids":[11],"level":2,
+            "drafts":[{"retry_id":12,"question":null,"area":null},{"retry_id":null,"question":"New question","area":"math"}],
+            "explanations":[{"question_id":11,"explanation":"Correct answer"}]});
+        let questions = grill_jq("Question delivery", delivery.clone()).expect("legal retry");
+        assert_eq!(questions[0], session["question_bank"][1]);
+        assert_eq!(questions[1]["id"], 14);
+        delivery["drafts"][0]["retry_id"] = serde_json::json!(11);
+        assert!(
+            grill_jq("Question delivery", delivery.clone()).is_err(),
+            "retired retry"
+        );
+        delivery["drafts"][0]["retry_id"] = serde_json::json!(12);
+        delivery["explanations"] = serde_json::json!([]);
+        assert!(
+            grill_jq("Question delivery", delivery).is_err(),
+            "missing retired explanation"
+        );
+        let mut final_input = serde_json::json!({"question_bank":session["question_bank"],"answers":session["answers"],
+            "summary":[{"area":"math","rating":"Unassessed","answer_ids":[]},
+                       {"area":"evidence","rating":"Unassessed","answer_ids":[]}]});
+        assert_eq!(
+            grill_jq("Final evidence", final_input.clone()).expect("unanswered areas"),
+            true
+        );
+        final_input["summary"][0] =
+            serde_json::json!({"area":"math","rating":"Gap","answer_ids":[1]});
+        assert!(
+            grill_jq("Final evidence", final_input.clone()).is_err(),
+            "ungraded cannot support Gap"
+        );
+        final_input["answers"][0]["rating"] = serde_json::json!("Gap");
+        assert_eq!(
+            grill_jq("Final evidence", final_input.clone()).expect("actual evidence"),
+            true
+        );
+        final_input["summary"][0]["answer_ids"] = serde_json::json!([99]);
+        assert!(
+            grill_jq("Final evidence", final_input).is_err(),
+            "invented evidence"
         );
     }
 
     #[test]
-    fn grill_assessment_preserves_answer_evidence_and_absent_calibration() {
-        let context = serde_json::json!({
-            "topic": "fixture arithmetic",
-            "question_bank": [{"id": 11, "question": "QUESTION_SENTINEL", "level": 1, "area": "math"}],
-            "answer_records": [{"id": 7, "question_id": 11, "text": "ANSWER_SENTINEL", "rating": "Gap"}],
-            "assessment": {"math": "Gap"}, "calibration": null
-        });
-        let output = render_template_for_test("grill-me/grill-me-assess", context.clone())
-            .expect("evidence-linked final synthesis renders");
-        assert!(output.contains("ANSWER_SENTINEL"));
-        assert!(output.contains("QUESTION_SENTINEL"));
-        assert!(output.contains("\"question_id\":11"));
-        assert!(output.contains("Unassessed"));
-        assert!(output.contains("answer_ids"));
-        assert!(!output.contains("solid|partial|gap"));
-        let mut missing = context;
-        missing
-            .as_object_mut()
-            .expect("context object")
-            .remove("answer_records");
+    fn grill_round_separates_identified_grading_from_next_questions() {
+        let session = grill_input();
+        let mut context = serde_json::json!({"topic":"fixture","phase":"grade","mode":"interrogate",
+            "current_level":2,"round_number":1,"question_bank":session["question_bank"],
+            "answer_ids":[1,2],"feedback":{"answers":session["answers"],"direction":"await_grades","retired_ids":[],"stop":false}});
+        let grade = render_template_for_test("grill-me/grill-me-round", context.clone())
+            .expect("grade render");
+        assert!(grade.contains("QUESTION_SENTINEL") && grade.contains("ANSWER_SENTINEL"));
         assert!(
-            render_template_for_test("grill-me/grill-me-assess", missing)
-                .expect_err("actual records are required")
-                .contains("answer_records")
+            grade.contains("## Grade Identified Answers Only")
+                && !grade.contains("## Draft Next Questions Only")
         );
+        context["phase"] = serde_json::json!("ask");
+        context["answer_ids"] = serde_json::json!([]);
+        for (direction, stop, allowed) in [
+            ("escalate", false, true),
+            ("await_grades", false, false),
+            ("complete", true, false),
+        ] {
+            context["feedback"] = serde_json::json!({"answers":[],"direction":direction,"retired_ids":[11],"stop":stop});
+            let output = render_template_for_test("grill-me/grill-me-round", context.clone())
+                .expect("ask render");
+            assert_eq!(output.contains("## Draft Next Questions Only"), allowed);
+            if allowed {
+                assert!(
+                    output.contains("retired_explanations") && !output.contains("\"assessment\":")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn grill_assessment_preserves_answer_evidence_and_absent_calibration() {
+        let session = grill_input();
+        let output = render_template_for_test("grill-me/grill-me-assess", serde_json::json!({
+            "topic":"fixture","question_bank":session["question_bank"],"answers":session["answers"],"calibrated_level":null
+        })).expect("final render");
+        for text in [
+            "QUESTION_SENTINEL",
+            "ANSWER_SENTINEL",
+            "Unassessed",
+            "answer_ids",
+        ] {
+            assert!(output.contains(text));
+        }
+        assert!(!output.contains("solid|partial|gap"));
     }
 
     #[test]

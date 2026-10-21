@@ -545,17 +545,14 @@ impl KanbanServer {
     }
 
     #[tool(
-        description = "List all caller-owned canonical goals with complete original criteria and history. Delivered and archived goals remain visible."
+        description = "List supported caller-owned canonical goals with complete criteria and history, plus explicit rejected row identities and reasons. Closed goals remain visible."
     )]
     pub async fn kanban_goal_list(
         &self,
         Parameters(GoalListRequest {}): Parameters<GoalListRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "kanban_goal_list", async {
-            respond(
-                self.service.goal_list(&self.webid),
-                |goals| serde_json::json!({ "goals": goals }),
-            )
+            respond(self.service.goal_list(&self.webid), |listing| listing)
         })
         .await
     }
@@ -1580,8 +1577,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 let store = HMemStore::from_driver(driver)
                     .map_err(|e| anyhow::anyhow!("hmem store init: {e}"))?;
                 let service = KanbanService::new(store);
-                service.goal_archive_legacy(ctx.webid)
-                    .map_err(|error| anyhow::anyhow!("goal legacy archival failed: {error}"))?;
 
                 // Local swarm delegation surface (kanban_task_spawn). No
                 // ledger: local agents run on the operator's own substrate

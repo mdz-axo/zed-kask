@@ -8,9 +8,10 @@ description: "Superforecasting pipeline following Tetlock's Good Judgment Projec
 
 Superforecasting pipeline following Tetlock's Good Judgment Project methodology. Eight-stage process from question triage through Fermi decomposition, outside/inside views, Bayesian evidence updating, dragonfly-eye synthesis, probability calibration, and forecast recording.
 
-## Goal evidence, closure and optional forecasts
+## Goal responsibilities
 
-Use `program-manager`'s goal contract and the [canonical pact](../../../kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md): create requires a real specification `source` and returns the full goal's `id`; ordinary goals omit `forecast`. Worker progress is not human closure. Native `kanban_goal_close` obtains human ActionChoice, never a model-supplied outcome; `kanban_goal_correct_outcome` is separate. Keep blinded assessment findings and human labels distinct, unknown visible, canonical history retained. The host freezes consented bounded local file snapshots before fresh assessment; missing contents stay unknown without inference, and fetched bytes do not authenticate claimed test execution. See the program-manager contract for read/sharing limits and the separately approved digest-only machine forecast. No automatic success closure or routine goal probability.
+Follow [GOAL_INTERFACE.md](../../../kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md).
+Keep event-forecast declaration/resolution separate from human acceptance of the work. Ordinary goals need no probability; optional goal forecasts use only HumanAcceptance.
 
 ## Forecast interpretation and evidence limits
 

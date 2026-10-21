@@ -12,22 +12,16 @@ mds_categories: [domain, composition, trust, lifecycle]
 
 ## Current goal/forecast cutover — 2026-10-20
 
-P1–P6 are approved. Current L9 path is immutable source/specification → worker
-progress → native human ActionChoice → fresh blinded assessment → optional
-frozen-resolver forecast → receipt-validated canonical snapshot projection.
-The canonical aggregate is never pruned on acknowledgment; raw loss never changes
-historical memory confidence. Native consent permits bounded local nofollow
-UTF-8 snapshots (16 files, 64 KiB each, 256 KiB aggregate including probes), with
-disclosed assessor/indexer sharing and retention; receipts freeze before inference.
-No fetched contents means unknown without a model call. Fetched bytes do not
-authenticate a test producer. The separately consented MachineArtifactDigest
-forecast uses its first actual in-window read, not an assessment snapshot; read
-failure is unknown/unscored. Scheduling is host-owned under `curator.always_on`; disabled
-or failed work remains visibly pending. See the canonical `GOAL_INTERFACE.md`
-and `kask/crates/kask_bridge/src/goals.rs`. L8 uses prospective `scenario_declare`
-`resolution_at` cutoffs before matching `scenario_score`, equal-weight synthesis
-and descriptive signed-probability-error bins;
-market reliability tiers are liquidity/spread-only, not raw-loss calibration.
+Current L9 follows [GOAL_INTERFACE.md](../mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md):
+source/specification → worker progress → native human ActionChoice → blinded
+assessment → one current recall record. Optional forecasts resolve only against
+the human outcome; the host administers scoring and retries, not the human.
+`goal_assess` and `goal_index_current` own coordination and revision publication;
+indexing never deletes canonical history. Scheduling remains under
+`curator.always_on`; disabled or failed work stays visible. L8 uses prospective
+`scenario_declare` / `resolution_at` cutoffs before matching `scenario_score`,
+equal-weight synthesis and descriptive signed-probability-error bins; market
+reliability tiers are liquidity/spread-only, not raw-loss calibration.
 
 The dated audit graphs, predictions, citations and receipts below are historical
 snapshots, not instructions to invoke retired APIs or current deployment claims.

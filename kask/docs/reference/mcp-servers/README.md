@@ -45,7 +45,7 @@ mds_categories: [composition, domain]
 
 ### Count verification (unified 2026-10-05; re-verified 2026-10-17)
 
-Every server pins its exact tool surface with the shared `tool_surface_pin!` macro (landed `ede1ba0ca8`, 2026-10-05): one macro call pins the exact tool count and the generated `TOOL_NAMES` set against the live router, so additions, drops, and same-count renames fail CI instead of degrading to tool-not-found. `kask/scripts/check-mcp-registration.sh` gates on the pin's presence for every server in `mcp-servers.txt` (CI: `.github/workflows/kask-invariants.yml`). Live pin sites (generated test names, re-verified 2026-10-18): corpus 25 (`hkask_mcp_corpus.rs:321`), curator 15 (`hkask_mcp_curator.rs:1766`), experimentation 8 (`hkask_mcp_experimentation.rs:82`), kata-kanban 27 (`hkask_mcp_kata_kanban.rs:1738`), media 102 (`hkask_mcp_media.rs:477`), prediction-markets 27 (`hkask_mcp_prediction_markets.rs:1348`), research 27 (`hkask_mcp_research.rs:2317`), scenarios 21 (`hkask_mcp_scenarios.rs`, `tool_surface_is_exactly_21_registered_tools`), swarm 91 (`hkask_mcp_swarm.rs:985`). The portfolio server (18 tools) and the spreadsheet server (2 tools) were removed 2026-10-15; the training server (9 tools) and the corpus `corpus_prepare_training_dataset` bridge tool were removed 2026-10-17; the companies server (32 tools) was removed 2026-10-18 with the companies/FMP/EODHD/FIBO retirement — its provider-free forecast loop moved to the scenarios server (which grew 17 → 21).
+Every server pins its exact tool surface with the shared `tool_surface_pin!` macro (landed `ede1ba0ca8`, 2026-10-05): one macro call pins the exact tool count and the generated `TOOL_NAMES` set against the live router, so additions, drops, and same-count renames fail CI instead of degrading to tool-not-found. `kask/scripts/check-mcp-registration.sh` gates on the pin's presence for every server in `mcp-servers.txt` (CI: `.github/workflows/kask-invariants.yml`). Live pin sites (generated test names, re-verified 2026-10-18): corpus 25 (`hkask_mcp_corpus.rs:321`), curator 15 (`hkask_mcp_curator.rs:1766`), experimentation 8 (`hkask_mcp_experimentation.rs:82`), kata-kanban 26 (`hkask_mcp_kata_kanban.rs`, `tool_surface_is_exactly_26_registered_tools`), media 102 (`hkask_mcp_media.rs:477`), prediction-markets 27 (`hkask_mcp_prediction_markets.rs:1348`), research 27 (`hkask_mcp_research.rs:2317`), scenarios 21 (`hkask_mcp_scenarios.rs`, `tool_surface_is_exactly_21_registered_tools`), swarm 91 (`hkask_mcp_swarm.rs:985`). The portfolio server (18 tools) and the spreadsheet server (2 tools) were removed 2026-10-15; the training server (9 tools) and the corpus `corpus_prepare_training_dataset` bridge tool were removed 2026-10-17; the companies server (32 tools) was removed 2026-10-18 with the companies/FMP/EODHD/FIBO retirement — its provider-free forecast loop moved to the scenarios server (which grew 17 → 21).
 
 Per-server specifics that survive the unification: the curator pin additionally asserts the removed escalation/advice-review tools stay unregistered (`curator_escalations`, `curator_escalation_resolve`, `curator_escalation_dismiss`, `curator_escalation_dismiss_by_pattern`, `curator_advice_mark_applied`, `curator_advice_reviews`); the swarm pin's live partition is 48 cloud plus 43 non-cloud (33 local + 3 A2A + 4 knowledge + 3 swarm-scoped thread tools; `swarm_gate_readings` joined the local set 2026-10-10); the experimentation tool-behavior suite drives every tool end-to-end over the real engine actor (`tests/tool_behavior.rs`).
 
@@ -320,19 +320,11 @@ status: VERIFIED
 The Kata-Kanban server persists boards, tasks and canonical functional goals in
 its DB-backed `HMemStore`. MCP create/judge/get/list are worker surfaces; native
 host closure/correction obtain real human ActionChoice, never model-authored
-outcomes. A fresh blinded assessor initially sees spec/evidence only; the current
-host supplies approved bounded nofollow UTF-8 file snapshots frozen before
-inference: 16 artifacts, 64 KiB each, 256 KiB aggregate including probes. Native
-consent discloses paths/hashes, assessor sharing/retries, retention and indexer
-sharing; no fetched contents means unknown without a model call. Findings cite
-fetched IDs, not producer authenticity. Optional `MachineArtifactDigest` uses
-separate native consent and its own first in-window file read; failures remain
-unknown/unscored, and digest equality never proves tests ran. Durable assessment/projection
-jobs retry without a model turn and validate event/revision/digest receipts;
-acknowledgment never deletes canonical history. Ordinary goals require no forecast.
-See `kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md` for exact types and
-`kask/crates/kask_bridge/src/goals.rs` for orchestration. Task status is not goal
-achievement. Kata prompts remain per-task `kanban_task_kata_prompt`.
+outcomes. The [canonical goal contract](../../../mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md)
+defines consented blinded assessment, optional `HumanAcceptance` forecasts and
+revision-safe current recall. The host handles retries and scoring administration;
+indexing never deletes canonical history. Task status is not goal achievement.
+Kata prompts remain per-task `kanban_task_kata_prompt`.
 ## Footnotes
 
 [^tetlock]: Tetlock, P. E., & Gardner, D. (2015). *Superforecasting: The Art and Science of Prediction*. Crown Publishers.

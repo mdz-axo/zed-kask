@@ -50,40 +50,35 @@ are distinct from worker progress and independent criterion assessment.
 | `kanban_goal_create` | Declare 1–4 explicit criteria and their source; optionally freeze a prospective forecast |
 | `kanban_goal_judge` | Append worker progress with exact criterion coverage; done requires every criterion passed |
 | `kanban_goal_get` | Get the complete caller-owned specification and lifecycle history |
-| `kanban_goal_list` | List complete caller-owned goals, including delivered and archived records |
+| `kanban_goal_list` | List supported caller-owned goals, including closed records, plus rejected row identities and reasons |
 
-Human closure, assessor leases/results, observed forecast outcomes and memory
-receipts are **not MCP tools**. Authenticated native host code constructs typed
-inputs and calls `KanbanService` directly; a worker-supplied actor string never
-grants human authority. See [the exact bridge pact](GOAL_INTERFACE.md).
+Human closure and corrections are **native-only**; worker actor strings never
+grant human authority. The service owns assessment claim/expiry/conditional
+finalization behind one operation, rather than exposing a worker subprotocol.
+Exact consented local-file contents or failure receipts are frozen before a
+fresh blinded assessment. No fetched evidence means Unknown without inference;
+support/contradiction must cite fetched digest-matched IDs. Failures retry
+without reopening human closure.
 
-Closure atomically persists a pending assessment and a revision/digest-bound
-projection. Claims preserve the original evidence manifest and a structurally
-blinded input (no worker verdict, human label, probability or score). Assessment
-failure/expired leases remain visible and retryable after restart. Evidence
-strings are untrusted content, not proof of independent ground truth.
+Forecasts are optional and prospectively frozen. Only human acceptance resolves
+them; there are no scheduled file-digest or arbitrary machine resolvers. Original
+closure time must fall inside the declared horizon/deadline window. Corrections
+relabel that event without moving its time. Unknown is unscored; baseline loss
+zero has undefined skill. Human and assessor labels remain separate.
 
-Forecasts are optional, frozen at declaration, and use only the declared human
-acceptance or machine source/oracle. Horizon is the evaluation-window start;
-resolution deadline is its end. Source observations outside that window are
-not eligible outcomes. Binary Brier uses `(p-y)^2`, matched baseline loss and
-undefined skill when baseline loss is zero; it is not a calibration certificate.
-Scoring waits for an assessor attempt, not assessor agreement. Unknown/disputed
-cases stay visible; source corrections append superseding score versions. A
-human correction corrects the original outcome, not its evaluation time.
-Only `forecast_status = resolved` identifies a current score; earlier score
-versions remain history when a later correction is unknown or disputed.
+Recall has one current memory per goal, atomically published with its vector
+using existing semantic write/revision facilities. A current revision and last
+indexed revision replace full-snapshot logs and per-event receipts. Publication
+and acknowledgment are protected by the canonical revision transaction; failed
+acknowledgment retries after restart without appending another memory record.
+Delivery never deletes canonical history.
 
-The service stores complete projection payloads with stable event IDs, revision
-and SHA-256 digest. The host drains pending work independently of model turns.
-An exact delivery receipt marks a projection delivered and **never deletes the
-canonical goal**. Transport is at-least-once, requiring idempotent effects at
-the destination. Retrieval/indexing remains host-owned and may fail separately.
-
-Historical rows migrate to `legacy.raw` with their exact historical data and an
-explicit provenance limitation. Old predictions/scores are archived, not
-retroactively admitted or reconstructed. Changed requirements declare a new
-goal with `supersedes`; they never rewrite an earlier specification.
+Only schema version 3 is supported. Direct unsupported reads produce explicit
+errors and leave bytes untouched. Listing returns `{ goals, rejected }`, with
+owner-filtered rejection reasons keyed by stored row identity rather than silently
+omitting unsupported records. The drainer logs these rejections and continues
+with supported goals across all owners. There is no runtime migration,
+archive conversion, or drifted-key scan. See [the exact ownership boundary](GOAL_INTERFACE.md).
 
 ### Communication
 | Tool | Description |

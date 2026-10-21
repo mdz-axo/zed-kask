@@ -11,9 +11,10 @@ The skill runs actual PDCA: grasp the current condition, establish a target
 condition, make a prediction, run an experiment, measure the gap, and compare observation with expectation. Evaluate convergence via the hypotenuse
 of object-space (Dublin Core) and process-space (PKO) gaps; an optional forecast requires a separate prospective declaration and frozen resolver.
 
-## Goal evidence, closure and optional forecasts
+## Goal responsibilities
 
-Use `program-manager`'s goal contract and the [canonical pact](../../../kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md): create requires a real specification `source` and returns the full goal's `id`; ordinary goals omit `forecast`. Worker progress is not human closure. Native `kanban_goal_close` obtains human ActionChoice, never a model-supplied outcome; `kanban_goal_correct_outcome` is separate. Keep blinded assessment findings and human labels distinct, unknown visible, canonical history retained. The host freezes consented bounded local file snapshots before fresh assessment; missing contents stay unknown without inference, and fetched bytes do not authenticate claimed test execution. See the program-manager contract for read/sharing limits and the separately approved digest-only machine forecast. No automatic success closure or routine goal probability.
+Follow [GOAL_INTERFACE.md](../../../kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md).
+Report measured gaps as worker evidence; the host administers assessment and any optional forecast. Do not infer human acceptance from a smaller gap.
 
 ## Reference models
 

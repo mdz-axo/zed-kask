@@ -11,9 +11,10 @@ Explanations: Evidence from Forecasting Tournaments" — Forecasting Research
 Institute. The paper defines the EQM instrument — 60 theory-guided marker patterns across six families; the reference catalog carries all 60 verbatim from Appendix A.4; the live `market_score_rationale` tool scores the predictive 12 using an LLM. Aggregate only complete tool results to forecast- and forecaster-level composites,
 validates against realized outcomes, and emits calibration feedback.
 
-## Goal evidence, closure and optional forecasts
+## Goal responsibilities
 
-Use `program-manager`'s goal contract and the [canonical pact](../../../kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md): create requires a real specification `source` and returns the full goal's `id`; ordinary goals omit `forecast`. Worker progress is not human closure. Native `kanban_goal_close` obtains human ActionChoice, never a model-supplied outcome; `kanban_goal_correct_outcome` is separate. Keep blinded assessment findings and human labels distinct, unknown visible, canonical history retained. The host freezes consented bounded local file snapshots before fresh assessment; missing contents stay unknown without inference, and fetched bytes do not authenticate claimed test execution. See the program-manager contract for read/sharing limits and the separately approved digest-only machine forecast. No automatic success closure or routine goal probability.
+Follow [GOAL_INTERFACE.md](../../../kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md).
+Explanation scores assess a rationale, not goal achievement or forecast calibration. Preserve the human acceptance boundary when reporting improvements.
 
 ## Initial and target condition
 

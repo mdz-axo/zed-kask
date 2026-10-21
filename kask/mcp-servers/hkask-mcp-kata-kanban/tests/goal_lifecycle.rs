@@ -1,1210 +1,610 @@
-//! Approved P1–P6 lifecycle obligations at the real file-backed service seam.
-use chrono::Utc;
+//! Functional lifecycle tests over separate connections to the canonical store.
+use chrono::{DateTime, Duration, Utc};
 use hkask_mcp_kata_kanban::*;
-use hkask_storage::DatabaseDriverTrait;
-use hkask_storage::{HMemStore, SqliteDriver};
+use hkask_storage::{HMem, HMemStore, SqliteDriver};
 use hkask_types::WebID;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-fn open(path: &std::path::Path) -> anyhow::Result<KanbanService> {
-    let pool = SqliteDriver::file_pool_with_schema(path.to_str().expect("utf8 test path"))?;
-    Ok(KanbanService::new(HMemStore::from_driver(Arc::new(
-        SqliteDriver::new(pool),
-    ))?))
-}
-fn source() -> GoalSource {
-    GoalSource {
-        interaction_id: "user-turn-1".into(),
-        session_id: "session-1".into(),
-        source: "native-confirmation".into(),
-    }
+fn open(path: &std::path::Path, clock: &Arc<Mutex<DateTime<Utc>>>) -> KanbanService {
+    let pool = SqliteDriver::file_pool_with_schema(path.to_str().expect("path")).expect("pool");
+    let clock = clock.clone();
+    KanbanService::new(HMemStore::from_driver(Arc::new(SqliteDriver::new(pool))).expect("store"))
+        .with_goal_clock(Arc::new(move || *clock.lock().expect("clock")))
 }
 fn declaration() -> GoalDeclaration {
     GoalDeclaration {
-        goal_text: "The original requirement".into(),
+        goal_text: "The feature is enabled".into(),
         criteria: vec![VerificationCriterion::new(
-            "The original explicit criterion".into(),
+            "The file enables the feature".into(),
         )],
         task_id: None,
-        source: source(),
+        source: GoalSource {
+            interaction_id: "original-user-turn".into(),
+            session_id: "session".into(),
+            source: "human-specification".into(),
+        },
         forecast: None,
         supersedes: None,
     }
 }
-fn closure(goal: &Goal) -> NativeGoalClosure {
+fn close(goal: &Goal, now: DateTime<Utc>, choice: HumanClosureChoice) -> NativeGoalClosure {
     NativeGoalClosure {
-        event_id: "closure-1".into(),
+        event_id: "native-choice".into(),
         expected_spec_digest: goal.spec_digest.clone(),
-        source: source(),
-        occurred_at: Utc::now(),
-        choice: HumanClosureChoice::StopUnknown,
-        evidence_manifest: vec![],
-        artifact_access: None,
-        machine_artifact_access: None,
-    }
-}
-#[test]
-fn stop_unknown_survives_reopen_and_delivery_never_deletes_the_goal() -> anyhow::Result<()> {
-    let dir = tempfile::tempdir()?;
-    let path = dir.path().join("goals.sqlite");
-    let owner = WebID::new();
-    let service = open(&path)?;
-    let goal = service.goal_create(declaration(), owner)?;
-    let closed = service.goal_close_native(goal.id, owner, closure(&goal))?;
-    assert!(closed.assessment_pending);
-    assert!(closed.scores.is_empty());
-    drop(service);
-    let reopened = open(&path)?;
-    let retained = reopened
-        .goal_get(goal.id, owner)?
-        .expect("canonical goal survives");
-    let projection = retained.projections.last().expect("durable outbox");
-    let receipt = GoalProjectionReceipt {
-        event_id: projection.event_id.clone(),
-        revision: projection.revision,
-        payload_digest: projection.payload_digest.clone(),
-        receipt_id: "memory-receipt-1".into(),
-    };
-    reopened.goal_mark_projection_delivered(goal.id, owner, receipt.clone())?;
-    reopened.goal_mark_projection_delivered(goal.id, owner, receipt)?;
-    drop(reopened);
-    let retained = open(&path)?
-        .goal_get(goal.id, owner)?
-        .expect("receipt cannot erase history");
-    assert_eq!(retained.criteria, goal.criteria);
-    assert_eq!(retained.spec_digest, goal.spec_digest);
-    assert_eq!(
-        retained.closure.expect("closure preserved").input.choice,
-        HumanClosureChoice::StopUnknown
-    );
-    assert!(retained.assessment_pending);
-    assert!(retained.scores.is_empty());
-    Ok(())
-}
-
-fn lease(id: &str) -> AssessmentLeaseRequest {
-    AssessmentLeaseRequest {
-        attempt_id: id.into(),
-        assessor_id: "independent-assessor".into(),
-        model_version: "recorded-provider-version".into(),
-        tool_version: "recorded-tool-version".into(),
-        lease_until: Utc::now() + chrono::Duration::minutes(5),
-    }
-}
-
-#[test]
-fn human_corrections_append_without_overwriting_original_closure() -> anyhow::Result<()> {
-    let dir = tempfile::tempdir()?;
-    let service = open(&dir.path().join("goals.sqlite"))?;
-    let owner = WebID::new();
-    let goal = service.goal_create(declaration(), owner)?;
-    let original = closure(&goal);
-    service.goal_close_native(goal.id, owner, original.clone())?;
-    let correction = NativeGoalOutcomeCorrection {
-        event_id: "correction-1".into(),
-        expected_spec_digest: goal.spec_digest.clone(),
-        source: source(),
-        occurred_at: Utc::now(),
-        supersedes_event_id: original.event_id.clone(),
-        outcome: Some(false),
-        reason: "Human corrects the outcome; stop remains stop".into(),
-    };
-    service.goal_correct_human_outcome(goal.id, owner, correction.clone())?;
-    service.goal_correct_human_outcome(goal.id, owner, correction.clone())?;
-    let mut conflict = correction;
-    conflict.outcome = Some(true);
-    assert!(
-        service
-            .goal_correct_human_outcome(goal.id, owner, conflict)
-            .is_err()
-    );
-    let retained = service.goal_get(goal.id, owner)?.expect("goal");
-    assert_eq!(retained.closure.expect("original").input, original);
-    assert_eq!(retained.human_corrections.len(), 1);
-    assert!(
-        retained.scores.is_empty(),
-        "correction does not create a forecast"
-    );
-    Ok(())
-}
-
-fn evidence() -> GoalEvidence {
-    GoalEvidence {
-        id: "evidence-1".into(),
-        source: "machine".into(),
-        locator: "file:///retained/check-report".into(),
-        digest: "42e3bdc0d187c8cbf613fcaaa452f47668db4c283ae5d767842644ccf1c0a717".into(),
-        reliability: "captured machine output".into(),
-        oracle: "check".into(),
-        limitation: "Only the stated criterion was checked".into(),
-    }
-}
-fn snapshots(
-    service: &KanbanService,
-    id: hkask_types::id::GoalID,
-    owner: WebID,
-) -> Vec<GoalArtifactSnapshot> {
-    let goal = service
-        .goal_get(id, owner)
-        .expect("goal query")
-        .expect("goal");
-    goal.closure
-        .iter()
-        .flat_map(|closure| {
-            closure
-                .input
-                .evidence_manifest
-                .iter()
-                .map(|evidence| GoalArtifactSnapshot {
-                    evidence_id: evidence.id.clone(),
-                    observed_at: closure.recorded_at,
-                    outcome: GoalArtifactReadOutcome::Fetched {
-                        source: "/retained/check-report".into(),
-                        sha256: evidence.digest.clone(),
-                        byte_count: "feature_status=disabled\n".len() as u64,
-                        content: "feature_status=disabled\n".into(),
-                    },
-                })
-        })
-        .collect()
-}
-fn completion(goal: &Goal, status: CriterionEvidenceStatus) -> AssessmentCompletion {
-    let attempt = goal.assessments.last().expect("claimed attempt");
-    AssessmentCompletion {
-        attempt_id: attempt.lease.attempt_id.clone(),
-        input_digest: attempt.input_digest.clone(),
-        findings: vec![CriterionFinding {
-            criterion_id: "criterion-1".into(),
-            status,
-            evidence_ids: vec!["evidence-1".into()],
-            note: "Original criterion checked by retained oracle".into(),
+        source: declaration().source,
+        occurred_at: now,
+        choice,
+        artifact_access: Some(LocalArtifactAccessApproval::BoundedUtf8V1),
+        evidence_manifest: vec![GoalEvidence {
+            id: "file".into(),
+            source: "untrusted worker".into(),
+            locator: "/evidence".into(),
+            digest: "4c34bb5402a70378b57765e0226203d3879a1caf74675e74634f11172ea6ca98".into(),
+            reliability: "claim".into(),
+            oracle: "claim".into(),
+            limitation: "file bytes only".into(),
         }],
-        limitations: vec!["No independent ground truth beyond this oracle".into()],
     }
 }
-fn close_with_evidence(
-    service: &KanbanService,
-    goal: &Goal,
-    owner: WebID,
-    choice: HumanClosureChoice,
-) -> anyhow::Result<Goal> {
-    let mut input = closure(goal);
-    input.choice = choice;
-    input.evidence_manifest = vec![evidence()];
-    input.artifact_access = Some(LocalArtifactAccessApproval::BoundedUtf8V1);
-    Ok(service.goal_close_native(goal.id, owner, input)?)
-}
-fn assessed(
-    service: &KanbanService,
-    id: hkask_types::id::GoalID,
-    owner: WebID,
-    status: CriterionEvidenceStatus,
-) -> anyhow::Result<Goal> {
-    service.goal_claim_assessment(
-        id,
-        owner,
-        lease("attempt-1"),
-        snapshots(&service, id, owner),
-    )?;
-    let goal = service.goal_get(id, owner)?.expect("goal");
-    Ok(service.goal_complete_assessment(id, owner, completion(&goal, status))?)
-}
-fn forecast(resolver: GoalForecastResolver) -> GoalForecast {
-    GoalForecast {
-        proposition: "Frozen condition at the declared horizon".into(),
-        probability: 0.8,
-        horizon: Utc::now() + chrono::Duration::milliseconds(100),
-        resolution_deadline: Utc::now() + chrono::Duration::hours(1),
-        execution_policy: "fixed procedure".into(),
-        resources: "fixed budget".into(),
-        resolver,
-        baseline_probability: 0.5,
-        cohort: "same-case-policy-horizon".into(),
-        update_policy: ForecastUpdatePolicy::FixedAtDeclaration,
-    }
-}
-fn wait_until(time: chrono::DateTime<Utc>) {
-    if let Ok(duration) = (time - Utc::now()).to_std() {
-        std::thread::sleep(duration);
-    }
-}
-#[test]
-fn six_human_choices_preserve_stop_and_acceptance_without_implicit_forecasts() -> anyhow::Result<()>
-{
-    let dir = tempfile::tempdir()?;
-    let service = open(&dir.path().join("goals.sqlite"))?;
-    let owner = WebID::new();
-    for choice in [
-        HumanClosureChoice::AccomplishedAchieved,
-        HumanClosureChoice::AccomplishedNotAchieved,
-        HumanClosureChoice::AccomplishedUnknown,
-        HumanClosureChoice::StopAchieved,
-        HumanClosureChoice::StopNotAchieved,
-        HumanClosureChoice::StopUnknown,
-    ] {
-        let goal = service.goal_create(declaration(), owner)?;
-        let closed = close_with_evidence(&service, &goal, owner, choice)?;
-        let assessed = assessed(
-            &service,
-            goal.id,
-            owner,
-            CriterionEvidenceStatus::Contradicted,
-        )?;
-        assert_eq!(
-            closed.closure, assessed.closure,
-            "assessor cannot relabel human closure"
-        );
-        assert_eq!(assessed.closure.expect("closure").input.choice, choice);
-        assert!(assessed.scores.is_empty());
-        assert_eq!(assessed.forecast_status, ForecastStatus::NotDeclared);
-    }
-    Ok(())
-}
-#[test]
-fn closure_replay_conflicts_spec_drift_and_foreign_owners_leave_history_unchanged()
--> anyhow::Result<()> {
-    let dir = tempfile::tempdir()?;
-    let service = open(&dir.path().join("goals.sqlite"))?;
-    let owner = WebID::new();
-    let goal = service.goal_create(declaration(), owner)?;
-    let input = closure(&goal);
-    assert!(
-        service
-            .goal_close_native(goal.id, WebID::new(), input.clone())
-            .is_err()
-    );
-    let mut wrong = input.clone();
-    wrong.expected_spec_digest = "rewritten-spec".into();
-    assert!(service.goal_close_native(goal.id, owner, wrong).is_err());
-    let mut wrong = input.clone();
-    wrong.source.interaction_id.clear();
-    assert!(service.goal_close_native(goal.id, owner, wrong).is_err());
-    assert_eq!(service.goal_get(goal.id, owner)?.expect("goal"), goal);
-    let closed = service.goal_close_native(goal.id, owner, input.clone())?;
-    assert_eq!(
-        service.goal_close_native(goal.id, owner, input.clone())?,
-        closed
-    );
-    let mut conflict = input;
-    conflict.choice = HumanClosureChoice::AccomplishedAchieved;
-    assert!(service.goal_close_native(goal.id, owner, conflict).is_err());
-    assert_eq!(service.goal_get(goal.id, owner)?.expect("goal"), closed);
-    Ok(())
-}
-#[test]
-fn progress_requires_exact_coverage_and_done_cannot_contradict_failed_criteria()
--> anyhow::Result<()> {
-    let dir = tempfile::tempdir()?;
-    let service = open(&dir.path().join("goals.sqlite"))?;
-    let owner = WebID::new();
-    let goal = service.goal_create(declaration(), owner)?;
-    let mut verdict = GoalVerdict {
-        verdict: GoalVerdictValue::Done,
-        confidence: 0.9,
-        criterion_results: vec![CriterionJudgment {
-            index: 0,
-            passed: false,
-            note: "check failed".into(),
-        }],
-        reasoning: "worker claim, not human closure".into(),
-        judged_at: Utc::now(),
-    };
-    assert!(service.goal_judge(goal.id, verdict.clone(), owner).is_err());
-    verdict.criterion_results[0].passed = true;
-    let mut missing = verdict.clone();
-    missing.criterion_results.clear();
-    assert!(service.goal_judge(goal.id, missing, owner).is_err());
-    let mut duplicate = verdict.clone();
-    duplicate
-        .criterion_results
-        .push(duplicate.criterion_results[0].clone());
-    assert!(service.goal_judge(goal.id, duplicate, owner).is_err());
-    let mut range = verdict.clone();
-    range.criterion_results[0].index = 1;
-    assert!(service.goal_judge(goal.id, range, owner).is_err());
-    assert!(
-        service
-            .goal_judge(goal.id, verdict.clone(), WebID::new())
-            .is_err()
-    );
-    let judged = service.goal_judge(goal.id, verdict, owner)?;
-    assert!(
-        judged.closure.is_none(),
-        "worker done is never human closure"
-    );
-    assert_eq!(judged.verdicts.len(), 1);
-    Ok(())
-}
-#[test]
-fn assessor_input_excludes_labels_and_completion_requires_the_frozen_manifest() -> anyhow::Result<()>
-{
-    let dir = tempfile::tempdir()?;
-    let service = open(&dir.path().join("goals.sqlite"))?;
-    let owner = WebID::new();
-    let goal = service.goal_create(declaration(), owner)?;
-    let verdict = GoalVerdict {
-        verdict: GoalVerdictValue::Done,
-        confidence: 0.88,
-        criterion_results: vec![CriterionJudgment {
-            index: 0,
-            passed: true,
-            note: "WORKER_LABEL_SECRET".into(),
-        }],
-        reasoning: "WORKER_LABEL_SECRET".into(),
-        judged_at: Utc::now(),
-    };
-    service.goal_judge(goal.id, verdict, owner)?;
-    close_with_evidence(
-        &service,
-        &goal,
-        owner,
-        HumanClosureChoice::AccomplishedAchieved,
-    )?;
-    let claim = lease("attempt-1");
-    let input = service.goal_claim_assessment(
-        goal.id,
-        owner,
-        claim.clone(),
-        snapshots(&service, goal.id, owner),
-    )?;
-    assert_eq!(
-        service.goal_claim_assessment(
-            goal.id,
-            owner,
-            claim,
-            snapshots(&service, goal.id, owner)
-        )?,
-        input
-    );
-    let wire = serde_json::to_value(&input)?;
-    for forbidden in [
-        "verdicts",
-        "closure",
-        "forecast",
-        "scores",
-        "owner",
-        "human_corrections",
-    ] {
-        assert!(wire.get(forbidden).is_none());
-    }
-    assert!(!wire.to_string().contains("WORKER_LABEL_SECRET"));
-    assert_eq!(input.evidence_manifest, vec![evidence()]);
-    assert!(
-        service
-            .goal_claim_assessment(
-                goal.id,
-                owner,
-                lease("attempt-2"),
-                snapshots(&service, goal.id, owner)
-            )
-            .is_err()
-    );
-    let goal = service.goal_get(goal.id, owner)?.expect("goal");
-    let good = completion(&goal, CriterionEvidenceStatus::Contradicted);
-    let mut missing = good.clone();
-    missing.findings.clear();
-    assert!(
-        service
-            .goal_complete_assessment(goal.id, owner, missing)
-            .is_err()
-    );
-    let mut duplicate = good.clone();
-    duplicate.findings.push(duplicate.findings[0].clone());
-    assert!(
-        service
-            .goal_complete_assessment(goal.id, owner, duplicate)
-            .is_err()
-    );
-    let mut wrong = good.clone();
-    wrong.input_digest = "different-input".into();
-    assert!(
-        service
-            .goal_complete_assessment(goal.id, owner, wrong)
-            .is_err()
-    );
-    let mut wrong = good.clone();
-    wrong.findings[0].evidence_ids = vec!["invented-evidence".into()];
-    assert!(
-        service
-            .goal_complete_assessment(goal.id, owner, wrong)
-            .is_err()
-    );
-    let mut unsupported = good.clone();
-    unsupported.findings[0].evidence_ids.clear();
-    assert!(
-        service
-            .goal_complete_assessment(goal.id, owner, unsupported)
-            .is_err()
-    );
-    let completed = service.goal_complete_assessment(goal.id, owner, good.clone())?;
-    assert_eq!(
-        service.goal_complete_assessment(goal.id, owner, good)?,
-        completed
-    );
-    assert!(!completed.assessment_pending);
-    assert_eq!(
-        completed.closure.expect("human retained").input.choice,
-        HumanClosureChoice::AccomplishedAchieved
-    );
-    Ok(())
-}
-#[test]
-fn failed_assessment_survives_reopen_and_can_be_retried_without_reopening_work()
--> anyhow::Result<()> {
-    let dir = tempfile::tempdir()?;
-    let path = dir.path().join("goals.sqlite");
-    let owner = WebID::new();
-    let service = open(&path)?;
-    let goal = service.goal_create(declaration(), owner)?;
-    close_with_evidence(&service, &goal, owner, HumanClosureChoice::StopUnknown)?;
-    service.goal_claim_assessment(
-        goal.id,
-        owner,
-        lease("failed-attempt"),
-        snapshots(&service, goal.id, owner),
-    )?;
-    let retained = service.goal_get(goal.id, owner)?.expect("goal");
-    let failure = AssessmentFailure {
-        attempt_id: "failed-attempt".into(),
-        input_digest: retained.assessments[0].input_digest.clone(),
-        reason: "provider unavailable".into(),
-    };
-    let failed = service.goal_fail_assessment(goal.id, owner, failure.clone())?;
-    assert_eq!(
-        service.goal_fail_assessment(goal.id, owner, failure)?,
-        failed
-    );
-    drop(service);
-    let service = open(&path)?;
-    assert!(
-        service
-            .goal_pending_work(&owner)?
-            .iter()
-            .any(|g| g.id == goal.id)
-    );
-    service.goal_claim_assessment(
-        goal.id,
-        owner,
-        lease("retry"),
-        snapshots(&service, goal.id, owner),
-    )?;
-    let retained = service.goal_get(goal.id, owner)?.expect("goal");
-    assert_eq!(
-        retained.assessments[0]
-            .failure
-            .as_ref()
-            .expect("failure retained")
-            .reason,
-        "provider unavailable"
-    );
-    service.goal_complete_assessment(
-        goal.id,
-        owner,
-        completion(&retained, CriterionEvidenceStatus::Supported),
-    )?;
-    let retained = service.goal_get(goal.id, owner)?.expect("goal");
-    assert!(!retained.assessment_pending);
-    assert_eq!(
-        retained.closure.expect("closed").input.choice,
-        HumanClosureChoice::StopUnknown
-    );
-    Ok(())
-}
-#[test]
-fn expired_assessor_lease_is_preserved_as_failure_and_old_completion_is_rejected()
--> anyhow::Result<()> {
-    let dir = tempfile::tempdir()?;
-    let service = open(&dir.path().join("goals.sqlite"))?;
-    let owner = WebID::new();
-    let goal = service.goal_create(declaration(), owner)?;
-    close_with_evidence(&service, &goal, owner, HumanClosureChoice::StopUnknown)?;
-    let mut short = lease("expired");
-    short.lease_until = Utc::now() + chrono::Duration::milliseconds(100);
-    service.goal_claim_assessment(
-        goal.id,
-        owner,
-        short.clone(),
-        snapshots(&service, goal.id, owner),
-    )?;
-    let old = completion(
-        &service.goal_get(goal.id, owner)?.expect("goal"),
-        CriterionEvidenceStatus::Supported,
-    );
-    wait_until(short.lease_until);
-    service.goal_claim_assessment(
-        goal.id,
-        owner,
-        lease("replacement"),
-        snapshots(&service, goal.id, owner),
-    )?;
-    assert!(
-        service
-            .goal_complete_assessment(goal.id, owner, old)
-            .is_err()
-    );
-    let retained = service.goal_get(goal.id, owner)?.expect("goal");
-    assert!(
-        retained.assessments[0]
-            .failure
-            .as_ref()
-            .expect("expired failure")
-            .reason
-            .contains("expired")
-    );
-    assert_eq!(retained.assessments.len(), 2);
-    Ok(())
-}
-#[test]
-fn forged_projection_receipt_is_rejected_and_digest_binds_original_payload() -> anyhow::Result<()> {
-    use sha2::{Digest, Sha256};
-    let dir = tempfile::tempdir()?;
-    let service = open(&dir.path().join("goals.sqlite"))?;
-    let owner = WebID::new();
-    let goal = service.goal_create(declaration(), owner)?;
-    let projection = &goal.projections[0];
-    assert_eq!(
-        projection.payload_digest,
-        format!(
-            "{:x}",
-            Sha256::digest(serde_json::to_vec(&projection.payload)?)
-        )
-    );
-    assert_eq!(
-        projection.payload["criteria"][0]["description"],
-        "The original explicit criterion"
-    );
-    let mut receipt = GoalProjectionReceipt {
-        event_id: projection.event_id.clone(),
-        revision: projection.revision,
-        payload_digest: "forged".into(),
-        receipt_id: "receipt-1".into(),
-    };
-    assert!(
-        service
-            .goal_mark_projection_delivered(goal.id, owner, receipt.clone())
-            .is_err()
-    );
-    receipt.payload_digest = projection.payload_digest.clone();
-    receipt.revision += 1;
-    assert!(
-        service
-            .goal_mark_projection_delivered(goal.id, owner, receipt.clone())
-            .is_err()
-    );
-    receipt.revision = projection.revision;
-    service.goal_mark_projection_delivered(goal.id, owner, receipt.clone())?;
-    receipt.receipt_id = "conflicting-receipt".into();
-    assert!(
-        service
-            .goal_mark_projection_delivered(goal.id, owner, receipt)
-            .is_err()
-    );
-    assert_eq!(
-        service
-            .goal_get(goal.id, owner)?
-            .expect("canonical history")
-            .projections
-            .len(),
-        1,
-        "ack must not publish another ack"
-    );
-    Ok(())
-}
-
-#[test]
-fn human_forecast_scores_only_after_assessor_attempt_and_keeps_contradiction() -> anyhow::Result<()>
-{
-    let dir = tempfile::tempdir()?;
-    let service = open(&dir.path().join("goals.sqlite"))?;
-    let owner = WebID::new();
-    let mut declared = declaration();
-    declared.forecast = Some(forecast(GoalForecastResolver::HumanAcceptance));
-    let goal = service.goal_create(declared, owner)?;
-    wait_until(goal.forecast.as_ref().expect("forecast").horizon);
-    let closed = close_with_evidence(
-        &service,
-        &goal,
-        owner,
-        HumanClosureChoice::AccomplishedAchieved,
-    )?;
-    assert!(closed.scores.is_empty());
-    let goal = assessed(
-        &service,
-        goal.id,
-        owner,
-        CriterionEvidenceStatus::Contradicted,
-    )?;
-    let score = goal.scores.last().expect("declared human resolver");
-    assert!((score.brier - 0.04).abs() < 1e-12);
-    assert_eq!(score.baseline_brier, 0.25);
-    assert_eq!(goal.forecast_status, ForecastStatus::Resolved);
-    assert_eq!(
-        goal.assessments[0]
-            .completion
-            .as_ref()
-            .expect("assessment")
-            .findings[0]
-            .status,
-        CriterionEvidenceStatus::Contradicted
-    );
-    let correction = NativeGoalOutcomeCorrection {
-        event_id: "human-correction".into(),
-        expected_spec_digest: goal.spec_digest.clone(),
-        source: source(),
-        occurred_at: Utc::now(),
-        supersedes_event_id: "closure-1".into(),
-        outcome: Some(false),
-        reason: "Human corrects actual acceptance".into(),
-    };
-    let corrected = service.goal_correct_human_outcome(goal.id, owner, correction.clone())?;
-    assert_eq!(corrected.scores.len(), 2);
-    assert!((corrected.scores[1].brier - 0.64).abs() < 1e-12);
-    assert_eq!(corrected.scores[1].supersedes_version, Some(1));
-    assert_eq!(
-        service
-            .goal_correct_human_outcome(goal.id, owner, correction)?
-            .scores
-            .len(),
-        2
-    );
-    Ok(())
-}
-
-#[test]
-fn forecast_admission_rejects_late_nonfinite_and_incomplete_declarations() -> anyhow::Result<()> {
-    let dir = tempfile::tempdir()?;
-    let service = open(&dir.path().join("goals.sqlite"))?;
-    let owner = WebID::new();
-    for probability in [f64::NAN, f64::INFINITY, -0.1, 1.1] {
-        let mut declared = declaration();
-        let mut f = forecast(GoalForecastResolver::HumanAcceptance);
-        f.probability = probability;
-        declared.forecast = Some(f);
-        assert!(service.goal_create(declared, owner).is_err());
-    }
-    let mut declared = declaration();
-    let mut f = forecast(GoalForecastResolver::HumanAcceptance);
-    f.horizon = Utc::now() - chrono::Duration::hours(1);
-    declared.forecast = Some(f);
-    assert!(service.goal_create(declared, owner).is_err());
-    let mut declared = declaration();
-    let mut f = forecast(GoalForecastResolver::HumanAcceptance);
-    f.execution_policy.clear();
-    declared.forecast = Some(f);
-    assert!(service.goal_create(declared, owner).is_err());
-    let mut declared = declaration();
-    declared.criteria[0].description = "  ".into();
-    assert!(service.goal_create(declared, owner).is_err());
-    assert!(service.goal_list(&owner)?.is_empty());
-    Ok(())
-}
-#[test]
-fn matched_zero_baseline_loss_has_no_synthetic_skill() -> anyhow::Result<()> {
-    let dir = tempfile::tempdir()?;
-    let service = open(&dir.path().join("goals.sqlite"))?;
-    let owner = WebID::new();
-    let mut declared = declaration();
-    let mut f = forecast(GoalForecastResolver::HumanAcceptance);
-    f.baseline_probability = 1.0;
-    declared.forecast = Some(f);
-    let goal = service.goal_create(declared, owner)?;
-    wait_until(goal.forecast.as_ref().expect("forecast").horizon);
-    close_with_evidence(&service, &goal, owner, HumanClosureChoice::StopAchieved)?;
-    let goal = assessed(&service, goal.id, owner, CriterionEvidenceStatus::Unknown)?;
-    let score = goal.scores.last().expect("score");
-    assert_eq!(score.baseline_brier, 0.0);
-    assert_eq!(score.skill, None);
-    Ok(())
-}
-#[test]
-fn legacy_archive_preserves_raw_data_but_never_reconstructs_eligibility() -> anyhow::Result<()> {
-    let dir = tempfile::tempdir()?;
-    let path = dir.path().join("goals.sqlite");
-    let owner = WebID::new();
-    let id = hkask_types::id::GoalID::new();
-    let pool = SqliteDriver::file_pool_with_schema(path.to_str().expect("path"))?;
-    let store = HMemStore::from_driver(Arc::new(SqliteDriver::new(pool)))?;
-    let raw = serde_json::json!({ "id": id, "goal_text": "historical original", "criteria": [{"description":"historical criterion", "llm_prompt":null}], "task_id": null, "prediction": 0.8, "verdicts": [], "resolution": {"achieved":true, "brier":0.04, "resolved_at":Utc::now()}, "owner":owner, "created_at":Utc::now(), "updated_at":Utc::now(), "unknown_historical_field": {"preserve":"verbatim"} });
-    store.insert(&hkask_storage::HMem::new(
-        "kanban:goal",
-        "historically-drifted-key",
-        raw.clone(),
-        owner,
-    ))?;
-    let service = KanbanService::new(store);
-    assert_eq!(service.goal_archive_legacy(owner)?, 1);
-    assert_eq!(service.goal_archive_legacy(owner)?, 0);
-    drop(service);
-    let service = open(&path)?;
-    let archived = service
-        .goal_get(id, owner)?
-        .expect("legacy remains visible");
-    assert_eq!(archived.legacy.as_ref().expect("explicit archive").raw, raw);
-    assert_eq!(archived.forecast_status, ForecastStatus::LegacyUnscored);
-    assert!(archived.forecast.is_none());
-    assert!(archived.scores.is_empty());
-    assert!(
-        service
-            .goal_close_native(id, owner, closure(&archived))
-            .is_err()
-    );
-    let mut successor = declaration();
-    successor.supersedes = Some(id);
-    let next = service.goal_create(successor, owner)?;
-    assert_eq!(next.supersedes, Some(id));
-    assert_eq!(service.goal_list(&owner)?.len(), 2);
-    Ok(())
-}
-#[test]
-fn concurrent_closures_and_progress_never_lose_successful_updates() -> anyhow::Result<()> {
-    let dir = tempfile::tempdir()?;
-    let service = open(&dir.path().join("goals.sqlite"))?;
-    let owner = WebID::new();
-    let goal = service.goal_create(declaration(), owner)?;
-    let barrier = std::sync::Barrier::new(3);
-    std::thread::scope(|scope| -> anyhow::Result<()> {
-        let handles: Vec<_> = (0..2)
-            .map(|i| {
-                let service = &service;
-                let barrier = &barrier;
-                scope.spawn(move || {
-                    let verdict = GoalVerdict {
-                        verdict: GoalVerdictValue::Continue,
-                        confidence: 0.5,
-                        criterion_results: vec![CriterionJudgment {
-                            index: 0,
-                            passed: false,
-                            note: "not yet satisfied".into(),
-                        }],
-                        reasoning: format!("worker-{i}"),
-                        judged_at: Utc::now(),
-                    };
-                    barrier.wait();
-                    service.goal_judge(goal.id, verdict, owner)
-                })
-            })
-            .collect();
-        barrier.wait();
-        for handle in handles {
-            handle.join().expect("thread")?;
-        }
-        Ok(())
-    })?;
-    assert_eq!(
-        service
-            .goal_get(goal.id, owner)?
-            .expect("goal")
-            .verdicts
-            .len(),
-        2
-    );
-    let a = closure(&goal);
-    let mut b = a.clone();
-    b.event_id = "different-event".into();
-    b.choice = HumanClosureChoice::AccomplishedAchieved;
-    let results = std::thread::scope(|scope| {
-        let a = scope.spawn(|| service.goal_close_native(goal.id, owner, a));
-        let b = scope.spawn(|| service.goal_close_native(goal.id, owner, b));
-        [a.join().expect("thread"), b.join().expect("thread")]
-    });
-    assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
-    let retained = service.goal_get(goal.id, owner)?.expect("goal");
-    assert!(retained.assessment_pending);
-    assert_eq!(retained.verdicts.len(), 2);
-    assert_eq!(
-        retained.projections.len(),
-        4,
-        "create, two judges, one closure"
-    );
-    Ok(())
-}
-#[test]
-fn failed_atomic_closure_does_not_leave_half_an_assessment_or_outbox() -> anyhow::Result<()> {
-    let dir = tempfile::tempdir()?;
-    let path = dir.path().join("goals.sqlite");
-    let pool = SqliteDriver::file_pool_with_schema(path.to_str().expect("path"))?;
-    let driver = Arc::new(SqliteDriver::new(pool));
-    let service = KanbanService::new(HMemStore::from_driver(driver.clone())?);
-    let owner = WebID::new();
-    let goal = service.goal_create(declaration(), owner)?;
-    driver.execute_batch("CREATE TRIGGER reject_closure BEFORE UPDATE ON hmems WHEN NEW.entity = 'kanban:goal' BEGIN SELECT RAISE(FAIL, 'forced closure failure'); END;")?;
-    let input = closure(&goal);
-    assert!(
-        service
-            .goal_close_native(goal.id, owner, input.clone())
-            .is_err()
-    );
-    assert_eq!(
-        service.goal_get(goal.id, owner)?.expect("unchanged goal"),
-        goal
-    );
-    driver.execute_batch("DROP TRIGGER reject_closure;")?;
-    assert!(
-        service
-            .goal_close_native(goal.id, owner, input)?
-            .assessment_pending
-    );
-    Ok(())
-}
-
-#[test]
-fn late_human_correction_rescores_the_original_in_window_outcome() -> anyhow::Result<()> {
-    let dir = tempfile::tempdir()?;
-    let service = open(&dir.path().join("goals.sqlite"))?;
-    let owner = WebID::new();
-    let mut declared = declaration();
-    let mut f = forecast(GoalForecastResolver::HumanAcceptance);
-    f.resolution_deadline = f.horizon + chrono::Duration::milliseconds(300);
-    declared.forecast = Some(f);
-    let goal = service.goal_create(declared, owner)?;
-    let forecast = goal.forecast.as_ref().expect("forecast");
-    wait_until(forecast.horizon);
-    close_with_evidence(
-        &service,
-        &goal,
-        owner,
-        HumanClosureChoice::AccomplishedAchieved,
-    )?;
-    assessed(&service, goal.id, owner, CriterionEvidenceStatus::Supported)?;
-    wait_until(forecast.resolution_deadline);
-    let corrected = service.goal_correct_human_outcome(
-        goal.id,
-        owner,
-        NativeGoalOutcomeCorrection {
-            event_id: "late-correction".into(),
-            expected_spec_digest: goal.spec_digest.clone(),
-            source: source(),
-            occurred_at: Utc::now(),
-            supersedes_event_id: "closure-1".into(),
-            outcome: Some(false),
-            reason: "Correction of the original human outcome, not a new target".into(),
+fn capture(closure: &NativeGoalClosure) -> Result<Vec<GoalArtifactSnapshot>, String> {
+    Ok(vec![GoalArtifactSnapshot {
+        evidence_id: "file".into(),
+        observed_at: closure.occurred_at,
+        outcome: GoalArtifactReadOutcome::Fetched {
+            source: "/evidence".into(),
+            sha256: closure.evidence_manifest[0].digest.clone(),
+            byte_count: 23,
+            content: "feature_status=enabled\n".into(),
         },
-    )?;
-    assert_eq!(corrected.forecast_status, ForecastStatus::Resolved);
-    assert!((corrected.scores.last().expect("corrected score").brier - 0.64).abs() < 1e-12);
-    Ok(())
+    }])
 }
-
-#[test]
-fn forecast_deadline_refresh_records_expiry_without_fabricating_failure() -> anyhow::Result<()> {
-    let dir = tempfile::tempdir()?;
-    let service = open(&dir.path().join("goals.sqlite"))?;
-    let owner = WebID::new();
-    let mut declared = declaration();
-    let mut forecast = forecast(GoalForecastResolver::HumanAcceptance);
-    forecast.resolution_deadline = forecast.horizon;
-    let deadline = forecast.resolution_deadline;
-    declared.forecast = Some(forecast);
-    let goal = service.goal_create(declared, owner)?;
-    close_with_evidence(&service, &goal, owner, HumanClosureChoice::StopNotAchieved)?;
-    assessed(&service, goal.id, owner, CriterionEvidenceStatus::Unknown)?;
-    wait_until(deadline);
-    let refreshed = service.goal_refresh_forecast(goal.id, owner)?;
-    assert_eq!(refreshed.forecast_status, ForecastStatus::DeadlineElapsed);
-    assert!(refreshed.scores.is_empty());
-    assert!(refreshed.observations.is_empty());
-    assert_eq!(
-        service.goal_refresh_forecast(goal.id, owner)?,
-        refreshed,
-        "deadline reconciliation is idempotent"
-    );
-    Ok(())
-}
-
-#[test]
-fn explicit_criteria_are_bounded_and_assessment_cannot_precede_closure() -> anyhow::Result<()> {
-    let dir = tempfile::tempdir()?;
-    let service = open(&dir.path().join("goals.sqlite"))?;
-    let owner = WebID::new();
-    for count in [0, 5] {
-        let mut declared = declaration();
-        declared.criteria = (0..count)
-            .map(|i| VerificationCriterion::new(format!("explicit criterion {i}")))
-            .collect();
-        assert!(service.goal_create(declared, owner).is_err());
+fn reply(input: GoalAssessmentInput, status: CriterionEvidenceStatus) -> AssessmentResult {
+    AssessmentResult {
+        findings: input
+            .criteria
+            .into_iter()
+            .map(|c| CriterionFinding {
+                criterion_id: c.id,
+                status: status.clone(),
+                evidence_ids: vec!["file".into()],
+                note: "Only fetched file contents were checked".into(),
+            })
+            .collect(),
+        limitations: vec!["No execution or producer authenticity established".into()],
     }
-    let mut declared = declaration();
-    declared.criteria = (0..4)
-        .map(|i| VerificationCriterion::new(format!("explicit criterion {i}")))
-        .collect();
-    let goal = service.goal_create(declared, owner)?;
-    assert_eq!(
-        goal.criterion_ids,
-        ["criterion-1", "criterion-2", "criterion-3", "criterion-4"]
-    );
+}
+struct Fixture {
+    dir: tempfile::TempDir,
+    clock: Arc<Mutex<DateTime<Utc>>>,
+    owner: WebID,
+    service: KanbanService,
+}
+impl Fixture {
+    fn new() -> Self {
+        let dir = tempfile::tempdir().expect("directory");
+        let clock = Arc::new(Mutex::new(Utc::now()));
+        let service = open(&dir.path().join("goals.db"), &clock);
+        Self {
+            dir,
+            clock,
+            owner: WebID::new(),
+            service,
+        }
+    }
+    fn now(&self) -> DateTime<Utc> {
+        *self.clock.lock().expect("clock")
+    }
+    fn advance(&self, seconds: i64) {
+        *self.clock.lock().expect("clock") += Duration::seconds(seconds);
+    }
+    fn reopen(&self) -> KanbanService {
+        open(&self.dir.path().join("goals.db"), &self.clock)
+    }
+    fn goal(&self, id: hkask_types::GoalID) -> Goal {
+        self.service
+            .goal_get(id, self.owner)
+            .expect("get")
+            .expect("goal")
+    }
+}
+#[tokio::test]
+async fn unknown_stop_replay_and_restart_keep_history_without_forecast_or_model() {
+    let f = Fixture::new();
+    let goal = f
+        .service
+        .goal_create(declaration(), f.owner)
+        .expect("create");
+    let mut input = close(&goal, f.now(), HumanClosureChoice::StopUnknown);
+    input.evidence_manifest.clear();
+    f.service
+        .goal_close_native(goal.id, f.owner, input.clone())
+        .expect("close");
+    f.service
+        .goal_close_native(goal.id, f.owner, input.clone())
+        .expect("exact replay");
+    input.choice = HumanClosureChoice::StopAchieved;
     assert!(
-        service
-            .goal_claim_assessment(
-                goal.id,
-                owner,
-                lease("premature"),
-                snapshots(&service, goal.id, owner)
-            )
+        f.service
+            .goal_close_native(goal.id, f.owner, input)
             .is_err()
     );
-    assert_eq!(service.goal_get(goal.id, owner)?.expect("unchanged"), goal);
-    let mut revised = declaration();
-    revised.supersedes = Some(goal.id);
-    let successor = service.goal_create(revised, owner)?;
-    assert_ne!(successor.spec_digest, goal.spec_digest);
+    f.reopen()
+        .goal_assess(
+            goal.id,
+            f.owner,
+            |_| Ok(vec![]),
+            |_| async { panic!("no evidence must not call inference") },
+        )
+        .await
+        .expect("unknown assessment");
+    let retained = f
+        .reopen()
+        .goal_get(goal.id, f.owner)
+        .expect("get")
+        .expect("retained");
     assert_eq!(
-        service.goal_get(goal.id, owner)?.expect("original remains"),
-        goal
+        retained.closure.expect("closure").input.choice,
+        HumanClosureChoice::StopUnknown
     );
-    assert!(service.goal_get(goal.id, WebID::new())?.is_none());
-    Ok(())
-}
-
-#[test]
-fn manifest_reference_alone_cannot_become_supported_or_contradicted() -> anyhow::Result<()> {
-    let dir = tempfile::tempdir()?;
-    let service = open(&dir.path().join("goals.sqlite"))?;
-    let owner = WebID::new();
-    let goal = service.goal_create(declaration(), owner)?;
-    close_with_evidence(
-        &service,
-        &goal,
-        owner,
-        HumanClosureChoice::AccomplishedAchieved,
-    )?;
-    service.goal_claim_assessment(goal.id, owner, lease("references-only"), vec![])?;
-    let goal = service.goal_get(goal.id, owner)?.expect("goal");
-    for status in [
-        CriterionEvidenceStatus::Supported,
-        CriterionEvidenceStatus::Contradicted,
-    ] {
-        assert!(
-            service
-                .goal_complete_assessment(goal.id, owner, completion(&goal, status))
-                .is_err(),
-            "a known manifest ID is not a fetched observation"
-        );
-    }
-    let retained = service.goal_complete_assessment(
-        goal.id,
-        owner,
-        completion(&goal, CriterionEvidenceStatus::Unknown),
-    )?;
     assert_eq!(
         retained.assessments[0]
-            .completion
+            .result
+            .as_ref()
+            .expect("result")
             .as_ref()
             .expect("unknown")
             .findings[0]
             .status,
         CriterionEvidenceStatus::Unknown
     );
-    Ok(())
+    assert!(retained.forecast.is_none() && retained.scores.is_empty());
 }
-
-#[test]
-fn host_observation_requires_native_read_consent_and_exact_byte_digest() -> anyhow::Result<()> {
-    let dir = tempfile::tempdir()?;
-    let service = open(&dir.path().join("goals.sqlite"))?;
-    let owner = WebID::new();
-    let goal = service.goal_create(declaration(), owner)?;
-    let mut old = closure(&goal);
-    old.evidence_manifest = vec![evidence()];
-    service.goal_close_native(goal.id, owner, old)?;
-    assert!(
-        service
-            .goal_claim_assessment(
+#[tokio::test]
+async fn human_forecast_disagreement_corrections_and_original_time_are_separate() {
+    for (choice, status, initial) in [
+        (
+            HumanClosureChoice::AccomplishedAchieved,
+            CriterionEvidenceStatus::Contradicted,
+            true,
+        ),
+        (
+            HumanClosureChoice::AccomplishedNotAchieved,
+            CriterionEvidenceStatus::Supported,
+            false,
+        ),
+    ] {
+        let f = Fixture::new();
+        let mut spec = declaration();
+        spec.forecast = Some(GoalForecast {
+            proposition: "The human accepts the feature".into(),
+            probability: 0.8,
+            baseline_probability: 0.0,
+            horizon: f.now() + Duration::seconds(1),
+            resolution_deadline: f.now() + Duration::seconds(10),
+            execution_policy: "this task".into(),
+            resources: "this session".into(),
+            cohort: "features".into(),
+            resolver: GoalForecastResolver::HumanAcceptance {},
+            update_policy: ForecastUpdatePolicy::FixedAtDeclaration,
+        });
+        let goal = f
+            .service
+            .goal_create(spec, f.owner)
+            .expect("prospective forecast");
+        f.advance(2);
+        f.service
+            .goal_close_native(goal.id, f.owner, close(&goal, f.now(), choice))
+            .expect("close");
+        f.service
+            .goal_assess(goal.id, f.owner, capture, |input| async {
+                Ok(reply(input, status))
+            })
+            .await
+            .expect("assessment");
+        let assessed = f.goal(goal.id);
+        assert_eq!(
+            assessed.scores[0].outcome, initial,
+            "assessor is not the human resolver"
+        );
+        if !initial {
+            assert!(
+                assessed.scores[0].skill.is_none(),
+                "zero baseline loss has undefined skill"
+            );
+        }
+        f.advance(20);
+        let correction = NativeGoalOutcomeCorrection {
+            event_id: "corrected".into(),
+            expected_spec_digest: goal.spec_digest.clone(),
+            source: declaration().source,
+            occurred_at: f.now(),
+            supersedes_event_id: "native-choice".into(),
+            outcome: Some(!initial),
+            reason: "Human corrects original outcome".into(),
+        };
+        f.service
+            .goal_correct_human_outcome(goal.id, f.owner, correction.clone())
+            .expect("correction after deadline");
+        f.service
+            .goal_correct_human_outcome(goal.id, f.owner, correction)
+            .expect("replay");
+        let corrected = f.goal(goal.id);
+        assert_eq!(corrected.scores.len(), 2);
+        assert_eq!(corrected.scores[1].outcome, !initial);
+        assert_eq!(corrected.assessments, assessed.assessments);
+        let original = corrected.closure.expect("original closure");
+        f.service
+            .goal_correct_human_outcome(
                 goal.id,
-                owner,
-                lease("unapproved"),
-                snapshots(&service, goal.id, owner)
+                f.owner,
+                NativeGoalOutcomeCorrection {
+                    event_id: "unknown".into(),
+                    expected_spec_digest: goal.spec_digest,
+                    source: declaration().source,
+                    occurred_at: f.now(),
+                    supersedes_event_id: "corrected".into(),
+                    outcome: None,
+                    reason: "Human cannot establish outcome".into(),
+                },
             )
-            .is_err(),
-        "historical closures never become read approval"
-    );
-    assert!(
-        service
-            .goal_get(goal.id, owner)?
-            .expect("goal")
-            .assessments
-            .is_empty()
-    );
-    let goal = service.goal_create(declaration(), owner)?;
-    close_with_evidence(&service, &goal, owner, HumanClosureChoice::StopUnknown)?;
-    let observed = snapshots(&service, goal.id, owner);
-    let mut changed = observed.clone();
-    if let GoalArtifactReadOutcome::Fetched { content, .. } = &mut changed[0].outcome {
-        content.push_str("tampered");
+            .expect("unknown correction");
+        let unknown = f.goal(goal.id);
+        assert_eq!(unknown.forecast_status, ForecastStatus::Unknown);
+        assert_eq!(unknown.scores.len(), 2, "no invented score for unknown");
+        assert_eq!(unknown.closure.expect("original retained"), original);
     }
+}
+#[tokio::test]
+async fn failed_assessment_retries_and_only_fetched_ids_can_support() {
+    let f = Fixture::new();
+    let goal = f
+        .service
+        .goal_create(declaration(), f.owner)
+        .expect("create");
+    f.service
+        .goal_close_native(
+            goal.id,
+            f.owner,
+            close(&goal, f.now(), HumanClosureChoice::StopNotAchieved),
+        )
+        .expect("close");
+    f.service
+        .goal_assess(goal.id, f.owner, capture, |input| async {
+            let mut result = reply(input, CriterionEvidenceStatus::Supported);
+            result.findings[0].evidence_ids = vec!["invented".into()];
+            Ok(result)
+        })
+        .await
+        .expect("failure retained");
     assert!(
-        service
-            .goal_claim_assessment(goal.id, owner, lease("tampered"), changed)
+        f.goal(goal.id).assessments[0]
+            .result
+            .as_ref()
+            .expect("failure")
             .is_err()
     );
-    let original_lease = lease("original");
-    let input =
-        service.goal_claim_assessment(goal.id, owner, original_lease.clone(), observed.clone())?;
-    let mut conflicting = observed.clone();
-    conflicting[0].observed_at += chrono::Duration::nanoseconds(1);
-    assert!(
+    f.reopen()
+        .goal_assess(goal.id, f.owner, capture, |input| async {
+            Ok(reply(input, CriterionEvidenceStatus::Supported))
+        })
+        .await
+        .expect("retry");
+    assert_eq!(f.goal(goal.id).assessments.len(), 2);
+    assert!(!f.goal(goal.id).needs_assessment(f.now()));
+}
+#[tokio::test]
+async fn separate_hosts_cannot_steal_live_claim_or_finish_expired_work() {
+    let f = Fixture::new();
+    let goal = f
+        .service
+        .goal_create(declaration(), f.owner)
+        .expect("create");
+    f.service
+        .goal_close_native(
+            goal.id,
+            f.owner,
+            close(&goal, f.now(), HumanClosureChoice::StopUnknown),
+        )
+        .expect("close");
+    let (started, wait) = tokio::sync::oneshot::channel();
+    let (finish, resume) = tokio::sync::oneshot::channel();
+    let service = f.reopen();
+    let owner = f.owner;
+    let id = goal.id;
+    let first = tokio::spawn(async move {
         service
-            .goal_claim_assessment(goal.id, owner, original_lease.clone(), conflicting)
-            .is_err(),
-        "same attempt cannot acquire different observations"
+            .goal_assess(id, owner, capture, |input| async move {
+                started.send(()).expect("started");
+                resume.await.expect("resume");
+                Ok(reply(input, CriterionEvidenceStatus::Contradicted))
+            })
+            .await
+    });
+    wait.await.expect("persisted before inference");
+    let frozen = f.goal(id);
+    assert_eq!(frozen.assessments[0].input.artifacts.len(), 1);
+    f.reopen()
+        .goal_assess(
+            id,
+            owner,
+            |_| panic!("live claim: no capture"),
+            |_| async { panic!("live claim: no inference") },
+        )
+        .await
+        .expect("other host skips live claim");
+    f.advance(91);
+    f.reopen()
+        .goal_assess(id, owner, capture, |input| async {
+            Ok(reply(input, CriterionEvidenceStatus::Supported))
+        })
+        .await
+        .expect("expired claim replaced");
+    finish.send(()).expect("late completion");
+    assert!(first.await.expect("task").is_err());
+    let retained = f.goal(id);
+    assert_eq!(retained.assessments.len(), 2);
+    assert!(
+        retained.assessments[0]
+            .result
+            .as_ref()
+            .expect("expiry")
+            .is_err()
     );
-    let retained = service.goal_get(goal.id, owner)?.expect("goal");
-    service.goal_fail_assessment(
-        goal.id,
-        owner,
-        AssessmentFailure {
-            attempt_id: "original".into(),
-            input_digest: retained.assessments[0].input_digest.clone(),
-            reason: "provider unavailable".into(),
-        },
-    )?;
-    service.goal_claim_assessment(goal.id, owner, lease("next"), observed.clone())?;
     assert_eq!(
-        service.goal_claim_assessment(goal.id, owner, original_lease, observed)?,
-        input,
-        "replaying an older claim returns that exact input, not the latest attempt"
+        retained.assessments[1]
+            .result
+            .as_ref()
+            .expect("result")
+            .as_ref()
+            .expect("new completion")
+            .findings[0]
+            .status,
+        CriterionEvidenceStatus::Supported
     );
-    Ok(())
 }
-
-#[test]
-fn machine_forecast_declaration_requires_a_real_supported_source_capability() -> anyhow::Result<()>
-{
-    let dir = tempfile::tempdir()?;
-    let service = open(&dir.path().join("goals.sqlite"))?;
-    let owner = WebID::new();
-    for (source, oracle) in [
-        ("machine", "check"),
-        (
-            "file:///absolute/report.txt",
-            "sha256:4c34bb5402a70378b57765e0226203d3879a1caf74675e74634f11172ea6ca98",
-        ),
-    ] {
-        let mut declared = declaration();
-        declared.forecast = Some(forecast(GoalForecastResolver::MachineEvidence {
-            source: source.into(),
-            oracle: oracle.into(),
-        }));
-        let error = service
-            .goal_create(declared, owner)
-            .expect_err("no production machine adapter exists");
-        assert!(
-            error
-                .to_string()
-                .contains("no production machine observation adapter"),
-            "admission must explain the missing capability: {error}"
-        );
-    }
-    assert!(
-        service.goal_list(&owner)?.is_empty(),
-        "rejected declarations create no phantom forecast records"
-    );
-    let mut declared = declaration();
-    declared.forecast = Some(forecast(GoalForecastResolver::HumanAcceptance));
-    assert!(
-        service.goal_create(declared, owner)?.forecast.is_some(),
-        "supported human forecasts remain admitted"
-    );
-    Ok(())
+#[tokio::test]
+async fn stale_preparation_cannot_publish_or_acknowledge_newer_revision() {
+    let f = Fixture::new();
+    let goal = f
+        .service
+        .goal_create(declaration(), f.owner)
+        .expect("create");
+    let other = f.reopen();
+    let result = f
+        .service
+        .goal_index_current(goal.id, f.owner, |_| async {
+            other
+                .goal_close_native(
+                    goal.id,
+                    f.owner,
+                    close(&goal, f.now(), HumanClosureChoice::StopUnknown),
+                )
+                .expect("new revision");
+            other
+                .goal_index_current(goal.id, f.owner, |_| async { Ok(|| Ok(())) })
+                .await
+                .expect("new revision published");
+            Ok(|| -> Result<(), String> {
+                panic!("older payload must not publish over current memory")
+            })
+        })
+        .await;
+    assert!(result.is_err());
+    let current = f.goal(goal.id);
+    assert_eq!(current.indexed_revision, current.revision);
 }
-
 #[test]
-fn startup_reconciles_historical_machine_records_without_a_pretend_producer() -> anyhow::Result<()>
-{
-    let dir = tempfile::tempdir()?;
-    let pool = SqliteDriver::file_pool_with_schema(
-        dir.path().join("goals.sqlite").to_str().expect("path"),
-    )?;
-    let store = HMemStore::from_driver(Arc::new(SqliteDriver::new(pool)))?;
-    let service = KanbanService::new(store.clone());
-    let owner = WebID::new();
-    let mut declared = declaration();
-    declared.forecast = Some(forecast(GoalForecastResolver::HumanAcceptance));
-    let goal = service.goal_create(declared, owner)?;
-    // Historical fixture only: preserve a record produced by the removed
-    // protocol, not an assertion that a current machine adapter exists.
-    let mut historical = serde_json::to_value(&goal)?;
-    historical["forecast"]["resolver"] =
-        serde_json::json!({"kind":"machine_evidence","source":"old-machine","oracle":"old-oracle"});
-    historical["forecast_status"] = serde_json::json!("resolved");
-    historical["observations"] = serde_json::json!([{"event_id":"historical-event","source":"old-machine","oracle":"old-oracle","occurred_at":Utc::now(),"outcome":true,"evidence_ids":["old-evidence"],"correction_of":null,"reason":"historical claim, not current supported capability"}]);
-    historical["scores"] = serde_json::json!([{"version":1,"outcome_event_id":"historical-event","outcome":true,"brier":0.04,"baseline_brier":0.25,"skill":0.84,"supersedes_version":null,"recorded_at":Utc::now()}]);
-    let observations = historical["observations"].clone();
-    let scores = historical["scores"].clone();
+fn unsupported_schema_and_drifted_keys_are_errors_not_migrations() {
+    let f = Fixture::new();
+    let pool =
+        SqliteDriver::file_pool_with_schema(f.dir.path().join("goals.db").to_str().expect("path"))
+            .expect("pool");
+    let store = HMemStore::from_driver(Arc::new(SqliteDriver::new(pool))).expect("store");
+    let id = hkask_types::GoalID::new();
+    let bytes =
+        serde_json::json!({"schema_version":2,"id":id,"human_history":"preserve these bytes"});
     store
-        .update_value_atomic("kanban:goal", &goal.id.to_string(), |_| {
-            Ok::<_, hkask_storage::HMemError>((Some(historical), ()))
-        })?
-        .expect("fixture row");
-    assert_eq!(service.goal_archive_legacy(owner)?, 1);
-    let reconciled = service.goal_get(goal.id, owner)?.expect("retained history");
-    assert_eq!(
-        reconciled.forecast_status,
-        ForecastStatus::UnsupportedResolver
+        .insert(&HMem::new(
+            "kanban:goal",
+            &id.to_string(),
+            bytes.clone(),
+            f.owner,
+        ))
+        .expect("old data");
+    assert!(
+        f.service
+            .goal_get(id, f.owner)
+            .expect_err("explicit version error")
+            .to_string()
+            .contains("expected version 3")
     );
     assert_eq!(
-        serde_json::to_value(&reconciled.observations)?,
-        observations
+        store
+            .query_by_entity_attribute("kanban:goal", &id.to_string())
+            .expect("raw read")[0]
+            .value,
+        bytes
     );
-    assert_eq!(serde_json::to_value(&reconciled.scores)?, scores);
-    let refreshed = service.goal_refresh_forecast(goal.id, owner)?;
+    let current = f
+        .service
+        .goal_create(declaration(), f.owner)
+        .expect("new goal");
+    let mut row = store
+        .query_by_entity_attribute("kanban:goal", &current.id.to_string())
+        .expect("query")
+        .remove(0);
+    row.attribute = "drifted-key".into();
+    let another_id = hkask_types::GoalID::new();
+    row.value["id"] = serde_json::json!(another_id);
+    row.id = hkask_storage::HMemId::new();
+    store.insert(&row).expect("drifted row");
+    assert!(
+        f.service
+            .goal_get(another_id, f.owner)
+            .expect("exact lookup")
+            .is_none()
+    );
+}
+#[test]
+fn strict_forecasts_and_findings_do_not_accept_removed_shapes_or_extra_fields() {
+    for value in [
+        serde_json::json!({"kind":"unknown"}),
+        serde_json::json!({"kind":"human_acceptance","outcome":true}),
+    ] {
+        assert!(serde_json::from_value::<GoalForecastResolver>(value).is_err());
+    }
+    assert!(serde_json::from_value::<CriterionFinding>(serde_json::json!({"criterion_id":"c","status":"unknown","evidence_ids":[],"note":"none","outcome":true})).is_err());
+    assert!(
+        serde_json::from_value::<AssessmentResult>(
+            serde_json::json!({"findings":[],"limitations":[],"score":1})
+        )
+        .is_err()
+    );
+}
+
+#[tokio::test]
+async fn rejected_authority_or_evidence_changes_leave_no_partial_attempt() {
+    let f = Fixture::new();
+    let goal = f
+        .service
+        .goal_create(declaration(), f.owner)
+        .expect("create");
+    assert!(f.service.goal_get(goal.id, WebID::new()).is_err());
+    assert!(
+        f.service
+            .goal_close_native(
+                goal.id,
+                WebID::new(),
+                close(&goal, f.now(), HumanClosureChoice::StopUnknown)
+            )
+            .is_err()
+    );
+    let mut closure = close(&goal, f.now(), HumanClosureChoice::StopUnknown);
+    closure.artifact_access = None;
+    f.service
+        .goal_close_native(goal.id, f.owner, closure)
+        .expect("closure without grant");
+    let before = f.goal(goal.id);
+    assert!(
+        f.service
+            .goal_assess(goal.id, f.owner, capture, |_| async {
+                panic!("unapproved bytes must never reach inference")
+            })
+            .await
+            .is_err()
+    );
     assert_eq!(
-        refreshed.forecast_status,
-        ForecastStatus::UnsupportedResolver
+        f.goal(goal.id),
+        before,
+        "failed claim is atomic, not a half attempt"
     );
-    assert_eq!(
-        refreshed.scores.len(),
-        1,
-        "no new score from historical observation data"
+}
+
+#[tokio::test]
+async fn closure_before_horizon_cannot_become_eligible_via_later_human_correction() {
+    let f = Fixture::new();
+    let mut spec = declaration();
+    spec.forecast = Some(GoalForecast {
+        proposition: "Human accepts".into(),
+        probability: 0.8,
+        baseline_probability: 0.5,
+        horizon: f.now() + Duration::seconds(10),
+        resolution_deadline: f.now() + Duration::seconds(20),
+        execution_policy: "task".into(),
+        resources: "session".into(),
+        cohort: "features".into(),
+        resolver: GoalForecastResolver::HumanAcceptance {},
+        update_policy: ForecastUpdatePolicy::FixedAtDeclaration,
+    });
+    let goal = f
+        .service
+        .goal_create(spec.clone(), f.owner)
+        .expect("prospective");
+    let mut early = close(&goal, f.now(), HumanClosureChoice::AccomplishedAchieved);
+    early.evidence_manifest.clear();
+    f.service
+        .goal_close_native(goal.id, f.owner, early)
+        .expect("early closure");
+    f.service
+        .goal_assess(
+            goal.id,
+            f.owner,
+            |_| Ok(vec![]),
+            |_| async { panic!("no evidence") },
+        )
+        .await
+        .expect("unknown assessment");
+    f.advance(15);
+    f.service
+        .goal_correct_human_outcome(
+            goal.id,
+            f.owner,
+            NativeGoalOutcomeCorrection {
+                event_id: "later".into(),
+                expected_spec_digest: goal.spec_digest,
+                source: declaration().source,
+                occurred_at: f.now(),
+                supersedes_event_id: "native-choice".into(),
+                outcome: Some(true),
+                reason: "Correction inside window cannot move the original event".into(),
+            },
+        )
+        .expect("correction");
+    assert!(f.goal(goal.id).scores.is_empty());
+    assert!(
+        f.service.goal_create(spec.clone(), f.owner).is_err(),
+        "cannot declare retrospectively"
     );
-    assert_eq!(service.goal_archive_legacy(owner)?, 0);
-    Ok(())
+    let forecast = spec.forecast.as_mut().expect("forecast");
+    forecast.horizon = f.now() + Duration::seconds(10);
+    forecast.resolution_deadline = f.now() + Duration::seconds(5);
+    assert!(
+        f.service.goal_create(spec.clone(), f.owner).is_err(),
+        "invalid window"
+    );
+    let forecast = spec.forecast.as_mut().expect("forecast");
+    forecast.resolution_deadline = f.now() + Duration::seconds(20);
+    forecast.probability = f64::NAN;
+    assert!(
+        f.service.goal_create(spec, f.owner).is_err(),
+        "no nonfinite probability"
+    );
 }
 
 #[test]
-fn typed_machine_artifact_digest_is_prospective_and_not_a_generic_oracle() -> anyhow::Result<()> {
-    let dir = tempfile::tempdir()?;
-    let service = open(&dir.path().join("goals.sqlite"))?;
-    let owner = WebID::new();
-    let resolver:GoalForecastResolver=serde_json::from_value(serde_json::json!({"kind":"machine_artifact_digest","locator":"file:///absolute/declared-artifact.txt","expected_sha256":"4c34bb5402a70378b57765e0226203d3879a1caf74675e74634f11172ea6ca98"})).expect("the one supported typed machine source must decode");
-    let mut declared = declaration();
-    declared.forecast = Some(forecast(resolver));
-    assert!(
-        service
-            .goal_create(declared.clone(), owner)?
-            .forecast
-            .is_some()
-    );
-    for (locator, hash) in [
-        (
-            "https://example.invalid/artifact",
-            "4c34bb5402a70378b57765e0226203d3879a1caf74675e74634f11172ea6ca98",
-        ),
-        (
-            "relative/artifact",
-            "4c34bb5402a70378b57765e0226203d3879a1caf74675e74634f11172ea6ca98",
-        ),
-        (
-            "file://remote-host/artifact",
-            "4c34bb5402a70378b57765e0226203d3879a1caf74675e74634f11172ea6ca98",
-        ),
-        ("file:///absolute/artifact", "not-a-sha256"),
-    ] {
-        let mut unsupported = declared.clone();
-        unsupported.forecast.as_mut().expect("forecast").resolver =
-            GoalForecastResolver::MachineArtifactDigest {
-                locator: locator.into(),
-                expected_sha256: hash.into(),
-            };
-        assert!(
-            service.goal_create(unsupported, owner).is_err(),
-            "source admission is the concrete local digest capability, not arbitrary labels"
-        );
+fn declaration_and_worker_progress_preserve_exact_criterion_obligations() {
+    let f = Fixture::new();
+    for count in [0, 5] {
+        let mut invalid = declaration();
+        invalid.criteria = vec![VerificationCriterion::new("criterion".into()); count];
+        assert!(f.service.goal_create(invalid, f.owner).is_err());
     }
-    declared.forecast.as_mut().expect("forecast").horizon =
-        Utc::now() - chrono::Duration::seconds(1);
+    let goal = f.service.goal_create(declaration(), f.owner).expect("goal");
+    let mut report = GoalVerdict {
+        verdict: GoalVerdictValue::Done,
+        confidence: 0.5,
+        criterion_results: vec![CriterionJudgment {
+            index: 0,
+            passed: false,
+            note: "Not working".into(),
+        }],
+        reasoning: "Observed failure".into(),
+        judged_at: f.now(),
+    };
     assert!(
-        service.goal_create(declared, owner).is_err(),
-        "no late probability or horizon rewrite"
+        f.service
+            .goal_judge(goal.id, report.clone(), f.owner)
+            .is_err(),
+        "done cannot contradict failed criteria"
     );
-    Ok(())
+    report.verdict = GoalVerdictValue::Continue;
+    f.service
+        .goal_judge(goal.id, report.clone(), f.owner)
+        .expect("honest progress");
+    report.criterion_results.clear();
+    assert!(
+        f.service.goal_judge(goal.id, report, f.owner).is_err(),
+        "every criterion must be covered"
+    );
+    assert_eq!(f.goal(goal.id).verdicts.len(), 1);
 }
