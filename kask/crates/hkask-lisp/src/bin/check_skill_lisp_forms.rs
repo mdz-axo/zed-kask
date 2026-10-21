@@ -492,6 +492,277 @@ mod tests {
             .source
     }
 
+    fn grill_state_env() -> serde_json::Value {
+        json!({
+            "question_bank": [
+                {"id": 11, "question": "What is two plus three?", "level": 2, "area": "arithmetic"},
+                {"id": 12, "question": "When may an answer be graded?", "level": 2, "area": "evidence"}
+            ],
+            "answers": [
+                {"id": 1, "question_id": 11, "text": "Six", "round": 1},
+                {"id": 2, "question_id": 12, "text": "After it exists", "round": 1}
+            ],
+            "grade_events": [
+                {"answer_id": 1, "rating": "Gap", "note": "Incorrect sum"},
+                {"answer_id": 2, "rating": "Solid", "note": "Evidence precedes evaluation"}
+            ],
+            "level": 2, "round": 1
+        })
+    }
+
+    #[test]
+    fn grill_distinct_answers_not_grading_calls_drive_retirement() {
+        let form = skill_candidate("grill-me", "define gm-state");
+        let mut env = grill_state_env();
+        let initial = eval_sandboxed(&form, &env).expect("initial authored grill state");
+        assert_eq!(initial["attempt_counts"], json!([[11, 1], [12, 0]]));
+        assert_eq!(initial["retired_ids"], json!([]));
+        assert_eq!(initial["direction"], "hold");
+
+        env["grade_events"]
+            .as_array_mut()
+            .expect("event fixture")
+            .extend([
+                json!({"answer_id": 1, "rating": "Gap", "note": "Repeated grading"}),
+                json!({"answer_id": 1, "rating": "Gap", "note": "Another grading"}),
+                json!({"answer_id": 1, "rating": "Solid", "note": "Revised semantic judgment"}),
+            ]);
+        let regraded = eval_sandboxed(&form, &env).expect("regrading the same answer");
+        assert_eq!(regraded["attempt_counts"], initial["attempt_counts"]);
+        assert_eq!(regraded["retired_ids"], json!([]));
+        assert_eq!(regraded["solid_this_round"], 2);
+        assert_eq!(regraded["direction"], "escalate");
+        assert_eq!(regraded["next_level"], 3);
+        assert_eq!(regraded["answer_records"][0]["rating"], "Solid");
+        assert_eq!(regraded["answer_records"][0]["question_id"], 11);
+
+        for (id, round) in [(3, 2), (4, 3)] {
+            env["answers"]
+                .as_array_mut()
+                .expect("answer fixture")
+                .push(json!({"id": id, "question_id": 11, "text": "Six", "round": round}));
+            env["grade_events"]
+                .as_array_mut()
+                .expect("event fixture")
+                .push(
+                    json!({"answer_id": id, "rating": "Gap", "note": "A distinct failed answer"}),
+                );
+        }
+        env["round"] = json!(3);
+        let retired = eval_sandboxed(&form, &env).expect("three distinct failed answers");
+        assert_eq!(retired["attempt_counts"], json!([[11, 3], [12, 0]]));
+        assert_eq!(retired["retired_ids"], json!([11]));
+        assert_eq!(retired["direction"], "reprobe");
+    }
+
+    #[test]
+    fn grill_feedback_counts_raw_current_answers_and_preserves_bounds() {
+        let form = skill_candidate("grill-me", "define gm-state");
+        for (solid, level, round, direction, next) in [
+            (4, 2, 1, "escalate", 3),
+            (3, 2, 1, "hold", 2),
+            (2, 2, 1, "hold", 2),
+            (1, 2, 1, "reprobe", 2),
+            (4, 5, 1, "complete", 5),
+            (0, 2, 5, "complete", 2),
+        ] {
+            let mut env = grill_state_env();
+            env["level"] = json!(level);
+            env["round"] = json!(round);
+            env["answers"] = json!(
+                (1..=5)
+                    .map(|id| json!({
+                        "id": id, "question_id": 11, "text": "Fixture answer", "round": round
+                    }))
+                    .collect::<Vec<_>>()
+            );
+            env["grade_events"] = json!((1..=5).map(|id| json!({
+                "answer_id": id, "rating": if id <= solid { "Solid" } else { "Gap" }, "note": "Fixture"
+            })).collect::<Vec<_>>());
+            let result = eval_sandboxed(&form, &env).expect("feedback boundary");
+            assert_eq!(result["direction"], direction);
+            assert_eq!(result["next_level"], next);
+            assert_eq!(result["answered_this_round"], 5);
+            assert_eq!(result["solid_this_round"], solid);
+        }
+        let mut env = grill_state_env();
+        env["grade_events"] = json!([]);
+        let awaiting = eval_sandboxed(&form, &env).expect("ungraded answers");
+        assert_eq!(awaiting["direction"], "await_grades");
+        assert_eq!(awaiting["ungraded_answer_ids"], json!([1, 2]));
+        env["answers"] = json!([]);
+        env["round"] = json!(5);
+        let empty = eval_sandboxed(&form, &env).expect("no answers at round bound");
+        assert_eq!(empty["direction"], "hold");
+        assert_eq!(
+            empty["stop"], true,
+            "zero-answer hold must not open round six"
+        );
+
+        for changes in [
+            json!({"level": 0}),
+            json!({"round": 6}),
+            json!({"round": 1.0}),
+            json!({"answers": [{"id": 1, "question_id": 99, "text": "X", "round": 1}]}),
+            json!({"answers": [{"id": 1, "question_id": 11, "text": "", "round": 1}]}),
+            json!({"grade_events": [{"answer_id": 99, "rating": "Solid", "note": "Unknown"}]}),
+            json!({"grade_events": [{"answer_id": 1, "rating": "solid", "note": "Wrong case"}]}),
+            json!({"answers": [
+                {"id": 1, "question_id": 11, "text": "X", "round": 1},
+                {"id": 1, "question_id": 12, "text": "Y", "round": 1}
+            ]}),
+        ] {
+            let invalid = scientific_env(&grill_state_env(), changes);
+            assert_eq!(
+                eval_sandboxed(&form, &invalid).expect("invalid state is surfaced"),
+                "invalid_state"
+            );
+        }
+    }
+
+    #[test]
+    fn grill_grade_batches_reconcile_exact_answer_identities() {
+        let form = skill_candidate("grill-me", "define gm-grade-batch");
+        let env = json!({
+            "answer_ids": [1, 2], "evaluations": [
+                {"answer_id": 2, "rating": "Solid", "note": "Second answer first"},
+                {"answer_id": 1, "rating": "Gap", "note": "ID join, not position"}
+            ], "mode": "interrogate", "calibrated_level": null
+        });
+        assert_eq!(
+            eval_sandboxed(&form, &env).expect("out of order ID batch"),
+            true
+        );
+        for changes in [
+            json!({"evaluations": []}),
+            json!({"evaluations": [
+                {"answer_id": 1, "rating": "Gap", "note": "Duplicate"},
+                {"answer_id": 1, "rating": "Gap", "note": "Duplicate"}
+            ]}),
+            json!({"evaluations": [
+                {"answer_id": 1, "rating": "Gap", "note": "Known"},
+                {"answer_id": 99, "rating": "Solid", "note": "Invented answer"}
+            ]}),
+            json!({"calibrated_level": 3}),
+            json!({"mode": "unknown"}),
+        ] {
+            assert_eq!(
+                eval_sandboxed(&form, &scientific_env(&env, changes)).expect("bad batch refused"),
+                false
+            );
+        }
+        assert_eq!(
+            eval_sandboxed(
+                &form,
+                &scientific_env(
+                    &env,
+                    json!({
+                        "mode": "calibrate", "calibrated_level": 3
+                    })
+                )
+            )
+            .expect("actual calibration grades"),
+            true
+        );
+    }
+
+    #[test]
+    fn grill_question_and_assessment_handoffs_use_records_not_summaries() {
+        let state = eval_sandboxed(
+            &skill_candidate("grill-me", "define gm-state"),
+            &grill_state_env(),
+        )
+        .expect("state for downstream handoff");
+        let question_form = skill_candidate("grill-me", "define gm-question-plan");
+        let env = json!({
+            "question_bank": grill_state_env()["question_bank"],
+            "retired_ids": [11], "level": 2, "round": 2,
+            "explanations": [{"question_id": 11, "explanation": "Two plus three is five."}],
+            "drafts": [
+                {"retry_id": null, "question": "Explain addition", "area": "arithmetic"},
+                {"retry_id": null, "question": "Explain evidence", "area": "evidence"}
+            ]
+        });
+        let questions = eval_sandboxed(&question_form, &env).expect("new questions");
+        assert_eq!(questions[0]["id"], 21);
+        assert_eq!(questions[1]["id"], 22);
+        assert_eq!(questions[0]["level"], 2);
+        for explanations in [
+            json!([]),
+            json!([{"question_id": 99, "explanation": "Unknown question"}]),
+            json!([{"question_id": 11, "explanation": ""}]),
+            json!([
+                {"question_id": 11, "explanation": "Duplicate one"},
+                {"question_id": 11, "explanation": "Duplicate two"}
+            ]),
+        ] {
+            assert_eq!(
+                eval_sandboxed(
+                    &question_form,
+                    &scientific_env(
+                        &env,
+                        json!({
+                            "explanations": explanations
+                        })
+                    )
+                )
+                .expect("bad explanation handoff refused"),
+                "invalid_questions"
+            );
+        }
+        for (retry_id, expected) in [(11, false), (12, true), (99, false)] {
+            let mut fixture = env.clone();
+            fixture["drafts"][0] = json!({"retry_id": retry_id, "question": null, "area": null});
+            let actual = eval_sandboxed(&question_form, &fixture).expect("retry validation");
+            assert_eq!(actual.is_array(), expected);
+            if expected {
+                assert_eq!(actual[0], fixture["question_bank"][1]);
+            } else {
+                assert_eq!(actual, "invalid_questions");
+            }
+        }
+        assert_eq!(
+            eval_sandboxed(&question_form, &scientific_env(&env, json!({"drafts": []})))
+                .expect("empty question plan refused"),
+            "invalid_questions"
+        );
+
+        let assessment_form = skill_candidate("grill-me", "define gm-assessment");
+        let summary = json!([
+            {"area": "arithmetic", "rating": "Gap", "answer_ids": [1], "notes": "Incorrect answer"},
+            {"area": "evidence", "rating": "Solid", "answer_ids": [2], "notes": "Answered"}
+        ]);
+        let assessment_env = json!({
+            "question_bank": grill_state_env()["question_bank"],
+            "answer_records": state["answer_records"], "summary": summary
+        });
+        assert_eq!(
+            eval_sandboxed(&assessment_form, &assessment_env).expect("evidence-linked summary"),
+            true
+        );
+        let mut invented = assessment_env.clone();
+        invented["summary"][0]["answer_ids"] = json!([99]);
+        assert_eq!(
+            eval_sandboxed(&assessment_form, &invented).expect("invented evidence refused"),
+            false
+        );
+        let mut empty = assessment_env;
+        empty["answer_records"] = json!([]);
+        for row in empty["summary"].as_array_mut().expect("summary fixture") {
+            row["rating"] = json!("Unassessed");
+            row["answer_ids"] = json!([]);
+        }
+        assert_eq!(
+            eval_sandboxed(&assessment_form, &empty).expect("honest unanswered areas"),
+            true
+        );
+        empty["summary"][0]["rating"] = json!("Gap");
+        assert_eq!(
+            eval_sandboxed(&assessment_form, &empty).expect("unanswered cannot be graded"),
+            false
+        );
+    }
+
     #[test]
     fn extracts_inline_fenced_and_quoted_forms() {
         let content = r#"Use `lisp_eval` with `(and ok (= count 1))`.

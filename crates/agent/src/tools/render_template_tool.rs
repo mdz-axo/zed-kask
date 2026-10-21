@@ -431,6 +431,98 @@ mod tests {
     }
 
     #[test]
+    fn grill_round_separates_identified_grading_from_next_questions() {
+        let mut context = serde_json::json!({
+            "topic": "fixture arithmetic", "phase": "grade", "mode": "interrogate",
+            "current_level": 2, "round_number": 1,
+            "question_bank": [{"id": 11, "question": "QUESTION_SENTINEL", "level": 2, "area": "math"}],
+            "answers_to_grade": [{"id": 7, "question_id": 11, "question": "QUESTION_SENTINEL", "text": "ANSWER_SENTINEL", "rating": null}],
+            "assessment_so_far": {},
+            "gate_result": {"direction": "await_grades", "retired_ids": [], "stop": false}
+        });
+        let grade = render_template_for_test("grill-me/grill-me-round", context.clone())
+            .expect("identified grade phase renders");
+        assert!(grade.contains("## Grade Identified Answers Only"));
+        assert!(grade.contains("ANSWER_SENTINEL"));
+        assert!(grade.contains("QUESTION_SENTINEL"));
+        assert!(grade.contains("\"question_id\":11"));
+        assert!(grade.contains("existing answer ID"));
+        assert!(!grade.contains("## Draft Next Questions Only"));
+        assert!(!grade.contains("Accumulate `attempt_counts`"));
+
+        context["phase"] = serde_json::json!("ask");
+        context["answers_to_grade"] = serde_json::json!([]);
+        context["gate_result"] =
+            serde_json::json!({"direction": "escalate", "retired_ids": [11], "stop": false});
+        context["current_level"] = serde_json::json!(3);
+        let ask = render_template_for_test("grill-me/grill-me-round", context.clone())
+            .expect("next-question phase renders after the gate");
+        assert!(ask.contains("## Draft Next Questions Only"));
+        assert!(ask.contains("supplied level 3"));
+        assert!(ask.contains("\"retired_ids\":[11]"));
+        assert!(ask.contains("retired_explanations"));
+        assert!(!ask.contains("## Grade Identified Answers Only"));
+        assert!(
+            !ask.contains("\"assessment\":"),
+            "ask must not regenerate unchanged state"
+        );
+        assert!(
+            !ask.contains("\"evaluations\": []"),
+            "inactive outputs are caller-owned"
+        );
+        for direction in ["await_grades", "complete"] {
+            context["gate_result"] = serde_json::json!({
+                "direction": direction, "retired_ids": [], "stop": direction == "complete"
+            });
+            let blocked = render_template_for_test("grill-me/grill-me-round", context.clone())
+                .expect("blocked ask is explicit");
+            assert!(blocked.contains("ask_blocked"));
+            assert!(!blocked.contains("## Draft Next Questions Only"));
+        }
+        context["phase"] = serde_json::json!("unknown");
+        let invalid = render_template_for_test("grill-me/grill-me-round", context.clone())
+            .expect("invalid phase is explicit");
+        assert!(invalid.contains("invalid_phase_or_mode"));
+        context
+            .as_object_mut()
+            .expect("context object")
+            .remove("answers_to_grade");
+        assert!(
+            render_template_for_test("grill-me/grill-me-round", context)
+                .expect_err("old positional contract is no longer accepted")
+                .contains("answers_to_grade")
+        );
+    }
+
+    #[test]
+    fn grill_assessment_preserves_answer_evidence_and_absent_calibration() {
+        let context = serde_json::json!({
+            "topic": "fixture arithmetic",
+            "question_bank": [{"id": 11, "question": "QUESTION_SENTINEL", "level": 1, "area": "math"}],
+            "answer_records": [{"id": 7, "question_id": 11, "text": "ANSWER_SENTINEL", "rating": "Gap"}],
+            "assessment": {"math": "Gap"}, "calibration": null
+        });
+        let output = render_template_for_test("grill-me/grill-me-assess", context.clone())
+            .expect("evidence-linked final synthesis renders");
+        assert!(output.contains("ANSWER_SENTINEL"));
+        assert!(output.contains("QUESTION_SENTINEL"));
+        assert!(output.contains("\"question_id\":11"));
+        assert!(output.contains("Unassessed"));
+        assert!(output.contains("answer_ids"));
+        assert!(!output.contains("solid|partial|gap"));
+        let mut missing = context;
+        missing
+            .as_object_mut()
+            .expect("context object")
+            .remove("answer_records");
+        assert!(
+            render_template_for_test("grill-me/grill-me-assess", missing)
+                .expect_err("actual records are required")
+                .contains("answer_records")
+        );
+    }
+
+    #[test]
     fn corpus_audit_repairs_are_pinned_at_template_handoffs() {
         let complete_intake = render_template_for_test(
             "product-manager/intake-brief",

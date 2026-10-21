@@ -1,10 +1,12 @@
-{# goal: Synthesize final assessment with per-area ratings (Solid/Partial/Gap) and prioritized study recommendations. #}
+{# goal: Synthesize an evidence-linked final assessment from actual identified answers, marking unanswered areas Unassessed and prioritizing study recommendations. #}
 [inference]
 contract:
   input:
     topic: string
-    all_answers: array
+    question_bank: array
+    answer_records: array
     assessment: object
+    calibration: object|null
   output:
     summary: array
     recommendations: array
@@ -13,10 +15,19 @@ contract:
 
 You are synthesizing a final knowledge assessment for **{{ topic }}**.
 
-## All Answers and Evaluations
+## Actual Answer Records and Asked Areas
 
+GM-STATE joined these records by identity, using each answer's latest grade:
 ```json
-{{ all_answers | tojson }}
+{{ answer_records | tojson }}
+```
+Question bank (covers unanswered areas too):
+```json
+{{ question_bank | tojson }}
+```
+Actual calibration output, or null if no calibration answers were graded:
+```json
+{{ calibration | tojson }}
 ```
 
 ## Running Assessment
@@ -27,10 +38,11 @@ You are synthesizing a final knowledge assessment for **{{ topic }}**.
 
 ## Assessment Task
 
-Produce a comprehensive gap analysis. Reconcile the calibration: state where the final ratings confirm or correct the calibrate round's baseline expectation (the calibrate output is part of `all_answers`). Rate each knowledge area using:
+Produce a comprehensive gap analysis. Reconcile the supplied calibration against the actual answers; if calibration is null, state that it is unassessed. Cover each asked area exactly once. Every graded summary row cites actual graded `answer_ids` from that area; never cite question IDs as answer evidence. Rate each knowledge area using:
 - 🟢 **Solid** — Deep, accurate understanding
 - 🟡 **Partial** — Some understanding, significant gaps
-- 🔴 **Gap** — Missing or incorrect understanding
+- 🔴 **Gap** — Missing or incorrect understanding evidenced by an actual answer
+- **Unassessed** — No graded answer in this area; `answer_ids` must be `[]`, never a fabricated Gap
 
 ## Output Requirements
 
@@ -39,7 +51,7 @@ Respond with a JSON object:
 ```json
 {
   "summary": [
-    {"area": "topic area name", "rating": "solid|partial|gap", "notes": "specific observations"}
+    {"area": "topic area name", "rating": "Solid", "answer_ids": [1], "notes": "specific observations grounded in answer 1"}
   ],
   "recommendations": [
     "Study recommendation 1",
@@ -53,5 +65,7 @@ Respond with a JSON object:
 
 - Be specific in recommendations — point to exact areas to study.
 - Don't sugarcoat gaps, but don't be demoralizing.
-- Prioritize recommendations by impact (most critical gaps first).
+- Prioritize recommendations by impact (most critical evidenced gaps first).
+- Use exactly `Solid`, `Partial`, `Gap`, or `Unassessed`; the example ID is schematic, not permission to invent evidence.
+- GM-2 checks the actual summary's area coverage and evidence references before delivery. It does not prove semantic quality.
 
