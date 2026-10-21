@@ -429,6 +429,8 @@ impl InferenceIpcServer {
             Arc::new(crate::host_skill_tools::HostSkillToolPort {
                 inner,
                 skill_tx: skill_tx.clone(),
+                #[cfg(test)]
+                lisp_probe: None,
             }) as Arc<dyn hkask_tool_port::ToolPort>
         });
         // zed-kask: P7h — the serving backend lives behind a swappable slot
@@ -662,6 +664,8 @@ impl IpcBackendSlot {
             Arc::new(crate::host_skill_tools::HostSkillToolPort {
                 inner,
                 skill_tx: self.skill_tx.clone(),
+                #[cfg(test)]
+                lisp_probe: None,
             }) as Arc<dyn hkask_tool_port::ToolPort>
         });
         let mut guard = match self.backend.write() {
@@ -1597,7 +1601,7 @@ mod tests {
     #[test]
     fn malformed_request_logging_withholds_payload() {
         let source = include_str!("inference_ipc_server.rs")
-            .split("#[cfg(test)]")
+            .split("\n#[cfg(test)]\nmod tests {")
             .next()
             .expect("implementation");
         let parse = source
@@ -1690,6 +1694,429 @@ mod tests {
                 .expect("handler");
             assert_eq!(pending.capacity.available_permits(), 1);
         }
+    }
+
+    // H7 uses a real connection and host port. The inference/inner ports are
+    // unreachable controls; Lisp entry/result/exit captures identify the leg.
+    async fn h7_event(
+        events: &mut tokio::sync::mpsc::UnboundedReceiver<crate::host_skill_tools::LispEvent>,
+    ) -> crate::host_skill_tools::LispEvent {
+        tokio::time::timeout(std::time::Duration::from_secs(5), events.recv())
+            .await
+            .expect("bounded H7 event wait")
+            .expect("H7 event sender alive")
+    }
+
+    struct H7Grant(String);
+
+    impl Drop for H7Grant {
+        fn drop(&mut self) {
+            crate::revoke_delegation_grant(&self.0);
+        }
+    }
+
+    struct H7Connection {
+        client: tokio::net::UnixStream,
+        handler: tokio::task::JoinHandle<()>,
+        events: tokio::sync::mpsc::UnboundedReceiver<crate::host_skill_tools::LispEvent>,
+        probe: Arc<crate::host_skill_tools::LispProbe>,
+        inner: Arc<RecordingToolPort>,
+        token: String,
+        _grant: H7Grant,
+    }
+
+    impl H7Connection {
+        fn new() -> Self {
+            use crate::host_skill_tools::{HostSkillToolPort, LispProbe};
+            let (events, rx) = tokio::sync::mpsc::unbounded_channel();
+            let probe = Arc::new(LispProbe {
+                events,
+                before_spawn: tokio::sync::Mutex::new(None),
+                worker_release: std::sync::Mutex::new(None),
+            });
+            let (skill_tx, _skill_rx) = tokio::sync::mpsc::unbounded_channel();
+            let inner = Arc::new(RecordingToolPort(std::sync::atomic::AtomicUsize::new(0)));
+            let host = Arc::new(HostSkillToolPort {
+                inner: inner.clone(),
+                skill_tx: skill_tx.clone(),
+                lisp_probe: Some(probe.clone()),
+            });
+            let slot = Arc::new(IpcBackendSlot::new(
+                IpcBackend {
+                    inference: Arc::new(CannedInferencePort),
+                    embedding: None,
+                    tools: Some(host),
+                },
+                skill_tx,
+            ));
+            let (client, server) = tokio::net::UnixStream::pair().expect("socket pair");
+            let handler = tokio::spawn(handle_connection(
+                server,
+                slot,
+                make_list_models_tx(),
+                None,
+                make_provider_credential_tx(),
+            ));
+            let server = format!("h7-{}", uuid::Uuid::new_v4());
+            let token =
+                crate::delegation_grants::grant_for_server(&server, &["host/lisp_eval".into()])
+                    .expect("host grant");
+            Self {
+                client,
+                handler,
+                events: rx,
+                probe,
+                inner,
+                token,
+                _grant: H7Grant(server),
+            }
+        }
+
+        fn request(&self, args: serde_json::Value) -> InferenceRequest {
+            let mut request =
+                make_tool_invoke_request("host", "lisp_eval", Some(vec!["host/lisp_eval".into()]));
+            request.params.tool_grant = Some(self.token.clone());
+            request.params.tool_args = Some(args);
+            request
+        }
+
+        async fn send(&mut self, request: InferenceRequest) {
+            self.client
+                .write_all((serde_json::to_string(&request).expect("request") + "\n").as_bytes())
+                .await
+                .expect("write request");
+        }
+
+        async fn response(&mut self) -> InferenceOutcome {
+            let mut reader = CappedReader::new(&mut self.client);
+            let line = tokio::time::timeout(std::time::Duration::from_secs(5), reader.read_line())
+                .await
+                .expect("response deadline")
+                .expect("read response")
+                .expect("response line");
+            serde_json::from_str::<InferenceResponse>(&line)
+                .expect("response")
+                .outcome
+        }
+
+        // Half-close supplies real EOF but retains the response half, so zero
+        // published bytes is observed rather than inferred from a dead socket.
+        async fn disconnect(&mut self) {
+            use tokio::io::AsyncReadExt;
+            self.client.shutdown().await.expect("client EOF");
+            tokio::time::timeout(std::time::Duration::from_secs(5), &mut self.handler)
+                .await
+                .expect("handler exit deadline")
+                .expect("handler exit");
+            let mut bytes = Vec::new();
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                self.client.read_to_end(&mut bytes),
+            )
+            .await
+            .expect("response EOF deadline")
+            .expect("response EOF");
+            assert!(bytes.is_empty(), "dead request received a result");
+            assert_eq!(
+                self.inner.0.load(std::sync::atomic::Ordering::SeqCst),
+                0,
+                "no fallback serving leg"
+            );
+        }
+
+        async fn guard(&mut self) -> Arc<std::sync::atomic::AtomicBool> {
+            let crate::host_skill_tools::LispEvent::GuardReady(flag) =
+                h7_event(&mut self.events).await
+            else {
+                panic!("pre-spawn guard")
+            };
+            flag
+        }
+
+        async fn cancelled_exit(&mut self) {
+            use crate::host_skill_tools::LispEvent;
+            // Signal and helper completion are distinct, ordered observations.
+            assert!(matches!(
+                h7_event(&mut self.events).await,
+                LispEvent::Cancelled
+            ));
+            let LispEvent::Evaluated(result) = h7_event(&mut self.events).await else {
+                panic!("real core return")
+            };
+            assert!(matches!(
+                h7_event(&mut self.events).await,
+                LispEvent::Exited
+            ));
+            // Entry/exit captures, not error text, identify the serving leg.
+            assert_eq!(result, Err("Lisp evaluation cancelled".into()));
+            assert!(self.events.try_recv().is_err(), "one worker exit only");
+        }
+    }
+
+    /// expect: "Authorized IPC Lisp uses the blocking pool and retains editor results and errors" [H7]
+    #[tokio::test]
+    async fn h7_ipc_authorized_lisp_uses_real_blocking_worker() {
+        use crate::host_skill_tools::LispEvent;
+        let runtime_thread = std::thread::current().id();
+        let mut ipc = H7Connection::new();
+        let cases = [
+            (
+                serde_json::json!({"form":"(begin (define make-adder (lambda (x) (lambda (y) (+ x y)))) (define add (make-adder 40)) (add 2))"}),
+                Ok(serde_json::json!(42)),
+            ),
+            (
+                serde_json::json!({"form":"(begin (define x 1) (define x (+ x 1)) x)"}),
+                Ok(serde_json::json!(2)),
+            ),
+            (
+                serde_json::json!({"form":"(/ 6 3)", "maxSteps":100000, "maxDepth":1024}),
+                Ok(serde_json::json!(2.0)),
+            ),
+            (
+                serde_json::json!({"form":"(= 9007199254740993 9007199254740992)"}),
+                Ok(serde_json::json!(false)),
+            ),
+            (
+                serde_json::json!({"form":"(+ 9223372036854775807 1)"}),
+                Err(()),
+            ),
+            (serde_json::json!({"form":"(+ 1 2)","max_steps":0}), Err(())),
+            (
+                serde_json::json!({"form":"1","env":"{\"x\":18446744073709551616}"}),
+                Err(()),
+            ),
+            (serde_json::json!({"form":"1","env":{}}), Err(())),
+        ];
+        for (args, literal) in cases {
+            let expected = serde_json::from_value(args.clone())
+                .map_err(|e| format!("invalid lisp_eval input: {e}"))
+                .and_then(agent::evaluate_lisp);
+            match literal {
+                Ok(value) => assert_eq!(expected, Ok(value)),
+                Err(()) => assert!(expected.is_err()),
+            }
+            ipc.send(ipc.request(args)).await;
+            let flag = ipc.guard().await;
+            let mut entered = false;
+            let mut spawned = false;
+            let mut actual = None;
+            let mut exited = false;
+            loop {
+                match h7_event(&mut ipc.events).await {
+                    LispEvent::Spawned => {
+                        assert!(!spawned);
+                        spawned = true;
+                    }
+                    LispEvent::Entered(thread) => {
+                        assert!(!entered);
+                        entered = true;
+                        assert_ne!(
+                            thread, runtime_thread,
+                            "decode/eval must leave the async runtime"
+                        );
+                    }
+                    LispEvent::Evaluated(result) => {
+                        assert!(entered);
+                        actual = Some(result);
+                    }
+                    LispEvent::Exited => {
+                        assert!(actual.is_some());
+                        exited = true;
+                    }
+                    LispEvent::Cancelled => break,
+                    other => panic!("unexpected event {other:?}"),
+                }
+            }
+            assert!(spawned && entered && exited);
+            assert_eq!(actual.expect("evaluation capture"), expected);
+            assert!(flag.load(std::sync::atomic::Ordering::Acquire));
+            match (ipc.response().await, expected) {
+                (InferenceOutcome::ToolResult { result }, Ok(expected)) => {
+                    assert_eq!(result, expected)
+                }
+                (InferenceOutcome::Error { error }, Err(expected)) => assert_eq!(
+                    error.message,
+                    ToolPortError::InvocationFailed {
+                        detail: expected,
+                        kind: None
+                    }
+                    .to_string()
+                ),
+                other => panic!("IPC/editor mismatch: {other:?}"),
+            }
+        }
+        ipc.disconnect().await;
+    }
+
+    /// expect: "Neither a missing parent grant nor a missing/narrowed card enters a Lisp worker" [H7]
+    #[tokio::test]
+    async fn h7_ipc_denied_lisp_never_enters_worker() {
+        let mut ipc = H7Connection::new();
+        for denial in 0..5 {
+            let mut request = ipc.request(serde_json::json!({"form":"42"}));
+            match denial {
+                0 => request.params.tool_grant = None,
+                1 => request.params.tool_grant = Some("not-a-grant".into()),
+                2 => request.params.tool_allowlist = None,
+                3 => request.params.tool_allowlist = Some(vec![]),
+                _ => request.params.tool_allowlist = Some(vec!["host/skill".into()]),
+            }
+            ipc.send(request).await;
+            assert!(matches!(
+                ipc.response().await,
+                InferenceOutcome::Error { .. }
+            ));
+            assert!(
+                ipc.events.try_recv().is_err(),
+                "denial reached host Lisp guard/worker"
+            );
+        }
+        ipc.disconnect().await;
+    }
+
+    /// expect: "EOF before spawn drops the installed guard without launching Lisp work" [H7]
+    #[tokio::test]
+    async fn h7_ipc_disconnect_before_spawn_signals_guard() {
+        use crate::host_skill_tools::LispEvent;
+        let mut ipc = H7Connection::new();
+        let (_release, wait) = tokio::sync::oneshot::channel();
+        *ipc.probe.before_spawn.lock().await = Some(wait);
+        ipc.send(ipc.request(serde_json::json!({"form":"42"})))
+            .await;
+        let flag = ipc.guard().await;
+        ipc.disconnect().await;
+        assert!(matches!(
+            h7_event(&mut ipc.events).await,
+            LispEvent::Cancelled
+        ));
+        assert!(flag.load(std::sync::atomic::Ordering::Acquire));
+        assert!(
+            ipc.events.try_recv().is_err(),
+            "pre-spawn request launched a worker"
+        );
+    }
+
+    /// expect: "EOF during a real entered worker signals cancellation before eventual core return and cleanup" [H7]
+    #[tokio::test]
+    async fn h7_ipc_disconnect_during_worker_acknowledges_core_exit() {
+        use crate::host_skill_tools::LispEvent;
+        let mut ipc = H7Connection::new();
+        let (release, wait) = std::sync::mpsc::channel();
+        *ipc.probe.worker_release.lock().expect("gate") = Some(wait);
+        ipc.send(ipc.request(serde_json::json!({"form":"(begin (define f (lambda (n) (if (= n 0) 0 (f (- n 1))))) (f 20))"}))).await;
+        let flag = ipc.guard().await;
+        let mut spawned = false;
+        let mut entered = false;
+        while !spawned || !entered {
+            match h7_event(&mut ipc.events).await {
+                LispEvent::Spawned => spawned = true,
+                LispEvent::Entered(_) => entered = true,
+                other => panic!("unexpected pre-disconnect event: {other:?}"),
+            }
+        }
+        ipc.disconnect().await;
+        // Handler has exited while the real blocking worker is still held.
+        // Release reaches the real core entry checkpoint, not a fake evaluator.
+        release.send(()).expect("release real evaluation");
+        ipc.cancelled_exit().await;
+        assert!(flag.load(std::sync::atomic::Ordering::Acquire));
+    }
+
+    /// expect: "Dropping the actual IPC handler signals its entered worker and still acknowledges cleanup" [H7]
+    #[tokio::test]
+    async fn h7_ipc_handler_drop_acknowledges_core_exit() {
+        use crate::host_skill_tools::LispEvent;
+        let mut ipc = H7Connection::new();
+        let (release, wait) = std::sync::mpsc::channel();
+        *ipc.probe.worker_release.lock().expect("gate") = Some(wait);
+        ipc.send(ipc.request(serde_json::json!({"form":"42"})))
+            .await;
+        let flag = ipc.guard().await;
+        let mut spawned = false;
+        let mut entered = false;
+        while !spawned || !entered {
+            match h7_event(&mut ipc.events).await {
+                LispEvent::Spawned => spawned = true,
+                LispEvent::Entered(_) => entered = true,
+                other => panic!("unexpected entry event {other:?}"),
+            }
+        }
+        ipc.handler.abort();
+        let exit = tokio::time::timeout(std::time::Duration::from_secs(5), &mut ipc.handler)
+            .await
+            .expect("handler-drop deadline")
+            .expect_err("aborted handler");
+        assert!(exit.is_cancelled());
+        release
+            .send(())
+            .expect("release evaluation after owner drop");
+        ipc.cancelled_exit().await;
+        assert!(flag.load(std::sync::atomic::Ordering::Acquire));
+        let mut reader = CappedReader::new(&mut ipc.client);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(5), reader.read_line())
+                .await
+                .expect("dead response deadline")
+                .expect("dead response read")
+                .is_none()
+        );
+        assert_eq!(ipc.inner.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    /// expect: "A queued Lisp worker retains cancellation after its IPC owner exits" [H7]
+    #[test]
+    fn h7_ipc_disconnect_queued_worker_acknowledges_core_exit() {
+        use crate::host_skill_tools::LispEvent;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(1)
+            .build()
+            .expect("bounded test runtime");
+        runtime.block_on(async {
+            let (release, wait) = std::sync::mpsc::channel();
+            let (entered, entry) = tokio::sync::oneshot::channel();
+            let occupied = tokio::task::spawn_blocking(move || {
+                entered.send(()).expect("pool entry");
+                wait.recv_timeout(std::time::Duration::from_secs(5))
+                    .expect("bounded pool release");
+            });
+            tokio::time::timeout(std::time::Duration::from_secs(5), entry)
+                .await
+                .expect("pool-entry deadline")
+                .expect("blocking pool occupied");
+            let mut ipc = H7Connection::new();
+            ipc.send(ipc.request(serde_json::json!({"form":"42"})))
+                .await;
+            let flag = ipc.guard().await;
+            assert!(matches!(
+                h7_event(&mut ipc.events).await,
+                LispEvent::Spawned
+            ));
+            ipc.disconnect().await;
+            assert!(matches!(
+                h7_event(&mut ipc.events).await,
+                LispEvent::Cancelled
+            ));
+            assert!(
+                ipc.events.try_recv().is_err(),
+                "queued Lisp entered an occupied pool"
+            );
+            release.send(()).expect("release pool");
+            tokio::time::timeout(std::time::Duration::from_secs(5), occupied)
+                .await
+                .expect("pool-exit deadline")
+                .expect("pool occupant exit");
+            assert!(matches!(
+                h7_event(&mut ipc.events).await,
+                LispEvent::Entered(_)
+            ));
+            let LispEvent::Evaluated(result) = h7_event(&mut ipc.events).await else {
+                panic!("real core return")
+            };
+            assert!(matches!(h7_event(&mut ipc.events).await, LispEvent::Exited));
+            assert_eq!(result, Err("Lisp evaluation cancelled".into()));
+            assert!(flag.load(std::sync::atomic::Ordering::Acquire));
+        });
     }
 
     // ── CappedReader tests ─────────────────────────────────────────────

@@ -209,8 +209,12 @@ The interaction is implemented as two coupled layers.[^kata]
   functional-first closeout (`crates/agent/src/templates.rs`).
 - **Persistent goal layer (D58).** MCP create/judge/get/list preserve immutable
   source-backed specification, stable criterion IDs and digest. Ordinary goals
-  omit forecasts. Create/get/list return the full goal with `id`, not an
-  abbreviated `goal_id`. Worker progress is never human closure.
+  omit forecasts. Create/get return the full goal with `id`, not an abbreviated
+  `goal_id`; list returns `Vec<Goal>`, including closed goals. Caller ownership is
+  filtered before decoding; invalid current records fail visibly. Obsolete goal
+  rows and projections are discarded by explicit one-time reset, not migrated or
+  archived for compatibility. This specification does not claim that reset ran.
+  Worker progress is never human closure.
 - **Human authority.** Native `kanban_goal_close` takes identity/evidence only;
   the host obtains human `ActionChoice` for accomplished/stop separately from
   achieved/not-achieved/unknown. Corrections use `kanban_goal_correct_outcome`,
@@ -240,15 +244,18 @@ The current definition of done is structural and falsifiable:
    template tests verify the role opening, Decide-by-class rule, and
    functional-outcome reporting in the rendered prompt
    (`crates/agent/src/templates.rs`).
-2. `goal_replay_protection_survives_a_restart_and_replays_the_live_goal`
+2. `goal_replay_across_handles_preserves_the_live_goal`
    verifies that an idempotent create returns the same still-live persistent
-   goal after a server restart
+   goal across server handles
    (`kask/mcp-servers/hkask-mcp-kata-kanban/tests/idempotent_creates.rs`).
 3. Goal lifecycle tests exercise immutable source/specification, owner isolation,
    authenticated closure ingress, private assessment coordination and complete
-   findings, revision-safe indexing, append-only corrections and visible rejection
-   of unsupported schema versions without rewriting bytes
-   (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs`).
+   findings, revision-safe indexing, append-only corrections, strict current-schema
+   reads and caller-owner filtering before decoding. Invalid current records fail
+   list/host scans rather than disappearing from results
+   (`kask/mcp-servers/hkask-mcp-kata-kanban/tests/goal_lifecycle.rs`;
+   `src/kanban/service_impl/goals.rs::goal_list` and `goal_scan_for_host`
+   within that server).
 4. Host integration fixtures in `kask/crates/kask_bridge/src/goals/tests.rs`
    drive native ActionChoice, retry/restart, exact and semantic projection, and
    missing evidence/configuration. A fixture run proves its assertions, not that

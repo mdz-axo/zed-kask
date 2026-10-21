@@ -640,6 +640,7 @@ mod smoke {
                     include_text: None,
                     min_score: None,
                     db_path: None,
+                    lisp_probe: None,
                 }))
                 .await
                 .expect_err("corpus_query without inference must fail, not panic");

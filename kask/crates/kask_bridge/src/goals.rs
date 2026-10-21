@@ -8,7 +8,6 @@ use chrono::Utc;
 use hkask_mcp_kata_kanban::*;
 use hkask_storage::{HMem, HMemStore, Provenance};
 use hkask_types::{ChatMessage, Confidence, Visibility, WebID};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 // Resource bounds, not outcome policy. One tick never dispatches an unbounded backlog.
@@ -19,8 +18,6 @@ pub const GOAL_DRAIN_INTERVAL: std::time::Duration = std::time::Duration::from_s
 #[derive(Default)]
 struct GoalDrain {
     cursor: usize,
-    // Current diagnostic snapshot only, not cached records or acceptance decisions.
-    rejected: HashMap<(WebID, String), String>,
 }
 
 pub struct GoalHost {
@@ -122,26 +119,20 @@ impl GoalHost {
         let Ok(mut state) = self.drain.try_lock() else {
             return Ok(());
         };
-        let mut pending = Vec::new();
-        let mut rejected = HashMap::new();
-        for (owner, listing) in self.service.goal_scan_for_host()? {
-            for (id, reason) in listing.rejected {
-                let key = (owner, id);
-                if state.rejected.get(&key) != Some(&reason) {
-                    tracing::warn!(owner = %owner, goal_id = %key.1, %reason, "Goal row rejected; supported siblings continue");
-                }
-                rejected.insert(key, reason);
-            }
-            pending.extend(listing.goals.into_iter().filter(|g| {
+        let mut pending: Vec<_> = self
+            .service
+            .goal_scan_for_host()?
+            .into_values()
+            .flatten()
+            .filter(|g| {
                 g.needs_assessment(self.service.goal_now())
                     || g.indexed_revision != g.revision
                     || matches!(
                         g.forecast_status,
                         ForecastStatus::PendingAssessment | ForecastStatus::PendingOutcome
                     )
-            }));
-        }
-        state.rejected = rejected;
+            })
+            .collect();
         pending.sort_by_key(|goal| goal.id.to_string());
         if pending.is_empty() {
             state.cursor = 0;

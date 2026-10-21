@@ -7,8 +7,10 @@ use crate::{
 use hkask_mcp_server::server::{map_io_error, write_contained};
 use schemars::JsonSchema;
 use serde::Deserialize;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-#[tool_router(router = storage_router, vis = "pub")]
+#[tool_router(router = storage_tools_router, vis = "pub")]
 impl CorpusServer {
     #[tool(
         description = "Cache processed document text for reference. Stores content keyed by label in the corpus cache directory (corpus-mcp/cache/ under the visible artifacts dir, ~/Documents/zk-data/)."
@@ -103,15 +105,52 @@ impl CorpusServer {
         .await
     }
 
-    #[tool(
-        description = "Search indexed passages by plain natural-language or Lisp query. db_path queries the named durable database through disk KNN only when the in-memory index is empty; a nonempty index (same-process published passages) ignores db_path. include_text defaults to false and controls only returned results, not grounded answer context. Missing stored text and model-mismatched rows (stored under a different embedding model than the query) are skipped and surfaced with counts; no usable context yields answer_error without generation."
-    )]
+    pub fn storage_router() -> rmcp::handler::server::router::tool::ToolRouter<Self> {
+        // Replace the generated direct-call route, retaining its exact metadata
+        // and direct method API. No second tool or transport layer is installed.
+        Self::storage_tools_router()
+            .with_route((Self::corpus_query_tool_attr(), Self::corpus_query_routed))
+    }
+
+    fn corpus_query_routed(
+        &self,
+        parameters: Parameters<QueryRequest>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> rmcp::service::MaybeBoxFuture<'_, Result<String, McpToolError>> {
+        Box::pin(async move {
+            if !parameters.0.query.trim_start().starts_with("(list") {
+                return self.corpus_query(parameters).await;
+            }
+            #[cfg(test)]
+            let parameters = {
+                let mut parameters = parameters;
+                parameters.0.lisp_probe = context.extensions.get::<Arc<LispQueryProbe>>().cloned();
+                if let Some(probe) = &parameters.0.lisp_probe {
+                    *probe.context.lock().expect("context") = Some(context.clone());
+                }
+                parameters
+            };
+            // rmcp cancels the context token, but its detached task does not drop
+            // the handler. Only the Lisp branch needs this drop-to-worker signal.
+            tokio::select! {
+                biased;
+                _ = context.ct.cancelled() => {
+                    Err(McpToolError::unavailable("Lisp query request cancelled"))
+                }
+                result = self.corpus_query(parameters) => result,
+            }
+        })
+    }
+
     /// Query the in-memory vector index for top-k relevant passages.
     ///
     /// expect: Answers use retrieved original text even when result text is hidden.
     /// [P8] Motivating: grounded answers independent of output projection.
     /// pre: plain or Lisp query; post: generation receives normalized question and
     /// usable passages, or answer_error reports why grounding was unavailable.
+    #[tool(
+        description = "Search indexed passages by plain natural-language or Lisp query. db_path queries the named durable database through disk KNN only when the in-memory index is empty; a nonempty index (same-process published passages) ignores db_path. include_text defaults to false and controls only returned results, not grounded answer context. Missing stored text and model-mismatched rows (stored under a different embedding model than the query) are skipped and surfaced with counts; no usable context yields answer_error without generation."
+    )]
     pub async fn corpus_query(
         &self,
         Parameters(QueryRequest {
@@ -121,6 +160,8 @@ impl CorpusServer {
             include_text,
             min_score,
             db_path,
+            #[cfg(test)]
+            lisp_probe,
         }): Parameters<QueryRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_query", async {
@@ -135,7 +176,30 @@ impl CorpusServer {
             // plain natural-language query.
             let (nl_query, k, include_text_flag, min_score_val, gen_answer) =
                 if query.trim_start().starts_with("(list") {
-                    parse_lisp_query(&query)?
+                    // The guard precedes spawn: dropping the handler signals even
+                    // a queued worker. Interpreter Rc state stays on that worker.
+                    let cancellation = Arc::new(AtomicBool::new(false));
+                    let _cancel = LispQueryCancellation {
+                        flag: cancellation.clone(),
+                        #[cfg(test)]
+                        probe: lisp_probe.clone(),
+                    };
+                    let expression = query.clone();
+                    let worker = tokio::task::spawn_blocking(move || {
+                        #[cfg(test)]
+                        if let Some(probe) = &lisp_probe {
+                            probe.enter(&cancellation);
+                        }
+                        let result = parse_lisp_query(&expression, cancellation);
+                        #[cfg(test)]
+                        if let Some(probe) = &lisp_probe {
+                            probe.finished(&result);
+                        }
+                        result
+                    });
+                    worker.await.map_err(|error| {
+                        McpToolError::internal(format!("Lisp query worker failed: {error}"))
+                    })??
                 } else {
                     (
                         query.clone(),
@@ -461,7 +525,7 @@ pub(crate) struct QueryRequest {
     /// specifying query options.
     ///
     /// When the string starts with `(list`, it is parsed as a Lisp
-    /// S-expression via `hkask_lisp::eval_sandboxed_with_budget`.
+    /// S-expression via `hkask_lisp::eval_sandboxed_with_cancellation`.
     /// The result is an association list (alist) of key-value pairs:
     ///
     /// ```lisp
@@ -501,6 +565,10 @@ pub(crate) struct QueryRequest {
     /// (e.g. after server restart). Ignored on a nonempty index; it does not switch DBs.
     #[serde(default)]
     pub db_path: Option<String>,
+    #[cfg(test)]
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub(crate) lisp_probe: Option<Arc<LispQueryProbe>>,
 }
 
 /// Parse a Lisp S-expression query string into query options.
@@ -516,12 +584,18 @@ pub(crate) struct QueryRequest {
 /// - `"generate-answer"` (bool, default false) — generate LLM answer from results
 ///
 /// Returns `(query, top_k, include_text, min_score, generate_answer)`.
-fn parse_lisp_query(expr: &str) -> Result<(String, usize, bool, f32, bool), McpToolError> {
-    let result =
-        hkask_lisp::eval_sandboxed_with_budget(expr, &serde_json::Value::Null, 100_000, 100)
-            .map_err(|e| {
-                McpToolError::invalid_argument(format!("Invalid Lisp query expression: {e}"))
-            })?;
+fn parse_lisp_query(
+    expr: &str,
+    cancellation: Arc<AtomicBool>,
+) -> Result<(String, usize, bool, f32, bool), McpToolError> {
+    let result = hkask_lisp::eval_sandboxed_with_cancellation(
+        expr,
+        &serde_json::Value::Null,
+        100_000,
+        100,
+        cancellation,
+    )
+    .map_err(|e| McpToolError::invalid_argument(format!("Invalid Lisp query expression: {e}")))?;
 
     // The result can be either a JSON object (when `list` of pairs is
     // evaluated — the interpreter converts 2-element lists to key-value pairs)
@@ -577,7 +651,7 @@ fn parse_lisp_query(expr: &str) -> Result<(String, usize, bool, f32, bool), McpT
             "include-text" => {
                 include_text = value.as_bool().ok_or_else(|| {
                     McpToolError::invalid_argument(
-                        "\"include-text\" value must be a boolean (t or nil)",
+                        "\"include-text\" value must be a boolean (true/t or false)",
                     )
                 })?;
             }
@@ -589,7 +663,7 @@ fn parse_lisp_query(expr: &str) -> Result<(String, usize, bool, f32, bool), McpT
             "generate-answer" => {
                 generate_answer = value.as_bool().ok_or_else(|| {
                     McpToolError::invalid_argument(
-                        "\"generate-answer\" value must be a boolean (t or nil)",
+                        "\"generate-answer\" value must be a boolean (true/t or false)",
                     )
                 })?;
             }
@@ -609,6 +683,57 @@ fn parse_lisp_query(expr: &str) -> Result<(String, usize, bool, f32, bool), McpT
     }
 
     Ok((nl_query, top_k, include_text, min_score, generate_answer))
+}
+
+/// Owner drop requests cooperative stop; it never synchronously joins a worker.
+struct LispQueryCancellation {
+    flag: Arc<AtomicBool>,
+    #[cfg(test)]
+    probe: Option<Arc<LispQueryProbe>>,
+}
+
+impl Drop for LispQueryCancellation {
+    fn drop(&mut self) {
+        self.flag.store(true, Ordering::Release);
+        #[cfg(test)]
+        if let Some(probe) = &self.probe {
+            probe.dropped.notify_one();
+        }
+    }
+}
+
+#[cfg(test)]
+#[derive(Debug, Default)]
+pub(crate) struct LispQueryProbe {
+    pub(crate) entered: tokio::sync::Notify,
+    pub(crate) dropped: tokio::sync::Notify,
+    pub(crate) exited: tokio::sync::Notify,
+    pub(crate) release: std::sync::Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+    pub(crate) flag: std::sync::Mutex<Option<Arc<AtomicBool>>>,
+    pub(crate) worker_thread: std::sync::Mutex<Option<std::thread::ThreadId>>,
+    pub(crate) error: std::sync::Mutex<Option<String>>,
+    pub(crate) context: std::sync::Mutex<Option<rmcp::service::RequestContext<rmcp::RoleServer>>>,
+}
+
+#[cfg(test)]
+impl LispQueryProbe {
+    fn enter(&self, flag: &Arc<AtomicBool>) {
+        *self.flag.lock().expect("flag") = Some(flag.clone());
+        *self.worker_thread.lock().expect("worker thread") = Some(std::thread::current().id());
+        self.entered.notify_one();
+        if let Some(release) = self.release.lock().expect("release").take() {
+            release
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .expect("release real worker");
+        }
+    }
+
+    fn finished(&self, result: &Result<(String, usize, bool, f32, bool), McpToolError>) {
+        *self.error.lock().expect("error") = result.as_ref().err().map(ToString::to_string);
+        // The controlled evaluator has returned: invocation teardown precedes
+        // this acknowledgment. Engine weak-scope probes belong to H6A.
+        self.exited.notify_one();
+    }
 }
 
 impl RetrievedPassage {
@@ -710,6 +835,10 @@ mod tests {
         assert!(results.is_empty());
     }
 
+    fn parse_lisp_query(expr: &str) -> Result<(String, usize, bool, f32, bool), McpToolError> {
+        super::parse_lisp_query(expr, Arc::new(AtomicBool::new(false)))
+    }
+
     // ── parse_lisp_query ────────────────────────────────────────────────
 
     #[test]
@@ -758,9 +887,7 @@ mod tests {
     proptest! {
         /// Hypothesis: every well-formed query alist round-trips — generated
         /// query text, top-k, min-score, and true flags parse back exactly.
-        /// False flags are asserted through their documented default: `nil`
-        /// serializes to JSON null (a typed error), so false is expressed by
-        /// omission and defaults to false.
+        /// Explicit false stays boolean; nil remains JSON null and is rejected.
         #[test]
         fn parse_lisp_query_round_trips_generated_requests(
             query in "[a-z ]{1,40}",
@@ -772,12 +899,8 @@ mod tests {
             let mut expr = format!(
                 "(list (list \"query\" \"{query}\") (list \"top-k\" {top_k}) (list \"min-score\" {min_score})"
             );
-            if include_text {
-                expr.push_str(" (list \"include-text\" t)");
-            }
-            if gen_answer {
-                expr.push_str(" (list \"generate-answer\" t)");
-            }
+            expr.push_str(&format!(" (list \"include-text\" {include_text})"));
+            expr.push_str(&format!(" (list \"generate-answer\" {gen_answer})"));
             expr.push(')');
             let (q, k, inc, ms, generate) =
                 parse_lisp_query(&expr).expect("well-formed query alist parses");

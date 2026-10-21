@@ -146,37 +146,29 @@ fn decode_goal(value: serde_json::Value) -> Result<Goal, KanbanError> {
         .and_then(serde_json::Value::as_u64)
         != Some(3)
     {
-        return Err(invalid(
-            "unsupported goal schema: expected version 3; stored bytes left unchanged",
-        ));
+        return Err(invalid("unsupported goal schema: expected version 3"));
     }
     serde_json::from_value(value).map_err(|e| KanbanError::Internal(format!("goal decode: {e}")))
 }
-fn owned_goal_listing(owner: WebID, rows: impl IntoIterator<Item = HMem>) -> GoalListing {
-    let mut listing = GoalListing::default();
+fn owned_goals(
+    owner: WebID,
+    rows: impl IntoIterator<Item = HMem>,
+) -> Result<Vec<Goal>, KanbanError> {
+    let mut goals = Vec::new();
     let mut ids = HashSet::new();
     for row in rows {
         if row.access.owner_webid != owner {
             continue;
         }
-        let decoded = decode_goal(row.value).and_then(|goal| {
-            require_owner(&goal, owner)?;
-            if row.attribute != goal.id.to_string() || !ids.insert(goal.id) {
-                return Err(invalid("goal key mismatch or duplicate canonical identity"));
-            }
-            Ok(goal)
-        });
-        match decoded {
-            Ok(goal) => listing.goals.push(goal),
-            Err(error) => {
-                listing.rejected.insert(row.attribute, error.to_string());
-            }
+        let goal = decode_goal(row.value)?;
+        require_owner(&goal, owner)?;
+        if row.attribute != goal.id.to_string() || !ids.insert(goal.id) {
+            return Err(invalid("goal key mismatch or duplicate canonical identity"));
         }
+        goals.push(goal);
     }
-    listing
-        .goals
-        .sort_by_key(|goal| std::cmp::Reverse(goal.created_at));
-    listing
+    goals.sort_by_key(|goal| std::cmp::Reverse(goal.created_at));
+    Ok(goals)
 }
 
 fn publish(goal: &mut Goal, now: DateTime<Utc>) -> Result<(), KanbanError> {
@@ -401,16 +393,13 @@ impl KanbanService {
             })
             .transpose()
     }
-    pub fn goal_list(&self, owner: &WebID) -> Result<GoalListing, KanbanError> {
-        Ok(owned_goal_listing(
-            *owner,
-            self.store.query_by_entity(GOAL_ENTITY)?,
-        ))
+    pub fn goal_list(&self, owner: &WebID) -> Result<Vec<Goal>, KanbanError> {
+        owned_goals(*owner, self.store.query_by_entity(GOAL_ENTITY)?)
     }
 
     /// Trusted native-host scheduling scan, not an MCP route. Validate each
     /// owner's records through the same collector as caller-scoped listing.
-    pub fn goal_scan_for_host(&self) -> Result<HashMap<WebID, GoalListing>, KanbanError> {
+    pub fn goal_scan_for_host(&self) -> Result<HashMap<WebID, Vec<Goal>>, KanbanError> {
         let mut rows_by_owner: HashMap<WebID, Vec<HMem>> = HashMap::new();
         for row in self.store.query_by_entity(GOAL_ENTITY)? {
             rows_by_owner
@@ -418,10 +407,10 @@ impl KanbanService {
                 .or_default()
                 .push(row);
         }
-        Ok(rows_by_owner
+        rows_by_owner
             .into_iter()
-            .map(|(owner, rows)| (owner, owned_goal_listing(owner, rows)))
-            .collect())
+            .map(|(owner, rows)| owned_goals(owner, rows).map(|goals| (owner, goals)))
+            .collect()
     }
     fn transition_goal(
         &self,

@@ -378,7 +378,7 @@ async fn scheduled_tick(
                 .goal_scan_for_host()
                 .expect("goals")
                 .into_values()
-                .flat_map(|listing| listing.goals)
+                .flatten()
                 .collect();
             let done = if provider.fail.load(Ordering::SeqCst) {
                 provider.embedding_calls.load(Ordering::SeqCst) > before
@@ -879,63 +879,13 @@ fn native_goal_inputs_reject_worker_identity_and_source_fields() {
     }
 }
 
-// Observe actual drainer warnings without adding another logging dependency.
-struct RejectionWarnings(Arc<std::sync::Mutex<Vec<String>>>);
-impl tracing::Subscriber for RejectionWarnings {
-    fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
-        *metadata.level() == tracing::Level::WARN
-    }
-    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
-        tracing::span::Id::from_u64(1)
-    }
-    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
-    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
-    fn event(&self, event: &tracing::Event<'_>) {
-        let mut fields = String::new();
-        event.record(
-            &mut |field: &tracing::field::Field, value: &dyn std::fmt::Debug| {
-                use std::fmt::Write;
-                write!(&mut fields, "{field}={value:?};").expect("string formatting");
-            },
-        );
-        self.0.lock().expect("warnings").push(fields);
-    }
-    fn enter(&self, _: &tracing::span::Id) {}
-    fn exit(&self, _: &tracing::span::Id) {}
-}
-
 #[gpui::test]
-async fn unsupported_goal_warns_without_blocking_same_or_other_owner_draining(
-    cx: &mut gpui::TestAppContext,
-) {
-    use tracing::instrument::WithSubscriber;
+async fn supported_goals_are_assessed_and_indexed_across_owners(cx: &mut gpui::TestAppContext) {
     let dir = tempfile::tempdir().expect("directory");
     let provider = Arc::new(Provider::default());
     let host = open(dir.path(), provider.clone()).expect("file-backed host");
     let owner = host.execution_owner;
     let other_owner = WebID::new();
-    let unsupported_id = hkask_types::GoalID::new();
-    let raw = format!(
-        " {{ \"schema_version\": 2, \"id\": \"{unsupported_id}\", \"history\": \"retain bytes\" }}\n"
-    );
-    let row = HMem::new(
-        "kanban:goal",
-        &unsupported_id.to_string(),
-        serde_json::from_str(&raw).expect("unsupported JSON"),
-        owner,
-    );
-    host.ledger.insert(&row).expect("unsupported row");
-    host.ledger
-        .driver()
-        .sqlite_pool()
-        .expect("pool")
-        .get()
-        .expect("connection")
-        .execute(
-            "UPDATE hmems SET value = ?1 WHERE id = ?2",
-            [&raw, &row.id.to_string()],
-        )
-        .expect("retain noncanonical JSON whitespace");
     let mut goals = Vec::new();
     for actor in [owner, other_owner] {
         let goal = declare(&host, actor).expect("supported declaration");
@@ -944,15 +894,10 @@ async fn unsupported_goal_warns_without_blocking_same_or_other_owner_draining(
         decision(owner_host, &goal, actor, "stop_unknown", false, cx).await;
         goals.push((goal.id, actor));
     }
-    let warnings = Arc::new(std::sync::Mutex::new(Vec::new()));
     cx.executor().allow_parking();
     let runtime = tokio::runtime::Runtime::new().expect("runtime");
-    let captured = warnings.clone();
     let task = runtime.spawn(async move {
-        host.drain_once()
-            .with_subscriber(RejectionWarnings(captured))
-            .await
-            .expect("unsupported row cannot abort the production scan");
+        host.drain_once().await.expect("production scan");
         for (id, actor) in goals {
             let retained = host
                 .service
@@ -980,27 +925,6 @@ async fn unsupported_goal_warns_without_blocking_same_or_other_owner_draining(
             assert_eq!(rows.len(), 1);
         }
         assert!(
-            host.service
-                .goal_get(unsupported_id, owner)
-                .expect_err("direct unsupported read")
-                .to_string()
-                .contains("expected version 3")
-        );
-        let retained: String = host
-            .ledger
-            .driver()
-            .sqlite_pool()
-            .expect("pool")
-            .get()
-            .expect("connection")
-            .query_row(
-                "SELECT value FROM hmems WHERE id = ?1",
-                [row.id.to_string()],
-                |row| row.get(0),
-            )
-            .expect("raw bytes");
-        assert_eq!(retained, raw, "unsupported row stays byte-identical");
-        assert!(
             provider.requests.lock().expect("capture").is_empty(),
             "unfetched evidence remains deterministic unknown"
         );
@@ -1009,12 +933,4 @@ async fn unsupported_goal_warns_without_blocking_same_or_other_owner_draining(
         task.await.expect("production drainer test");
     })
     .await;
-    let warnings = warnings.lock().expect("warnings");
-    assert!(
-        warnings
-            .iter()
-            .any(|message| message.contains(&unsupported_id.to_string())
-                && message.contains("expected version 3")),
-        "rejection identity and reason must be logged: {warnings:?}"
-    );
 }

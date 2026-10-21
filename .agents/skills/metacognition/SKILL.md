@@ -58,7 +58,7 @@ unmeasured, not zero. The goal-tool calls are D recordings of specification and 
 
 ### Step 0 — Read prior calibration (execute)
 
-1. Read retained `metacognition:` goals with `kanban_goal_list` as evidence history: original criteria, worker progress, human closure and assessment limitations separately. Only prospectively eligible resolved forecasts may contribute to a declared comparable cohort. Legacy intake predictions are provenance-limited history, not repaired declarations. Forecast-market cohorts are a different reference class.
+1. Read current-schema `metacognition:` goals from the array returned by `kanban_goal_list` as evidence history: original criteria, worker progress, human closure and assessment limitations separately. Only prospectively eligible resolved forecasts may contribute to a declared comparable cohort. Do not reconstruct forecasts or human confirmations from obsolete data. Forecast-market cohorts are a different reference class.
 2. The resolved predictions feed the grasp-current step. "No resolved metacognition goals" is an expected empty state: record calibration as unavailable and continue. Other failures remain visible, and the Kata cycle proceeds without calibration context.
 
 ### meta-grasp-current (Kata Step 1: Grasp Current Condition)

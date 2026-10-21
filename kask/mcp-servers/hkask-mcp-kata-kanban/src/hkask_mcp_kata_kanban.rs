@@ -545,14 +545,14 @@ impl KanbanServer {
     }
 
     #[tool(
-        description = "List supported caller-owned canonical goals with complete criteria and history, plus explicit rejected row identities and reasons. Closed goals remain visible."
+        description = "List caller-owned canonical goals with complete criteria and history. Closed goals remain visible. Invalid records or unsupported schemas return an error."
     )]
     pub async fn kanban_goal_list(
         &self,
         Parameters(GoalListRequest {}): Parameters<GoalListRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "kanban_goal_list", async {
-            respond(self.service.goal_list(&self.webid), |listing| listing)
+            respond(self.service.goal_list(&self.webid), |goals| goals)
         })
         .await
     }

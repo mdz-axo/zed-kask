@@ -2,7 +2,6 @@ use super::*;
 use hkask_storage::database::driver::{DatabaseDriver, TransactionOps};
 use hkask_storage::database::value::{DbRow, DbValue};
 use hkask_types::DbError;
-use tracing::instrument::WithSubscriber;
 
 struct ScanCounter {
     inner: Arc<dyn DatabaseDriver>,
@@ -60,53 +59,17 @@ fn observed_host(directory: &std::path::Path) -> (Arc<GoalHost>, Arc<ScanCounter
     unshared.ledger = ledger;
     (host, counter, provider)
 }
-fn unsupported(host: &GoalHost, owner: WebID) -> HMem {
-    let id = hkask_types::GoalID::new();
-    let row = HMem::new(
-        "kanban:goal",
-        &id.to_string(),
-        serde_json::json!({"schema_version":2,"id":id,"history":"retain bytes"}),
-        owner,
-    );
-    host.ledger.insert(&row).expect("unsupported fixture");
-    row
-}
-fn rejection_messages(warnings: &std::sync::Mutex<Vec<String>>) -> Vec<String> {
-    warnings
-        .lock()
-        .expect("warnings")
-        .iter()
-        .filter(|message| message.contains("Goal row rejected"))
-        .cloned()
-        .collect()
-}
 
 #[tokio::test]
-async fn one_full_scan_drains_supported_owners_and_retains_rejected_bytes() {
+async fn one_full_scan_drains_supported_owners() {
     let dir = tempfile::tempdir().expect("directory");
     let (host, counter, provider) = observed_host(dir.path());
     let first = WebID::new();
     let second = WebID::new();
-    let rejected_only = WebID::new();
     let goals = [
         declare(&host, first).expect("first"),
         declare(&host, second).expect("second"),
     ];
-    let rejected = [unsupported(&host, first), unsupported(&host, rejected_only)];
-    let raw = format!(
-        " {{ \"schema_version\": 2, \"id\": \"{}\" }}\n",
-        rejected[0].attribute
-    );
-    host.ledger
-        .driver()
-        .execute(
-            "UPDATE hmems SET value = ?1 WHERE id = ?2",
-            &[
-                DbValue::Text(raw.clone()),
-                DbValue::Text(rejected[0].id.to_string()),
-            ],
-        )
-        .expect("noncanonical whitespace fixture");
     // Prove the counter observes the real store operation before trusting its reading.
     counter.scans.store(0, Ordering::SeqCst);
     host.ledger
@@ -129,47 +92,6 @@ async fn one_full_scan_drains_supported_owners_and_retains_rejected_bytes() {
         assert_eq!(current.indexed_revision, current.revision);
     }
     assert_eq!(provider.embedding_calls.load(Ordering::SeqCst), 2);
-    let retained = host
-        .ledger
-        .driver()
-        .query_optional(
-            "SELECT value FROM hmems WHERE id = ?1",
-            &[DbValue::Text(rejected[0].id.to_string())],
-        )
-        .expect("raw read")
-        .expect("row");
-    assert_eq!(retained.get_str(0).expect("stored bytes"), raw);
-    let own = host.service.goal_list(&first).expect("explicit listing");
-    assert_eq!(own.rejected.len(), 1);
-    assert!(own.rejected[&rejected[0].attribute].contains("expected version 3"));
-    assert!(!own.rejected.contains_key(&rejected[1].attribute));
-    assert!(
-        host.service
-            .goal_list(&WebID::new())
-            .expect("foreign listing")
-            .rejected
-            .is_empty()
-    );
-}
-
-#[tokio::test]
-async fn unchanged_rejections_are_quiet_but_changes_and_recurrences_warn() {
-    let dir = tempfile::tempdir().expect("directory");
-    let (host, counter, _) = observed_host(dir.path());
-    let owner = WebID::new();
-    let row = unsupported(&host, owner);
-    let warnings = Arc::new(std::sync::Mutex::new(Vec::new()));
-    for _ in 0..2 {
-        host.drain_once()
-            .with_subscriber(RejectionWarnings(warnings.clone()))
-            .await
-            .expect("drain");
-    }
-    assert_eq!(
-        rejection_messages(&warnings).len(),
-        1,
-        "unchanged failures must not repeat even with no supported work"
-    );
     counter.fail.store(true, Ordering::SeqCst);
     assert!(
         host.drain_once()
@@ -179,54 +101,7 @@ async fn unchanged_rejections_are_quiet_but_changes_and_recurrences_warn() {
             .contains("injected goal scan failure")
     );
     counter.fail.store(false, Ordering::SeqCst);
-    host.drain_once()
-        .with_subscriber(RejectionWarnings(warnings.clone()))
-        .await
-        .expect("recovery");
-    assert_eq!(
-        rejection_messages(&warnings).len(),
-        1,
-        "query failure must not erase the diagnostic snapshot"
-    );
-    host.ledger
-        .driver()
-        .execute(
-            "UPDATE hmems SET value = ?1 WHERE id = ?2",
-            &[
-                DbValue::Text("{\"schema_version\":3}".into()),
-                DbValue::Text(row.id.to_string()),
-            ],
-        )
-        .expect("changed failure fixture");
-    host.drain_once()
-        .with_subscriber(RejectionWarnings(warnings.clone()))
-        .await
-        .expect("changed rejection");
-    let messages = rejection_messages(&warnings);
-    assert_eq!(messages.len(), 2);
-    assert!(messages[1].contains(&row.attribute) && messages[1].contains("goal decode"));
-    let new = unsupported(&host, owner);
-    host.drain_once()
-        .with_subscriber(RejectionWarnings(warnings.clone()))
-        .await
-        .expect("new rejection");
-    assert_eq!(rejection_messages(&warnings).len(), 3);
-    assert!(rejection_messages(&warnings)[2].contains(&new.attribute));
-    // Simulate external resolution, then recurrence; the drainer must not keep an ever-seen set.
-    host.ledger
-        .delete_by_id(&row.id)
-        .expect("fixture resolution");
-    host.drain_once()
-        .with_subscriber(RejectionWarnings(warnings.clone()))
-        .await
-        .expect("observe resolution");
-    host.ledger.insert(&row).expect("fixture recurrence");
-    host.drain_once()
-        .with_subscriber(RejectionWarnings(warnings.clone()))
-        .await
-        .expect("recurrence");
-    assert_eq!(rejection_messages(&warnings).len(), 4);
-    assert!(rejection_messages(&warnings)[3].contains(&row.attribute));
+    host.drain_once().await.expect("scan recovery");
 }
 
 #[tokio::test]
@@ -236,70 +111,84 @@ async fn native_scan_preserves_canonical_validation_and_caller_separation() {
     let owners = [WebID::new(), WebID::new()];
     let first = declare(&host, owners[0]).expect("first");
     let second = declare(&host, owners[1]).expect("second");
-    let unsupported_first = unsupported(&host, owners[0]);
-    unsupported(&host, owners[1]);
+    let mut scanned = host.service.goal_scan_for_host().expect("native scan");
+    for goal in [&first, &second] {
+        let goals = scanned.remove(&goal.owner).expect("owner");
+        assert_eq!(goals.len(), 1);
+        assert_eq!(goals[0].id, goal.id);
+        assert_eq!(
+            serde_json::to_value(goals).expect("native goals"),
+            serde_json::to_value(host.service.goal_list(&goal.owner).expect("caller goals"))
+                .expect("caller JSON")
+        );
+    }
+    assert!(scanned.is_empty());
     let forged_id = hkask_types::GoalID::new();
     let mut forged = serde_json::to_value(&second).expect("goal JSON");
     forged["id"] = serde_json::json!(forged_id);
     let wrong_key = hkask_types::GoalID::new();
     let malformed = hkask_types::GoalID::new();
-    for row in [
-        HMem::new("kanban:goal", &forged_id.to_string(), forged, owners[0]),
-        HMem::new(
-            "kanban:goal",
-            &wrong_key.to_string(),
-            serde_json::to_value(&first).expect("goal JSON"),
-            owners[0],
+    for (row, reason) in [
+        (
+            HMem::new("kanban:goal", &forged_id.to_string(), forged, owners[0]),
+            "permission denied",
         ),
-        HMem::new(
-            "kanban:goal",
-            &malformed.to_string(),
-            serde_json::json!({"schema_version":3}),
-            owners[0],
+        (
+            HMem::new(
+                "kanban:goal",
+                &wrong_key.to_string(),
+                serde_json::to_value(&first).expect("goal JSON"),
+                owners[0],
+            ),
+            "key mismatch",
         ),
-        HMem::new(
-            "kanban:goal",
-            &first.id.to_string(),
-            serde_json::to_value(&first).expect("duplicate goal JSON"),
-            owners[0],
+        (
+            HMem::new(
+                "kanban:goal",
+                &malformed.to_string(),
+                serde_json::json!({"schema_version":3}),
+                owners[0],
+            ),
+            "goal decode",
+        ),
+        (
+            HMem::new(
+                "kanban:goal",
+                &first.id.to_string(),
+                serde_json::to_value(&first).expect("duplicate goal JSON"),
+                owners[0],
+            ),
+            "duplicate canonical identity",
         ),
     ] {
         host.ledger.insert(&row).expect("invalid canonical fixture");
+        for error in [
+            host.service.goal_scan_for_host().expect_err("invalid scan"),
+            host.service
+                .goal_list(&owners[0])
+                .expect_err("invalid listing"),
+        ] {
+            assert!(error.to_string().to_lowercase().contains(reason), "{error}");
+        }
+        let error = host
+            .drain_once()
+            .await
+            .expect_err("invalid scan must surface");
+        assert!(error.to_string().to_lowercase().contains(reason), "{error}");
+        let other = host.service.goal_list(&owners[1]).expect("other owner");
+        assert_eq!(other.len(), 1);
+        assert_eq!(other[0].id, second.id);
+        assert!(
+            host.service
+                .goal_list(&WebID::new())
+                .expect("stranger")
+                .is_empty()
+        );
+        host.ledger
+            .delete_by_id(&row.id)
+            .expect("remove invalid fixture");
     }
-    let mut scanned = host.service.goal_scan_for_host().expect("native scan");
-    let first_listing = scanned.remove(&owners[0]).expect("first owner");
-    assert_eq!(first_listing.goals.len(), 1);
-    assert_eq!(first_listing.goals[0].id, first.id);
-    assert_eq!(first_listing.rejected.len(), 5);
-    assert!(first_listing.rejected[&unsupported_first.attribute].contains("expected version 3"));
-    assert!(
-        first_listing.rejected[&forged_id.to_string()]
-            .to_lowercase()
-            .contains("permission denied")
-    );
-    assert!(first_listing.rejected[&wrong_key.to_string()].contains("key mismatch"));
-    assert!(first_listing.rejected[&malformed.to_string()].contains("goal decode"));
-    assert!(first_listing.rejected[&first.id.to_string()].contains("duplicate canonical identity"));
-    assert_eq!(
-        serde_json::to_value(first_listing).expect("native listing"),
-        serde_json::to_value(host.service.goal_list(&owners[0]).expect("caller listing"))
-            .expect("caller JSON")
-    );
-    let second_listing = scanned.remove(&owners[1]).expect("second owner");
-    assert_eq!(second_listing.goals.len(), 1);
-    assert_eq!(second_listing.goals[0].id, second.id);
-    assert_eq!(second_listing.rejected.len(), 1);
-    assert_eq!(
-        serde_json::to_value(second_listing).expect("native listing"),
-        serde_json::to_value(host.service.goal_list(&owners[1]).expect("caller listing"))
-            .expect("caller JSON")
-    );
-    assert!(scanned.is_empty());
-    let stranger = host
-        .service
-        .goal_list(&WebID::new())
-        .expect("foreign listing");
-    assert!(stranger.goals.is_empty() && stranger.rejected.is_empty());
+    host.drain_once().await.expect("scan recovery");
 }
 
 #[tokio::test]

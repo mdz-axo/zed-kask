@@ -281,8 +281,8 @@ enforced by:
    Mutable lessons project their provenance-bearing `recall_text`; goal recall
    preserves current meaningful state and histories, not coordination fields. Backfill is
    scoped by exact `(entity, passage)`, so one successful sibling vector cannot
-   hide another failed h_mem. Goal rows are excluded: invalid goal publication
-   is rejected, never healed by a compatibility backfill. Backfill therefore
+   hide another failed h_mem. Canonical goal projections are excluded from generic
+   backfill: `goal_index_current` owns their publication and repair. Backfill therefore
    cannot report success with a passage production recall will reject.
 3. The regression tests `recall_context_finds_turn_by_embedding_only`,
    `ingest_turn_embeds_every_chunk_with_passage_text`,
@@ -461,12 +461,11 @@ When a thread turn completes, the turn loop calls
 The host drainer publishes goal recall independently of turn completion.
 `kanban_goal_list` reads canonical history, not instructions to store whole-list
 copies. Publication failures remain retryable; indexing never prunes the goal.
-Each scheduling pass uses one full goal-store scan, preserving per-owner canonical
-validation before bounded work. Only the current rejected-row identities/reasons
-are retained for diagnostic coalescing: new or changed failures warn, unchanged
-failures stay quiet, and resolved failures can warn again on recurrence. Explicit
-listings retain every caller-owned rejection; no accepted record or admission
-result is cached.
+Each scheduling pass uses one full goal-store scan returning
+`HashMap<WebID, Vec<Goal>>`, with per-owner canonical validation before bounded
+work. `goal_list(owner)` returns `Vec<Goal>` after caller-owner filtering before
+decoding. Invalid current records and query failures remain visible errors;
+there is no rejection map or cache.
 See [GOAL_INTERFACE.md](../../mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md).
 Curator-turn detection is `agent_id.as_deref() == Some("Curator")`
 (`ingest.rs:277`) — used for logging only; the write path is identical for
@@ -480,16 +479,18 @@ rebuilds the consolidation service.
 The 2026-10-20 cutover removes single-score confidence mutation and
 response-only score/ack coupling. A low-loss forecast does not authenticate its
 source, and a high-loss forecast remains valuable history. The canonical ledger
-retains all admitted goals, closure choices, findings, corrections and score
-versions; confidence-based retrieval cleanup is not a deletion policy for it.
+retains admitted current-schema goals, closure choices, findings, corrections and
+score versions; confidence-based retrieval cleanup is not a deletion policy for it.
 Memory is a rebuildable projection, not the only surviving structured record.
 
 The bridge calls service-owned `goal_assess` and `goal_index_current`; the
 canonical contract above owns evidence consent/bounds and exact-input blindness.
 The memory boundary atomically replaces the current row/vector; the service
 acknowledges only the revision actually published. Restart repairs that record,
-not a historical delivery log. Unsupported schemas fail visibly with bytes intact;
-there is no runtime conversion or historical-key scan.
+not a historical delivery log. Obsolete goal rows and recall projections are
+discarded by an explicit one-time reset, not runtime conversion, archival retention,
+or historical-key discovery. No backward compatibility contract applies, and no
+reset execution is claimed here.
 
 Optional `HumanAcceptance` forecast arithmetic uses the original closure time;
 corrections append without adding cohort weight. Unknown stays unscored. Raw Brier

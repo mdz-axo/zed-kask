@@ -27,10 +27,9 @@ declared reference on the same cases, weights and lead times; skill is
 undefined when reference loss is zero. Report eligible/resolved/unresolved
 counts and event dependence; versions are not independent outcomes. No
 universal score bands, score labels, inverse-loss reliability weights or
-automatic historical-bias correction. The [approved evidence register](../../../kask/docs/research/goal-closure-and-forecast-verification-plan.md#2-statistical-purpose-sources-conventions-and-transfer)
-records Murphy/GJP access and the limits of Brier OCR and the local Tetlock
-edition. Ontology lookup names the concept; if its gloss calls raw loss
-calibration, use these sources for interpretation rather than repeating it.
+automatic historical-bias correction. Ontology lookup names the concept; if
+its gloss calls raw loss calibration, use the cited primary source for
+interpretation rather than repeating it.
 
 ## Reference model
 

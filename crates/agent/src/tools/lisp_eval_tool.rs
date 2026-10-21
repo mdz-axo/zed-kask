@@ -482,7 +482,9 @@ pub fn evaluate_lisp(input: LispEvalToolInput) -> Result<Value, String> {
     evaluate_lisp_controlled(input, None)
 }
 
-fn evaluate_lisp_controlled(
+/// Shared evaluator for adapters that own an invocation cancellation flag.
+/// Decoding uses `LispEvalToolInput`; the pure entry above remains uncontrolled.
+pub fn evaluate_lisp_controlled(
     input: LispEvalToolInput,
     cancellation: Option<Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<Value, String> {

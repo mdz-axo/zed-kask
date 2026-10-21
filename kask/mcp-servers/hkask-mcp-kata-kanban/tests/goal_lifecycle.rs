@@ -100,6 +100,13 @@ impl Fixture {
     fn reopen(&self) -> KanbanService {
         open(&self.dir.path().join("goals.db"), &self.clock)
     }
+    fn store(&self) -> HMemStore {
+        let pool = SqliteDriver::file_pool_with_schema(
+            self.dir.path().join("goals.db").to_str().expect("path"),
+        )
+        .expect("pool");
+        HMemStore::from_driver(Arc::new(SqliteDriver::new(pool))).expect("store")
+    }
     fn goal(&self, id: hkask_types::GoalID) -> Goal {
         self.service
             .goal_get(id, self.owner)
@@ -394,56 +401,149 @@ async fn stale_preparation_cannot_publish_or_acknowledge_newer_revision() {
     assert_eq!(current.indexed_revision, current.revision);
 }
 #[test]
-fn unsupported_schema_and_drifted_keys_are_errors_not_migrations() {
+fn current_schema_listing_and_host_scan_include_closed_goals_newest_first() {
     let f = Fixture::new();
-    let pool =
-        SqliteDriver::file_pool_with_schema(f.dir.path().join("goals.db").to_str().expect("path"))
-            .expect("pool");
-    let store = HMemStore::from_driver(Arc::new(SqliteDriver::new(pool))).expect("store");
+    let first = f
+        .service
+        .goal_create(declaration(), f.owner)
+        .expect("first");
+    let closed = f
+        .service
+        .goal_close_native(
+            first.id,
+            f.owner,
+            close(&first, f.now(), HumanClosureChoice::StopUnknown),
+        )
+        .expect("close");
+    f.advance(1);
+    let second = f
+        .service
+        .goal_create(declaration(), f.owner)
+        .expect("second");
+    let foreign_owner = WebID::new();
+    let foreign = f
+        .service
+        .goal_create(declaration(), foreign_owner)
+        .expect("foreign");
+    let listed = f.service.goal_list(&f.owner).expect("current goals");
+    assert_eq!(listed, vec![second.clone(), closed.clone()]);
+    let scanned = f.service.goal_scan_for_host().expect("host scan");
+    assert_eq!(scanned.len(), 2);
+    assert_eq!(scanned[&f.owner], vec![second, closed]);
+    assert_eq!(scanned[&foreign_owner], vec![foreign]);
+}
+
+#[test]
+fn unsupported_schema_is_rejected_by_get_list_and_host_scan() {
+    let f = Fixture::new();
+    f.service
+        .goal_create(declaration(), f.owner)
+        .expect("current goal");
     let id = hkask_types::GoalID::new();
-    let bytes =
-        serde_json::json!({"schema_version":2,"id":id,"human_history":"preserve these bytes"});
-    store
+    f.store()
         .insert(&HMem::new(
             "kanban:goal",
             &id.to_string(),
-            bytes.clone(),
+            serde_json::json!({"schema_version":2,"id":id}),
             f.owner,
         ))
-        .expect("old data");
-    assert!(
+        .expect("obsolete schema fixture");
+    for error in [
         f.service
             .goal_get(id, f.owner)
-            .expect_err("explicit version error")
-            .to_string()
-            .contains("expected version 3")
-    );
-    assert_eq!(
-        store
-            .query_by_entity_attribute("kanban:goal", &id.to_string())
-            .expect("raw read")[0]
-            .value,
-        bytes
-    );
-    let current = f
+            .expect_err("get rejects obsolete schema"),
+        f.service
+            .goal_list(&f.owner)
+            .expect_err("list rejects obsolete schema"),
+        f.service
+            .goal_scan_for_host()
+            .expect_err("host rejects obsolete schema"),
+    ] {
+        assert!(error.to_string().contains("expected version 3"));
+    }
+}
+
+#[test]
+fn invalid_current_records_fail_listing_and_host_scan_instead_of_being_omitted() {
+    for case in [
+        "missing field",
+        "unknown field",
+        "key",
+        "owner",
+        "duplicate",
+    ] {
+        let f = Fixture::new();
+        let goal = f
+            .service
+            .goal_create(declaration(), f.owner)
+            .expect("current goal");
+        let mut value = serde_json::to_value(&goal).expect("goal JSON");
+        let mut key = goal.id.to_string();
+        match case {
+            "missing field" => {
+                value.as_object_mut().expect("object").remove("criteria");
+            }
+            "unknown field" => {
+                value["removed_field"] = serde_json::json!(true);
+            }
+            "key" => {
+                key = "drifted-key".into();
+            }
+            "owner" => {
+                value["owner"] = serde_json::json!(WebID::new());
+            }
+            "duplicate" => {}
+            _ => unreachable!("fixed test cases"),
+        }
+        f.store()
+            .insert(&HMem::new("kanban:goal", &key, value, f.owner))
+            .expect("invalid current fixture");
+        let listed = f.service.goal_list(&f.owner).expect_err(case);
+        let scanned = f.service.goal_scan_for_host().expect_err(case);
+        assert_eq!(listed.to_string(), scanned.to_string(), "{case}");
+        let expected = match case {
+            "missing field" | "unknown field" => "goal decode",
+            "key" | "duplicate" => "key mismatch or duplicate canonical identity",
+            "owner" => "not owned by caller",
+            _ => unreachable!("fixed test cases"),
+        };
+        assert!(listed.to_string().contains(expected), "{case}: {listed}");
+    }
+}
+
+#[test]
+fn caller_listing_filters_foreign_rows_before_decoding_or_owner_validation() {
+    let f = Fixture::new();
+    let goal = f
         .service
         .goal_create(declaration(), f.owner)
-        .expect("new goal");
-    let mut row = store
-        .query_by_entity_attribute("kanban:goal", &current.id.to_string())
-        .expect("query")
-        .remove(0);
-    row.attribute = "drifted-key".into();
-    let another_id = hkask_types::GoalID::new();
-    row.value["id"] = serde_json::json!(another_id);
-    row.id = hkask_storage::HMemId::new();
-    store.insert(&row).expect("drifted row");
+        .expect("current goal");
+    let foreign_owner = WebID::new();
+    let store = f.store();
+    for (key, value) in [
+        ("malformed", serde_json::json!({"schema_version":3})),
+        ("unsupported", serde_json::json!({"schema_version":2})),
+        (
+            "owner-mismatch",
+            serde_json::to_value(&goal).expect("goal JSON"),
+        ),
+    ] {
+        store
+            .insert(&HMem::new("kanban:goal", key, value, foreign_owner))
+            .expect("foreign fixture");
+    }
+    assert_eq!(
+        f.service.goal_list(&f.owner).expect("isolated caller"),
+        vec![goal]
+    );
     assert!(
         f.service
-            .goal_get(another_id, f.owner)
-            .expect("exact lookup")
-            .is_none()
+            .goal_list(&WebID::new())
+            .expect("no owned rows")
+            .is_empty()
     );
+    assert!(f.service.goal_list(&foreign_owner).is_err());
+    assert!(f.service.goal_scan_for_host().is_err());
 }
 #[test]
 fn strict_forecasts_and_findings_do_not_accept_removed_shapes_or_extra_fields() {

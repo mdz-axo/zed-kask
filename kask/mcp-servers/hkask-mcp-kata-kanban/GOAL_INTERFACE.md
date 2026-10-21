@@ -6,20 +6,18 @@ against the human outcome. No probability is synthesized for ordinary goals.
 
 ## Supported data
 
-The canonical `kanban:goal` row is keyed by the goal ID. Schema version **3** is
-supported. Direct reads reject unsupported versions, malformed records, and
-key/owner mismatches without rewriting or deleting stored bytes. Listing returns
-one `GoalListing { goals, rejected }`: `goals` contains supported caller-owned
-records; `rejected` maps omitted stored row keys to rejection reasons. Owner
-filtering happens before canonical decoding or exposing rejections. The MCP list
-always serializes both fields with all caller-owned rejections, including an empty
-rejection map for ordinary listings. The trusted host scans once per drain pass,
-validating owner-grouped records through the same collector. It logs each new or
-changed rejection with owner, stored row key and reason; unchanged failures do not
-repeat every tick. The diagnostic snapshot retains only current rejections, so a
-resolved problem warns again if it recurs. Accepted records and validation decisions
-are never cached. Query failures remain errors and leave the prior diagnostic
-snapshot intact. There is no legacy conversion, startup migration, historical-key
+**Forward-only policy:** obsolete goal-schema data is discarded, not migrated.
+There is no backward compatibility contract. Obsolete stored goal rows and their
+recall projections are removed by an explicit one-time reset, not a runtime
+migration, archive, or compatibility subsystem. This contract does not record an
+executed reset.
+
+The canonical `kanban:goal` row is keyed by the goal ID. Only schema version **3**
+is accepted. `goal_list(owner)` returns `Vec<Goal>`; the MCP list returns that
+array, including closed goals. Caller ownership is checked before decoding.
+Unsupported versions, malformed current records, key/owner mismatches and duplicate
+canonical identities fail visibly rather than being silently omitted. Query failures
+remain errors. There is no rejected-row map, rejection cache, historical-key
 discovery, or machine resolver.
 
 `Goal` retains the declaration/source, criterion IDs and specification digest,
@@ -33,9 +31,10 @@ no separate dirty flag, snapshot backlog, or per-event delivery receipt.
 
 Ordinary MCP routes are create, judge, get, and list. The service also accepts
 trusted native closure/correction. `goal_scan_for_host()` is a native scheduling
-read, not an MCP route: it uses one full-store query and preserves the per-owner
-schema, ownership, key and duplicate-identity checks. Ordinary `goal_list(owner)`
-filters the caller's rows before the common canonical decoder. Scheduling still
+read, not an MCP route: it returns `HashMap<WebID, Vec<Goal>>` from one full-store
+query with per-owner schema, ownership, key and duplicate-identity checks. Ordinary
+`goal_list(owner)` filters the caller's rows before the common canonical decoder;
+invalid current records fail the read visibly. Scheduling still
 uses the same bounded, fair work loop; per-goal transitions re-read and claim
 canonical state normally rather than relying on the scan snapshot.
 

@@ -1261,6 +1261,7 @@ fn query(database: Option<&std::path::Path>, answer: bool, include_text: bool) -
         include_text: Some(include_text),
         min_score: Some(0.5),
         db_path: database.map(|path| path.to_string_lossy().into()),
+        lisp_probe: None,
     }
 }
 
@@ -2107,4 +2108,364 @@ async fn retrieval_partial_purge_failure_still_invalidates() {
         )["results"],
         json!([])
     );
+}
+
+/// H8: strict Lisp booleans fail before inference and teach the accepted values.
+#[tokio::test]
+async fn h8_boolean_query_handler_contract() {
+    let port = Arc::new(RecordingPort::default());
+    let server = server(port.clone());
+    for key in ["include-text", "generate-answer"] {
+        let mut request = query(None, false, false);
+        request.query = format!("(list (list \"query\" \"river\") (list \"{key}\" nil))");
+        let error = server
+            .corpus_query(Parameters(request))
+            .await
+            .expect_err("nil is not bool");
+        assert!(error.to_string().contains("true/t or false"), "{error}");
+    }
+    assert!(port.inputs.lock().expect("inputs").is_empty());
+}
+
+/// H8: public handler preserves NL/defaults, Lisp overrides, true/t/false and limits.
+#[tokio::test]
+async fn h8_query_options_and_fixed_budgets() {
+    let port = Arc::new(RecordingPort::default());
+    let server = server(port.clone());
+    let refs: Vec<_> = (0..6).map(|i| format!("h8:{i}")).collect();
+    let permit = server
+        .index
+        .begin_ephemeral("h8", refs.clone())
+        .expect("permit");
+    let passages: Vec<_> = refs
+        .iter()
+        .map(|r| (r.clone(), format!("original {r}")))
+        .collect();
+    server
+        .index
+        .publish_ephemeral(
+            &permit,
+            &passages,
+            vec![vec![1.0; crate::embedding_dim()]; 6],
+            &crate::default_embedding_model().expect("model"),
+        )
+        .expect("publish");
+    let default: QueryRequest =
+        serde_json::from_value(json!({"query":"ordinary river"})).expect("request");
+    let result = content(server.corpus_query(Parameters(default)).await);
+    assert_eq!(result["query"], "ordinary river");
+    assert_eq!(result["results"].as_array().expect("results").len(), 5);
+    assert!(result["results"][0].get("text").is_none());
+    for boolean in ["true", "t", "false"] {
+        let mut request = query(None, true, true);
+        request.query = format!(
+            "  (list (list \"query\" \"normalized river\") (list \"top-k\" 2) (list \"min-score\" 0.5) (list \"include-text\" {boolean}) (list \"generate-answer\" {boolean}))"
+        );
+        let result = content(server.corpus_query(Parameters(request)).await);
+        assert_eq!(result["query"], "normalized river");
+        assert_eq!(result["results"].as_array().expect("results").len(), 2);
+        assert_eq!(
+            result["results"][0].get("text").is_some(),
+            boolean != "false"
+        );
+        assert_eq!(result.get("answer").is_some(), boolean != "false");
+    }
+    let mut request = query(None, true, true);
+    request.query = "(list (list \"query\" \"Lisp defaults\"))".into();
+    let result = content(server.corpus_query(Parameters(request)).await);
+    assert_eq!(result["results"].as_array().expect("results").len(), 5);
+    assert!(result.get("answer").is_none());
+    assert!(result["results"][0].get("text").is_none());
+    for lisp in [false, true] {
+        let mut request = query(None, false, false);
+        request.min_score = Some(1.1);
+        if lisp {
+            request.query = "(list (list \"query\" \"floor\") (list \"min-score\" 1.1))".into();
+            request.min_score = Some(0.0);
+        }
+        let result = content(server.corpus_query(Parameters(request)).await);
+        assert!(
+            result["results"].as_array().expect("results").is_empty(),
+            "caller floor must reach retrieval"
+        );
+    }
+    let calls = port.inputs.lock().expect("inputs").len();
+    for (expression, diagnostic) in [
+        ("(list (list \"query\" (begin (define walk (lambda (n) (if (= n 0) \"done\" (walk (- n 1))))) (walk 200))))".to_string(), "max_depth (100)"),
+        (format!("(list (list \"query\" (begin (define xs (list {})) {} \"done\")))", "1 ".repeat(12_000), "(length xs) ".repeat(10)), "max_steps (100000)"),
+    ] {
+        let mut request = query(None, false, false);
+        request.query = expression;
+        let error = server.corpus_query(Parameters(request)).await.expect_err("fixed budget refusal");
+        assert!(error.to_string().to_lowercase().contains(diagnostic), "{error}");
+    }
+    assert_eq!(
+        port.inputs.lock().expect("inputs").len(),
+        calls,
+        "budget refusal precedes inference"
+    );
+    assert_eq!(port.prompts.lock().expect("prompts").len(), 2);
+}
+
+fn h8_held_probe() -> (
+    Arc<crate::tools::storage::LispQueryProbe>,
+    std::sync::mpsc::Sender<()>,
+) {
+    let (release, receiver) = std::sync::mpsc::channel();
+    let probe = Arc::new(crate::tools::storage::LispQueryProbe::default());
+    *probe.release.lock().expect("release") = Some(receiver);
+    (probe, release)
+}
+
+/// H8: actual handler drop signals a queued/entered real blocking evaluator.
+#[tokio::test]
+async fn h8_handler_drop_stops_real_worker() {
+    let port = Arc::new(RecordingPort::default());
+    let server = Arc::new(server(port.clone()));
+    let (probe, release) = h8_held_probe();
+    let mut request = query(None, false, false);
+    request.query = "(list (list \"query\" \"river\"))".into();
+    request.lisp_probe = Some(probe.clone());
+    let foreground = std::thread::current().id();
+    let task = tokio::spawn(async move { server.corpus_query(Parameters(request)).await });
+    tokio::time::timeout(std::time::Duration::from_secs(5), probe.entered.notified())
+        .await
+        .expect("worker entry");
+    assert_ne!(
+        probe
+            .worker_thread
+            .lock()
+            .expect("thread")
+            .expect("entered"),
+        foreground
+    );
+    task.abort();
+    assert!(task.await.expect_err("aborted handler").is_cancelled());
+    tokio::time::timeout(std::time::Duration::from_secs(5), probe.dropped.notified())
+        .await
+        .expect("guard drop");
+    let signalled = probe
+        .flag
+        .lock()
+        .expect("flag")
+        .as_ref()
+        .expect("worker flag")
+        .load(std::sync::atomic::Ordering::Acquire);
+    release.send(()).expect("release evaluator");
+    tokio::time::timeout(std::time::Duration::from_secs(5), probe.exited.notified())
+        .await
+        .expect("real evaluator exit");
+    assert!(signalled, "handler drop must signal the real evaluator");
+    assert!(
+        probe
+            .error
+            .lock()
+            .expect("error")
+            .as_ref()
+            .expect("cancel error")
+            .contains("cancelled")
+    );
+    assert!(port.inputs.lock().expect("inputs").is_empty());
+}
+
+// Decorate only incoming call extensions to attach per-request observations.
+// All IO/handshake/cancellation remains the locked production rmcp transport.
+struct H8ObservedTransport<T> {
+    inner: T,
+    probe: Arc<crate::tools::storage::LispQueryProbe>,
+}
+
+impl<T: rmcp::transport::Transport<rmcp::RoleServer>> rmcp::transport::Transport<rmcp::RoleServer>
+    for H8ObservedTransport<T>
+{
+    type Error = T::Error;
+    fn send(
+        &mut self,
+        message: rmcp::service::TxJsonRpcMessage<rmcp::RoleServer>,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send + 'static {
+        self.inner.send(message)
+    }
+    async fn receive(&mut self) -> Option<rmcp::service::RxJsonRpcMessage<rmcp::RoleServer>> {
+        let Some(mut message) = self.inner.receive().await else {
+            if let Some(context) = self.probe.context.lock().expect("context").as_ref() {
+                let signalled = self
+                    .probe
+                    .flag
+                    .lock()
+                    .expect("flag")
+                    .as_ref()
+                    .expect("flag captured")
+                    .load(std::sync::atomic::Ordering::Acquire);
+                println!(
+                    "H8 at transport EOF: context_cancelled={}, worker_signalled={signalled}",
+                    context.ct.is_cancelled()
+                );
+            }
+            return None;
+        };
+        if let rmcp::model::JsonRpcMessage::Request(request) = &mut message
+            && let rmcp::model::ClientRequest::CallToolRequest(call) = &mut request.request
+        {
+            call.extensions.insert(self.probe.clone());
+        }
+        Some(message)
+    }
+    async fn close(&mut self) -> Result<(), Self::Error> {
+        self.inner.close().await
+    }
+}
+
+async fn h8_wire_send<W: tokio::io::AsyncWrite + Unpin>(writer: &mut W, value: Value) {
+    use tokio::io::AsyncWriteExt;
+    writer
+        .write_all(format!("{value}\n").as_bytes())
+        .await
+        .expect("wire write");
+    writer.flush().await.expect("wire flush");
+}
+
+/// H8: production rmcp notification cancellation reaches context, drops handler,
+/// and signals the real worker; transport EOF is measured independently.
+#[tokio::test]
+async fn h8_rmcp_request_cancel_and_disconnect_capture() {
+    use rmcp::ServiceExt;
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    for disconnect in [false, true] {
+        let port = Arc::new(RecordingPort::default());
+        let server = server(port.clone());
+        let (probe, release) = h8_held_probe();
+        let (server_io, client_io) = tokio::io::duplex(8192);
+        let (read, write) = tokio::io::split(server_io);
+        let transport = H8ObservedTransport {
+            inner: rmcp::transport::async_rw::AsyncRwTransport::<rmcp::RoleServer, _, _>::new(
+                read, write,
+            ),
+            probe: probe.clone(),
+        };
+        let serving = tokio::spawn(async move {
+            server
+                .serve(transport)
+                .await
+                .expect("serve")
+                .waiting()
+                .await
+                .expect("service exit")
+        });
+        let (read, mut write) = tokio::io::split(client_io);
+        let mut read = BufReader::new(read);
+        h8_wire_send(&mut write, json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"h8-probe","version":"1"}}})).await;
+        let mut response = String::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            read.read_line(&mut response),
+        )
+        .await
+        .expect("handshake bound")
+        .expect("handshake");
+        assert!(
+            serde_json::from_str::<Value>(&response)
+                .expect("handshake json")
+                .get("result")
+                .is_some(),
+            "{response}"
+        );
+        h8_wire_send(
+            &mut write,
+            json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+        )
+        .await;
+        h8_wire_send(&mut write, json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"corpus_query","arguments":{"query":"(list (list \"query\" \"river\"))"}}})).await;
+        tokio::time::timeout(std::time::Duration::from_secs(5), probe.entered.notified())
+            .await
+            .expect("routed real worker");
+        let context = probe
+            .context
+            .lock()
+            .expect("context")
+            .as_ref()
+            .expect("production context")
+            .clone();
+        assert!(!context.ct.is_cancelled());
+        if disconnect {
+            drop(read);
+            drop(write);
+            // Observe EOF while the evaluator is parked, not helper-drop.
+            // rmcp drains detached handlers for up to five seconds; waiting's
+            // owner drop may subsequently cancel the root token.
+            let reason = tokio::time::timeout(std::time::Duration::from_secs(7), serving)
+                .await
+                .expect("EOF service bound")
+                .expect("serve task");
+            println!(
+                "H8 EOF service reason={reason:?}, context_cancelled={}",
+                context.ct.is_cancelled()
+            );
+        } else {
+            h8_wire_send(&mut write, json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":2,"reason":"H8 capture"}})).await;
+            tokio::time::timeout(std::time::Duration::from_secs(5), context.ct.cancelled())
+                .await
+                .expect("rmcp context cancellation");
+            // Capture handler drop before EOF, so disconnect cannot explain it.
+            tokio::time::timeout(std::time::Duration::from_secs(5), probe.dropped.notified())
+                .await
+                .expect("notification drops handler before EOF");
+            assert!(
+                probe
+                    .flag
+                    .lock()
+                    .expect("flag")
+                    .as_ref()
+                    .expect("flag captured")
+                    .load(std::sync::atomic::Ordering::Acquire)
+            );
+            // Restore the permit for the common event check below.
+            probe.dropped.notify_one();
+            drop(read);
+            drop(write);
+            tokio::time::timeout(std::time::Duration::from_secs(7), serving)
+                .await
+                .expect("service bound")
+                .expect("serve task");
+        }
+        let cancelled = context.ct.is_cancelled();
+        if cancelled {
+            tokio::time::timeout(std::time::Duration::from_secs(5), probe.dropped.notified())
+                .await
+                .expect("routed handler guard drop");
+        }
+        let signalled = probe
+            .flag
+            .lock()
+            .expect("flag")
+            .as_ref()
+            .expect("worker flag")
+            .load(std::sync::atomic::Ordering::Acquire);
+        println!(
+            "H8 disconnect={disconnect}, context_cancelled={cancelled}, worker_signalled={signalled}"
+        );
+        release.send(()).expect("release real evaluator");
+        tokio::time::timeout(std::time::Duration::from_secs(5), probe.exited.notified())
+            .await
+            .expect("real worker exit");
+        if cancelled {
+            assert!(signalled);
+            assert!(
+                probe
+                    .error
+                    .lock()
+                    .expect("error")
+                    .as_ref()
+                    .expect("cancel error")
+                    .contains("cancelled")
+            );
+            assert!(port.inputs.lock().expect("inputs").is_empty());
+        } else {
+            assert!(disconnect, "request cancellation must propagate");
+            println!(
+                "H8 client-disconnect guarantee BLOCKED: no rmcp token propagation; worker exits by fixed budget/normal completion only"
+            );
+        }
+        // Break the observer's retained peer after all captured events.
+        probe.context.lock().expect("context").take();
+    }
 }

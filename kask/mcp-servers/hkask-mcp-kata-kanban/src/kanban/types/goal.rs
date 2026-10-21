@@ -30,13 +30,6 @@ pub struct Goal {
     pub updated_at: DateTime<Utc>,
 }
 
-/// One owner-scoped scan: valid goals plus visible omissions by stored row key.
-#[derive(Debug, Default, Serialize)]
-pub struct GoalListing {
-    pub goals: Vec<Goal>,
-    pub rejected: std::collections::BTreeMap<String, String>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GoalSource {

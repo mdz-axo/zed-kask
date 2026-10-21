@@ -837,7 +837,7 @@ async fn listed_goal_ids(server: &KanbanServer) -> Vec<String> {
         .await
         .expect("tool ok");
     let listed = parse(&out);
-    listed["goals"]
+    listed
         .as_array()
         .expect("goals array")
         .iter()
@@ -1402,7 +1402,27 @@ async fn pre_effect_failure_releases_the_claim_for_a_clean_retry() {
 }
 
 #[tokio::test]
-async fn goal_listing_reports_owner_scoped_rejections_without_hiding_supported_goals() {
+async fn goal_listing_surfaces_invalid_current_records_as_tool_errors() {
+    let (server, driver) = make_server_with_shared_driver();
+    create_goal(&server, "Current goal", None).await;
+    let store = HMemStore::from_driver(driver).expect("store");
+    store
+        .insert(&hkask_storage::HMem::new(
+            "kanban:goal",
+            "malformed-current",
+            serde_json::json!({"schema_version":3}),
+            server.webid,
+        ))
+        .expect("invalid current fixture");
+    let error = server
+        .kanban_goal_list(Parameters(GoalListRequest {}))
+        .await
+        .expect_err("invalid current record fails the tool call");
+    assert!(error.to_string().contains("goal decode"));
+}
+
+#[tokio::test]
+async fn goal_listing_returns_current_goals_or_errors_without_cross_owner_disclosure() {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("goals.db");
     let pool = SqliteDriver::file_pool_with_schema(path.to_str().expect("path")).expect("pool");
@@ -1420,45 +1440,26 @@ async fn goal_listing_reports_owner_scoped_rejections_without_hiding_supported_g
             .await
             .expect("ordinary listing"),
     );
-    assert_eq!(
-        ordinary["rejected"],
-        serde_json::json!({}),
-        "ordinary listing explicitly has no omissions"
-    );
-    assert_eq!(ordinary["goals"].as_array().expect("goals").len(), 1);
-    assert_eq!(ordinary["goals"][0]["id"], supported["id"]);
+    assert_eq!(ordinary.as_array().expect("goals array").len(), 1);
+    assert_eq!(ordinary[0]["id"], supported["id"]);
     let store = HMemStore::from_driver(driver.clone()).expect("store");
     let unsupported_id = hkask_types::GoalID::new().to_string();
-    let raw = serde_json::json!({"schema_version":2,"id":unsupported_id,"history":"must remain untouched"});
-    let row = hkask_storage::HMem::new("kanban:goal", &unsupported_id, raw.clone(), owner);
+    let raw = serde_json::json!({"schema_version":2,"id":unsupported_id});
+    let row = hkask_storage::HMem::new("kanban:goal", &unsupported_id, raw, owner);
     store.insert(&row).expect("unsupported fixture");
-    let listed = parse(
-        &server
-            .kanban_goal_list(Parameters(GoalListRequest {}))
-            .await
-            .expect("partial listing is explicit"),
-    );
-    assert_eq!(listed["goals"][0]["id"], supported["id"]);
-    assert_eq!(listed["goals"].as_array().expect("goals").len(), 1);
-    assert!(
-        listed["rejected"][&unsupported_id]
-            .as_str()
-            .expect("visible reason")
-            .contains("expected version 3")
-    );
-    assert_eq!(listed["rejected"].as_object().expect("rejections").len(), 1);
+    let error = server
+        .kanban_goal_list(Parameters(GoalListRequest {}))
+        .await
+        .expect_err("unsupported schema fails the listing");
+    assert!(error.to_string().contains("expected version 3"));
     let isolated = parse(
         &foreign
             .kanban_goal_list(Parameters(GoalListRequest {}))
             .await
             .expect("foreign listing"),
     );
-    assert_eq!(isolated["goals"][0]["id"], foreign_supported["id"]);
-    assert_eq!(
-        isolated["rejected"],
-        serde_json::json!({}),
-        "another owner's identity/reason must not be disclosed"
-    );
+    assert_eq!(isolated.as_array().expect("isolated goals").len(), 1);
+    assert_eq!(isolated[0]["id"], foreign_supported["id"]);
     assert!(
         server
             .kanban_goal_get(Parameters(GoalGetRequest {
@@ -1478,13 +1479,5 @@ async fn goal_listing_reports_owner_scoped_rejections_without_hiding_supported_g
     assert!(
         !denied.to_string().contains("schema"),
         "foreign caller cannot inspect the unsupported schema"
-    );
-    assert_eq!(
-        store
-            .get_by_id(&row.id)
-            .expect("raw read")
-            .expect("row retained")
-            .value,
-        raw
     );
 }

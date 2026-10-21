@@ -1,7 +1,9 @@
-//! Study-local, integer micro-USD accounting. The caller must fsync each reserve
-//! event before accessing a model or replay response; this ledger performs no I/O.
+//! Study-local generation-only monetary accounting and separate count attempts.
+//! Count attempts do not price the counting endpoint; its billing remains unknown.
+//! The caller must fsync each count/reserve event before accessing its response;
+//! this offline-replay ledger performs no I/O.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -13,8 +15,8 @@ pub(super) struct Limits {
     pub(super) max_output_tokens: u64,
     pub(super) provider_output_max: u64,
     pub(super) spending_ceiling_microusd: u64,
-    pub(super) prompt_microusd_per_token: u64,
-    pub(super) completion_microusd_per_token: u64,
+    pub(super) prompt_microusd_per_million_tokens: u64,
+    pub(super) completion_microusd_per_million_tokens: u64,
 }
 
 impl Limits {
@@ -35,14 +37,17 @@ impl Limits {
     }
 
     fn cost(&self, input: u64, output: u64) -> Result<u64, String> {
-        input
-            .checked_mul(self.prompt_microusd_per_token)
+        let total = u128::from(input)
+            .checked_mul(u128::from(self.prompt_microusd_per_million_tokens))
             .and_then(|prompt| {
-                output
-                    .checked_mul(self.completion_microusd_per_token)
+                u128::from(output)
+                    .checked_mul(u128::from(self.completion_microusd_per_million_tokens))
                     .and_then(|completion| prompt.checked_add(completion))
             })
-            .ok_or_else(|| "token tariff arithmetic overflow".into())
+            .ok_or("token tariff arithmetic overflow")?;
+        // Round the combined request cost, not each billable component.
+        u64::try_from(total.div_ceil(1_000_000))
+            .map_err(|_| "token tariff arithmetic overflow".into())
     }
 }
 
@@ -58,6 +63,9 @@ pub(super) struct Usage {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "event", rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum Event {
+    Count {
+        id: String,
+    },
     Reserve {
         id: String,
         input_upper_bound: Option<u64>,
@@ -86,6 +94,7 @@ struct Allowance {
 pub(super) struct Ledger {
     limits: Limits,
     attempts: u64,
+    counted: BTreeSet<String>,
     incurred_microusd: u64,
     outstanding: BTreeMap<String, u64>,
     stopped: Option<String>,
@@ -99,11 +108,26 @@ impl Ledger {
         Ok(Self {
             limits,
             attempts: 0,
+            counted: BTreeSet::new(),
             incurred_microusd: 0,
             outstanding: BTreeMap::new(),
             stopped: None,
             allowances: BTreeMap::new(),
         })
+    }
+
+    pub(super) fn count(&mut self, id: &str) -> Result<(), String> {
+        if let Some(reason) = self.stopped() {
+            return Err(format!("ledger stopped: {reason}"));
+        }
+        if self.counted.contains(id) {
+            return Err(format!("count attempt ID already used: {id}"));
+        }
+        if self.count_attempts() >= self.limits.max_attempts {
+            return Err("count attempt limit exhausted".into());
+        }
+        self.counted.insert(id.into());
+        Ok(())
     }
 
     pub(super) fn reserve(
@@ -252,6 +276,10 @@ impl Ledger {
         self.attempts
     }
 
+    pub(super) fn count_attempts(&self) -> u64 {
+        self.counted.len() as u64
+    }
+
     pub(super) fn incurred_microusd(&self) -> u64 {
         self.incurred_microusd
     }
@@ -272,6 +300,7 @@ impl Ledger {
         let mut ledger = Self::new(limits)?;
         for event in events {
             match event {
+                Event::Count { id } => ledger.count(id)?,
                 Event::Reserve {
                     id,
                     input_upper_bound,
@@ -316,8 +345,8 @@ mod tests {
             max_output_tokens: 1024,
             provider_output_max: 128_000,
             spending_ceiling_microusd: 6_000_000,
-            prompt_microusd_per_token: 2,
-            completion_microusd_per_token: 6,
+            prompt_microusd_per_million_tokens: 2_000_000,
+            completion_microusd_per_million_tokens: 6_000_000,
         }
     }
 
@@ -343,6 +372,142 @@ mod tests {
     }
 
     #[test]
+    fn count_exhaustion_and_duplicates_refuse_atomically() {
+        let mut policy = limits();
+        policy.max_attempts = 2;
+        let mut ledger = Ledger::new(policy).expect("valid fixture");
+        assert_eq!(ledger.count_attempts(), 0);
+        ledger.count("one").expect("first count fits");
+        let before = snapshot(&ledger);
+        assert_eq!(
+            ledger.count("one").expect_err("duplicate count"),
+            "count attempt ID already used: one"
+        );
+        assert_eq!(snapshot(&ledger), before);
+        ledger.count("two").expect("exact count limit fits");
+        assert_eq!(ledger.count_attempts(), 2);
+        let before = snapshot(&ledger);
+        assert_eq!(
+            ledger.count("three").expect_err("count limit exhausted"),
+            "count attempt limit exhausted"
+        );
+        assert_eq!(snapshot(&ledger), before);
+        assert!(ledger.stopped().is_none());
+        assert_eq!(ledger.attempts(), 0);
+        assert_eq!(ledger.incurred_microusd(), 0);
+        assert_eq!(ledger.outstanding_microusd().expect("sum"), 0);
+    }
+
+    #[test]
+    fn count_respects_sticky_stop_without_mutation() {
+        let mut ledger = Ledger::new(limits()).expect("valid fixture");
+        ledger.count("one").expect("first count");
+        ledger.stop("count response failed");
+        ledger.stop("later reason");
+        for id in ["one", "two"] {
+            let before = snapshot(&ledger);
+            assert_eq!(
+                ledger.count(id).expect_err("stopped ledger refuses counts"),
+                "ledger stopped: count response failed"
+            );
+            assert_eq!(snapshot(&ledger), before);
+        }
+        assert_eq!(ledger.count_attempts(), 1);
+    }
+
+    #[test]
+    fn count_and_generation_admission_are_independent() {
+        let mut policy = limits();
+        policy.max_attempts = 1;
+        for count_first in [false, true] {
+            let mut ledger = Ledger::new(policy.clone()).expect("valid fixture");
+            if count_first {
+                ledger.count("one").expect("count first");
+            }
+            let reservation = ledger
+                .reserve("one", Some(10), false)
+                .expect("generation admission is independent of counts");
+            if !count_first {
+                ledger.count("one").expect("count after generation reserve");
+            }
+            assert_eq!(ledger.attempts(), 1);
+            assert_eq!(ledger.count_attempts(), 1);
+            assert_eq!(ledger.outstanding_microusd().expect("sum"), reservation);
+            assert_eq!(ledger.incurred_microusd(), 0);
+            ledger.settle("one", Some(&usage(10, 1))).expect("settle");
+            assert_eq!(ledger.count_attempts(), 1);
+            assert_eq!(ledger.incurred_microusd(), 26);
+        }
+    }
+
+    #[test]
+    fn replay_preserves_count_only_attempts_without_generation_liability() {
+        let mut policy = limits();
+        policy.max_attempts = 2;
+        let events = [
+            Event::Count { id: "one".into() },
+            Event::Count { id: "two".into() },
+            Event::Stop {
+                reason: "count response failed".into(),
+            },
+        ];
+        let bytes = serde_json::to_string(&events).expect("journal serializes");
+        let decoded: Vec<Event> = serde_json::from_str(&bytes).expect("journal parses");
+        let replay = Ledger::replay(policy.clone(), &decoded).expect("replay count-only prefix");
+        let mut live = Ledger::new(policy).expect("valid fixture");
+        live.count("one").expect("first count");
+        live.count("two").expect("second count");
+        live.stop("count response failed");
+        assert_eq!(snapshot(&live), snapshot(&replay));
+        assert_eq!(replay.count_attempts(), 2);
+        assert_eq!(replay.attempts(), 0);
+        assert_eq!(replay.incurred_microusd(), 0);
+        assert_eq!(replay.outstanding_microusd().expect("sum"), 0);
+        assert_eq!(replay.stopped(), Some("count response failed"));
+        let prefix =
+            Ledger::replay(limits(), &decoded[..1]).expect("interrupted count-only prefix");
+        assert_eq!(prefix.count_attempts(), 1);
+        assert_eq!(prefix.attempts(), 0);
+        assert!(prefix.stopped().is_none());
+    }
+
+    #[test]
+    fn replay_refuses_invalid_count_events_immediately() {
+        let mut policy = limits();
+        policy.max_attempts = 1;
+        for (events, expected) in [
+            (
+                vec![
+                    Event::Count { id: "one".into() },
+                    Event::Count { id: "one".into() },
+                ],
+                "count attempt ID already used: one",
+            ),
+            (
+                vec![
+                    Event::Count { id: "one".into() },
+                    Event::Count { id: "two".into() },
+                ],
+                "count attempt limit exhausted",
+            ),
+            (
+                vec![
+                    Event::Stop {
+                        reason: "stopped".into(),
+                    },
+                    Event::Count { id: "one".into() },
+                ],
+                "ledger stopped: stopped",
+            ),
+        ] {
+            assert_eq!(
+                Ledger::replay(policy.clone(), &events).expect_err("invalid count journal"),
+                expected
+            );
+        }
+    }
+
+    #[test]
     fn reservation_tariffs_and_exact_boundary() {
         let mut ledger = Ledger::new(limits()).expect("valid fixture");
         assert_eq!(
@@ -362,6 +527,106 @@ mod tests {
         let before = snapshot(&ledger);
         assert!(ledger.reserve("extra", Some(0), false).is_err());
         assert_eq!(snapshot(&ledger), before);
+    }
+
+    #[test]
+    fn fractional_tariffs_reserve_and_settle_exact_request_cost() {
+        let mut policy = limits();
+        policy.prompt_microusd_per_million_tokens = 750_000;
+        policy.completion_microusd_per_million_tokens = 4_500_000;
+        let mut ledger = Ledger::new(policy).expect("valid fractional tariffs");
+        assert_eq!(
+            ledger.reserve("exact", Some(8192), false).expect("reserve"),
+            10_752
+        );
+        let actual = Usage {
+            reasoning_tokens: Some(512),
+            ..usage(8192, 1024)
+        };
+        ledger.settle("exact", Some(&actual)).expect("settle");
+        assert_eq!(ledger.incurred_microusd(), 10_752);
+        assert_eq!(ledger.outstanding_microusd().expect("sum"), 0);
+        assert!(ledger.stopped().is_none());
+    }
+
+    #[test]
+    fn fractional_components_round_once_per_request() {
+        let mut policy = limits();
+        policy.max_output_tokens = 1;
+        policy.prompt_microusd_per_million_tokens = 250_000;
+        policy.completion_microusd_per_million_tokens = 250_000;
+        for (input, output, expected) in [(1, 0, 1), (0, 1, 1), (1, 1, 1), (3, 1, 1), (4, 1, 2)] {
+            assert_eq!(policy.cost(input, output).expect("bounded cost"), expected);
+        }
+        let mut ledger = Ledger::new(policy).expect("valid fractional tariffs");
+        for id in ["one", "two"] {
+            assert_eq!(ledger.reserve(id, Some(1), false).expect("reserve"), 1);
+            ledger.settle(id, Some(&usage(1, 1))).expect("settle");
+        }
+        // Separate requests each round up even when their exact costs sum to one.
+        assert_eq!(ledger.incurred_microusd(), 2);
+        assert_eq!(ledger.outstanding_microusd().expect("sum"), 0);
+    }
+
+    #[test]
+    fn tariff_cost_keeps_wide_products_and_checks_final_conversion() {
+        let mut policy = limits();
+        policy.prompt_microusd_per_million_tokens = 1_000_000;
+        policy.completion_microusd_per_million_tokens = 1;
+        assert_eq!(
+            policy.cost(u64::MAX, 0).expect("exact u64 maximum"),
+            u64::MAX
+        );
+        assert_eq!(
+            policy.cost(u64::MAX - 1, 1).expect("rounds to maximum"),
+            u64::MAX
+        );
+        assert_eq!(
+            policy.cost(u64::MAX, 1).expect_err("rounding exceeds u64"),
+            "token tariff arithmetic overflow"
+        );
+        policy.prompt_microusd_per_million_tokens = u64::MAX;
+        policy.completion_microusd_per_million_tokens = u64::MAX;
+        assert_eq!(
+            policy
+                .cost(500_000, 500_000)
+                .expect("wide sum fits after division"),
+            u64::MAX
+        );
+        assert!(policy.cost(u64::MAX, 0).is_err());
+        assert!(policy.cost(0, u64::MAX).is_err());
+        assert_eq!(
+            policy
+                .cost(u64::MAX, u64::MAX)
+                .expect_err("u128 sum overflow"),
+            "token tariff arithmetic overflow"
+        );
+    }
+
+    #[test]
+    fn zero_tokens_and_zero_tariffs_cost_zero() {
+        let mut policy = limits();
+        policy.prompt_microusd_per_million_tokens = u64::MAX;
+        policy.completion_microusd_per_million_tokens = u64::MAX;
+        assert_eq!(policy.cost(0, 0).expect("zero usage"), 0);
+        policy.prompt_microusd_per_million_tokens = 0;
+        assert_eq!(policy.cost(u64::MAX, 0).expect("free input"), 0);
+        policy.prompt_microusd_per_million_tokens = u64::MAX;
+        policy.completion_microusd_per_million_tokens = 0;
+        assert_eq!(policy.cost(0, u64::MAX).expect("free output"), 0);
+        policy.prompt_microusd_per_million_tokens = 0;
+        assert_eq!(policy.cost(u64::MAX, u64::MAX).expect("zero tariffs"), 0);
+        let mut ledger = Ledger::new(policy).expect("zero tariffs are valid");
+        assert_eq!(
+            ledger.reserve("free", Some(8192), false).expect("reserve"),
+            0
+        );
+        ledger
+            .settle("free", Some(&usage(8192, 1024)))
+            .expect("settle");
+        assert_eq!(ledger.incurred_microusd(), 0);
+        assert_eq!(ledger.outstanding_microusd().expect("sum"), 0);
+        assert!(ledger.stopped().is_none());
     }
 
     #[test]
@@ -419,10 +684,12 @@ mod tests {
         let mut policy = limits();
         policy.max_output_tokens = policy.provider_output_max + 1;
         assert!(Ledger::new(policy).is_err());
-        for prices in [(u64::MAX, 6), (2, u64::MAX), (u64::MAX / 8192, 6)] {
+        for prices in [(u64::MAX, 0), (0, u64::MAX), (u64::MAX, u64::MAX)] {
             let mut policy = limits();
-            policy.prompt_microusd_per_token = prices.0;
-            policy.completion_microusd_per_token = prices.1;
+            policy.max_input_tokens = u64::MAX;
+            policy.provider_output_max = u64::MAX;
+            policy.prompt_microusd_per_million_tokens = prices.0;
+            policy.completion_microusd_per_million_tokens = prices.1;
             assert!(Ledger::new(policy).is_err());
         }
     }
@@ -430,16 +697,18 @@ mod tests {
     #[test]
     fn aggregate_overflow_is_atomic() {
         let mut policy = limits();
-        policy.max_input_tokens = 1;
+        policy.max_input_tokens = u64::MAX / 2;
         policy.max_output_tokens = 1;
         policy.provider_output_max = 1;
-        policy.prompt_microusd_per_token = u64::MAX / 2;
-        policy.completion_microusd_per_token = 1;
+        policy.prompt_microusd_per_million_tokens = 1_000_000;
+        policy.completion_microusd_per_million_tokens = 1_000_000;
         policy.spending_ceiling_microusd = u64::MAX;
         let mut ledger = Ledger::new(policy).expect("single reservation fits");
-        ledger.reserve("one", Some(1), false).expect("first fits");
+        ledger
+            .reserve("one", Some(u64::MAX / 2), false)
+            .expect("first fits");
         let before = snapshot(&ledger);
-        assert!(ledger.reserve("two", Some(1), false).is_err());
+        assert!(ledger.reserve("two", Some(u64::MAX / 2), false).is_err());
         assert_eq!(snapshot(&ledger), before);
     }
 

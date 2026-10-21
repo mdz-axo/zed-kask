@@ -50,7 +50,7 @@ are distinct from worker progress and independent criterion assessment.
 | `kanban_goal_create` | Declare 1–4 explicit criteria and their source; optionally freeze a prospective forecast |
 | `kanban_goal_judge` | Append worker progress with exact criterion coverage; done requires every criterion passed |
 | `kanban_goal_get` | Get the complete caller-owned specification and lifecycle history |
-| `kanban_goal_list` | List supported caller-owned goals, including closed records, plus rejected row identities and reasons |
+| `kanban_goal_list` | Return an array of complete caller-owned current-schema goals, including closed records; invalid current records fail visibly |
 
 Human closure and corrections are **native-only**; worker actor strings never
 grant human authority. The service owns assessment claim/expiry/conditional
@@ -73,12 +73,13 @@ and acknowledgment are protected by the canonical revision transaction; failed
 acknowledgment retries after restart without appending another memory record.
 Delivery never deletes canonical history.
 
-Only schema version 3 is supported. Direct unsupported reads produce explicit
-errors and leave bytes untouched. Listing returns `{ goals, rejected }`, with
-owner-filtered rejection reasons keyed by stored row identity rather than silently
-omitting unsupported records. The drainer logs these rejections and continues
-with supported goals across all owners. There is no runtime migration,
-archive conversion, or drifted-key scan. See [the exact ownership boundary](GOAL_INTERFACE.md).
+Only schema version 3 is accepted. `goal_list(owner)` returns `Vec<Goal>` after
+filtering caller ownership before decoding; the host scan returns owner-grouped
+vectors. Invalid current records and query failures remain visible errors, not
+omitted rows or a separate rejection channel. Obsolete goal rows and projections
+are discarded by an explicit one-time reset, with no runtime migration, archive,
+or backward compatibility contract. No reset execution is claimed here.
+See [the exact ownership boundary](GOAL_INTERFACE.md).
 
 ### Communication
 | Tool | Description |
