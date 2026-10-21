@@ -1,7 +1,7 @@
 //! hkask-mcp-media — binary entrypoint.
 //!
-//! Thin wrapper around the media generation server library. The server struct
-//! tool methods live in lib.rs for fuzz testability (P5 Testing Discipline).
+//! Thin wrapper around the research-media curation server library. Tool methods
+//! live in the library's tools modules so their contracts can be tested directly.
 
 #[tokio::main]
 async fn main() -> Result<(), hkask_mcp_server::McpError> {

@@ -1,8 +1,4 @@
-//! Video module — short video and GIF creation.
-//!
-//! Tool families:
-//! - Local: video_clip, video_to_gif, video_add_caption, video_remix
-//! - AI: image_to_video (routed through inference router)
+//! Source video inspection, extraction, and traceable presentation derivatives.
 
 pub mod ffmpeg;
 pub mod ytdlp;

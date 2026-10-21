@@ -513,7 +513,7 @@ pub struct MediaModelInfo {
     pub provider: String,
     /// Media modality: "image", "video", "audio", or "vision".
     pub modality: String,
-    /// List of supported media operations (e.g. ["generate_image", "image_to_image"]).
+    /// Supported research operations, such as transcription or visual analysis.
     pub capabilities: Vec<String>,
     /// Whether this is the configured default model for its modality.
     pub is_default: bool,
@@ -534,7 +534,7 @@ pub struct ModelInfoRequest {
     pub model_id: String,
 }
 
-// ── Generation job queue request types ──────────────────────────────────
+// ── Research job queue request types ──────────────────────────────────
 
 /// A research job record — tracks the lifecycle of an async media operation.
 /// Maps to the OMC `Task` concept.
@@ -542,7 +542,7 @@ pub struct ModelInfoRequest {
 pub struct JobRecord {
     /// Unique job identifier (UUID).
     pub id: String,
-    /// The media operation (e.g. "generate_image", "generate_video").
+    /// The research operation, such as "transcribe" or "video_clip".
     pub op: String,
     /// Job status: "queued", "running", "cancelling", "completed", "failed", or "cancelled".
     pub status: String,

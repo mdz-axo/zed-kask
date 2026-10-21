@@ -1240,7 +1240,7 @@ impl MediaServer {
     // Historical generation evidence remains readable.
 
     #[tool(
-        description = "Show the recorded generation lineage for a gallery image (op, prompt, model, provider, seed, params, workflow, parent, timestamp). Returns lineage: null if none is recorded."
+        description = "Read historical or source-derived lineage for a gallery asset, including any saved historical workflow graph. Read-only evidence inspection never replays a retired operation. Returns lineage: null if none is recorded."
     )]
     pub async fn gallery_lineage(
         &self,
@@ -1254,7 +1254,17 @@ impl MediaServer {
                 .gallery_store
                 .get_generation(&image_id)
                 .map_err(|e| map_media_error(e.into()))?;
-            Ok(serde_json::json!({ "image_index": image_index, "lineage": lineage }))
+            let historical_workflow = lineage
+                .as_ref()
+                .and_then(|record| record.workflow_id.as_deref())
+                .map(|id| self.gallery_store.get_workflow(id))
+                .transpose()
+                .map_err(map_gallery_store_error)?;
+            Ok(serde_json::json!({
+                "image_index": image_index,
+                "lineage": lineage,
+                "historical_workflow": historical_workflow,
+            }))
         })
         .await
     }
@@ -1729,6 +1739,52 @@ pub(super) mod tests {
     pub(crate) fn payload(response: &str) -> serde_json::Value {
         let response = serde_json::from_str(response).expect("tool response JSON");
         hkask_types::tool_response::unwrap_tool_envelope(response)
+    }
+
+    /// expect: Retired workflow graphs remain inspectable evidence, not executable operations.
+    #[tokio::test]
+    async fn historical_workflow_is_readable_through_lineage()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server = research_server();
+        let dir = tempfile::tempdir()?;
+        image::RgbImage::new(2, 2).save(dir.path().join("historical.png"))?;
+        server
+            .gallery_organize(crate::test_support::read_only_organize_request(dir.path()))
+            .await?;
+        let ga = server.access_gallery()?;
+        let image = server
+            .gallery_store
+            .list_assets(&ga.gallery_id, 0, 1)?
+            .remove(0);
+        let no_lineage = payload(
+            &server
+                .gallery_lineage(Parameters(GalleryLineageRequest { image_index: 0 }))
+                .await?,
+        );
+        assert!(no_lineage["lineage"].is_null());
+        assert!(no_lineage["historical_workflow"].is_null());
+        let graph = r#"{"steps":[{"id":"historical-step","tool":"retired-operation"}]}"#;
+        let workflow = server.gallery_store.record_workflow(graph)?;
+        server.gallery_store.record_generation(
+            &image.id,
+            "historical-operation",
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&workflow.id),
+            None,
+        )?;
+        let result = payload(
+            &server
+                .gallery_lineage(Parameters(GalleryLineageRequest { image_index: 0 }))
+                .await?,
+        );
+        assert_eq!(result["historical_workflow"]["graph_json"], graph);
+        assert_eq!(result["historical_workflow"]["id"], workflow.id);
+        assert_eq!(result["lineage"]["op"], "historical-operation");
+        Ok(())
     }
 
     /// expect: Researcher annotations survive actual scans and successful reanalysis,

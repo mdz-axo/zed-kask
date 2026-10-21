@@ -43,9 +43,9 @@ The table below is a partial quick-reference.
 
 ## Research annotations and recording retrieval
 
-The approved target inventory is 91 tools (102 − 20 creative operations + 9
-research operations). `TOOL_NAMES` and the live router must reconcile at
-integration; this target is not a claim about a rebuilt/running child.
+The source inventory is 91 tools (102 − 20 creative operations + 9
+research operations), pinned against the real router and request schemas.
+A running editor must rebuild/restart its media child to expose this inventory.
 
 | Tool | Required request fields |
 |---|---|
@@ -79,9 +79,26 @@ for semantic search. Search hits and annotations do not certify source truth.
 
 Creative generation/TTS/workflow execution is retired. Historical Asset records,
 lineage, OMC graphs, transcripts, and source-derived excerpts/reels remain
-readable. Reduct upload/import transfers selected media externally and requires
+readable. `gallery_lineage` also returns the saved historical workflow graph
+when one is referenced; no workflow replay or new creative execution is exposed.
+Reduct upload/import transfers selected media externally and requires
 an explicit operator decision; publication is a separate decision creating
 public access. Face identification is opt-in, never implied by generic analysis.
+
+## Source-linked visual evidence
+
+`video_caption` explicitly analyzes sampled visual frames, not the complete
+recording or its audio. Optional `interval_sec` (default 2 seconds) and
+`max_frames` (default 10, bounded by the extraction limit) control sampling.
+Responses distinguish the requested sample from observed source-frame timestamps
+and disclose missing-frame failures and visual-only limitations. Transcribe
+speech separately rather than treating a visual caption as spoken evidence.
+
+`video_extract_frames` publishes each selected frame through the atomic asset
+publisher. Lineage records source identity, the SHA-256 of the private snapshot
+actually decoded, a matching indexed parent when available, and actual source
+PTS observed from FFmpeg. Frame ordinals are not timestamps. Originals remain
+unchanged; failures do not leave half-published assets.
 
 ## Tool-result contracts
 

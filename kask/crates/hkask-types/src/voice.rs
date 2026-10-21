@@ -2,14 +2,14 @@
 //!
 //! A VoiceDesign is a machine-readable description of a synthetic voice
 //! that can be passed to TTS models for consistent speech generation.
-//! Designed by the `voice_design` tool in the media MCP server,
+//! Provider-neutral voice configuration for inference callers,
 //! stored on the AgentPod, and consumed by the talk service.
 
 use serde::{Deserialize, Serialize};
 
 /// A structured voice profile for TTS generation.
 ///
-/// Designed by an LLM via the `voice_design` tool, stored with the agent,
+/// Supplied by an inference caller and stored with the agent,
 /// and passed to TTS models as a natural-language voice description.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct VoiceDesign {

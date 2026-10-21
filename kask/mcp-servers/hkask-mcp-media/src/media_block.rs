@@ -294,10 +294,7 @@ mod tests {
         assert_eq!(extract_src(&result, "audio"), Some("/tmp/c.wav".into()));
     }
 
-    // The audio arm must also read `output` — generate_speech composes its
-    // slim result through staged publication, whose path field is
-    // `output` (same as every other kind). Without this fallback the speech
-    // display hint never attached.
+    // Source-derived audio publication uses the same `output` path as video.
     #[test]
     fn test_extract_src_audio_falls_back_to_output_field() {
         let result = serde_json::json!({"output": "/tmp/speech.mp3"});

@@ -236,16 +236,8 @@ pub struct FaceRegistryRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowRecord {
     pub id: String,
-    /// Serialized `WorkflowGraph` JSON (export / import / re-execute).
+    /// Historical workflow JSON; retained for evidence inspection only.
     pub graph_json: String,
-    pub created_at: String,
-}
-
-/// Bounded workflow-list row. Full graph JSON is available only through
-/// `GalleryStore::get_workflow`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkflowSummary {
-    pub id: String,
     pub created_at: String,
 }
 
@@ -1357,8 +1349,9 @@ impl GalleryStore {
 impl GalleryStore {
     // ── Generation lineage (WS-3) ──────────────────────────────────────────
 
-    /// Persist a workflow graph (serialized `WorkflowGraph` JSON) and return its id.
-    pub fn record_workflow(
+    /// Historical fixture writer; production keeps prior graphs read-only.
+    #[cfg(test)]
+    pub(crate) fn record_workflow(
         &self,
         graph_json: &str,
     ) -> std::result::Result<WorkflowRecord, GalleryStoreError> {
@@ -1397,53 +1390,6 @@ impl GalleryStore {
                 id: workflow_id.to_string(),
             })
         })
-    }
-
-    /// List a bounded page of saved workflow summaries, newest first, without
-    /// loading graph JSON. Returns the matching total for pagination metadata.
-    #[must_use = "result must be used"]
-    pub fn list_workflow_summaries(
-        &self,
-        limit: usize,
-    ) -> std::result::Result<(Vec<WorkflowSummary>, usize), GalleryStoreError> {
-        let total = query_row(
-            &*self.driver,
-            "SELECT COUNT(*) FROM gallery_workflow",
-            &[],
-            |row| row.get_int(0).map(|count| count as usize),
-        )?
-        .ok_or_else(|| {
-            GalleryStoreError::Conflict("workflow count query returned no row".to_string())
-        })?;
-        let summaries = query_map(
-            &*self.driver,
-            "SELECT id, created_at FROM gallery_workflow ORDER BY created_at DESC, id DESC LIMIT ?1",
-            &[DbValue::Integer(limit as i64)],
-            |row| {
-                Ok(WorkflowSummary {
-                    id: row.get_str(0)?.to_string(),
-                    created_at: row.get_str(1)?.to_string(),
-                })
-            },
-        )?;
-        Ok((summaries, total))
-    }
-
-    /// Delete a workflow by id. Does not delete assets produced by the
-    /// workflow — only the workflow definition. Generation records referencing
-    /// this workflow have their `workflow_id` set to NULL (ON DELETE SET NULL).
-    pub fn delete_workflow(&self, workflow_id: &str) -> std::result::Result<(), GalleryStoreError> {
-        let affected = self.driver.execute(
-            "DELETE FROM gallery_workflow WHERE id = ?1",
-            &[DbValue::Text(workflow_id.to_string())],
-        )?;
-        if affected == 0 {
-            return Err(GalleryStoreError::NotFound(NotFound {
-                entity_type: "workflow".to_string(),
-                id: workflow_id.to_string(),
-            }));
-        }
-        Ok(())
     }
 
     /// Historical fixture writer; production publication uses the atomic asset aggregate.
@@ -1932,6 +1878,33 @@ mod tests {
         assert_eq!(img.hash, "abc");
     }
 
+    /// expect: Opening a legacy gallery preserves existing tags and permits a
+    /// supplied annotation with identical text without conflating its provenance.
+    #[test]
+    fn legacy_tag_index_upgrade_preserves_model_and_supplied_annotations()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (store, _gallery, image) = store_with_image("legacy-tags");
+        store.driver.execute_batch(
+            "DROP INDEX idx_gallery_tags_provenance;
+             CREATE UNIQUE INDEX idx_gallery_tags_unique ON gallery_tags(image_id, tag_type, value);",
+        )?;
+        let prior = store.tag_image(&image.id, "tag", "specimen", 0.8, "vision-model")?;
+        let reopened = GalleryStore::from_driver(Arc::clone(store.driver()))?;
+        let supplied = reopened.tag_image(&image.id, "tag", "specimen", 1.0, "user")?;
+        assert_ne!(prior.id, supplied.id);
+        let tags = reopened.get_tags(&image.id)?;
+        assert_eq!(tags.len(), 2);
+        assert!(
+            tags.iter()
+                .any(|tag| tag.id == prior.id && tag.model_used == "vision-model")
+        );
+        assert!(
+            tags.iter()
+                .any(|tag| tag.id == supplied.id && tag.model_used == "user")
+        );
+        Ok(())
+    }
+
     #[test]
     fn tag_image_stores_tag() {
         let (store, _gallery, img) = store_with_image("abc");
@@ -2223,24 +2196,6 @@ mod tests {
             .unwrap();
         let retrieved = store.get_workflow(&wf.id).unwrap();
         assert_eq!(retrieved.graph_json, "{\"nodes\":[],\"parallel\":false}");
-    }
-
-    /// expect: Workflow listings return only bounded metadata while full graphs remain available
-    /// through direct load.
-    #[test]
-    fn workflow_summary_page_is_bounded_and_excludes_graphs() {
-        let store = setup();
-        let first = store.record_workflow(r#"{"nodes":["first"]}"#).unwrap();
-        let second = store.record_workflow(r#"{"nodes":["second"]}"#).unwrap();
-
-        let (summaries, total) = store.list_workflow_summaries(1).unwrap();
-        assert_eq!(total, 2);
-        assert_eq!(summaries.len(), 1);
-        assert!(summaries[0].id == first.id || summaries[0].id == second.id);
-        assert_eq!(
-            store.get_workflow(&first.id).unwrap().graph_json,
-            r#"{"nodes":["first"]}"#
-        );
     }
 
     #[test]
