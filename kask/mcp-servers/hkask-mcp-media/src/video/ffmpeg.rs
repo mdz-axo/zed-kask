@@ -18,6 +18,8 @@ struct RollbackOwnedOutput {
 pub(crate) struct ExtractedFrames {
     directory: PathBuf,
     paths: Vec<PathBuf>,
+    /// Original selected frame PTS, in seconds on the source stream timeline.
+    pub(crate) timestamps_sec: Vec<f64>,
 }
 
 impl ExtractedFrames {
@@ -96,6 +98,31 @@ pub struct VideoProbeInfo {
     pub codec: String,
     pub fps: f32,
     pub bit_rate: u64,
+}
+
+/// Parse only selected-frame showinfo records; no ordinal-based fallback.
+fn selected_frame_timestamps(stderr: &str) -> Result<Vec<f64>, crate::MediaError> {
+    let mut timestamps = Vec::new();
+    for line in stderr
+        .lines()
+        .filter(|line| line.contains("Parsed_showinfo_") && line.contains("pts_time:"))
+    {
+        let value = line
+            .split_once("pts_time:")
+            .and_then(|(_, tail)| tail.split_whitespace().next())
+            .and_then(|value| value.parse::<f64>().ok())
+            .filter(|value| value.is_finite())
+            .ok_or_else(|| {
+                crate::MediaError::FfmpegFailed(format!("Invalid selected frame PTS: {line}"))
+            })?;
+        if timestamps.last().is_some_and(|previous| *previous >= value) {
+            return Err(crate::MediaError::FfmpegFailed(
+                "Non-increasing selected frame PTS".into(),
+            ));
+        }
+        timestamps.push(value);
+    }
+    Ok(timestamps)
 }
 
 /// ffmpeg runner with availability detection.
@@ -512,66 +539,6 @@ impl FfmpegRunner {
         Ok(output)
     }
 
-    /// Create a video from a sequence of images.
-    /// Images are concatenated at the specified frame rate.
-    pub(crate) async fn images_to_video(
-        &self,
-        image_paths: &[PathBuf],
-        fps: u32,
-        format: crate::assets::LocalVideoFormat,
-    ) -> Result<PathBuf, crate::MediaError> {
-        if !self.available {
-            return Err(crate::MediaError::FfmpegUnavailable);
-        }
-        if image_paths.is_empty() {
-            return Err(crate::MediaError::FfmpegFailed(
-                "No images provided".to_string(),
-            ));
-        }
-        self.ensure_temp_dir()?;
-
-        let output = RollbackOwnedOutput::new(self.output_path(format.extension()));
-
-        // Write image list to a temp file for concat demuxer
-        let list_path = RollbackOwnedOutput::new(self.output_path("txt"));
-        let list_content: String = image_paths
-            .iter()
-            .map(|p| format!("file '{}'", p.display()))
-            .collect::<Vec<_>>()
-            .join("\n");
-        std::fs::write(list_path.path(), list_content)
-            .map_err(|e| crate::MediaError::Io(format!("Failed to write image list: {}", e)))?;
-
-        let mut command = Command::new(&self.ffmpeg_path);
-        command
-            .arg("-f")
-            .arg("concat")
-            .arg("-safe")
-            .arg("0")
-            .arg("-r")
-            .arg(fps.to_string())
-            .arg("-i")
-            .arg(list_path.path());
-        match format {
-            crate::assets::LocalVideoFormat::Mp4 => {
-                command
-                    .arg("-c:v")
-                    .arg("libx264")
-                    .arg("-pix_fmt")
-                    .arg("yuv420p");
-            }
-            crate::assets::LocalVideoFormat::Gif => {
-                command.arg("-c:v").arg("gif");
-            }
-        }
-        command.arg(output.path());
-        Self::run_to_completion(command, "images_to_video").await?;
-
-        let output = output.commit();
-        tracing::info!(target: "hkask.mcp.media.ffmpeg", image_count = image_paths.len(), fps = %fps, output = %output.display(), "Video created from images");
-        Ok(output)
-    }
-
     /// Concatenate multiple video clips into one.
     /// Uses the concat demuxer for fast, lossless joining.
     pub async fn concat(&self, video_paths: &[String]) -> Result<PathBuf, crate::MediaError> {
@@ -602,8 +569,9 @@ impl FfmpegRunner {
         Ok(output)
     }
 
-    /// Extract keyframes from a video at regular intervals.
-    /// Returns paths to extracted frame images for vision LLM analysis.
+    /// Sample original decoded frames at least `interval_sec` apart.
+    /// `showinfo` runs after selection and before encoding: its PTS belongs to
+    /// the source frame, not an fps filter's synthetic output timeline.
     pub(crate) async fn extract_keyframes(
         &self,
         input: &str,
@@ -612,6 +580,11 @@ impl FfmpegRunner {
     ) -> Result<ExtractedFrames, crate::MediaError> {
         if !self.available {
             return Err(crate::MediaError::FfmpegUnavailable);
+        }
+        if !interval_sec.is_finite() || interval_sec <= 0.0 || max_frames == 0 {
+            return Err(crate::MediaError::FfmpegFailed(
+                "Invalid frame sampling controls".into(),
+            ));
         }
         self.ensure_temp_dir()?;
 
@@ -625,19 +598,32 @@ impl FfmpegRunner {
         let mut frames = ExtractedFrames {
             directory,
             paths: Vec::new(),
+            timestamps_sec: Vec::new(),
         };
         let pattern = frames.directory.join("frame_%03d.jpg");
 
         let mut command = Command::new(&self.ffmpeg_path);
         command
+            .arg("-copyts")
             .arg("-i")
             .arg(input)
+            .arg("-map").arg("0:v:0")
             .arg("-vf")
-            .arg(format!("fps=1/{interval_sec},scale=640:-1"))
-            .arg("-vframes")
+            .arg(format!("select='isnan(prev_selected_t)+gte(t-prev_selected_t,{interval_sec})',showinfo,scale=640:-1"))
+            .arg("-fps_mode").arg("vfr")
+            .arg("-frames:v")
             .arg(max_frames.to_string())
             .arg(&pattern);
-        Self::run_to_completion(command, "keyframe extraction").await?;
+        let output = command.output().await.map_err(|error| {
+            crate::MediaError::FfmpegFailed(format!("frame extraction spawn: {error}"))
+        })?;
+        if !output.status.success() {
+            return Err(crate::MediaError::FfmpegFailed(format!(
+                "frame extraction failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+        let timestamps = selected_frame_timestamps(&String::from_utf8_lossy(&output.stderr))?;
 
         for entry in std::fs::read_dir(&frames.directory).map_err(|error| {
             crate::MediaError::Io(format!(
@@ -655,6 +641,21 @@ impl FfmpegRunner {
             }
         }
         frames.paths.sort();
+        if frames.paths.len() > max_frames as usize {
+            return Err(crate::MediaError::FfmpegFailed(
+                "Frame output exceeded requested maximum".into(),
+            ));
+        }
+        // FFmpeg can filter one extra frame before the encoder's frame limit
+        // stops it. Match only encoded files, and refuse missing observations.
+        if timestamps.len() < frames.paths.len() {
+            return Err(crate::MediaError::FfmpegFailed(format!(
+                "Missing source PTS: {} images, {} observations",
+                frames.paths.len(),
+                timestamps.len()
+            )));
+        }
+        frames.timestamps_sec = timestamps.into_iter().take(frames.paths.len()).collect();
 
         tracing::info!(target: "hkask.mcp.media.ffmpeg", input = %input, frame_count = frames.len(), "Keyframes extracted");
         Ok(frames)
@@ -728,6 +729,42 @@ impl FfmpegRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selected_pts_are_observed_not_ordinal_times_interval() {
+        let stderr = "unrelated pts_time:99\n[Parsed_showinfo_1] n: 0 pts_time:3.7 pos:0\n[Parsed_showinfo_1] n: 1 pts_time:7.25 pos:10";
+        assert_eq!(
+            selected_frame_timestamps(stderr).expect("valid PTS"),
+            vec![3.7, 7.25]
+        );
+        assert!(selected_frame_timestamps("[Parsed_showinfo_1] pts_time:NOPTS").is_err());
+        assert!(selected_frame_timestamps("[Parsed_showinfo_1] pts_time:NaN").is_err());
+        assert!(
+            selected_frame_timestamps(
+                "[Parsed_showinfo_1] pts_time:2\n[Parsed_showinfo_1] pts_time:1"
+            )
+            .is_err()
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn extraction_refuses_unobserved_pts_and_cleans_scratch()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let (runner, output_dir) = fake_ffmpeg_runner(
+            &root,
+            "missing-pts.sh",
+            "#!/bin/sh\nfor arg do pattern=$arg; done\noutput=$(printf '%s\\n' \"$pattern\" | sed 's/%03d/001/')\nprintf frame > \"$output\"\n",
+        )?;
+        let error = runner
+            .extract_keyframes("source.mp4", 2.0, 1)
+            .await
+            .expect_err("missing PTS must not be invented");
+        assert!(error.to_string().contains("Missing source PTS"));
+        assert_eq!(std::fs::read_dir(output_dir)?.count(), 0);
+        Ok(())
+    }
 
     /// Write a fake ffmpeg shell script, mark it executable, and build a
     /// runner over it. Returns the runner and its output directory; the
@@ -858,11 +895,12 @@ mod tests {
         let (runner, output_dir) = fake_ffmpeg_runner(
             &root,
             "extract-one.sh",
-            "#!/bin/sh\nfor arg do pattern=$arg; done\noutput=$(printf '%s\\n' \"$pattern\" | sed 's/%03d/001/')\nprintf frame > \"$output\"\n",
+            "#!/bin/sh\nfor arg do pattern=$arg; done\noutput=$(printf '%s\\n' \"$pattern\" | sed 's/%03d/001/')\nprintf frame > \"$output\"\nprintf '[Parsed_showinfo_1] n: 0 pts: 37 pts_time:3.7\\n' >&2\n",
         )?;
 
         let frames = runner.extract_keyframes("input.mp4", 2.0, 1).await?;
         assert_eq!(frames.len(), 1);
+        assert_eq!(frames.timestamps_sec, vec![3.7]);
         assert_eq!(
             (&frames)
                 .into_iter()
@@ -945,16 +983,6 @@ mod tests {
                 .add_caption("input.mp4", "caption", "bottom", 24)
                 .await
                 .expect_err("caption must surface injected failure"),
-        )?;
-        assert_rolled_back(
-            runner
-                .images_to_video(
-                    &[std::path::PathBuf::from("frame.png")],
-                    24,
-                    crate::assets::LocalVideoFormat::Mp4,
-                )
-                .await
-                .expect_err("image sequence must surface injected failure"),
         )?;
         assert_rolled_back(
             runner

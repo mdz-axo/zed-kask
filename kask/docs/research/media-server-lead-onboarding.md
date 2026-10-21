@@ -1,7 +1,7 @@
 ---
 title: "Media MCP Server Lead — Onboarding"
 audience: [developers, architects, agents]
-last_updated: 2026-09-30
+last_updated: 2026-10-21
 version: "1.0.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -26,47 +26,53 @@ This document assumes:
 
 ## 1. What has been built
 
-The media MCP server is the project's largest MCP server: **102 registered tools** out of 360 fleet-wide across 9 built-in servers (`kask/docs/reference/mcp-servers/README.md`). The count is not documentation — it is pinned end-to-end by the test `tool_surface_is_exactly_102_registered_tools`, which asserts `MediaServer::combined_router().list_all().len() == 102` (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:477-482`). The tool surface, grouped by the module that registers each tool (`kask/mcp-servers/hkask-mcp-media/src/tools.rs`):
+The media MCP server curates existing research evidence: ingest, organize,
+annotate, search, transcribe, and derive source-linked excerpts/reels. The
+operator-approved integration target is **91 tools** (102 − 20 creative
+operations + 9 annotation/search operations), not a claim that a rebuilt child
+or current integration suite has been validated. The generated `TOOL_NAMES`
+and `MediaServer::combined_router()` are the inventory authority. Shared
+inference-library creative capabilities are not this server's tool surface.
+Historical assets, lineage, and OMC graphs remain readable without restoring
+creative execution. The research groups in `src/tools.rs` are:
 
-### Gallery management — 26 tools (`src/tools/gallery.rs`)
-`gallery_organize`, `gallery_status`, `gallery_search`, `gallery_refresh`, `describe_image`, `gallery_analyze`, `gallery_name_face`, `face_validate`, `face_register`, `face_scan_folder`, `face_list`, `face_remove`, `gallery_timeline`, `gallery_record_generation`, `gallery_lineage`, `gallery_list_assets`, `gallery_asset_detail`, `gallery_reproduce`, `gallery_delete_image`, `gallery_add_media`, `gallery_create_album`, `gallery_list_albums`, `gallery_move_to_album`, `gallery_remove_from_album`, `gallery_delete_album`, `gallery_list_album_members`
+### Gallery management — 28 tools (`src/tools/gallery.rs`)
+`gallery_organize`, `gallery_status`, `gallery_search`, `gallery_refresh`, `describe_image`, `gallery_analyze`, `gallery_name_face`, `face_validate`, `face_register`, `face_scan_folder`, `face_list`, `face_remove`, `gallery_timeline`, `gallery_lineage`, `gallery_list_assets`, `gallery_asset_detail`, `gallery_delete_image`, `gallery_add_media`, `gallery_create_album`, `gallery_list_albums`, `gallery_move_to_album`, `gallery_remove_from_album`, `gallery_delete_album`, `gallery_list_album_members`, `gallery_annotation_create`, `gallery_annotation_list`, `gallery_annotation_update`, `gallery_annotation_delete`
 
-The core lifecycle: `gallery_organize` creates the index and activates a gallery (activation survives restart; startup itself never picks a gallery), `gallery_analyze` persists AI-generated tags (faces, objects, colors, composition, scene captions), and `gallery_search` finds images either by fuzzy tag match or by caption-embedding similarity (`semantic` mode). Albums are metadata-only groupings. Face recognition runs through vision-LLM prompt templates, not local code — a deliberate design decision with the rationale recorded in the README (`kask/mcp-servers/hkask-mcp-media/README.md:379-383`).
+The core lifecycle: `gallery_organize` creates the index and activates a gallery (activation survives restart; startup itself never picks a gallery), `gallery_analyze` persists model-derived source observations (objects, colors, composition, scene captions; faces only by explicit selection), and `gallery_search` finds images either by fuzzy tag match or by caption-embedding similarity (`semantic` mode). Albums are metadata-only groupings. Face recognition runs through vision-LLM prompt templates, not local code — a deliberate design decision with the rationale recorded in the README (`kask/mcp-servers/hkask-mcp-media/README.md:379-383`).
 
-### Image and video processing — 15 tools (`src/tools/processing.rs`)
-`image_remove_background`, `image_apply_style`, `image_create_collage`, `video_clip`, `video_to_gif`, `image_to_video`, `video_add_caption`, `video_remix`, `video_from_images`, `video_concat`, `video_caption`, `video_extract_frames`, `video_meme`, `video_info`, `video_fetch`
+### Source-image and video processing — 9 tools (`src/tools/processing.rs`)
+`image_create_collage`, `video_clip`, `video_to_gif`, `video_add_caption`, `video_concat`, `video_caption`, `video_extract_frames`, `video_info`, `video_fetch`
 
-Local FFmpeg operations (clip, GIF, caption, concat, keyframe extraction) plus provider-delegated transforms (background removal, style transfer, image-to-video). `video_fetch` downloads a platform URL via yt-dlp and publishes it as a durable gallery asset with rollback semantics (`README.md:72-76`).
+Source-derived FFmpeg operations (clip, GIF, caption, concat, keyframe extraction),
+source-image collage, and visual analysis. `video_fetch` downloads a selected
+platform URL via yt-dlp and publishes it as a durable gallery asset with rollback
+semantics. A collage/caption/excerpt is a derived presentation, not new evidence.
 
-### Audio and voice — 8 tools (`src/tools/audio.rs`)
-`voice_design`, `generate_speech`, `transcribe_bundle`, `transcribe_and_store`, `audio_capture`, `record_and_transcribe`, `audio_trim`, `audio_concat`
+### Audio capture and transcription — 6 tools (`src/tools/audio.rs`)
+`transcribe_bundle`, `transcribe_and_store`, `audio_capture`, `record_and_transcribe`, `audio_trim`, `audio_concat`
 
-Speech synthesis from a designed voice profile, Whisper-optimized microphone capture (16 kHz mono WAV), transcription with word-level timings, and lossless FFmpeg trim/concat that publish durable assets.
+Whisper-optimized microphone capture (16 kHz mono WAV), transcription with word-level
+timings, and lossless FFmpeg trim/concat that publish durable source-derived assets.
+Synthetic speech, image/video creation, and creative recipe execution are retired.
 
-### Generation — 6 tools (`src/tools/generation.rs`)
-`generate_image`, `transform_image`, `upscale_image`, `generate_video`, `expand_prompt`, `image_edit_region`
+### Transcript timeline ("educt") — 21 tools (`src/tools/educt.rs`)
+`educt_store_transcript`, `educt_list_transcripts`, `educt_get_transcript`, `educt_delete_transcript`, `educt_store_layer`, `educt_list_layers`, `educt_paragraph_pass`, `educt_speaker_pass`, `educt_correction_pass`, `educt_apply_corrections`, `educt_realign_transcript`, `educt_highlight_pass`, `educt_edl_from_highlights`, `educt_render_edl`, `educt_export`, `educt_locate`, `educt_annotation_create`, `educt_annotation_list`, `educt_annotation_update`, `educt_annotation_delete`, `educt_search_transcripts`
 
-Text-to-image (with multi-variant support), image-to-image, upscaling, text-to-video, Fooocus-style prompt expansion, and masked region editing.
+A local transcript-editing system modeled on Reduct.video's published interaction model: immutable word-level time anchors, text selections as media ranges, labeled highlights, ordered Keep ranges composed into an EDL ("Reel"), deterministic FFmpeg rendering, and durable SRT/highlight-CSV/corpus-text exports (`README.md:230-249`). LLM "passes" (paragraph, speaker, correction, highlight) store validated layers over the immutable word timeline. Researcher annotations are separate supplied observations, not authenticated human identity or verified evidence: gallery CRUD uses stable `gallery_asset_id`, `kind` (`tag`/`note`) and `value`; transcript CRUD uses immutable-source word ranges, label/note and stable annotation IDs. `educt_search_transcripts` is bounded lexical substring matching with exact excerpts, source/timing citations and continuation offsets, not semantic retrieval. Missing/unaligned timing stays visible. See the media reference for exact request fields and bounds.
 
-### Transcript timeline ("educt") — 15 tools (`src/tools/educt.rs`)
-`educt_store_transcript`, `educt_list_transcripts`, `educt_get_transcript`, `educt_delete_transcript`, `educt_store_layer`, `educt_list_layers`, `educt_paragraph_pass`, `educt_speaker_pass`, `educt_correction_pass`, `educt_apply_corrections`, `educt_highlight_pass`, `educt_edl_from_highlights`, `educt_render_edl`, `educt_export`, `educt_locate`
+### Reduct cloud — 20 tools (`src/tools/reduct.rs`)
+`reduct_connection_status`, `reduct_connection_probe`, `reduct_projects_snapshot`, `reduct_recordings_snapshot`, `reduct_reels_snapshot`, `reduct_reel_detail`, `reduct_create_reel`, `reduct_add_reel_clip`, `reduct_add_reel_title`, `reduct_edit_reel_clip_range`, `reduct_create_recording`, `reduct_import_media`, `reduct_upload_gallery_media`, `reduct_upload_local_media`, `reduct_recording_highlights`, `reduct_recording_status`, `reduct_recording_transcript`, `reduct_add_recording_highlight`, `reduct_edit_recording_highlight`, `reduct_publish_reel`
 
-A local transcript-editing system modeled on Reduct.video's published interaction model: immutable word-level time anchors, text selections as media ranges, labeled highlights, ordered Keep ranges composed into an EDL ("Reel"), deterministic FFmpeg rendering, and durable SRT/highlight-CSV/corpus-text exports (`README.md:230-249`). LLM "passes" (paragraph, speaker, correction, highlight) store validated layers over the immutable word timeline.
-
-### Reduct cloud — 17 tools (`src/tools/reduct.rs`)
-`reduct_connection_status`, `reduct_connection_probe`, `reduct_projects_snapshot`, `reduct_recordings_snapshot`, `reduct_reels_snapshot`, `reduct_reel_detail`, `reduct_create_reel`, `reduct_add_reel_clip`, `reduct_add_reel_title`, `reduct_edit_reel_clip_range`, `reduct_create_recording`, `reduct_import_media`, `reduct_upload_gallery_media`, `reduct_upload_local_media`, `reduct_recording_highlights`, `reduct_recording_status`, `reduct_recording_transcript`
-
-Read paths plus scoped write contracts (recording creation, media import/upload, reel composition and clip-range edits) implemented exactly against the operator-supplied v3 API reference. The local educt system never silently falls back from a cloud request, and no POST is retried (`README.md:286-309`).
+Read paths plus scoped write contracts (recording creation, media import/upload, reel composition and clip-range edits) implemented exactly against the operator-supplied v3 API reference. The local educt system never silently uploads or falls back from a cloud request, and no POST is retried. Upload/import is an explicit operator decision to transfer selected media externally; publication is a separate explicit decision creating public access. Read back provider state after writes; a submission acknowledgement is not successful ingestion, rendering, or playback. Uncertain POST outcomes require inspection before retry. Cloud DELETE operations remain out of scope.
 
 ### Async job queue — 4 tools (`src/tools/jobs.rs`)
 `job_submit`, `job_list`, `job_status`, `job_cancel`
 
-Process-local background generation jobs. History loss on restart is disclosed at the tool boundary, not hidden (`README.md:120-125`).
-
-### Workflows — 4 tools (`src/tools/workflows.rs`)
-`workflow_save`, `workflow_list`, `workflow_load`, `workflow_delete`
-
-Persisted multi-step media-generation recipes (serialized graphs, capped at 1 MiB).
+Process-local research jobs accept only `transcribe`, `audio_trim`, `audio_concat`,
+`video_clip`, and `video_concat` with operation-specific serialized params. History
+loss on restart is disclosed at the tool boundary; transcript persistence requires
+explicit storage. No creative generation or saved recipe is admitted.
 
 ### Model browser — 2 tools (`src/tools/models.rs`)
 `model_list`, `model_info`
@@ -88,28 +94,43 @@ The server is a thin binary over a library: `src/main.rs:6-9` is a one-line `#[t
 
 Three pieces must stay in sync, and tests pin every seam:
 
-1. A tool is a `#[tool(description = ...)]`-annotated `pub async fn` inside a `#[tool(router(...))]` impl block in one of the ten `src/tools/*.rs` modules.
+1. A tool is a `#[tool(description = ...)]`-annotated `pub async fn` inside a `#[tool(router(...))]` impl block in a registered research `src/tools/*.rs` module.
 2. `build.rs` scans `src/**/*.rs` for `#[tool`-annotated functions and generates the `TOOL_NAMES` const into `tool_names.gen.rs` (`kask/mcp-servers/hkask-mcp-media/build.rs:1-13`) — annotation-based, because the modules also contain non-tool `pub async fn` helpers.
-3. `combined_router()` sums the ten sub-routers and the `#[tool_handler(router = Self::combined_router())]` attribute wires it as the runtime surface (`src/hkask_mcp_media.rs:446-461`).
+3. `combined_router()` sums the registered research sub-routers and the `#[tool_handler(router = Self::combined_router())]` attribute wires it as the runtime surface (`src/hkask_mcp_media.rs:446-461`).
 
-The pins: `tool_surface_is_exactly_98_registered_tools` (catches a sub-router silently missing from the sum — an unwired `#[tool]` block registers nothing while `cargo check` passes), `tool_names_match_live_router` (the generated const equals the live router), and `omc_mapping_covers_all_registered_tools` (every tool has an ontology arm) (`src/hkask_mcp_media.rs:449-545`). **Practical consequence: adding a tool means touching the count pin (98 → 99), the OMC mapping, and the docs reference in the same change.**
+The surface-count pin catches a sub-router silently missing from the sum — an
+unwired `#[tool]` block registers nothing while `cargo check` passes.
+`tool_names_match_live_router` checks generated/live inventory equality;
+`omc_mapping_covers_all_registered_tools` checks ontology coverage.
+Adding/removing a tool must reconcile the count pin, OMC mapping, and docs in
+the same change. Test presence is not evidence that the current suite passed.
 
 ### Two inference routes (D35)
 
 A single `InferencePort` field serves two deliberately different routes (`src/hkask_mcp_media.rs:549-559`, `README.md:346-348`):
 
 - **Vision/chat/embed** cross the IPC bridge (`HKASK_INFERENCE_SOCKET`) to zed's `LanguageModelRegistry`.
-- **Media generation** (`media_generate`: image/video/speech) is **child-local**: it dispatches to a process-local `MediaRouter` using the env-injected `DEEPINFRA_API_KEY` / `OPENROUTER_API_KEY`. No IPC round-trip. The routing policy is operator-ratified (2026-09-06): explicit `params.model` wins, otherwise the per-operation env model; full `OpenRouter/...` or `DeepInfra/...` qualification required; no cross-provider retry (`README.md:350-357`).
+- **Transcription** uses `media_generate` child-locally through `MediaRouter`
+  with env-injected `DEEPINFRA_API_KEY` / `OPENROUTER_API_KEY`, not an IPC media
+  round-trip. Explicit `params.model` wins, otherwise the STT env model; full
+  provider qualification is required and cross-provider retry is forbidden.
+  The shared inference router still has creative operations for other consumers;
+  that does not expose them as media MCP tools or settings.
 
 ### Canonical asset storage and publication
 
-This is the server's central invariant. Every tool whose output is an asset composes its result through `assets::persist_slim_and_enrich` (`src/assets.rs`): decode/download the provider payload exactly once, write a rollback-armed file under `{artifacts_dir}/media-mcp/generated/{uuid}.{ext}`, and commit the gallery Asset row, generation lineage, and OMC creation graph in **one SQLite transaction** — coupled files and rows roll back together (`kask/docs/reference/mcp-servers/media.md:341-357`). The tool result carries the persisted path and provider metadata, **never the payload** — the "context bomb" incident (2026-08-31: two ~65K-token base64 results breached the context limit) is why this is enforced (`media.md:353-357`).
+This is the server's central invariant. File-producing research operations use canonical publication in `src/assets.rs`:
+write a rollback-armed file under `{artifacts_dir}/media-mcp/generated/`, and
+commit the gallery Asset row, effective source parameters, operation lineage,
+and OMC creation graph in **one SQLite transaction** — coupled files and rows
+roll back together. The historical directory name does not imply creative generation. The tool result carries the persisted path and provider metadata, **never the payload** — the "context bomb" incident (2026-08-31: two ~65K-token base64 results breached the context limit) is why this is enforced (`media.md:353-357`).
 
 The gallery store itself is a durable SQLite DB at `{kask_data_dir}/mcp/media/gallery.db` (override: `HKASK_MEDIA_DB`) with **no in-memory fallback** — a DB open failure aborts startup, because the fallback made an outage indistinguishable from an empty gallery (`src/hkask_mcp_media.rs:561-624`). The DB is unencrypted and deliberately does not use `HKASK_DB_PASSPHRASE` (`src/hkask_mcp_media.rs:569-571`). Asset identity is **gallery + canonical absolute path**, not content hash; the missing-file policy is retain-and-mark-missing; unchanged rescans preserve IDs, annotations, and lineage (`README.md:136-157`).
 
 ### Admission control and limits
 
-Direct heavy operations (provider calls, FFmpeg/ffprobe, yt-dlp, analysis, capture/transcription, transcript passes) share one **four-slot fail-fast semaphore** with background jobs (`MAX_CONCURRENT_HEAVY_OPERATIONS = 4`, `src/jobs.rs:15`; `admit_heavy_operation` at `src/hkask_mcp_media.rs:306-320`). The fifth operation fails before external work — never queued, clamped, or silently truncated. Cardinality limits live in `hkask_types::media_limits` and are shared with the panel rather than copied: concat ≤ 64 inputs, image sequences ≤ 256, keyframes ≤ 256, image generation ≤ 10 variants, workflow graphs ≤ 1 MiB (`README.md:100-112`).
+Direct heavy operations (provider calls, FFmpeg/ffprobe, yt-dlp, analysis, capture/transcription, transcript passes) share one **four-slot fail-fast semaphore** with background jobs (`MAX_CONCURRENT_HEAVY_OPERATIONS = 4`, `src/jobs.rs:15`; `admit_heavy_operation` at `src/hkask_mcp_media.rs:306-320`). The fifth operation fails before external work — never queued, clamped, or silently truncated. Cardinality limits live in `hkask_types::media_limits` and are shared with the panel rather than copied: concat ≤ 64 inputs and keyframes ≤ 256. Retired creative variant, image-sequence,
+and recipe-graph operations are not admitted.
 
 ### Error classification, OMC anchoring, display hints
 
@@ -119,7 +140,7 @@ Direct heavy operations (provider calls, FFmpeg/ffprobe, yt-dlp, analysis, captu
 
 ### Integration with the rest of zed-kask
 
-The server is registered as a built-in server (`id: "media"`, `binary: "hkask-mcp-media"`) in `BUILT_IN_MCP_SERVERS` with explicit credential and env allowlists (`kask/crates/kask_bridge/src/mcp_servers.rs:485-528`): credentials `OPENROUTER_API_KEY`, `DEEPINFRA_API_KEY`, `HKASK_SERPAPI_API_KEY`, `REDUCT_API_KEY`; env `HKASK_INFERENCE_SOCKET`, `HKASK_DATA_DIR`, `HKASK_ARTIFACTS_DIR`, `HKASK_MEDIA_DB`, the five `HKASK_MEDIA_*_MODEL` vars, and `HKASK_EMBEDDING_MODEL`. On the zed side, `crates/media_panel/` is a **Steer-only surface with no browse forms** — the operator drives media work through the curator conversation, the panel's prompt advertises the server's generated `TOOL_NAMES`, and results render inline via the media block renderer (`crates/media_panel/src/media_panel.rs:1-12`). The widget is `crates/hkask-media-widget/` (D18); benchmarks live in `crates/hkask-media-benchmarks/`.
+The server is registered as a built-in server (`id: "media"`, `binary: "hkask-mcp-media"`) in `BUILT_IN_MCP_SERVERS` with explicit credential and env allowlists (`kask/crates/kask_bridge/src/mcp_servers.rs:485-528`): credentials `OPENROUTER_API_KEY`, `DEEPINFRA_API_KEY`, `HKASK_SERPAPI_API_KEY`, `REDUCT_API_KEY`; env `HKASK_INFERENCE_SOCKET`, `HKASK_DATA_DIR`, `HKASK_ARTIFACTS_DIR`, `HKASK_MEDIA_DB`, `HKASK_MEDIA_STT_MODEL` and `HKASK_MEDIA_VISION_MODEL` only, and `HKASK_EMBEDDING_MODEL`. On the zed side, `crates/media_panel/` is a **cross-domain Steer conversation with Media/Library/Queue/Detail viewing tabs** — the operator drives media work through the curator conversation, the panel's prompt advertises the server's generated `TOOL_NAMES`, and results render inline via the media block renderer (`crates/media_panel/src/media_panel.rs:1-12`). The widget is `crates/hkask-media-widget/` (D18); benchmarks live in `crates/hkask-media-benchmarks/`.
 
 ---
 
@@ -206,18 +227,32 @@ Both lenses are already written down as skills — read `.agents/skills/product-
 1. Read the crate README end-to-end (`kask/mcp-servers/hkask-mcp-media/README.md`) — it carries the ratified contracts, not marketing.
 2. Read the reference doc (`kask/docs/reference/mcp-servers/media.md`) — architecture, per-tool reference, error classification, key paths.
 3. Run the crate's tests and read the pin tests in `src/hkask_mcp_media.rs:449-545` — they encode the invariants that matter most. (Baseline established 2026-09-30: `cargo test -p hkask-mcp-media` — 432 passed, 0 failed, 6 ignored; the ignored six are opt-in live Reduct API probes gated behind `HKASK_REDUCT_LIVE_PROBE=1` and a configured OS keychain. Re-run it yourself to confirm your own working baseline.)
-4. Trace one tool end-to-end: `generate_image` → `persist_slim_and_enrich` (`src/assets.rs`) → gallery Asset + lineage + OMC graph → `media_block` display hint → inline render in the panel. This single path touches every load-bearing module.
+4. Trace one source-derived tool end-to-end: `video_clip` → canonical local
+   publication (`src/assets.rs`) → gallery Asset + lineage + OMC graph →
+   `media_block` display hint → inline render in the panel. Also check a manual
+   annotation and a bounded transcript-search citation; neither certifies truth.
 5. Read `DIVERGENCE.md` rows D35, D18, D28, and the `.rules` file.
 
 ### A realistic first month
 
-- Own one small change end-to-end — the canonical exercise is adding or refining one tool, which forces the full pattern: `#[tool]` fn in the right `tools/` module, router membership, the count pin (98 → your new count), the `omc::tool_to_omc` arm, the docs-reference row, and tests that pin the behavior. The four pin tests will fail loudly if you miss a seam — that is them working.
+- Own one small change end-to-end — the canonical exercise is adding or refining one tool, which forces the full pattern: `#[tool]` fn in the right `tools/` module, router membership, the current inventory/count pin, the `omc::tool_to_omc` arm, the docs-reference row, and tests that pin the behavior. The four pin tests will fail loudly if you miss a seam — that is them working.
 - Sit in on the algedonic review (`algedonic-review` skill) to see how skill and tool quality is judged.
 - Start the calibration habit below with your first work item.
 
 ---
 
-## 6. What to focus on next
+## 6. Historical review starting conditions (2026-09-30)
+
+The five items below preserve the original review's starting conditions, not
+current work authorization. Their dispositions are recorded in the media
+reference's **Redesign record (2026-10-06/07)**: cloud highlight create/edit and
+publication have pinned contracts; contractless cloud operations and cloud
+DELETE remain out of scope; local re-alignment exists; face build-out stays
+deferred; embedding errors have typed classification; the subprocess DNS window
+has an operator-accepted risk ruling with deployment/untrusted-input revisit
+conditions. Do not reopen those decisions by treating this historical list as
+a live backlog. In particular, cloud upload/publication and face ID remain
+explicit opt-ins under the research-curation scope.
 
 Each priority below is a **target condition**, not a backlog item: a measured current condition (cited), an observable target, and the evidence that says it is reached. Work each one with the predict → measure → correct habit: before starting, state the expected observation and falsifier; record a confirmed goal with real source and criteria when useful, omitting routine forecast. After work compare evidence with the expectation. Worker progress, native human closure and independent assessment stay separate; optional forecasts require a complete prospective declaration and frozen resolver. Two things the project's metacognition discipline insists on: never score your own prediction (the outside score is the check), and report a plateau honestly — two unchanged measured iterations while the target still fails means the approach is wrong, not that you need more of it.
 
@@ -250,4 +285,10 @@ Each priority below is a **target condition**, not a backlog item: a measured cu
 
 ---
 
-**Grounding note.** Every claim above was verified against the tree in the composition pass: the 98 tool names were enumerated from the `#[tool]`-annotated functions in `src/tools/*.rs` (count reconciled against the pin test and the docs reference), and behavioral contracts come from the crate README, `kask/docs/reference/mcp-servers/media.md`, `DIVERGENCE.md` (D35), and `kask/crates/kask_bridge/src/mcp_servers.rs`. The crate's test suite was run on 2026-09-30 (`cargo test -p hkask-mcp-media`): 432 passed, 0 failed, 6 ignored (opt-in live Reduct probes requiring `HKASK_REDUCT_LIVE_PROBE=1` and a configured OS keychain) — the green baseline is established, not assumed. Not read in depth: `crates/hkask-media-widget/` (referenced only through the D18 seam and the README's widget-contract section).
+**Grounding note.** Research-curation scope was approved by the operator on
+2026-10-21. Contracts come from the crate README, media reference, D35, and
+bridge registration; the generated/live inventory must be checked on the
+integrated tree. The 2026-09-30 test receipt (432 passed, 6 opt-in live Reduct
+probes ignored) is historical, not a current validation claim. Current build,
+focused tests, and deployment need their own receipts. Not read in depth:
+`crates/hkask-media-widget/` (referenced through D18 and README contracts).

@@ -297,9 +297,6 @@ pub(crate) fn emit_media_env(
     media: &KaskMediaSettings,
     env: &mut std::collections::HashMap<String, String>,
 ) {
-    if !media.tts_model.is_empty() {
-        env.insert("HKASK_MEDIA_TTS_MODEL".to_string(), media.tts_model.clone());
-    }
     if !media.stt_model.is_empty() {
         env.insert("HKASK_MEDIA_STT_MODEL".to_string(), media.stt_model.clone());
     }
@@ -307,18 +304,6 @@ pub(crate) fn emit_media_env(
         env.insert(
             "HKASK_MEDIA_VISION_MODEL".to_string(),
             media.vision_model.clone(),
-        );
-    }
-    if !media.image_gen_model.is_empty() {
-        env.insert(
-            "HKASK_MEDIA_IMAGE_GEN_MODEL".to_string(),
-            media.image_gen_model.clone(),
-        );
-    }
-    if !media.video_model.is_empty() {
-        env.insert(
-            "HKASK_MEDIA_VIDEO_MODEL".to_string(),
-            media.video_model.clone(),
         );
     }
 }
@@ -357,11 +342,8 @@ const SETTINGS_BACKED_CONFIG_ENV_VARS: &[&str] = &[
     "HKASK_A2A_HTTP_ENABLE",
     "HKASK_SWARM_MEMORY_DB",
     "HKASK_SWARM_EMBEDDING_DIM",
-    "HKASK_MEDIA_TTS_MODEL",
     "HKASK_MEDIA_STT_MODEL",
     "HKASK_MEDIA_VISION_MODEL",
-    "HKASK_MEDIA_IMAGE_GEN_MODEL",
-    "HKASK_MEDIA_VIDEO_MODEL",
     "HKASK_DEFAULT_MODEL",
     "HKASK_CLASSIFIER_MODEL",
     hkask_inference::model_constants::QA_GENERATION_MODEL_ENV,

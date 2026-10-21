@@ -44,7 +44,7 @@ lean-prover|unverified-external|clean|clean|LP-1/LP-2 D; lean_check is the exter
 local-research-swarm|aligned|clean|clean|LRS-1/LRS-2 D; boundary text updated by the retirement commit
 mcda|aligned|clean|clean|Belton & Stewart + Keeney & Raiffa; MCDA-1/2 D
 mcp-tool-review|aligned|clean|clean|MTR-1/MTR-2 D; Initial stated as "**Initial:**" (false positive in the sweep)
-media-workflow|aligned|clean|clean|MWF-1/MWF-2 D
+
 metacognition|aligned|clean|clean|MC-1 D; falstaffian-rotation.j2 referenced extensionlessly at line 92 (resolves)
 onto-anchor|aligned|clean|clean|OA-1/OA-2 D; PDCA exemption stated (one deterministic call)
 pragmatic-cybernetics|aligned|clean|clean|Beer/Ashby; PC-1/PC-2 D
@@ -156,19 +156,11 @@ echo "cycle. No self-loops. The invocation graph is acyclic."
 echo
 echo "## Template accounting"
 echo
-echo "216 registry templates decompose exactly:"
-echo
-echo "- **207** skill-owned (the ledger's tpl column sums to 207 across 51 skills)."
-echo "- **9** server/process-owned, rendered by Rust callers rather than by a skill:"
-echo "  \`docproc/\` (6, the corpus pipeline), \`media/\` (2, the media server),"
-echo "  \`experimentation/\` (1, the experiment protocol)."
-echo "- **Seven** live skills carry no templates of their own (the tpl column reads 0):"
-echo "  five tool-driven — algedonic-review, gpui-bench, onto-anchor, system-maintenance,"
-echo "  transcript-reel — and two that render the server-owned templates above:"
-echo "  build-corpus-pipeline (\`docproc/\`) and media-workflow (\`media/\`)."
-echo
-echo "Every template was therefore either read against its owning skill or accounted"
-echo "to the server that renders it — none is unaccounted for."
+echo "The 2026-10-18 template accounting is historical, not a current ownership census."
+echo "The creative logo templates no longer ship. Recompute ownership totals from"
+echo "the live registry and ledger before asserting a complete decomposition."
+echo "The transcript-reel skill uses the educt tools and owns no registry templates;"
+echo "build-corpus-pipeline also consumes the server-owned docproc templates."
 echo
 echo "## Independent assessment"
 echo

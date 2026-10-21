@@ -1,6 +1,6 @@
 //! Helper for formatting ```media fenced blocks in tool responses.
 //!
-//! When a media tool (generate_image, generate_video, etc.) returns a result,
+//! When a media tool (video_fetch, audio_capture, etc.) returns a result,
 //! it includes a `display_hint` field containing a pre-formatted ```media
 //! markdown block. The model can copy this into its reply, and the D18 seam
 //! in `crates/markdown` will render it as a `MediaWidget`.
@@ -22,7 +22,7 @@ use hkask_types::BlockProvenance;
 ///
 /// ```text
 /// ```media
-/// {"kind":"image","src":"/path/to/image.png","ontology":"omc:CreativeWork","provenance":{"tool":"generate_image","server":"hkask-mcp-media","args":{}}}
+/// {"kind":"image","src":"/path/to/image.png","ontology":"omc:CreativeWork","provenance":{"tool":"image_create_collage","server":"hkask-mcp-media","args":{}}}
 /// ```
 /// ```
 pub fn media_block(kind: &str, src: &str) -> String {
@@ -141,7 +141,7 @@ mod tests {
     fn media_blocks_round_trip_escaped_paths() -> Result<(), Box<dyn std::error::Error>> {
         let source = "/tmp/雪/quote\"-back\\slash\nimage.png";
         let provenance = provenance_for_tool(
-            "generate_image",
+            "image_create_collage",
             serde_json::json!({"prompt": "quote\"\n雪"}),
             Some("span-1".into()),
         );
@@ -178,8 +178,8 @@ mod tests {
     #[test]
     fn test_media_block_with_omc_includes_tag_and_provenance() {
         let prov = provenance_for_tool(
-            "generate_image",
-            serde_json::json!({"prompt": "a cat"}),
+            "image_create_collage",
+            serde_json::json!({"image_indices": [0, 1]}),
             Some("span-1".into()),
         );
         let block = media_block_with_omc(
@@ -191,7 +191,7 @@ mod tests {
         assert!(block.contains("\"kind\":\"image\""));
         assert!(block.contains("/tmp/img.png"));
         assert!(block.contains("\"ontology\":\"omc:CreativeWork\""));
-        assert!(block.contains("\"tool\":\"generate_image\""));
+        assert!(block.contains("\"tool\":\"image_create_collage\""));
         assert!(block.contains("\"server\":\"hkask-mcp-media\""));
         assert!(block.contains("\"span_id\":\"span-1\""));
     }
@@ -206,35 +206,35 @@ mod tests {
     }
 
     #[test]
-    fn test_enrich_with_omc_and_provenance_generate_image() {
+    fn test_enrich_with_omc_and_provenance_contact_sheet() {
         // The slim result shape every media tool returns after
-        // authoritative generated publication: `output` carries the persisted path.
+        // authoritative derived publication: `output` carries the persisted path.
         let result = serde_json::json!({"output": "/tmp/img.png"});
         let enriched = enrich_with_omc_and_provenance(
             result,
-            "generate_image",
+            "image_create_collage",
             "image",
-            serde_json::json!({"prompt": "a cat"}),
+            serde_json::json!({"image_indices": [0, 1]}),
             None,
         );
         let hint = enriched["display_hint"].as_str().expect("hint attached");
         assert!(hint.contains("\"ontology\":\"omc:CreativeWork\""));
-        assert!(hint.contains("\"tool\":\"generate_image\""));
+        assert!(hint.contains("\"tool\":\"image_create_collage\""));
         assert!(hint.contains("\"kind\":\"image\""));
     }
 
     #[test]
-    fn test_enrich_with_omc_and_provenance_transform_maps_to_version() {
+    fn test_enrich_with_omc_and_provenance_frame_maps_to_shot() {
         let result = serde_json::json!({"output": "/tmp/out.png"});
         let enriched = enrich_with_omc_and_provenance(
             result,
-            "transform_image",
+            "video_extract_frames",
             "image",
             serde_json::json!({}),
             None,
         );
         let hint = enriched["display_hint"].as_str().expect("hint attached");
-        assert!(hint.contains("\"ontology\":\"omc:VersionInfo\""));
+        assert!(hint.contains("\"ontology\":\"omc:Shot\""));
     }
 
     #[test]
@@ -258,7 +258,7 @@ mod tests {
         let result = serde_json::json!({"status": "ok"});
         let enriched = enrich_with_omc_and_provenance(
             result,
-            "generate_image",
+            "image_create_collage",
             "image",
             serde_json::json!({}),
             None,

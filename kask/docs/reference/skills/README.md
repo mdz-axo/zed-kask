@@ -71,7 +71,7 @@ annual. The embedded seed payload equals the authored tree (pinned in
 
 ---
 
-## Skills (59)
+## Skills (58)
 
 ### Research, markets and forecasting
 
@@ -87,8 +87,8 @@ annual. The embedded seed payload equals the authored tree (pinned in
 
 | Skill | Purpose |
 |-------|---------|
-| `transcript-reel` | Recording → highlight reel over the educt layer system: transcribe, correct, highlight, EDL, render, export |
-| `media-workflow` | Multi-tool media generation pipelines (product shots, stylized art, reaction GIFs, collages, memes, NFT derivatives, and the Logo pipeline — Martin MVB → Bokhua gates → operator-chosen refinement) chaining media server tools in known-good sequences |
+| `transcript-reel` | Source-linked research recordings: transcribe, correct, annotate, search lexically with citations, select highlights, render excerpts/reels, and export |
+
 | `writing-style` | Compose or rewrite prose from curated style corpora and validate the result against measured style centroids |
 | `sankey-flow` | Dynamic Sankey flow diagramming: classify domain, gather quantities, render Mermaid `sankey-beta` |
 | `diataxis-diagram` | Generate Mermaid diagrams from code using Diataxis methodology |

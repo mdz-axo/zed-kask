@@ -394,21 +394,14 @@ pub(crate) fn kask_string_input(
                             .cache_ttl_secs = Some(v);
                     }
                 }
-                ("media", "tts_model") => {
-                    kask.media.get_or_insert_default().tts_model = Some(parsed);
-                }
+
                 ("media", "stt_model") => {
                     kask.media.get_or_insert_default().stt_model = Some(parsed);
                 }
                 ("media", "vision_model") => {
                     kask.media.get_or_insert_default().vision_model = Some(parsed);
                 }
-                ("media", "image_gen_model") => {
-                    kask.media.get_or_insert_default().image_gen_model = Some(parsed);
-                }
-                ("media", "video_model") => {
-                    kask.media.get_or_insert_default().video_model = Some(parsed);
-                }
+
                 ("models", "default_model") => {
                     kask.models.get_or_insert_default().default_model = Some(parsed);
                 }

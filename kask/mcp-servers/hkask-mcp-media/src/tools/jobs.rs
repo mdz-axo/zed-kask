@@ -156,7 +156,7 @@ impl ResearchJob {
             Self::VideoConcat(request) => validate_item_count(
                 "video_urls",
                 request.video_urls.len(),
-                1,
+                2,
                 hkask_types::media_limits::MAX_CONCAT_ITEMS,
             )?,
             Self::Transcribe(_) => {}
@@ -794,7 +794,10 @@ mod tests {
                 "video_clip",
                 serde_json::json!({"video_url": input, "start_sec": 0, "end_sec": 1}),
             ),
-            ("video_concat", serde_json::json!({"video_urls": [input]})),
+            (
+                "video_concat",
+                serde_json::json!({"video_urls": [input, input]}),
+            ),
         ] {
             let operation = ResearchJob::parse(op, &params.to_string())?;
             operation.validate().await?;
@@ -872,6 +875,20 @@ mod tests {
         port.fail = true;
         let server = server(port)?;
         let input = tempfile::NamedTempFile::new()?;
+        let singleton = ResearchJob::VideoConcat(VideoConcatRequest {
+            video_urls: vec![input.path().to_string_lossy().into_owned()],
+        });
+        let error = singleton
+            .validate()
+            .await
+            .expect_err("concat requires two sources before enqueue");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+        let pair = ResearchJob::VideoConcat(VideoConcatRequest {
+            video_urls: vec![input.path().to_string_lossy().into_owned(); 2],
+        });
+        pair.validate()
+            .await
+            .expect("two existing sources are valid");
         let missing = input.path().with_extension("missing");
         let error = submit(&server, &missing).await.expect_err("missing source");
         assert_eq!(error.kind, hkask_types::McpErrorKind::NotFound);

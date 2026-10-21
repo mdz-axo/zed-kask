@@ -1,4 +1,4 @@
-//! Generated-asset persistence — download/decode provider results into
+//! Source-derived asset persistence — publish processor outputs into
 //! `{artifacts_dir}/media-mcp/generated/` (visible under ~/Documents/zk-data/)
 //! and index them in the gallery. Generated media are user-facing outputs —
 //! they belong in the open artifacts tree, not the hidden internal data dir
@@ -105,11 +105,10 @@ pub(crate) fn owning_gallery_id(
         .map_or(home.id, |gallery| gallery.id))
 }
 
-/// A job asset whose final file and gallery row remain rollback-armed until the
-/// job controller atomically accepts completion over cancellation.
+/// A processor publication whose final file and gallery row remain
+/// rollback-armed until provenance and the tool result are composed.
 pub(crate) struct StagedJobPublication {
     assets: Vec<StagedJobAsset>,
-    provider_metadata: serde_json::Map<String, serde_json::Value>,
 }
 
 struct StagedJobAsset {
@@ -166,7 +165,6 @@ impl StagedJobAsset {
         gallery_store: &Arc<GalleryStore>,
         op: &str,
         effective_params: &serde_json::Value,
-        provider_metadata: &serde_json::Map<String, serde_json::Value>,
     ) -> Result<(), MediaError> {
         std::fs::rename(&self.staged_path, &self.final_path).map_err(|error| {
             MediaError::AssetPersistence(format!("publish {}: {error}", self.final_path.display()))
@@ -195,7 +193,6 @@ impl StagedJobAsset {
         let string_field = |name: &str| {
             effective_params
                 .get(name)
-                .or_else(|| provider_metadata.get(name))
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_string)
         };
@@ -218,7 +215,6 @@ impl StagedJobAsset {
             provider: string_field("provider"),
             seed: effective_params
                 .get("seed")
-                .or_else(|| provider_metadata.get("seed"))
                 .and_then(serde_json::Value::as_i64),
             params: Some(params_json),
             workflow_id: string_field("workflow_id"),
@@ -301,9 +297,7 @@ impl StagedJobPublication {
         effective_params: &serde_json::Value,
     ) -> Result<serde_json::Value, MediaError> {
         for asset in &mut self.assets {
-            if let Err(error) =
-                asset.publish(gallery_store, op, effective_params, &self.provider_metadata)
-            {
+            if let Err(error) = asset.publish(gallery_store, op, effective_params) {
                 let rollback_error = self.rollback().err();
                 return match rollback_error {
                     Some(rollback_error) => Err(MediaError::AssetPersistence(format!(
@@ -315,10 +309,10 @@ impl StagedJobPublication {
         }
         let Some(output_path) = self.assets.first().map(|asset| &asset.final_path) else {
             return Err(MediaError::AssetPersistence(
-                "no assets staged — empty provider response".to_string(),
+                "no processor outputs staged".to_string(),
             ));
         };
-        let mut slim = self.provider_metadata.clone();
+        let mut slim = serde_json::Map::new();
         slim.insert(
             "output".to_string(),
             serde_json::Value::String(output_path.to_string_lossy().into_owned()),
@@ -392,76 +386,6 @@ impl StagedJobPublication {
     }
 }
 
-/// Decode or download provider payloads and write hidden staging files. No
-/// final output path or gallery row is visible until `publish_and_slim` runs.
-pub(crate) async fn stage_job_publication(
-    result: &serde_json::Value,
-    kind: &str,
-) -> Result<StagedJobPublication, MediaError> {
-    let entries = if kind == "image" {
-        result
-            .get("data")
-            .and_then(|data| data.as_array())
-            .filter(|entries| entries.len() > 1)
-            .map(|entries| {
-                entries
-                    .iter()
-                    .map(|entry| serde_json::json!({ "data": [entry] }))
-                    .collect::<Vec<_>>()
-            })
-    } else {
-        None
-    }
-    .unwrap_or_else(|| vec![result.clone()]);
-
-    let mut assets = Vec::with_capacity(entries.len());
-    for entry in entries {
-        assets.push(stage_job_asset(&entry, kind).await?);
-    }
-    let mut provider_metadata = serde_json::Map::new();
-    if let Some(object) = result.as_object() {
-        for (field, value) in object {
-            if !matches!(field.as_str(), "data" | "video_url" | "url" | "audio") {
-                provider_metadata.insert(field.clone(), value.clone());
-            }
-        }
-    }
-    Ok(StagedJobPublication {
-        assets,
-        provider_metadata,
-    })
-}
-
-async fn stage_job_asset(
-    result: &serde_json::Value,
-    kind: &str,
-) -> Result<StagedJobAsset, MediaError> {
-    stage_job_asset_in_dir(result, kind, &generated_assets_dir()).await
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LocalVideoFormat {
-    Mp4,
-    Gif,
-}
-
-impl LocalVideoFormat {
-    pub(crate) fn parse(value: &str) -> Option<Self> {
-        match value {
-            "mp4" => Some(Self::Mp4),
-            "gif" => Some(Self::Gif),
-            _ => None,
-        }
-    }
-
-    pub(crate) const fn extension(self) -> &'static str {
-        match self {
-            Self::Mp4 => "mp4",
-            Self::Gif => "gif",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum LocalMediaFormat {
@@ -469,15 +393,7 @@ pub(crate) enum LocalMediaFormat {
     Gif,
     Wav,
     Png,
-}
-
-impl From<LocalVideoFormat> for LocalMediaFormat {
-    fn from(format: LocalVideoFormat) -> Self {
-        match format {
-            LocalVideoFormat::Mp4 => Self::Mp4,
-            LocalVideoFormat::Gif => Self::Gif,
-        }
-    }
+    Jpg,
 }
 
 impl LocalMediaFormat {
@@ -487,6 +403,7 @@ impl LocalMediaFormat {
             Self::Gif => "gif",
             Self::Wav => "wav",
             Self::Png => "png",
+            Self::Jpg => "jpg",
         }
     }
 
@@ -495,7 +412,7 @@ impl LocalMediaFormat {
             Self::Mp4 => "video",
             Self::Gif => "image",
             Self::Wav => "audio",
-            Self::Png => "image",
+            Self::Png | Self::Jpg => "image",
         }
     }
 
@@ -506,8 +423,7 @@ impl LocalMediaFormat {
 
 /// Stage `bytes` into `asset_dir` under a fresh uuid with the rollback-armed
 /// staged path — the staging block shared by local processor outputs
-/// (`stage_local_media_publication`) and provider-response assets
-/// (`stage_job_asset_in_dir`). The caller owns the returned cleanup and
+/// (`stage_local_media_publication`). The caller owns the returned cleanup and
 /// disarms it once the built asset owns the staged path.
 fn stage_staged_asset(
     asset_dir: &std::path::Path,
@@ -524,8 +440,8 @@ fn stage_staged_asset(
     Ok((staged_path, final_path, staged_path_cleanup))
 }
 
-/// Move a completed local processor output under the same rollback-armed
-/// publication owner used by background generation jobs. The processor's
+/// Move a completed local processor output under the rollback-armed
+/// publication owner. The processor's
 /// temporary file is consumed before this returns; no temp-runner lifetime is
 /// allowed to own the user-facing output.
 pub(crate) fn stage_local_media_publication(
@@ -568,7 +484,6 @@ pub(crate) fn stage_local_media_publication(
     staged_path_cleanup.disarm();
     Ok(StagedJobPublication {
         assets: vec![asset],
-        provider_metadata: serde_json::Map::new(),
     })
 }
 
@@ -742,99 +657,6 @@ fn publish_local_media_inner<T: serde::Serialize + ?Sized>(
     Ok(result)
 }
 
-async fn stage_job_asset_in_dir(
-    result: &serde_json::Value,
-    kind: &str,
-    asset_dir: &std::path::Path,
-) -> Result<StagedJobAsset, MediaError> {
-    let (bytes, ext, media_type) = match kind {
-        "image" => {
-            if let Some(b64) = result
-                .get("data")
-                .and_then(|data| data.get(0))
-                .and_then(|data| data.get("b64_json"))
-                .and_then(|value| value.as_str())
-            {
-                use base64::Engine;
-                let bytes = base64::engine::general_purpose::STANDARD
-                    .decode(b64)
-                    .map_err(|error| {
-                        MediaError::AssetPersistence(format!("decode b64_json: {error}"))
-                    })?;
-                let ext = image_ext_from_bytes(&bytes);
-                (bytes, ext, "image")
-            } else if let Some(url) = result
-                .get("data")
-                .and_then(|data| data.get(0))
-                .and_then(|data| data.get("url"))
-                .and_then(|value| value.as_str())
-            {
-                let bytes = download_asset(url).await?;
-                let ext = image_ext_from_bytes(&bytes);
-                (bytes, ext, "image")
-            } else {
-                return Err(MediaError::AssetPersistence(
-                    "unrecognized image provider response shape: no data[0].b64_json / data[0].url field"
-                        .to_string(),
-                ));
-            }
-        }
-        "video" => {
-            let url = result
-                .get("video_url")
-                .or_else(|| result.get("url"))
-                .and_then(|value| value.as_str())
-                .ok_or_else(|| {
-                    MediaError::AssetPersistence(
-                        "unrecognized video provider response shape: no video_url / url field"
-                            .to_string(),
-                    )
-                })?;
-            let (bytes, ext) = if url.starts_with("data:") {
-                decode_data_uri(url)?
-            } else {
-                (download_asset(url).await?, "mp4")
-            };
-            (bytes, ext, "video")
-        }
-        "audio" => {
-            let audio = result
-                .get("audio")
-                .and_then(|value| value.as_str())
-                .ok_or_else(|| {
-                    MediaError::AssetPersistence(
-                        "unrecognized audio provider response shape: no audio field".to_string(),
-                    )
-                })?;
-            let (bytes, ext) = decode_data_uri(audio)?;
-            (bytes, ext, "audio")
-        }
-        _ => {
-            return Err(MediaError::AssetPersistence(format!(
-                "unknown asset kind '{kind}' (expected image, video, or audio)"
-            )));
-        }
-    };
-
-    let (staged_path, final_path, mut staged_path_cleanup) =
-        stage_staged_asset(asset_dir, ext, &bytes)?;
-    let asset = StagedJobAsset {
-        staged_path,
-        final_path,
-        asset_id: uuid::Uuid::new_v4().to_string(),
-        task_id: uuid::Uuid::new_v4().to_string(),
-        created_at: hkask_types::time::now_rfc3339(),
-        bytes,
-        ext: ext.to_string(),
-        media_type,
-        gallery_store: None,
-        gallery_image_id: None,
-        committed: false,
-    };
-    staged_path_cleanup.disarm();
-    Ok(asset)
-}
-
 #[cfg(test)]
 const PARTIAL_WRITE_FAILURE_DIR: &str = "inject-partial-staged-write-failure";
 
@@ -854,49 +676,8 @@ fn write_staged_asset(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<(
     std::fs::write(path, bytes)
 }
 
-/// Map a `media_generate` op string to the asset kind its result persists
-/// as ("image", "video", or "audio"). Ops whose results carry no persisted
-/// asset (transcription, audio-chat, structured chat) return `None` — a job
-/// submitted for such an op is rejected, since there is nothing to persist.
-pub(crate) fn media_op_kind(op: &str) -> Option<&'static str> {
-    match op {
-        "generate_image" | "image_to_image" | "remove_background" | "upscale" => Some("image"),
-        "generate_video" | "image_to_video" => Some("video"),
-        "generate_speech" => Some("audio"),
-        _ => None,
-    }
-}
-
-/// Persist a provider payload and compose the complete slim tool result
-/// every `media_generate` tool returns: the persisted path plus the
-/// provider's non-payload metadata, enriched with the OMC-tagged,
-/// provenance-carrying display hint (so the media widget can dispatch the
-/// "Explain" affordance).
-///
-/// The single composition and publication path. It stages provider payloads,
-/// commits each Asset with its generation lineage and OMC creation graph, then
-/// attaches the display hint without allowing base64 payloads into model context.
-pub(crate) async fn persist_slim_and_enrich(
-    gallery_store: &Arc<GalleryStore>,
-    result: &serde_json::Value,
-    tool: &str,
-    kind: &str,
-    args: serde_json::Value,
-) -> Result<serde_json::Value, McpToolError> {
-    let mut publication = stage_job_publication(result, kind)
-        .await
-        .map_err(map_media_error)?;
-    let slim = publication
-        .publish_and_slim(gallery_store, tool, &args)
-        .map_err(map_media_error)?;
-    let enriched = crate::media_block::enrich_with_omc_and_provenance(slim, tool, kind, args, None);
-    publication.commit();
-    Ok(enriched)
-}
-
-/// Maximum size for a downloaded provider asset (128 MiB — matches the
-/// server's upload ceiling; bounds in-memory staging against runaway or
-/// malicious provider URLs).
+/// Maximum size for a downloaded source asset (128 MiB — matches the
+/// server's upload ceiling; bounds staging against runaway or malicious URLs).
 const MAX_DOWNLOAD_ASSET_BYTES: usize = 128 * 1024 * 1024;
 const DOWNLOAD_ASSET_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
@@ -977,72 +758,7 @@ pub(crate) async fn download_asset(url: &str) -> Result<Vec<u8>, MediaError> {
     download_asset_with_limit(url, MAX_DOWNLOAD_ASSET_BYTES, cfg!(test)).await
 }
 
-/// Decode a `data:{mime};base64,{data}` URI into bytes + extension.
-pub(crate) fn decode_data_uri(uri: &str) -> Result<(Vec<u8>, &'static str), MediaError> {
-    use base64::Engine;
-    let parts: Vec<&str> = uri.splitn(2, ',').collect();
-    if parts.len() != 2 {
-        return Err(MediaError::AssetPersistence(
-            "malformed data URI: no ',' separator".to_string(),
-        ));
-    }
-    let header = parts[0];
-    let data = parts[1];
-    let ext = if header.contains("image/png") {
-        "png"
-    } else if header.contains("image/jpeg") || header.contains("image/jpg") {
-        "jpg"
-    } else if header.contains("image/webp") {
-        "webp"
-    } else if header.contains("image/gif") {
-        "gif"
-    } else if header.contains("video/mp4") {
-        "mp4"
-    } else if header.contains("audio/mp3") || header.contains("audio/mpeg") {
-        "mp3"
-    } else if header.contains("audio/wav") {
-        "wav"
-    } else {
-        "bin"
-    };
-    base64::engine::general_purpose::STANDARD
-        .decode(data)
-        .map(|bytes| (bytes, ext))
-        .map_err(|e| MediaError::AssetPersistence(format!("decode data URI base64 payload: {e}")))
-}
-
-/// Derive the image file extension from the actual bytes (magic-number
-/// sniffing via the `image` crate), not from provider labels, URL suffixes,
-/// or hardcoded defaults — the bytes are the only authoritative source.
-///
-/// PNG is the fallback because it is the default output format across
-/// image-generation APIs: OpenAI's Images API and OpenRouter's Image API
-/// both treat PNG as the canonical case (OpenRouter's docs call out non-PNG
-/// outputs — JPEG, WebP, SVG — as per-model exceptions), while JPEG is
-/// model-family-specific (BFL FLUX returns it). Every real raster image
-/// carries recognizable magic bytes, so the fallback fires only for
-/// unrecognizable payloads.
-///
-/// SVG (Recraft vector models) is text, not covered by magic-number
-/// sniffing — checked separately before the binary formats.
-pub(crate) fn image_ext_from_bytes(bytes: &[u8]) -> &'static str {
-    let head = String::from_utf8_lossy(&bytes[..bytes.len().min(256)]);
-    if head.trim_start().starts_with('<') && head.contains("<svg") {
-        return "svg";
-    }
-    match image::guess_format(bytes) {
-        Ok(image::ImageFormat::Png) => "png",
-        Ok(image::ImageFormat::Jpeg) => "jpg",
-        Ok(image::ImageFormat::WebP) => "webp",
-        Ok(image::ImageFormat::Gif) => "gif",
-        Ok(image::ImageFormat::Bmp) => "bmp",
-        Ok(image::ImageFormat::Tiff) => "tiff",
-        Ok(image::ImageFormat::Avif) => "avif",
-        _ => "png",
-    }
-}
-
-/// Infer image dimensions from raw bytes using the `image` crate.
+/// Read raster dimensions without fully decoding the image.
 pub(crate) fn infer_image_dimensions(bytes: &[u8]) -> (u32, u32) {
     match image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format() {
         Ok(reader) => match reader.into_dimensions() {
@@ -1056,8 +772,8 @@ pub(crate) fn infer_image_dimensions(bytes: &[u8]) -> (u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::{
-        PARTIAL_WRITE_FAILURE_DIR, download_asset_with_limit, image_ext_from_bytes,
-        stage_job_asset_in_dir, validate_download_url,
+        PARTIAL_WRITE_FAILURE_DIR, download_asset_with_limit, stage_staged_asset,
+        validate_download_url,
     };
 
     #[tokio::test]
@@ -1128,16 +844,12 @@ mod tests {
         assert_eq!(within_cap, b"0123");
     }
 
-    #[tokio::test]
-    async fn partial_staged_write_failure_leaves_no_asset_and_preserves_error() {
+    #[test]
+    fn partial_staged_write_failure_leaves_no_asset_and_preserves_error() {
         let temp_dir = tempfile::tempdir().expect("create temporary assets directory");
         let asset_dir = temp_dir.path().join(PARTIAL_WRITE_FAILURE_DIR);
         std::fs::create_dir(&asset_dir).expect("create injected-failure assets directory");
-        let result = serde_json::json!({
-            "data": [{ "b64_json": "cGFydGlhbCBhc3NldA==" }]
-        });
-
-        let error = match stage_job_asset_in_dir(&result, "image", &asset_dir).await {
+        let error = match stage_staged_asset(&asset_dir, "jpg", b"partial processor output") {
             Ok(_) => panic!("partial staged write unexpectedly succeeded"),
             Err(error) => error,
         };
@@ -1156,40 +868,6 @@ mod tests {
             0,
             "partial write left a staged or final asset behind"
         );
-    }
-
-    #[test]
-    fn image_ext_from_bytes_sniffs_magic_numbers() {
-        assert_eq!(
-            image_ext_from_bytes(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]),
-            "png"
-        );
-        assert_eq!(image_ext_from_bytes(&[0xFF, 0xD8, 0xFF, 0xE0]), "jpg");
-        assert_eq!(image_ext_from_bytes(b"RIFF\x00\x00\x00\x00WEBP"), "webp");
-        assert_eq!(image_ext_from_bytes(b"GIF89a"), "gif");
-    }
-
-    #[test]
-    fn image_ext_from_bytes_detects_svg_text() {
-        // Recraft vector models return SVG — text bytes the magic-number
-        // sniffer does not cover.
-        assert_eq!(
-            image_ext_from_bytes(
-                b"<?xml version=\"1.0\"?><svg xmlns=\"http://www.w3.org/2000/svg\"/>"
-            ),
-            "svg"
-        );
-        assert_eq!(image_ext_from_bytes(b"  <svg width=\"1\"/>"), "svg");
-    }
-
-    #[test]
-    fn image_ext_from_bytes_defaults_to_png_for_unknown_bytes() {
-        // PNG is the default output format across image-generation APIs
-        // (OpenAI Images, OpenRouter's Image API); JPEG is model-family
-        // specific (BFL FLUX). Real raster images always carry magic bytes,
-        // so the default fires only for unrecognizable payloads.
-        assert_eq!(image_ext_from_bytes(b"not an image at all"), "png");
-        assert_eq!(image_ext_from_bytes(&[]), "png");
     }
 }
 

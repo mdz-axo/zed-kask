@@ -1,11 +1,5 @@
-//! Processing tools — background removal, style transfer, collage, video editing, memes.
+//! Source-linked processing and presentation tools.
 use crate::*;
-
-const REMIX_CAPTION_POSITION: &str = "bottom";
-const REMIX_CAPTION_FONT_SIZE: u32 = 24;
-const REMIX_GIF_START_SEC: f32 = 0.0;
-const REMIX_GIF_WIDTH: u32 = 480;
-const REMIX_GIF_FPS: u32 = 10;
 
 #[cfg(test)]
 #[derive(Clone)]
@@ -90,27 +84,6 @@ struct CaptionEffectiveParams<'a> {
 }
 
 #[derive(serde::Serialize)]
-struct RemixEffectiveParams<'a> {
-    source: &'a str,
-    start_sec: f32,
-    end_sec: f32,
-    caption_text: Option<&'a str>,
-    caption_position: &'static str,
-    caption_font_size: u32,
-    gif_start_sec: f32,
-    gif_duration_sec: f32,
-    gif_width: u32,
-    gif_fps: u32,
-}
-
-#[derive(serde::Serialize)]
-struct ImagesEffectiveParams<'a> {
-    sources: &'a [String],
-    image_indices: &'a [usize],
-    fps: u32,
-}
-
-#[derive(serde::Serialize)]
 struct ConcatEffectiveParams<'a> {
     sources: &'a [String],
 }
@@ -132,9 +105,6 @@ enum LocalVideoEffectiveParams<'a> {
     Clip(ClipEffectiveParams<'a>),
     Gif(GifEffectiveParams<'a>),
     Caption(CaptionEffectiveParams<'a>),
-    Remix(RemixEffectiveParams<'a>),
-    ImagesMp4(ImagesEffectiveParams<'a>),
-    ImagesGif(ImagesEffectiveParams<'a>),
     Concat(ConcatEffectiveParams<'a>),
 }
 
@@ -144,8 +114,6 @@ impl LocalVideoEffectiveParams<'_> {
             Self::Clip(_) => "video_clip",
             Self::Gif(_) => "video_to_gif",
             Self::Caption(_) => "video_add_caption",
-            Self::Remix(_) => "video_remix",
-            Self::ImagesMp4(_) | Self::ImagesGif(_) => "video_from_images",
             Self::Concat(_) => "video_concat",
         }
     }
@@ -155,39 +123,18 @@ impl LocalVideoEffectiveParams<'_> {
             Self::Clip(_) => "clipped",
             Self::Gif(_) => "converted",
             Self::Caption(_) => "captioned",
-            Self::Remix(_) => "remixed",
-            Self::ImagesMp4(_) | Self::ImagesGif(_) => "created",
             Self::Concat(_) => "concatenated",
         }
     }
 
     const fn format(&self) -> crate::assets::LocalMediaFormat {
         match self {
-            Self::Gif(_) | Self::Remix(_) | Self::ImagesGif(_) => {
-                crate::assets::LocalMediaFormat::Gif
-            }
-            Self::Clip(_) | Self::Caption(_) | Self::ImagesMp4(_) | Self::Concat(_) => {
+            Self::Gif(_) => crate::assets::LocalMediaFormat::Gif,
+            Self::Clip(_) | Self::Caption(_) | Self::Concat(_) => {
                 crate::assets::LocalMediaFormat::Mp4
             }
         }
     }
-}
-
-pub(crate) fn resolve_image_path_in_gallery(
-    server: &MediaServer,
-    gallery: &GalleryAccess,
-    image_index: usize,
-) -> Result<std::path::PathBuf, MediaError> {
-    let gallery_id = &gallery.gallery_id;
-    let image = server
-        .gallery_store
-        .get_image(gallery_id, Some(image_index), None)
-        .map_err(|error| {
-            MediaError::ImageNotFound(format!(
-                "Image not found at index {image_index} in the active gallery {gallery_id}: {error}"
-            ))
-        })?;
-    Ok(std::path::PathBuf::from(image.absolute_path))
 }
 
 /// Compose a collage grid: dark canvas, cells sized by `cols`/`rows` and
@@ -237,27 +184,142 @@ pub(crate) fn compose_collage_grid(
     canvas
 }
 
-/// Draw meme text (uppercase, centered, black outline + white fill) at the
-/// given row. The y position is the caller's variation — top text sits
-/// near the top edge, bottom text sits above the bottom edge.
-fn draw_meme_text(
-    img: &mut image::DynamicImage,
-    font: &ab_glyph::FontVec,
-    scale: ab_glyph::PxScale,
-    text: &str,
-    y: i32,
-) {
-    let text_upper = text.to_uppercase();
-    let (tw, _th) = measure_text(font, scale, &text_upper);
-    let x = ((img.width() as i32 - tw as i32) / 2).max(0);
-    let white = image::Rgba([255u8, 255u8, 255u8, 255u8]);
-    let black = image::Rgba([0u8, 0u8, 0u8, 255u8]);
-    for &(dx, dy) in &[(1, 0), (-1, 0), (0, 1), (0, -1)] {
-        draw_text_mut(img, black, x + dx, y + dy, scale, font, &text_upper);
-    }
-    draw_text_mut(img, white, x, y, scale, font, &text_upper);
+/// Captioning is explicitly bounded visual sampling, not whole-recording analysis.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SampledVideoCaptionRequest {
+    pub video_url: String,
+    pub style: Option<String>,
+    /// Minimum separation between selected source frames in seconds.
+    #[serde(default = "caption_interval")]
+    pub interval_sec: f32,
+    /// Maximum number of sampled frames sent for visual analysis.
+    #[serde(default = "caption_frame_limit")]
+    pub max_frames: u32,
 }
 
+fn caption_interval() -> f32 {
+    2.0
+}
+fn caption_frame_limit() -> u32 {
+    10
+}
+
+fn validate_sampling(interval_sec: f32, max_frames: u32) -> Result<(), McpToolError> {
+    if !interval_sec.is_finite() || interval_sec <= 0.0 {
+        return Err(McpToolError::invalid_argument(
+            "interval_sec must be finite and greater than 0",
+        ));
+    }
+    validate_item_count(
+        "max_frames",
+        max_frames as usize,
+        1,
+        hkask_types::media_limits::MAX_EXTRACTED_FRAMES as usize,
+    )
+}
+
+/// Hash and decode the same private snapshot, never a mutable original or URL.
+struct SourceSnapshot {
+    file: tempfile::NamedTempFile,
+    identity: serde_json::Value,
+}
+
+impl SourceSnapshot {
+    async fn capture(store: &GalleryStore, source: &str) -> Result<Self, McpToolError> {
+        use sha2::Digest;
+        use std::io::{Read, Write};
+        let mut file = tempfile::NamedTempFile::new()
+            .map_err(MediaError::from)
+            .map_err(map_media_error)?;
+        let canonical = if crate::is_local_media_path(source) {
+            let path = std::path::Path::new(source.strip_prefix("file://").unwrap_or(source))
+                .canonicalize()
+                .map_err(MediaError::from)
+                .map_err(map_media_error)?;
+            let mut original = std::fs::File::open(&path)
+                .map_err(MediaError::from)
+                .map_err(map_media_error)?;
+            std::io::copy(&mut original, file.as_file_mut())
+                .map_err(MediaError::from)
+                .map_err(map_media_error)?;
+            Some(path)
+        } else {
+            let bytes = crate::assets::download_asset(source)
+                .await
+                .map_err(map_media_error)?;
+            file.write_all(&bytes)
+                .map_err(MediaError::from)
+                .map_err(map_media_error)?;
+            None
+        };
+        let mut hasher = sha2::Sha256::new();
+        let mut snapshot = file
+            .reopen()
+            .map_err(MediaError::from)
+            .map_err(map_media_error)?;
+        let mut buffer = [0_u8; 65536];
+        loop {
+            let read = snapshot
+                .read(&mut buffer)
+                .map_err(MediaError::from)
+                .map_err(map_media_error)?;
+            if read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..read]);
+        }
+        let hash = format!("{:x}", hasher.finalize());
+        let mut parent_id = None;
+        if let Some(path) = &canonical {
+            if let Some(gallery) = store
+                .containing(path)
+                .map_err(crate::error::map_gallery_store_error)?
+            {
+                let count = store
+                    .count_assets(&gallery.id)
+                    .map_err(crate::error::map_gallery_store_error)?;
+                for offset in (0..count).step_by(100) {
+                    for record in store
+                        .list_assets(&gallery.id, offset as usize, 100)
+                        .map_err(crate::error::map_gallery_store_error)?
+                    {
+                        if std::path::Path::new(&record.absolute_path) == path
+                            && !record.missing
+                            && record.hash == hash
+                        {
+                            parent_id = Some(record.id);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(Self {
+            file,
+            identity: serde_json::json!({
+                "source": source, "source_id": format!("urn:sha256:{hash}"),
+                "source_sha256": hash, "parent_image_id": parent_id,
+            }),
+        })
+    }
+
+    fn path(&self) -> String {
+        self.file.path().to_string_lossy().into_owned()
+    }
+}
+
+fn sampled_coverage(interval_sec: f32, max_frames: u32, timestamps: &[f64]) -> serde_json::Value {
+    serde_json::json!({
+        "method": "original_frames_minimum_interval_showinfo_pts",
+        "requested": { "interval_sec": interval_sec, "max_frames": max_frames,
+            "nominal_start_offset_sec": 0.0,
+            "nominal_last_sample_offset_sec": f64::from(interval_sec) * f64::from(max_frames - 1) },
+        "observed": { "source_pts_sec": timestamps, "first_source_pts_sec": timestamps.first(),
+            "last_source_pts_sec": timestamps.last() },
+        "limitation": "Sampled visual frames only; intervening and later events, audio, speech, and whole-recording coverage are not assessed. Requested offsets are a sampling plan, not observed timestamps."
+    })
+}
+
+#[tool_router(router = processing_router, vis = "pub")]
 impl MediaServer {
     /// Admission choreography shared by the local-video tools: local
     /// inputs must exist, the test gate observes admission (test builds
@@ -279,103 +341,6 @@ impl MediaServer {
         }
         self.require_ffmpeg()?;
         Ok(())
-    }
-
-    /// Run one provider media-generation op and persist its payload as a
-    /// slim gallery result — the shared tail of the vision-backed tools
-    /// (the provider's base64 payload never enters the model's context).
-    async fn media_generate_and_persist(
-        &self,
-        op: &'static str,
-        error_label: &'static str,
-        tool: &'static str,
-        kind: &'static str,
-        media_params: hkask_types::MediaGenerateParams,
-    ) -> Result<serde_json::Value, McpToolError> {
-        let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
-        let result = self
-            .vision_port
-            .media_generate(op, &media_params)
-            .await
-            .map_err(|e| classify_inference_error(error_label, e))?;
-        persist_slim_and_enrich(&self.gallery_store, &result, tool, kind, args).await
-    }
-}
-
-#[tool_router(router = processing_router, vis = "pub")]
-impl MediaServer {
-    // ── Derivation tools ─────────────────────────────────────────────────────
-
-    #[tool(
-        description = "Remove background from a gallery image. Delegates to the configured background-removal provider."
-    )]
-    pub async fn image_remove_background(
-        &self,
-        Parameters(RemoveBackgroundRequest {
-            image_index,
-            new_bg_color: _new_bg_color,
-        }): Parameters<RemoveBackgroundRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "image_remove_background", async {
-            let _admission = self.admit_heavy_operation()?;
-            let image_url = self
-                .resolve_image_url(image_index)
-                .map_err(map_media_error)?;
-
-            let media_params = hkask_types::MediaGenerateParams {
-                image_url: Some(image_url.clone()),
-                ..Default::default()
-            };
-            self.media_generate_and_persist(
-                "remove_background",
-                "Background removal failed",
-                "image_remove_background",
-                "image",
-                media_params,
-            )
-            .await
-        })
-        .await
-    }
-
-    #[tool(
-        description = "Apply style transfer to a gallery image via the configured image-to-image provider (DeepInfra or OpenRouter)."
-    )]
-    pub async fn image_apply_style(
-        &self,
-        Parameters(ApplyStyleRequest {
-            image_index,
-            style_prompt,
-            strength,
-        }): Parameters<ApplyStyleRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "image_apply_style", async {
-            let _admission = self.admit_heavy_operation()?;
-            if style_prompt.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "style_prompt must not be empty",
-                ));
-            }
-            let image_url = self
-                .resolve_image_url(image_index)
-                .map_err(map_media_error)?;
-
-            let media_params = hkask_types::MediaGenerateParams {
-                image_url: Some(image_url.clone()),
-                prompt: Some(style_prompt.clone()),
-                strength,
-                ..Default::default()
-            };
-            self.media_generate_and_persist(
-                "image_to_image",
-                "Style transfer failed",
-                "image_apply_style",
-                "image",
-                media_params,
-            )
-            .await
-        })
-        .await
     }
 
     #[tool(
@@ -671,48 +636,6 @@ impl MediaServer {
         .await
     }
 
-    #[tool(
-        description = "Animate a gallery image into a short video clip via the configured image-to-video provider (DeepInfra or OpenRouter)."
-    )]
-    pub async fn image_to_video(
-        &self,
-        Parameters(ImageToVideoRequest {
-            image_index,
-            prompt,
-            duration,
-            model,
-        }): Parameters<ImageToVideoRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "image_to_video", async {
-            let _admission = self.admit_heavy_operation()?;
-            if let Some(d) = duration
-                && d <= 0.0
-            {
-                return Err(McpToolError::invalid_argument("duration must be positive"));
-            }
-            let image_url = self
-                .resolve_image_url(image_index)
-                .map_err(map_media_error)?;
-
-            let media_params = hkask_types::MediaGenerateParams {
-                image_url: Some(image_url.clone()),
-                prompt: prompt.clone(),
-                duration,
-                model,
-                ..Default::default()
-            };
-            self.media_generate_and_persist(
-                "image_to_video",
-                "Image-to-video failed",
-                "image_to_video",
-                "video",
-                media_params,
-            )
-            .await
-        })
-        .await
-    }
-
     #[tool(description = "Add text caption overlay to a video using local ffmpeg.")]
     pub async fn video_add_caption(
         &self,
@@ -763,167 +686,6 @@ impl MediaServer {
         .await
     }
 
-    #[tool(description = "Generate a video remix: clip, add caption, convert to GIF.")]
-    pub async fn video_remix(
-        &self,
-        Parameters(VideoRemixRequest {
-            video_url,
-            start_sec,
-            end_sec,
-            caption_text,
-        }): Parameters<VideoRemixRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "video_remix", async {
-            let _admission = self.admit_heavy_operation()?;
-            if start_sec >= end_sec {
-                return Err(McpToolError::invalid_argument(
-                    "start_sec must be less than end_sec.",
-                ));
-            }
-            self.admit_local_video_inputs(std::slice::from_ref(&video_url))
-                .await?;
-
-            let params = RemixEffectiveParams {
-                source: &video_url,
-                start_sec,
-                end_sec,
-                caption_text: caption_text.as_deref(),
-                caption_position: REMIX_CAPTION_POSITION,
-                caption_font_size: REMIX_CAPTION_FONT_SIZE,
-                gif_start_sec: REMIX_GIF_START_SEC,
-                gif_duration_sec: end_sec - start_sec,
-                gif_width: REMIX_GIF_WIDTH,
-                gif_fps: REMIX_GIF_FPS,
-            };
-            let mut intermediates = crate::assets::ScratchIntermediates::new("video remix");
-            let clipped = self
-                .ffmpeg
-                .clip(params.source, params.start_sec, params.end_sec)
-                .await
-                .map_err(map_media_error)?;
-            intermediates.track(clipped.clone());
-
-            let captioned = if let Some(cap) = params.caption_text {
-                let captioned = self
-                    .ffmpeg
-                    .add_caption(
-                        &clipped.to_string_lossy(),
-                        cap,
-                        params.caption_position,
-                        params.caption_font_size,
-                    )
-                    .await
-                    .map_err(map_media_error)?;
-                intermediates.track(captioned.clone());
-                captioned
-            } else {
-                clipped.clone()
-            };
-
-            let gif = self
-                .ffmpeg
-                .to_gif(
-                    &captioned.to_string_lossy(),
-                    params.gif_start_sec,
-                    params.gif_duration_sec,
-                    params.gif_width,
-                    params.gif_fps,
-                )
-                .await
-                .map_err(map_media_error)?;
-            let mut final_cleanup = crate::assets::ScratchIntermediates::new("video remix");
-            final_cleanup.track(gif.clone());
-            intermediates.cleanup().map_err(map_media_error)?;
-
-            let effective_params = LocalVideoEffectiveParams::Remix(params);
-            crate::assets::publish_local_media(
-                &self.gallery_store,
-                &gif,
-                effective_params.op(),
-                effective_params.status(),
-                effective_params.format(),
-                &effective_params,
-            )
-        })
-        .await
-    }
-
-    #[tool(description = "Create a video or GIF from a sequence of gallery images using ffmpeg.")]
-    pub async fn video_from_images(
-        &self,
-        Parameters(VideoFromImagesRequest {
-            image_indices,
-            fps,
-            format,
-        }): Parameters<VideoFromImagesRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "video_from_images", async {
-            let _admission = self.admit_heavy_operation()?;
-            validate_item_count(
-                "image_indices",
-                image_indices.len(),
-                1,
-                hkask_types::media_limits::MAX_IMAGE_SEQUENCE_ITEMS,
-            )?;
-
-            let fps = fps.unwrap_or(24);
-            if fps == 0 {
-                return Err(McpToolError::invalid_argument("fps must be greater than 0"));
-            }
-            let requested_format = format.as_deref().unwrap_or("mp4");
-            let format =
-                crate::assets::LocalVideoFormat::parse(requested_format).ok_or_else(|| {
-                    McpToolError::invalid_argument(format!(
-                        "Unsupported video format {requested_format:?}; expected mp4 or gif"
-                    ))
-                })?;
-            let gallery = self.access_gallery().map_err(map_media_error)?;
-            #[cfg(test)]
-            pause_after_local_video_admission().await?;
-            self.require_ffmpeg()?;
-
-            let mut paths = Vec::new();
-            for idx in &image_indices {
-                paths.push(
-                    resolve_image_path_in_gallery(self, &gallery, *idx).map_err(map_media_error)?,
-                );
-            }
-            let sources = paths
-                .iter()
-                .map(|path| path.to_string_lossy().into_owned())
-                .collect::<Vec<_>>();
-
-            let params = ImagesEffectiveParams {
-                sources: &sources,
-                image_indices: &image_indices,
-                fps,
-            };
-            let effective_params = match format {
-                crate::assets::LocalVideoFormat::Mp4 => {
-                    LocalVideoEffectiveParams::ImagesMp4(params)
-                }
-                crate::assets::LocalVideoFormat::Gif => {
-                    LocalVideoEffectiveParams::ImagesGif(params)
-                }
-            };
-            let output = self
-                .ffmpeg
-                .images_to_video(&paths, fps, format)
-                .await
-                .map_err(map_media_error)?;
-
-            crate::assets::publish_local_media(
-                &self.gallery_store,
-                &output,
-                effective_params.op(),
-                effective_params.status(),
-                effective_params.format(),
-                &effective_params,
-            )
-        })
-        .await
-    }
-
     #[tool(description = "Concatenate multiple video clips into one using ffmpeg.")]
     pub async fn video_concat(
         &self,
@@ -961,11 +723,16 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Generate a description of video content by extracting keyframes and analyzing them with a vision LLM."
+        description = "Analyze sampled video frames with a vision model. Returns requested sampling coverage, actual source-frame timestamps, and explicit visual-only limitations; not whole-recording analysis."
     )]
     pub async fn video_caption(
         &self,
-        Parameters(VideoCaptionRequest { video_url, style }): Parameters<VideoCaptionRequest>,
+        Parameters(SampledVideoCaptionRequest {
+            video_url,
+            style,
+            interval_sec,
+            max_frames,
+        }): Parameters<SampledVideoCaptionRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_caption", async {
             let _admission = self.admit_heavy_operation()?;
@@ -974,12 +741,14 @@ impl MediaServer {
                 validate_tool_url_with_dns(&video_url).await?;
             }
 
+            validate_sampling(interval_sec, max_frames)?;
             let style_str = style.as_deref().unwrap_or("descriptive");
             self.require_ffmpeg()?;
+            let source = SourceSnapshot::capture(&self.gallery_store, &video_url).await?;
 
             let frames = self
                 .ffmpeg
-                .extract_keyframes(&video_url, 2.0, 10)
+                .extract_keyframes(&source.path(), interval_sec, max_frames)
                 .await
                 .map_err(map_media_error)?;
 
@@ -989,7 +758,8 @@ impl MediaServer {
 
             let mut image_urls = Vec::new();
             let mut frame_read_failures = Vec::new();
-            for frame in &frames {
+            let mut observed_timestamps = Vec::new();
+            for (frame, timestamp) in (&frames).into_iter().zip(&frames.timestamps_sec) {
                 match std::fs::read(frame) {
                     Ok(data) => {
                         let b64 = base64::Engine::encode(
@@ -997,6 +767,7 @@ impl MediaServer {
                             &data,
                         );
                         image_urls.push(format!("data:image/jpeg;base64,{b64}"));
+                        observed_timestamps.push(*timestamp);
                     }
                     Err(error) => frame_read_failures.push(format!("{}: {error}", frame.display())),
                 }
@@ -1010,12 +781,17 @@ impl MediaServer {
                 );
             }
 
+            if image_urls.is_empty() {
+                return Err(McpToolError::internal(format!("No sampled frames readable: {}", frame_read_failures.join("; "))));
+            }
+            let coverage = sampled_coverage(interval_sec, max_frames, &observed_timestamps);
             let mut vars = HashMap::new();
             vars.insert("style", style_str);
             let prompt = self
                 .render_prompt("video_caption", &vars)
                 .map_err(|e| McpToolError::internal(format!("Template render failed: {}", e)))?;
 
+            let prompt = format!("{prompt}\nDescribe ONLY the supplied sampled visual frames. Do not infer audio, speech, unseen events or whole-recording coverage. Source frame timestamps in image order (seconds): {observed_timestamps:?}. State the sampled-only limitation in the description.");
             let (vision_model, _vision_label) = self.require_vision()?;
             let params = hkask_types::template::LLMParameters::default();
             let mut image_b64s = Vec::with_capacity(image_urls.len());
@@ -1036,6 +812,9 @@ impl MediaServer {
                     "caption": r.text.trim(),
                     "style": style_str,
                     "frames_analyzed": image_urls.len(),
+                    "source": source.identity,
+                    "sampling": coverage,
+                    "frame_read_failures": frame_read_failures,
                 })),
                 Err(e) => Err(classify_inference_error("Vision inference failed", e)),
             }
@@ -1044,7 +823,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Extract keyframes from a video as gallery assets. Each frame becomes a searchable gallery image with its own lineage. Returns the gallery indices of the imported frames."
+        description = "Sample original video frames as durable gallery assets with source hash identity and actual source PTS. Returns stable asset IDs, source mappings, and per-frame publication failures."
     )]
     pub async fn video_extract_frames(
         &self,
@@ -1056,26 +835,17 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_extract_frames", async {
             let _admission = self.admit_heavy_operation()?;
-            if !interval_sec.is_finite() || interval_sec <= 0.0 {
-                return Err(McpToolError::invalid_argument(
-                    "interval_sec must be finite and greater than 0",
-                ));
-            }
-            validate_item_count(
-                "max_frames",
-                max_frames as usize,
-                1,
-                hkask_types::media_limits::MAX_EXTRACTED_FRAMES as usize,
-            )?;
+            validate_sampling(interval_sec, max_frames)?;
             ensure_local_input_exists(&video_url)?;
             if !crate::is_local_media_path(&video_url) {
                 validate_tool_url_with_dns(&video_url).await?;
             }
             self.require_ffmpeg()?;
 
+            let source = SourceSnapshot::capture(&self.gallery_store, &video_url).await?;
             let frames = self
                 .ffmpeg
-                .extract_keyframes(&video_url, interval_sec, max_frames)
+                .extract_keyframes(&source.path(), interval_sec, max_frames)
                 .await
                 .map_err(map_media_error)?;
 
@@ -1083,47 +853,40 @@ impl MediaServer {
                 return Err(McpToolError::internal("No keyframes extracted from video."));
             }
 
-            // Promote each scratch frame into a durable gallery asset. The
-            // extraction batch owns all scratch cleanup; failed durable copies
-            // are removed here while successful imports remain published.
-            let durable_directory = crate::assets::generated_assets_dir();
-            std::fs::create_dir_all(&durable_directory).map_err(|error| {
-                map_media_error(MediaError::Io(format!(
-                    "Failed to create generated assets directory {}: {error}",
-                    durable_directory.display()
-                )))
-            })?;
+            // Only extracted scratch outputs are consumed by the atomic publisher.
             let mut imported = Vec::new();
             let mut failures = Vec::new();
-            for (frame_index, frame) in (&frames).into_iter().enumerate() {
-                let durable_path = durable_directory.join(format!("{}.jpg", uuid::Uuid::new_v4()));
-                let import_result = std::fs::copy(frame, &durable_path)
-                    .map_err(|error| MediaError::Io(format!("durable copy failed: {error}")))
-                    .and_then(|_| self.import_reference_image(&durable_path, &durable_directory));
-                match import_result {
-                    Ok((image_id, image_url)) => imported.push(serde_json::json!({
-                        "frame_index": frame_index,
-                        "image_id": image_id,
-                        "image_url": image_url,
+            for (frame_index, (frame, timestamp)) in (&frames)
+                .into_iter()
+                .zip(&frames.timestamps_sec)
+                .enumerate()
+            {
+                let mut params = source.identity.clone();
+                params["source_pts_sec"] = serde_json::json!(timestamp);
+                params["frame_index"] = serde_json::json!(frame_index);
+                params["sampling_interval_sec"] = serde_json::json!(interval_sec);
+                params["timestamp_basis"] =
+                    serde_json::json!("selected_original_frame_showinfo_pts");
+                let publication = image::image_dimensions(frame)
+                    .map_err(|error| {
+                        McpToolError::internal(format!("Invalid extracted image: {error}"))
+                    })
+                    .and_then(|_| {
+                        crate::assets::publish_local_media(
+                            &self.gallery_store,
+                            frame,
+                            "video_extract_frames",
+                            "extracted",
+                            crate::assets::LocalMediaFormat::Jpg,
+                            &params,
+                        )
+                    });
+                match publication {
+                    Ok(result) => imported.push(result),
+                    Err(error) => failures.push(serde_json::json!({
+                        "frame_index": frame_index, "source_pts_sec": timestamp,
+                        "source": source.identity, "cause": error.to_string(),
                     })),
-                    Err(error) => {
-                        let mut cause = error.to_string();
-                        match std::fs::remove_file(&durable_path) {
-                            Ok(()) => {}
-                            Err(cleanup_error)
-                                if cleanup_error.kind() == std::io::ErrorKind::NotFound => {}
-                            Err(cleanup_error) => {
-                                cause.push_str(&format!(
-                                    "; failed durable-copy cleanup: {cleanup_error}"
-                                ));
-                            }
-                        }
-                        failures.push(serde_json::json!({
-                            "frame_index": frame_index,
-                            "scratch_file": frame.file_name().and_then(|name| name.to_str()),
-                            "cause": cause,
-                        }));
-                    }
                 }
             }
 
@@ -1146,6 +909,8 @@ impl MediaServer {
 
             Ok(serde_json::json!({
                 "status": status,
+                "source": source.identity,
+                "sampling": sampled_coverage(interval_sec, max_frames, &frames.timestamps_sec),
                 "frames_extracted": frames.len(),
                 "frames_imported": imported.len(),
                 "frames": imported,
@@ -1155,81 +920,6 @@ impl MediaServer {
         .await
     }
 
-    #[tool(
-        description = "Create a meme video from a gallery image with text overlay and camera motion. Composes text rendering + AI motion generation. Perfect for 'WHEN YOU SEE IT' style memes."
-    )]
-    pub async fn video_meme(
-        &self,
-        Parameters(VideoMemeRequest {
-            image_index,
-            top_text,
-            bottom_text,
-            motion,
-            duration,
-            font_path,
-        }): Parameters<VideoMemeRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "video_meme", async {
-            let _admission = self.admit_heavy_operation()?;
-            let image_path = self
-                .resolve_image_path(image_index)
-                .map_err(map_media_error)?;
-
-            let mut img = image::open(&image_path).map_err(|e| map_image_open_error(&image_path, e))?;
-
-            let font = load_meme_font(font_path.as_deref()).map_err(|e| {
-                McpToolError::unavailable(format!(
-                    "No font available for text rendering: {}. Install fonts-dejavu-core or provide --font_path.",
-                    e
-                ))
-            })?;
-
-            let img_h = img.height();
-            let scale = ab_glyph::PxScale::from(img_h as f32 * 0.10);
-
-            if let Some(ref text) = top_text {
-                draw_meme_text(&mut img, &font, scale, text, (img_h as f32 * 0.05) as i32);
-            }
-
-            if let Some(ref text) = bottom_text {
-                let (_, th) = measure_text(&font, scale, &text.to_uppercase());
-                let y = (img_h as i32 - th as i32 - (img_h as f32 * 0.05) as i32).max(0);
-                draw_meme_text(&mut img, &font, scale, text, y);
-            }
-
-            let mut buf = std::io::Cursor::new(Vec::new());
-            img.write_to(&mut buf, image::ImageFormat::Png)
-                .map_err(|e| map_image_open_error(std::path::Path::new("<meme composite>"), e))?;
-            let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, buf.get_ref());
-            let data_uri = format!("data:image/png;base64,{}", b64);
-
-            let motion_prompt = if motion.is_empty() {
-                "slow zoom in".to_string()
-            } else {
-                motion.clone()
-            };
-            let media_params = hkask_types::MediaGenerateParams {
-                image_url: Some(data_uri.clone()),
-                prompt: Some(motion_prompt.clone()),
-                duration,
-                ..Default::default()
-            };
-            self.media_generate_and_persist(
-                "image_to_video",
-                "Image-to-video failed",
-                "video_meme",
-                "video",
-                media_params,
-            )
-            .await
-        })
-        .await
-    }
-
-    /// Probe a video file for metadata — duration, dimensions, codec, fps,
-    /// bit rate. Uses `ffprobe` (bundled with ffmpeg). The timeline-editor
-    /// data source: the UI needs duration to render the timeline strip and
-    /// fps to compute frame positions.
     #[tool(
         description = "Probe a video file for metadata — duration, dimensions, codec, fps, bit rate. Uses ffprobe (bundled with ffmpeg)."
     )]
@@ -1318,5 +1008,263 @@ impl MediaServer {
             Ok(result)
         })
         .await
+    }
+}
+
+#[cfg(test)]
+mod curation_tests {
+    use super::*;
+    use sha2::Digest;
+
+    struct NoProvider;
+    crate::test_support::media_inference_stub! {
+        NoProvider,
+        generate(self, _prompt): {
+            Box::pin(async { panic!("curation test must not call providers") })
+        }
+    }
+
+    fn store() -> Arc<GalleryStore> {
+        Arc::new(
+            GalleryStore::from_driver(
+                hkask_storage::database::sqlite::SqliteDriver::in_memory_driver(),
+            )
+            .expect("in-memory gallery"),
+        )
+    }
+
+    fn server(store: Arc<GalleryStore>, ffmpeg: FfmpegRunner) -> MediaServer {
+        MediaServer::new(
+            hkask_types::WebID::new(),
+            Arc::new(NoProvider),
+            Arc::new(Mutex::new(None)),
+            store,
+            templates::create_env().expect("media templates"),
+            ffmpeg,
+            YtDlpRunner::detect(),
+            jobs::new_job_store(),
+            None,
+            None,
+        )
+    }
+
+    #[test]
+    fn sampled_visual_coverage_distinguishes_plan_from_observation() {
+        let coverage = sampled_coverage(2.0, 3, &[0.37, 2.42]);
+        assert_eq!(coverage["requested"]["nominal_last_sample_offset_sec"], 4.0);
+        assert_eq!(
+            coverage["observed"]["source_pts_sec"],
+            serde_json::json!([0.37, 2.42])
+        );
+        assert!(
+            coverage["limitation"]
+                .as_str()
+                .expect("limitation")
+                .contains("whole-recording coverage are not assessed")
+        );
+        assert!(validate_sampling(f32::NAN, 3).is_err());
+        assert!(validate_sampling(2.0, 0).is_err());
+        assert!(validate_sampling(2.0, 3).is_ok());
+        let request: SampledVideoCaptionRequest = serde_json::from_value(serde_json::json!({
+            "video_url": "source.mp4", "interval_sec": 7.5, "max_frames": 4,
+        }))
+        .expect("sampling controls deserialize");
+        assert_eq!((request.interval_sec, request.max_frames), (7.5, 4));
+    }
+
+    #[tokio::test]
+    async fn missing_source_is_not_found_before_processing() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("missing.mp4").display().to_string();
+        let server = server(store(), FfmpegRunner::detect());
+        let extract = server
+            .video_extract_frames(Parameters(VideoExtractFramesRequest {
+                video_url: path.clone(),
+                interval_sec: 2.0,
+                max_frames: 1,
+            }))
+            .await
+            .expect_err("missing source must fail");
+        assert!(extract.to_string().contains("not_found"));
+        let caption = server
+            .video_caption(Parameters(SampledVideoCaptionRequest {
+                video_url: path,
+                style: None,
+                interval_sec: 2.0,
+                max_frames: 1,
+            }))
+            .await
+            .expect_err("caption missing source must fail");
+        assert!(caption.to_string().contains("not_found"));
+    }
+
+    struct EnvironmentGuard(&'static str, Option<std::ffi::OsString>);
+    impl EnvironmentGuard {
+        fn set(key: &'static str, value: &std::ffi::OsStr) -> Self {
+            let guard = Self(key, std::env::var_os(key));
+            unsafe { std::env::set_var(key, value) };
+            guard
+        }
+    }
+    impl Drop for EnvironmentGuard {
+        fn drop(&mut self) {
+            match self.1.take() {
+                Some(value) => unsafe { std::env::set_var(self.0, value) },
+                None => unsafe { std::env::remove_var(self.0) },
+            }
+        }
+    }
+
+    struct SampledVision;
+    crate::test_support::media_inference_stub! {
+        SampledVision,
+        generate(self, _prompt): {
+            Box::pin(async { panic!("caption must use the visual port") })
+        },
+        generate_vision(self, prompt, images): {
+            assert_eq!(images.len(), 1);
+            assert!(prompt.contains("3.7"));
+            assert!(prompt.contains("Do not infer audio, speech, unseen events or whole-recording coverage"));
+            Box::pin(async { Ok(hkask_types::InferenceResult {
+                text: "One sampled visual frame; unobserved events are not assessed.".into(),
+                model: "mock".into(),
+                usage: hkask_types::InferenceUsage { prompt_tokens: 1, completion_tokens: 1,
+                    total_tokens: 2, reported: true },
+                finish_reason: "stop".into(), tool_calls: Vec::new(), reasoning: None, cost_usd: None,
+            }) })
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn caption_controls_and_sampled_limitations_roundtrip_without_provider()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt;
+        let _lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let _model = EnvironmentGuard::set(
+            crate::models::VISION_ENV,
+            std::ffi::OsStr::new("mock/visual"),
+        );
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("original.mp4");
+        std::fs::write(&source, b"original bytes")?;
+        let image = root.path().join("sample.jpg");
+        image::RgbImage::new(2, 2).save(&image)?;
+        let script = root.path().join("sample.sh");
+        let fixture = image.to_string_lossy().replace('\'', "'\\''");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nfor arg do pattern=$arg; done\noutput=$(printf '%s\\n' \"$pattern\" | sed 's/%03d/001/')\ncp '{fixture}' \"$output\"\nprintf '[Parsed_showinfo_1] n: 0 pts_time:3.7\\n' >&2\n"
+            ),
+        )?;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))?;
+        let mut server = server(
+            store(),
+            FfmpegRunner::with_binary(script.display().to_string(), root.path().join("scratch")),
+        );
+        server.vision_port = Arc::new(SampledVision);
+        let response = server
+            .video_caption(Parameters(SampledVideoCaptionRequest {
+                video_url: source.display().to_string(),
+                style: None,
+                interval_sec: 7.5,
+                max_frames: 4,
+            }))
+            .await?;
+        let envelope: serde_json::Value = serde_json::from_str(&response)?;
+        let payload = &envelope["content"];
+        assert_eq!(payload["frames_analyzed"], 1);
+        assert_eq!(payload["sampling"]["requested"]["interval_sec"], 7.5);
+        assert_eq!(payload["sampling"]["requested"]["max_frames"], 4);
+        assert_eq!(
+            payload["sampling"]["observed"]["source_pts_sec"],
+            serde_json::json!([3.7])
+        );
+        assert!(
+            payload["sampling"]["limitation"]
+                .as_str()
+                .ok_or("missing limitation")?
+                .contains("Sampled visual frames only")
+        );
+        assert_eq!(std::fs::read(source)?, b"original bytes");
+        Ok(())
+    }
+
+    /// The tool must persist selected-frame PTS and the exact decoded source
+    /// revision while retaining useful frames when a sibling is invalid.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn extracted_frame_provenance_roundtrip_preserves_source_and_partial_failures()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt;
+        let _lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let root = tempfile::tempdir()?;
+        let _guard = EnvironmentGuard::set("HKASK_ARTIFACTS_DIR", root.path().as_os_str());
+        let original = root.path().join("original.mp4");
+        let original_bytes = b"immutable source revision";
+        std::fs::write(&original, original_bytes)?;
+        let fixture = root.path().join("fixture.jpg");
+        image::RgbImage::new(2, 2).save(&fixture)?;
+        let script = root.path().join("extract.sh");
+        let fixture_path = fixture.to_string_lossy().replace('\'', "'\\''");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nfor arg do pattern=$arg; done\nfirst=$(printf '%s\\n' \"$pattern\" | sed 's/%03d/001/')\nsecond=$(printf '%s\\n' \"$pattern\" | sed 's/%03d/002/')\ncp '{fixture_path}' \"$first\"\nprintf invalid > \"$second\"\nprintf '[Parsed_showinfo_1] n: 0 pts_time:0.37\\n[Parsed_showinfo_1] n: 1 pts_time:4.9\\n' >&2\n"
+            ),
+        )?;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))?;
+        let store = store();
+        let gallery = store.open(&root.path().display().to_string(), GalleryMode::ReadOnly)?;
+        let hash = format!("{:x}", sha2::Sha256::digest(original_bytes));
+        let parent = store.add_media(
+            &gallery.id,
+            &original.display().to_string(),
+            &hash,
+            0,
+            0,
+            "mp4",
+            original_bytes.len() as u64,
+            "video",
+        )?;
+        let scratch = root.path().join("scratch");
+        let server = server(
+            store.clone(),
+            FfmpegRunner::with_binary(script.display().to_string(), scratch.clone()),
+        );
+        let response = server
+            .video_extract_frames(Parameters(VideoExtractFramesRequest {
+                video_url: original.display().to_string(),
+                interval_sec: 2.0,
+                max_frames: 2,
+            }))
+            .await?;
+        let envelope: serde_json::Value = serde_json::from_str(&response)?;
+        let payload = &envelope["content"];
+        assert_eq!(payload["status"], "partial");
+        assert_eq!(payload["frames_imported"], 1);
+        assert_eq!(payload["failures"][0]["source_pts_sec"], 4.9);
+        let frame = &payload["frames"][0];
+        assert_eq!(frame["source_pts_sec"], 0.37);
+        assert_eq!(frame["source_sha256"], hash);
+        assert_eq!(frame["source_id"], format!("urn:sha256:{hash}"));
+        let id = frame["gallery_asset_id"]
+            .as_str()
+            .ok_or("missing gallery asset id")?;
+        let lineage = store.get_generation(id)?.ok_or("missing lineage")?;
+        assert_eq!(lineage.parent_image_id.as_deref(), Some(parent.id.as_str()));
+        let params: serde_json::Value =
+            serde_json::from_str(lineage.params.as_deref().ok_or("missing params")?)?;
+        assert_eq!(params["source_sha256"], hash);
+        assert_eq!(params["source_pts_sec"], 0.37);
+        assert!(store.get_omc_creation_graph(id)?.is_some());
+        let durable = store.get_by_id(id)?;
+        assert!(std::path::Path::new(&durable.absolute_path).is_file());
+        drop(server);
+        assert_eq!(std::fs::read(&original)?, original_bytes);
+        assert!(std::path::Path::new(&durable.absolute_path).is_file());
+        assert!(!scratch.exists());
+        Ok(())
     }
 }

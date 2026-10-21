@@ -1,7 +1,7 @@
 ---
 title: "hkask-inference — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-28
+last_updated: 2026-10-21
 version: "3.4.0"
 status: "Active"
 domain: "Inference"
@@ -10,7 +10,10 @@ mds_categories: [domain, composition]
 
 # hkask-inference — Reference
 
-Lookup reference for the current `hkask-inference` surface. Citations use full repository-relative paths and were re-derived from the implementation on 2026-09-28.
+Lookup reference for `hkask-inference`. The broad implementation citations date
+to 2026-09-28; the 2026-10-21 media scope note distinguishes shared provider
+capabilities from retired media MCP execution, without revalidating the full
+inference surface.
 
 ## Crate root and modules
 
@@ -324,7 +327,18 @@ status: VERIFIED
 
 ### Configure strict media routing
 
-For selectable media operations, provide a full model name either in `MediaGenerateParams.model` or the operation's environment setting:
+This section describes the **shared inference library**, not the media MCP tool
+inventory. Its creative provider operations remain available to other consumers;
+the research-curation media MCP server no longer exposes image/video/TTS creation
+or creative workflow execution, and Settings → Kask → Media no longer emits
+those model overrides. That server retains `HKASK_MEDIA_STT_MODEL` for
+transcription/passes and `HKASK_MEDIA_VISION_MODEL` for source analysis. See the
+[media server reference](../../reference/mcp-servers/media.md) for that boundary.
+
+For a direct shared-library consumer's selectable media operations, provide a
+full model name either in `MediaGenerateParams.model` or that consumer's
+operation environment. The following is provider-library capability/configuration,
+not a recipe for re-enabling retired media MCP tools:
 
 | Operations | Environment setting |
 |---|---|

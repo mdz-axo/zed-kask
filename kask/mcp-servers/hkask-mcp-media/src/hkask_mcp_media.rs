@@ -39,14 +39,11 @@ use hkask_types::InferencePort;
 
 use crate::transcript::{TimedWord, TranscriptBundle, TranscriptSegment};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
-pub mod text;
 pub mod tools;
 
 // Extracted implementation modules (C2 split). Re-exported so the
 // `use crate::*` imports in tools/ keep resolving without churn.
-pub(crate) use assets::{media_op_kind, persist_slim_and_enrich};
 pub(crate) use faces::default_face_folder;
-pub(crate) use text::{draw_text_mut, load_meme_font, measure_text};
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -426,7 +423,8 @@ pub const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp", "gif"];
 include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
 
 impl MediaServer {
-    fn combined_router() -> rmcp::handler::server::router::tool::ToolRouter<Self> {
+    #[doc(hidden)]
+    pub fn combined_router() -> rmcp::handler::server::router::tool::ToolRouter<Self> {
         Self::gallery_router()
             + Self::processing_router()
             + Self::audio_router()
@@ -445,7 +443,7 @@ impl rmcp::ServerHandler for MediaServer {}
 mod tool_surface_tests {
     use super::*;
 
-    // One macro call pins the surface two ways: the exact count (102) and
+    // One macro call pins the surface two ways: the exact count (91) and
     // the generated TOOL_NAMES set against the live rmcp surface. Catches
     // silent registration drops — a `#[tool]` impl block without
     // `#[tool_router]`, or a sub-router missing from `combined_router()`,
@@ -458,8 +456,8 @@ mod tool_surface_tests {
     hkask_mcp_server::tool_surface_pin!(
         MediaServer::combined_router(),
         "combined_router",
-        102,
-        tool_surface_is_exactly_102_registered_tools,
+        91,
+        tool_surface_is_exactly_91_registered_tools,
     );
 
     // Coverage: every registered tool must map to an OMC concept. Catches
@@ -481,18 +479,16 @@ mod tool_surface_tests {
     // Regression: distinct tool families must map to distinct concepts.
     #[test]
     fn omc_mapping_distinguishes_tool_families() {
-        let creative = omc::tool_to_omc("generate_image");
-        let version = omc::tool_to_omc("transform_image");
+        let version = omc::tool_to_omc("educt_locate");
         let scene = omc::tool_to_omc("describe_image");
         let asset = omc::tool_to_omc("gallery_organize");
-        let source = omc::tool_to_omc("generate_speech");
+        let source = omc::tool_to_omc("audio_capture");
         let sequence = omc::tool_to_omc("video_clip");
         let shot = omc::tool_to_omc("video_extract_frames");
-        let task = omc::tool_to_omc("gallery_record_generation");
+        let task = omc::tool_to_omc("job_submit");
         let participant = omc::tool_to_omc("model_list");
-        // Nine distinct concepts across nine tool families.
+        // Eight distinct concepts across retained research tool families.
         let concepts = [
-            creative,
             version,
             scene,
             asset,
@@ -512,7 +508,6 @@ mod tool_surface_tests {
                 }
             }
         }
-        assert_eq!(creative, Some(omc::CREATIVE_WORK));
         assert_eq!(version, Some(omc::VERSION_INFO));
         assert_eq!(scene, Some(omc::SCENE));
         assert_eq!(asset, Some(omc::ASSET));
@@ -989,7 +984,7 @@ mod integration_tests {
     }
 
     #[test]
-    fn gallery_lineage_record_and_replay_round_trip() {
+    fn historical_gallery_lineage_round_trip() {
         let (store, temp) = setup_store();
         let gallery = store
             .open(&temp.path().to_string_lossy(), GalleryMode::ReadOnly)
@@ -1007,8 +1002,8 @@ mod integration_tests {
             )
             .unwrap();
 
-        // Record the lineage a generation tool would attach after producing
-        // this image (the gallery_record_generation tool wraps this call).
+        // Historical generation metadata stays readable even though the
+        // creative handlers that originally produced it have been retired.
         let wf = store
             .record_workflow("{\"nodes\":[],\"parallel\":false}")
             .unwrap();
@@ -1045,8 +1040,7 @@ mod integration_tests {
         assert_eq!(lineage.provider.as_deref(), Some("deepinfra"));
         assert_eq!(lineage.seed, Some(12345));
         assert_eq!(lineage.workflow_id.as_deref(), Some(wf.id.as_str()));
-        // The stored params JSON round-trips — this is what gallery_reproduce
-        // deserializes to replay the generation.
+        // Historical parameters round-trip without re-executing their retired operation.
         let replay: serde_json::Value =
             serde_json::from_str(lineage.params.as_deref().unwrap()).unwrap();
         assert_eq!(replay["size"], "1024x1024");
@@ -1178,7 +1172,6 @@ mod tool_behavior_tests {
             vec!["local.wav".to_string(); hkask_types::media_limits::MAX_CONCAT_ITEMS + 1];
         let video_over_cap =
             vec!["local.mp4".to_string(); hkask_types::media_limits::MAX_CONCAT_ITEMS + 1];
-        let sequence_over_cap = vec![0; hkask_types::media_limits::MAX_IMAGE_SEQUENCE_ITEMS + 1];
 
         let errors = [
             server
@@ -1193,14 +1186,6 @@ mod tool_behavior_tests {
                 }))
                 .await
                 .expect_err("oversized video concat must fail"),
-            server
-                .video_from_images(Parameters(VideoFromImagesRequest {
-                    image_indices: sequence_over_cap,
-                    fps: None,
-                    format: None,
-                }))
-                .await
-                .expect_err("oversized image sequence must fail"),
             server
                 .video_extract_frames(Parameters(VideoExtractFramesRequest {
                     video_url: "local.mp4".to_string(),
@@ -1249,7 +1234,7 @@ mod tool_behavior_tests {
         std::fs::write(
             &fake_ffmpeg,
             format!(
-                "#!/bin/sh\nfor arg do pattern=$arg; done\nfirst=$(printf '%s\\n' \"$pattern\" | sed 's/%03d/001/')\nsecond=$(printf '%s\\n' \"$pattern\" | sed 's/%03d/002/')\ncp '{template_path}' \"$first\"\nprintf invalid > \"$second\"\n"
+                "#!/bin/sh\nfor arg do pattern=$arg; done\nfirst=$(printf '%s\\n' \"$pattern\" | sed 's/%03d/001/')\nsecond=$(printf '%s\\n' \"$pattern\" | sed 's/%03d/002/')\ncp '{template_path}' \"$first\"\nprintf invalid > \"$second\"\nprintf '[Parsed_showinfo_1] n: 0 pts: 37 pts_time:3.7\\n[Parsed_showinfo_1] n: 1 pts: 725 pts_time:7.25\\n' >&2\n"
             ),
         )?;
         let mut permissions = std::fs::metadata(&fake_ffmpeg)?.permissions();
@@ -1291,7 +1276,12 @@ mod tool_behavior_tests {
         let payload = content_of(&response);
         assert_eq!(payload["status"], "partial");
         assert_eq!(payload["frames_imported"], 1);
+        assert_eq!(
+            payload["frames"][0]["effective_params"]["source_pts_sec"],
+            3.7
+        );
         assert_eq!(payload["failures"].as_array().map(Vec::len), Some(1));
+        assert_eq!(payload["failures"][0]["source_pts_sec"], 7.25);
         assert!(
             payload["failures"][0]["cause"]
                 .as_str()
@@ -1427,280 +1417,6 @@ mod tool_behavior_tests {
             "the hint carries the gallery asset id"
         );
         Ok(())
-    }
-
-    /// Isolate `HKASK_ARTIFACTS_DIR` in a fresh tempdir for one test and
-    /// return `(temp, prior)` — the manual prior/set/restore prologue the
-    /// payload-persistence tests share. The explicit restore tail
-    /// ([`restore_artifacts_dir`]) is what these tests pin — the RAII guards
-    /// (`ArtifactsEnvGuard`, `IsolatedArtifacts`) live elsewhere. The
-    /// tempdir is returned, not dropped, so it outlives the call.
-    fn isolate_artifacts_dir() -> (tempfile::TempDir, Option<String>) {
-        let temp = tempfile::TempDir::new().expect("tempdir for artifacts isolation");
-        let prior = std::env::var("HKASK_ARTIFACTS_DIR").ok();
-        unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", temp.path()) };
-        (temp, prior)
-    }
-
-    /// Restore `HKASK_ARTIFACTS_DIR` to its pre-test value — the manual
-    /// restore tail paired with [`isolate_artifacts_dir`].
-    fn restore_artifacts_dir(prior: Option<String>) {
-        match prior {
-            Some(value) => unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", value) },
-            None => unsafe { std::env::remove_var("HKASK_ARTIFACTS_DIR") },
-        }
-    }
-
-    /// Extension-fidelity round trip: a persisted image's file extension
-    /// must match the format sniffed from its bytes. Regression pin for the
-    /// JPEG-saved-as-.png defect — DeepInfra's FLUX serve returns JPEG and
-    /// the old code hardcoded the "png" extension for every b64 payload.
-    #[tokio::test]
-    async fn persist_image_extension_matches_sniffed_format() {
-        // Serialize with every other test that mutates HKASK_ARTIFACTS_DIR —
-        // the env var is process-global and parallel test threads race on
-        // it.
-        // tokio Mutex — the guard is held across await points (the persist
-        // calls are async); a std guard across an await is a clippy error.
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let (_temp, prior) = isolate_artifacts_dir();
-
-        let server = make_server();
-
-        // JPEG payload — the magic prefix is all the sniffer reads, and the
-        // exact mismatch case observed in production (FLUX returns JPEG).
-        let jpeg: Vec<u8> = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, b'J', b'F', b'I', b'F'];
-        use base64::Engine;
-        let b64 = base64::engine::general_purpose::STANDARD.encode(&jpeg);
-        let result = serde_json::json!({"data": [{"b64_json": b64}]});
-
-        let published = persist_slim_and_enrich(
-            &server.gallery_store,
-            &result,
-            "generate_image",
-            "image",
-            serde_json::json!({"prompt": "format sniff"}),
-        )
-        .await
-        .expect("publish jpeg payload");
-        let path =
-            std::path::PathBuf::from(published["output"].as_str().expect("published output path"));
-
-        // The alignment invariant, checked three ways: the extension on
-        // disk, the byte round-trip, and a re-sniff of the written file.
-        assert_eq!(
-            path.extension().and_then(|e| e.to_str()),
-            Some("jpg"),
-            "extension must come from the sniffed bytes, not a hardcoded label"
-        );
-        let written = std::fs::read(&path).expect("read persisted file back");
-        assert_eq!(written, jpeg, "file bytes must round-trip unchanged");
-        assert_eq!(
-            crate::assets::image_ext_from_bytes(&written),
-            "jpg",
-            "re-sniffing the persisted file must agree with its extension"
-        );
-        restore_artifacts_dir(prior);
-    }
-
-    /// Regression pin for the 2026-08-31 context bomb: the slim tool result
-    /// a media tool returns after authoritative staged publication carries the
-    /// persisted path and the provider's non-payload metadata — never the
-    /// base64 payload. Two raw b64 results (~65K tokens each) breached the
-    /// 262144-token context limit on the following turn.
-    #[tokio::test]
-    async fn generated_publication_strips_payload_and_returns_paths() {
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let (_temp, prior) = isolate_artifacts_dir();
-
-        let server = make_server();
-        use base64::Engine;
-        let encode = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
-        let jpeg: Vec<u8> = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, b'J', b'F', b'I', b'F'];
-        let png_magic: Vec<u8> = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
-
-        // (1) Single image: `output` is the persisted path, the payload is
-        // gone, and the provider's non-payload metadata survives.
-        let result = serde_json::json!({
-            "data": [{ "b64_json": encode(&jpeg) }],
-            "model": "flux-1-schnell",
-        });
-        let slim = persist_slim_and_enrich(
-            &server.gallery_store,
-            &result,
-            "generate_image",
-            "image",
-            serde_json::json!({"prompt": "single"}),
-        )
-        .await
-        .expect("persist + slim must succeed");
-        let serialized = slim.to_string();
-        assert!(
-            !serialized.contains("b64_json") && !serialized.contains("data:"),
-            "the slim result must carry no payload — got: {serialized}"
-        );
-        let output = slim["output"].as_str().expect("output carries the path");
-        assert!(output.ends_with(".jpg"), "extension from sniffed bytes");
-        assert_eq!(
-            std::fs::read(output).expect("persisted file readable"),
-            jpeg,
-            "the persisted file must round-trip the payload bytes"
-        );
-        assert_eq!(
-            slim["model"].as_str(),
-            Some("flux-1-schnell"),
-            "non-payload provider metadata must survive"
-        );
-
-        // (2) Multi-image: every data[] entry persists; `outputs` lists
-        // each path and `output` is the first.
-        let result = serde_json::json!({
-            "data": [
-                { "b64_json": encode(&png_magic) },
-                { "b64_json": encode(&png_magic) },
-            ],
-        });
-        let slim = persist_slim_and_enrich(
-            &server.gallery_store,
-            &result,
-            "generate_image",
-            "image",
-            serde_json::json!({"prompt": "multiple"}),
-        )
-        .await
-        .expect("persist + slim must succeed");
-        let outputs = slim["outputs"].as_array().expect("outputs array");
-        assert_eq!(outputs.len(), 2, "num_images > 1 persists every image");
-        for path in outputs {
-            let path = path.as_str().expect("path string");
-            assert!(
-                std::fs::metadata(path)
-                    .expect("persisted file exists")
-                    .is_file(),
-                "every outputs[] entry must exist on disk"
-            );
-        }
-        assert_eq!(
-            slim["output"].as_str(),
-            outputs.first().and_then(|path| path.as_str()),
-            "output is the first of outputs"
-        );
-
-        // (3) Unrecognized shape: a surfaced error — the raw provider
-        // response is never the fallback.
-        let result = serde_json::json!({"something": "else"});
-        let error = persist_slim_and_enrich(
-            &server.gallery_store,
-            &result,
-            "generate_image",
-            "image",
-            serde_json::json!({"prompt": "invalid"}),
-        )
-        .await
-        .expect_err("unrecognized shape must fail the tool");
-        assert!(
-            error.to_string().contains("unrecognized"),
-            "the error must name the unrecognized shape"
-        );
-        restore_artifacts_dir(prior);
-    }
-
-    /// Pins the composition contract of `persist_slim_and_enrich` — the
-    /// single composition path every `media_generate` tool funnels through:
-    /// the returned value is the slim result (persisted path, no payload)
-    /// with the OMC-tagged, provenance-carrying `display_hint` attached,
-    /// referencing the persisted path. A tool hand-rolling this sequence
-    /// can drop the display hint (breaking the inline media widget) or
-    /// return the raw payload (re-creating the context bomb) — folding it
-    /// here makes both failure modes structural non-options.
-    #[tokio::test]
-    async fn persist_slim_and_enrich_composes_path_and_display_hint() {
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let (temp, prior) = isolate_artifacts_dir();
-
-        let server = make_server();
-        let gallery = server
-            .gallery_store
-            .open(
-                temp.path().to_str().expect("UTF-8 gallery root"),
-                GalleryMode::ReadOnly,
-            )
-            .expect("open publication gallery");
-        let mut state = GalleryState::new(temp.path().to_path_buf(), GalleryMode::ReadOnly);
-        state.gallery_id = Some(gallery.id.clone());
-        *server.gallery_state.lock().expect("gallery state lock") = Some(state);
-        use base64::Engine;
-        let jpeg: Vec<u8> = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, b'J', b'F', b'I', b'F'];
-        let result = serde_json::json!({
-            "data": [{
-                "b64_json": base64::engine::general_purpose::STANDARD.encode(&jpeg)
-            }],
-        });
-        let enriched = persist_slim_and_enrich(
-            &server.gallery_store,
-            &result,
-            "generate_image",
-            "image",
-            serde_json::json!({"prompt": "a cat"}),
-        )
-        .await
-        .expect("persist + slim + enrich must succeed");
-
-        let serialized = enriched.to_string();
-        assert!(
-            !serialized.contains("b64_json") && !serialized.contains("data:"),
-            "the enriched result must carry no payload — got: {serialized}"
-        );
-        let output = enriched["output"]
-            .as_str()
-            .expect("output carries the path");
-        let hint = enriched["display_hint"]
-            .as_str()
-            .expect("display hint is attached");
-        assert!(
-            hint.contains(output),
-            "the media block must reference the persisted path — hint: {hint}"
-        );
-        assert!(hint.starts_with("```media"), "fenced media block: {hint}");
-        let asset_id = enriched["gallery_asset_id"]
-            .as_str()
-            .expect("stable gallery Asset id");
-        let task_id = enriched["omc_task_id"]
-            .as_str()
-            .expect("durable OMC Task id");
-        let generation = server
-            .gallery_store
-            .get_generation(asset_id)
-            .expect("read lineage")
-            .expect("lineage exists");
-        assert_eq!(generation.id, task_id);
-        assert_eq!(generation.prompt.as_deref(), Some("a cat"));
-        let graph = server
-            .gallery_store
-            .get_omc_creation_graph(asset_id)
-            .expect("read OMC graph")
-            .expect("OMC graph exists");
-        let graph: crate::omc::CreationGraph =
-            serde_json::from_str(&graph.graph_json).expect("decode OMC graph");
-        assert_eq!(graph.asset_id, asset_id);
-        assert_eq!(graph.task_id, task_id);
-        let types = graph
-            .entities
-            .iter()
-            .flat_map(|entity| entity.types.iter().map(String::as_str))
-            .collect::<std::collections::HashSet<_>>();
-        for expected in [
-            crate::omc::ASSET,
-            crate::omc::TASK,
-            crate::omc::STATE,
-            crate::omc::STATE_DESCRIPTOR,
-            crate::omc::PROVENANCE,
-            crate::omc::PARTICIPANT,
-            crate::omc::SERVICE,
-        ] {
-            assert!(types.contains(expected), "missing OMC type {expected}");
-        }
-        restore_artifacts_dir(prior);
     }
 
     /// A no-op inference port — gallery_refresh without face analysis never
@@ -1911,7 +1627,7 @@ mod tool_behavior_tests {
     struct TwoGalleryArms {
         _env: ArtifactsEnvGuard,
         _artifacts: tempfile::TempDir,
-        gallery_a_root: tempfile::TempDir,
+        _gallery_a_root: tempfile::TempDir,
         gallery_b_root: tempfile::TempDir,
         store: Arc<GalleryStore>,
         gallery_a: crate::gallery::store::GalleryRecord,
@@ -1963,7 +1679,7 @@ mod tool_behavior_tests {
         Ok(TwoGalleryArms {
             _env,
             _artifacts: artifacts,
-            gallery_a_root,
+            _gallery_a_root: gallery_a_root,
             gallery_b_root,
             store,
             gallery_a,
@@ -2877,33 +2593,6 @@ mod tool_behavior_tests {
         Ok(output_path)
     }
 
-    fn add_test_image(
-        store: &GalleryStore,
-        gallery_id: &str,
-        path: &std::path::Path,
-        color: [u8; 3],
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        image::RgbImage::from_pixel(64, 64, image::Rgb(color)).save(path)?;
-        let bytes = std::fs::read(path)?;
-        let hash = {
-            use sha2::Digest;
-            let mut hasher = sha2::Sha256::new();
-            hasher.update(&bytes);
-            format!("{:x}", hasher.finalize())
-        };
-        store.add_media(
-            gallery_id,
-            &path.to_string_lossy(),
-            &hash,
-            64,
-            64,
-            "png",
-            bytes.len() as u64,
-            "image",
-        )?;
-        Ok(())
-    }
-
     fn collect_temp_media_files(
         root: &std::path::Path,
         files: &mut std::collections::HashSet<std::path::PathBuf>,
@@ -3010,109 +2699,6 @@ mod tool_behavior_tests {
         Ok(())
     }
 
-    /// dcterms:identifier: `MediaServer::video_remix`
-    /// expect: My remixed GIF is durable and no temporary edit stages remain.
-    /// [P1] Motivating: completed work survives teardown without hidden residue.
-    /// pre: a real source video, caption, and active file-backed gallery exist.
-    /// post: one durable GIF is published with complete lineage and no new FFmpeg temp files.
-    /// [P1] Constraining: clip and caption intermediates are deleted before return.
-    #[tokio::test]
-    async fn video_remix_publishes_durable_asset_and_cleans_intermediates()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let env = video_server_env().await?;
-        let before = temp_media_files()?;
-        let content = content_of(
-            &env.server
-                .video_remix(Parameters(VideoRemixRequest {
-                    video_url: env.source.to_string_lossy().into_owned(),
-                    start_sec: 0.0,
-                    end_sec: 1.0,
-                    caption_text: Some("remix caption".to_string()),
-                }))
-                .await?,
-        );
-        let output = assert_local_publication(
-            &content,
-            &env.store,
-            "video_remix",
-            "gif",
-            "image",
-            &serde_json::json!({
-                "source": env.source.to_string_lossy(),
-                "start_sec": 0.0,
-                "end_sec": 1.0,
-                "caption_text": "remix caption",
-                "caption_position": "bottom",
-                "caption_font_size": 24,
-                "gif_start_sec": 0.0,
-                "gif_duration_sec": 1.0,
-                "gif_width": 480,
-                "gif_fps": 10,
-                "format": "gif",
-            }),
-        )?;
-        let after = temp_media_files()?;
-        assert_eq!(
-            after.difference(&before).count(),
-            0,
-            "remix left FFmpeg intermediates: {:?}",
-            after.difference(&before).collect::<Vec<_>>()
-        );
-        drop(env.server);
-        assert!(output.is_file(), "server drop removed remixed publication");
-        Ok(())
-    }
-
-    /// dcterms:identifier: `MediaServer::video_from_images`
-    /// expect: My image sequence becomes one durable gallery video with traceable sources.
-    /// [P1] Motivating: user work survives processor and server teardown.
-    /// pre: indexed source images and an active file-backed gallery exist.
-    /// post: the durable MP4 and its complete source/parameter lineage survive server drop.
-    /// [P1] Constraining: multiple source indices do not fabricate one parent identity.
-    #[tokio::test]
-    async fn video_from_images_publishes_durable_asset_and_lineage_after_server_drop()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
-            media_test_env().await?;
-        let first = gallery_root.path().join("first.png");
-        let second = gallery_root.path().join("second.png");
-        add_test_image(&store, &gallery.id, &first, [255, 0, 0])?;
-        add_test_image(&store, &gallery.id, &second, [0, 255, 0])?;
-        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
-        let sources = serde_json::json!([first.to_string_lossy(), second.to_string_lossy()]);
-        let mut outputs = Vec::new();
-        for (format, media_type) in [("mp4", "video"), ("gif", "image")] {
-            let content = content_of(
-                &server
-                    .video_from_images(Parameters(VideoFromImagesRequest {
-                        image_indices: vec![0, 1],
-                        fps: Some(2),
-                        format: Some(format.to_string()),
-                    }))
-                    .await?,
-            );
-            outputs.push(assert_local_publication(
-                &content,
-                &store,
-                "video_from_images",
-                format,
-                media_type,
-                &serde_json::json!({
-                    "sources": sources.clone(),
-                    "image_indices": [0, 1],
-                    "fps": 2,
-                    "format": format,
-                }),
-            )?);
-        }
-        drop(server);
-        assert!(
-            outputs.iter().all(|output| output.is_file()),
-            "server drop removed an image-sequence publication"
-        );
-        Ok(())
-    }
-
     /// dcterms:identifier: `MediaServer::video_concat`
     /// expect: My concatenated clips become one durable gallery video with traceable sources.
     /// [P1] Motivating: user work survives processor and server teardown.
@@ -3160,24 +2746,25 @@ mod tool_behavior_tests {
     /// post: the original gallery cause is returned and no generated file, gallery row, or lineage remains.
     /// [P1] Constraining: rollback stays armed through lineage publication.
     #[tokio::test]
-    async fn local_video_publication_failure_rolls_back_gif_and_remix_intermediates()
+    async fn local_video_publication_failure_rolls_back_gif_and_intermediates()
     -> Result<(), Box<dyn std::error::Error>> {
         use hkask_storage::database::driver::DatabaseDriver;
         let env = video_server_env().await?;
         let before = temp_media_files()?;
         env.driver.execute(
-            "CREATE TRIGGER fail_remix_asset BEFORE INSERT ON gallery_images \
+            "CREATE TRIGGER fail_gif_asset BEFORE INSERT ON gallery_images \
              BEGIN SELECT RAISE(ABORT, 'injected gallery failure'); END",
             &[],
         )?;
 
         let error = env
             .server
-            .video_remix(Parameters(VideoRemixRequest {
+            .video_to_gif(Parameters(VideoToGifRequest {
                 video_url: env.source.to_string_lossy().into_owned(),
-                start_sec: 0.0,
-                end_sec: 1.0,
-                caption_text: Some("rollback caption".to_string()),
+                start_sec: Some(0.0),
+                duration_sec: Some(1.0),
+                width: Some(48),
+                fps: Some(8),
             }))
             .await
             .expect_err("gallery publication must fail");
@@ -3196,7 +2783,7 @@ mod tool_behavior_tests {
         assert_eq!(
             after.difference(&before).count(),
             0,
-            "failed remix left FFmpeg files: {:?}",
+            "failed GIF publication left FFmpeg files: {:?}",
             after.difference(&before).collect::<Vec<_>>()
         );
         Ok(())
@@ -3294,98 +2881,6 @@ mod tool_behavior_tests {
         );
         assert_eq!(arms.store.count_assets(&arms.gallery_a.id)?, 0);
         assert_eq!(arms.store.count_assets(&arms.gallery_b.id)?, 0);
-        Ok(())
-    }
-
-    /// dcterms:identifier: `MediaServer::video_from_images`
-    /// expect: Image indices name images in the active gallery; the output is filed under the generated gallery.
-    /// [P1] Motivating: positional indices mean the gallery the user is looking at; outputs have one canonical home.
-    /// pre: Galleries A and B each have index 0 and A is active.
-    /// post: the source is A.s index 0 and the output is indexed only in the generated gallery.
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn video_from_images_reads_active_sources_and_files_output_under_generated()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        // Field access — the keep-alive fixture fields stay bound in `arms`
-        // (a `..` rest drops the artifacts dir before the operation spawns).
-        let arms = two_gallery_arms().await?;
-        let source_a = arms.gallery_a_root.path().join("source-a.png");
-        let source_b = arms.gallery_b_root.path().join("source-b.png");
-        add_test_image(&arms.store, &arms.gallery_a.id, &source_a, [255, 0, 0])?;
-        add_test_image(&arms.store, &arms.gallery_b.id, &source_b, [0, 255, 0])?;
-        let _gate = crate::tools::processing::install_local_video_validation_gate(
-            crate::tools::processing::LocalVideoValidationGate {
-                entered: arms.entered.clone(),
-                resume: arms.resume.clone(),
-                bypass_dns: false,
-            },
-        )?;
-        let operation = {
-            let server = arms.server.clone();
-            tokio::spawn(async move {
-                server
-                    .video_from_images(Parameters(VideoFromImagesRequest {
-                        image_indices: vec![0],
-                        fps: Some(2),
-                        format: Some("mp4".to_string()),
-                    }))
-                    .await
-            })
-        };
-        let (content, asset_id) = switch_to_gallery_b_and_finish(
-            &arms.entered,
-            &arms.resume,
-            &arms.gallery_state,
-            arms.gallery_b_root.path(),
-            &arms.gallery_b.id,
-            operation,
-        )
-        .await?;
-
-        assert_eq!(
-            content["effective_params"]["sources"][0],
-            source_a.to_string_lossy().as_ref()
-        );
-        assert_eq!(
-            arms.store.get_by_id(&asset_id)?.gallery_id,
-            generated_gallery(&arms.store)
-        );
-        assert_eq!(arms.store.count_assets(&arms.gallery_a.id)?, 1);
-        assert_eq!(arms.store.count_assets(&arms.gallery_b.id)?, 1);
-        Ok(())
-    }
-
-    /// dcterms:identifier: `MediaServer::video_from_images`
-    /// expect: Image-sequence publication accepts only its two real final formats.
-    /// [P1] Motivating: every accepted format has one truthful output identity.
-    /// pre: indexed source images and an active gallery exist.
-    /// post: arbitrary strings and webp are typed invalid_argument errors before FFmpeg runs.
-    /// [P1] Constraining: the format contract is closed to mp4 and gif.
-    #[tokio::test]
-    async fn video_from_images_rejects_invalid_and_webp_formats()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
-            media_test_env().await?;
-        let image = gallery_root.path().join("frame.png");
-        add_test_image(&store, &gallery.id, &image, [255, 0, 0])?;
-        let server = server_with_gallery(store, gallery.id, gallery_root.path());
-
-        for format in ["avi", "webp", "MP4", "", "   ", "mp4\0gif", ".gif"] {
-            let error = server
-                .video_from_images(Parameters(VideoFromImagesRequest {
-                    image_indices: vec![0],
-                    fps: Some(2),
-                    format: Some(format.to_string()),
-                }))
-                .await
-                .expect_err("unsupported format must be rejected");
-            let message = error.to_string();
-            assert!(
-                message.contains("invalid_argument") || message.contains("Invalid argument"),
-                "unsupported {format} did not surface a typed invalid_argument: {message}"
-            );
-        }
         Ok(())
     }
 
@@ -6166,5 +5661,4 @@ mod gallery_lifecycle_tests {
         assert!(server.gallery_store.get_by_id(&image.id)?.metadata_stale);
         Ok(())
     }
-
 }

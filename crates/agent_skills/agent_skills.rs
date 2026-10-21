@@ -947,6 +947,7 @@ const RETIRED_SKILL_NAMES: &[&str] = &[
     "logo-builder",
     "lora-training",
     "magna-carta-verifier",
+    "media-workflow",
     "pragmatic-laziness",
     "portfolio-review",
     "principle-constraints",

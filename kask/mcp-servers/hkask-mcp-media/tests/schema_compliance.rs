@@ -14,39 +14,102 @@
 //! the testing-protocol propagation plan
 //! (`kask/docs/reference/testing-protocol.md`).
 
+use hkask_mcp_media::tools::educt::{
+    EductAnnotationCreateRequest, EductAnnotationDeleteRequest, EductAnnotationListRequest,
+    EductAnnotationUpdateRequest, EductSearchTranscriptsRequest,
+};
+use hkask_mcp_media::tools::gallery::{
+    GalleryAnnotationCreateRequest, GalleryAnnotationDeleteRequest, GalleryAnnotationListRequest,
+    GalleryAnnotationUpdateRequest,
+};
+use hkask_mcp_media::tools::processing::SampledVideoCaptionRequest;
 use hkask_mcp_media::types::{
-    ApplyStyleRequest, AudioCaptureRequest, AudioConcatRequest, AudioTrimRequest,
-    CreateCollageRequest, DescribeImageRequest, EductApplyCorrectionsRequest,
-    EductCorrectionPassRequest, EductDeleteTranscriptRequest, EductEdlFromHighlightsRequest,
-    EductExportRequest, EductGetTranscriptRequest, EductHighlightPassRequest,
-    EductListLayersRequest, EductListTranscriptsRequest, EductLocateRequest,
-    EductParagraphPassRequest, EductRealignTranscriptRequest, EductRenderEdlRequest,
-    EductSpeakerPassRequest, EductStoreLayerRequest, EductStoreTranscriptRequest,
-    ExpandPromptRequest, FaceListRequest, FaceRegisterRequest, FaceRemoveRequest,
-    FaceScanFolderRequest, FaceValidateRequest, GalleryAddMediaRequest, GalleryAnalyzeRequest,
-    GalleryAssetDetailRequest, GalleryCreateAlbumRequest, GalleryDeleteAlbumRequest,
-    GalleryDeleteImageRequest, GalleryLineageRequest, GalleryListAlbumMembersRequest,
-    GalleryListAssetsRequest, GalleryMoveToAlbumRequest, GalleryNameFaceRequest,
-    GalleryOrganizeRequest, GalleryRecordGenerationRequest, GalleryRefreshRequest,
-    GalleryRemoveFromAlbumRequest, GalleryReproduceRequest, GallerySearchRequest,
-    GalleryTimelineRequest, GenerateImageRequest, GenerateSpeechRequest, GenerateVideoRequest,
-    ImageEditRegionRequest, ImageToVideoRequest, JobCancelRequest, JobListRequest,
-    JobStatusRequest, JobSubmitRequest, ModelInfoRequest, ModelListRequest,
+    AudioCaptureRequest, AudioConcatRequest, AudioTrimRequest, CreateCollageRequest,
+    DescribeImageRequest, EductApplyCorrectionsRequest, EductCorrectionPassRequest,
+    EductDeleteTranscriptRequest, EductEdlFromHighlightsRequest, EductExportRequest,
+    EductGetTranscriptRequest, EductHighlightPassRequest, EductListLayersRequest,
+    EductListTranscriptsRequest, EductLocateRequest, EductParagraphPassRequest,
+    EductRealignTranscriptRequest, EductRenderEdlRequest, EductSpeakerPassRequest,
+    EductStoreLayerRequest, EductStoreTranscriptRequest, FaceListRequest, FaceRegisterRequest,
+    FaceRemoveRequest, FaceScanFolderRequest, FaceValidateRequest, GalleryAddMediaRequest,
+    GalleryAnalyzeRequest, GalleryAssetDetailRequest, GalleryCreateAlbumRequest,
+    GalleryDeleteAlbumRequest, GalleryDeleteImageRequest, GalleryLineageRequest,
+    GalleryListAlbumMembersRequest, GalleryListAssetsRequest, GalleryMoveToAlbumRequest,
+    GalleryNameFaceRequest, GalleryOrganizeRequest, GalleryRefreshRequest,
+    GalleryRemoveFromAlbumRequest, GallerySearchRequest, GalleryTimelineRequest, JobCancelRequest,
+    JobListRequest, JobStatusRequest, JobSubmitRequest, ModelInfoRequest, ModelListRequest,
     RecordAndTranscribeRequest, ReductCreateRecordingHighlightRequest,
     ReductCreateRecordingRequest, ReductCreateReelClipRequest, ReductCreateReelRequest,
     ReductCreateReelTitleRequest, ReductEditRecordingHighlightRequest, ReductEditReelClipRequest,
     ReductImportMediaRequest, ReductProjectItemsRequest, ReductProjectsRequest,
     ReductPublishReelRequest, ReductRecordingRequest, ReductReelRequest, ReductTranscriptRequest,
-    ReductUploadLocalMediaRequest, ReductUploadMediaRequest, RemoveBackgroundRequest,
-    TranscribeAndStoreRequest, TranscribeBundleRequest, TransformImageRequest, UpscaleImageRequest,
-    VideoAddCaptionRequest, VideoCaptionRequest, VideoClipRequest, VideoConcatRequest,
-    VideoExtractFramesRequest, VideoFetchRequest, VideoFromImagesRequest, VideoInfoRequest,
-    VideoMemeRequest, VideoRemixRequest, VideoToGifRequest, VoiceDesignRequest,
-    WorkflowDeleteRequest, WorkflowListRequest, WorkflowLoadRequest, WorkflowSaveRequest,
+    ReductUploadLocalMediaRequest, ReductUploadMediaRequest, TranscribeAndStoreRequest,
+    TranscribeBundleRequest, VideoAddCaptionRequest, VideoClipRequest, VideoConcatRequest,
+    VideoExtractFramesRequest, VideoFetchRequest, VideoInfoRequest, VideoToGifRequest,
     YoutubeSearchRequest,
 };
 use hkask_types::find_boolean_schema_positions;
 use schemars::schema_for;
+
+/// expect: Every advertised request, including tool-local annotation/search
+/// requests, is checked through the actual combined router, not a stale types list.
+#[test]
+fn live_router_schema_inventory_is_complete_and_clean() {
+    let tools = hkask_mcp_media::MediaServer::combined_router().list_all();
+    assert_eq!(
+        tools.len(),
+        91,
+        "approved surface: 102 - 20 + 9 research tools"
+    );
+    let actual = tools
+        .iter()
+        .map(|tool| tool.name.as_ref())
+        .collect::<std::collections::BTreeSet<_>>();
+    let declared = hkask_mcp_media::TOOL_NAMES
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        actual, declared,
+        "schema inventory must match the registered tool surface"
+    );
+    for retired in [
+        "generate_image",
+        "transform_image",
+        "upscale_image",
+        "generate_video",
+        "expand_prompt",
+        "image_edit_region",
+        "image_remove_background",
+        "image_apply_style",
+        "image_to_video",
+        "video_meme",
+        "video_remix",
+        "video_from_images",
+        "voice_design",
+        "generate_speech",
+        "gallery_record_generation",
+        "gallery_reproduce",
+        "workflow_save",
+        "workflow_list",
+        "workflow_load",
+        "workflow_delete",
+    ] {
+        assert!(
+            !actual.contains(retired),
+            "retired tool remains registered: {retired}"
+        );
+    }
+    for tool in tools {
+        let schema = serde_json::to_value(&tool.input_schema).expect("router schema serializes");
+        let violations = find_boolean_schema_positions(&schema);
+        assert!(
+            violations.is_empty(),
+            "{} live schema contains bare-boolean positions: {violations:?}",
+            tool.name
+        );
+    }
+}
 
 macro_rules! schema_clean_test {
     ($test_name:ident, $ty:ty) => {
@@ -63,8 +126,42 @@ macro_rules! schema_clean_test {
     };
 }
 
-schema_clean_test!(voice_design_request_schema, VoiceDesignRequest);
-schema_clean_test!(generate_speech_request_schema, GenerateSpeechRequest);
+schema_clean_test!(
+    gallery_annotation_create_request_schema,
+    GalleryAnnotationCreateRequest
+);
+schema_clean_test!(
+    gallery_annotation_list_request_schema,
+    GalleryAnnotationListRequest
+);
+schema_clean_test!(
+    gallery_annotation_update_request_schema,
+    GalleryAnnotationUpdateRequest
+);
+schema_clean_test!(
+    gallery_annotation_delete_request_schema,
+    GalleryAnnotationDeleteRequest
+);
+schema_clean_test!(
+    educt_annotation_create_request_schema,
+    EductAnnotationCreateRequest
+);
+schema_clean_test!(
+    educt_annotation_list_request_schema,
+    EductAnnotationListRequest
+);
+schema_clean_test!(
+    educt_annotation_update_request_schema,
+    EductAnnotationUpdateRequest
+);
+schema_clean_test!(
+    educt_annotation_delete_request_schema,
+    EductAnnotationDeleteRequest
+);
+schema_clean_test!(
+    educt_search_transcripts_request_schema,
+    EductSearchTranscriptsRequest
+);
 schema_clean_test!(transcribe_request_schema, TranscribeBundleRequest);
 schema_clean_test!(audio_capture_request_schema, AudioCaptureRequest);
 
@@ -96,29 +193,13 @@ schema_clean_test!(face_scan_folder_request_schema, FaceScanFolderRequest);
 schema_clean_test!(face_list_request_schema, FaceListRequest);
 schema_clean_test!(face_remove_request_schema, FaceRemoveRequest);
 schema_clean_test!(gallery_timeline_request_schema, GalleryTimelineRequest);
-schema_clean_test!(
-    gallery_record_generation_request_schema,
-    GalleryRecordGenerationRequest
-);
 schema_clean_test!(gallery_lineage_request_schema, GalleryLineageRequest);
-schema_clean_test!(gallery_reproduce_request_schema, GalleryReproduceRequest);
-schema_clean_test!(generate_image_request_schema, GenerateImageRequest);
-schema_clean_test!(transform_image_request_schema, TransformImageRequest);
-schema_clean_test!(upscale_image_request_schema, UpscaleImageRequest);
-schema_clean_test!(generate_video_request_schema, GenerateVideoRequest);
-schema_clean_test!(expand_prompt_request_schema, ExpandPromptRequest);
-schema_clean_test!(remove_background_request_schema, RemoveBackgroundRequest);
-schema_clean_test!(apply_style_request_schema, ApplyStyleRequest);
 schema_clean_test!(create_collage_request_schema, CreateCollageRequest);
 schema_clean_test!(video_clip_request_schema, VideoClipRequest);
 schema_clean_test!(video_to_gif_request_schema, VideoToGifRequest);
-schema_clean_test!(image_to_video_request_schema, ImageToVideoRequest);
 schema_clean_test!(video_add_caption_request_schema, VideoAddCaptionRequest);
-schema_clean_test!(video_remix_request_schema, VideoRemixRequest);
-schema_clean_test!(video_from_images_request_schema, VideoFromImagesRequest);
 schema_clean_test!(video_concat_request_schema, VideoConcatRequest);
-schema_clean_test!(video_caption_request_schema, VideoCaptionRequest);
-schema_clean_test!(video_meme_request_schema, VideoMemeRequest);
+schema_clean_test!(video_caption_request_schema, SampledVideoCaptionRequest);
 schema_clean_test!(model_list_request_schema, ModelListRequest);
 schema_clean_test!(model_info_request_schema, ModelInfoRequest);
 schema_clean_test!(job_submit_request_schema, JobSubmitRequest);
@@ -154,10 +235,6 @@ schema_clean_test!(
     gallery_delete_image_request_schema,
     GalleryDeleteImageRequest
 );
-schema_clean_test!(image_edit_region_request_schema, ImageEditRegionRequest);
-schema_clean_test!(workflow_save_request_schema, WorkflowSaveRequest);
-schema_clean_test!(workflow_load_request_schema, WorkflowLoadRequest);
-schema_clean_test!(workflow_delete_request_schema, WorkflowDeleteRequest);
 schema_clean_test!(video_info_request_schema, VideoInfoRequest);
 schema_clean_test!(video_fetch_request_schema, VideoFetchRequest);
 schema_clean_test!(youtube_search_request_schema, YoutubeSearchRequest);
@@ -168,18 +245,13 @@ schema_clean_test!(
     VideoExtractFramesRequest
 );
 
-// ── Coverage completion (2026-10-06): the educt + reduct request structs and
-// the two pre-existing gaps (TranscribeAndStoreRequest, WorkflowListRequest)
-// join the battery — every request struct on the 102-tool surface is now
-// schema-clean and deser-total. The reduct structs moved to types.rs in the
-// same change (the crate's convention: request structs live in types.rs;
-// the schema-compliance battery imports them through it).
+// Retained transcript and Reduct request contracts. Tool-local gallery and
+// sampled-caption requests are covered below and by the live-router scan.
 
 schema_clean_test!(
     transcribe_and_store_request_schema,
     TranscribeAndStoreRequest
 );
-schema_clean_test!(workflow_list_request_schema, WorkflowListRequest);
 schema_clean_test!(
     educt_store_transcript_request_schema,
     EductStoreTranscriptRequest
@@ -306,10 +378,41 @@ macro_rules! deser_totality_test {
     };
 }
 
-deser_totality_test!(voice_design_request_deser_totality, VoiceDesignRequest);
 deser_totality_test!(
-    generate_speech_request_deser_totality,
-    GenerateSpeechRequest
+    gallery_annotation_create_request_deser_totality,
+    GalleryAnnotationCreateRequest
+);
+deser_totality_test!(
+    gallery_annotation_list_request_deser_totality,
+    GalleryAnnotationListRequest
+);
+deser_totality_test!(
+    gallery_annotation_update_request_deser_totality,
+    GalleryAnnotationUpdateRequest
+);
+deser_totality_test!(
+    gallery_annotation_delete_request_deser_totality,
+    GalleryAnnotationDeleteRequest
+);
+deser_totality_test!(
+    educt_annotation_create_request_deser_totality,
+    EductAnnotationCreateRequest
+);
+deser_totality_test!(
+    educt_annotation_list_request_deser_totality,
+    EductAnnotationListRequest
+);
+deser_totality_test!(
+    educt_annotation_update_request_deser_totality,
+    EductAnnotationUpdateRequest
+);
+deser_totality_test!(
+    educt_annotation_delete_request_deser_totality,
+    EductAnnotationDeleteRequest
+);
+deser_totality_test!(
+    educt_search_transcripts_request_deser_totality,
+    EductSearchTranscriptsRequest
 );
 deser_totality_test!(transcribe_request_deser_totality, TranscribeBundleRequest);
 deser_totality_test!(audio_capture_request_deser_totality, AudioCaptureRequest);
@@ -352,46 +455,21 @@ deser_totality_test!(
     GalleryTimelineRequest
 );
 deser_totality_test!(
-    gallery_record_generation_request_deser_totality,
-    GalleryRecordGenerationRequest
-);
-deser_totality_test!(
     gallery_lineage_request_deser_totality,
     GalleryLineageRequest
 );
-deser_totality_test!(
-    gallery_reproduce_request_deser_totality,
-    GalleryReproduceRequest
-);
-deser_totality_test!(generate_image_request_deser_totality, GenerateImageRequest);
-deser_totality_test!(
-    transform_image_request_deser_totality,
-    TransformImageRequest
-);
-deser_totality_test!(upscale_image_request_deser_totality, UpscaleImageRequest);
-deser_totality_test!(generate_video_request_deser_totality, GenerateVideoRequest);
-deser_totality_test!(expand_prompt_request_deser_totality, ExpandPromptRequest);
-deser_totality_test!(
-    remove_background_request_deser_totality,
-    RemoveBackgroundRequest
-);
-deser_totality_test!(apply_style_request_deser_totality, ApplyStyleRequest);
 deser_totality_test!(create_collage_request_deser_totality, CreateCollageRequest);
 deser_totality_test!(video_clip_request_deser_totality, VideoClipRequest);
 deser_totality_test!(video_to_gif_request_deser_totality, VideoToGifRequest);
-deser_totality_test!(image_to_video_request_deser_totality, ImageToVideoRequest);
 deser_totality_test!(
     video_add_caption_request_deser_totality,
     VideoAddCaptionRequest
 );
-deser_totality_test!(video_remix_request_deser_totality, VideoRemixRequest);
-deser_totality_test!(
-    video_from_images_request_deser_totality,
-    VideoFromImagesRequest
-);
 deser_totality_test!(video_concat_request_deser_totality, VideoConcatRequest);
-deser_totality_test!(video_caption_request_deser_totality, VideoCaptionRequest);
-deser_totality_test!(video_meme_request_deser_totality, VideoMemeRequest);
+deser_totality_test!(
+    video_caption_request_deser_totality,
+    SampledVideoCaptionRequest
+);
 deser_totality_test!(model_list_request_deser_totality, ModelListRequest);
 deser_totality_test!(model_info_request_deser_totality, ModelInfoRequest);
 deser_totality_test!(job_submit_request_deser_totality, JobSubmitRequest);
@@ -430,16 +508,6 @@ deser_totality_test!(
     gallery_delete_image_request_deser_totality,
     GalleryDeleteImageRequest
 );
-deser_totality_test!(
-    image_edit_region_request_deser_totality,
-    ImageEditRegionRequest
-);
-deser_totality_test!(workflow_save_request_deser_totality, WorkflowSaveRequest);
-deser_totality_test!(workflow_load_request_deser_totality, WorkflowLoadRequest);
-deser_totality_test!(
-    workflow_delete_request_deser_totality,
-    WorkflowDeleteRequest
-);
 deser_totality_test!(video_info_request_deser_totality, VideoInfoRequest);
 deser_totality_test!(video_fetch_request_deser_totality, VideoFetchRequest);
 deser_totality_test!(youtube_search_request_deser_totality, YoutubeSearchRequest);
@@ -458,7 +526,6 @@ deser_totality_test!(
     transcribe_and_store_request_deser_totality,
     TranscribeAndStoreRequest
 );
-deser_totality_test!(workflow_list_request_deser_totality, WorkflowListRequest);
 deser_totality_test!(
     educt_store_transcript_request_deser_totality,
     EductStoreTranscriptRequest

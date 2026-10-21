@@ -30,7 +30,7 @@ pub(super) struct Case {
     pub(super) expected_checker_state: CheckerState,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum Contract {
     JsonPreserved,
@@ -38,7 +38,7 @@ pub(super) enum Contract {
     SupportedStatus,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum Checker {
     JsonParses,
@@ -50,7 +50,7 @@ pub(super) enum Checker {
     NoResult,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum CheckerState {
     Accurate,
@@ -58,7 +58,7 @@ pub(super) enum CheckerState {
     Inconclusive,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum CheckOutcome {
     Pass,
@@ -66,7 +66,7 @@ pub(super) enum CheckOutcome {
     Inconclusive,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum Method {
     SelfCritique,
@@ -92,13 +92,67 @@ pub(super) struct Judgment {
     pub(super) reason: String,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum Verdict {
     Complete,
     Incomplete,
     InsufficientEvidence,
 }
+
+// Derived unit-enum deserialization also accepts {"variant": null}.
+// Require a string before matching the closed vocabulary, at every use site.
+macro_rules! deserialize_string_enum {
+    ($enum:ident { $($name:literal => $variant:ident),+ $(,)? }) => {
+        impl<'de> Deserialize<'de> for $enum {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                let name = String::deserialize(deserializer)?;
+                match name.as_str() {
+                    $($name => Ok(Self::$variant),)+
+                    _ => Err(serde::de::Error::unknown_variant(&name, &[$($name),+])),
+                }
+            }
+        }
+    };
+}
+
+deserialize_string_enum!(Contract {
+    "json_preserved" => JsonPreserved,
+    "integer_sum" => IntegerSum,
+    "supported_status" => SupportedStatus,
+});
+deserialize_string_enum!(Checker {
+    "json_parses" => JsonParses,
+    "json_array_length" => JsonArrayLength,
+    "integer_nonnegative" => IntegerNonnegative,
+    "integer_parity" => IntegerParity,
+    "status_field_present" => StatusFieldPresent,
+    "status_not_unsupported" => StatusNotUnsupported,
+    "no_result" => NoResult,
+});
+deserialize_string_enum!(CheckerState {
+    "accurate" => Accurate,
+    "misleading" => Misleading,
+    "inconclusive" => Inconclusive,
+});
+deserialize_string_enum!(CheckOutcome {
+    "pass" => Pass,
+    "fail" => Fail,
+    "inconclusive" => Inconclusive,
+});
+deserialize_string_enum!(Method {
+    "self_critique" => SelfCritique,
+    "repeat" => Repeat,
+    "secondary" => Secondary,
+});
+deserialize_string_enum!(Verdict {
+    "complete" => Complete,
+    "incomplete" => Incomplete,
+    "insufficient_evidence" => InsufficientEvidence,
+});
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1030,6 +1084,147 @@ mod tests {
         ] {
             assert!(parse_judgment(text, &allowed).is_err(), "accepted {text}");
         }
+    }
+
+    #[test]
+    fn strict_judgment_rejects_object_encoded_verdicts() {
+        let mut accepted = Vec::new();
+        for verdict in ["complete", "incomplete", "insufficient_evidence"] {
+            let text = json!({
+                "verdict": { (verdict): null },
+                "evidence_refs": [],
+                "reason": "An object is not a verdict string.",
+            })
+            .to_string();
+            if parse_judgment(&text, &[]).is_ok() {
+                accepted.push(verdict);
+            }
+        }
+        assert!(
+            accepted.is_empty(),
+            "accepted object verdicts: {accepted:?}"
+        );
+    }
+
+    #[test]
+    fn case_preparation_rejects_object_encoded_enums() {
+        let base = serde_json::to_value(instrument_cases().remove(0)).expect("case serialization");
+        let mut accepted = Vec::new();
+        for field in ["contract", "primary", "secondary", "expected_checker_state"] {
+            let mut value = base.clone();
+            let name = value[field]
+                .as_str()
+                .expect("serialized enum string")
+                .to_string();
+            value[field] = json!({ (name): null });
+            if serde_json::from_value::<Case>(value.clone()).is_ok() {
+                accepted.push(format!("from_value:{field}"));
+            }
+            if serde_json::from_str::<Case>(&value.to_string()).is_ok() {
+                accepted.push(format!("from_str:{field}"));
+            }
+        }
+        assert!(
+            accepted.is_empty(),
+            "accepted object case fields: {accepted:?}"
+        );
+    }
+
+    #[test]
+    fn all_unit_enums_accept_only_snake_case_strings() {
+        fn check<T>(variants: &[(T, &str)], accepted: &mut Vec<String>)
+        where
+            T: Serialize + serde::de::DeserializeOwned + PartialEq + std::fmt::Debug,
+        {
+            for (variant, name) in variants {
+                let value = serde_json::to_value(variant).expect("enum serialization");
+                assert_eq!(value, json!(name));
+                assert_eq!(
+                    serde_json::from_value::<T>(value).expect("enum string"),
+                    *variant
+                );
+                let text = serde_json::to_string(name).expect("string serialization");
+                assert_eq!(
+                    serde_json::from_str::<T>(&text).expect("enum JSON string"),
+                    *variant
+                );
+                for invalid in [
+                    json!({ (*name): null }),
+                    json!([name]),
+                    json!(null),
+                    json!(true),
+                    json!(1),
+                    json!("unknown"),
+                ] {
+                    if serde_json::from_value::<T>(invalid.clone()).is_ok() {
+                        accepted.push(format!(
+                            "{}:from_value:{invalid}",
+                            std::any::type_name::<T>()
+                        ));
+                    }
+                    if serde_json::from_str::<T>(&invalid.to_string()).is_ok() {
+                        accepted.push(format!("{}:from_str:{invalid}", std::any::type_name::<T>()));
+                    }
+                }
+            }
+        }
+        let mut accepted = Vec::new();
+        check(
+            &[
+                (Contract::JsonPreserved, "json_preserved"),
+                (Contract::IntegerSum, "integer_sum"),
+                (Contract::SupportedStatus, "supported_status"),
+            ],
+            &mut accepted,
+        );
+        check(
+            &[
+                (Checker::JsonParses, "json_parses"),
+                (Checker::JsonArrayLength, "json_array_length"),
+                (Checker::IntegerNonnegative, "integer_nonnegative"),
+                (Checker::IntegerParity, "integer_parity"),
+                (Checker::StatusFieldPresent, "status_field_present"),
+                (Checker::StatusNotUnsupported, "status_not_unsupported"),
+                (Checker::NoResult, "no_result"),
+            ],
+            &mut accepted,
+        );
+        check(
+            &[
+                (CheckerState::Accurate, "accurate"),
+                (CheckerState::Misleading, "misleading"),
+                (CheckerState::Inconclusive, "inconclusive"),
+            ],
+            &mut accepted,
+        );
+        check(
+            &[
+                (CheckOutcome::Pass, "pass"),
+                (CheckOutcome::Fail, "fail"),
+                (CheckOutcome::Inconclusive, "inconclusive"),
+            ],
+            &mut accepted,
+        );
+        check(
+            &[
+                (Method::SelfCritique, "self_critique"),
+                (Method::Repeat, "repeat"),
+                (Method::Secondary, "secondary"),
+            ],
+            &mut accepted,
+        );
+        check(
+            &[
+                (Verdict::Complete, "complete"),
+                (Verdict::Incomplete, "incomplete"),
+                (Verdict::InsufficientEvidence, "insufficient_evidence"),
+            ],
+            &mut accepted,
+        );
+        assert!(
+            accepted.is_empty(),
+            "accepted non-string/unknown enums: {accepted:?}"
+        );
     }
 
     #[test]

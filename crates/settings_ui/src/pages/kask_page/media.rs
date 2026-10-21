@@ -60,3 +60,89 @@ pub(crate) fn render_media_page(
         .child(v_flex().gap_3().child(stt_input).child(vision_input))
         .into_any_element()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs::Fs;
+
+    /// expect: [P7] Only research model controls have a media save path.
+    #[test]
+    fn media_controls_match_research_save_paths() {
+        let page = include_str!("media.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production media page");
+        let dispatcher = include_str!("../kask_page.rs");
+        for field in ["stt_model", "vision_model"] {
+            assert!(page.contains(&format!("\"{field}\",")));
+            assert!(dispatcher.contains(&format!("(\"media\", \"{field}\") => {{")));
+        }
+        for field in ["tts_model", "image_gen_model", "video_model"] {
+            assert!(!page.contains(field));
+            assert!(!dispatcher.contains(&format!("(\"media\", \"{field}\") => {{")));
+        }
+    }
+
+    /// expect: [P7] Saving/reloading either research model preserves its value;
+    /// an explicit clear stays empty and suppresses its child env injection.
+    /// Exercises the real file writer/reload, not rendered input interaction.
+    #[gpui::test]
+    async fn media_models_persist_reload_and_clear(cx: &mut gpui::TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.create_dir(paths::settings_file().parent().expect("settings directory"))
+            .await
+            .expect("create fake settings directory");
+        fs.insert_file(paths::settings_file(), b"{}".to_vec()).await;
+        cx.update(settings::init);
+        for value in ["OpenRouter/research-model", ""] {
+            let completion = cx.update(|cx| {
+                SettingsStore::global(cx).update_settings_file_with_completion(
+                    fs.clone(),
+                    move |settings, _| {
+                        let media = settings
+                            .kask
+                            .get_or_insert_default()
+                            .media
+                            .get_or_insert_default();
+                        media.stt_model = Some(value.into());
+                        media.vision_model = Some(value.into());
+                    },
+                )
+            });
+            completion
+                .await
+                .expect("writer finished")
+                .expect("settings saved");
+            let saved = fs
+                .load(paths::settings_file())
+                .await
+                .expect("read saved settings");
+            cx.update(|cx| {
+                let mut reloaded = SettingsStore::new(cx, &settings::default_settings());
+                reloaded
+                    .set_user_settings(&saved, cx)
+                    .expect("reload media settings");
+                cx.set_global(reloaded);
+                let content = raw_kask_settings(cx).expect("persisted media settings");
+                let resolved: kask_bridge::KaskSettings = content.into();
+                assert_eq!(resolved.media.stt_model, value);
+                assert_eq!(resolved.media.vision_model, value);
+                let env = resolved.mcp_env();
+                for key in ["HKASK_MEDIA_STT_MODEL", "HKASK_MEDIA_VISION_MODEL"] {
+                    assert_eq!(
+                        env.get(key).map(String::as_str),
+                        (!value.is_empty()).then_some(value)
+                    );
+                }
+                for key in [
+                    "HKASK_MEDIA_TTS_MODEL",
+                    "HKASK_MEDIA_IMAGE_GEN_MODEL",
+                    "HKASK_MEDIA_VIDEO_MODEL",
+                ] {
+                    assert!(!env.contains_key(key));
+                }
+            });
+        }
+    }
+}

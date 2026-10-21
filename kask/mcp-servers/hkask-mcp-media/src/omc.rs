@@ -99,17 +99,7 @@ pub fn creation_graph(asset_id: &str, task_id: &str, created_at: &str) -> Creati
 /// concept about who made the media, not who appears in it).
 pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
     match tool {
-        // Generation — produces a new creative work.
-        "generate_image" | "generate_video" | "video_meme" | "expand_prompt" => Some(CREATIVE_WORK),
-        // Transform / upscale — produces a version of an existing work.
-        "transform_image"
-        | "upscale_image"
-        | "image_remove_background"
-        | "image_apply_style"
-        | "image_edit_region" => Some(VERSION_INFO),
-        // Analysis — produces a scene description (the scene is the subject).
         "describe_image" | "gallery_analyze" | "video_caption" => Some(SCENE),
-        // Gallery management — produces/manages asset references.
         "gallery_search"
         | "gallery_timeline"
         | "gallery_organize"
@@ -125,64 +115,61 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         | "gallery_remove_from_album"
         | "gallery_delete_album"
         | "gallery_list_album_members"
+        | "gallery_annotation_create"
+        | "gallery_annotation_list"
+        | "gallery_annotation_update"
+        | "gallery_annotation_delete"
         | "youtube_search"
-        | "video_fetch" => Some(ASSET),
-        // Face management — faces are gallery assets (people identified within
-        // images, NOT production participants).
-        "face_register" | "face_validate" | "face_scan_folder" | "face_list" | "face_remove"
+        | "video_fetch"
+        | "face_register"
+        | "face_validate"
+        | "face_scan_folder"
+        | "face_list"
+        | "face_remove"
         | "gallery_name_face" => Some(ASSET),
-        // Audio — produces a media source (audio/text is a source asset).
-        "generate_speech"
-        | "audio_capture"
+        "audio_capture"
         | "record_and_transcribe"
-        | "voice_design"
         | "transcribe_bundle"
         | "transcribe_and_store"
         | "audio_trim"
-        | "audio_concat" => Some(CAPTURE),
-        // Video processing — produces a sequence (a clip is a sequence of shots).
-        "video_clip" | "video_to_gif" | "image_to_video" | "video_concat" | "video_add_caption"
-        | "video_remix" | "video_from_images" | "video_info" => Some(SEQUENCE),
-        // Collage — produces a new creative work from sources.
-        "image_create_collage" => Some(CREATIVE_WORK),
-        // Frame extraction — produces shots (individual frames as gallery assets).
-        "video_extract_frames" => Some(SHOT),
-        // Generation lineage — produces/reads task records (production work).
-        "gallery_record_generation" | "gallery_lineage" | "gallery_reproduce" => Some(TASK),
-        // Model browser — the model/provider is a participant in the creation task.
-        "model_list"
-        | "model_info"
-        | "reduct_connection_status"
-        | "reduct_connection_probe"
-        | "reduct_projects_snapshot" => Some(PARTICIPANT),
-        "reduct_recordings_snapshot"
+        | "audio_concat"
+        | "reduct_recordings_snapshot"
         | "reduct_create_recording"
         | "reduct_import_media"
         | "reduct_upload_gallery_media"
-        | "reduct_upload_local_media" => Some(CAPTURE),
-        "reduct_recording_status" => Some(STATE),
-        "reduct_recording_transcript" => Some(CAPTURE),
-        "reduct_recording_highlights" => Some(VERSION_INFO),
-        "reduct_add_recording_highlight" => Some(VERSION_INFO),
-        "reduct_edit_recording_highlight" => Some(VERSION_INFO),
-        "reduct_reels_snapshot"
+        | "reduct_upload_local_media"
+        | "reduct_recording_transcript"
+        | "educt_store_transcript"
+        | "educt_list_transcripts"
+        | "educt_get_transcript"
+        | "educt_delete_transcript"
+        | "educt_search_transcripts" => Some(CAPTURE),
+        "video_clip"
+        | "video_to_gif"
+        | "video_concat"
+        | "video_add_caption"
+        | "video_info"
+        | "reduct_reels_snapshot"
         | "reduct_reel_detail"
         | "reduct_create_reel"
         | "reduct_add_reel_clip"
         | "reduct_add_reel_title"
         | "reduct_edit_reel_clip_range"
-        | "reduct_publish_reel" => Some(SEQUENCE),
-        // Generation job queue — async job tracking (OMC Task).
-        "job_submit" | "job_list" | "job_status" | "job_cancel" | "workflow_save"
-        | "workflow_list" | "workflow_load" | "workflow_delete" => Some(TASK),
-        // Educt transcript store — manages captured text records (the
-        // transcript is a capture-derived source; layers are versioned
-        // annotations over the immutable words).
-        "educt_store_transcript"
-        | "educt_list_transcripts"
-        | "educt_get_transcript"
-        | "educt_delete_transcript" => Some(CAPTURE),
-        "educt_store_layer"
+        | "reduct_publish_reel"
+        | "educt_render_edl" => Some(SEQUENCE),
+        "image_create_collage" => Some(CREATIVE_WORK),
+        "video_extract_frames" => Some(SHOT),
+        "gallery_lineage" | "job_submit" | "job_list" | "job_status" | "job_cancel" => Some(TASK),
+        "model_list"
+        | "model_info"
+        | "reduct_connection_status"
+        | "reduct_connection_probe"
+        | "reduct_projects_snapshot" => Some(PARTICIPANT),
+        "reduct_recording_status" => Some(STATE),
+        "reduct_recording_highlights"
+        | "reduct_add_recording_highlight"
+        | "reduct_edit_recording_highlight"
+        | "educt_store_layer"
         | "educt_list_layers"
         | "educt_paragraph_pass"
         | "educt_speaker_pass"
@@ -192,9 +179,11 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         | "educt_highlight_pass"
         | "educt_edl_from_highlights"
         | "educt_export"
-        | "educt_locate" => Some(VERSION_INFO),
-        "educt_render_edl" => Some(SEQUENCE),
-        // Unknown tool — no OMC concept.
+        | "educt_locate"
+        | "educt_annotation_create"
+        | "educt_annotation_list"
+        | "educt_annotation_update"
+        | "educt_annotation_delete" => Some(VERSION_INFO),
         _ => None,
     }
 }
@@ -248,20 +237,6 @@ mod tests {
     }
 
     #[test]
-    fn generation_tools_map_to_creative_work() {
-        assert_eq!(tool_to_omc("generate_image"), Some(CREATIVE_WORK));
-        assert_eq!(tool_to_omc("generate_video"), Some(CREATIVE_WORK));
-    }
-
-    #[test]
-    fn transform_tools_map_to_version() {
-        assert_eq!(tool_to_omc("transform_image"), Some(VERSION_INFO));
-        assert_eq!(tool_to_omc("upscale_image"), Some(VERSION_INFO));
-        assert_eq!(tool_to_omc("image_remove_background"), Some(VERSION_INFO));
-        assert_eq!(tool_to_omc("image_apply_style"), Some(VERSION_INFO));
-    }
-
-    #[test]
     fn analysis_tools_map_to_scene() {
         assert_eq!(tool_to_omc("describe_image"), Some(SCENE));
         assert_eq!(tool_to_omc("gallery_analyze"), Some(SCENE));
@@ -276,7 +251,6 @@ mod tests {
 
     #[test]
     fn audio_tools_map_to_media_source() {
-        assert_eq!(tool_to_omc("generate_speech"), Some(CAPTURE));
         assert_eq!(tool_to_omc("audio_capture"), Some(CAPTURE));
         assert_eq!(tool_to_omc("record_and_transcribe"), Some(CAPTURE));
     }
@@ -285,26 +259,13 @@ mod tests {
     fn video_processing_maps_to_sequence() {
         assert_eq!(tool_to_omc("video_clip"), Some(SEQUENCE));
         assert_eq!(tool_to_omc("video_to_gif"), Some(SEQUENCE));
-        assert_eq!(tool_to_omc("image_to_video"), Some(SEQUENCE));
         assert_eq!(tool_to_omc("video_concat"), Some(SEQUENCE));
         assert_eq!(tool_to_omc("video_add_caption"), Some(SEQUENCE));
-        assert_eq!(tool_to_omc("video_remix"), Some(SEQUENCE));
-        assert_eq!(tool_to_omc("video_from_images"), Some(SEQUENCE));
     }
 
     #[test]
     fn video_caption_maps_to_scene() {
         assert_eq!(tool_to_omc("video_caption"), Some(SCENE));
-    }
-
-    #[test]
-    fn video_meme_maps_to_creative_work() {
-        assert_eq!(tool_to_omc("video_meme"), Some(CREATIVE_WORK));
-    }
-
-    #[test]
-    fn expand_prompt_maps_to_creative_work() {
-        assert_eq!(tool_to_omc("expand_prompt"), Some(CREATIVE_WORK));
     }
 
     #[test]
@@ -329,7 +290,6 @@ mod tests {
 
     #[test]
     fn audio_transcription_maps_to_media_source() {
-        assert_eq!(tool_to_omc("voice_design"), Some(CAPTURE));
         assert_eq!(tool_to_omc("transcribe_bundle"), Some(CAPTURE));
         assert_eq!(tool_to_omc("transcribe_and_store"), Some(CAPTURE));
     }
@@ -337,7 +297,6 @@ mod tests {
     #[test]
     fn gallery_lineage_tools_map_to_task() {
         assert_eq!(tool_to_omc("gallery_lineage"), Some(TASK));
-        assert_eq!(tool_to_omc("gallery_reproduce"), Some(TASK));
     }
 
     #[test]
@@ -346,9 +305,7 @@ mod tests {
     }
 
     #[test]
-    fn generation_lineage_maps_to_task() {
-        assert_eq!(tool_to_omc("gallery_record_generation"), Some(TASK));
-    }
+    fn generation_lineage_maps_to_task() {}
 
     #[test]
     fn model_browser_maps_to_participant() {

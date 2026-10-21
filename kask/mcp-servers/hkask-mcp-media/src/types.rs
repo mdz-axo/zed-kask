@@ -8,37 +8,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-// ── Generation request types ─────────────────────────────────────────────
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct GenerateImageRequest {
-    pub prompt: String,
-    pub image_size: Option<String>,
-    pub num_images: Option<u32>,
-    pub style: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct TransformImageRequest {
-    pub prompt: String,
-    pub image_url: String,
-    pub strength: Option<f32>,
-    pub style: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct UpscaleImageRequest {
-    pub image_url: String,
-    pub scale: Option<u32>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct GenerateVideoRequest {
-    pub prompt: String,
-    pub duration: Option<f32>,
-    pub style: Option<String>,
-}
-
 // ── Image description ────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -71,18 +40,6 @@ fn default_mode() -> String {
     "read-only".to_string()
 }
 
-/// Request to expand a short media prompt into a rich, detailed prompt
-/// using a vision LLM (Fooocus "V2" pattern). Optionally applies a
-/// style preset (default, anime, realistic, cinematic, minimal).
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ExpandPromptRequest {
-    /// The short media prompt to expand (e.g., "a cat in space").
-    pub prompt: String,
-    /// Optional style preset to apply to the expanded prompt.
-    /// Available: default, anime, realistic, cinematic, minimal.
-    pub style: Option<String>,
-}
-
 fn default_true() -> bool {
     true
 }
@@ -109,7 +66,7 @@ pub struct GalleryAnalyzeRequest {
     pub mode: String,
     /// Specific image indices (only when mode="selection").
     pub image_indices: Option<Vec<usize>>,
-    /// Which pipelines to run: "faces", "objects", "colors", "composition", "scene". Default: all.
+    /// Which pipelines to run: "faces", "objects", "colors", "composition", "scene". Default: "objects", "colors", "composition", "scene"; faces require explicit selection.
     pub pipelines: Option<Vec<String>>,
     /// Maximum images to process (safety limit, default: 50).
     #[serde(default = "default_analyze_limit")]
@@ -401,19 +358,6 @@ fn default_per_period() -> usize {
 // ── Image editing request types ──────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct RemoveBackgroundRequest {
-    pub image_index: usize,
-    pub new_bg_color: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ApplyStyleRequest {
-    pub image_index: usize,
-    pub style_prompt: String,
-    pub strength: Option<f32>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
 pub struct CreateCollageRequest {
     pub search_terms: Option<Vec<String>>,
     pub similar_to_index: Option<usize>,
@@ -460,14 +404,6 @@ pub struct VideoToGifRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ImageToVideoRequest {
-    pub image_index: usize,
-    pub prompt: Option<String>,
-    pub duration: Option<f32>,
-    pub model: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
 pub struct VideoAddCaptionRequest {
     pub video_url: String,
     pub text: String,
@@ -476,29 +412,8 @@ pub struct VideoAddCaptionRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct VideoRemixRequest {
-    pub video_url: String,
-    pub start_sec: f32,
-    pub end_sec: f32,
-    pub caption_text: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct VideoFromImagesRequest {
-    pub image_indices: Vec<usize>,
-    pub fps: Option<u32>,
-    pub format: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
 pub struct VideoConcatRequest {
     pub video_urls: Vec<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct VideoCaptionRequest {
-    pub video_url: String,
-    pub style: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -519,40 +434,6 @@ fn default_frame_interval() -> f32 {
 
 fn default_max_frames() -> u32 {
     10
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct VideoMemeRequest {
-    /// Gallery image index to use as the meme base.
-    pub image_index: usize,
-    /// Text at the top of the image (Impact-style meme text).
-    pub top_text: Option<String>,
-    /// Text at the bottom of the image.
-    pub bottom_text: Option<String>,
-    /// Camera motion for the video (e.g., "slow zoom in", "dramatic pan right").
-    #[serde(default = "default_motion")]
-    pub motion: String,
-    /// Video duration in seconds.
-    pub duration: Option<f32>,
-    /// Optional font path (TTF/OTF). Falls back to system DejaVu Sans Bold on Linux.
-    pub font_path: Option<String>,
-}
-
-fn default_motion() -> String {
-    "slow zoom in".to_string()
-}
-
-// ── Voice request types ──────────────────────────────────────────────────
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct VoiceDesignRequest {
-    pub character_description: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct GenerateSpeechRequest {
-    pub text: String,
-    pub voice_design: Option<String>,
 }
 
 // ── Audio request types ──────────────────────────────────────────────────
@@ -590,44 +471,11 @@ pub struct RecordAndTranscribeRequest {
     pub language: Option<String>,
 }
 
-// ── Generation lineage request types (WS-3) ─────────────────────────────
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct GalleryRecordGenerationRequest {
-    /// Index of the gallery image to attach lineage to (the generated asset
-    /// must already be in the gallery — call gallery_organize / gallery_refresh
-    /// after saving the generated file).
-    pub image_index: usize,
-    /// The media op that produced the image ("generate_image",
-    /// "image_to_image", "upscale", "image_to_video", ...).
-    pub op: String,
-    /// The prompt used.
-    pub prompt: Option<String>,
-    /// The provider-specific model id used.
-    pub model: Option<String>,
-    /// The provider that produced the image ("deepinfra", "openrouter", ...).
-    pub provider: Option<String>,
-    /// The generation seed, if known.
-    pub seed: Option<i64>,
-    /// JSON string of the generation params (serialize the `MediaGenerateParams`
-    /// used, so `gallery_reproduce` can replay them).
-    pub params: Option<String>,
-    /// Workflow id if the image came from a multi-step workflow.
-    pub workflow_id: Option<String>,
-    /// Index of the parent gallery image this was derived from (img2img /
-    /// upscale / image_to_video), if any. Resolved to an image id internally.
-    pub parent_image_index: Option<usize>,
-}
+// ── Historical lineage request types ─────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GalleryLineageRequest {
     /// Index of the gallery image whose lineage to read.
-    pub image_index: usize,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct GalleryReproduceRequest {
-    /// Index of the gallery image to reproduce (re-runs its stored op + params).
     pub image_index: usize,
 }
 
@@ -652,12 +500,12 @@ pub struct GalleryDeleteImageRequest {
 
 // ── Model browser request types ─────────────────────────────────────────
 
-/// Information about an available media generation model.
+/// Information about an available research media model.
 /// Returned by `model_list` and `model_info` tools. Maps to the OMC `Participant`
 /// concept — the model/provider is a participant in the creation task.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MediaModelInfo {
-    /// Unique model identifier (the full prefixed name, e.g. "DeepInfra/black-forest-labs/FLUX-2-klein-4b").
+    /// Unique model identifier (the full prefixed name, e.g. "Provider/model").
     pub id: String,
     /// Human-readable model name without provider prefix.
     pub name: String,
@@ -688,7 +536,7 @@ pub struct ModelInfoRequest {
 
 // ── Generation job queue request types ──────────────────────────────────
 
-/// A generation job record — tracks the lifecycle of an async media generation.
+/// A research job record — tracks the lifecycle of an async media operation.
 /// Maps to the OMC `Task` concept.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct JobRecord {
@@ -719,17 +567,17 @@ pub struct JobListPayload {
     pub restart_behavior: String,
 }
 
-/// Request to submit a new async generation job.
+/// Request to submit a new async research media job.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct JobSubmitRequest {
-    /// The media operation to execute (e.g. "generate_image", "generate_video",
-    /// "image_to_image", "upscale", "generate_speech", "transcribe").
+    /// The research operation: "transcribe", "audio_trim", "audio_concat",
+    /// "video_clip", or "video_concat".
     pub op: String,
-    /// JSON-serialized `MediaGenerateParams` (prompt, image_url, size, etc.).
+    /// JSON-serialized request for the selected research operation, with its source fields.
     pub params: String,
 }
 
-/// Request to list generation jobs.
+/// Request to list research media jobs.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct JobListRequest {
     /// Optional status filter: "queued", "running", "cancelling", "completed", "failed", or "cancelled".
@@ -833,52 +681,6 @@ pub struct GalleryDeleteAlbumRequest {
 pub struct GalleryListAlbumMembersRequest {
     /// Album ID to list members for.
     pub album_id: String,
-}
-
-// ── Region-selective editing request types ──────────────────────────────
-
-/// Request to apply a transform to a region of an image (inpaint/outpaint).
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ImageEditRegionRequest {
-    /// URL or data URI of the source image to edit.
-    pub image_url: String,
-    /// Mask image (base64 data URI). White regions are edited; black regions
-    /// are preserved. Must be the same dimensions as the source image.
-    pub mask: String,
-    /// The prompt describing the edit to apply in the masked region.
-    pub prompt: String,
-    /// Strength of the edit (0.0–1.0). Default: 0.85.
-    pub strength: Option<f32>,
-}
-
-// ── Workflow composer request types ─────────────────────────────────────
-
-/// Request to save a workflow definition.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct WorkflowSaveRequest {
-    /// Serialized workflow JSON (the step sequence and parameters).
-    pub graph_json: String,
-}
-
-/// Request to list saved workflow summaries.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct WorkflowListRequest {
-    /// Maximum number of workflow summaries to return (default: 100).
-    pub limit: Option<usize>,
-}
-
-/// Request to load a saved workflow by ID.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct WorkflowLoadRequest {
-    /// The workflow ID (returned by `workflow_save`).
-    pub workflow_id: String,
-}
-
-/// Request to delete a saved workflow.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct WorkflowDeleteRequest {
-    /// The workflow ID to delete.
-    pub workflow_id: String,
 }
 
 // ── Video info request types ────────────────────────────────────────────

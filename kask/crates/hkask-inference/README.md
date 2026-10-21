@@ -2,12 +2,40 @@
 
 Multi-provider inference router for hKask — OpenRouter, Ollama, RunPod.
 
-## Features
+## Entry points
 
-- **Provider dispatch** — route inference requests to the best available provider
-- **Model selection** — fuzzy search, prefix-based routing (`OR/`, `OM/`, `RP/`)
-- **Provider ID parsing** — `ProviderId` with model name resolution
-- **Prompt validation** — never-panics input validation
+- **Inference ports** — `resolve_inference_port` and `InferenceIpcClient` connect callers to the configured host; the explicit direct-path policy is described below.
+- **Provider configuration** — `InferenceConfig`, `ProviderId` and `model_constants` resolve visible provider/model choices; they are not a study budget or evidence-retention contract.
+- **Offline packet-study instrument** — `packet-study` prepares evidence-conditioned judgment requests, replays digest-bound responses, and audits durable reservation journals. It does not dispatch live inference.
+
+## Offline packet-study instrument
+
+Study A compares completion judgments over supplied evidence, not autonomous tool choice or code repair. The instrument lives in this standalone crate: it adds no editor, registry-execution or generic agent framework dependency.
+
+```bash
+cargo run -p hkask-inference --bin packet-study -- verify --output /absolute/new-directory
+cargo run -p hkask-inference --bin packet-study -- audit --output /absolute/new-directory
+```
+
+`verify` runs deterministic contract controls and scripted responses through the real preparation, parser, reservation, persistence and paired-report path. Every output is labeled `instrument_verification_replay`: the displayed model name and usage/cost arithmetic are fixture declarations, not model observations or provider charges. Controls are not a pilot dataset or heldout scientific evidence.
+
+The resulting private directory contains `protocol.json`, `private-cases.json`, `replay-records.json`, per-attempt request/raw-response/receipt files, an fsynced hash-chained `budget.jsonl`, and `report.json`. The output directory must be new; files are never overwritten or automatically resumed. On Unix the directory/files are created with 0700/0600 permissions. Hash consistency is not producer authentication.
+
+```bash
+cargo run -p hkask-inference --bin packet-study -- prepare \
+  --protocol protocol.json --cases cases.json --output /absolute/new-preparation
+cargo run -p hkask-inference --bin packet-study -- replay \
+  --protocol protocol.json --cases cases.json --responses replay-records.json \
+  --output /absolute/new-replay
+```
+
+Use the verification output as a documented schema example. Protocol, case and replay inputs are bounded JSON files; duplicate IDs/digests and invalid case/checker classifications fail. Request fingerprints bind protocol, attempt, stage and exact body, so identical bodies from different attempts cannot reuse one receipt. Initial model history is shared across methods; final requests contain only their own branch's review. Hidden contract truth and primary-checker health labels do not enter request bodies. Weak checker receipts come from actually executed deterministic predicates, not copied oracle labels.
+
+Reference contract checks cover JSON-container preservation, checked integer sums and constrained readiness claims. They share a trusted JSON parsing kernel; reference agreement and smoke controls are not independent scientific validation. Malformed output is not abstention. Missing primary-pair members remain bounded unknowns, rather than disappearing from the denominator; reported bounds are not confidence intervals or a treatment conclusion.
+
+Reservation arithmetic uses checked integer micro-USD, not floating-point balances. Every accepted reservation is synced before a replay response is accessed. Missing/partial usage, cap violations and failed receipts retain liability and stop further admission; reasoning tokens are a subset of completion tokens and are not charged twice. Journal audit reconstructs outstanding reservations after an interrupted run and never authorizes a retry. Replay input-token bounds are explicit fixture declarations, **not validated live token measurements**.
+
+**Live execution is unavailable.** No supported CLI mode reads credentials or invokes an inference provider. An `execute` request fails visibly. The selected model's tokenizer is not established by its catalog label `Other`; byte limits are storage limits, not an 8,192-token proof. A bounded live transport, validated model-specific input counting, provider cap/route evidence, independent study-case calibration and a separate PI execution approval remain required before any paid pilot. Do not turn offline verification into scientific capability acceptance.
 
 ## QA transport contracts
 
