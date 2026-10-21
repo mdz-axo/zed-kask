@@ -1833,6 +1833,29 @@ mod tests {
             flag
         }
 
+        async fn held_worker(
+            &mut self,
+            args: serde_json::Value,
+        ) -> (
+            Arc<std::sync::atomic::AtomicBool>,
+            std::sync::mpsc::Sender<()>,
+        ) {
+            use crate::host_skill_tools::LispEvent;
+            let (release, wait) = std::sync::mpsc::channel();
+            *self.probe.worker_release.lock().expect("gate") = Some(wait);
+            self.send(self.request(args)).await;
+            let flag = self.guard().await;
+            assert!(matches!(
+                (
+                    h7_event(&mut self.events).await,
+                    h7_event(&mut self.events).await
+                ),
+                (LispEvent::Spawned, LispEvent::Entered(_))
+                    | (LispEvent::Entered(_), LispEvent::Spawned)
+            ));
+            (flag, release)
+        }
+
         async fn cancelled_exit(&mut self) {
             use crate::host_skill_tools::LispEvent;
             // Signal and helper completion are distinct, ordered observations.
@@ -1999,21 +2022,8 @@ mod tests {
     /// expect: "EOF during a real entered worker signals cancellation before eventual core return and cleanup" [H7]
     #[tokio::test]
     async fn h7_ipc_disconnect_during_worker_acknowledges_core_exit() {
-        use crate::host_skill_tools::LispEvent;
         let mut ipc = H7Connection::new();
-        let (release, wait) = std::sync::mpsc::channel();
-        *ipc.probe.worker_release.lock().expect("gate") = Some(wait);
-        ipc.send(ipc.request(serde_json::json!({"form":"(begin (define f (lambda (n) (if (= n 0) 0 (f (- n 1))))) (f 20))"}))).await;
-        let flag = ipc.guard().await;
-        let mut spawned = false;
-        let mut entered = false;
-        while !spawned || !entered {
-            match h7_event(&mut ipc.events).await {
-                LispEvent::Spawned => spawned = true,
-                LispEvent::Entered(_) => entered = true,
-                other => panic!("unexpected pre-disconnect event: {other:?}"),
-            }
-        }
+        let (flag, release) = ipc.held_worker(serde_json::json!({"form":"(begin (define f (lambda (n) (if (= n 0) 0 (f (- n 1))))) (f 20))"})).await;
         ipc.disconnect().await;
         // Handler has exited while the real blocking worker is still held.
         // Release reaches the real core entry checkpoint, not a fake evaluator.
@@ -2025,22 +2035,8 @@ mod tests {
     /// expect: "Dropping the actual IPC handler signals its entered worker and still acknowledges cleanup" [H7]
     #[tokio::test]
     async fn h7_ipc_handler_drop_acknowledges_core_exit() {
-        use crate::host_skill_tools::LispEvent;
         let mut ipc = H7Connection::new();
-        let (release, wait) = std::sync::mpsc::channel();
-        *ipc.probe.worker_release.lock().expect("gate") = Some(wait);
-        ipc.send(ipc.request(serde_json::json!({"form":"42"})))
-            .await;
-        let flag = ipc.guard().await;
-        let mut spawned = false;
-        let mut entered = false;
-        while !spawned || !entered {
-            match h7_event(&mut ipc.events).await {
-                LispEvent::Spawned => spawned = true,
-                LispEvent::Entered(_) => entered = true,
-                other => panic!("unexpected entry event {other:?}"),
-            }
-        }
+        let (flag, release) = ipc.held_worker(serde_json::json!({"form":"42"})).await;
         ipc.handler.abort();
         let exit = tokio::time::timeout(std::time::Duration::from_secs(5), &mut ipc.handler)
             .await

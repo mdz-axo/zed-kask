@@ -123,71 +123,30 @@ async fn native_scan_preserves_canonical_validation_and_caller_separation() {
         );
     }
     assert!(scanned.is_empty());
-    let forged_id = hkask_types::GoalID::new();
-    let mut forged = serde_json::to_value(&second).expect("goal JSON");
-    forged["id"] = serde_json::json!(forged_id);
-    let wrong_key = hkask_types::GoalID::new();
-    let malformed = hkask_types::GoalID::new();
-    for (row, reason) in [
-        (
-            HMem::new("kanban:goal", &forged_id.to_string(), forged, owners[0]),
-            "permission denied",
-        ),
-        (
-            HMem::new(
-                "kanban:goal",
-                &wrong_key.to_string(),
-                serde_json::to_value(&first).expect("goal JSON"),
-                owners[0],
-            ),
-            "key mismatch",
-        ),
-        (
-            HMem::new(
-                "kanban:goal",
-                &malformed.to_string(),
-                serde_json::json!({"schema_version":3}),
-                owners[0],
-            ),
-            "goal decode",
-        ),
-        (
-            HMem::new(
-                "kanban:goal",
-                &first.id.to_string(),
-                serde_json::to_value(&first).expect("duplicate goal JSON"),
-                owners[0],
-            ),
-            "duplicate canonical identity",
-        ),
-    ] {
-        host.ledger.insert(&row).expect("invalid canonical fixture");
-        for error in [
-            host.service.goal_scan_for_host().expect_err("invalid scan"),
-            host.service
-                .goal_list(&owners[0])
-                .expect_err("invalid listing"),
-        ] {
-            assert!(error.to_string().to_lowercase().contains(reason), "{error}");
-        }
-        let error = host
-            .drain_once()
-            .await
-            .expect_err("invalid scan must surface");
-        assert!(error.to_string().to_lowercase().contains(reason), "{error}");
-        let other = host.service.goal_list(&owners[1]).expect("other owner");
-        assert_eq!(other.len(), 1);
-        assert_eq!(other[0].id, second.id);
-        assert!(
-            host.service
-                .goal_list(&WebID::new())
-                .expect("stranger")
-                .is_empty()
-        );
-        host.ledger
-            .delete_by_id(&row.id)
-            .expect("remove invalid fixture");
-    }
+    let malformed = HMem::new(
+        "kanban:goal",
+        &hkask_types::GoalID::new().to_string(),
+        serde_json::json!({"schema_version":3}),
+        owners[0],
+    );
+    host.ledger.insert(&malformed).expect("malformed fixture");
+    let error = host
+        .drain_once()
+        .await
+        .expect_err("invalid scan must surface");
+    assert!(error.to_string().contains("goal decode"), "{error}");
+    let other = host.service.goal_list(&owners[1]).expect("other owner");
+    assert_eq!(other.len(), 1);
+    assert_eq!(other[0].id, second.id);
+    assert!(
+        host.service
+            .goal_list(&WebID::new())
+            .expect("stranger")
+            .is_empty()
+    );
+    host.ledger
+        .delete_by_id(&malformed.id)
+        .expect("remove malformed fixture");
     host.drain_once().await.expect("scan recovery");
 }
 

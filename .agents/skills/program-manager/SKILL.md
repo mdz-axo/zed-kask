@@ -127,7 +127,9 @@ insert is D — the returned h_mem id.
 
 1. Call `curator_memory_recall` for the target entity (crate, file,
    feature name). Prior decisions and ratifications live there.
-2. Recover the spec BEFORE forming a design:
+2. Recover the spec BEFORE forming a design. The operator's current
+   requirement overrides superseded decisions; historical code and records
+   explain prior behavior, not an obligation to preserve it:
    - `git log --oneline -- <path>` and `git log -S "<identifier>"` for
      when a behavior was added, changed, or removed — commit messages
      are the operator's stated intent at that time.
@@ -359,6 +361,11 @@ report.
 - **No doc-from-code laundering.** Never regenerate a spec/design doc
   from current code without diffing against the operator's stated
   intent; label reconstructions and record ratifications.
+- **Forward-only cutovers.** This project has no default backward-
+  compatibility requirement. Remove superseded contracts, callers, tests,
+  guidance and obsolete state together. Do not introduce aliases, archives,
+  migrations or preservation requirements without an explicit current need.
+  Protect current work and human authority, not obsolete representations.
 - **Cleanup rides with the change.** Whatever a change obsoletes — a
   dep, a comment, a script default, a dead path — is removed in the
   same change. "I'll clean it up later" is how residue survives years.

@@ -116,7 +116,9 @@ impl CorpusServer {
         &self,
         parameters: Parameters<QueryRequest>,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
-    ) -> rmcp::service::MaybeBoxFuture<'_, Result<String, McpToolError>> {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<String, McpToolError>> + Send + '_>,
+    > {
         Box::pin(async move {
             if !parameters.0.query.trim_start().starts_with("(list") {
                 return self.corpus_query(parameters).await;
