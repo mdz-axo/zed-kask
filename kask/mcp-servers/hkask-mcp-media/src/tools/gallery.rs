@@ -10,10 +10,8 @@ pub struct GalleryAnnotationCreateRequest {
     pub gallery_asset_id: String,
     /// One of: tag, note.
     pub kind: String,
-    /// Researcher-authored text, not a model suggestion.
+    /// Manually supplied annotation text (possibly agent-mediated), not model-analysis output.
     pub value: String,
-    /// Explicit approval of this write by the user; false refuses the operation.
-    pub user_approved: bool,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -26,23 +24,12 @@ pub struct GalleryAnnotationUpdateRequest {
     pub gallery_asset_id: String,
     pub annotation_id: String,
     pub value: String,
-    pub user_approved: bool,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct GalleryAnnotationDeleteRequest {
     pub gallery_asset_id: String,
     pub annotation_id: String,
-    pub user_approved: bool,
-}
-
-pub(super) fn require_annotation_approval(approved: bool) -> Result<(), McpToolError> {
-    if !approved {
-        return Err(McpToolError::invalid_argument(
-            "user_approved must be true for researcher annotation writes",
-        ));
-    }
-    Ok(())
 }
 
 fn validate_annotation_value(value: &str) -> Result<(), McpToolError> {
@@ -225,17 +212,17 @@ fn ranked_image_display_hints<'a>(
 
 #[tool_router(router = gallery_router, vis = "pub")]
 impl MediaServer {
-    // User metadata lives in the index even in read-only gallery mode. These
-    // operations never rewrite source bytes or touch another provenance class.
+    // Supplied metadata lives in the index even in read-only gallery mode.
+    // Host invocation authorization is the boundary: `user` classifies supplied
+    // metadata, not proof of human identity/approval. Source bytes stay untouched.
     #[tool(
-        description = "Create a user-approved researcher tag or note on a stable gallery_asset_id. Does not modify source media. Identical model suggestions remain separate. Requires user_approved=true."
+        description = "Create a manually supplied researcher tag or note on a stable gallery_asset_id. Does not modify source media. Identical model suggestions remain separate. Provenance classifies supplied metadata, not authenticated human identity; authorization is the existing host boundary."
     )]
     pub async fn gallery_annotation_create(
         &self,
         Parameters(request): Parameters<GalleryAnnotationCreateRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "gallery_annotation_create", async {
-            require_annotation_approval(request.user_approved)?;
             validate_annotation_value(&request.value)?;
             if !matches!(request.kind.as_str(), "tag" | "note") {
                 return Err(McpToolError::invalid_argument("kind must be tag or note"));
@@ -243,7 +230,7 @@ impl MediaServer {
             self.gallery_store.get_by_id(&request.gallery_asset_id).map_err(map_gallery_store_error)?;
             let annotation = self.gallery_store.tag_image(&request.gallery_asset_id, &request.kind, &request.value, 1.0, "user")
                 .map_err(map_gallery_store_error)?;
-            Ok(serde_json::json!({"annotation": annotation, "provenance": "user", "gallery_changed": true}))
+            Ok(serde_json::json!({"annotation": annotation, "provenance": "researcher_supplied", "gallery_changed": true}))
         }).await
     }
 
@@ -258,34 +245,32 @@ impl MediaServer {
             self.gallery_store.get_by_id(&request.gallery_asset_id).map_err(map_gallery_store_error)?;
             let annotations = self.gallery_store.get_tags(&request.gallery_asset_id).map_err(map_gallery_store_error)?
                 .into_iter().filter(|tag| tag.model_used == "user" && matches!(tag.tag_type.as_str(), "tag" | "note")).collect::<Vec<_>>();
-            Ok(serde_json::json!({"gallery_asset_id": request.gallery_asset_id, "annotations": annotations, "provenance": "user"}))
+            Ok(serde_json::json!({"gallery_asset_id": request.gallery_asset_id, "annotations": annotations, "provenance": "researcher_supplied"}))
         }).await
     }
 
     #[tool(
-        description = "Update only a researcher-authored tag or note by stable asset and annotation IDs. Preserves annotation identity and creation provenance. Requires user_approved=true."
+        description = "Update only a researcher-authored tag or note by stable asset and annotation IDs. Preserves annotation identity and creation provenance."
     )]
     pub async fn gallery_annotation_update(
         &self,
         Parameters(request): Parameters<GalleryAnnotationUpdateRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "gallery_annotation_update", async {
-            require_annotation_approval(request.user_approved)?;
             validate_annotation_value(&request.value)?;
             self.gallery_store.update_user_annotation(&request.gallery_asset_id, &request.annotation_id, &request.value).map_err(map_gallery_store_error)?;
-            Ok(serde_json::json!({"gallery_asset_id": request.gallery_asset_id, "annotation_id": request.annotation_id, "value": request.value, "provenance": "user", "gallery_changed": true}))
+            Ok(serde_json::json!({"gallery_asset_id": request.gallery_asset_id, "annotation_id": request.annotation_id, "value": request.value, "provenance": "researcher_supplied", "gallery_changed": true}))
         }).await
     }
 
     #[tool(
-        description = "Delete only the named researcher annotation, never model tags, other user annotations, or source bytes. Requires user_approved=true."
+        description = "Delete only the named researcher annotation, never model tags, other user annotations, or source bytes."
     )]
     pub async fn gallery_annotation_delete(
         &self,
         Parameters(request): Parameters<GalleryAnnotationDeleteRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "gallery_annotation_delete", async {
-            require_annotation_approval(request.user_approved)?;
             self.gallery_store.delete_user_annotation(&request.gallery_asset_id, &request.annotation_id).map_err(map_gallery_store_error)?;
             Ok(serde_json::json!({"gallery_asset_id": request.gallery_asset_id, "annotation_id": request.annotation_id, "deleted": true, "gallery_changed": true}))
         }).await
@@ -479,7 +464,7 @@ impl MediaServer {
                 "similarity": sim,
                 "confidence": tag.confidence,
                 "annotation_id": tag.id,
-                "provenance": if tag.model_used == "user" { "user" } else { "model" },
+                "provenance": if tag.model_used == "user" { "researcher_supplied" } else { "model" },
                 "model_used": tag.model_used,
             }));
         }
@@ -1773,7 +1758,6 @@ pub(super) mod tests {
                 gallery_asset_id: image.id.clone(),
                 kind: kind.into(),
                 value: value.into(),
-                user_approved: true,
             })
         };
         let tag = payload(
@@ -1836,9 +1820,10 @@ pub(super) mod tests {
             .as_array()
             .ok_or("matching tags")?;
         assert!(
-            matches.iter().any(
-                |matched| matched["annotation_id"] == tag_id && matched["provenance"] == "user"
-            )
+            matches
+                .iter()
+                .any(|matched| matched["annotation_id"] == tag_id
+                    && matched["provenance"] == "researcher_supplied")
         );
         assert!(
             matches
@@ -1850,7 +1835,6 @@ pub(super) mod tests {
                 gallery_asset_id: image.id.clone(),
                 annotation_id: note_id.into(),
                 value: "Recheck fracture".into(),
-                user_approved: true,
             }))
             .await?;
         let updated = server.gallery_store.get_tags(&image.id)?;
@@ -1869,7 +1853,6 @@ pub(super) mod tests {
                         .ok_or("retained model suggestion")?
                         .id
                         .clone(),
-                    user_approved: true
                 }))
                 .await
                 .is_err()
@@ -1878,7 +1861,6 @@ pub(super) mod tests {
             .gallery_annotation_delete(Parameters(GalleryAnnotationDeleteRequest {
                 gallery_asset_id: image.id.clone(),
                 annotation_id: tag_id.into(),
-                user_approved: true,
             }))
             .await?;
         let remaining = server.gallery_store.get_tags(&image.id)?;
@@ -1886,15 +1868,7 @@ pub(super) mod tests {
         assert!(remaining.iter().any(|tag| tag.model_used == "vision-model"));
         assert!(!remaining.iter().any(|tag| tag.id == tag_id));
         assert_eq!(std::fs::read(&path)?, original);
-        assert!(
-            server
-                .gallery_annotation_create(Parameters(GalleryAnnotationCreateRequest {
-                    user_approved: false,
-                    ..create("tag", "unapproved").0
-                }))
-                .await
-                .is_err()
-        );
+
         assert!(
             server
                 .gallery_annotation_list(Parameters(GalleryAnnotationListRequest {

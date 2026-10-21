@@ -114,6 +114,10 @@ narrative generation loop.
    when it changes; an in-flight change excludes external hits. External stores
    cannot be migrated, repaired, touched, linked, or written
    (`hkask-memory/federated_recall.rs`; `hkask-mcp-curator/federated.rs`).
+   The sealed-source lexical leg breaks equal BM25 scores by embedding ID
+   before truncation (`hkask-memory/src/lexical.rs::LexicalIndex::search`):
+   reopening identical rows must not assign different ranks to exact ties,
+   since those ranks feed reciprocal-rank fusion.
 
 ### What it does NOT do
 

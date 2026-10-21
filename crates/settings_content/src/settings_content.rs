@@ -1682,8 +1682,7 @@ pub struct KaskSettingsContent {
     #[serde(default)]
     pub swarm: Option<KaskSwarmSettingsContent>,
 
-    /// Media MCP server configuration: model overrides for TTS, STT, vision,
-    /// image generation, and video generation.
+    /// Media MCP server configuration: research transcription and vision models.
     #[serde(default)]
     pub media: Option<KaskMediaSettingsContent>,
 
@@ -1877,17 +1876,13 @@ pub enum SwarmModeContent {
 
 /// Media MCP server configuration (the `"kask.media"` section in settings.json).
 ///
-/// Model overrides for the media server's TTS, STT, vision, image generation,
-/// and video generation pipelines. When empty, the media server falls back
-/// to `hkask_inference::model_constants` defaults (resolved at startup via
-/// `std::env::var` → `DEFAULT_*_MODEL`). All are provider-prefixed strings.
+/// Provider-prefixed transcription and vision model overrides. Absent fields
+/// use settings-layer defaults; an explicitly empty value disables that
+/// pipeline with a visible configuration error, never a server-side fallback.
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct KaskMediaSettingsContent {
-    pub tts_model: Option<String>,
     pub stt_model: Option<String>,
     pub vision_model: Option<String>,
-    pub image_gen_model: Option<String>,
-    pub video_model: Option<String>,
 }
 
 /// Kask-wide model configuration (the `"kask.models"` section in settings.json).

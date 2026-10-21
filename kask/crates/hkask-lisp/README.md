@@ -70,8 +70,9 @@ Raw conversions, defaults and infix rewriting are unchanged.
 
 ## Skill usage
 
-The `lisp_eval` agent tool calls `eval_sandboxed_with_budget` with a Lisp form and a JSON
-environment. The SKILL.md instructs the agent to call `lisp_eval` for
+The native `lisp_eval` tool uses `eval_sandboxed_with_cancellation`; the pure
+`evaluate_lisp` / delegated host path retains `eval_sandboxed_with_budget`.
+The SKILL.md instructs the agent to call `lisp_eval` for
 convergence checks, invariant validation, and deterministic scoring:
 
 ```
@@ -125,11 +126,18 @@ No hKask crate dependencies — this is a standalone computation library.
   core work caps. The output cap excludes envelopes, error strings and intermediate
   `Value` heap; it is not a total-heap, time or concurrency quota. Large intermediate
   values can exist before refusal. H4C operating measurements remain pending.
-- H5 agent titles inspect only the first 80 Unicode form characters, never env,
-  including partial input. Typed decoding and pure evaluation run via
-  `cx.background_spawn`; evaluator `Rc`s live only within synchronous worker evaluation.
-  Generic raw-output copying and bounded display formatting remain foreground;
-  normal engine-to-display processing counts twice and emits once. Host/corpus
-  offload (H7/H8) and cancellation/Task-drop joining (H6) remain deferred; no new
-  runtime or result cache is introduced.
+- H5/H6 native titles inspect only the first 80 Unicode form characters, never env.
+  Typed decoding/evaluation run via `cx.background_spawn`, with evaluator `Rc`s
+  confined to synchronous worker evaluation. One monotonic `Arc<AtomicBool>` per
+  invocation requests cooperative cancellation on user cancel or result-task drop;
+  `eval_sandboxed_with_cancellation` returns `LispError::Cancelled` at checkpoints
+  (`src/hkask_lisp.rs:2505@eval_sandboxed_with_cancellation`). Scope teardown is
+  mandatory, not cancellable. Bounded serde/std operations, raw conversions and
+  destruction remain nonpreemptible; this is no hard time, heap or concurrency quota.
+  Native turn completion/cancel joins worker cleanup receipts; publication checks
+  the old turn's cancellation state and weak pending-owner identity prevents stale
+  writes/flushes into a successor. Raw/pure APIs are unchanged. Raw-output copying
+  and bounded display formatting remain foreground (two counts, one emit).
+  Host/corpus cancellation/offload (H7/H8) and H4C measurements remain deferred;
+  no H6 installed-editor validation, new runtime or result cache is claimed.
 - `#![forbid(unsafe_code)]` — no unsafe blocks anywhere in the crate

@@ -1078,6 +1078,46 @@ mod tests {
         );
     }
 
+    /// expect: [P7] Research model choices reach only media; creative model
+    /// variables cannot re-enable retired pipelines through child injection.
+    #[test]
+    fn media_models_are_research_only_and_round_trip_to_child() {
+        let content: settings_content::KaskMediaSettingsContent = serde_json::from_value(
+            serde_json::json!({"stt_model":"OpenRouter/research-stt", "vision_model":"OpenRouter/research-vision"}),
+        ).expect("research media content");
+        let mut settings = crate::KaskSettings::default();
+        settings.media = content.into();
+        let env = settings.mcp_env();
+        let media_env = filter_config_env_for_server("media", &env);
+        for key in ["HKASK_MEDIA_STT_MODEL", "HKASK_MEDIA_VISION_MODEL"] {
+            assert_eq!(media_env.get(key), env.get(key));
+            assert!(media_env.contains_key(key));
+            for server in BUILT_IN_MCP_SERVERS
+                .iter()
+                .filter(|server| server.id != "media")
+            {
+                assert!(!filter_config_env_for_server(server.id, &env).contains_key(key));
+            }
+        }
+        let cleared: settings_content::KaskMediaSettingsContent =
+            serde_json::from_value(serde_json::json!({"stt_model":"", "vision_model":""}))
+                .expect("explicitly cleared models");
+        settings.media = cleared.into();
+        let cleared_env = settings.mcp_env();
+        for key in ["HKASK_MEDIA_STT_MODEL", "HKASK_MEDIA_VISION_MODEL"] {
+            assert!(!cleared_env.contains_key(key));
+        }
+        let retired: std::collections::HashMap<String, String> = [
+            "HKASK_MEDIA_TTS_MODEL",
+            "HKASK_MEDIA_IMAGE_GEN_MODEL",
+            "HKASK_MEDIA_VIDEO_MODEL",
+        ]
+        .into_iter()
+        .map(|key| (key.to_string(), "retired".to_string()))
+        .collect();
+        assert!(filter_config_env_for_server("media", &retired).is_empty());
+    }
+
     #[test]
     fn reduct_key_reaches_only_media_child() {
         let descriptor = crate::DATA_SERVICES

@@ -641,9 +641,11 @@ pub fn store_layer(
     })
 }
 
-/// Change only a single researcher-authored highlight. Compare the exact
-/// previous payload in the write so a concurrent edit is never overwritten.
-/// Existing pass-produced highlights (including all labels/notes) are inert.
+/// Change only a single researcher-supplied highlight. `model = user` marks
+/// manually supplied data, not authenticated human identity/approval; invocation
+/// authorization is the host's boundary. Compare the exact previous payload in
+/// the write so concurrent edits are never overwritten. Pass-produced highlights
+/// (including all labels/notes) are inert.
 pub fn mutate_user_highlight(
     driver: &dyn DatabaseDriver,
     transcript_id: &str,

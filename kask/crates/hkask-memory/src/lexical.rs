@@ -155,7 +155,9 @@ impl LexicalIndex {
     /// Rank rows by BM25 over the query's rare terms, combining a term's
     /// filename and text frequency into one per-row tf. Queries whose
     /// terms are all common (or absent) return no hits — the leg is
-    /// silent without rare-term signal, by construction.
+    /// silent without rare-term signal, by construction. Equal scores use
+    /// embedding identity before truncation, so reopening the same source
+    /// cannot change lexical ranks or the fused retrieval window.
     pub fn search(&self, query: &str, limit: usize) -> Vec<LexicalHit> {
         if limit == 0 || self.row_ids.is_empty() {
             return Vec::new();
@@ -198,6 +200,7 @@ impl LexicalIndex {
             b.score
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| self.row_ids[a.row as usize].cmp(&self.row_ids[b.row as usize]))
         });
         hits.truncate(limit);
         hits
@@ -346,6 +349,63 @@ mod tests {
         assert!(
             hits.iter().all(|hit| hit.row < 3),
             "every hit must be an alpha-charter row, got {hits:?}"
+        );
+    }
+
+    /// expect: "Reopening an unchanged sealed source must preserve lexical ranks and cutoff membership." [P1]
+    #[test]
+    fn equal_scores_use_embedding_identity_before_truncation() {
+        let rows = [
+            row(
+                "a0",
+                "alpha-charter.md",
+                "dignity of work expresses and enhances the lives of persons",
+            ),
+            row(
+                "a2",
+                "alpha-charter.md",
+                "the limit is positive and systems flourish through restraint",
+            ),
+        ];
+        for reverse in [false, true] {
+            let mut input = rows.to_vec();
+            if reverse {
+                input.reverse();
+            }
+            let index = LexicalIndex::build(input);
+            for _ in 0..16 {
+                let hits = index.search("dignity of work and the positive limit", 2);
+                assert_eq!(hits.len(), 2);
+                assert_eq!(
+                    hits[0].score.to_bits(),
+                    hits[1].score.to_bits(),
+                    "the fixture must exercise an exact score tie"
+                );
+                let ids: Vec<_> = hits.iter().map(|hit| index.row_id(hit.row)).collect();
+                assert_eq!(
+                    ids,
+                    [Some("a0"), Some("a2")],
+                    "equal scores must not inherit map iteration or input order"
+                );
+                let limited = index.search("dignity of work and the positive limit", 1);
+                assert_eq!(index.row_id(limited[0].row), Some("a0"));
+            }
+        }
+    }
+
+    #[test]
+    fn unequal_scores_take_precedence_over_embedding_identity() {
+        let index = LexicalIndex::build([
+            row("a", "fixture.md", "dignity"),
+            row("z", "fixture.md", "dignity work"),
+        ]);
+        let hits = index.search("dignity work", 2);
+        assert_eq!(hits.len(), 2);
+        assert!(hits[0].score > hits[1].score);
+        assert_eq!(index.row_id(hits[0].row), Some("z"));
+        assert_eq!(
+            index.row_id(index.search("dignity work", 1)[0].row),
+            Some("z")
         );
     }
 

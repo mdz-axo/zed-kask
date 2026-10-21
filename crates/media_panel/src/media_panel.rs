@@ -266,7 +266,12 @@ fn steer_system_prompt() -> SharedString {
          Preserve source bytes and stable asset identities. Keep user-authored \
          annotations distinct from model-derived observations; neither is verified \
          source evidence by itself. Link excerpts and reels to their source and \
-         transcript ranges, and retain historical provenance. Use face identification \
+         transcript ranges, and retain historical provenance. Use gallery_annotation_ \
+         tools with stable gallery_asset_id, never positional indices, for researcher \
+         tags/notes; educt_annotation_ tools use immutable source-word ranges. \
+         Search stored transcripts with educt_search_transcripts in lexical mode; \
+         follow returned continuation offsets and retain source/timing citations. \
+         A lexical match is not semantic retrieval or verified evidence. Use face identification \
          only when explicitly selected by the operator. Reduct cloud uploads and \
          publication require an explicit operator decision. Do not synthesize \
          research evidence. Media results render inline; the Library, Queue, and \
@@ -302,7 +307,7 @@ impl gpui::Render for MediaPanel {
 
         let conversation = self.steer.conversation().cloned();
         // The director (bottom): the Steer conversation drives all media
-        // operations through the scoped media MCP tools. Definite fractional
+        // operations through media guidance without restricting other MCP tools. Definite fractional
         // height — the viewer above flexes to fill whatever the director
         // leaves.
         let director = div()
@@ -468,6 +473,77 @@ mod tests {
                 hkask_mcp_media::TOOL_NAMES.contains(&name.as_str()),
                 "steer prompt advertises `{name}`, not in hkask_mcp_media::TOOL_NAMES"
             );
+        }
+    }
+
+    /// expect: [P7] The approved research surface excludes creative operations
+    /// while retaining source processing, annotations, retrieval, and history.
+    #[test]
+    fn steer_prompt_carries_research_scope_and_boundaries() {
+        assert_eq!(hkask_mcp_media::TOOL_NAMES.len(), 102 - 20 + 9);
+        let prompt = steer_system_prompt();
+        for required in [
+            "gallery_annotation_create",
+            "gallery_annotation_list",
+            "gallery_annotation_update",
+            "gallery_annotation_delete",
+            "educt_annotation_create",
+            "educt_annotation_list",
+            "educt_annotation_update",
+            "educt_annotation_delete",
+            "educt_search_transcripts",
+            "gallery_lineage",
+            "gallery_asset_detail",
+            "transcribe_bundle",
+            "audio_trim",
+            "audio_concat",
+            "video_clip",
+            "video_concat",
+        ] {
+            assert!(
+                prompt.contains(required),
+                "research prompt missing {required}"
+            );
+        }
+        for retired in [
+            "voice_design",
+            "generate_speech",
+            "gallery_record_generation",
+            "gallery_reproduce",
+            "generate_image",
+            "transform_image",
+            "upscale_image",
+            "generate_video",
+            "expand_prompt",
+            "image_edit_region",
+            "image_remove_background",
+            "image_apply_style",
+            "image_to_video",
+            "video_remix",
+            "video_from_images",
+            "video_meme",
+            "workflow_save",
+            "workflow_list",
+            "workflow_load",
+            "workflow_delete",
+        ] {
+            assert!(
+                !prompt.contains(retired),
+                "retired operation advertised: {retired}"
+            );
+        }
+        for boundary in [
+            "full MCP tool surface remains available",
+            "Preserve source bytes",
+            "immutable source-word ranges",
+            "lexical mode",
+            "source/timing citations",
+            "neither is verified",
+            "explicitly selected by the operator",
+            "publication require an explicit operator decision",
+            "historical provenance",
+        ] {
+            assert!(prompt.contains(boundary), "missing boundary: {boundary}");
         }
     }
 

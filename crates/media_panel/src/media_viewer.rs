@@ -2084,7 +2084,7 @@ mod tests {
         {
             let output = hkask_mcp_media::media_block::enrich_with_omc_and_provenance(
                 serde_json::json!({"output": source}),
-                "generate_image",
+                "image_create_collage",
                 "image",
                 serde_json::json!({}),
                 None,
@@ -2095,7 +2095,7 @@ mod tests {
                 Value::String(output.to_string())
             };
             viewer.update(cx, |viewer, cx| {
-                viewer.ingest_tool_result(&output, "generate_image", cx)
+                viewer.ingest_tool_result(&output, "image_create_collage", cx)
             });
             cx.run_until_parked();
             assert_eq!(
@@ -2105,7 +2105,7 @@ mod tests {
             );
 
             viewer.update(cx, |viewer, cx| {
-                viewer.ingest_tool_result(&output, "generate_image", cx)
+                viewer.ingest_tool_result(&output, "image_create_collage", cx)
             });
             cx.run_until_parked();
             assert_eq!(
@@ -2131,7 +2131,7 @@ mod tests {
     fn ingest_tool_result_accepts_structured_and_text_transports(cx: &mut gpui::TestAppContext) {
         let output = hkask_mcp_media::media_block::enrich_with_omc_and_provenance(
             serde_json::json!({"output": "/tmp/雪/quote\"-back\\slash\nimage.png"}),
-            "generate_image",
+            "image_create_collage",
             "image",
             serde_json::json!({"prompt": "snow"}),
             None,
@@ -2140,17 +2140,21 @@ mod tests {
         let viewer = cx.new(|_| MediaViewer::new());
         viewer.update(cx, |viewer, cx| {
             viewer.detail = Some(serde_json::json!({"stale": true}));
-            viewer.ingest_tool_result(&wrapped, "generate_image", cx);
+            viewer.ingest_tool_result(&wrapped, "image_create_collage", cx);
             assert_eq!(viewer.assets.len(), 1);
             assert_eq!(viewer.selected, Some(0));
             assert!(viewer.detail.is_none());
-            viewer.ingest_tool_result(&Value::String(wrapped.to_string()), "generate_image", cx);
-            viewer.ingest_tool_result(&output, "generate_image", cx);
+            viewer.ingest_tool_result(
+                &Value::String(wrapped.to_string()),
+                "image_create_collage",
+                cx,
+            );
+            viewer.ingest_tool_result(&output, "image_create_collage", cx);
             assert_eq!(viewer.assets.len(), 1);
             let second = hkask_mcp_media::media_block::media_block("video", "/tmp/second.mp4");
             viewer.ingest_tool_result(
                 &serde_json::json!({"display_hints": [second]}),
-                "generate_video",
+                "video_clip",
                 cx,
             );
             assert_eq!(viewer.selected, Some(1));
@@ -2192,7 +2196,7 @@ mod tests {
         let _restore = RestoreInvoker(hkask_tool_invoker::shared_tool_invoker());
         let record = hkask_mcp_media::types::JobRecord {
             id: "job-1".into(),
-            op: "generate_image".into(),
+            op: "transcribe".into(),
             status: "running".into(),
             created_at: "2026-09-05T00:00:00Z".into(),
             completed_at: None,
@@ -2257,6 +2261,17 @@ mod tests {
         assert!(asset.gallery_index.is_none());
     }
 
+    /// expect: [P7] Retiring a producer must not erase historical media provenance.
+    #[test]
+    fn historical_creative_hint_remains_readable() {
+        let body = r#"{"kind":"image","src":"/tmp/historical.png","gallery_asset_id":"old-asset","ontology":"omc:CreativeWork","provenance":{"tool":"generate_image","args":{"prompt":"historical"}}}"#;
+        let asset = asset_from_hint(&hint(body), &"generate_image".into())
+            .expect("historical producer is not an execution request");
+        assert_eq!(asset.gallery_asset_id.as_deref(), Some("old-asset"));
+        assert_eq!(asset.body, body);
+        assert_eq!(asset.tool, "generate_image");
+    }
+
     /// expect: [P7] Invalid media never becomes a selectable phantom asset.
     #[test]
     fn asset_from_hint_rejects_missing_src_and_unsupported_kind() {
@@ -2264,7 +2279,7 @@ mod tests {
             r#"{"kind":"image"}"#,
             r#"{"kind":"hologram","src":"/tmp/x"}"#,
         ] {
-            assert!(asset_from_hint(&hint(body), &"generate_image".into()).is_none());
+            assert!(asset_from_hint(&hint(body), &"image_create_collage".into()).is_none());
         }
     }
 
@@ -2275,7 +2290,7 @@ mod tests {
         for kind in ["image", "svg", "video", "audio"] {
             let output = hkask_mcp_media::media_block::enrich_with_omc_and_provenance(
                 serde_json::json!({"output": source, "gallery_asset_id": "asset-1"}),
-                "generate_image",
+                "image_create_collage",
                 kind,
                 serde_json::json!({"prompt": "雪\n\""}),
                 Some("span-1".into()),
@@ -2283,7 +2298,7 @@ mod tests {
             let hint = output["display_hint"]
                 .as_str()
                 .ok_or_else(|| anyhow::anyhow!("missing hint"))?;
-            let asset = asset_from_hint(hint, &"generate_image".into())
+            let asset = asset_from_hint(hint, &"image_create_collage".into())
                 .ok_or_else(|| anyhow::anyhow!("missing asset"))?;
             let body = hkask_media_widget::MediaBlockBody::parse(&asset.body)?;
             assert_eq!(asset.src, source);
@@ -2292,7 +2307,10 @@ mod tests {
             assert_eq!(body.ontology.as_deref(), Some("omc:CreativeWork"));
             assert_eq!(body.gallery_asset_id.as_deref(), Some("asset-1"));
             assert_eq!(asset.gallery_asset_id.as_deref(), Some("asset-1"));
-            assert_eq!(body.provenance.tool.as_deref(), Some("generate_image"));
+            assert_eq!(
+                body.provenance.tool.as_deref(),
+                Some("image_create_collage")
+            );
             assert_eq!(body.provenance.span_id.as_deref(), Some("span-1"));
             assert_eq!(
                 body.provenance.args,
@@ -2304,7 +2322,7 @@ mod tests {
             extended["height"] = serde_json::json!(480);
             extended["caption"] = serde_json::json!("雪\n\"");
             let extended_hint = self::hint(&extended.to_string());
-            let asset = asset_from_hint(&extended_hint, &"generate_image".into())
+            let asset = asset_from_hint(&extended_hint, &"image_create_collage".into())
                 .ok_or_else(|| anyhow::anyhow!("extended body rejected"))?;
             assert_eq!(serde_json::from_str::<Value>(&asset.body)?, extended);
         }
@@ -2338,7 +2356,7 @@ mod tests {
             body: serde_json::json!({"kind": kind, "src": src}).to_string(),
             src: src.into(),
             kind: kind.into(),
-            tool: "generate_image".into(),
+            tool: "image_create_collage".into(),
             gallery_index: None,
             gallery_asset_id: None,
         }
@@ -2347,7 +2365,7 @@ mod tests {
     fn job(status: &str) -> JobRecord {
         JobRecord {
             id: format!("job-{status}"),
-            op: "generate_video".into(),
+            op: "video_clip".into(),
             status: status.into(),
             created_at: "2026-09-14T00:00:00Z".into(),
             completed_at: None,
@@ -2589,7 +2607,7 @@ mod tests {
     #[test]
     fn gallery_freshness_is_result_derived_across_publisher_families() {
         for tool in [
-            "generate_image",
+            "image_create_collage",
             "video_clip",
             "audio_capture",
             "educt_render_edl",

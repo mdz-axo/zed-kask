@@ -81,8 +81,7 @@ pub struct KaskSettings {
     /// Swarm (Agent Bestiary World) MCP server configuration.
     pub swarm: KaskSwarmSettings,
 
-    /// Media MCP server configuration: model overrides for TTS, STT, vision,
-    /// image generation, and video generation.
+    /// Media MCP server configuration: research transcription and vision models.
     pub media: KaskMediaSettings,
 
     /// Kask-wide model configuration: default, embedding, and classifier models.
@@ -487,8 +486,7 @@ impl Default for KaskSwarmSettings {
 
 /// Media MCP server configuration.
 ///
-/// Model overrides for the media server's TTS, STT, vision, image
-/// generation, and video generation pipelines. STT and vision carry
+/// Research transcription and vision model overrides. Both carry
 /// settings-layer defaults (`hkask_inference::model_constants::
 /// DEFAULT_MEDIA_*`) — the media server has no in-server fallback, so
 /// without an injected value those pipelines fail visibly (NotConfigured).
@@ -497,28 +495,17 @@ impl Default for KaskSwarmSettings {
 /// provider-prefixed strings.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct KaskMediaSettings {
-    /// TTS model override (env `HKASK_MEDIA_TTS_MODEL`).
-    pub tts_model: String,
     /// STT model override (env `HKASK_MEDIA_STT_MODEL`).
     pub stt_model: String,
     /// Vision model override (env `HKASK_MEDIA_VISION_MODEL`).
     pub vision_model: String,
-    /// Image generation model override (env `HKASK_MEDIA_IMAGE_GEN_MODEL`).
-    pub image_gen_model: String,
-    /// Video generation model override (env `HKASK_MEDIA_VIDEO_MODEL`).
-    pub video_model: String,
 }
 
 impl Default for KaskMediaSettings {
     fn default() -> Self {
         Self {
-            // TTS/image/video stay operator-set (no ratified
-            // default); empty = not configured, the tools fail visibly.
-            tts_model: String::new(),
             stt_model: hkask_inference::model_constants::DEFAULT_MEDIA_STT_MODEL.to_string(),
             vision_model: hkask_inference::model_constants::DEFAULT_MEDIA_VISION_MODEL.to_string(),
-            image_gen_model: String::new(),
-            video_model: String::new(),
         }
     }
 }
@@ -994,11 +981,8 @@ impl From<KaskMediaSettingsContent> for KaskMediaSettings {
     fn from(c: KaskMediaSettingsContent) -> Self {
         let default = Self::default();
         Self {
-            tts_model: c.tts_model.unwrap_or(default.tts_model),
             stt_model: c.stt_model.unwrap_or(default.stt_model),
             vision_model: c.vision_model.unwrap_or(default.vision_model),
-            image_gen_model: c.image_gen_model.unwrap_or(default.image_gen_model),
-            video_model: c.video_model.unwrap_or(default.video_model),
         }
     }
 }
@@ -1093,8 +1077,7 @@ mod tests {
     // HKASK_MEDIA_VISION_MODEL into the server child. Before 2026-09-04 both
     // fields defaulted to empty and the transcribe + gallery-analysis
     // pipelines shipped dead (NotConfigured on every call). This test pins
-    // the wiring: STT and vision carry the model_constants defaults;
-    // generation models stay operator-set.
+    // the wiring: STT and vision carry the model_constants defaults.
     #[test]
     fn media_settings_default_carries_stt_and_vision_models() {
         let default = KaskMediaSettings::default();
@@ -1108,9 +1091,11 @@ mod tests {
             hkask_inference::model_constants::DEFAULT_MEDIA_VISION_MODEL,
             "default vision_model must carry the settings-layer constant"
         );
-        assert!(default.tts_model.is_empty());
-        assert!(default.image_gen_model.is_empty());
-        assert!(default.video_model.is_empty());
+        let serialized = serde_json::to_value(default).expect("serialize research media settings");
+        let fields = serialized.as_object().expect("media settings object");
+        assert_eq!(fields.len(), 2);
+        assert!(fields.contains_key("stt_model"));
+        assert!(fields.contains_key("vision_model"));
     }
 
     // Regression test for the silent `embedding_dim == 0` bug. A user

@@ -2,7 +2,7 @@
 //!
 //! The gallery is a lens over the filesystem, not a copy of it.
 //! Images are indexed by path + hash; tags distinguish model metadata from
-//! user-authored annotations through their persisted provenance.
+//! manually supplied annotations through their persisted provenance.
 //! Schema is flat — one join maximum (image → tags).
 //!
 //! Tables:
@@ -209,6 +209,9 @@ pub struct TagRecord {
     pub tag_type: String,
     pub value: String,
     pub confidence: f64,
+    /// `user` means researcher-directed, manually supplied metadata (including
+    /// agent-mediated writes), not an authenticated human identity or receipt.
+    /// Invocation authorization belongs to the host, not this provenance marker.
     pub model_used: String,
     pub created_at: String,
 }
@@ -370,7 +373,7 @@ impl GalleryStore {
                 ON gallery_tags(image_id);
             CREATE INDEX IF NOT EXISTS idx_gallery_tags_type
                 ON gallery_tags(tag_type);
-            -- Human acceptance must not alias a model suggestion with the same text.
+            -- Supplied annotations must not alias model suggestions with the same text.
             CREATE UNIQUE INDEX IF NOT EXISTS idx_gallery_tags_provenance
                 ON gallery_tags(image_id, tag_type, value, model_used);
             DROP INDEX IF EXISTS idx_gallery_tags_unique;
@@ -1012,8 +1015,9 @@ impl GalleryStore {
         }))
     }
 
-    /// Researcher edits cannot overwrite or delete model suggestions.
-    /// Ownership is checked in the mutation, not a racy read-then-write check.
+    /// Supplied-annotation edits cannot overwrite or delete model suggestions.
+    /// The provenance class is checked in the mutation, not a racy read-then-write
+    /// check. This is data preservation, not authentication of a human actor.
     pub fn update_user_annotation(
         &self,
         image_id: &str,
