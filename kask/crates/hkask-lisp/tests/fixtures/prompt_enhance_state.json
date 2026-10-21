@@ -1,0 +1,1013 @@
+[
+  {
+    "id": "initial-low-skipped",
+    "env": "{\"effort_tier\":\"low\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[],\"request\":null}",
+    "expect": {
+      "input_valid": true,
+      "admit": false,
+      "delivery_verdict": "skipped",
+      "attempts_used": 0
+    }
+  },
+  {
+    "id": "initial-low-no-critic",
+    "env": "{\"effort_tier\":\"low\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[],\"request\":{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false
+    }
+  },
+  {
+    "id": "initial-medium-L1",
+    "env": "{\"effort_tier\":\"medium\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[],\"request\":{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": true
+    }
+  },
+  {
+    "id": "initial-medium-L2",
+    "env": "{\"effort_tier\":\"medium\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[],\"request\":{\"attempt_id\":1,\"level\":2,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false
+    }
+  },
+  {
+    "id": "initial-medium-L3",
+    "env": "{\"effort_tier\":\"medium\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[],\"request\":{\"attempt_id\":1,\"level\":3,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false
+    }
+  },
+  {
+    "id": "initial-high-L1",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[],\"request\":{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": true
+    }
+  },
+  {
+    "id": "initial-high-L2",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[],\"request\":{\"attempt_id\":1,\"level\":2,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false
+    }
+  },
+  {
+    "id": "initial-high-L3",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[],\"request\":{\"attempt_id\":1,\"level\":3,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false
+    }
+  },
+  {
+    "id": "invalid-effort",
+    "env": "{\"effort_tier\":\"max\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[],\"request\":null}",
+    "expect": {
+      "input_valid": false,
+      "admit": false,
+      "verified_current_revision": false
+    }
+  },
+  {
+    "id": "invalid-initial-level0",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[],\"request\":{\"attempt_id\":1,\"level\":0,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false
+    }
+  },
+  {
+    "id": "invalid-initial-level4",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[],\"request\":{\"attempt_id\":1,\"level\":4,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false
+    }
+  },
+  {
+    "id": "invalid-attempt-id",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[],\"request\":{\"attempt_id\":2,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false
+    }
+  },
+  {
+    "id": "invalid-initial-revision",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\",\"p1\"],\"critique_runs\":[],\"request\":{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":1,\"reviewed_prompt\":\"p1\",\"kind\":\"initial\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false
+    }
+  },
+  {
+    "id": "L1-to-L2",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":{\"attempt_id\":2,\"level\":2,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"escalate\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": true
+    }
+  },
+  {
+    "id": "L2-to-L3",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}},{\"attempt_id\":2,\"level\":2,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"escalate\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Rationale\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":{\"attempt_id\":3,\"level\":3,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"escalate\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": true
+    }
+  },
+  {
+    "id": "reject-skip1-to3",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":{\"attempt_id\":2,\"level\":3,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"escalate\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false
+    }
+  },
+  {
+    "id": "reject-backward3-to2",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}},{\"attempt_id\":2,\"level\":2,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"escalate\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Rationale\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}},{\"attempt_id\":3,\"level\":3,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"escalate\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Rationale\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Edge Cases\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Synthesis\",\"rating\":\"Gap\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":{\"attempt_id\":4,\"level\":2,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"escalate\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false
+    }
+  },
+  {
+    "id": "reject-backward2-to1",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}},{\"attempt_id\":2,\"level\":2,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"escalate\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Rationale\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":{\"attempt_id\":3,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"escalate\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false
+    }
+  },
+  {
+    "id": "reject-fabricated-skip-history",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}},{\"attempt_id\":2,\"level\":3,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"escalate\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Rationale\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Edge Cases\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Synthesis\",\"rating\":\"Gap\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":null}",
+    "expect": {
+      "input_valid": false,
+      "admit": false,
+      "verified_current_revision": false
+    }
+  },
+  {
+    "id": "reject-initial-L3-history",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":3,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Rationale\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Edge Cases\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Synthesis\",\"rating\":\"Gap\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":null}",
+    "expect": {
+      "input_valid": false,
+      "admit": false,
+      "verified_current_revision": false
+    }
+  },
+  {
+    "id": "pass-stops-extra-call",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[],\"verdict\":\"pass\"}}],\"request\":{\"attempt_id\":2,\"level\":2,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"escalate\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false,
+      "verified_current_revision": true,
+      "delivery_verdict": "pass"
+    }
+  },
+  {
+    "id": "medium-no-escalation",
+    "env": "{\"effort_tier\":\"medium\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":{\"attempt_id\":2,\"level\":2,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"escalate\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false
+    }
+  },
+  {
+    "id": "medium-no-reprobe",
+    "env": "{\"effort_tier\":\"medium\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Gap\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Gap\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":{\"attempt_id\":2,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"reprobe\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false
+    }
+  },
+  {
+    "id": "high-L1-current-reprobe",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Gap\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Gap\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":{\"attempt_id\":2,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"reprobe\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": true
+    }
+  },
+  {
+    "id": "high-L1-not-next-reprobe",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Gap\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Gap\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":{\"attempt_id\":2,\"level\":2,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"reprobe\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false
+    }
+  },
+  {
+    "id": "high-L2-current-reprobe",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}},{\"attempt_id\":2,\"level\":2,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"escalate\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Gap\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Rationale\",\"rating\":\"Gap\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":{\"attempt_id\":3,\"level\":2,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"reprobe\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": true
+    }
+  },
+  {
+    "id": "high-L2-wrong-reprobe-L1",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}},{\"attempt_id\":2,\"level\":2,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"escalate\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Gap\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Rationale\",\"rating\":\"Gap\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":{\"attempt_id\":3,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"reprobe\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false
+    }
+  },
+  {
+    "id": "high-L2-wrong-reprobe-L3",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}},{\"attempt_id\":2,\"level\":2,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"escalate\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Gap\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Rationale\",\"rating\":\"Gap\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":{\"attempt_id\":3,\"level\":3,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"reprobe\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false
+    }
+  },
+  {
+    "id": "not-enough-solid-to-escalate",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Gap\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":{\"attempt_id\":2,\"level\":2,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"escalate\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false
+    }
+  },
+  {
+    "id": "pending-counts-and-blocks",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"pending\",\"outcome\":null}],\"request\":{\"attempt_id\":2,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"retry\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false,
+      "attempts_used": 1,
+      "attempts_remaining": 2,
+      "verified_current_revision": false
+    }
+  },
+  {
+    "id": "failed-counts",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"failed\",\"outcome\":null}],\"request\":{\"attempt_id\":2,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"retry\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": true,
+      "attempts_used": 1,
+      "attempts_remaining": 2
+    }
+  },
+  {
+    "id": "failed-cannot-escalate",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"failed\",\"outcome\":null}],\"request\":{\"attempt_id\":2,\"level\":2,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"escalate\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false
+    }
+  },
+  {
+    "id": "retry-cannot-change-level",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"failed\",\"outcome\":null}],\"request\":{\"attempt_id\":2,\"level\":2,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"retry\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false
+    }
+  },
+  {
+    "id": "retry-cannot-change-revision",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\",\"p1\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"failed\",\"outcome\":null}],\"request\":{\"attempt_id\":2,\"level\":1,\"reviewed_revision\":1,\"reviewed_prompt\":\"p1\",\"kind\":\"retry\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false
+    }
+  },
+  {
+    "id": "three-failed-exhausted",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"failed\",\"outcome\":null},{\"attempt_id\":2,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"retry\",\"status\":\"failed\",\"outcome\":null},{\"attempt_id\":3,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"retry\",\"status\":\"failed\",\"outcome\":null}],\"request\":{\"attempt_id\":4,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"retry\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false,
+      "attempts_used": 3,
+      "attempts_remaining": 0,
+      "verified_current_revision": false,
+      "delivery_verdict": "fail"
+    }
+  },
+  {
+    "id": "third-pending-counts-exhausted",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"failed\",\"outcome\":null},{\"attempt_id\":2,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"retry\",\"status\":\"failed\",\"outcome\":null},{\"attempt_id\":3,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"retry\",\"status\":\"pending\",\"outcome\":null}],\"request\":{\"attempt_id\":4,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"retry\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false,
+      "attempts_used": 3,
+      "attempts_remaining": 0
+    }
+  },
+  {
+    "id": "pending-cannot-have-follower",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"pending\",\"outcome\":null},{\"attempt_id\":2,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"retry\",\"status\":\"failed\",\"outcome\":null}],\"request\":null}",
+    "expect": {
+      "input_valid": false,
+      "admit": false,
+      "verified_current_revision": false
+    }
+  },
+  {
+    "id": "four-records-rejected",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"failed\",\"outcome\":null},{\"attempt_id\":2,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"retry\",\"status\":\"failed\",\"outcome\":null},{\"attempt_id\":3,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"retry\",\"status\":\"failed\",\"outcome\":null},{\"attempt_id\":4,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"retry\",\"status\":\"failed\",\"outcome\":null}],\"request\":null}",
+    "expect": {
+      "input_valid": false,
+      "admit": false,
+      "verified_current_revision": false
+    }
+  },
+  {
+    "id": "duplicate-id-rejected",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"failed\",\"outcome\":null},{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"retry\",\"status\":\"failed\",\"outcome\":null}],\"request\":null}",
+    "expect": {
+      "input_valid": false,
+      "admit": false,
+      "verified_current_revision": false
+    }
+  },
+  {
+    "id": "medium-correction-admitted",
+    "env": "{\"effort_tier\":\"medium\",\"prompt_revisions\":[\"p0\",\"p1\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":{\"attempt_id\":2,\"level\":1,\"reviewed_revision\":1,\"reviewed_prompt\":\"p1\",\"kind\":\"correction\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": true
+    }
+  },
+  {
+    "id": "high-correction-third-admitted",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\",\"p1\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}},{\"attempt_id\":2,\"level\":2,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"escalate\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Rationale\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":{\"attempt_id\":3,\"level\":2,\"reviewed_revision\":1,\"reviewed_prompt\":\"p1\",\"kind\":\"correction\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": true
+    }
+  },
+  {
+    "id": "correction-after-exhaustion-denied",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\",\"p1\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}},{\"attempt_id\":2,\"level\":2,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"escalate\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Rationale\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}},{\"attempt_id\":3,\"level\":3,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"escalate\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Rationale\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Edge Cases\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Synthesis\",\"rating\":\"Gap\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":{\"attempt_id\":4,\"level\":3,\"reviewed_revision\":1,\"reviewed_prompt\":\"p1\",\"kind\":\"correction\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false,
+      "attempts_used": 3,
+      "verified_current_revision": false
+    }
+  },
+  {
+    "id": "correction-wrong-level",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\",\"p1\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":{\"attempt_id\":2,\"level\":2,\"reviewed_revision\":1,\"reviewed_prompt\":\"p1\",\"kind\":\"correction\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false
+    }
+  },
+  {
+    "id": "correction-old-revision",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\",\"p1\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":{\"attempt_id\":2,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"correction\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false
+    }
+  },
+  {
+    "id": "correction-wrong-prompt",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\",\"p1\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":{\"attempt_id\":2,\"level\":1,\"reviewed_revision\":1,\"reviewed_prompt\":\"p0\",\"kind\":\"correction\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false
+    }
+  },
+  {
+    "id": "history-wrong-prompt",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"other\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":null}",
+    "expect": {
+      "input_valid": false,
+      "admit": false,
+      "verified_current_revision": false
+    }
+  },
+  {
+    "id": "corrected-pass-verifies-new-revision",
+    "env": "{\"effort_tier\":\"medium\",\"prompt_revisions\":[\"p0\",\"p1\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}},{\"attempt_id\":2,\"level\":1,\"reviewed_revision\":1,\"reviewed_prompt\":\"p1\",\"kind\":\"correction\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[],\"verdict\":\"pass\"}}],\"request\":null}",
+    "expect": {
+      "input_valid": true,
+      "admit": false,
+      "verified_current_revision": true,
+      "delivery_verdict": "pass",
+      "attempts_used": 2
+    }
+  },
+  {
+    "id": "old-pass-does-not-verify-revision1",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\",\"p1\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[],\"verdict\":\"pass\"}}],\"request\":null}",
+    "expect": {
+      "input_valid": true,
+      "admit": false,
+      "verified_current_revision": false,
+      "delivery_verdict": "fail"
+    }
+  },
+  {
+    "id": "pending-correction-not-verified",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\",\"p1\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}},{\"attempt_id\":2,\"level\":1,\"reviewed_revision\":1,\"reviewed_prompt\":\"p1\",\"kind\":\"correction\",\"status\":\"pending\",\"outcome\":null}],\"request\":null}",
+    "expect": {
+      "input_valid": true,
+      "admit": false,
+      "verified_current_revision": false
+    }
+  },
+  {
+    "id": "second-correction-refused",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\",\"p1\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}},{\"attempt_id\":2,\"level\":1,\"reviewed_revision\":1,\"reviewed_prompt\":\"p1\",\"kind\":\"correction\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Gap\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Gap\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":{\"attempt_id\":3,\"level\":1,\"reviewed_revision\":1,\"reviewed_prompt\":\"p1\",\"kind\":\"correction\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false
+    }
+  },
+  {
+    "id": "post-correction-reprobe-refused",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\",\"p1\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}},{\"attempt_id\":2,\"level\":1,\"reviewed_revision\":1,\"reviewed_prompt\":\"p1\",\"kind\":\"correction\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Gap\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Gap\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":{\"attempt_id\":3,\"level\":1,\"reviewed_revision\":1,\"reviewed_prompt\":\"p1\",\"kind\":\"reprobe\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false
+    }
+  },
+  {
+    "id": "second-rewrite-revision-refused",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\",\"p1\",\"p2\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":null}",
+    "expect": {
+      "input_valid": false,
+      "admit": false,
+      "verified_current_revision": false
+    }
+  },
+  {
+    "id": "medium-second-primary-refused",
+    "env": "{\"effort_tier\":\"medium\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":{\"attempt_id\":2,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false
+    }
+  },
+  {
+    "id": "correction-requires-named-gap",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\",\"p1\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[],\"verdict\":\"rewrite_needed\"}}],\"request\":{\"attempt_id\":2,\"level\":1,\"reviewed_revision\":1,\"reviewed_prompt\":\"p1\",\"kind\":\"correction\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false
+    }
+  },
+  {
+    "id": "ratings-missing-area",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":null}",
+    "expect": {
+      "input_valid": false,
+      "admit": false,
+      "verified_current_revision": false
+    }
+  },
+  {
+    "id": "ratings-duplicate-area",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":null}",
+    "expect": {
+      "input_valid": false,
+      "admit": false,
+      "verified_current_revision": false
+    }
+  },
+  {
+    "id": "ratings-unknown-area",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Invented\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":null}",
+    "expect": {
+      "input_valid": false,
+      "admit": false,
+      "verified_current_revision": false
+    }
+  },
+  {
+    "id": "ratings-invalid-word",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Good\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":null}",
+    "expect": {
+      "input_valid": false,
+      "admit": false,
+      "verified_current_revision": false
+    }
+  },
+  {
+    "id": "ratings-invalid-type",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":80,\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":null}",
+    "expect": {
+      "input_valid": false,
+      "admit": false,
+      "verified_current_revision": false
+    }
+  },
+  {
+    "id": "ratings-empty",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":null}",
+    "expect": {
+      "input_valid": false,
+      "admit": false,
+      "verified_current_revision": false
+    }
+  },
+  {
+    "id": "ratings-order-insensitive",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":{\"attempt_id\":2,\"level\":2,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"escalate\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": true
+    }
+  },
+  {
+    "id": "ratings-L2-missing-rationale",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}},{\"attempt_id\":2,\"level\":2,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"escalate\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":null}",
+    "expect": {
+      "input_valid": false,
+      "admit": false,
+      "verified_current_revision": false
+    }
+  },
+  {
+    "id": "ratings-L3-missing-synthesis",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}},{\"attempt_id\":2,\"level\":2,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"escalate\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Rationale\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}},{\"attempt_id\":3,\"level\":3,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"escalate\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Rationale\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Edge Cases\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":null}",
+    "expect": {
+      "input_valid": false,
+      "admit": false,
+      "verified_current_revision": false
+    }
+  },
+  {
+    "id": "pass-over-prohibition-refused",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Prohibition\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"pass\"}}],\"request\":null}",
+    "expect": {
+      "input_valid": false,
+      "admit": false,
+      "verified_current_revision": false
+    }
+  },
+  {
+    "id": "invalid-verdict-refused",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"verified\"}}],\"request\":null}",
+    "expect": {
+      "input_valid": false,
+      "admit": false,
+      "verified_current_revision": false
+    }
+  },
+  {
+    "id": "invalid-severity-refused",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Fatal\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":null}",
+    "expect": {
+      "input_valid": false,
+      "admit": false,
+      "verified_current_revision": false
+    }
+  },
+  {
+    "id": "invalid-completion-retained-as-failed-counts",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"failed\",\"outcome\":{\"ratings\":[],\"verdict\":\"pass\"}}],\"request\":{\"attempt_id\":2,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"retry\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": true,
+      "attempts_used": 1,
+      "verified_current_revision": false
+    }
+  },
+  {
+    "id": "consumer-derived-not-injected",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":null,\"grill_verdict\":\"pass\",\"findings\":[],\"ratings\":[]}",
+    "expect": {
+      "input_valid": true,
+      "admit": false,
+      "delivery_verdict": "rewrite_needed",
+      "selected_attempt_id": 1
+    },
+    "forbid": [
+      "last_completed_review"
+    ]
+  },
+  {
+    "id": "empty-high-not-pass",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[],\"request\":null}",
+    "expect": {
+      "input_valid": true,
+      "admit": false,
+      "verified_current_revision": false,
+      "delivery_verdict": "fail"
+    }
+  },
+  {
+    "id": "ratings-missing-name-error-refuses",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":null}",
+    "expect_error": true
+  },
+  {
+    "id": "missing-findings-error-refuses",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":null}",
+    "expect_error": true
+  },
+  {
+    "id": "missing-verdict-error-refuses",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}]}}],\"request\":null}",
+    "expect_error": true
+  },
+  {
+    "id": "medium-failed-primary-retry-correction-third",
+    "env": "{\"effort_tier\":\"medium\",\"prompt_revisions\":[\"p0\",\"p1\"],\"critique_runs\":[{\"attempt_id\":1,\"kind\":\"initial\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"status\":\"failed\",\"outcome\":null},{\"attempt_id\":2,\"kind\":\"retry\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW\"},{\"area\":\"Mechanism\",\"rating\":\"Gap\",\"evidence\":\"NEW\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW named correction gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address it\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":{\"attempt_id\":3,\"kind\":\"correction\",\"level\":1,\"reviewed_revision\":1,\"reviewed_prompt\":\"p1\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": true,
+      "attempts_used": 2,
+      "attempts_remaining": 1
+    }
+  },
+  {
+    "id": "medium-failed-attempts-exhaust-global-three",
+    "env": "{\"effort_tier\":\"medium\",\"prompt_revisions\":[\"p0\"],\"critique_runs\":[{\"attempt_id\":1,\"kind\":\"initial\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"status\":\"failed\",\"outcome\":null},{\"attempt_id\":2,\"kind\":\"retry\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"status\":\"failed\",\"outcome\":null},{\"attempt_id\":3,\"kind\":\"retry\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"status\":\"failed\",\"outcome\":null}],\"request\":{\"attempt_id\":4,\"kind\":\"retry\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": false,
+      "attempts_used": 3,
+      "attempts_remaining": 0
+    }
+  },
+  {
+    "id": "actual-finalizer-handoff-from-accepted-raw-record",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"NEW fixture prompt: preserve the original task and disclose unresolved gaps.\"],\"critique_runs\":[{\"attempt_id\":1,\"kind\":\"initial\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"NEW fixture prompt: preserve the original task and disclose unresolved gaps.\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture purpose is explicit\"},{\"area\":\"Mechanism\",\"rating\":\"Gap\",\"evidence\":\"NEW fixture gap persists\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW PE contract handoff sentinel: unresolved mechanism\",\"severity\":\"Prohibition\",\"suggested_fix_direction\":\"Preserve this exact structured finding\"},{\"area\":\"Recall\",\"gap\":\"NEW secondary finding\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Disclose rather than erase\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":null}",
+    "expect": {
+      "input_valid": true,
+      "admit": false,
+      "verified_current_revision": false,
+      "delivery_verdict": "rewrite_needed",
+      "selected_attempt_id": 1
+    },
+    "forbid": [
+      "last_completed_review"
+    ]
+  },
+  {
+    "id": "raw-valid-empty-array-findings",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"request\":null,\"critique_runs\":[{\"attempt_id\":1,\"kind\":\"initial\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW\"}],\"findings\":[],\"verdict\":\"pass\"}}]}",
+    "expect": {
+      "input_valid": true,
+      "verified_current_revision": true
+    }
+  },
+  {
+    "id": "raw-null-findings-refused",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"request\":null,\"critique_runs\":[{\"attempt_id\":1,\"kind\":\"initial\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW\"}],\"findings\":null,\"verdict\":\"pass\"}}]}",
+    "expect_error": true
+  },
+  {
+    "id": "raw-object-findings-refused",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"request\":null,\"critique_runs\":[{\"attempt_id\":1,\"kind\":\"initial\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW\"}],\"findings\":{},\"verdict\":\"pass\"}}]}",
+    "expect_error": true
+  },
+  {
+    "id": "raw-null-ratings-refused",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"request\":null,\"critique_runs\":[{\"attempt_id\":1,\"kind\":\"initial\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"status\":\"completed\",\"outcome\":{\"ratings\":null,\"findings\":[],\"verdict\":\"pass\"}}]}",
+    "expect_error": true
+  },
+  {
+    "id": "raw-object-ratings-refused",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"request\":null,\"critique_runs\":[{\"attempt_id\":1,\"kind\":\"initial\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"status\":\"completed\",\"outcome\":{\"ratings\":{},\"findings\":[],\"verdict\":\"pass\"}}]}",
+    "expect_error": true
+  },
+  {
+    "id": "raw-object-log-refused",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"request\":null,\"critique_runs\":{}}",
+    "expect_error": true
+  },
+  {
+    "id": "raw-null-log-refused",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"request\":null,\"critique_runs\":null}",
+    "expect_error": true
+  },
+  {
+    "id": "raw-object-revisions-refused",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":{},\"request\":null,\"critique_runs\":[{\"attempt_id\":1,\"kind\":\"initial\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW\"}],\"findings\":[],\"verdict\":\"pass\"}}]}",
+    "expect_error": true
+  },
+  {
+    "id": "B1-inconsistent-pass-Gap",
+    "group": "B1",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"NEW revision0\"],\"critique_runs\":[{\"attempt_id\":1,\"kind\":\"initial\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"NEW revision0\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Gap\",\"evidence\":\"NEW\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW\"}],\"findings\":[],\"verdict\":\"pass\"}}],\"request\":null}",
+    "expect": {
+      "input_valid": false,
+      "admit": false,
+      "verified_current_revision": false,
+      "delivery_verdict": "fail",
+      "attempts_used": 1
+    }
+  },
+  {
+    "id": "B1-inconsistent-pass-Partial",
+    "group": "B1",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"NEW revision0\"],\"critique_runs\":[{\"attempt_id\":1,\"kind\":\"initial\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"NEW revision0\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Partial\",\"evidence\":\"NEW\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW\"}],\"findings\":[],\"verdict\":\"pass\"}}],\"request\":null}",
+    "expect": {
+      "input_valid": false,
+      "admit": false,
+      "verified_current_revision": false,
+      "delivery_verdict": "fail",
+      "attempts_used": 1
+    }
+  },
+  {
+    "id": "B1-failed-inconsistent-Gap-keeps-attempt",
+    "group": "B1",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"NEW revision0\"],\"critique_runs\":[{\"attempt_id\":1,\"kind\":\"initial\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"NEW revision0\",\"status\":\"failed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Gap\",\"evidence\":\"NEW\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW\"}],\"findings\":[],\"verdict\":\"pass\"}}],\"request\":null}",
+    "expect": {
+      "input_valid": true,
+      "verified_current_revision": false,
+      "delivery_verdict": "fail",
+      "attempts_used": 1,
+      "attempts_remaining": 2
+    }
+  },
+  {
+    "id": "B1-failed-inconsistent-Partial-keeps-attempt",
+    "group": "B1",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"NEW revision0\"],\"critique_runs\":[{\"attempt_id\":1,\"kind\":\"initial\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"NEW revision0\",\"status\":\"failed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Partial\",\"evidence\":\"NEW\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW\"}],\"findings\":[],\"verdict\":\"pass\"}}],\"request\":null}",
+    "expect": {
+      "input_valid": true,
+      "verified_current_revision": false,
+      "delivery_verdict": "fail",
+      "attempts_used": 1,
+      "attempts_remaining": 2
+    }
+  },
+  {
+    "id": "B1-legitimate-allSolid-pass",
+    "group": "B1",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"NEW revision0\"],\"critique_runs\":[{\"attempt_id\":1,\"kind\":\"initial\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"NEW revision0\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW\"}],\"findings\":[],\"verdict\":\"pass\"}}],\"request\":null}",
+    "expect": {
+      "input_valid": true,
+      "admit": false,
+      "verified_current_revision": true,
+      "delivery_verdict": "pass",
+      "attempts_used": 1
+    }
+  },
+  {
+    "id": "S1-original-raw-empty-object",
+    "group": "S1",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"NEW revision0\"],\"critique_runs\":[{\"attempt_id\":1,\"kind\":\"initial\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"NEW revision0\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW\"}],\"findings\":[{\"area\":\"NEW arbitrary named area\",\"gap\":\"NEW named gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"\",\"details\":{}}],\"verdict\":\"rewrite_needed\"}}],\"request\":null}",
+    "expect": {
+      "input_valid": true,
+      "selected_attempt_id": 1,
+      "delivery_verdict": "rewrite_needed"
+    },
+    "forbid": [
+      "last_completed_review"
+    ],
+    "expect_selected_raw": {
+      "attempt_id": 1,
+      "kind": "initial",
+      "level": 1,
+      "reviewed_revision": 0,
+      "reviewed_prompt": "NEW revision0",
+      "status": "completed",
+      "outcome": {
+        "ratings": [
+          {
+            "area": "Recall",
+            "rating": "Solid",
+            "evidence": "NEW"
+          },
+          {
+            "area": "Mechanism",
+            "rating": "Solid",
+            "evidence": "NEW"
+          }
+        ],
+        "findings": [
+          {
+            "area": "NEW arbitrary named area",
+            "gap": "NEW named gap",
+            "severity": "Guardrail",
+            "suggested_fix_direction": "",
+            "details": {}
+          }
+        ],
+        "verdict": "rewrite_needed"
+      }
+    }
+  },
+  {
+    "id": "S1-original-raw-list-of-pairs",
+    "group": "S1",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"NEW revision0\"],\"critique_runs\":[{\"attempt_id\":1,\"kind\":\"initial\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"NEW revision0\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW\"}],\"findings\":[{\"area\":\"NEW arbitrary named area\",\"gap\":\"NEW named gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"\",\"details\":[[\"key\",\"value\"],[\"other\",[]]]}],\"verdict\":\"rewrite_needed\"}}],\"request\":null}",
+    "expect": {
+      "input_valid": true,
+      "selected_attempt_id": 1,
+      "delivery_verdict": "rewrite_needed"
+    },
+    "forbid": [
+      "last_completed_review"
+    ],
+    "expect_selected_raw": {
+      "attempt_id": 1,
+      "kind": "initial",
+      "level": 1,
+      "reviewed_revision": 0,
+      "reviewed_prompt": "NEW revision0",
+      "status": "completed",
+      "outcome": {
+        "ratings": [
+          {
+            "area": "Recall",
+            "rating": "Solid",
+            "evidence": "NEW"
+          },
+          {
+            "area": "Mechanism",
+            "rating": "Solid",
+            "evidence": "NEW"
+          }
+        ],
+        "findings": [
+          {
+            "area": "NEW arbitrary named area",
+            "gap": "NEW named gap",
+            "severity": "Guardrail",
+            "suggested_fix_direction": "",
+            "details": [
+              [
+                "key",
+                "value"
+              ],
+              [
+                "other",
+                []
+              ]
+            ]
+          }
+        ],
+        "verdict": "rewrite_needed"
+      }
+    }
+  },
+  {
+    "id": "S1-no-review-zero-selector",
+    "group": "S1",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"NEW revision0\"],\"critique_runs\":[],\"request\":null}",
+    "expect": {
+      "input_valid": true,
+      "selected_attempt_id": 0,
+      "delivery_verdict": "fail"
+    },
+    "forbid": [
+      "last_completed_review"
+    ]
+  },
+  {
+    "id": "S2-pending-outcome-object-refused",
+    "group": "S2",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"NEW revision0\"],\"critique_runs\":[{\"attempt_id\":1,\"kind\":\"initial\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"NEW revision0\",\"status\":\"pending\",\"outcome\":{}}],\"request\":null}",
+    "expect_error": true,
+    "expect_stage": "raw"
+  },
+  {
+    "id": "S2-pending-outcome-array-refused",
+    "group": "S2",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"NEW revision0\"],\"critique_runs\":[{\"attempt_id\":1,\"kind\":\"initial\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"NEW revision0\",\"status\":\"pending\",\"outcome\":[]}],\"request\":null}",
+    "expect_error": true,
+    "expect_stage": "raw"
+  },
+  {
+    "id": "S2-legitimate-pending-null",
+    "group": "S2",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"NEW revision0\"],\"critique_runs\":[{\"attempt_id\":1,\"kind\":\"initial\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"NEW revision0\",\"status\":\"pending\",\"outcome\":null}],\"request\":null}",
+    "expect": {
+      "input_valid": true,
+      "admit": false,
+      "attempts_used": 1,
+      "attempts_remaining": 2,
+      "verified_current_revision": false
+    }
+  },
+  {
+    "id": "S2-request-object-not-snapshot",
+    "group": "S2",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"NEW revision0\"],\"critique_runs\":[],\"request\":{}}",
+    "expect_error": true,
+    "expect_stage": "raw"
+  },
+  {
+    "id": "S2-request-array-not-snapshot",
+    "group": "S2",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"NEW revision0\"],\"critique_runs\":[],\"request\":[]}",
+    "expect_error": true,
+    "expect_stage": "raw"
+  },
+  {
+    "id": "S2-request-missing-kind",
+    "group": "S2",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"NEW revision0\"],\"critique_runs\":[],\"request\":{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"NEW revision0\"}}",
+    "expect_error": true,
+    "expect_stage": "raw"
+  },
+  {
+    "id": "S2-request-unknown-field",
+    "group": "S2",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"NEW revision0\"],\"critique_runs\":[],\"request\":{\"attempt_id\":1,\"kind\":\"initial\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"NEW revision0\",\"shadow\":0}}",
+    "expect_error": true,
+    "expect_stage": "raw"
+  },
+  {
+    "id": "S2-request-invalid-level-type",
+    "group": "S2",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"NEW revision0\"],\"critique_runs\":[],\"request\":{\"attempt_id\":1,\"kind\":\"initial\",\"level\":\"1\",\"reviewed_revision\":0,\"reviewed_prompt\":\"NEW revision0\"}}",
+    "expect_error": true,
+    "expect_stage": "raw"
+  },
+  {
+    "id": "S2-request-unknown-kind",
+    "group": "S2",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"NEW revision0\"],\"critique_runs\":[],\"request\":{\"attempt_id\":1,\"kind\":\"reconcile\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"NEW revision0\"}}",
+    "expect_error": true,
+    "expect_stage": "raw"
+  },
+  {
+    "id": "S2-legitimate-snapshot-null",
+    "group": "S2",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"NEW revision0\"],\"critique_runs\":[],\"request\":null}",
+    "expect": {
+      "input_valid": true,
+      "admit": false,
+      "attempts_used": 0
+    }
+  },
+  {
+    "id": "S2-legitimate-complete-known-request",
+    "group": "S2",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"NEW revision0\"],\"critique_runs\":[],\"request\":{\"attempt_id\":1,\"kind\":\"initial\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"NEW revision0\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": true,
+      "attempts_used": 0
+    }
+  },
+  {
+    "id": "S3-empty-named-field-both",
+    "group": "S3",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"NEW revision0\",\"NEW revision1\"],\"critique_runs\":[{\"attempt_id\":1,\"kind\":\"initial\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"NEW revision0\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW\"}],\"findings\":[{\"area\":\"\",\"gap\":\"\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":{\"attempt_id\":2,\"kind\":\"correction\",\"level\":1,\"reviewed_revision\":1,\"reviewed_prompt\":\"NEW revision1\"}}",
+    "expect": {
+      "input_valid": false,
+      "admit": false,
+      "verified_current_revision": false,
+      "delivery_verdict": "fail",
+      "attempts_used": 1
+    }
+  },
+  {
+    "id": "S3-empty-named-field-area",
+    "group": "S3",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"NEW revision0\",\"NEW revision1\"],\"critique_runs\":[{\"attempt_id\":1,\"kind\":\"initial\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"NEW revision0\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW\"}],\"findings\":[{\"area\":\"\",\"gap\":\"NEW named gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":{\"attempt_id\":2,\"kind\":\"correction\",\"level\":1,\"reviewed_revision\":1,\"reviewed_prompt\":\"NEW revision1\"}}",
+    "expect": {
+      "input_valid": false,
+      "admit": false,
+      "verified_current_revision": false,
+      "delivery_verdict": "fail",
+      "attempts_used": 1
+    }
+  },
+  {
+    "id": "S3-empty-named-field-gap",
+    "group": "S3",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"NEW revision0\",\"NEW revision1\"],\"critique_runs\":[{\"attempt_id\":1,\"kind\":\"initial\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"NEW revision0\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW\"}],\"findings\":[{\"area\":\"NEW arbitrary area\",\"gap\":\"\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":{\"attempt_id\":2,\"kind\":\"correction\",\"level\":1,\"reviewed_revision\":1,\"reviewed_prompt\":\"NEW revision1\"}}",
+    "expect": {
+      "input_valid": false,
+      "admit": false,
+      "verified_current_revision": false,
+      "delivery_verdict": "fail",
+      "attempts_used": 1
+    }
+  },
+  {
+    "id": "S3-legitimate-named-gap-empty-fix-no-taxonomy",
+    "group": "S3",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"NEW revision0\",\"NEW revision1\"],\"critique_runs\":[{\"attempt_id\":1,\"kind\":\"initial\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"NEW revision0\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW\"}],\"findings\":[{\"area\":\"NEW arbitrary non-taxonomy area\",\"gap\":\"NEW named gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":{\"attempt_id\":2,\"kind\":\"correction\",\"level\":1,\"reviewed_revision\":1,\"reviewed_prompt\":\"NEW revision1\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": true,
+      "attempts_used": 1
+    }
+  },
+  {
+    "id": "S3-legitimate-named-gap-with-fix",
+    "group": "S3",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"NEW revision0\",\"NEW revision1\"],\"critique_runs\":[{\"attempt_id\":1,\"kind\":\"initial\",\"level\":1,\"reviewed_revision\":0,\"reviewed_prompt\":\"NEW revision0\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW named gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address gap\"}],\"verdict\":\"rewrite_needed\"}}],\"request\":{\"attempt_id\":2,\"kind\":\"correction\",\"level\":1,\"reviewed_revision\":1,\"reviewed_prompt\":\"NEW revision1\"}}",
+    "expect": {
+      "input_valid": true,
+      "admit": true,
+      "attempts_used": 1
+    }
+  }
+]

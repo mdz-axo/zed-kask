@@ -1,0 +1,80 @@
+[
+  {
+    "id": "threshold-0-of5",
+    "env": "{\"effort_tier\":\"high\",\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Gap\",\"evidence\":\"NEW boundary fixture\"},{\"area\":\"Mechanism\",\"rating\":\"Gap\",\"evidence\":\"NEW boundary fixture\"},{\"area\":\"Rationale\",\"rating\":\"Gap\",\"evidence\":\"NEW boundary fixture\"},{\"area\":\"Edge Cases\",\"rating\":\"Gap\",\"evidence\":\"NEW boundary fixture\"},{\"area\":\"Synthesis\",\"rating\":\"Gap\",\"evidence\":\"NEW boundary fixture\"}]}",
+    "expect": {
+      "ratings_valid": true,
+      "escalation_threshold": false,
+      "reprobe_threshold": true
+    },
+    "probe": "threshold"
+  },
+  {
+    "id": "threshold-1-of5",
+    "env": "{\"effort_tier\":\"high\",\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW boundary fixture\"},{\"area\":\"Mechanism\",\"rating\":\"Gap\",\"evidence\":\"NEW boundary fixture\"},{\"area\":\"Rationale\",\"rating\":\"Gap\",\"evidence\":\"NEW boundary fixture\"},{\"area\":\"Edge Cases\",\"rating\":\"Gap\",\"evidence\":\"NEW boundary fixture\"},{\"area\":\"Synthesis\",\"rating\":\"Gap\",\"evidence\":\"NEW boundary fixture\"}]}",
+    "expect": {
+      "ratings_valid": true,
+      "escalation_threshold": false,
+      "reprobe_threshold": true
+    },
+    "probe": "threshold"
+  },
+  {
+    "id": "threshold-2-of5",
+    "env": "{\"effort_tier\":\"high\",\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW boundary fixture\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW boundary fixture\"},{\"area\":\"Rationale\",\"rating\":\"Gap\",\"evidence\":\"NEW boundary fixture\"},{\"area\":\"Edge Cases\",\"rating\":\"Gap\",\"evidence\":\"NEW boundary fixture\"},{\"area\":\"Synthesis\",\"rating\":\"Gap\",\"evidence\":\"NEW boundary fixture\"}]}",
+    "expect": {
+      "ratings_valid": true,
+      "escalation_threshold": false,
+      "reprobe_threshold": false
+    },
+    "probe": "threshold"
+  },
+  {
+    "id": "threshold-3-of5",
+    "env": "{\"effort_tier\":\"high\",\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW boundary fixture\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW boundary fixture\"},{\"area\":\"Rationale\",\"rating\":\"Solid\",\"evidence\":\"NEW boundary fixture\"},{\"area\":\"Edge Cases\",\"rating\":\"Gap\",\"evidence\":\"NEW boundary fixture\"},{\"area\":\"Synthesis\",\"rating\":\"Gap\",\"evidence\":\"NEW boundary fixture\"}]}",
+    "expect": {
+      "ratings_valid": true,
+      "escalation_threshold": false,
+      "reprobe_threshold": false
+    },
+    "probe": "threshold"
+  },
+  {
+    "id": "threshold-4-of5",
+    "env": "{\"effort_tier\":\"high\",\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW boundary fixture\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW boundary fixture\"},{\"area\":\"Rationale\",\"rating\":\"Solid\",\"evidence\":\"NEW boundary fixture\"},{\"area\":\"Edge Cases\",\"rating\":\"Solid\",\"evidence\":\"NEW boundary fixture\"},{\"area\":\"Synthesis\",\"rating\":\"Gap\",\"evidence\":\"NEW boundary fixture\"}]}",
+    "expect": {
+      "ratings_valid": true,
+      "escalation_threshold": true,
+      "reprobe_threshold": false
+    },
+    "probe": "threshold"
+  },
+  {
+    "id": "threshold-5-of5",
+    "env": "{\"effort_tier\":\"high\",\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW boundary fixture\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW boundary fixture\"},{\"area\":\"Rationale\",\"rating\":\"Solid\",\"evidence\":\"NEW boundary fixture\"},{\"area\":\"Edge Cases\",\"rating\":\"Solid\",\"evidence\":\"NEW boundary fixture\"},{\"area\":\"Synthesis\",\"rating\":\"Solid\",\"evidence\":\"NEW boundary fixture\"}]}",
+    "expect": {
+      "ratings_valid": true,
+      "escalation_threshold": true,
+      "reprobe_threshold": false
+    },
+    "probe": "threshold"
+  },
+  {
+    "id": "empty-threshold-invalid",
+    "env": "{\"effort_tier\":\"high\",\"ratings\":[]}",
+    "expect": {
+      "ratings_valid": false,
+      "escalation_threshold": false,
+      "reprobe_threshold": false
+    },
+    "probe": "threshold"
+  },
+  {
+    "id": "L3-backward-L2-with-budget-not-confounded",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"prior\":[{\"attempt_id\":1,\"level\":3,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"status\":\"completed\",\"outcome\":{\"verdict\":\"rewrite_needed\",\"ratings\":[{\"rating\":\"Solid\"},{\"rating\":\"Solid\"},{\"rating\":\"Solid\"},{\"rating\":\"Solid\"},{\"rating\":\"Solid\"}]}}],\"request\":{\"attempt_id\":2,\"level\":2,\"kind\":\"escalate\",\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\"}}",
+    "expect": {
+      "admit": false
+    },
+    "probe": "transition"
+  }
+]
