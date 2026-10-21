@@ -987,3 +987,18 @@ proptest! {
         }
     }
 }
+
+/// expect: "Operand validation is not hidden by an earlier overflow or false comparison" [P8]
+#[test]
+fn numeric_validation_precedes_folding() {
+    let env = serde_json::json!({});
+    for form in ["(+ 1e308 1e308 \"x\")", "(= 1.0 2.0 \"x\")"] {
+        assert!(
+            matches!(eval_sandboxed(form, &env), Err(LispError::TypeError { .. })),
+            "{form} must report the invalid operand"
+        );
+    }
+    let error = eval_sandboxed("(= 1 2 9007199254740993 0.0)", &env)
+        .expect_err("false comparison must still reject lossy promotion");
+    assert!(error.to_string().contains("exactly"));
+}

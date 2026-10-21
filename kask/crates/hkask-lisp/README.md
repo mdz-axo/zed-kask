@@ -50,7 +50,7 @@ let result = eval_sandboxed(form, &env).unwrap();
 assert_eq!(result, json!(true));
 ```
 
-## Integer admission
+## Numeric admission
 
 Source tokens consisting of digits with an optional `+`/`-` sign must fit
 signed `i64`; out-of-range spellings return `LispError::Parse` rather than
@@ -63,13 +63,14 @@ before projection into `serde_json::Value`, including nested and duplicate-key
 values and integers beyond `u64`. It uses existing serde JSON `RawValue` and a
 structure pass retaining serde's default nesting check, not a new parser or
 dependency. Explicit finite floats (`1.0`, `1e0`) and numeric-looking strings
-remain accepted. This is integer admission, not complete numeric correctness:
-H3 non-finite arithmetic and mixed-number promotion remain deferred. Defaults,
-output conversion and infix rewriting are unchanged.
+remain accepted. H3 rejects non-finite literals, evaluated scalar floats,
+numeric operands/results and sandbox output; required integer-to-`f64`
+promotion must be exact. Integer-only arithmetic remains checked and exact.
+Raw conversions, defaults and infix rewriting are unchanged.
 
 ## Skill usage
 
-The `lisp_eval` agent tool calls `eval_sandboxed` with a Lisp form and a JSON
+The `lisp_eval` agent tool calls `eval_sandboxed_with_budget` with a Lisp form and a JSON
 environment. The SKILL.md instructs the agent to call `lisp_eval` for
 convergence checks, invariant validation, and deterministic scoring:
 
@@ -94,19 +95,16 @@ No hKask crate dependencies — this is a standalone computation library.
 - No I/O, no filesystem, no network, no environment variable access
 - Budgeted sandbox boundary (`eval_sandboxed` / `eval_sandboxed_with_budget`):
   default depth 1024 and work budget 100000; oversized work returns a limit error
-- Lower-level `from_json` / `to_json` are unchecked conversions: they do not
-  enforce sandbox work/depth or integer-admission checks. `from_json` can
-  convert an out-of-i64 unsigned number to a float; `to_json` maps non-finite
-  floats to JSON null. Use the sandbox boundary for its admission checks.
+- Raw `from_json` / `to_json` bypass sandbox work/depth and admission checks:
+  unsigned integers can become floats; non-finite floats become JSON null.
+  Use the sandbox boundary for its checks.
 - Returned JSON nesting is independently bounded for caller serialization/drop
-- Stateless sandbox calls retain strong lexical captures during evaluation.
-  A private `InvocationScopes` RAII guard, held through a private field in
-  `EvalBudget`, weakly tracks root, `let` and lambda-call scopes. On drop it
-  upgrades all surviving scopes before clearing any bindings and parent links,
-  breaking closure cycles even in scopes no longer reachable from the root.
-  Cleanup covers success, returned errors and Rust unwinding, not process
-  abort or OOM. Raw `Env` / `eval` callers retain their owned environments;
-  they do not receive this automatic cleanup.
+- Strong lexical captures survive evaluation. `EvalBudget`'s private
+  `InvocationScopes` RAII guard weakly tracks root, `let` and lambda-call
+  scopes; on drop it upgrades all survivors before clearing bindings and
+  parent links, breaking even disconnected closure cycles. Cleanup covers
+  success, errors and Rust unwinding, not abort/OOM. Raw `Env` / `eval`
+  callers retain ownership without automatic cleanup.
 - Step/depth accounting and cycle cleanup are not wall-clock or heap quotas,
   nor a claim of complete sandbox or numeric correctness
 - `#![forbid(unsafe_code)]` — no unsafe blocks anywhere in the crate

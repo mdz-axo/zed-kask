@@ -597,7 +597,11 @@ pub fn eval_with_budget(
     if track_depth {
         budget.exit();
     }
-    result.and_then(|value| finite_value(value, "evaluation"))
+    let value = result?;
+    if let LispValue::Float(number) = &value {
+        finite_number(*number, "evaluation")?;
+    }
+    Ok(value)
 }
 
 fn eval_inner(
@@ -969,13 +973,6 @@ fn finite_number(value: f64, operation: &str) -> Result<f64, LispError> {
     }
 }
 
-fn finite_value(value: LispValue, operation: &str) -> Result<LispValue, LispError> {
-    if let LispValue::Float(number) = &value {
-        finite_number(*number, operation)?;
-    }
-    Ok(value)
-}
-
 fn as_f64(v: &LispValue, operation: &str) -> Result<f64, LispError> {
     match v {
         LispValue::Int(i) => {
@@ -1035,12 +1032,13 @@ fn arithmetic_fold(
         return Ok(LispValue::Int(acc));
     }
     let mut acc = as_f64(initial, name)?;
-    let numbers = args
-        .iter()
-        .map(|arg| as_f64(arg, name))
-        .collect::<Result<Vec<_>, _>>()?;
-    for value in numbers {
-        acc = finite_number(float_op(acc, value), name)?;
+    // Validate every operand before folding, preserving error precedence when
+    // an early operation would overflow but a later operand is invalid.
+    for arg in args {
+        as_f64(arg, name)?;
+    }
+    for arg in args {
+        acc = finite_number(float_op(acc, as_f64(arg, name)?), name)?;
     }
     Ok(LispValue::Float(acc))
 }
@@ -1141,21 +1139,20 @@ fn compare_chain(
     if args.len() < 2 {
         return Err(LispError::Arity(format!("{name} expects at least 2 args")));
     }
-    let ints: Option<Vec<i64>> = args
-        .iter()
-        .map(|a| match a {
-            LispValue::Int(i) => Some(*i),
-            _ => None,
-        })
-        .collect();
-    if let Some(ints) = ints {
-        return Ok(LispValue::Bool(ints.windows(2).all(|w| ord(w[0], w[1]))));
+    if args.iter().all(|arg| matches!(arg, LispValue::Int(_))) {
+        return Ok(LispValue::Bool(args.windows(2).all(
+            |pair| matches!(pair, [LispValue::Int(a), LispValue::Int(b)] if ord(*a, *b)),
+        )));
     }
-    let nums: Vec<f64> = args
-        .iter()
-        .map(|arg| as_f64(arg, name))
-        .collect::<Result<_, _>>()?;
-    Ok(LispValue::Bool(nums.windows(2).all(|w| ford(w[0], w[1]))))
+    let mut previous = as_f64(&args[0], name)?;
+    let mut result = true;
+    // A false comparison must not hide an invalid later operand.
+    for arg in &args[1..] {
+        let current = as_f64(arg, name)?;
+        result &= ford(previous, current);
+        previous = current;
+    }
+    Ok(LispValue::Bool(result))
 }
 
 fn lt(

@@ -18,7 +18,7 @@ mds_categories: [domain, composition]
 > **Two tools support skill execution:**
 > - `lisp_eval` — sandboxed Lisp interpreter (`hkask_lisp::eval_sandboxed_with_budget`). No I/O,
 >   no `eval`, no network. Bounded by `max_steps` (default 100000) and `max_depth` (default 1024)
->   (`kask/crates/hkask-lisp/src/hkask_lisp.rs:2147@eval_sandboxed`, call-site defaults at `crates/agent/src/tools/lisp_eval_tool.rs:266@default_max_steps,270@default_max_depth`). The model calls it when a SKILL.md instructs
+>   (`kask/crates/hkask-lisp/src/hkask_lisp.rs:2156@eval_sandboxed_with_budget`, call-site defaults at `crates/agent/src/tools/lisp_eval_tool.rs:266@default_max_steps,270@default_max_depth`). The model calls it when a SKILL.md instructs
 >   deterministic computation (convergence signals, invariant checks, scoring).
 > - `render_template` — renders Jinja2 templates from `kask/registry/templates/` using `minijinja`.
 >   Strips the `[inference]`-keyed header. Path traversal protection via `canonicalize` + `starts_with` check.
