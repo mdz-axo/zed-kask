@@ -232,15 +232,6 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         dashboard_url: "https://firecrawl.dev/",
         shows_in_ui: true,
     },
-    // ABW API key — not shown in the Data Services UI (no toggle, managed
-    // via the keychain by the swarm server's governed launch path).
-    DataServiceDescriptor {
-        env_var: "HKASK_ABW_API_KEY",
-        credential_key: "hkask_abw_api_key",
-        label: "ABW API Key",
-        dashboard_url: "",
-        shows_in_ui: false,
-    },
     // DB passphrase — supplied to the DB-backed MCP servers through
     // `ctx.credentials.get("HKASK_DB_PASSPHRASE")` for SQLCipher stores.
     // Not shown in the Data Services UI (no toggle; managed via the

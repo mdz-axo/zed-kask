@@ -284,29 +284,24 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
     BuiltinMcpServer {
         id: "swarm",
         binary: "hkask-mcp-swarm",
-        description: "Swarm — Agent Bestiary World agent swarms and Xaman Ek curator",
+        description: "Swarm — local swarm agents, local swarms, and A2A collaboration",
         // HKASK_DB_PASSPHRASE is the ONE SQLCipher passphrase — the swarm
         // memory DB opens with it, same as curator/kanban/research. (The
         // separate HKASK_SWARM_MEMORY_PASSPHRASE was removed: two passphrases
         // for one system was a setup trap and a rotation inconsistency —
         // rotating one left the other unopenable.)
-        credentials: &["HKASK_ABW_API_KEY", "HKASK_DB_PASSPHRASE"],
+        credentials: &["HKASK_DB_PASSPHRASE"],
         config_env: &[
-            "HKASK_ABW_API_URL",
-            "HKASK_ABW_MAX_CREDITS",
-            "HKASK_ABW_CURATOR_CONSENT_DEFAULT",
-            "HKASK_ABW_DEFAULT_AGENT_MODEL",
-            "HKASK_SWARM_MODE",
+            "HKASK_SWARM_DEFAULT_AGENT_MODEL",
             "HKASK_LOCAL_AGENTS_DIR",
             // Local swarms dir — read by `LocalSwarmRegistry::new` via
             // `HKASK_LOCAL_SWARMS_DIR` in `config.rs`. Without this entry,
             // a kask-settings-derived `local_swarms_dir` override is
             // silently dropped by `filter_config_env_for_server`.
             "HKASK_LOCAL_SWARMS_DIR",
-            "HKASK_SWARM_CONSENT_STORE",
-            // The governed server id set — the swarm server filters cloned
-            // cards' declared mcp_tools to these servers (provenance boundary
-            // for third-party ABW cards).
+            // The governed server id set — the swarm server filters imported
+            // cards' declared mcp_tools to these servers (the provenance
+            // boundary for cards cloned into the local registry).
             "HKASK_MCP_SERVER_IDS",
             // Data dir — needed so `resolve_under_data_dir` in the swarm
             // server resolves `local_agents_dir` under the same root as the
@@ -1194,11 +1189,11 @@ mod tests {
         assert!(filtered.is_empty());
     }
 
-    // The swarm server should only receive the ABW API key, not SMTP or
-    // inference keys. This pins the credential blast-radius reduction for
-    // the swarm server specifically — a future edit that widens the swarm
-    // `credentials` allowlist would not be caught by the generic
-    // `all_servers_have_credential_allowlist` test.
+    // The swarm server should only receive the shared DB passphrase, not
+    // SMTP or inference keys. This pins the credential blast-radius
+    // reduction for the swarm server specifically — a future edit that
+    // widens the swarm `credentials` allowlist would not be caught by the
+    // generic `all_servers_have_credential_allowlist` test.
     #[test]
     fn swarm_credentials_exclude_other_servers_secrets() {
         let all_credentials: Vec<(String, String)> = [
@@ -1214,14 +1209,18 @@ mod tests {
         .collect();
         let filtered = filter_credentials_for_server("swarm", &all_credentials);
         // The invariant that matters is not the count — it is that no OTHER
-        // server's secret reaches this one. The swarm receives the ABW key
-        // and the shared DB passphrase (its memory DB is one of the kask
-        // SQLCipher DBs).
+        // server's secret reaches this one. The swarm receives only the
+        // shared DB passphrase (its memory DB is one of the kask SQLCipher
+        // DBs).
         let names: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
         assert_eq!(
             names,
-            vec!["HKASK_ABW_API_KEY", "HKASK_DB_PASSPHRASE"],
-            "swarm should receive exactly its own two declared secrets"
+            vec!["HKASK_DB_PASSPHRASE"],
+            "swarm should receive exactly its own one declared secret"
+        );
+        assert!(
+            !filtered.iter().any(|(k, _)| k == "HKASK_ABW_API_KEY"),
+            "the ABW cloud swarm integration is removed — its API key must not reach the swarm server"
         );
         assert!(
             !filtered.iter().any(|(k, _)| k == "HKASK_SMTP_PASSWORD"),
@@ -1232,40 +1231,45 @@ mod tests {
             "swarm server must not receive inference keys"
         );
     }
-    // The swarm server should only receive ABW config env, not curator email
+    // The swarm server should only receive its allowlisted local config
+    // env — not curator email config, and not the removed cloud vars even
+    // when a stale operator environment still carries them.
     #[test]
     fn swarm_config_env_excludes_unrelated_vars() {
         let mut config_env = std::collections::HashMap::new();
         config_env.insert(
-            "HKASK_ABW_API_URL".to_string(),
-            "https://abw.example".to_string(),
-        );
-        config_env.insert("HKASK_ABW_MAX_CREDITS".to_string(), "100".to_string());
-        config_env.insert(
-            "HKASK_ABW_CURATOR_CONSENT_DEFAULT".to_string(),
-            "true".to_string(),
-        );
-        config_env.insert(
-            "HKASK_ABW_DEFAULT_AGENT_MODEL".to_string(),
+            "HKASK_SWARM_DEFAULT_AGENT_MODEL".to_string(),
             "test-agent-model".to_string(),
         );
-        config_env.insert("HKASK_SWARM_MODE".to_string(), "local".to_string());
         config_env.insert(
             "HKASK_LOCAL_AGENTS_DIR".to_string(),
             "/custom/dir".to_string(),
         );
         config_env.insert("HKASK_DATA_DIR".to_string(), "/data/hkask".to_string());
         config_env.insert(
+            "HKASK_ABW_API_URL".to_string(),
+            "https://abw.example".to_string(),
+        );
+        config_env.insert("HKASK_SWARM_MODE".to_string(), "local".to_string());
+        config_env.insert(
             "HKASK_SMTP_USERNAME".to_string(),
             "ops@example.com".to_string(),
         );
         let filtered = filter_config_env_for_server("swarm", &config_env);
-        assert!(filtered.contains_key("HKASK_ABW_API_URL"));
-        assert!(filtered.contains_key("HKASK_ABW_MAX_CREDITS"));
-        assert!(filtered.contains_key("HKASK_ABW_CURATOR_CONSENT_DEFAULT"));
-        assert!(filtered.contains_key("HKASK_ABW_DEFAULT_AGENT_MODEL"));
-        assert!(filtered.contains_key("HKASK_SWARM_MODE"));
+        assert!(filtered.contains_key("HKASK_SWARM_DEFAULT_AGENT_MODEL"));
         assert!(filtered.contains_key("HKASK_LOCAL_AGENTS_DIR"));
+        assert!(
+            filtered.contains_key("HKASK_DATA_DIR"),
+            "swarm server must receive HKASK_DATA_DIR so it can resolve local_agents_dir"
+        );
+        assert!(
+            !filtered.contains_key("HKASK_ABW_API_URL"),
+            "the ABW cloud swarm integration is removed — its env must not reach the swarm server"
+        );
+        assert!(
+            !filtered.contains_key("HKASK_SWARM_MODE"),
+            "the single-backend swarm has no mode switch"
+        );
         assert!(
             filtered.contains_key("HKASK_DATA_DIR"),
             "swarm server must receive HKASK_DATA_DIR so it can resolve local_agents_dir"
@@ -1294,21 +1298,23 @@ mod tests {
     #[test]
     fn swarm_config_env_includes_all_read_vars() {
         // The env vars the swarm server reads at runtime (non-test).
-        // `HKASK_ABW_API_KEY` is a credential (read via `ServerContext`), not
-        // `config_env`; assert it via the credential allowlist instead.
+        // `HKASK_DB_PASSPHRASE` is a credential (read via `ServerContext`),
+        // not `config_env`; assert it via the credential allowlist instead.
         let read_config_vars = [
-            "HKASK_ABW_API_URL",
-            "HKASK_ABW_MAX_CREDITS",
-            "HKASK_ABW_CURATOR_CONSENT_DEFAULT",
-            "HKASK_ABW_DEFAULT_AGENT_MODEL",
-            "HKASK_SWARM_MODE",
+            "HKASK_SWARM_DEFAULT_AGENT_MODEL",
             "HKASK_LOCAL_AGENTS_DIR",
             "HKASK_LOCAL_SWARMS_DIR",
-            "HKASK_SWARM_CONSENT_STORE",
             "HKASK_MCP_SERVER_IDS",
             "HKASK_DATA_DIR",
+            "HKASK_SWARM_MEMORY_DB",
+            "HKASK_SWARM_EMBEDDING_DIM",
+            "HKASK_A2A_HTTP_ENABLE",
+            "HKASK_SWARM_EVENTS_PATH",
+            "HKASK_SWARM_ROLLOUT_RETENTION_DAYS",
             // Transitive reads through `hkask-inference` (agent-response
-            // chunk tagging in `local_knowledge.rs`).
+            // chunk tagging in `local_knowledge.rs`) and `hkask-types`
+            // (`agent_paths` events-path override).
+            "HKASK_EMBEDDING_MODEL",
             "HKASK_CLASSIFIER_MODEL",
             "HKASK_TEMPLATE_ROOT",
         ];
@@ -1326,14 +1332,16 @@ mod tests {
         }
         // The credential (secret) read is gated by the credentials allowlist,
         // not config_env. Assert it via the credential-filter path.
-        let credentials: Vec<(String, String)> = [("HKASK_ABW_API_KEY", "secret")]
+        let credentials: Vec<(String, String)> = [("HKASK_DB_PASSPHRASE", "secret")]
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
         let filtered_creds = filter_credentials_for_server("swarm", &credentials);
         assert!(
-            filtered_creds.iter().any(|(k, _)| k == "HKASK_ABW_API_KEY"),
-            "swarm server reads HKASK_ABW_API_KEY but it is not in the credentials allowlist"
+            filtered_creds
+                .iter()
+                .any(|(k, _)| k == "HKASK_DB_PASSPHRASE"),
+            "swarm server reads HKASK_DB_PASSPHRASE but it is not in the credentials allowlist"
         );
     }
 
@@ -1713,19 +1721,20 @@ mod tests {
     ///
     /// SAFETY: Setting/removing test environment variables in test code is
     /// safe in a single-threaded test context (Rust runs tests serially by
-    /// default). The `HKASK_ABW_API_KEY` env var is set and removed within this
-    /// test only.
+    /// default). The `OPENROUTER_API_KEY` env var is set and removed within
+    /// this test only.
     #[test]
     fn shell_set_credential_survives_env_clear() {
-        // SAFETY: Single-threaded test context. Set a shell value for the ABW
-        // key, simulating an operator who exports it in their shell.
-        unsafe { std::env::set_var("HKASK_ABW_API_KEY", "shell-secret-value") };
+        // SAFETY: Single-threaded test context. Set a shell value for the
+        // OpenRouter key, simulating an operator who exports it in their
+        // shell.
+        unsafe { std::env::set_var("OPENROUTER_API_KEY", "shell-secret-value") };
 
         // Mirror the credential loop from `build_mcp_server_env`:
         //   if parent env has a non-empty value → insert into env, continue
         //   else → read from keychain (simulated as None here)
         let mut env = std::collections::HashMap::<String, String>::new();
-        let cred_urls = filter_credentials_for_server("swarm", &crate::credential_urls_for_mcp());
+        let cred_urls = filter_credentials_for_server("media", &crate::credential_urls_for_mcp());
         for (env_var, _url) in cred_urls {
             if let Ok(value) = std::env::var(&env_var)
                 && !value.is_empty()
@@ -1740,16 +1749,16 @@ mod tests {
         // were a skip (the pre-fix behavior), this would fail — the value would
         // be lost when the governed path clears the child's env.
         assert_eq!(
-            env.get("HKASK_ABW_API_KEY").map(|v| v.as_str()),
+            env.get("OPENROUTER_API_KEY").map(|v| v.as_str()),
             Some("shell-secret-value"),
-            "shell-set HKASK_ABW_API_KEY must be inserted into the env map so it \
+            "shell-set OPENROUTER_API_KEY must be inserted into the env map so it \
              survives the governed path's cmd.env_clear() — the prior `continue` \
              skipped it, and the child received neither the shell value nor the \
              keychain value"
         );
 
         // SAFETY: Clean up the test env var.
-        unsafe { std::env::remove_var("HKASK_ABW_API_KEY") };
+        unsafe { std::env::remove_var("OPENROUTER_API_KEY") };
     }
 
     // ── build_mcp_server_env: composed-path filter-order tests ──────────

@@ -1,28 +1,29 @@
 ---
 name: swarm-intelligence
 core: true
-description: "Convergent swarm-composition process. Senses swarm state, orients via Ashby requisite variety and PSO balance, decides composition adjustments (PSO velocity, ACO pheromone, Reynolds flocking), and acts via shared-thread local delegation or consent-gated ABW calls."
+description: "Convergent swarm-composition process. Senses swarm state, orients via Ashby requisite variety and PSO balance, decides composition adjustments (PSO velocity, ACO pheromone, Reynolds flocking), and acts via shared-thread local delegation across named local swarms and local swarm agents."
 ---
 
 # Swarm Intelligence
 
-Inform the composition, configuration, and operation of Agent Bestiary World
-(ABW) agent swarms — how swarms are composed, how they are run, and how their
+Inform the composition, configuration, and operation of local agent swarms
+— how swarms are composed, how they are run, and how their
 behavior is steered toward a target condition via an embedded PDCA loop.
 
-## Substrate: ABW swarm semantics
+## Substrate: local swarm semantics
 
-A swarm is an ABW **workspace** with hired agents (not the deprecated
-"ensemble" model). Compound agents orchestrate via `execute_agent` (text
-consult, one LLM call) and `delegate_to_agent` (full tool access, 1 cr +
-tokens, **delegation chains forbidden** — delegates lose
-`delegate_to_agent`/`execute_agent`). Gas (verified live 2026-08-02): own-
-agent hire via `/add` = flat 2 cr; third-party `/hire` = flat 5 cr base
-(quote `total` = base + required + optional); @mention 1 cr + tokens,
-delegation 1 cr + tokens. Compound agents declare
-`dependencies { required,
-optional }` and auto-hire their team. Thagard coherence scoring on
-workspaces. (Verified live 2026-08-01.)
+A local swarm is a named roster of local agent cards
+(`agents/local/curated/<id>/agent_card.json`) with a mission and a durable
+ordered thread (`swarm_thread_local`). Local agents run on the host
+session's model (a card may pin one; unpinned cards resolve the default at
+execution time — never assume a cheaper or smaller model). Cards declare
+`accepts[]`/`produces[]` port labels (typing references, not free strings —
+see `port_registry.rs`), optional `dependencies { required, optional }`, an
+optional `workflow_template`, and optional `evaluators` (deterministic
+contains/not_contains/regex contracts). There is no credit ledger, no
+consent token, and no spend gate — dispatch is bounded instead by the
+roster membership, the tool's 10-entry batch cap, and the card's
+`mcp_tools` allowlist (filtered against the governed server set).
 
 ## Surface ontologies
 
@@ -53,49 +54,51 @@ receipts — the model never supplies the convergence score.
 - `SWM-1` (`lisp_eval` SENSE metrics — the caller runs it after the SENSE render's Step 2): `(begin (define inter (lambda (a b) (if (is_null a) 0 (if (member (car a) b) (+ 1 (inter (cdr a) b)) (inter (cdr a) b))))) (define jac (lambda (x y) (let ((i (inter x y)) (u (- (+ (length x) (length y)) (inter x y)))) (if (= u 0) 0.0 (/ i u))))) (define pair-rows (lambda (a bs) (if (is_null bs) (list) (let ((j (jac (nth 1 a) (nth 1 (car bs))))) (if (>= j 0.75) (cons (list (nth 0 a) (nth 0 (car bs)) j) (pair-rows a (cdr bs))) (pair-rows a (cdr bs))))))) (define all-pairs (lambda (as) (if (is_null as) (list) (append (pair-rows (car as) (cdr as)) (all-pairs (cdr as)))))) (let ((vc (if (= req_count 0) 1.0 (if (= agent_count 0) 0.0 (/ cov_count req_count)))) (div (if (= agent_count 0) 0.0 (/ distinct_type_model_count agent_count))) (coh (if (= dep_count 0) 1.0 (/ sat_dep_count dep_count))) (sep (if (= agent_count 0) 0.0 (/ distinct_tuple_count agent_count)))) (list vc div coh sep (= req_count 0) (all-pairs ports_by_agent))))`, env `{ "req_count": <|required_transforms|>, "cov_count": <|required_transforms ∩ covered_transforms|>, "agent_count": <|agents|>, "distinct_type_model_count": <|distinct (agent_type, model)|>, "dep_count": <|required dependencies|>, "sat_dep_count": <|satisfied dependencies|>, "distinct_tuple_count": <|distinct (agent_type, model, temperature)|>, "ports_by_agent": <|per-agent port labels [[agent_id, [accepts ∪ produces]], ...] in roster order|> }` — returns `(variety_coverage diversity cohesion separation trivial_task redundancy_pairs)`; each `redundancy_pairs` entry is `[agent_a, agent_b, jaccard]` for an unordered pair with `jaccard >= 0.75`, in roster order (the C7 substitutability signal).
 - `SWM-2` (`lisp_eval` ORIENT deficit cross-check, latency outliers, and C5 fault attribution — the caller runs it after the ORIENT render): `(begin (define excluded (lambda (r) (or (not (nth 1 r)) (string= (nth 2 r) "invalid") (string= (nth 3 r) "eval")))) (define adm (lambda (rs) (if (is_null rs) (list) (if (excluded (car rs)) (adm (cdr rs)) (cons (car rs) (adm (cdr rs))))))) (define first-trusted-fail (lambda (rs) (if (is_null rs) (list) (if (nth 4 (car rs)) (car rs) (first-trusted-fail (cdr rs)))))) (define first-exec-fail (lambda (rs) (if (is_null rs) (list) (if (nth 5 (car rs)) (car rs) (first-exec-fail (cdr rs)))))) (define last-of (lambda (rs) (if (is_null (cdr rs)) (car rs) (last-of (cdr rs))))) (define outliers (lambda (xs thr) (if (is_null xs) (list) (if (> (nth 1 (car xs)) thr) (cons (car xs) (outliers (cdr xs) thr)) (outliers (cdr xs) thr))))) (let ((deficit (cond ((< lc 1.0) "loop_break") ((< vc 0.9) "variety_deficit") ((or (< div 0.25) (not coherence_non_decreasing)) "coherence_deficit") (t "on_target"))) (a (adm delegate_records))) (let ((r1 (first-trusted-fail a)) (r3 (first-exec-fail a))) (list deficit (outliers agent_latencies (max (* 2 median_latency) 1000)) (cond ((not (is_null r1)) (list (nth 0 r1) 1)) ((and whole_task_failed (> (length a) 0)) (list (nth 0 (last-of a)) 2)) ((not (is_null r3)) (list (nth 0 r3) 3)) (t (list)))))))`, env `{ "vc": <variety_coverage>, "div": <diversity>, "lc": <loop_closure>, "coherence_non_decreasing": <bool>, "agent_latencies": <[[agent_id, latency_ms], ...]>, "median_latency": <median latency_ms>, "delegate_records": <[[agent_id, bind_matched, input_contract_check, route_reason, trusted_task_failed, exec_failed], ...] in delegate_results array order — trusted_task_failed only for provenance "deterministic_evaluator"/"operator" with pass = false (the Gap S3 guard: llm_judged is never trusted); exec_failed for an explicit per-entry error or any tool_calls[].ok = false>, "whole_task_failed": <bool — the whole-task task_success input is present with trusted provenance and pass = false> }` — returns `(deficit latency_outliers fault)`: `latency_outliers` flags entries with `latency_ms > max(2 * median_ms, 1000)` (C4); `fault` is `(list)` (no attribution — C5/C6 inert) or `[agent_id, rule]` by the 4-rule priority over the admissible entries (1: earliest trusted per-delegation `task_success.pass = false`; 2: terminal admissible agent on whole-task failure; 3: earliest explicit error / `tool_calls[].ok = false`; 4: array-order tie-break). An entry is inadmissible — routing-attributable, never C6 blame — when `bind_matched = false`, `input_contract_check = "invalid"`, or `dispatch.route_reason = "eval"`.
 ACT renders
-intents, never executed receipts; execution comes only from the live tools
-(consent-gated ABW spend; local no-credit dispatch), and a rendered plan is
+intents, never executed receipts; execution comes only from the live local
+dispatch tools, and a rendered plan is
 not a swarm state change. A task-success target requires an actual
 deterministic or operator verdict — with no task oracle, report swarm-health
 on target, task unassessed.
 
 ## When to Use
 
-- Compose a new ABW swarm for a task (which agents to hire, what dependencies
+- Compose a new local swarm for a task (which agents to add, what dependencies
   to satisfy)
-- Author a new agent when no catalogue agent (or forkable near-match) covers a
+- Author a new agent when no existing card (or a near-match) covers a
   required transform — agent creation + authoring is a first-class `author_agent`
-  move (generate prompt + ontology + create), not an implicit side-effect of hire
+  move (generate prompt + ontology + create), not an implicit side-effect of roster add
 - Diagnose an existing swarm that is under-performing (variety deficit,
-  coherence deficit, or a broken cost/consent feedback loop)
+  coherence deficit, or a broken feedback loop)
 - Steer a swarm toward a target condition across iterations (the PDCA loop)
 - Detect premature convergence (the swarm has collapsed onto a single agent
   type and lost exploration ability — the canonical PSO/ACO failure mode)
-- Reconcile swarm spend against the ABW wallet (close the algedonic channel)
+- Reconcile delegated dispatches against observed receipts (close the
+  feedback loop)
 
 Do NOT use for:
 
-- Dispatching a single ABW agent without composition intent (use the swarm
-  panel directly)
-- General multi-agent coordination theory outside ABW (the skill's vocabulary
-  is ABW-specific: workspaces, hired agents, compound agents, dependencies)
-- Curator (Xaman Ek) session management (that is a per-dispatch parameter of
-  the ACT phase, not a separate skill)
+- Dispatching a single local agent without composition intent (use
+  `swarm_delegate_local` directly)
+- General multi-agent coordination theory outside the local substrate (the
+  skill's vocabulary is substrate-specific: named swarms, rosters, port
+  labels, dependency declarations)
+- Panel form authoring assistance outside the ACT/DECIDE author_agent flow
+  (the swarm panel's own `swarm_ai_assist` tool covers standalone form help)
 
 ## When NOT to Use
 
 - Single-agent tasks — delegate directly; the SENSE→ORIENT→DECIDE→ACT→CHECK→CONVERGE loop buys nothing without a swarm to regulate.
 - Executing a plan without its receipt check — in steering mode, run the "Steering a local swarm" loop below (directive → one `swarm_execute_plan_local` call → receipt check → feed back); never replay delegations or feed back an unverified array.
-- Unbudgeted ABW spend calls — cloud delegations require `credits_authorized` and consent; local delegations have neither.
+- Inventing dispatch authority — local dispatch is bounded by roster membership and the card's declared allowlists; a plan may not dispatch a non-member or a tool outside the governed set.
 
 ## Instructions
 
 ```
-Check: Phase 1  — SENSE            → Measure current swarm state against Onto4MAT + backend workspace/wallet. Optionally pass `kanban_board_id` when a kanban board is this swarm's durable coordination surface — SENSE grounds its sensing in the board's persisted task state via `kanban_task_list`. Pass the already-read roster/wallet as `fetched_swarm_state` when the live-process roster read has run — SENSE then does not re-fetch.
+Check: Phase 1  — SENSE            → Measure current swarm state against Onto4MAT + the local roster. Optionally pass `kanban_board_id` when a kanban board is this swarm's durable coordination surface — SENSE grounds its sensing in the board's persisted task state via `kanban_task_list`. Pass the already-read roster as `fetched_swarm_state` when the live-process roster read has run — SENSE then does not re-fetch.
 Plan:  Phase 2  — ORIENT           → Classify the gap + deterministic fault attribution (C5). When a `swarm_id` is available, call `swarm_task_board` for durable task progress. Detect reasoning loops from the iteration log (C1), not from fields absent in local results.
 Plan:  Phase 3  — DECIDE           → Propose composition adjustments isomorphic to PSO/ACO/Reynolds tuning
 Det:   Phase 4  — FILTER           → Deterministically enforce C3 failed-edit + C7 influence guards (no LLM)
-Do:    Phase 5  — ACT              → Emit consent-gated ABW calls or shared-thread local-swarm calls
+Do:    Phase 5  — ACT              → Emit shared-thread local-swarm action intents
 Check: Phase 6  — CHECK             → Re-measure, compute swarm-state distance d, emit next_focus + algedonic. Pass the pre-Act sensed state as `pre_act_state` and the post-Act re-read as `fetched_post_act_state` (CHECK re-reads through them rather than re-fetching).
 Check: Phase 7  — CONVERGE (check)  → evaluate d (swarm-state distance)
 Check: Phase 8  — CONVERGE (accum) → Deterministic accumulator: iteration_log, failed_edits, influence_scores (C1/C3/C7)
@@ -120,7 +123,6 @@ with the partial fields and the selectors:
 ```json
 {
   "surface": "agent|swarm",
-  "mode": "abw|local",
   "action": "suggest|validate",
   "name": "<string> | null",
   "agent_type": "<string> | null",
@@ -132,12 +134,12 @@ with the partial fields and the selectors:
 ```
 
 `suggest` returns field completions;
-`validate` returns a verdict over the supplied fields. It is read-only: no
-ledger debit, no consent. "Local" is an execution location, not a model tier —
-leave the card model unset to inherit Settings → Kask → Models; never invent a
-cheaper or smaller local model. The panel's own `swarm_ai_assist` tool runs
-the deterministic ABW contract checks in code and its own inline prompt; it
-does not render this template.
+`validate` returns a verdict over the supplied fields. It is read-only. "Local"
+is an execution location, not a model tier — leave the card model unset to
+inherit Settings → Kask → Models; never invent a cheaper or smaller local
+model. The panel's own `swarm_ai_assist` tool runs the deterministic local
+contract checks in code and its own inline prompt; it does not render this
+template.
 
 ## Target condition (measurable)
 
@@ -147,9 +149,9 @@ A swarm is well-composed for a task when three conditions hold simultaneously:
    agents' `accepts[]`/`produces[]` cover the task's required transforms.
 2. **Coherence without premature convergence**: `diversity >= 0.25` (≥¼ of
    agents are non-identical) and Thagard coherence non-decreasing.
-3. **Closed feedback loop**: `loop_closure = 1.0` — ABW spend reconciles
-   against wallet transactions and curator consent; local delegation attempts
-   have observed results or surfaced errors (no local credit ledger).
+3. **Closed feedback loop**: `loop_closure = 1.0` — local delegation attempts
+   have observed results or surfaced errors (every admitted delegation has
+   one actual receipt; no local credit ledger exists).
 
 ## Convergence criterion
 
@@ -163,8 +165,7 @@ swarm-health axes only; the human Go See loop (C2) covers the task-success gap,
 never an LLM judge.
 Stability alone is a plateau, not success: four equal off-target distances cannot converge. The inputs (`variety_coverage`, `diversity`, `loop_closure`) are sensed/assessed in CHECK (P for judged components, critiqued by Go See); the distance and gate arithmetic are D via `lisp_eval`. A task-success target requires an actual deterministic or operator verdict; with no task oracle, report *swarm-health on target, task unassessed*, never user-task success:
 - distance form: `(let ((base (+ (* (- 1 vc) (- 1 vc)) (let ((g (max 0 (- 0.25 div)))) (* g g)) (* (- 1 lc) (- 1 lc))))) (sqrt (if (is_null s) base (+ base (* (- 1 s) (- 1 s))))))`, env `{ "vc": <variety_coverage>, "div": <diversity>, "lc": <loop_closure>, "s": <task_success score, or null> }`
-- target-plus-stability form: `(and (= (length ds) 4) (< (abs (- (nth 1 ds) (nth 0 ds))) 0.03) (< (abs (- (nth 2 ds) (nth 1 ds))) 0.03) (< (abs (- (nth 3 ds) (nth 2 ds))) 0.03) (>= vc 0.9) (>= div 0.25) (= lc 1) coherence_non_decreasing no_algedonic_alert (or (not task_success_required) (and (numberp s) (= s 1))))`. Bind `ds` to four observed distances, `vc`, `div`, `lc`, `s` to the latest observed inputs; `task_success_required` comes from the user's target, and the coherence/algedonic flags must have observed evidence. Any returned per-entry error or tool-level error forces `no_algedonic_alert = false` (and a tool-level error leaves `lc` unmeasured). An unavailable flag is not `true`. Fewer than four measurements cannot converge. **Algedonic override:** a 402 or un-acknowledged
-curator dispatch escalates regardless of `d` — a broken algedonic channel is
+- target-plus-stability form: `(and (= (length ds) 4) (< (abs (- (nth 1 ds) (nth 0 ds))) 0.03) (< (abs (- (nth 2 ds) (nth 1 ds))) 0.03) (< (abs (- (nth 3 ds) (nth 2 ds))) 0.03) (>= vc 0.9) (>= div 0.25) (= lc 1) coherence_non_decreasing no_algedonic_alert (or (not task_success_required) (and (numberp s) (= s 1))))`. Bind `ds` to four observed distances, `vc`, `div`, `lc`, `s` to the latest observed inputs; `task_success_required` comes from the user's target, and the coherence/algedonic flags must have observed evidence. Any returned per-entry error or tool-level error forces `no_algedonic_alert = false` (and a tool-level error leaves `lc` unmeasured). An unavailable flag is not `true`. Fewer than four measurements cannot converge. **Algedonic override:** a tool-level dispatch error or an un-reconciled emitted dispatch escalates regardless of `d` — a broken feedback channel is
 never read as "no deviation" (the `.rules` "unwrap_or(0)" trap enforced as a
 convergence invariant).
 
@@ -204,11 +205,11 @@ how the output is handled. A plan alone never closes the feedback loop:
 - **advisory** (default): the plan IS the final output. The operator executes
   the emitted_calls manually and feeds `delegate_results` back on the next
   invocation (Option A — operator-in-the-loop).
-- **steering**: the **Kask Curator** (local swarms) or **Xaman Ek** (cloud
-  swarms) executes the plan and feeds results back autonomously (Option B).
+- **steering**: the **Kask Curator** (or the human operator) executes
+  the plan and feeds results back autonomously (Option B).
   ACT emits a `steering_directive` the Curator acts on.
 
-### Local swarms — the Kask Curator
+### The Kask Curator — the local executor
 
 The Kask Curator (`Agent::Curator`, `CURATOR_AGENT_ID`) is the in-process agent
 that runs zed-kask — it has governed tool access (the MCP servers via
@@ -222,25 +223,14 @@ with `delegate_results` set to that array — closing the feedback loop without
 a new skill execution surface (the Curator's normal tool-call turn IS the
 execution).
 
-### Cloud swarms — Xaman Ek
-
-Xaman Ek has steering **built in** (cloud-side). Delegate to it via
-`swarm_xaman` with the plan as the message; Xaman Ek executes the plan and
-steers the ABW swarm. The zed-kask side calls `swarm_xaman` with a steering-
-style message (session_type `composition_design`); the execution + result
-capture is Xaman Ek's built-in capability, then `delegate_results` flow back.
-
-### Local swarms — the Kask Curator (continued)
-
-Locally, the Kask Curator (or a human) steers by running the loop below on
-the plan this skill emitted. It is this skill's execute-and-feed-back step
-(formerly the separate swarm-steering skill, folded in 2026-09-25): it
-sequences and collects, it never re-plans — DECIDE owns composition.
-
 ### Steering a local swarm — directive and receipt (PDCA)
 
 PKO's specification/execution split: the plan is the Procedure; the
-delegation array and its results are the StepExecutions.
+delegation array and its results are the StepExecutions. The Curator (or the
+human) steers by running the loop below on the plan this skill emitted — the
+execute-and-feed-back step (formerly the separate swarm-steering skill,
+folded in 2026-09-25): it sequences and collects, it never re-plans — DECIDE
+owns composition.
 
 - **Initial condition:** the emitted plan, an existing local `swarm_id`, the
   current roster, its ordered delegation entries (up to the tool's 10-entry

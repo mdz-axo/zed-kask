@@ -30,9 +30,9 @@ pub use database_maintenance::{
     initialize_database_inventory, preview_database_inventory,
 };
 mod delegation_grants;
+mod goals;
 mod host_skill_tools;
 mod identity;
-mod goals;
 pub use goals::GoalHost;
 mod inference_chat;
 mod inference_edit_prediction;
@@ -92,10 +92,10 @@ pub use passphrase_rotation::{
     schedule_db_passphrase_rotation,
 };
 pub use settings::{
-    KaskCondenserSettings, KaskCorpusSettings, KaskCuratorEmailSettings,
-    KaskCuratorSettings, KaskGeneralSettings, KaskMcpSettings, KaskMediaSettings,
-    KaskMemorySettings, KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings,
-    KaskScenariosSettings, KaskSettings, KaskSwarmSettings, SwarmModeConfig,
+    KaskCondenserSettings, KaskCorpusSettings, KaskCuratorEmailSettings, KaskCuratorSettings,
+    KaskGeneralSettings, KaskMcpSettings, KaskMediaSettings, KaskMemorySettings,
+    KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings, KaskScenariosSettings,
+    KaskSettings, KaskSwarmSettings,
 };
 
 mod metacognition_bridge;
@@ -130,4 +130,6 @@ pub use rollout_event_bridge::{
 // The credential namespace constant and the test-email helper live in the
 // `credentials` module; re-exported here to preserve the historical public
 // surface (`kask_bridge::KASK_CREDENTIAL_NAMESPACE`, `kask_bridge::spawn_test_email`).
-pub use credentials::{KASK_CREDENTIAL_NAMESPACE, spawn_test_email};
+// `purge_removed_abw_api_key` is the startup purge of the removed ABW key
+// (D5) — called once from zed's app init.
+pub use credentials::{KASK_CREDENTIAL_NAMESPACE, purge_removed_abw_api_key, spawn_test_email};

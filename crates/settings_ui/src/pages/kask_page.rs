@@ -706,11 +706,11 @@ pub(crate) fn kask_page() -> SettingsPage {
             r#type: Default::default(),
             json_path: Some("kask.swarm"),
             description: Some(
-                "Configure the swarm MCP server: backend mode (remote ABW vs local \
-                 substrate), per-dispatch credit ceiling, curator consent default, and \
-                 local agent/swarm directories.".into(),
+                "Configure the swarm MCP server (local swarm agents and local \
+                 swarms): default agent model, A2A HTTP gateway, and the local \
+                 semantic-memory store.".into(),
             ),
-            search_aliases: &["swarm", "abw", "agent bestiary", "xaman ek", "local agents"],
+            search_aliases: &["swarm", "local agents", "local swarms", "a2a"],
             in_json: true,
             files: USER,
             render: render_swarm_page,
@@ -844,7 +844,7 @@ mod tests {
 
         // Data-service kask slots with MCP-child consumers — MUST nudge.
         for url in [
-            "kask://credentials/hkask_abw_api_key",
+            "kask://credentials/hkask_db_passphrase",
             "kask://credentials/exa",
         ] {
             assert!(
@@ -852,6 +852,13 @@ mod tests {
                 "kask slot {url} feeds MCP server env and must nudge"
             );
         }
+
+        // The removed ABW key feeds nothing — the ABW cloud swarm
+        // integration is gone, so nudging on it would be wasted work and its
+        // presence in the feed set would mean the removal regressed.
+        assert!(!credential_url_feeds_mcp_servers(
+            "kask://credentials/hkask_abw_api_key"
+        ));
 
         // In-process-only credentials do not restart children.
         assert!(!credential_url_feeds_mcp_servers(

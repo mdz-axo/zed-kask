@@ -1,11 +1,12 @@
-//! Swarm sub-page — Agent Bestiary World backend mode, credit ceiling,
-//! curator consent default, default agent model, A2A HTTP gateway, and
-//! local semantic-memory configuration.
+//! Swarm sub-page — local swarm agents and local swarms: default agent
+//! model, A2A HTTP gateway, and local semantic-memory configuration.
 //!
-//! No per-server path fields — the swarm server's local agent registry,
-//! local swarms registry, and memory DB are derived from the global
-//! `data_dir` as `mcp/swarm/agents/curated/`, `mcp/swarm/swarms/`, and
-//! `mcp/swarm/memory.db` by `mcp_env()`. The server reads them via
+//! The swarm server is local-only (the former ABW cloud backend is removed
+//! — no API key, API URL, credit ceiling, or curator consent settings
+//! remain). No per-server path fields — the swarm server's local agent
+//! registry, local swarms registry, and memory DB are derived from the
+//! global `data_dir` as `mcp/swarm/agents/curated/`, `mcp/swarm/swarms/`,
+//! and `mcp/swarm/memory.db` by `mcp_env()`. The server reads them via
 //! `HKASK_LOCAL_AGENTS_DIR`, `HKASK_LOCAL_SWARMS_DIR`, and
 //! `HKASK_SWARM_MEMORY_DB`.
 
@@ -17,151 +18,19 @@ pub(crate) fn render_swarm_page(
     _window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
-    super::ensure_keychain_prefetch(cx);
     let raw = raw_kask_settings(cx);
     // Resolve via `From` so the UI shows the same defaults the runtime uses.
     let swarm: kask_bridge::KaskSwarmSettings = raw
         .and_then(|c| c.swarm)
         .map(Into::into)
         .unwrap_or_default();
-    let api_url = swarm.api_url;
-    let max_credits = swarm.max_credits_per_dispatch.to_string();
-    let curator_consent_default = swarm.curator_consent_default;
     let default_agent_model = swarm.default_agent_model;
     let a2a_http_enabled = swarm.a2a_http_enabled;
     let embedding_dim = swarm.embedding_dim.to_string();
 
-    // ABW API key — the core credential for ABW mode. Lives in the keychain
-    // under `kask://credentials/hkask_abw_api_key`, injected as
-    // `HKASK_ABW_API_KEY` at server launch. Has `shows_in_ui: false` in
-    // `DATA_SERVICES` (it's the swarm backend auth credential, not a data
-    // service), so it has no Data Services page row. Without this field the
-    // operator had no UI path to configure it at all.
-    let credentials_provider = zed_credentials::global(cx);
-    let abw_credential_url = format!("{KASK_CREDENTIAL_NAMESPACE}/hkask_abw_api_key");
-    let abw_key_configured = has_credential(
-        &credentials_provider,
-        &[&abw_credential_url],
-        "HKASK_ABW_API_KEY",
-    );
-    let abw_api_key_field = if abw_key_configured {
-        ConfiguredApiCard::new("kask-swarm-abw-api-key-reset", "ABW API Key Configured")
-            .button_label("Reset Key")
-            .button_tab_index(2)
-            .on_click({
-                let provider = credentials_provider.clone();
-                let url = abw_credential_url;
-                move |_, _, cx| {
-                    delete_credential(&provider, &url, cx).detach();
-                }
-            })
-            .into_any_element()
-    } else {
-        let provider = credentials_provider.clone();
-        let url = abw_credential_url;
-        v_flex()
-            .gap_1()
-            .child(Label::new("ABW API Key"))
-            .child(
-                Label::new(
-                    "Agent Bestiary World Pro-tier API key (Authorization: Bearer). \
-                     Required for authenticated tools (swarm_get_swarm, swarm_hire, \
-                     swarm_delegate, etc.). Without it, the swarm server runs in \
-                     catalogue-only mode. Stored in the keychain under \
-                     kask://credentials/hkask_abw_api_key. Or set the \
-                     HKASK_ABW_API_KEY env var and restart Zed.",
-                )
-                .size(LabelSize::Small)
-                .color(Color::Muted),
-            )
-            .child(
-                SettingsInputField::new("kask-swarm-abw-api-key-input")
-                    .tab_index(2)
-                    .with_placeholder("xxxxxxxxxxxxxxxxxxxx")
-                    .aria_label("ABW API Key")
-                    .on_confirm(move |api_key, _window, cx| {
-                        if let Some(key_value) = api_key.filter(|key_value| !key_value.is_empty()) {
-                            write_credential(&provider, &url, &key_value, cx).detach();
-                        }
-                    }),
-            )
-            .into_any_element()
-    };
-
-    // The `kask.swarm.mode` setting is intentionally NOT exposed as a toggle
-    // here. Both backends (cloud ABW + local substrate) are always available
-    // in the swarm panel — the panel shows both and the operator picks the
-    // target per action (Author/Compose forms have a Cloud/Local toggle).
-    // The setting only controls a server-side startup warning, so exposing
-    // it as a top-level toggle misleads operators into thinking it's an
-    // either/or capability gate (it is not — both tool sets are always
-    // registered). The setting remains in settings.json for the startup
-    // warning and for Steer-mode context; advanced operators can set it
-    // there if they want to suppress the ABW-key warning in local-only use.
-
-    // Curator consent default toggle.
-    let consent_toggle = kask_toggle(
-        "kask-swarm-curator-consent-default",
-        Some("Curator Consent Default"),
-        Some(
-            "When enabled, Xaman Ek curator calls may be initiated without a per-call \
-             consent token (S5 policy opt-in). Default false — sending task content to \
-             a third-party curator requires explicit per-call consent."
-                .into(),
-        ),
-        curator_consent_default,
-        1,
-        move |enabled, settings| {
-            settings
-                .kask
-                .get_or_insert_default()
-                .swarm
-                .get_or_insert_default()
-                .curator_consent_default = Some(enabled);
-        },
-    );
-
-    let api_url_input = kask_input_field(
-        "kask-swarm-api-url",
-        2,
-        api_url,
-        "https://agent-bestiary.world",
-        "ABW API URL",
-        |text| Some(text.trim().to_string()),
-        move |parsed, settings| {
-            settings
-                .kask
-                .get_or_insert_default()
-                .swarm
-                .get_or_insert_default()
-                .api_url = if parsed.is_empty() {
-                None
-            } else {
-                Some(parsed)
-            };
-        },
-    );
-
-    let max_credits_input = kask_input_field(
-        "kask-swarm-max-credits",
-        3,
-        max_credits,
-        "50",
-        "Max Credits Per Dispatch",
-        |text| text.trim().parse::<u32>().ok(),
-        move |parsed, settings| {
-            settings
-                .kask
-                .get_or_insert_default()
-                .swarm
-                .get_or_insert_default()
-                .max_credits_per_dispatch = Some(parsed);
-        },
-    );
-
     let default_agent_model_input = kask_input_field(
         "kask-swarm-default-agent-model",
-        5,
+        1,
         default_agent_model,
         "claude-haiku-4-5-20251001",
         "Default Agent Model",
@@ -191,7 +60,7 @@ pub(crate) fn render_swarm_page(
                 .into(),
         ),
         a2a_http_enabled,
-        6,
+        2,
         move |enabled, settings| {
             settings
                 .kask
@@ -204,7 +73,7 @@ pub(crate) fn render_swarm_page(
 
     let embedding_dim_input = kask_input_field(
         "kask-swarm-embedding-dim",
-        8,
+        3,
         embedding_dim,
         "1024",
         "Embedding Dimension",
@@ -234,52 +103,15 @@ pub(crate) fn render_swarm_page(
                 .child(SettingsSectionHeader::new("Swarm"))
                 .child(
                     Label::new(
-                        "Agent Bestiary World agent swarms and the Xaman Ek curator. \
-                         Configure the backend mode (remote ABW vs local substrate), the \
-                         per-dispatch credit ceiling, and the curator consent default. \
-                         Local agent cards, local swarms, and the semantic-memory DB \
-                         persist to mcp/swarm/ under the shared kask data directory (set \
-                         on the General page). There are no per-server path settings — \
-                         all MCP servers share the single data directory.",
+                        "Local swarm agents and local swarms. Local agent cards, local \
+                         swarms, and the semantic-memory DB persist to mcp/swarm/ under \
+                         the shared kask data directory (set on the General page). There \
+                         are no per-server path settings — all MCP servers share the \
+                         single data directory.",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
                 ),
-        )
-        .child(Divider::horizontal())
-        .child(abw_api_key_field)
-        .child(Divider::horizontal())
-        .child(consent_toggle)
-        .child(Divider::horizontal())
-        .child(
-            v_flex()
-                .gap_1()
-                .child(Label::new("ABW API URL"))
-                .child(
-                    Label::new(
-                        "ABW API base URL override. Leave empty for the default \
-                         (https://agent-bestiary.world). Or set HKASK_ABW_API_URL.",
-                    )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-                )
-                .child(api_url_input),
-        )
-        .child(Divider::horizontal())
-        .child(
-            v_flex()
-                .gap_1()
-                .child(Label::new("Max Credits Per Dispatch"))
-                .child(
-                    Label::new(
-                        "Per-dispatch credit ceiling for spend tools. Dispatches estimated \
-                         above this are refused before any credit is spent. Or set \
-                         HKASK_ABW_MAX_CREDITS.",
-                    )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-                )
-                .child(max_credits_input),
         )
         .child(Divider::horizontal())
         .child(
@@ -288,9 +120,10 @@ pub(crate) fn render_swarm_page(
                 .child(Label::new("Default Agent Model"))
                 .child(
                     Label::new(
-                        "Default model for new ABW agents and local agents without an explicit \
-                         model. Leave empty for ABW's default or the local host session model. \
-                         Explicit agent models take precedence. Env: HKASK_ABW_DEFAULT_AGENT_MODEL.",
+                        "Default model for new local agents and for local agents without \
+                         an explicit model. Leave empty for the host session model. \
+                         Explicit agent models take precedence. Env: \
+                         HKASK_SWARM_DEFAULT_AGENT_MODEL.",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),

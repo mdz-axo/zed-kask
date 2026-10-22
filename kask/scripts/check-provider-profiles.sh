@@ -62,7 +62,6 @@ adopted="$(
       while IFS= read -r k; do
         case "$k" in
           hkask_db_passphrase | hkask_smtp_password) continue ;;
-          hkask_abw_api_key) echo abw ;;
           runpod) echo runpod ;;
           reduct_api_key) echo reduct ;;
           *) echo "$k" ;;

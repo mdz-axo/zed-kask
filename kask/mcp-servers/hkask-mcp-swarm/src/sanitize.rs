@@ -48,22 +48,6 @@ pub fn strip_leading_mentions(task: &str) -> String {
     remaining.to_string()
 }
 
-/// Extract tool names from a card's `capabilities.mcp_tools` array of
-/// `[{name, description}]` objects. The older plain-string shape was
-/// removed under the no-backward-compatibility ruling (2026-09-18): a card
-/// still carrying it contributes no tool names, and `filter_mcp_tools`
-/// warnings remain the authority gate for what a card may dispatch.
-pub fn extract_tool_names(value: Option<&serde_json::Value>) -> Vec<String> {
-    value
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|entry| entry.get("name").and_then(|n| n.as_str()).map(String::from))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 /// Validate a card's declared `mcp_tools`. Each entry must be `server/tool`
 /// with charset-safe, non-empty segments. When `allowed_servers` is set (the
 /// governed server set from `HKASK_MCP_SERVER_IDS`), entries whose server is
@@ -135,35 +119,4 @@ pub fn filter_declared_skills(skills: Vec<String>) -> Vec<String> {
             ok
         })
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A card's `capabilities.mcp_tools` is `[{name, description}]`
-    /// objects. The older plain-string shape is rejected under the
-    /// no-backward-compatibility ruling (2026-09-18): a card still carrying
-    /// it contributes no tool names.
-    #[test]
-    fn extract_tool_names_accepts_objects_only() {
-        let objects = serde_json::json!([
-            { "name": "execute_agent", "description": "Invoke a member agent." },
-            { "name": "web_search", "description": "" }
-        ]);
-        assert_eq!(
-            extract_tool_names(Some(&objects)),
-            vec!["execute_agent".to_string(), "web_search".to_string()]
-        );
-
-        // The removed string shape contributes nothing.
-        let strings = serde_json::json!(["research/web_search"]);
-        assert!(extract_tool_names(Some(&strings)).is_empty());
-
-        assert!(extract_tool_names(None).is_empty());
-        assert!(extract_tool_names(Some(&serde_json::json!(null))).is_empty());
-        // An object without a name key contributes nothing.
-        let malformed = serde_json::json!([{ "description": "no name" }]);
-        assert!(extract_tool_names(Some(&malformed)).is_empty());
-    }
 }

@@ -1678,7 +1678,7 @@ pub struct KaskSettingsContent {
     #[serde(default)]
     pub prediction_markets: Option<KaskPredictionMarketsSettingsContent>,
 
-    /// Swarm (Agent Bestiary World) MCP server configuration.
+    /// Swarm MCP server configuration (local swarm agents and local swarms).
     #[serde(default)]
     pub swarm: Option<KaskSwarmSettingsContent>,
 
@@ -1840,17 +1840,9 @@ pub struct KaskPredictionMarketsSettingsContent {
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct KaskSwarmSettingsContent {
-    /// Which backend to route to. Default `abw` (v1). `local` routes to
-    /// zed-kask's local substrate crates (v2 §15).
-    pub mode: Option<SwarmModeContent>,
-    pub api_url: Option<String>,
-    pub max_credits_per_dispatch: Option<u32>,
-    /// When `true`, Xaman Ek curator calls do not require a per-call consent
-    /// token. Default `false` (opt-in per call).
-    pub curator_consent_default: Option<bool>,
-    /// Operator-selected model for new ABW agents without an explicit model
-    /// and for unpinned local agents at execution time. When empty, ABW
-    /// chooses its own default and local agents use the host session model.
+    /// Operator-selected model for new local agents without an explicit
+    /// model and for unpinned local agents at execution time. When empty,
+    /// local agents use the host session model.
     pub default_agent_model: Option<String>,
     /// Whether to start the A2A HTTP gateway (loopback JSON-RPC server that
     /// exposes local agents to external A2A clients). Default `false`
@@ -1860,18 +1852,6 @@ pub struct KaskSwarmSettingsContent {
     /// Embedding vector dimension for the semantic-memory embedding store.
     /// Default 1024. Only relevant if the embedding-search path is used.
     pub embedding_dim: Option<usize>,
-}
-
-/// Mirror of `SwarmModeConfig` in the bridge crate, kept separate to avoid a
-/// circular dependency. The two enums MUST stay in sync.
-#[derive(Debug, PartialEq, Eq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
-#[serde(rename_all = "lowercase")]
-pub enum SwarmModeContent {
-    /// Route to Agent Bestiary World (v1 behavior).
-    #[default]
-    Abw,
-    /// Route to local substrate crates (v2, §15).
-    Local,
 }
 
 /// Media MCP server configuration (the `"kask.media"` section in settings.json).

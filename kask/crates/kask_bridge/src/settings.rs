@@ -388,35 +388,17 @@ pub struct KaskPredictionMarketsSettings {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
 pub struct KaskScenariosSettings {}
 
-/// Swarm (Agent Bestiary World) MCP server configuration.
+/// Swarm MCP server configuration — the local substrate (local swarm
+/// agents and local swarms) only.
 ///
-/// The API key is a secret — it lives in the keychain under
-/// `kask://credentials/hkask_abw_api_key`, injected as `HKASK_ABW_API_KEY`.
-/// Only non-secret config lives here.
+/// No cloud credentials or config: the former ABW cloud integration is
+/// removed. The swarm memory DB opens with the ONE shared
+/// `HKASK_DB_PASSPHRASE` keychain credential, like every kask SQLCipher DB.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct KaskSwarmSettings {
-    /// Which backend to route to (v2 §15). Default `Abw` (v1 behavior).
-    /// `Local` routes to zed-kask's local substrate crates.
-    pub mode: SwarmModeConfig,
-
-    /// ABW API base URL override. When empty, uses the default
-    /// (`https://agent-bestiary.world`).
-    pub api_url: String,
-
-    /// Per-dispatch credit ceiling for spend tools (the S3 budget gate).
-    /// Dispatches estimated above this are refused before any credit is spent.
-    pub max_credits_per_dispatch: u32,
-
-    /// Whether Xaman Ek curator calls may be initiated without a per-call
-    /// consent token (S5 policy). Default `false` — sending task content to
-    /// a third-party curator requires explicit opt-in per the plan's §3.7.
-    /// When `false`, `swarm_xaman` requires a `consent_token` (action "curate").
-    /// When `true`, the operator has globally opted in and the token is optional.
-    pub curator_consent_default: bool,
-
-    /// Default model id for newly created ABW agents when the caller omits
+    /// Default model id for newly created local agents when the caller omits
     /// `model` (KA-05); also used by local agents without a per-card model.
-    /// Empty leaves ABW and the host session to resolve their own defaults.
+    /// Empty leaves the host session to resolve its own default.
     pub default_agent_model: String,
 
     /// Whether to start the A2A HTTP gateway (loopback JSON-RPC server that
@@ -429,54 +411,18 @@ pub struct KaskSwarmSettings {
     pub embedding_dim: usize,
 }
 
-/// Mirror of `SwarmMode` in the server crate, kept separate to avoid a
-/// circular dependency (the bridge crate does not depend on the server
-/// crate). The two enums MUST stay in sync — see the `Default` impl comment
-/// on `KaskSwarmSettings`.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum SwarmModeConfig {
-    /// Route to Agent Bestiary World (v1 behavior).
-    #[default]
-    Abw,
-    /// Route to local substrate crates (v2, §15).
-    Local,
-}
-
-impl std::fmt::Display for SwarmModeConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Abw => write!(f, "abw"),
-            Self::Local => write!(f, "local"),
-        }
-    }
-}
-
-impl From<settings_content::SwarmModeContent> for SwarmModeConfig {
-    fn from(c: settings_content::SwarmModeContent) -> Self {
-        match c {
-            settings_content::SwarmModeContent::Abw => Self::Abw,
-            settings_content::SwarmModeContent::Local => Self::Local,
-        }
-    }
-}
-
 impl Default for KaskSwarmSettings {
     fn default() -> Self {
         // These defaults MUST stay in sync with `SwarmConfig::default()` in
         // `kask/mcp-servers/hkask-mcp-swarm/src/config.rs`. The bridge emits
-        // env vars (`HKASK_ABW_*` / `HKASK_SWARM_*`) from this `Default` via
-        // `mcp_env()`; the server reads them in `SwarmConfig::from_env`. The
-        // two `Default` impls are deliberately separate (the server crate
-        // does not depend on the bridge crate) to avoid a circular dependency
-        // — the duplication is the seam between them. If you change a default
+        // env vars (`HKASK_SWARM_*`) from this `Default` via `mcp_env()`; the
+        // server reads them in `SwarmConfig::from_env`. The two `Default`
+        // impls are deliberately separate (the server crate does not depend
+        // on the bridge crate) to avoid a circular dependency — the
+        // duplication is the seam between them. If you change a default
         // here, change it there too, and update the
         // `swarm_settings_default_emits_no_env` test below.
         Self {
-            mode: SwarmModeConfig::default(),
-            api_url: String::new(),
-            max_credits_per_dispatch: 50,
-            curator_consent_default: false,
             default_agent_model: String::new(),
             a2a_http_enabled: false,
             embedding_dim: 1024,
@@ -962,14 +908,6 @@ impl From<KaskSwarmSettingsContent> for KaskSwarmSettings {
     fn from(c: KaskSwarmSettingsContent) -> Self {
         let default = Self::default();
         Self {
-            mode: c.mode.map(Into::into).unwrap_or(default.mode),
-            api_url: c.api_url.unwrap_or(default.api_url),
-            max_credits_per_dispatch: c
-                .max_credits_per_dispatch
-                .unwrap_or(default.max_credits_per_dispatch),
-            curator_consent_default: c
-                .curator_consent_default
-                .unwrap_or(default.curator_consent_default),
             default_agent_model: c.default_agent_model.unwrap_or(default.default_agent_model),
             a2a_http_enabled: c.a2a_http_enabled.unwrap_or(default.a2a_http_enabled),
             embedding_dim: c.embedding_dim.unwrap_or(default.embedding_dim),

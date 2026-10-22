@@ -2,8 +2,8 @@
 //!
 //! The `kask://credentials` prefix is the single source of truth for
 //! kask-namespaced keychain entries. Every credential URL written by kask
-//! (data-service API keys, the curator SMTP password, the swarm ABW key, the
-//! mirrored DB passphrase, etc.) is built by formatting this constant with a
+//! (data-service API keys, the curator SMTP password, the mirrored DB
+//! passphrase, etc.) is built by formatting this constant with a
 //! per-credential suffix. Keeping the constant here — rather than re-declaring
 //! it in each consumer — prevents the silent drift that occurred when the
 //! former private duplicate in `inference_providers` diverged from the
@@ -35,6 +35,53 @@ pub fn spawn_test_email(recipient: String, cx: &gpui::App) {
                 error = %e,
                 recipient = %recipient,
                 "Test email failed"
+            ),
+        }
+    })
+    .detach();
+}
+
+/// One-time startup purge of the removed ABW API key (ABW-removal plan
+/// Decision A; recorded in DIVERGENCE.md D5).
+///
+/// The ABW cloud swarm integration was removed; its keychain entry
+/// `kask://credentials/hkask_abw_api_key` is a dormant third-party secret
+/// with no remaining read path or management surface — worse to keep than
+/// to delete once, loudly. Safe to run on every startup:
+/// `delete_by_url_async` on an absent entry is a no-op, so the steady state
+/// logs at debug and the actual purge logs at info. A failed delete of a
+/// live key warns naming manual remediation.
+pub fn purge_removed_abw_api_key(cx: &gpui::App) {
+    use gpui::AppContext as _;
+
+    let url = format!("{KASK_CREDENTIAL_NAMESPACE}/hkask_abw_api_key");
+    cx.background_spawn(async move {
+        let keychain = hkask_keystore::keychain::Keychain;
+        match keychain.retrieve_by_url_async(&url).await {
+            Ok(_) => match keychain.delete_by_url_async(&url).await {
+                Ok(()) => tracing::info!(
+                    target: "reg.keystore",
+                    "Purged the removed ABW API key at {url} — the ABW cloud swarm \
+                     integration no longer exists; the orphaned third-party secret \
+                     is deleted (D5, ABW-removal plan Decision A)"
+                ),
+                Err(e) => tracing::warn!(
+                    target: "reg.keystore",
+                    "Found the removed ABW API key at {url} but the purge delete \
+                     failed: {e} — delete the keychain entry manually"
+                ),
+            },
+            Err(hkask_keystore::KeychainError::NotFound(_)) => {
+                tracing::debug!(
+                    target: "reg.keystore",
+                    "No ABW API key at {url} — keychain already clean (the ABW \
+                     integration is removed)"
+                );
+            }
+            Err(e) => tracing::warn!(
+                target: "reg.keystore",
+                "Could not check for the removed ABW API key at {url}: {e} — the \
+                 key may still exist; delete it manually if present"
             ),
         }
     })

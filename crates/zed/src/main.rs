@@ -1176,6 +1176,11 @@ fn main() {
         // unified `kask://credentials/*` namespace (same as zed's
         // CredentialsProvider). One keychain, one namespace.
         //
+        // zed-kask: D5 (ABW removal) — the ABW cloud swarm integration is
+        // gone; purge its orphaned keychain entry once at startup so no
+        // dormant third-party secret survives without a management surface.
+        kask_bridge::purge_removed_abw_api_key(cx);
+        //
         // D3: McpRuntime is constructed above so it's available for both the
         // skill execution and the post-settings auto-launch. The
         // model-dependent wiring (skill execution, guard, panel) is
@@ -1423,8 +1428,9 @@ fn main() {
 
         // The governed McpRuntime instances (kask panel + skill execution)
         // are started once at login and keep their startup env. A settings
-        // change that alters a server's env (e.g. `kask.swarm.mode` →
-        // `HKASK_SWARM_MODE`) restarts it; a `kask.mcp` load/unload toggle
+        // change that alters a server's env (e.g.
+        // `kask.swarm.default_agent_model` → `HKASK_SWARM_DEFAULT_AGENT_MODEL`)
+        // restarts it; a `kask.mcp` load/unload toggle
         // stops/starts it through the runtime's own primitives (D45). The
         // restart baseline is recorded by the deferred launch task once
         // servers actually start — an empty baseline means "not launched
