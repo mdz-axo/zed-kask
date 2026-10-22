@@ -335,10 +335,10 @@ pub struct SwarmPanel {
     /// as `author_scroll` — the compose form (name, mission, agents, AI assist,
     /// action row) overflows on smaller panes.
     compose_scroll: ScrollHandle,
-    /// The fetch lifecycle — in-flight count, per-source errors, the
-    /// cloud-auth signal, and the retry/backoff state. Owned by `fetch.rs`;
+    /// The fetch lifecycle — in-flight count, per-source errors, and
+    /// the retry/backoff state. Owned by `fetch.rs`;
     /// render reads it through `self.fetch.is_fetching()` /
-    /// `self.fetch.visible_error()` / `self.fetch.cloud_authenticated()`.
+    /// `self.fetch.visible_error()`.
     fetch: FetchState,
     filter: SwarmFilter,
     entries: Vec<SwarmEntry>,

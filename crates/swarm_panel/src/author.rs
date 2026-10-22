@@ -204,7 +204,7 @@ impl SwarmPanel {
                             .rounded_sm()
                             .tooltip(Tooltip::text(
                                 "Agent identifier (lowercase_with_underscores). Becomes the \
-                                 system id used to hire, delegate, and reference the agent.",
+                                 system id used to delegate to and reference the agent.",
                             ))
                             .child(self.author.name.clone()),
                     )
@@ -319,8 +319,8 @@ impl SwarmPanel {
                             .child(self.author.system_prompt.clone()),
                     ),
             )
-            // Temperature — fermi `agents.temperature`, applied by both the
-            // cloud executor and the local executor (card-driven sampling).
+            // Temperature — applied by the local executor (card-driven
+            // sampling).
             .child(
                 v_flex()
                     .gap_1()
@@ -534,7 +534,7 @@ impl SwarmPanel {
                             .border_color(border)
                             .rounded_sm()
                             .tooltip(Tooltip::text(
-                                "One example question per line. The ABW publish gate \
+                                "One example question per line. The composition contract \
                                  requires at least one — without one, nobody can tell \
                                  what to ask this agent.",
                             ))
@@ -564,7 +564,7 @@ impl SwarmPanel {
                                     .rounded_sm()
                                     .tooltip(Tooltip::text(
                                         "Comma-separated input types this agent accepts \
-                                         (e.g. text, market_report). The ABW publish gate \
+                                         (e.g. text, market_report). The composition contract \
                                          requires at least one — composition planning cannot \
                                          route work to an agent with no declared inputs.",
                                     ))
@@ -588,7 +588,7 @@ impl SwarmPanel {
                                     .rounded_sm()
                                     .tooltip(Tooltip::text(
                                         "Comma-separated output types this agent produces \
-                                         (e.g. sentiment_report). The ABW publish gate \
+                                         (e.g. sentiment_report). The composition contract \
                                          requires at least one — downstream agents match \
                                          against it to build pipelines.",
                                     ))
@@ -597,8 +597,8 @@ impl SwarmPanel {
                     ),
             )
             // AI Assist + validation — model-backed suggestions and a
-            // well-formedness check before create. Mirrors the publish banner
-            // pattern: a bordered box with Apply/Dismiss (suggestions) or a
+            // well-formedness check before create. A bordered box with
+            // Apply/Dismiss (suggestions) or a
             // success/issues list (validation).
             .child(self.render_ai_assist_row("agent", self.author.busy, cx))
             .children(self.render_ai_suggestions_banner("agent", cx))

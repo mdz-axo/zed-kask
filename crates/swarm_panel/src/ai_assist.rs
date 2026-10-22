@@ -307,8 +307,9 @@ impl SwarmPanel {
     //
     // `render_ai_assist_row` is the two-button row (AI Assist / Validate)
     // shown on both the Author and Compose surfaces. `render_ai_suggestions_banner`
-    // and `render_validation_banner` mirror `render_publish_banner`: a bordered
-    // box with Apply/Dismiss (suggestions) or a success/issues list (validation).
+    // `render_ai_suggestions_banner`
+    // and `render_validation_banner` are bordered boxes with Apply/Dismiss
+    // (suggestions) or a success/issues list (validation).
     // Each banner is gated by its `surface` field so the Author banner does not
     // render in Compose and vice versa.
 
@@ -338,7 +339,7 @@ impl SwarmPanel {
                     .disabled(disabled)
                     .tooltip(Tooltip::text(
                         "Uses the default model to suggest completions for empty or \
-                         partial fields based on ABW/Local composition guidance.",
+                         partial fields based on local composition guidance.",
                     ))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.ai_assist("suggest", cx);
@@ -522,7 +523,7 @@ impl SwarmPanel {
                         }))
                         .when(v.valid, |this| {
                             this.child(
-                                Label::new("Meets the ABW composition contract.")
+                                Label::new("Meets the composition contract.")
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
                             )
