@@ -101,6 +101,9 @@ classDiagram
     class recompute_marginals {
         +recompute_marginals(body, topo_order, evidence) Vec~f64~
     }
+    class recompute_posteriors {
+        +recompute_posteriors(body, topo_order, evidence) Result
+    }
     class GraphWidget {
         +body: GraphBlockBody
         +layout: LayeredLayout
@@ -109,6 +112,7 @@ classDiagram
         +zoom
         +hovered
         +selected
+        +inference_error: Option~String~
         +focus_handle: FocusHandle
         +new(body, cx) GraphWidget
         +repropagate()
@@ -123,7 +127,9 @@ classDiagram
     compute_layout ..> GraphBlockBody
     compute_layout ..> LayeredLayout
     recompute_marginals ..> GraphBlockBody
-    recompute_marginals ..> hkask_forecast : marginalize and certainty_tier
+    recompute_marginals ..> hkask_forecast : forward-only path
+    recompute_posteriors ..> hkask_forecast : shared factor messages
+    GraphWidget ..> recompute_posteriors : active and saved-branch evidence
     GraphWidget --> GraphBlockBody
     GraphWidget --> LayeredLayout
     GraphWidget o-- EvidenceKind : evidence map
@@ -134,10 +140,15 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-GRAPH
-verified_date: 2026-09-28
-verified_against: crates/hkask-graph-widget/src/block.rs (EvidenceKind L17-30 — Hard/Soft + apply); crates/hkask-graph-widget/src/layout.rs; crates/hkask-graph-widget/src/propagate.rs (recompute_marginals L76); crates/hkask-graph-widget/src/view.rs (GraphWidget L48-58 — evidence HashMap<usize, EvidenceKind>, repropagate L154)
+verified_date: 2026-10-21
+verified_against: crates/hkask-graph-widget/src/block.rs (EvidenceKind::apply, GraphBlockBody, NodeBody); crates/hkask-graph-widget/src/layout.rs (LayoutNode, LayeredLayout, compute_layout); crates/hkask-graph-widget/src/propagate.rs (recompute_marginals, fallible recompute_posteriors); crates/hkask-graph-widget/src/view.rs (GraphWidget::repropagate, comparison_rows, inference_error)
 status: VERIFIED
 -->
+
+Inference failure clears numeric values and is reported in the existing graph
+header or comparison panel. Saved branches use the same inference selection as
+the active graph. A what-if marginal product is labeled an independence estimate,
+not the posterior joint of dependent events.
 
 **Block shape:** a JSON body with `viz: "event_tree"`, an optional `subject`
 and `joint_probability`, and a `nodes` array. Edges are child-side: each node

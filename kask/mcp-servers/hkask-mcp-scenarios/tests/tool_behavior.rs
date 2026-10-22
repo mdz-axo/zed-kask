@@ -935,10 +935,75 @@ async fn scenario_assess_unreported_metrics_withhold_dependent_phases() {
 
 // ── Slice 5 posterior-tool pins (PR-08) ──────────
 
+#[tokio::test]
+async fn scenario_recompute_posteriors_matches_finite_bayes() {
+    let server = make_server();
+    let root = independent_event("evt-a", "root event", 0.5);
+    let mut child = independent_event("evt-b", "child event", 0.5);
+    child.depends_on = vec![EventDependency {
+        parent_event_ids: vec!["evt-a".to_owned()],
+        conditionals: vec![0.2, 0.8],
+    }];
+    for (observed, expected) in [(Some(true), 0.8), (Some(false), 0.2), (None, 0.5)] {
+        let evidence = observed
+            .map(|occurred| PosteriorEvidenceEntry {
+                event_id: "evt-b".to_owned(),
+                occurred: Some(occurred),
+                observed_probability: None,
+                likelihood_ratio: None,
+            })
+            .into_iter()
+            .collect();
+        let output = server
+            .scenario_recompute_posteriors(Parameters(PosteriorsRequest {
+                events: vec![root.clone(), child.clone()],
+                evidence,
+            }))
+            .await
+            .expect("valid finite Bayesian model");
+        let parsed = parse(&output);
+        let a = parsed["nodes"]
+            .as_array()
+            .expect("node array")
+            .iter()
+            .find(|node| node["id"] == "evt-a")
+            .expect("root present");
+        let actual = a["posterior_probability"].as_f64().expect("numeric root");
+        assert!(
+            (actual - expected).abs() < 1e-12,
+            "observed {observed:?}, got {parsed}"
+        );
+        assert_eq!(parsed["method"], "polytree_backward_inference");
+        assert!(parsed["note"].is_null());
+    }
+}
+
+#[tokio::test]
+async fn scenario_recompute_posteriors_surfaces_impossible_evidence() {
+    let server = make_server();
+    let error = server
+        .scenario_recompute_posteriors(Parameters(PosteriorsRequest {
+            events: vec![independent_event("evt-a", "impossible event", 0.0)],
+            evidence: vec![PosteriorEvidenceEntry {
+                event_id: "evt-a".to_owned(),
+                occurred: Some(true),
+                observed_probability: None,
+                likelihood_ratio: None,
+            }],
+        }))
+        .await
+        .expect_err("zero-support observations cannot become probabilities");
+    assert!(
+        matches!(error.kind, hkask_types::McpErrorKind::InvalidArgument),
+        "got {error:?}"
+    );
+    assert!(error.to_string().contains("evidence"), "got {error}");
+}
+
 /// PR-08 parity: the tool reproduces the shared engine's backward
-/// inference — the same chain the widget's engine test pins (a 0.5 →
-/// b [0.1, 0.6] → c [0.2, 0.7]; evidence c=0.9 raises P(b) above its
-/// forward 0.35 and P(a) above 0.5). One engine, two surfaces.
+/// inference with an independent numeric oracle. For a 0.5 → b [0.1, 0.6]
+/// → c [0.2, 0.7], fixing P(c)=0.9 yields P(a)=0.64 and P(b)=0.6048.
+/// One engine, two surfaces; matching direction alone is insufficient.
 #[tokio::test]
 async fn scenario_recompute_posteriors_updates_ancestors_on_leaf_evidence() {
     let server = make_server();
@@ -980,21 +1045,12 @@ async fn scenario_recompute_posteriors_updates_ancestors_on_leaf_evidence() {
             .cloned()
             .unwrap_or_else(|| panic!("node {id} present, got: {parsed}"))
     };
-    let a = node("evt-a");
-    let b = node("evt-b");
-    let c = node("evt-c");
-    assert!(
-        (c["posterior_probability"].as_f64().unwrap() - 0.9).abs() < 1e-9,
-        "hard evidence clamps the observed node, got: {parsed}"
-    );
-    assert!(
-        b["posterior_probability"].as_f64().unwrap() > 0.35,
-        "backward inference raises P(b) above its forward 0.35, got: {parsed}"
-    );
-    assert!(
-        a["posterior_probability"].as_f64().unwrap() > 0.5,
-        "backward inference raises P(a) above 0.5, got: {parsed}"
-    );
+    for (id, expected) in [("evt-a", 0.64), ("evt-b", 0.6048), ("evt-c", 0.9)] {
+        let actual = node(id)["posterior_probability"]
+            .as_f64()
+            .expect("numeric posterior");
+        assert!((actual - expected).abs() < 1e-12, "node {id}: got {parsed}");
+    }
 }
 
 /// PR-08: a multiply-connected DAG (diamond) degrades to forward-only

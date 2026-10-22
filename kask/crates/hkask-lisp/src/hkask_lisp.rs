@@ -606,13 +606,13 @@ impl EvalBudget {
     }
 
     fn collect_list(&self, list: &List) -> Result<Vec<LispValue>, LispError> {
-        list.iter()
-            .enumerate()
-            .map(|(index, value)| {
-                check_cancellation(self.cancellation.as_deref(), "list", index)?;
-                Ok(value.clone())
-            })
-            .collect()
+        // Keep the checked walk explicit rather than collecting through Result's shunt.
+        let mut values = Vec::new();
+        for (index, value) in list.iter().enumerate() {
+            check_cancellation(self.cancellation.as_deref(), "list", index)?;
+            values.push(value.clone());
+        }
+        Ok(values)
     }
 
     fn make_list(&self, items: Vec<LispValue>) -> Result<Rc<List>, LispError> {

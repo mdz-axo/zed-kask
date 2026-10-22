@@ -915,7 +915,7 @@ impl ScenariosServer {
     /// (diagnostic) — answering "given the leaf was observed, what is the
     /// posterior on the root?", which forward-only propagation cannot.
     #[tool(
-        description = "Recompute event-tree posterior probabilities under evidence, in BOTH directions: forward to descendants (causal) and backward to ancestors (diagnostic) — answering 'given the leaf was observed, what is the posterior on the root?', which forward-only propagation cannot. Takes the same valid event tree scenario_quantify accepts plus evidence entries (exactly one of observed_probability, occurred, or likelihood_ratio per entry). Hard evidence clamps the node's marginal; soft evidence (a likelihood ratio) applies a Bayesian update. Exact on polytrees (singly-connected DAGs); on multiply-connected DAGs it degrades to forward-only marginalization with a note naming the limitation — never silently. Returns per-node prior marginal, posterior, certainty tier, and the method used. Shares its engine (hkask_forecast::posterior) with the graph widget's interactive re-propagation — one implementation."
+        description = "Recompute event-tree posterior probabilities under evidence, in BOTH directions: forward to descendants (causal) and backward to ancestors (diagnostic) — answering 'given the leaf was observed, what is the posterior on the root?', which forward-only propagation cannot. Takes the same valid event tree scenario_quantify accepts plus evidence entries (exactly one of observed_probability, occurred, or likelihood_ratio per entry). Hard evidence clamps the node's marginal; soft evidence (a likelihood ratio) applies a Bayesian update. Uses edge-excluding tree messages on polytrees (singly-connected DAGs). Fractional observed probabilities are fixed marginal constraints fitted within 1e-12; incompatible or unsatisfied evidence returns an explicit error, not an estimate. On multiply-connected DAGs it degrades to forward-only marginalization with a note naming the limitation — never silently. Returns per-node prior marginal, posterior, certainty tier, and the method used. Shares its engine (hkask_forecast::posterior) with the graph widget's interactive re-propagation — one implementation."
     )]
     pub async fn scenario_recompute_posteriors(
         &self,
@@ -1018,7 +1018,18 @@ impl ScenariosServer {
             let polytree = hkask_forecast::posterior::is_polytree(&nodes);
             let (posteriors, method) = if polytree {
                 (
-                    hkask_forecast::posterior::recompute_posteriors(&nodes, &topo, &evidence),
+                    hkask_forecast::posterior::recompute_posteriors(&nodes, &topo, &evidence)
+                        .map_err(|error| {
+                            use hkask_forecast::posterior::PosteriorError;
+                            match &error {
+                                PosteriorError::InvalidModel(_)
+                                | PosteriorError::InvalidEvidence(_)
+                                | PosteriorError::ImpossibleEvidence =>
+                                    McpToolError::invalid_argument(error.to_string()),
+                                PosteriorError::UnsatisfiedMarginals =>
+                                    McpToolError::failed_precondition(error.to_string()),
+                            }
+                        })?,
                     "polytree_backward_inference",
                 )
             } else {

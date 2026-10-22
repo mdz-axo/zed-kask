@@ -12,8 +12,8 @@
 //! Interaction is centralized: `on_mouse_move` pans (left-drag) and hit-tests
 //! for hover; `on_click` selects; `on_scroll_wheel` zooms around the cursor.
 //! Selecting a node reveals evidence buttons (Set P≈90% / ≈10% / Reset);
-//! setting evidence overrides that node's marginal and re-propagates the whole
-//! tree via `propagate::recompute_marginals`.
+//! setting evidence runs shared posterior inference on polytrees, otherwise
+//! an explicitly limited forward pass. Failed inference shows no numeric value.
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -34,6 +34,13 @@ const NODE_RADIUS: f32 = 12.0;
 /// Hit radius (in graph-space px) is a bit larger than the drawn node so small
 /// nodes are still grabbable when zoomed out.
 const HIT_RADIUS: f32 = NODE_RADIUS * 1.6;
+
+fn probability_label(value: Option<f64>) -> String {
+    value.map_or_else(
+        || "unavailable".to_owned(),
+        |p| format!("{}%", (p * 100.0).round() as u32),
+    )
+}
 
 /// A saved what-if: a snapshot of the evidence overrides the user explored.
 /// The base tree is empty evidence; branches capture non-empty snapshots the
@@ -73,6 +80,7 @@ pub struct GraphWidget {
     /// between `recompute_posteriors` (polytree) and `recompute_marginals`
     /// (multiply-connected fallback).
     backward_inference_available: bool,
+    inference_error: Option<String>,
     focus_handle: FocusHandle,
 }
 
@@ -111,6 +119,7 @@ impl GraphWidget {
             branches: Vec::new(),
             compare_branch: None,
             backward_inference_available,
+            inference_error: None,
             focus_handle: cx.focus_handle(),
         }
     }
@@ -143,6 +152,21 @@ impl GraphWidget {
         self.repropagate(cx);
     }
 
+    fn marginals_for(
+        &self,
+        evidence: &HashMap<usize, EvidenceKind>,
+    ) -> Result<Vec<f64>, hkask_forecast::posterior::PosteriorError> {
+        if self.backward_inference_available && !evidence.is_empty() {
+            propagate::recompute_posteriors(&self.body, &self.layout.topo_order, evidence)
+        } else {
+            Ok(propagate::recompute_marginals(
+                &self.body,
+                &self.layout.topo_order,
+                evidence,
+            ))
+        }
+    }
+
     /// Recompute every node's marginal from the body + evidence and refresh the
     /// display values (marginal probability + certainty tier) on the layout.
     ///
@@ -152,22 +176,25 @@ impl GraphWidget {
     /// multiply-connected DAGs, with a `tracing::warn!` so an operator can
     /// distinguish "no evidence" from "backward inference unavailable."
     fn repropagate(&mut self, cx: &mut Context<Self>) {
-        let marginals = if self.backward_inference_available && !self.evidence.is_empty() {
-            propagate::recompute_posteriors(&self.body, &self.layout.topo_order, &self.evidence)
-        } else if !self.evidence.is_empty() && !self.backward_inference_available {
+        if !self.backward_inference_available && !self.evidence.is_empty() {
             tracing::warn!(
                 target: "hkask-graph-widget",
                 "DAG is multiply-connected; backward inference requires a polytree, falling back to forward-only marginalization"
             );
-            propagate::recompute_marginals(&self.body, &self.layout.topo_order, &self.evidence)
-        } else {
-            propagate::recompute_marginals(&self.body, &self.layout.topo_order, &self.evidence)
-        };
-        for (i, marginal) in marginals.iter().enumerate() {
-            if let Some(node) = self.layout.nodes.get_mut(i) {
-                node.marginal_probability = Some(*marginal);
-                node.certainty_tier = Some(hkask_forecast::certainty_tier(*marginal).to_string());
-            }
+        }
+        let marginals = self.marginals_for(&self.evidence);
+        self.inference_error = marginals.as_ref().err().map(ToString::to_string);
+        if let Err(error) = &marginals {
+            tracing::warn!(target: "hkask-graph-widget", %error, "posterior inference unavailable");
+        }
+        for (i, node) in self.layout.nodes.iter_mut().enumerate() {
+            node.marginal_probability = marginals
+                .as_ref()
+                .ok()
+                .and_then(|values| values.get(i).copied());
+            node.certainty_tier = node
+                .marginal_probability
+                .map(|p| hkask_forecast::certainty_tier(p).to_string());
         }
         cx.notify();
     }
@@ -380,25 +407,58 @@ impl GraphWidget {
         self.body.subject.clone().unwrap_or_default()
     }
 
-    /// Joint probability for the header. When no evidence is set, this is the
+    /// A labeled probability for the header. When no evidence is set, this is the
     /// server-provided `body.joint_probability`. When evidence is set, the cached
-    /// value is stale, so recompute it as the product of the current node
-    /// marginals (under the same independence assumption the propagation engine
-    /// makes). This keeps the header informative during what-if exploration
-    /// rather than hiding the joint entirely.
-    fn joint_probability_for_header(&self) -> Option<f64> {
-        if self.evidence.is_empty() {
-            return self.body.joint_probability;
+    /// value is stale. The marginal product is only an independence estimate,
+    /// not the posterior joint of dependent events; keep that limitation in
+    /// the returned label. Failed inference has no numeric header value.
+    fn header_probability(&self) -> Option<(&'static str, f64)> {
+        if self.inference_error.is_some() {
+            return None;
         }
-        // Recompute from the current marginals stored on the layout by
-        // `repropagate`. Product under independence: Π_i P(node_i).
+        if self.evidence.is_empty() {
+            return self.body.joint_probability.map(|p| ("joint", p));
+        }
         let product = self
             .layout
             .nodes
             .iter()
             .filter_map(|n| n.marginal_probability)
             .fold(1.0_f64, |acc, p| acc * p.clamp(0.0, 1.0));
-        Some(product)
+        Some(("independence estimate", product))
+    }
+
+    fn comparison_rows(
+        &self,
+        branch: &WhatIfBranch,
+    ) -> Result<Vec<String>, hkask_forecast::posterior::PosteriorError> {
+        let base = self.marginals_for(&HashMap::new())?;
+        let compared = self.marginals_for(&branch.evidence)?;
+        Ok(self
+            .body
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(i, node)| {
+                let base_pct = (base[i] * 100.0).round() as i32;
+                let branch_pct = (compared[i] * 100.0).round() as i32;
+                let name = node.name.clone().unwrap_or_else(|| node.id.clone());
+                format!(
+                    "{name}: {base_pct}% → {branch_pct}% (Δ{:+}%)",
+                    branch_pct - base_pct
+                )
+            })
+            .collect())
+    }
+
+    fn inference_note(&self) -> Option<String> {
+        if let Some(error) = &self.inference_error {
+            Some(format!("inference unavailable: {error}"))
+        } else if !self.backward_inference_available && !self.evidence.is_empty() {
+            Some("backward inference unavailable for this graph shape — evidence propagates forward only".to_owned())
+        } else {
+            None
+        }
     }
 }
 
@@ -498,9 +558,9 @@ impl Render for GraphWidget {
                 let sx = ox + node.position.x.as_f32() * scale - bx;
                 let sy = oy + node.position.y.as_f32() * scale - by;
                 let label = format!(
-                    "{}  {}%",
+                    "{}  {}",
                     node.name,
-                    (node.marginal_probability.unwrap_or(0.0) * 100.0).round() as u32
+                    probability_label(node.marginal_probability)
                 );
                 overlays.push(
                     div()
@@ -546,8 +606,8 @@ impl Render for GraphWidget {
                         t.child(div().text_xs().text_color(muted).child(q.clone()))
                     })
                     .child(div().text_xs().text_color(accent).child(format!(
-                        "P = {}%",
-                        (node.marginal_probability.unwrap_or(0.0) * 100.0).round() as u32
+                        "P = {}",
+                        probability_label(node.marginal_probability)
                     )))
                     .when(is_evidence, |t| {
                         t.child(
@@ -625,17 +685,15 @@ impl Render for GraphWidget {
             .text_xs()
             .text_color(cx.theme().colors().text_muted)
             .child(self.subject_for_header())
-            .when_some(self.joint_probability_for_header(), |t, joint| {
-                t.child(format!("   joint = {}%", (joint * 100.0).round() as u32))
+            .when_some(self.header_probability(), |t, (label, probability)| {
+                t.child(format!(
+                    "   {label} = {}%",
+                    (probability * 100.0).round() as u32
+                ))
             })
-            .when(
-                !self.backward_inference_available && !self.evidence.is_empty(),
-                |t| {
-                    t.child(
-                        "   (backward inference unavailable for this graph shape — evidence propagates forward only)",
-                    )
-                },
-            );
+            .when_some(self.inference_note(), |t, note| {
+                t.child(format!("   ({note})"))
+            });
 
         // What-if branch controls: save/revert + per-branch load/compare/delete.
         let mut branch_chips: Vec<AnyElement> = Vec::new();
@@ -714,43 +772,29 @@ impl Render for GraphWidget {
             .compare_branch
             .and_then(|idx| self.branches.get(idx).map(|branch| (idx, branch)))
             .map(|(_idx, branch)| {
-                let base_marginals = propagate::recompute_marginals(
-                    &self.body,
-                    &self.layout.topo_order,
-                    &HashMap::new(),
-                );
-                let branch_marginals = propagate::recompute_marginals(
-                    &self.body,
-                    &self.layout.topo_order,
-                    &branch.evidence,
-                );
-                let pct = |m: Option<&f64>| (m.copied().unwrap_or(0.0) * 100.0).round() as i32;
-                let mut rows: Vec<AnyElement> = Vec::new();
-                for (i, node) in self.body.nodes.iter().enumerate() {
-                    let base_pct = pct(base_marginals.get(i));
-                    let branch_pct = pct(branch_marginals.get(i));
-                    let delta = branch_pct - base_pct;
-                    let name = node.name.clone().unwrap_or_else(|| node.id.clone());
-                    rows.push(
-                        div()
-                            .child(format!(
-                                "{}: {}% → {}% (Δ{:+}%)",
-                                name, base_pct, branch_pct, delta
-                            ))
-                            .into_any_element(),
-                    );
-                }
+                let labels = match self.comparison_rows(branch) {
+                    Ok(rows) => rows,
+                    Err(error) => vec![format!("Comparison unavailable: {error}")],
+                };
+                let rows: Vec<AnyElement> = labels
+                    .into_iter()
+                    .map(|row| div().child(row).into_any_element())
+                    .collect();
                 div()
                     .p_2()
                     .bg(cx.theme().colors().elevated_surface_background)
                     .border_1()
                     .border_color(cx.theme().colors().border)
                     .text_xs()
-                    .child(
-                        div()
-                            .text_color(cx.theme().colors().text)
-                            .child(format!("Compare: {} vs base", branch.name)),
-                    )
+                    .child(div().text_color(cx.theme().colors().text).child(format!(
+                        "Compare: {} vs base{}",
+                        branch.name,
+                        if self.backward_inference_available {
+                            ""
+                        } else {
+                            " (forward-only estimates)"
+                        }
+                    )))
                     .children(rows)
             });
 
@@ -957,6 +1001,20 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn saved_branch_comparison_uses_updated_ancestor(cx: &mut gpui::TestAppContext) {
+        let widget = cx.new(|cx| GraphWidget::new(make_body(), cx));
+        widget.update(cx, |w, cx| w.set_evidence(1, 0.9, cx));
+        widget.update(cx, |w, cx| w.save_branch(cx));
+        widget.update(cx, |w, cx| w.revert_to_base(cx));
+        let rows = widget.read_with(cx, |w, _| {
+            w.comparison_rows(&w.branches[0])
+                .expect("supported saved evidence")
+        });
+        // .9 * (.5*.6/.35) + .1 * (.5*.4/.65) = .8021978...
+        assert_eq!(rows[0], "a: 50% → 80% (Δ+30%)");
+    }
+
+    #[gpui::test]
     async fn save_branch_noop_when_evidence_empty(cx: &mut gpui::TestAppContext) {
         let widget = cx.new(|cx| GraphWidget::new(make_body(), cx));
         widget.update(cx, |w, cx| w.save_branch(cx));
@@ -974,31 +1032,63 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn joint_probability_recomputes_after_evidence(cx: &mut gpui::TestAppContext) {
-        // make_body has joint_probability = None, so build a body with a stale
-        // server joint to verify the recompute path overrides it.
+    async fn header_distinguishes_joint_from_independence_estimate(cx: &mut gpui::TestAppContext) {
         let mut body = make_body();
-        body.joint_probability = Some(0.999); // stale server value
+        body.joint_probability = Some(0.999);
         let widget = cx.new(|cx| GraphWidget::new(body, cx));
-        // Before evidence: header shows the server-provided joint.
         assert_eq!(
-            widget.read_with(cx, |w, _| w.joint_probability_for_header()),
-            Some(0.999)
+            widget.read_with(cx, |w, _| w.header_probability()),
+            Some(("joint", 0.999))
         );
-        // After evidence on node 0 (a, P=0.5 → 0.9): marginals become
-        //   a = 0.9, b = 0.1*0.1 + 0.6*0.9 = 0.55
-        // joint (product under independence) = 0.9 * 0.55 = 0.495.
         widget.update(cx, |w, cx| w.set_evidence(0, 0.9, cx));
-        let joint = widget
-            .read_with(cx, |w, _| w.joint_probability_for_header())
-            .expect("recomputed joint is present after evidence");
-        assert!((joint - 0.495).abs() < 1e-9, "got {joint}");
-        // revert restores the server joint.
+        let (label, value) = widget
+            .read_with(cx, |w, _| w.header_probability())
+            .expect("supported inference");
+        assert_eq!(label, "independence estimate");
+        assert!((value - 0.495).abs() < 1e-9, "got {value}");
         widget.update(cx, |w, cx| w.revert_to_base(cx));
         assert_eq!(
-            widget.read_with(cx, |w, _| w.joint_probability_for_header()),
-            Some(0.999)
+            widget.read_with(cx, |w, _| w.header_probability()),
+            Some(("joint", 0.999))
         );
+    }
+
+    #[gpui::test]
+    async fn impossible_evidence_clears_numbers_and_reset_recovers(cx: &mut gpui::TestAppContext) {
+        let mut body = make_body();
+        body.nodes[1].depends_on[0].conditionals = vec![0.0, 1.0];
+        let widget = cx.new(|cx| GraphWidget::new(body, cx));
+        widget.update(cx, |w, cx| w.set_evidence(0, 1.0, cx));
+        widget.update(cx, |w, cx| w.set_evidence(1, 0.0, cx));
+        widget.update(cx, |w, cx| w.save_branch(cx));
+        widget.read_with(cx, |w, _| {
+            assert!(
+                w.layout
+                    .nodes
+                    .iter()
+                    .all(|node| node.marginal_probability.is_none())
+            );
+            assert_eq!(w.header_probability(), None);
+            assert!(w.comparison_rows(&w.branches[0]).is_err());
+            assert!(
+                w.inference_note()
+                    .expect("visible error note")
+                    .contains("inference unavailable")
+            );
+            assert_eq!(
+                probability_label(w.layout.nodes[0].marginal_probability),
+                "unavailable"
+            );
+        });
+        widget.update(cx, |w, cx| w.reset_evidence(0, cx));
+        widget.read_with(cx, |w, _| {
+            assert!(w.inference_error.is_none());
+            assert_eq!(w.layout.nodes[0].marginal_probability, Some(0.0));
+            assert_eq!(
+                probability_label(w.layout.nodes[0].marginal_probability),
+                "0%"
+            );
+        });
     }
 
     #[gpui::test]

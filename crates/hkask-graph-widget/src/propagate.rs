@@ -20,7 +20,7 @@ use hkask_forecast::posterior::{self as engine, Evidence, PosteriorDependency, P
 use crate::block::{EvidenceKind, GraphBlockBody};
 
 /// Convert the parsed block body into the engine's neutral node list:
-/// `base_probability` is the block's last-propagated marginal (clamped),
+/// `base_probability` comes from the immutable block, not the updated layout,
 /// `parents` is the deduplicated parent-id set across both edge
 /// representations, `dependencies` are the conditional tables.
 fn neutral_nodes(body: &GraphBlockBody) -> Vec<PosteriorNode> {
@@ -96,10 +96,9 @@ pub fn recompute_marginals(
 }
 
 /// Detect whether the DAG is a polytree (singly-connected: its underlying
-/// undirected graph has no cycles). Backward inference is exact and linear
-/// on polytrees; on multiply-connected DAGs it double-counts evidence
-/// along multiple paths, so the caller falls back to forward-only
-/// marginalization. Delegates to `hkask_forecast::posterior::is_polytree`
+/// undirected graph has no cycles). This permits edge-excluding tree messages;
+/// multiply-connected graphs retain the explicitly limited forward-only path.
+/// Delegates to `hkask_forecast::posterior::is_polytree`
 /// (PR-08).
 pub fn is_polytree(body: &GraphBlockBody) -> bool {
     engine::is_polytree(&neutral_nodes(body))
@@ -112,9 +111,9 @@ pub fn is_polytree(body: &GraphBlockBody) -> bool {
 /// forward-only marginalization cannot.
 ///
 /// **Scope: polytrees only.** For multiply-connected DAGs the caller must
-/// fall back to [`recompute_marginals`] (forward-only) — this function
-/// double-counts evidence along multiple paths if called on a
-/// non-polytree.
+/// use [`recompute_marginals`] (forward-only). The exact engine rejects an
+/// unsupported graph or incompatible evidence rather than returning an
+/// invented estimate. Fractional hard evidence retains its marginal clamp.
 ///
 /// Delegates to `hkask_forecast::posterior::recompute_posteriors` (PR-08) —
 /// the same engine the scenarios server's `scenario_recompute_posteriors`
@@ -123,7 +122,7 @@ pub fn recompute_posteriors(
     body: &GraphBlockBody,
     topo_order: &[usize],
     evidence: &HashMap<usize, EvidenceKind>,
-) -> Vec<f64> {
+) -> Result<Vec<f64>, engine::PosteriorError> {
     engine::recompute_posteriors(
         &neutral_nodes(body),
         topo_order,
@@ -391,21 +390,14 @@ mod tests {
         let topo = vec![0, 1, 2];
         let mut evidence = HashMap::new();
         evidence.insert(2, EvidenceKind::Hard(0.9)); // evidence on c (the leaf)
-        let posteriors = recompute_posteriors(&body, &topo, &evidence);
-        // P(b) forward was 0.35. With c observed at 0.9 (high), P(b) should
-        // increase — c is more likely when b is true.
-        assert!(
-            posteriors[1] > 0.35,
-            "backward inference should increase P(b) above 0.35, got {}",
-            posteriors[1]
-        );
-        // P(a) forward was 0.5. With c observed high, P(a) should increase
-        // (a → b → c, high c implies high b implies high a).
-        assert!(
-            posteriors[0] > 0.5,
-            "backward inference should increase P(a) above 0.5, got {}",
-            posteriors[0]
-        );
+        let posteriors =
+            recompute_posteriors(&body, &topo, &evidence).expect("compatible polytree evidence");
+        for (actual, expected) in posteriors.iter().zip([0.64, 0.6048, 0.9]) {
+            assert!(
+                (actual - expected).abs() < 1e-12,
+                "got {actual}, expected {expected}"
+            );
+        }
     }
 
     #[test]
@@ -442,9 +434,9 @@ mod tests {
     #[test]
     fn backward_inference_updates_sibling_on_evidence() {
         // Branching polytree: a → b, a → c. Evidence on b should update a
-        // (backward), and the updated a should re-propagate to c (forward
-        // re-pass). Without the fixpoint iteration, c stays at its forward
-        // value — the sibling-stale bug.
+        // (backward), then the outward factor message updates c (forward).
+        // Each message excludes the receiving edge, so sibling propagation
+        // does not recycle the same observation.
         // Priors: P(a)=0.5. P(b|¬a)=0.1, P(b|a)=0.9. P(c|¬a)=0.2, P(c|a)=0.8.
         // Forward: P(b) = 0.1*0.5 + 0.9*0.5 = 0.5. P(c) = 0.2*0.5 + 0.8*0.5 = 0.5.
         // Set evidence b = 0.9 (high). Backward: P(a|b=0.9) should increase
@@ -472,20 +464,13 @@ mod tests {
         let topo = vec![0, 1, 2];
         let mut evidence = HashMap::new();
         evidence.insert(1, EvidenceKind::Hard(0.9)); // evidence on b
-        let posteriors = recompute_posteriors(&body, &topo, &evidence);
-        // P(a) forward was 0.5. With b observed high, P(a) should increase.
-        assert!(
-            posteriors[0] > 0.5,
-            "backward inference should increase P(a) above 0.5, got {}",
-            posteriors[0]
-        );
-        // P(c) forward was 0.5. The fixpoint re-pass should propagate the
-        // updated P(a) to c, increasing P(c). This is the assertion that
-        // catches the sibling-stale bug — the old two-pass code left c at 0.5.
-        assert!(
-            posteriors[2] > 0.5,
-            "fixpoint should re-propagate updated P(a) to sibling c, increasing it above 0.5, got {}",
-            posteriors[2]
-        );
+        let posteriors =
+            recompute_posteriors(&body, &topo, &evidence).expect("compatible polytree evidence");
+        for (actual, expected) in posteriors.iter().zip([0.82, 0.9, 0.692]) {
+            assert!(
+                (actual - expected).abs() < 1e-12,
+                "got {actual}, expected {expected}"
+            );
+        }
     }
 }
