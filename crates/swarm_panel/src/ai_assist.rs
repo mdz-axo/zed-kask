@@ -136,7 +136,7 @@ impl SwarmPanel {
         self.ai_assist.busy = true;
         self.ai_assist.action = Some(action.to_string());
         // Clear stale banners so the operator doesn't see the previous result
-        // while a new call is in flight (mirrors the Xaman Ek stale-suggestion
+        // while a new call is in flight (the historical stale-suggestion
         // fix, L5).
         self.ai_assist.suggestions = None;
         self.ai_assist.validation = None;

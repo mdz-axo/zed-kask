@@ -2,7 +2,7 @@
 title: "Swarm Diagrams — Server Architecture, Panel Modes, Feedback Loops, PDCA Cascade, Steering Loop"
 audience: [architects, developers]
 last_updated: 2026-10-22
-version: "1.2.0"
+version: "1.3.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust]
@@ -13,26 +13,26 @@ mds_categories: [domain, composition, trust]
 Consolidated diagrams for the swarm system: the `hkask-mcp-swarm` server
 (architecture + class), the swarm panel modes, the cybernetic feedback-loop
 map, the `swarm-intelligence` PDCA cascade, and the steering loop. Unique
-`DIAGRAM_ALIGNMENT` IDs are preserved from the originals. Every diagram was
-re-verified against current code on 2026-09-28; on 2026-10-21 the class
-diagram was re-measured for the trust-verdict removal (the tenth collaborator
-`GateCounterStore` was removed with the grounding gate) and the
-dispatch-provenance stamp, and the feedback-loop map was re-verified for
-the C5/C6 routing-vs-agent blame split.
+`DIAGRAM_ALIGNMENT` IDs are preserved from the originals. On 2026-10-22 the
+diagrams were re-verified for the ABW cloud removal (the 48 cloud tools,
+consent/spend gates, cloud bridges, and the panel's cloud surfaces all went
+together — the server and panel are local-only).
 
 ## Swarm MCP Server Architecture
 
-The swarm server (`hkask-mcp-swarm`) exposes **89 tools** across four
-routers. The governed `McpRuntime` is the sole Kask MCP spawn authority;
-`kask.swarm.mode` selects the execution substrate, not the tool surface.
-The agent tool picker reads from that runtime, not a second per-project
-`ContextServerStore` child (`crates/zed/src/main.rs:1019-1021`, the single
+The swarm server (`hkask-mcp-swarm`) exposes **37 tools** across three
+routers (local substrate only — no cloud backend). The governed `McpRuntime`
+is the sole Kask MCP spawn authority. The agent tool picker reads from that
+runtime, not a second per-project `ContextServerStore` child
+(`crates/zed/src/main.rs`, the single
 spawn authority).
 
-**Current router (2026-10-21):** **89** tools (48 cloud + 31 local + 3 A2A
-+ 4 knowledge + 3 swarm-scoped thread tools); the router composition is
-`cloud_swarm_router + local_router + a2a_router + knowledge_router`
-(`hkask_mcp_swarm.rs:173-178`) — the former `ledger_router` was removed with
+**Current router (2026-10-22):** **37** tools (27 local + 3 A2A
++ 4 knowledge + 3 swarm-scoped thread tools — the 48 cloud tools, their
+consent/spend gates, and the four cloud bridges were removed with the ABW
+backend, 2026-10-22); the router composition is
+`local_router + a2a_router + knowledge_router`
+(`hkask_mcp_swarm.rs`) — the former `ledger_router` was removed with
 `hkask-ledger` and the local budget system (2026-09-08); `swarm_fleet_digest_local`
 was added 2026-09-09 with the fermi absorption (`256f87307c`);
 `swarm_select_agent_local` and `swarm_gate_readings` were removed with the
@@ -43,27 +43,20 @@ unsupported trust-verdict machinery (2026-10-21, `d3d5cf6`). The tool-name list 
 ```mermaid
 flowchart TD
     MR[McpRuntime<br/>sole governed spawn authority]
-    SWARM[hkask-mcp-swarm<br/>89 tools: 48 cloud + 31 local + 3 a2a + 4 knowledge + 3 scoped thread]
+    SWARM[hkask-mcp-swarm<br/>37 tools: 27 local + 3 a2a + 4 knowledge + 3 scoped thread]
     MR --> SWARM
 
-    subgraph abw[ABW Backend cloud]
-        ABW_API[ABW REST API<br/>agent-bestiary.world]
-        XAMAN[Xaman Ek<br/>curator, steering built-in]
-    end
-
-    subgraph local[Local Substrate v2 S15]
+    subgraph local[Local Substrate]
         INF[hkask-inference<br/>Ollama / cloud via IPC]
         STATS[agent_stats<br/>per-agent execution stats]
         MEMORY[local knowledge<br/>LazyLocalMemory]
         EVENTS[event store<br/>LazyEventStore]
     end
 
-    SWARM -->|abw mode| ABW_API
-    SWARM -->|abw mode| XAMAN
-    SWARM -->|local mode| INF
-    SWARM -->|local mode| STATS
-    SWARM -->|local mode| MEMORY
-    SWARM -->|local mode| EVENTS
+    SWARM -->|local dispatch| INF
+    SWARM -->|local dispatch| STATS
+    SWARM -->|local dispatch| MEMORY
+    SWARM -->|local dispatch| EVENTS
 
     subgraph ui[UI + Skills]
         PANEL[Swarm Panel<br/>crates/swarm_panel]
@@ -80,29 +73,29 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-SWARM-001
 verified_date: 2026-10-22
-verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs (combined_router four-router composition L173-178, tool_surface_is_exactly_89_registered_tools L950-966); crates/zed/src/main.rs (single spawn authority L1019-1021, L1420-1421); crates/swarm_panel/src/swarm_panel.rs; .agents/skills/swarm-intelligence/SKILL.md
+verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs (combined_router three-router composition, tool_surface pin asserting 37); crates/zed/src/main.rs (single spawn authority); crates/swarm_panel/src/swarm_panel.rs; .agents/skills/swarm-intelligence/SKILL.md
 status: VERIFIED
 -->
 
 ## Swarm Server Class Diagram
 
-`SwarmServer` composes nine collaborators: the ABW REST client, the consent
-store (real-time spend gate with TTL), the local agent registry, the
-lazily-initialized local runtime, the local swarm registry, the local
-knowledge memory, the per-agent stats store, the event store, and the
-encrypted member-conversation thread store. The spend
-gate consumes consent grants before any debit (cloud delegation only); the
+`SwarmServer` composes eight collaborators: the config, the local agent
+registry, the lazily-initialized local runtime, the local swarm registry, the
+local knowledge memory, the per-agent stats store, the event store, and the
+encrypted member-conversation thread store. The
 local runtime measures the run (tokens, latency, per-agent stats) — there is
 no spending policy on the local substrate: local agents run on the
 operator's own substrate, so nothing is priced or gated
-(`local_runtime.rs:161-164`). The A2A layer wraps the existing `delegate`
+(`local_runtime.rs`). The A2A layer wraps the existing `delegate`
 in protocol-compliant types over the in-process transport (no HTTP server
 required).
 
-**Re-measured (2026-10-21):** `SwarmThreadStore` (the encrypted
-member-conversation store behind the swarm-scoped thread tools) is the
-ninth collaborator; the `GateCounterStore` added as the tenth on 2026-10-10
-was removed with the unsupported grounding-gate verdicts (2026-10-21,
+**Re-measured (2026-10-22):** the ABW REST client, the consent store, and the
+spend-gate module were removed with the ABW cloud backend (2026-10-22 — the
+48 cloud tools, consent/session gates, and cloud bridges all went together;
+`SwarmConfig` replaces the client as the first construction argument). The
+`GateCounterStore` added as a collaborator on 2026-10-10
+was earlier removed with the unsupported grounding-gate verdicts (2026-10-21,
 `d3d5cf6` — the gate promoted mere tool-call presence to `tool_verified`,
 and unrelated or failed tool calls passed it). `LocalDelegateResult` carries the
 contract/telemetry fields (`rollout_id`, `reasoning_steps`,
@@ -112,7 +105,7 @@ fields — `task_success` is an evaluator's response-match verdict (it
 describes the response, not whether the task was accomplished);
 `dispatch` is the R6 provenance stamp (`route_reason` + `question_source`,
 fermi's `stamp_invocation` port) that splits C6 blame into
-routing-attributable vs agent-attributable. The 89-tool pin and the
+routing-attributable vs agent-attributable. The 37-tool pin and the
 build.rs-generated `tool_names.gen.rs` asserted against the live
 `combined_router()` at test time are unchanged in mechanism.
 
@@ -120,8 +113,7 @@ build.rs-generated `tool_names.gen.rs` asserted against the live
 classDiagram
     direction TD
     class SwarmServer {
-        +client: Arc~SwarmClient~
-        +consent: Arc~ConsentStore~
+        +config: Arc~SwarmConfig~
         +local_registry: Arc~LocalAgentRegistry~
         +local_runtime: Arc~LazyLocalSwarmRuntime~
         +local_swarms: Arc~LocalSwarmRegistry~
@@ -130,30 +122,6 @@ classDiagram
         +event_store: Arc~LazyEventStore~
         +thread_store: Arc~SwarmThreadStore~
         +combined_router() Router
-    }
-    class SwarmClient {
-        ABW REST base agent-bestiary.world
-        Bearer auth Pro tier key
-        200 body may carry LLM error
-    }
-    class ConsentStore {
-        +mint(action,target,credits) ConsentGrant
-        +consume(token,action,target,cost) Result
-        +refund(grant)
-        +open_session(...) SessionGrant
-        -CONSENT_TTL_SECS enforced
-        -sqlite or memory backing
-    }
-    class spend_gate_module {
-        <<module>>
-        +authorize_hire()
-        +complete_hire()
-        +authorize_delegate()
-        +complete_delegate()
-        +authorize_curate()
-        +resolve_auth()
-        ceiling HKASK_ABW_MAX_CREDITS
-        crate-private fns no SpendGate struct
     }
     class LazyLocalSwarmRuntime {
         -agent_stats: Arc~AgentStatsStore~
@@ -177,7 +145,7 @@ classDiagram
     }
     class LocalAgentRegistry {
         reads agents/local/curated
-        LocalAgentCard carries cloud_id
+        LocalAgentCard
     }
     class LocalSwarmRegistry {
         local swarms + task boards
@@ -218,100 +186,74 @@ classDiagram
         reasoning_steps[]
         input_contract_check optional
         output_contract_check optional
-        grounding report optional
-        completeness report optional
-        reliance one-token verdict
         memory ingestion report
         dispatch stamp optional
     }
 
-    SwarmServer --> SwarmClient : abw mode
-    SwarmServer --> ConsentStore
-    SwarmServer --> LocalAgentRegistry : local mode
-    SwarmServer --> LazyLocalSwarmRuntime : local mode
-    SwarmServer --> LocalSwarmRegistry : local mode
-    SwarmServer --> LazyLocalMemory : local mode
-    SwarmServer --> AgentStatsStore : local mode
-    SwarmServer --> LazyEventStore : local mode
+    SwarmServer --> LocalAgentRegistry
+    SwarmServer --> LazyLocalSwarmRuntime
+    SwarmServer --> LocalSwarmRegistry
+    SwarmServer --> LazyLocalMemory
+    SwarmServer --> AgentStatsStore
+    SwarmServer --> LazyEventStore
     SwarmServer --> SwarmThreadStore : scoped threads
-    spend_gate_module ..> ConsentStore : consumes grants
-    SwarmServer ..> spend_gate_module : hire delegate fanout xaman
     LazyLocalSwarmRuntime ..> LocalSwarmRuntime : get_or_init
     LocalSwarmRuntime --> AgentExecutor : run
     LocalSwarmRuntime ..> LocalDelegateResult : produces
     A2A ..> LocalSwarmRuntime : wraps delegate
     LocalAgentRegistry ..> LocalSwarmRuntime : reads cards
 
-    note for SwarmServer "89 tools = 48 cloud + 31 local + 3 a2a + 4 knowledge + 3 scoped thread\ncombined_router = cloud + local + a2a + knowledge routers\nkask.swarm.mode selects the substrate not the surface\nTool names generated by build.rs, asserted against combined_router at test time\nSpend mutating tools are consent gated"
+    note for SwarmServer "37 tools = 27 local + 3 a2a + 4 knowledge + 3 scoped thread\ncombined_router = local + a2a + knowledge routers\nlocal substrate only — no cloud backend\nTool names generated by build.rs, asserted against combined_router at test time\nno consent gate — roster membership and card allowlists bound authority"
     note for LocalDelegateResult "Fed back as delegate_results\nto swarm-intelligence ORIENT\nactivates C5 fault attribution\nand C6 reconfigure"
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-SWARM-006
 verified_date: 2026-10-22
-verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs (SwarmServer struct L159-169 — nine collaborators incl. thread_store, combined_router L173-178, 89-tool pin L950-966); kask/mcp-servers/hkask-mcp-swarm/src/consent.rs (CONSENT_TTL_SECS L76, mint L221, consume L255); kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs (resolve_auth L50, authorize_hire L130, complete_hire L287, authorize_delegate L443, complete_delegate L531, authorize_curate L602); kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs (LazyLocalSwarmRuntime L63, lazy L151, LocalSwarmRuntime L181, delegate L324, LocalDelegateResult L712-786 — dispatch stamp field L781-785, DispatchStamp L672, no-spending-policy doc L172-179); kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs (MAX_TOOL_ROUNDS L21); kask/mcp-servers/hkask-mcp-swarm/src/a2a_tools.rs; kask/mcp-servers/hkask-mcp-swarm/src/local_swarms.rs; kask/mcp-servers/hkask-mcp-swarm/src/local_knowledge.rs; kask/mcp-servers/hkask-mcp-swarm/src/agent_stats.rs; kask/mcp-servers/hkask-mcp-swarm/src/thread_store.rs (SwarmThreadStore L17, ThreadTurn L9, lock L38)
+verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs (SwarmServer struct — eight collaborators incl. thread_store, combined_router, 37-tool pin); kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs (LazyLocalSwarmRuntime, LocalSwarmRuntime, delegate, LocalDelegateResult — dispatch stamp, no-spending-policy doc); kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs (MAX_TOOL_ROUNDS); kask/mcp-servers/hkask-mcp-swarm/src/a2a_tools.rs; kask/mcp-servers/hkask-mcp-swarm/src/local_swarms.rs; kask/mcp-servers/hkask-mcp-swarm/src/local_knowledge.rs; kask/mcp-servers/hkask-mcp-swarm/src/agent_stats.rs; kask/mcp-servers/hkask-mcp-swarm/src/thread_store.rs (SwarmThreadStore, ThreadTurn, lock)
 status: VERIFIED
 -->
 
 ## Swarm Panel Modes
 
-The `SwarmPanel` (`crates/swarm_panel/src/swarm_panel.rs`) has **five**
+The `SwarmPanel` (`crates/swarm_panel/src/swarm_panel.rs`) has **four**
 `PanelMode` states, exposed as a header tab bar. The user can switch freely
 between any of them at any time via `set_mode`, which also moves focus to
 the target mode's first field.
 
-**Corrections (2026-08-28):** `AppAuthor` was added as the fifth mode (App
-authoring/detail — edit an existing App's manifest or create a new App;
-entered via an App card click or the Author toggle when the Apps filter is
-active; always cloud — ABW catalogue, no target toggle). `kask.swarm.mode`
-is **not a capability gate** — both cloud and local backends are always
-available (the swarm MCP server registers both tool sets in either mode; the
-setting only selects a startup warning). Backend choice is now a per-form
-`CreateTarget` (cloud/local), seeded from `kask.swarm.mode`. A
-`kask.swarm.mode` change still tears down any open Steer conversation (the
-Steer system prompt bakes the mode in at construction via
-`ensure_steer_conversation`) and re-syncs open forms' targets.
+**Re-measured (2026-10-22):** the panel is local-only. The former `AppAuthor`
+mode (App authoring/detail — always cloud) and the App cards/filter were
+removed with the ABW cloud backend, along with the per-form `CreateTarget`
+cloud/local toggle, the `kask.swarm.mode` observer, and the hire/publish
+consent flows. Author creates/edits a local agent card; Compose creates a
+local swarm; the destructive actions (delete swarm, remove agent) run
+through the `pending_destructive` two-step confirmation with an active-run
+warning.
 
 ```mermaid
 stateDiagram-v2
     direction TD
     [*] --> Browse : Toggle action deploys panel
-    Browse --> Browse : filter All Swarms Agents Apps
+    Browse --> Browse : filter All Swarms Agents
     Browse --> Author : New Agent tab
     Browse --> Compose : New Swarm tab
-    Browse --> AppAuthor : App card click or Author toggle with Apps filter
     Browse --> Steer : Steer tab builds conversation
     Author --> Browse : cancel or save
     Author --> Author : edit name prompt type
     Compose --> Browse : cancel or create
-    Compose --> Compose : ask Xaman add agents
-    AppAuthor --> Browse : cancel or save
-    AppAuthor --> AppAuthor : edit App manifest
+    Compose --> Compose : edit mission and members
     Steer --> Browse : switch tab
     Steer --> Steer : curator PDCA turn
     Browse --> [*] : close item
     Author --> [*]
     Compose --> [*]
-    AppAuthor --> [*]
     Steer --> [*]
-
-    state BackendChoice {
-        [*] : per-form CreateTarget Cloud or Local
-        note right of BackendChoice
-            kask.swarm.mode setting (abw or local)
-            NOT a capability gate — both tool sets
-            always registered; selects startup warning
-            seeds active_backend and the Steer prompt
-            mode change tears down open Steer convo
-            and re-syncs open form targets
-        end note
-    }
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-SWARM-007
-verified_date: 2026-09-28
-verified_against: crates/swarm_panel/src/swarm_panel.rs (PanelMode enum L433-445 — Browse, Author, Compose, AppAuthor, Steer; CreateTarget L368-370 — per-form Cloud/Local; target_on_surface_entry L395 — AppAuthor always cloud; set_mode L821; current_swarm_mode L874; ensure_steer_conversation L887; last_swarm_mode observer L615, L708-722; Toggle action L92, registered L297; SwarmEntry::App L454-458)
+verified_date: 2026-10-22
+verified_against: crates/swarm_panel/src/swarm_panel.rs (PanelMode enum — Browse, Author, Compose, Steer; set_mode; select_swarm_for_steer; pending_destructive two-step; Toggle action registration)
 status: VERIFIED
 -->
 
@@ -320,19 +262,16 @@ status: VERIFIED
 The swarm system runs four coupled feedback loops. **Loop A** (PDCA
 convergence) is the planner's inner loop; **Loop B** (C5/C6 steering
 execution) closes only when swarm-intelligence's steering loop (the Curator
-or a human in steering mode) feeds `delegate_results` back; **Loop C** (credit/consent
-algedonic) is the strongest — the 402 / un-acknowledged curator dispatch
+or a human in steering mode) feeds `delegate_results` back; **Loop C** (execution-error
+algedonic) is the strongest — a tool-level dispatch error or an
+un-reconciled emitted dispatch
 escalates regardless of the swarm-state distance `d` (the "never read as no
 deviation" invariant); **Loop D** (Go See) is the intentionally-human outer
-meta-loop. The diagram annotates each loop with its 5-property health and
-marks the two structural gaps found in the audit: Loop B's binary `ok`
-fidelity and the C4 latency sub-loop that is sensed but not regulated.
-Verified current (skill files and consent/spend-gate code unchanged in
-role).
+meta-loop. The diagram annotates each loop with its 5-property health.
 
 ```mermaid
 flowchart TD
-    SENSE["SENSE<br/>Onto4MAT + backend<br/>ABW wallet / local ledger"]
+    SENSE["SENSE<br/>Onto4MAT + roster<br/>local ledger"]
     ORIENT["ORIENT<br/>gap + C5 fault attribution<br/>reads delegate_results"]
     DECIDE["DECIDE<br/>PSO/ACO/Reynolds moves<br/>reads failed_edits influence fault_count"]
     FILTER["FILTER compute<br/>C3 failed-edit + C7 influence guards"]
@@ -364,27 +303,13 @@ flowchart TD
         RC -.->|re-prompt| DL
     end
 
-    subgraph cred["Loop C credit/consent algedonic"]
-        direction LR
-        CEIL["ceiling HKASK_ABW_MAX_CREDITS<br/>+ swarm_hire_cost within_budget"]
-        CONSENT["ConsentStore mint/consume<br/>TTL enforced real-time block"]
-        WALLET["wallet reconciliation<br/>/api/wallet/transactions"]
-        CEIL --> CONSENT --> WALLET
-    end
-    ACT -.->|hire delegate| cred
-    WALLET -.->|loop_closure signal| CHECK
-
-    ALG["ALGEDONIC override<br/>402 or un-ack curator dispatch<br/>escalates regardless of d"]
-    cred -.->|402| ALG
+    ALG["ALGEDONIC override<br/>dispatch error or un-reconciled plan<br/>escalates regardless of d"]
+    ACT -.->|dispatch error| ALG
     ALG -.->|force escalate| CONV
 
     GSEE["Loop D Go See C2<br/>human cadence every N convergences<br/>closure DEGRADED by design"]
     CONV -.->|go_see directive| GSEE
     GSEE -.->|operator descends| SENSE
-
-    LAT["C4 latency_ms<br/>SENSED in LocalDelegateResult<br/>NOT regulated by DECIDE<br/>VARIETY DEFICIT"]
-    RES -.-> LAT
-    LAT -.->|no consumer| X["open sub-loop"]
 
     noteA["Loop A polarity healthy gain healthy<br/>delay degraded closure degraded fidelity degraded"]
     noteB["Loop B polarity healthy gain healthy<br/>delay healthy in steering<br/>fidelity MITIGATED task_success first"]
@@ -393,14 +318,14 @@ flowchart TD
 
     SENSE ~~~ noteA
     RC ~~~ noteB
-    WALLET ~~~ noteC
+    ALG ~~~ noteC
     GSEE ~~~ noteD
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-SWARM-008
-verified_date: 2026-10-10
-verified_against: .agents/skills/swarm-intelligence/SKILL.md (ORIENT C5 fault attribution L89, CHECK/CONV L94-98, convergence criterion L145-148, delegate_results contract L260-285 — dispatch stamp + C5/C6 routing-vs-agent blame split); kask/registry/templates/swarm-intelligence/swarm-act.j2 (emitted_calls L13, steering_directive L15, L122-154); kask/registry/templates/swarm-intelligence/swarm-check.j2; kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs (swarm_execute_plan_local L3112)
+verified_date: 2026-10-22
+verified_against: .agents/skills/swarm-intelligence/SKILL.md (ORIENT C5 fault attribution, CHECK/CONV, convergence criterion, delegate_results contract — dispatch stamp + C5/C6 routing-vs-agent blame split); kask/registry/templates/swarm-intelligence/swarm-act.j2 (emitted_calls, steering_directive); kask/registry/templates/swarm-intelligence/swarm-check.j2; kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs (swarm_execute_plan_local)
 status: VERIFIED
 -->
 
@@ -418,7 +343,7 @@ registered swarm filter, accumulator, or second-order monitor performs these pha
 flowchart TD
     Sense[Read roster and prior receipts] --> Orient[Orient to target and observed faults]
     Orient --> Decide[Propose composition move]
-    Decide --> Preflight[Check failed signatures and tool or consent contract]
+    Decide --> Preflight[Check failed signatures and tool or membership contract]
     Preflight --> Act[Emit action plan]
     Act --> Mode{Explicit steering?}
     Mode -->|No| Advisory[Return plan to operator]
@@ -433,8 +358,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-SWARM-009
-verified_date: 2026-09-28
-verified_against: .agents/skills/swarm-intelligence/SKILL.md (Steering a local swarm — directive and receipt L81); kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs (swarm_execute_plan_local L2882-3080)
+verified_date: 2026-10-22
+verified_against: .agents/skills/swarm-intelligence/SKILL.md (Steering a local swarm — directive and receipt); kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs (swarm_execute_plan_local)
 status: VERIFIED
 -->
 
@@ -476,8 +401,8 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-SWARM-010
-verified_date: 2026-09-28
-verified_against: kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs (dispatch_in_thread L278, swarm_execute_plan_local L2882); kask/mcp-servers/hkask-mcp-swarm/src/thread_store.rs (SwarmThreadStore L17, ThreadTurn L9, lock L38); kask/mcp-servers/hkask-mcp-swarm/src/scoped_dispatch_tests.rs (scoped_plan_broadcast_send_share_history_and_keep_verdict_and_board L148)
+verified_date: 2026-10-22
+verified_against: kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs (dispatch_in_thread, swarm_execute_plan_local); kask/mcp-servers/hkask-mcp-swarm/src/thread_store.rs (SwarmThreadStore, ThreadTurn, lock); kask/mcp-servers/hkask-mcp-swarm/src/scoped_dispatch_tests.rs (scoped_plan_broadcast_send_share_history_and_keep_verdict_and_board)
 status: VERIFIED
 -->
 

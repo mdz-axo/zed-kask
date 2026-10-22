@@ -261,8 +261,8 @@ pub const PORT_TYPES_FILE: &str = "port_types.json";
 /// (injected by zed, always emitted) or the default
 /// `mcp/swarm/agents/curated` resolved under the data dir (D28). It is NOT
 /// the repo's `agents/local/curated/` — cards committed in the repo are
-/// source material and must be copied into the registry (or cloned via
-/// `swarm_clone_to_local`) before the server sees them. Layout:
+/// source material and must be copied into the registry
+/// before the server sees them. Layout:
 /// ```text
 /// {registry_dir}/
 ///   market_research/

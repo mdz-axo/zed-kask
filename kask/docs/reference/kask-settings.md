@@ -310,25 +310,29 @@ Prediction-markets data-service configuration (`kask/crates/kask_bridge/src/sett
 
 ## Swarm (`KaskSwarmSettings`)
 
-Agent Bestiary World (ABW) swarm integration (added 2026-08-01). See `diataxis/swarm_system/` and `DIVERGENCE.md` D2/D33.[^reynolds-swarm-settings]
+Local swarm substrate — local swarm agents and local swarms (the former ABW
+cloud backend was removed 2026-10-22). See `diataxis/swarm_system/` and
+`DIVERGENCE.md` D2/D33.[^reynolds-swarm-settings]
 
 | Field | Type | Default | Env var injected | Notes |
 |-------|------|---------|-------------------|-------|
-| `mode` | `SwarmModeConfig` | `"abw"` | `HKASK_SWARM_MODE` | `"abw"` (Agent Bestiary World, v1) or `"local"` (local substrate crates, v2 §15) |
-| `api_url` | `String` | `""` | `HKASK_ABW_API_URL` | ABW API base URL override; empty = `https://agent-bestiary.world` |
-| `max_credits_per_dispatch` | `u32` | `50` | `HKASK_ABW_MAX_CREDITS` | Per-dispatch credit ceiling (S3 budget gate); dispatches above this are refused pre-spend |
-| `curator_consent_default` | `bool` | `false` | `HKASK_ABW_CURATOR_CONSENT_DEFAULT` | When `false`, `swarm_xaman` requires a per-call `consent_token`; `true` = operator globally opted in |
-| `default_agent_model` | `String` | `""` | `HKASK_ABW_DEFAULT_AGENT_MODEL` | New ABW agents and unpinned local agents inherit this model; empty uses ABW's default or the local host session model respectively. Explicit card models win. |
+| `default_agent_model` | `String` | `""` | `HKASK_SWARM_DEFAULT_AGENT_MODEL` | New local agents and unpinned local agents inherit this model at execution time; empty uses the local host session model. Explicit card models win. |
 | `a2a_http_enabled` | `bool` | `false` | server configuration | Opt-in loopback A2A HTTP gateway |
-| `embedding_dim` | `usize` | `1024` | `HKASK_SWARM_EMBEDDING_DIM` | Shared semantic-memory vector dimension — the width requested from MRL embedding models (`mcp_env.rs:331-336`; read by the swarm server at `config.rs:277`) |
+| `embedding_dim` | `usize` | `1024` | `HKASK_SWARM_EMBEDDING_DIM` | Shared semantic-memory vector dimension — the width requested from MRL embedding models (`mcp_env.rs`; read by the swarm server at `config.rs`) |
 
-The complete subsection and defaults are at `kask/crates/kask_bridge/src/settings.rs:423-517`.
+The complete subsection and defaults are at `kask/crates/kask_bridge/src/settings.rs`.
 
 No `local_agents_dir`, `local_swarms_dir`, or `memory_db_path` fields — these paths are derived from the global `data_dir` as `mcp/swarm/agents/curated/`, `mcp/swarm/swarms/`, and `mcp/swarm/memory.db` by `mcp_env()`. The server reads them via `HKASK_LOCAL_AGENTS_DIR`, `HKASK_LOCAL_SWARMS_DIR`, and `HKASK_SWARM_MEMORY_DB`.
 
-The ABW API key is a secret — it lives in the keychain under
-`kask://credentials/hkask_abw_api_key`, injected as `HKASK_ABW_API_KEY` by
-`mcp_env_with_credentials`, not by `mcp_env()`. The bridge `Default` impl (`kask/crates/kask_bridge/src/settings.rs:497-517`) MUST stay in sync with `SwarmConfig::default()` in `kask/mcp-servers/hkask-mcp-swarm/src/config.rs:137-158` — the two impls are
+Removed settings (2026-10-22, with the ABW cloud backend): `mode`, `api_url`,
+`max_credits_per_dispatch`, `curator_consent_default`. A settings.json still
+carrying them parses (serde-unknown fields are ignored) and the keys are
+inert. The removed keychain credential
+`kask://credentials/hkask_abw_api_key` is purged at startup (DIVERGENCE.md D5).
+The memory DB opens with the one shared `HKASK_DB_PASSPHRASE` keychain
+credential, injected by `mcp_env_with_credentials`, not by `mcp_env()`. The
+bridge `Default` impl MUST stay in sync with `SwarmConfig::default()` in
+`kask/mcp-servers/hkask-mcp-swarm/src/config.rs` — the two impls are
 deliberately duplicated across the crate boundary to avoid a circular
 dependency.
 
@@ -560,14 +564,10 @@ into the editor process env).
 | `HKASK_SCENARIOS_DATA` | scenarios | derived from `data_dir` as `mcp/scenarios/` |
 | `HKASK_PREDICTION_MARKETS_DATA` | prediction-markets | derived from `data_dir` as `mcp/prediction-markets/` |
 | `HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS` | prediction-markets | `prediction_markets.cache_ttl_secs` |
-| `HKASK_SWARM_MODE` | swarm | `swarm.mode` |
-| `HKASK_ABW_API_URL` | swarm | `swarm.api_url` |
-| `HKASK_ABW_MAX_CREDITS` | swarm | `swarm.max_credits_per_dispatch` |
-| `HKASK_ABW_CURATOR_CONSENT_DEFAULT` | swarm | `swarm.curator_consent_default` |
+| `HKASK_SWARM_DEFAULT_AGENT_MODEL` | swarm | `swarm.default_agent_model` |
 | `HKASK_LOCAL_AGENTS_DIR` | swarm | derived from `data_dir` as `mcp/swarm/agents/curated/` |
 | `HKASK_LOCAL_SWARMS_DIR` | swarm | derived from `data_dir` as `mcp/swarm/swarms/` |
 | `HKASK_SWARM_MEMORY_DB` | swarm | derived from `data_dir` as `mcp/swarm/memory.db` |
-| `HKASK_ABW_API_KEY` | swarm | ABW API key (keychain only) |
 | `HKASK_DEFAULT_MODEL` | all | `models.default_model` |
 | `HKASK_EMBEDDING_MODEL` | all | `models.embedding_model` / `corpus.embedding_model` |
 | `HKASK_CLASSIFIER_MODEL` | all | `models.classifier_model` |
@@ -577,7 +577,6 @@ into the editor process env).
 | `HKASK_CURATOR_DB` | curator | injected by deferred task |
 | `HKASK_KANBAN_DB` | kata-kanban | Operator override for kanban DB path (default `mcp/kata-kanban/kanban.db`) |
 | `HKASK_RESEARCH_DB` | research | Operator override for research DB path (default `mcp/research/research.db`) |
-| `HKASK_SWARM_CONSENT_STORE` | swarm | Operator override for consent store path (default `mcp/swarm/consent.db`) |
 
 The collab server is launched directly by zed-kask (not via `mcp_env()`), so
 there are no `collab.*`-derived env vars.
@@ -620,7 +619,7 @@ The skill-span history cap (`max_skill_span_history`) is configurable via the
     Cited for the LLM-specific security model the former guard layer (D4, removed 2026-08-10) was built to wrap the skill process with; provider-side safety and refusal fallbacks remain the active defense.
 
 [^reynolds-swarm-settings]: Reynolds, C. W. (1987). Flocks, herds and schools: A distributed behavioral model. *ACM SIGGRAPH Computer Graphics*, 21(4), 25–34. https://doi.org/10.1145/37402.37406
-    Cited for the swarm-coordination model the ABW swarm settings configure.
+    Cited for the swarm-coordination model the local swarm settings configure.
 
 [^ousterhout-models-settings]: Ousterhout, J. (2018). *A Philosophy of Software Design*. Yakny Press.
     Cited for the two-layer default design (empty-string fields with effective_* fallback to constants) that avoids magic-number defaults.

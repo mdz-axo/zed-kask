@@ -1177,7 +1177,6 @@ impl SerializableItem for SwarmPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hkask_types::tool_response::parse_tool_response;
 
     // ── Status severity convention ────────────────────────────────────────
     //

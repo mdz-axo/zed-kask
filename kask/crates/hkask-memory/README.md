@@ -6,7 +6,7 @@ Implements turn ingestion → h_mem + embedding → cleanup → semantic recall.
 
 ## Architecture
 
-The memory system is a **vector + relational** store following the ABW/OpenClaw
+The memory system is a **vector + relational** store following the OpenClaw
 model. One entity_ref string (`chat:thread:{thread_id}`) links each embedding
 vector to its relational h_mem row, so KNN search results join back to the
 full turn text.

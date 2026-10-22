@@ -332,43 +332,47 @@ the surviving record).
 ## Registry
 
 - Templates: `kask/registry/templates/swarm-intelligence/swarm-{sense,orient,decide,act,check,compose-guide}.j2`
-- Live process: read the selected ABW or local roster → SENSE → ORIENT → DECIDE → check proposed moves against observed failed signatures and actual consent/permissions → ACT emits intents → execute only in explicitly selected steering mode → CHECK re-reads state and receipts → compute receipt coverage, distance and target gate with `lisp_eval` → carry observed iteration history into a bounded next cycle. A rendered phase alone does not call an MCP tool.
+- Live process: read the selected swarm's roster → SENSE → ORIENT → DECIDE → check proposed moves against observed failed signatures and actual roster membership/allowlists → ACT emits intents → execute only in explicitly selected steering mode → CHECK re-reads state and receipts → compute receipt coverage, distance and target gate with `lisp_eval` → carry observed iteration history into a bounded next cycle. A rendered phase alone does not call an MCP tool.
 - No registered `swarm.*` filter, accumulator or second-order monitor primitives exist. Record failed edits and task-board/receipt fault evidence explicitly; `lisp_eval` handles only the pinned arithmetic and exact-signature checks, while Go See is human observation. Do not report a nonexistent compute step as executed.
-- MCP tool surface (consult current registration rather than a fixed count):
-  - **ABW tools**: `swarm_list_agents`, `swarm_get_swarm`, `swarm_get_agent`,
-    `swarm_list_apps`, `swarm_ontology_templates`, `swarm_execute_agent`,
-    `swarm_hire_cost`, `swarm_request_consent`, `swarm_authorize_session`,
-    `swarm_hire`, `swarm_delegate`, `swarm_delegate_and_wait`, `swarm_fanout`,
-    `swarm_run_status`, `swarm_generate_prompt`, `swarm_generate_ontology`,
-    `swarm_create_agent`, `swarm_create_swarm`, `swarm_xaman`, `swarm_create_app`,
-    `swarm_fire` (roster removal, verified live), `swarm_delete_agent`,
-    `swarm_delete_swarm`, `swarm_search_knowledge`, `swarm_publish_checks`,
-    `swarm_publish_agent`, `swarm_fork_agent`.
-  - **Local tools**: `swarm_delegate_local` (standalone),
+- MCP tool surface — 37 local tools (the server is local-only; consult current registration rather than a fixed count):
+  - **Dispatch**: `swarm_delegate_local` (standalone),
     `swarm_delegate_in_thread_local` (member-scoped shared thread),
-    `swarm_fanout_local`, `swarm_pipeline_local`,
-    `swarm_execute_plan_local`, `swarm_a2a_send` (A2A protocol message, in-process),
-    `swarm_a2a_card` (A2A Agent Card discovery), `swarm_list_local_agents`,
-    `swarm_clone_to_local`, `swarm_push_to_cloud`, `swarm_remove_local`,
-    `swarm_create_local_agent`, `swarm_reconfigure_local_agent` (C6),
-    `swarm_create_local_swarm`, `swarm_list_local_swarms`,
-    `swarm_get_local_swarm`, `swarm_delete_local_swarm`, `swarm_add_agent_local`,
-    `swarm_remove_agent_local` (local-swarm lifecycle — local mode has explicit
-    named swarms/rosters, not just an ephemeral session),
-    `swarm_search_knowledge_local`, `swarm_generate_prompt_local`,
-    `swarm_generate_ontology_local` (local knowledge analogs — search/generate
-    over the operator's `hkask-memory` + local inference; no ABW; see
-    [Local Knowledge Tools design](../../../kask/docs/diataxis/swarm_system/reference.md),
-    `swarm_ai_assist` (authoring aid), `swarm_evaluate_local` (deterministic
+    `swarm_fanout_local` (parallel batch, capped at 10),
+    `swarm_pipeline_local` (sequential with `{prev_output}` substitution),
+    `swarm_execute_plan_local` (ordered plan + optional evaluators +
+    task-board progress), `swarm_evaluate_local` (deterministic
     task-success evaluator — stamps a `TaskSuccessVerdict` with
     `provenance: Deterministic`), `swarm_eval_suite_local`,
-    `swarm_eval_agent_local` (rollout harness), `swarm_task_board`,
-    `swarm_workflow_check_local`, `swarm_run_workflow_local` (execute a
-    declared workflow_template end-to-end), `swarm_observed_seams_local`
-    (the observed delegation topology — edges recorded at dispatch, compared
-    against declared ports), `swarm_fleet_digest_local` (the fleet's shape:
-    categories and counts, never individual agents), `swarm_who_answers_local`
-    (which agents accept a label, with the bespoke/cohort/universal reading).
+    `swarm_eval_agent_local` (rollout harness), `swarm_task_board`.
+  - **Thread and shared memory**: `swarm_thread_local` (read a swarm's
+    ordered durable turns), `swarm_list_local_threads`,
+    `swarm_recall_local` (recall prior response passages from shared
+    local swarm memory by semantic similarity).
+  - **Agent registry**: `swarm_list_local_agents`,
+    `swarm_get_local_agent`, `swarm_create_local_agent`,
+    `swarm_reconfigure_local_agent` (C6), `swarm_remove_local`.
+  - **Swarm lifecycle**: `swarm_create_local_swarm`,
+    `swarm_list_local_swarms`, `swarm_get_local_swarm`,
+    `swarm_update_local_swarm`, `swarm_delete_local_swarm`,
+    `swarm_clone_local_swarm`, `swarm_add_agent_local`,
+    `swarm_remove_agent_local` (named swarms/rosters, explicit lifecycle).
+  - **Knowledge and fleet shape**: `swarm_search_knowledge_local`,
+    `swarm_generate_prompt_local`, `swarm_generate_ontology_local`
+    (search/generate over the operator's `hkask-memory` + local
+    inference; see
+    [Local Knowledge Tools design](../../../kask/docs/diataxis/swarm_system/reference.md)),
+    `swarm_observed_seams_local` (the observed delegation topology —
+    edges recorded at dispatch, compared against declared ports),
+    `swarm_fleet_digest_local` (the fleet's shape: categories and
+    counts, never individual agents), `swarm_who_answers_local`
+    (which agents accept a label, with the bespoke/cohort/universal
+    reading).
+  - **Workflow and assist**: `swarm_workflow_check_local`,
+    `swarm_run_workflow_local` (execute a declared workflow_template
+    end-to-end), `swarm_ai_assist` (authoring aid).
+  - **A2A**: `swarm_a2a_send` (A2A protocol message, in-process),
+    `swarm_a2a_card` (A2A Agent Card discovery),
+    `swarm_a2a_broadcast` (message every member of a local swarm).
 
     **Fleet facts are registry-first — never from memory** (fermi's
     `biotech_analyst` incident: a navigator answered three specific claims
@@ -379,25 +383,22 @@ the surviving record).
     `swarm_who_answers_local`. Do not state them from memory. If a tool
     reports a different fleet size than a digest you hold, the digest is
     stale — say so rather than answering from it.
-- Spend-mutating ABW tools (`swarm_hire`, `swarm_delegate`,
-  `swarm_delegate_and_wait`, `swarm_fanout`, `swarm_execute_agent`,
-  `swarm_create_swarm`,
-  `swarm_xaman`) are consent-gated via `swarm_request_consent` (single-use,
-  action+target+credits-scoped, TTL-bounded) or `swarm_authorize_session`
-  (headless). In local mode there is no consent token, credit budget, or funding gate.
-  See the [Swarm Systems Reference](../../../kask/docs/diataxis/swarm_system/reference.md)
-  for the full tool/contract table and the token model.
+- Local dispatch has no consent token, credit budget, or funding gate —
+  authority is roster membership, the card's declared allowlists, and the
+  governed tool surface. See the
+  [Swarm Systems Reference](../../../kask/docs/diataxis/swarm_system/reference.md)
+  for the full tool/contract table.
 
 ## Registry Templates
 
 | Template | Purpose |
 |----------|---------|
-| `swarm-sense.j2` | Measure the current swarm state. In `abw` mode, fetch the ABW workspace roster and wallet; in `local` mode, read the member roster and local agent registry. Optionally probe an agent's consolidated knowledge graph via `swarm_search_knowledge` (fermi v0.10.26 — the embedder was broken platform-wide for 6 weeks and is now fixed) when the roster's accepts/produces is ambiguous about whether an agent covers a required transform. Compute the alignment team property (task-gated delegation-graph density from produces/accepts overlap); variety_coverage, diversity, cohesion, separation, and redundancy_pairs route through the caller's `SWM-1` gate. Derive required_transforms and covered_transforms from the task and roster. Consumes prior_iteration.next_focus when present (feedback loop closure). Vacuous-truth defaults (enforced in the `SWM-1` gate): empty required_transforms → variety_coverage 1.0 + trivial_task flag; empty swarm → diversity 0.0, variety_coverage 0.0. |
-| `swarm-orient.j2` | Classify the gap between sensed state and target condition into one of three deficit classes (or on-target): (a) variety deficit — required_transforms not covered; (b) coherence deficit — Thagard coherence flat/declining OR diversity below floor (premature convergence, the PSO/ACO failure mode); (c) loop-break — un-reconciled dispatches or un-acknowledged curator data-sharing. Mode-agnostic: operates on the state shape from SENSE, not the data source. Delegates to pragmatic-cybernetics for the 5-property assessment (polarity, delay, gain, closure, fidelity) when the deficit is a loop-break. Classifies the coordination problem (Axelrod): cooperation (repeated, shadow of the future) vs division-of-labor (one-shot, complementary capabilities). |
-| `swarm-decide.j2` | Propose measured-deficit responses using PSO/ACO/Reynolds as analogies, not executed numerical algorithms. Local composition uses named-swarm roster add/remove without deleting saved cards; ABW removal uses `swarm_fire` under the workspace contract. The one-level delegation invariant still applies. |
-| `swarm-act.j2` | Prepare ABW consent-gated or local no-credit action intents (`decisions`, `swarm_id`, `task`, `mode`, `steering_mode`) and emit `steering_directive` for local (`swarm_execute_plan_local`, gated by `SWM-3`) or cloud (`swarm_xaman`) steering. Rendering emits a plan, never an executed-call receipt; the invoking Curator/human runs the selected live tools and retains their results. |
-| `swarm-check.j2` | Re-read post-Act state and observed receipts (`pre_act_state`, `act_result`, `swarm_id`, `mode`, `target_condition`, `task_success`, `fetched_post_act_state`); local `loop_closure` covers both successful and explicit error entries in order, while a dispatch error remains an independent alert. Supply measured axes for the caller's `lisp_eval` distance/target gate. Zero actual delegations are vacuously receipted, but unexecuted plans are not. |
-| `swarm-compose-guide.j2` | Reference/authoring template for agent and swarm composition. Given a composition request (surface: agent|swarm, mode: abw|local, action: suggest|validate, plus partial fields), it produces either suggested completions for unfilled fields (action=suggest) or a validation verdict over the supplied fields (action=validate). Encodes the canonical field definitions (name, agent_type, description, system_prompt, mission, agents) and the ABW/local backend considerations (credit-cost consent-gated catalogue vs local filesystem registry without credits). Mirrors the inline prompt used by the `swarm_ai_assist` MCP tool — this template is the single source of truth the panel and the process share. Consumed by the DECIDE phase when it proposes an `author_agent` move (no catalogue agent covers a required transform); also available for standalone invocation from the swarm panel. |
+| `swarm-sense.j2` | Measure the current swarm state. Read the member roster and local agent registry (`swarm_get_local_swarm` / `swarm_list_local_agents`). Optionally probe an agent's prefix-scoped knowledge via `swarm_search_knowledge_local` when the roster's accepts/produces is ambiguous about whether an agent covers a required transform. Compute the alignment team property (task-gated delegation-graph density from produces/accepts overlap); variety_coverage, diversity, cohesion, separation, and redundancy_pairs route through the caller's `SWM-1` gate. Derive required_transforms and covered_transforms from the task and roster. Consumes prior_iteration.next_focus when present (feedback loop closure). Vacuous-truth defaults (enforced in the `SWM-1` gate): empty required_transforms → variety_coverage 1.0 + trivial_task flag; empty swarm → diversity 0.0, variety_coverage 0.0. |
+| `swarm-orient.j2` | Classify the gap between sensed state and target condition into one of three deficit classes (or on-target): (a) variety deficit — required_transforms not covered; (b) coherence deficit — Thagard coherence flat/declining OR diversity below floor (premature convergence, the PSO/ACO failure mode); (c) loop-break — un-reconciled dispatches or un-fed-back receipts. Operates on the state shape from SENSE, not the data source. Delegates to pragmatic-cybernetics for the 5-property assessment (polarity, delay, gain, closure, fidelity) when the deficit is a loop-break. Classifies the coordination problem (Axelrod): cooperation (repeated, shadow of the future) vs division-of-labor (one-shot, complementary capabilities). |
+| `swarm-decide.j2` | Propose measured-deficit responses using PSO/ACO/Reynolds as analogies, not executed numerical algorithms. Local composition uses named-swarm roster add/remove (`swarm_add_agent_local` / `swarm_remove_agent_local`) without deleting saved cards; an author or remove move that must delete a card is explicit (`swarm_create_local_agent` / `swarm_remove_local`). The one-level delegation invariant still applies. |
+| `swarm-act.j2` | Prepare local no-credit action intents (`decisions`, `swarm_id`, `task`, `steering_mode`) and emit `steering_directive` for local steering (`swarm_execute_plan_local`, gated by `SWM-3`). Rendering emits a plan, never an executed-call receipt; the invoking Curator/human runs the selected live tools and retains their results. |
+| `swarm-check.j2` | Re-read post-Act state and observed receipts (`pre_act_state`, `act_result`, `swarm_id`, `target_condition`, `task_success`, `fetched_post_act_state`); local `loop_closure` covers both successful and explicit error entries in order, while a dispatch error remains an independent alert. Supply measured axes for the caller's `lisp_eval` distance/target gate. Zero actual delegations are vacuously receipted, but unexecuted plans are not. |
+| `swarm-compose-guide.j2` | Reference/authoring template for agent and swarm composition. Given a composition request (surface: agent|swarm, action: suggest|validate, plus partial fields), it produces either suggested completions for unfilled fields (action=suggest) or a validation verdict over the supplied fields (action=validate). Encodes the canonical field definitions (name, agent_type, description, system_prompt, mission, agents) and the local-registry constraints (lowercase_with_underscores ids, port-registry-backed accepts/produces, filesystem cards without credits). Mirrors the inline prompt used by the `swarm_ai_assist` MCP tool — this template is the single source of truth the panel and the process share. Consumed by the DECIDE phase when it proposes an `author_agent` move (no existing card covers a required transform); also available for standalone invocation from the swarm panel. |
 
 To render a template, call the `render_template` tool with the template ref and a context object naming every contract input field. The deterministic gates (`SWM-1` after SENSE, `SWM-2` after ORIENT, `SWM-3` before local steering) run in the caller's `lisp_eval` — never in a rendered template.
 
@@ -406,11 +407,10 @@ To render a template, call the `render_template` tool with the template ref and 
 {
   "swarm_id": "<string>",
   "task": "<string>",
-  "mode": "abw|local",
   "target_condition": { "variety_coverage": 0.9, "diversity": 0.25, "loop_closure": 1.0 } | null,
   "prior_iteration": { "next_focus": "<string>", "lessons_learned": [] } | null,
   "kanban_board_id": "<string> | null",
-  "fetched_swarm_state": { "<the pre-fetched roster/wallet read — required object>" }
+  "fetched_swarm_state": { "<the pre-fetched roster read — required object>" }
 }
 ```
 
@@ -430,7 +430,6 @@ To render a template, call the `render_template` tool with the template ref and 
   "swarm_state": { "<the SENSE output with the SWM-1 gate metrics merged>" },
   "orientation": { "<the ORIENT output with the caller's SWM-2 gate outputs (latency_outliers, agent_at_fault) merged>" },
   "task": "<string>",
-  "mode": "abw|local",
   "failed_edits": [ { "decision_action": "<string>", "swarm_state_signature": "<string>", "d_delta": 0.0 } ],
   "influence_scores": { "<agent_type>": 0.0 },
   "second_order": { "recommendation": "go_see|diversify_action" }
@@ -443,7 +442,6 @@ To render a template, call the `render_template` tool with the template ref and 
   "decisions": { "<the DECIDE output>" },
   "swarm_id": "<string>",
   "task": "<string>",
-  "mode": "abw|local",
   "steering_mode": "advisory|steering"
 }
 ```
@@ -454,7 +452,6 @@ To render a template, call the `render_template` tool with the template ref and 
   "pre_act_state": { "<the SENSE output with the SWM-1 gate metrics merged>" },
   "act_result": { "<the ACT output>" },
   "swarm_id": "<string>",
-  "mode": "abw|local",
   "target_condition": { "variety_coverage": 0.9, "diversity": 0.25, "loop_closure": 1.0 } | null,
   "task_success": { "pass": true, "score": 1.0, "provenance": "deterministic_evaluator" } | null,
   "fetched_post_act_state": { "<the post-Act roster re-read — required object>" }
@@ -476,9 +473,9 @@ The skill's forms are executed at use time, never anchored in code.
 
 ## Constraints
 
-- Every ABW spend delegation carries an explicit `credits_authorized` and consent. Local member delegation carries `swarm_id`, not a credit budget.
+- Local member delegation carries `swarm_id`, not a credit budget — there is no credit ledger and no consent gate; authority is roster membership and the card's declared allowlists.
 - Task-success verdicts are deterministic (`swarm_evaluate_local` or a configured evaluator) or null — never LLM-judged; `llm_judged` provenance is downgraded by ORIENT.
-- Algedonic override: a 402 or un-acknowledged curator dispatch escalates regardless of the convergence distance `d` — a broken algedonic channel is never read as "no deviation".
+- Algedonic override: a dispatch error or un-reconciled emitted dispatch escalates regardless of the convergence distance `d` — a broken feedback loop is never read as "no deviation".
 - Convergence requires |d_i − d_{i−1}| < 0.03 for 3 consecutive iterations; a healthy swarm that fails the task must NOT converge.
 - Open tasks with no oracle: `task_success` stays null and the human Go See loop (C2) covers the gap — never an LLM judge.
-- Clean up (storage Cleanup rule). When a steering session ends, remove local cards this session created by an `author_agent` or `hire` move that the operator did not ask to keep (`swarm_remove_local`), and delete a local swarm the session created (`swarm_delete_local_swarm`); its thread stays readable. A swarm or card the operator supplied, or asked to keep, is untouched and named in the report. ABW firing and deletion stay consent-gated moves, never automatic cleanup.
+- Clean up (storage Cleanup rule). When a steering session ends, remove local cards this session created by an `author_agent` move that the operator did not ask to keep (`swarm_remove_local`), and delete a local swarm the session created (`swarm_delete_local_swarm`); its thread stays readable. A swarm or card the operator supplied, or asked to keep, is untouched and named in the report. Deleting an operator-supplied card is never automatic cleanup.

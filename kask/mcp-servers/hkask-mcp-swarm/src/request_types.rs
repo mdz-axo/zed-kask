@@ -61,8 +61,6 @@ pub struct ListLocalAgentsRequest {
 }
 
 /// Get a single local agent's full card.
-/// Get a single local agent's full card — the local analog of
-/// `swarm_get_agent` (fermi's `GET /api/agents/:id`).
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetLocalAgentRequest {
     /// The local agent id whose card to fetch
@@ -134,7 +132,7 @@ pub struct RemoveLocalRequest {
 
 /// Create a new local agent card programmatically (Cybernetic Swarm Plan —
 /// `reconfigure_agent` / fan-out composition needs a programmatic create
-/// path; `swarm_clone_to_local` only copies from ABW). Writes
+/// path). Writes
 /// `agents/local/curated/<id>/agent_card.json` and reloads the registry. No
 /// consent token — local mode has no consent gate and no budget gate (no
 /// local budget exists; card creation is free).
@@ -224,11 +222,11 @@ pub struct FanoutEntry {
 /// Reconfigure an existing local agent's prompt in place (Cybernetic Swarm Plan
 /// C6 — the Modify-Block / MASS prompt axis). Updates ONLY the `system_prompt`
 /// (and optionally `model`/`mcp_tools`/`skills`/`model_params`); preserves `agent_id`,
-/// `agent_type`, `description`, `accepts`, `produces`, `dependencies`, and the
-/// `cloud_swarm_id` sync link. The DECIDE `reconfigure_agent` action seeds
-/// `swarm_generate_prompt` with the blamed agent's failure log to produce the
-/// new prompt, then this tool writes it and reloads the registry. No consent
-/// token — local mode; re-prompting is generation (an LLM producing a new
+/// `agent_type`, `description`, `accepts`, `produces`, `dependencies`, and
+/// provenance, then reloads the registry. The DECIDE `reconfigure_agent` action seeds
+/// `swarm_generate_prompt_local` with the blamed agent's failure log to produce the
+/// new prompt, then this tool writes it. No consent
+/// token — re-prompting is generation (an LLM producing a new
 /// prompt), not judging, so it is admissible under the determinism constraint.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ReconfigureLocalAgentRequest {

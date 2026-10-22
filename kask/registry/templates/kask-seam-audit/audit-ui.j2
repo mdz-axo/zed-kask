@@ -24,8 +24,8 @@ code outside the above.
 - **D33** — the swarm panel destructive-action confirmation flow: the
   `DestructiveAction` enum (`DeleteSwarm`/`RemoveAgent`), the
   `pending_destructive` two-step stage→confirm flow, and the active-run warning
-  shown for ABW deletes. Verify the confirmation gate fires on every
-  destructive path (local delete, ABW delete, remove-agent) and that the
+  shown for deletes. Verify the confirmation gate fires on every
+  destructive path (local delete, remove-agent) and that the
   warning text is non-empty when active runs exist. A destructive action that
   bypasses `pending_destructive` is a blocking finding.
 

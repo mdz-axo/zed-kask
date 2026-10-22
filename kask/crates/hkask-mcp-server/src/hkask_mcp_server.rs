@@ -250,8 +250,8 @@ macro_rules! dual_axis_annotate {
             // OUT_DIR, so the totality test derives its expectations from
             // the live tool surface (build.rs scan), never a hardcoded
             // list. The module-level `allow(dead_code)` covers the sibling
-            // `CLOUD_SWARM_TOOL_NAMES`-style consts a server's build.rs may
-            // emit but only its own router test reads.
+            // const sets a server's build.rs may emit but only its own
+            // router test reads.
             include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
 
             /// P5.4: every registered tool must carry a process AND a

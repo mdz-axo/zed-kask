@@ -1,11 +1,10 @@
-{# goal: Propose evidence-grounded swarm roster/delegation changes for the observed deficit. Treat PSO/ACO/Reynolds as design analogies, not measured swarm algorithms; local membership removal preserves agent cards, ABW firing follows its consent and workspace contracts. #}
+{# goal: Propose evidence-grounded swarm roster/delegation changes for the observed deficit. Treat PSO/ACO/Reynolds as design analogies, not measured swarm algorithms; local membership removal preserves agent cards. #}
 [inference]
 contract:
   input:
     swarm_state: object
     orientation: object
     task: string
-    mode: string
     failed_edits: array
     influence_scores: object
     second_order: object
@@ -15,10 +14,10 @@ contract:
     respects_no_delegation_chains: boolean
     delegate_notes: string
 ---
-{# DECIDE only proposes; ACT chooses the live ABW or local tool. Delegation
+{# DECIDE only proposes; ACT chooses the live local tool. Delegation
    remains one level deep, and roster removal never implies card deletion. #}
 
-You are a swarm-composition strategist. Propose changes for the observed local or ABW swarm. PSO/ACO/Reynolds provide candidate-generation analogies; only subsequent measured state and task outcomes judge whether a move helped.
+You are a swarm-composition strategist. Propose changes for the observed local swarm. PSO/ACO/Reynolds provide candidate-generation analogies; only subsequent measured state and task outcomes judge whether a move helped.
 
 ## Swarm State (from SENSE)
 ```json
@@ -52,10 +51,10 @@ under the same deficit and the same roster shape that already failed to improve
 ```json
 {{ influence_scores | tojson }}
 ```
-Per-agent_type running sum of `d_delta` after hiring/firing that type. A sum
+Per-agent_type running sum of `d_delta` after adding/removing that type. A sum
 <= 0 means the agent type has been measured to DEGRADE the swarm over the
 recent window (some agent types fail to improve or even degrade).
-**Guard**: reject a `hire` move of an agent_type whose influence score is
+**Guard**: reject an `add` move of an agent_type whose influence score is
 <= 0 — prune before searching (S7's deterministic "prune before search").
 Record the rejection in the move's rationale (`rejected_by: influence_guard`).
 {% endif %}
@@ -75,90 +74,67 @@ directive in delegate_notes for the operator.
 
 ## Step 1 — Select the tuning palette by deficit class
 
-Apply the tuning palette below (PSO / ACO / Reynolds terms mapped onto hire / fire / delegate):
+Apply the tuning palette below (PSO / ACO / Reynolds terms mapped onto add / remove / delegate):
 
 ### If deficit_class = "variety_deficit"
-Hire agents whose `accepts[]`/`produces[]` cover the uncovered transforms.
+Add agents whose `accepts[]`/`produces[]` cover the uncovered transforms.
 **Anchor: ACO pheromone deposition** — "as more ants find the path, the
-concentration of pheromone gets stronger" (Bansal 2019). Each hire
+concentration of pheromone gets stronger" (Bansal 2019). Each add
 strengthens the path to the uncovered region of the transform space.
 
-For each uncovered transform, propose a `hire` move naming the agent_type
-and the accepts/produces it must cover. Prefer agents already in the
-catalogue whose dependencies are satisfiable by the current roster.
+For each uncovered transform, propose an `add` move naming the agent_type
+and the accepts/produces it must cover. Prefer agents already registered
+locally whose dependencies are satisfiable by the current roster.
 
-{% if mode == "local" %}
-In local mode, a named swarm has a roster. A `hire` move uses an existing registered card or creates/clones one if needed, then adds it with `swarm_add_agent_local(swarm_id, agent_name)`. A `remove` move removes roster membership with `swarm_remove_agent_local`; it does not delete the card. Permanent `swarm_remove_local` is a distinct operator-authorized deletion, not composition tuning.
-{% else %}
-Prefer agents already in the ABW catalogue whose dependencies are
-satisfiable by the current roster. When a near-match agent exists but
-needs customization, fork it via `swarm_fork_agent` (fermi v0.10.16)
-to create a `{source}_fork_{n}` derivative (the source must have a
-slug-compliant name).
-{% endif %}
+A named swarm has a roster. An `add` move uses an existing registered card or creates one if needed, then adds it with `swarm_add_agent_local(swarm_id, agent_name)`. A `remove` move removes roster membership with `swarm_remove_agent_local`; it does not delete the card. Permanent `swarm_remove_local` is a distinct operator-authorized deletion, not composition tuning.
 
-**Authoring when no catalogue agent covers the transform.** If no existing
-or forkable catalogue agent covers an uncovered required transform, propose an
+**Authoring when no registered card covers the transform.** If no existing
+card covers an uncovered required transform, propose an
 `author_agent` move (agent creation + authoring as a first-class composition
-primitive, not just an implicit side-effect of "hire"). The move carries:
+primitive, not just an implicit side-effect of "add"). The move carries:
 `agent_type`, `description`, a draft `system_prompt` authored for the transform,
 `accepts`/`produces` (the uncovered transform's input/output types), and an
 optional `model`/`mcp_tools`/`skills`. Authoring the prompt:
-{% if mode == "local" %}
-- In local mode ACT creates the card with `swarm_create_local_agent` only when it does not already exist, then calls `swarm_add_agent_local` for the named swarm. Creation alone is not member-scoped delegation authority.
-{% else %}
-- In abw mode, seed the prompt via `swarm_generate_prompt` (ABW's authoring
-  aid) when the move did not carry a drafted prompt, optionally enrich the
-  agent's knowledge graph via `swarm_generate_ontology`, then create the agent
-  via `swarm_create_agent`. Authoring is followed by a `hire` move (consent-
-  gated) to add the new agent to the workspace — emit the `author_agent` move
-  and a dependent `hire` move for the same `agent_type`.
-{% endif %}
+- ACT creates the card with `swarm_create_local_agent` only when it does not already exist, then calls `swarm_add_agent_local` for the named swarm. Creation alone is not member-scoped delegation authority.
 Record the move's `authored_card` = { agent_type, description, system_prompt,
 accepts, produces, model?, mcp_tools?, skills? } so ACT can create it.
 
 ### If deficit_class = "coherence_deficit" + coherence_low_diversity
-Hire a diverse agent (different agent_type or model from the current
+Add a diverse agent (different agent_type or model from the current
 monoculture). List redundant duplicates (same agent_type + model as an
-existing hire) under `redundant_candidates` in the move's rationale. In
-**local mode**, a redundant member can be removed from this swarm's roster with
-`swarm_remove_agent_local` (propose a `remove` move). Its saved card remains available to other swarms. In **abw mode**, propose a `remove`/fire move → `swarm_fire`
-(verified live 2026-08-02 — removes the agent from the roster; the agent
-itself is not deleted).
+existing member) under `redundant_candidates` in the move's rationale. A
+redundant member can be removed from this swarm's roster with
+`swarm_remove_agent_local` (propose a `remove` move). Its saved card remains
+available to other swarms.
 **Anchor: PSO** — raise c1 (cognitive scaling) and lower omega (inertia) to
 broaden the search; **ACO evaporation** — "pheromone evaporates with time
 and hence the longer paths will have more evaporation" (Bansal 2019) —
 flagging/removing the redundant duplicate is the evaporation signal.
 
 ### If deficit_class = "coherence_deficit" + coherence_low_alignment
-Hire or assign a coordinator compound agent.
+Add or assign a coordinator agent.
 **Anchor: PSO** — raise c2 (social scaling) to pull toward gbest; **Reynolds
 alignment rule** — "steer toward the average heading of local flockmates"
 (Labra 2026). The coordinator aligns the diverse agents.
-Prefer ABW's existing compound agents (social_media_studio,
-cohere_and_coordinate, intention_coordinator) when their dependencies match.
+Prefer existing registered coordinator-type agents when their dependencies match.
 
 ### If deficit_class = "loop_break"
 Do NOT change composition. Propose a reconciliation repair:
-- Re-query `/api/wallet/transactions` for the un-reconciled dispatch.
-- Backfill the missing curator consent record.
-The loop-break is a feedback-loop failure, not a capability gap; hiring
+- Re-read the un-reconciled dispatch's receipt (`swarm_task_board`,
+  `swarm_list_local_threads`, or the live dispatch result) and feed the
+  observed result back.
+- Surface the un-reconciled dispatch in delegate_notes for the operator.
+The loop-break is a feedback-loop failure, not a capability gap; adding
 agents cannot fix it.
 
 ### If deficit_class = "on_target"
 Propose no moves. Set proposed_moves = [] and note that the swarm is
 on-target.
 
-### If ABW wallet capacity is low
+### Capacity signals
 
-{% if mode == "local" %}
 Local results do not carry balance or energy. Do not infer capacity or propose
 funding from `per_agent_metrics.energy = null`.
-{% else %}
-A verified ABW wallet reading can constrain cloud spend. If insufficient,
-request operator funding or defer the credit-consuming move; never treat a
-missing reading as zero. Local `delegate_results` do not measure ABW balance.
-{% endif %}
 
 ### If orientation.latency_outliers is non-empty (Cybernetic Swarm Plan C4, regulated)
 
@@ -166,59 +142,46 @@ The caller's `SWM-2` gate (ORIENT phase) surfaced agents whose `latency_ms`
 exceeded `max(2 * median, 1000)`. This is the C4 latency regulation the audit
 added — previously
 `latency_ms` was sensed but no DECIDE move consumed it. For each outlier,
-propose a `reconfigure_agent` move (local mode) seeded with the outlier's
+propose a `reconfigure_agent` move seeded with the outlier's
 failure mode (latency, not a wrong answer): the re-prompt should instruct the
 agent to reduce tool-loop rounds, simplify its tool use, or switch to a faster
 model — the goal is to bring its latency under `threshold_ms` without losing
-coverage. In abw mode (no in-place reconfigure tool), propose a `remove`/fire
-move (`swarm_fire`) plus a fresh `hire` (or `author_agent`) of a faster
-variant. Record `rationale.rejected_by`-style note: `triggered_by: latency`
+coverage. Record `rationale.rejected_by`-style note: `triggered_by: latency`
 with the `latency_ms` and `threshold_ms`. Do NOT reconfigure a latency outlier
 whose `task_success.pass = false` is already handled by the C6 fault rule
 below — the task-failure reconfiguration takes precedence (fix correctness
 first, then speed).
 
 ### If orientation.agent_at_fault is non-null (Cybernetic Swarm Plan C6)
-The caller's `SWM-2` gate (ORIENT phase) attributed fault to a specific agent. A historical `fault_count` may be used only if the invoking agent reconciled actual prior receipts or `swarm_task_board` entries and carried the counted agent IDs forward. No registered automatic accumulator produces this map. Without observed history, use the current `agent_at_fault` as one incident and do not call it the most-consistently-blamed agent. Before firing the
+The caller's `SWM-2` gate (ORIENT phase) attributed fault to a specific agent. A historical `fault_count` may be used only if the invoking agent reconciled actual prior receipts or `swarm_task_board` entries and carried the counted agent IDs forward. No registered automatic accumulator produces this map. Without observed history, use the current `agent_at_fault` as one incident and do not call it the most-consistently-blamed agent. Before removing the
 blamed agent, consider **reconfiguring** it in place — the Modify-Block action
 and the MASS prompt axis:
 
-Propose a `reconfigure_agent` move (local mode) that:
-1. Calls `swarm_generate_prompt` seeded with the blamed agent's current
+Propose a `reconfigure_agent` move that:
+1. Calls `swarm_generate_prompt_local` seeded with the blamed agent's current
    `system_prompt` + the per-fault log (the deterministic trace of WHY it
    failed — the `failure_detail` from `agent_at_fault`) to produce a new
    prompt.
 2. Writes the new prompt via `swarm_reconfigure_local_agent` (which preserves
-   `agent_id`/`agent_type`/`description`/`accepts`/`produces`/`dependencies`/
-   `cloud_id` and reloads the registry).
+   `agent_id`/`agent_type`/`description`/`accepts`/`produces`/`dependencies`
+   and reloads the registry).
 
 The *scoring* of candidate prompts must be deterministic (C0's `s`), not an LLM
-judge. Reconfigure is preferred over fire when the blamed agent's type covers
-a required transform (firing would re-open the variety deficit); fire when the
-agent is structurally redundant or its type is negatively influential (C7). In
-abw mode there is no in-place reconfigure tool — propose a `remove`/fire move
-and a fresh `hire` with the improved prompt instead.
+judge. Reconfigure is preferred over remove when the blamed agent's type covers
+a required transform (removal would re-open the variety deficit); remove when the
+agent is structurally redundant or its type is negatively influential (C7).
 
 ## Step 2 — Respect invariants
 
 For every proposed move:
-- **No delegation chains**: any `delegate` move is one level deep. The
-  delegate receives all workspace tools EXCEPT delegate_to_agent and
-  execute_agent. Set respects_no_delegation_chains = true only if every
-  delegate move satisfies this.
-- **Dependencies satisfiable**: for a `hire` of a compound agent, its
-  `dependencies { required[] }` must be satisfiable by the post-hire roster
-  (the compound agent auto-hires its team, but the required dependencies must
-  exist in the catalogue).
-{% if mode == "local" %}
+- **No delegation chains**: any `delegate` move is one level deep — a local
+  delegate does not itself further delegate. Set
+  respects_no_delegation_chains = true only if every delegate move satisfies
+  this.
+- **Dependencies satisfiable**: for an `add` of a compound agent, its
+  `dependencies { required[] }` must be satisfiable by the post-add roster.
 - Local delegation has no credit gate. Observe `tokens_used` and `latency_ms`
   from executed results; include `swarm_id` for shared-thread delegations.
-{% else %}
-- **Credit awareness** (verified live 2026-08-02): own-agent hire via `/add` is
-  a flat 2 cr fee; third-party `/hire` is a flat 5 cr base (quote `total` =
-  base + required + optional); each @mention 1 cr + tokens, each delegation
-  1 cr + tokens. Record estimated_credits per move.
-{% endif %}
 
 ## Step 3 — Record tuning_rationale
 
@@ -228,14 +191,12 @@ reynolds_alignment, reynolds_cohesion) and why, given the sensed state.
 
 ## Output
 
-Produce a JSON object with: proposed_moves (array of { move_type: "hire"|
+Produce a JSON object with: proposed_moves (array of { move_type: "add"|
 "delegate"|"remove"|"reconfigure_agent"|"author_agent", agent_id_or_type,
-estimated_credits? (ABW only), covers_transforms?, redundant_candidates?,
+covers_transforms?, redundant_candidates?,
 authored_card?, rationale }), tuning_rationale
 (object mapping move → swarm-algorithm term), respects_no_delegation_chains
-(boolean), delegate_notes. `remove` moves are local-mode only via
-`swarm_remove_agent_local`; in abw mode a `remove`/fire move is actionable via
-`swarm_fire` (roster removal; the agent itself is not deleted —
-`swarm_delete_agent` is the permanent-delete tool). `reconfigure_agent` moves
-are local-mode only via `swarm_reconfigure_local_agent` (C6); in abw mode,
-propose a fire+hire-with-improved-prompt pair instead.
+(boolean), delegate_notes. `remove` moves remove roster membership via
+`swarm_remove_agent_local` (the saved card is not deleted — `swarm_remove_local`
+is the permanent-delete tool, a distinct operator-authorized action).
+`reconfigure_agent` moves run via `swarm_reconfigure_local_agent` (C6).

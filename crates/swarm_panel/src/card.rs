@@ -111,7 +111,6 @@ impl SwarmPanel {
                                         Tooltip::text("More actions"),
                                     )
                                     .menu({
-                                        let panel_handle = panel_handle.clone();
                                         move |window, cx| {
                                             let panel_handle = panel_handle.clone();
                                             let remove_name = remove_name.clone();

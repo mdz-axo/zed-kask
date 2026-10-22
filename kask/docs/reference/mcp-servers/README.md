@@ -41,7 +41,7 @@ mds_categories: [composition, domain]
 | [Prediction Markets](prediction-markets.md) | `kask/mcp-servers/hkask-mcp-prediction-markets` | Polymarket/Kalshi base rates, calibration, residuals | 27 |
 | [Research](research.md) | `kask/mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds, evidence scoring, research-run ledger, paper identity | 27 |
 | [Scenarios](scenarios.md) | `kask/mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) with prospective declaration, equity persistence and raw loss | 22 |
-| [Swarm](swarm.md) | `kask/mcp-servers/hkask-mcp-swarm` | Agent Bestiary World swarms + Xaman Ek curator + local swarm substrate (v2 §15) | 91 |
+| [Swarm](swarm.md) | `kask/mcp-servers/hkask-mcp-swarm` | Local swarm agents, local swarms, A2A collaboration, and the swarm-intelligence substrate | 37 |
 
 ### Count verification (unified 2026-10-05; re-verified 2026-10-17)
 

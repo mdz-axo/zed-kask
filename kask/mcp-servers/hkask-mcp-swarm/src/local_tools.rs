@@ -1103,10 +1103,9 @@ impl SwarmServer {
         .await
     }
 
-    /// Get a single local agent's full card — the local analog of
-    /// `swarm_get_agent` (fermi's `GET /api/agents/:id`). Returns the complete
+    /// Get a single local agent's full card. Returns the complete
     /// `LocalAgentCard` (system prompt, contracts, sampling, valence,
-    /// dependencies, sync link) for one agent, so a caller does not have to
+    /// dependencies) for one agent, so a caller does not have to
     /// list the whole registry and filter.
     /// Resolve a local agent's card by name — the shared admission of the
     /// local-agent tools: a non-empty name, then a registry lookup that
@@ -1143,7 +1142,7 @@ impl SwarmServer {
     }
 
     #[tool(
-        description = "Get a single local agent's full card (the local analog of swarm_get_agent). Returns the complete LocalAgentCard — system prompt, input/output contracts, sampling, valence, dependencies, and the cloud sync link."
+        description = "Get a single local agent's full card. Returns the complete LocalAgentCard — system prompt, input/output contracts, sampling, valence, and dependencies."
     )]
     pub(crate) async fn swarm_get_local_agent(
         &self,
@@ -1799,10 +1798,9 @@ impl SwarmServer {
         .await
     }
 
-    /// List all local swarms (id, name, mission, members, created_at). The
-    /// local counterpart of `swarm_get_swarm` (no-id list mode).
+    /// List all local swarms (id, name, mission, members, created_at).
     #[tool(
-        description = "List all local swarms. Each entry has swarm_id, name, mission, members (agent ids), and created_at. Read-only. Local counterpart of swarm_get_swarm list mode."
+        description = "List all local swarms. Each entry has swarm_id, name, mission, members (agent ids), and created_at. Read-only."
     )]
     pub(crate) async fn swarm_list_local_swarms(
         &self,

@@ -1,8 +1,7 @@
-//! Local swarm registry — the local replica of an ABW workspace/team.
+//! Local swarm registry — named local team rosters on disk.
 //!
 //! A local swarm is a named grouping of local agent ids: `{swarm_id, name,
-//! mission, members}`. It mirrors an ABW workspace (created via
-//! `swarm_create_swarm`'s `POST /teams`) but lives on disk, costs nothing, and
+//! mission, members}`. It lives on disk, costs nothing, and
 //! has no consent gate. Local delegation has no budget gate either — no
 //! local budget exists. The registry owns the roster, while scoped delegation
 //! checks that roster and reads/writes the ordered conversation through

@@ -73,10 +73,6 @@ classDiagram
         +overrides: Map
     }
     class KaskSwarmSettings {
-        +mode: SwarmModeConfig
-        +api_url: String
-        +max_credits_per_dispatch: u32
-        +curator_consent_default: bool
         +default_agent_model: String
         +a2a_http_enabled: bool
         +embedding_dim: usize
@@ -118,7 +114,7 @@ by `run_pending_db_passphrase_rotation` (`crates/zed/src/main.rs:373`) — see
 | `KaskMemorySettings` | consolidation 300s; confidence 0.3; recall 5 at 0.3; auto-inject; federated auto-inject off with empty `federated_source_ids`; distillation 600s/300s; memory life 90 from `MemoryStore::default_memory_life_days`; forgetting 7 | `kask/crates/kask_bridge/src/settings.rs:284-300`; `kask/crates/hkask-memory/src/memory_store.rs:199` |
 | `KaskCondenserSettings` | normal profile; incoming-result compression off | `kask/crates/kask_bridge/src/settings.rs:320-326` |
 | `KaskCorpusSettings` | dimension 1024; embedding default `OpenRouter/qwen/qwen3-embedding-8b` (MRL — every embed request carries `dimensions = embedding_dim`); template root `kask/registry` | `kask/crates/kask_bridge/src/settings.rs:377-383` |
-| `KaskSwarmSettings` | ABW mode; empty URL; credit ceiling 50; curator consent off; A2A HTTP off; dimension 1024; empty model override | `kask/crates/kask_bridge/src/settings.rs:496-512` |
+| `KaskSwarmSettings` | Local substrate only; A2A HTTP off; dimension 1024; empty model override | `kask/crates/kask_bridge/src/settings.rs` |
 | `KaskMediaSettings` | STT and vision use shared constants; TTS/image/video empty | `kask/crates/kask_bridge/src/settings.rs:555-566` |
 | `KaskModelsSettings` | default GLM 5.3; classifier GLM 5.2; QA generator empty; OCR `ollama/glm-ocr:latest`; reranker from `DEFAULT_RERANK_MODEL` | `kask/crates/kask_bridge/src/settings.rs:647-667` |
 

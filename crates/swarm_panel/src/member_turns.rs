@@ -181,14 +181,11 @@ impl MemberTurnsState {
     }
 }
 
-fn selected_member_id<'a>(selected_local_swarm: Option<&'a str>) -> Option<&'a str> {
+fn selected_member_id(selected_local_swarm: Option<&str>) -> Option<&str> {
     selected_local_swarm
 }
 
-fn inspected_member_id<'a>(
-    archived_id: Option<&'a str>,
-    active_id: Option<&'a str>,
-) -> Option<&'a str> {
+fn inspected_member_id(archived_id: Option<&str>, active_id: Option<&str>) -> Option<&'a str> {
     archived_id.or(active_id)
 }
 

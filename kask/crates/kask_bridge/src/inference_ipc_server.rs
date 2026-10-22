@@ -2218,7 +2218,7 @@ mod tests {
         let request = make_tool_invoke_request(
             "kanban",
             "kanban_task_create",
-            Some(vec!["swarm/swarm_delegate".to_string()]),
+            Some(vec!["swarm/swarm_delegate_local".to_string()]),
         );
 
         let outcome = dispatch(

@@ -78,7 +78,7 @@ pub struct KaskSettings {
     /// Prediction-markets data-service configuration.
     pub prediction_markets: KaskPredictionMarketsSettings,
 
-    /// Swarm (Agent Bestiary World) MCP server configuration.
+    /// Swarm MCP server configuration (local swarm agents and local swarms).
     pub swarm: KaskSwarmSettings,
 
     /// Media MCP server configuration: research transcription and vision models.

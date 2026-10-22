@@ -1,4 +1,4 @@
-{# goal: Classify the gap between sensed state and target condition into one of three deficit classes (or on-target): (a) variety deficit — required_transforms not covered; (b) coherence deficit — Thagard coherence flat/declining OR diversity below floor (premature convergence, the PSO/ACO failure mode); (c) loop-break — un-reconciled dispatches or un-acknowledged curator data-sharing. Mode-agnostic: operates on the state shape from SENSE, not the data source. #}
+{# goal: Classify the gap between sensed state and target condition into one of three deficit classes (or on-target): (a) variety deficit — required_transforms not covered; (b) coherence deficit — Thagard coherence flat/declining OR diversity below floor (premature convergence, the PSO/ACO failure mode); (c) loop-break — un-reconciled dispatches. Operates on the state shape from SENSE, not the data source. #}
 [inference]
 contract:
   input:
@@ -69,7 +69,7 @@ feeds `delegate_results` from a real `swarm_execute_plan_local` run.
 Classify the gap into exactly one of:
 
 ### (a) Variety deficit
-`variety_coverage < target`. The swarm's hired agents do not cover the task's
+`variety_coverage < target`. The swarm's member agents do not cover the task's
 required_transforms. This is an Ashby requisite-variety failure: the swarm's
 response repertoire does not span the disturbance set. (Anchor: Ashby's Law of
 Requisite Variety.)
@@ -89,10 +89,8 @@ Sub-classify: `coherence_low_diversity` (needs diversification) vs
 `coherence_low_alignment` (diverse but not coordinated — needs a coordinator).
 
 ### (c) Loop-break
-For ABW only: un-reconciled cloud dispatches (estimated_credits not matching
-actual spend in wallet/transactions) OR un-acknowledged curator data-sharing.
-For local swarms: an attempted delegation without an observed result or a
-surfaced execution failure is a loop-break; there is no local wallet. This is a cybernetic
+An attempted delegation without an observed result or a
+surfaced execution failure is a loop-break. This is a cybernetic
 closure failure — the feedback loop is open. (Anchor: .rules
 "unwrap_or(0) on regulation-loop sense inputs" trap.)
 
@@ -109,22 +107,24 @@ task is largely one-shot). (Anchor: Axelrod 1984, cooperation without central
 authority; Henrich, cooperative dilemmas.)
 
 - Cooperation problem → DECIDE should favor reciprocity-based coordination
-  (TIT FOR TAT / generous TFT) and a coordinator compound agent.
-- Division-of-labor problem → DECIDE should favor hiring to cover the missing
-  transforms; coordination is structural (dependencies), not strategic.
+  (TIT FOR TAT / generous TFT) and a coordinator agent.
+- Division-of-labor problem → DECIDE should favor adding agents to cover the
+  missing transforms; coordination is structural (dependencies), not
+  strategic.
 
 ## Step 3 — Cybernetic 5-property assessment (only for loop-break)
 
 If the deficit is (c) loop-break, delegate to `pragmatic-cybernetics` for the
 5-property assessment of the swarm dispatch loop:
-- **Polarity**: is cost feeding back to the dispatch gate, or is it a
-  reinforcing loop (more dispatches → more credits → no stop)?
-- **Delay**: ABW API latency — is state stale when the gate reads it?
-- **Gain**: N agents × M calls = unbounded cost amplification without a
-  per-dispatch budget gate.
-- **Closure**: are credits consumed AND curator data-sharing both fed back to
-  the operator?
-- **Fidelity**: ABW streaming granularity — is the state read fine enough?
+- **Polarity**: are dispatch results feeding back to the composition decision,
+  or is it a reinforcing loop (more dispatches → no observed receipts → no
+  stop)?
+- **Delay**: execution latency — is state stale when the gate reads it?
+- **Gain**: N agents × M calls = unbounded work amplification without receipt
+  discipline.
+- **Closure**: are dispatch outcomes fed back to the operator (and into
+  ORIENT's fault attribution)?
+- **Fidelity**: result telemetry granularity — is the state read fine enough?
 
 Record the assessment in cybernetic_assessment. For other deficit classes,
 set cybernetic_assessment = null.
