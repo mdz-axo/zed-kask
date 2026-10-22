@@ -5425,6 +5425,7 @@ dependencies = [
  "paths",
  "project",
  "prompt_store",
+ "recent_projects",
  "release_channel",
  "remote_connection",
  "reqwest_client",
@@ -5435,6 +5436,7 @@ dependencies = [
  "terminal_view",
  "theme",
  "theme_settings",
+ "title_bar",
  "util",
  "watch",
 ]
@@ -9430,6 +9432,7 @@ dependencies = [
  "language_model_core",
  "proptest",
  "r2d2",
+ "remote_connection",
  "rmcp",
  "rustix",
  "schemars 1.0.4",
