@@ -66,6 +66,13 @@ rustix.workspace = true
 # Local file URI fixtures; production path parsing belongs to the canonical service.
 url.workspace = true
 agent = { workspace = true, features = ["test-support"] }
+# Feature-propagation-only dev-dep: the `agent`/`acp_thread`/`workspace`
+# `test-support` requests above forward `remote/test-support` on (via
+# `project`), exposing `RemoteConnectionOptions::Mock` — while
+# `remote_connection`'s Mock match arm is gated on its OWN `test-support`.
+# Both must be in sync whenever `remote/test-support` is on (the
+# swarm_panel precedent), so the pairing rides this dev closure too.
+remote_connection = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
 agent-client-protocol.workspace = true
 acp_thread = { workspace = true, features = ["test-support"] }
@@ -82,4 +89,11 @@ language_model = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true
+
+[package.metadata.cargo-machete]
+# Feature-propagation-only dev-dep (see the comment at the dev-dependencies
+# entry): never `use`d in source — it exists to pair remote_connection's
+# test-support with the remote/test-support the rest of this dev closure
+# turns on (the D80 trap).
+ignored = ["remote_connection"]
 
