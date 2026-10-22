@@ -588,7 +588,7 @@ pub struct CreateLocalAgentRequest {
     pub model_params: Option<AnyJsonValue>,
     /// Per-card declared evaluators (the evaluator contract). When present,
     /// every `swarm_delegate_local` call to this agent runs them against the
-    /// response and stamps a deterministic `task_success` verdict.
+    /// response and stamps its match result under `task_success`.
     #[serde(default)]
     pub evaluators: Option<Vec<crate::local_registry::DeclaredEvaluator>>,
     /// Opt-in structured reasoning trace. When true, the agent's executor
@@ -1151,7 +1151,7 @@ pub struct PlanDelegation {
     pub agent_name: String,
     /// The task text to send to the agent.
     pub task: String,
-    /// Optional deterministic evaluator. When provided, the tool runs the
+    /// Optional response predicate. When provided, the tool runs the
     /// check after the delegation and stamps `task_success` onto the result.
     /// When absent, `task_success` is omitted and the board remains Pending.
     pub evaluator: Option<PlanEvaluator>,

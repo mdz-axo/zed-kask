@@ -660,7 +660,7 @@ impl SwarmServer {
             .await
             .map_err(map_local_swarm_error)?;
             // Evaluator contract (phase 4): a card-declared evaluator is the
-            // agent's own response predicate. Run each; the verdict passes only if ALL
+            // agent's own response predicate. The result passes only if ALL
             // declared evaluators pass (they are conjunctive expectations
             // about the response, not alternatives). A bad evaluator spec
             // propagates as an error rather than stamping `pass: false` —
@@ -694,9 +694,9 @@ impl SwarmServer {
             // artifact, two uses").
             self.validate_produces(&req.agent_name, &agent.produces, &result.response);
             // Stigmergy (ACO pheromone trail): record the delegation's
-            // performance annotation to the agent's prefix-scoped semantic
+            // execution annotation to the agent's prefix-scoped semantic
             // memory. The SENSE phase can read these via
-            // `swarm_search_knowledge_local` to assess agent fitness across
+            // `swarm_search_knowledge_local` to inspect execution observations across
             // cascade invocations. Failures are logged (non-fatal) — the
             // delegation result is returned regardless. The narrative-passage
             // ingestion rode in `delegate_and_ingest` above.
@@ -2938,12 +2938,12 @@ impl SwarmServer {
     /// Execute a swarm-intelligence plan: run each delegation, evaluate each
     /// result (when an evaluator is provided), and return the collected
     /// `LocalDelegateResult` array with response-predicate results under
-    /// `task_success`. No evaluator leaves board status Pending; a predicate
+    /// `task_success`. Without an evaluator, board status stays Pending; a predicate
     /// match is not certification of task accomplishment. With a swarm id, only roster members run, using
     /// prior durable turns; without an id, delegation stays standalone.
     /// Capped at 10 delegations (same as fanout). Each runs sequentially.
     #[tool(
-        description = "Execute a swarm-intelligence plan: run each delegation via the local runtime, evaluate each result with a deterministic check (when an evaluator is provided), and return the collected LocalDelegateResult array with response-predicate results under task_success (not task-truth certification). No evaluator leaves the task board Pending. Capped at 10 delegations. Each delegation runs sequentially. With swarm_id, members use the durable ordered thread; without it, delegations remain standalone. The returned array is ready to feed back to swarm-intelligence as delegate_results. No consent token — local mode."
+        description = "Execute a swarm-intelligence plan: run each delegation via the local runtime, evaluate each result with a deterministic check (when an evaluator is provided), and return the collected LocalDelegateResult array with response-predicate results under task_success (not task-truth certification). Without an evaluator, the task board stays Pending. Capped at 10 delegations. Each delegation runs sequentially. With swarm_id, members use the durable ordered thread; without it, delegations remain standalone. The returned array is ready to feed back to swarm-intelligence as delegate_results. No consent token — local mode."
     )]
     pub(crate) async fn swarm_execute_plan_local(
         &self,

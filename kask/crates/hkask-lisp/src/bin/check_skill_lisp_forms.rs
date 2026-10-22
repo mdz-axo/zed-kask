@@ -1201,27 +1201,6 @@ form: "(= (+ a b) 3)"
         })
     }
 
-    fn scientific_admission_env() -> serde_json::Value {
-        json!({
-            "ethics_safety": true, "feasibility": true, "rivals_differ": true,
-            "equivalence_prespecified": false, "identification": true,
-            "measurement_validity": true, "information_adequacy": true,
-            "bias_control": true, "preregistration": true, "reproducibility": true
-        })
-    }
-
-    fn scientific_selection_env() -> serde_json::Value {
-        json!({
-            "candidate_drafts": [{"candidate_id": "a"}, {"candidate_id": "b"}],
-            "gate_results": [
-                {"candidate_id": "a", "result": "execute"},
-                {"candidate_id": "b", "result": "design_void: not_identified"}
-            ],
-            "selected_design": {"candidate_id": "a"},
-            "strongest_rejected_alternative": {"candidate_id": "b"}
-        })
-    }
-
     fn scientific_findings_env() -> serde_json::Value {
         json!({
             "design_valid": true, "measurement_valid": true,
@@ -1414,109 +1393,6 @@ form: "(= (+ a b) 3)"
                 json!(expected),
             );
         }
-    }
-
-    #[test]
-    fn scientific_gate_ed1_keeps_validity_noncompensatory() {
-        let form = skill_candidate("experimental-design", "blocked: ethics_safety");
-        let base = scientific_admission_env();
-        assert_scientific_case(&form, "admitted", &base, json!("execute"));
-        for (field, expected) in [
-            ("ethics_safety", "blocked: ethics_safety"),
-            ("feasibility", "blocked: infeasible"),
-            ("rivals_differ", "design_void: no_discrimination"),
-            ("identification", "design_void: not_identified"),
-            (
-                "measurement_validity",
-                "measurement_void: measurement_invalid",
-            ),
-            ("information_adequacy", "no-headroom: no_information"),
-            ("bias_control", "design_void: bias_uncontrolled"),
-            ("preregistration", "design_void: not_preregistered"),
-            ("reproducibility", "design_void: not_reproducible"),
-        ] {
-            let mut env = base.clone();
-            env[field] = json!(false);
-            assert_scientific_case(&form, field, &env, json!(expected));
-        }
-        assert_scientific_case(
-            &form,
-            "prespecified equivalence discriminates",
-            &scientific_env(
-                &base,
-                json!({"rivals_differ": false, "equivalence_prespecified": true}),
-            ),
-            json!("execute"),
-        );
-        assert_scientific_case(
-            &form,
-            "ethics cannot be compensated",
-            &scientific_env(
-                &base,
-                json!({"ethics_safety": false, "measurement_validity": false}),
-            ),
-            json!("blocked: ethics_safety"),
-        );
-    }
-
-    #[test]
-    fn scientific_gate_ed1s_selects_only_gated_survivors() {
-        let form = skill_candidate("experimental-design", "define unique-result-ids");
-        let base = scientific_selection_env();
-        assert_scientific_case(&form, "eligible selection", &base, json!(true));
-        for (case, changes) in [
-            (
-                "ineligible selection",
-                json!({"selected_design": {"candidate_id": "b"}}),
-            ),
-            (
-                "unknown selection",
-                json!({"selected_design": {"candidate_id": "other"}}),
-            ),
-            (
-                "selected equals rejected",
-                json!({"strongest_rejected_alternative": {"candidate_id": "a"}}),
-            ),
-            (
-                "unknown alternative",
-                json!({"strongest_rejected_alternative": {"candidate_id": "other"}}),
-            ),
-            (
-                "missing alternative",
-                json!({"strongest_rejected_alternative": null}),
-            ),
-            (
-                "missing receipt",
-                json!({"gate_results": [{"candidate_id": "a", "result": "execute"}]}),
-            ),
-            (
-                "duplicate receipt",
-                json!({"gate_results": [
-                    {"candidate_id": "a", "result": "execute"}, {"candidate_id": "a", "result": "execute"}
-                ]}),
-            ),
-            (
-                "equal counts do not prove coverage",
-                json!({"gate_results": [
-                    {"candidate_id": "a", "result": "execute"}, {"candidate_id": "other", "result": "execute"}
-                ]}),
-            ),
-        ] {
-            assert_scientific_case(&form, case, &scientific_env(&base, changes), json!(false));
-        }
-        assert_scientific_case(
-            &form,
-            "sole candidate needs no alternative",
-            &scientific_env(
-                &base,
-                json!({
-                    "candidate_drafts": [{"candidate_id": "a"}],
-                    "gate_results": [{"candidate_id": "a", "result": "execute"}],
-                    "strongest_rejected_alternative": null
-                }),
-            ),
-            json!(true),
-        );
     }
 
     #[test]

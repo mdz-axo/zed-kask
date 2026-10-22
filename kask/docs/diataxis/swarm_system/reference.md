@@ -73,11 +73,11 @@ All 48 are defined in
 | Apps | `swarm_list_apps`, `swarm_get_app`, `swarm_create_app`, `swarm_create_app_direct`, `swarm_update_app`, `swarm_publish_app`, `swarm_archive_app`, `swarm_spawn_app_workspace`, `swarm_list_app_workspaces`, `swarm_get_app_schema`, `swarm_fork_workspace_to_app` |
 | Workspace actions and files | `swarm_workspace_list_actions`, `swarm_workspace_pending_actions`, `swarm_workspace_mutate_document`, `swarm_workspace_fork_state`, `swarm_workspace_accept_action`, `swarm_workspace_reject_action`, `swarm_workspace_annotate`, `swarm_workspace_list_annotations`, `swarm_workspace_list_files`, `swarm_workspace_read_file`, `swarm_workspace_write_file` |
 
-The full 90-name surface is verified against the registered routers by the
+The full 89-name surface is checked against the registered routers by the
 name-set pin tests at
 `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs`.
 
-## Non-cloud tools — 42
+## Non-cloud tools — 41
 
 ### Local tools — 34
 
@@ -99,7 +99,7 @@ stats persistence at `kask/mcp-servers/hkask-mcp-swarm/src/agent_stats.rs`).
 `swarm_id` binds supported dispatches to roster membership and the ordered
 encrypted member conversation; without it they remain standalone
 (the binding mechanism `dispatch_in_thread` at
-`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs`and its dispatch callers). The eval
+`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs` and its dispatch callers). The eval
 suite's
 `swarm_id` only selects the task board.
 

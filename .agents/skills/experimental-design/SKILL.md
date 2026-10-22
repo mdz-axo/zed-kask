@@ -1,6 +1,6 @@
 ---
 name: experimental-design
-description: "Design discriminating hypothesis tests before scientific spend: normalize provenance-carrying hypotheses, compare materially different candidate designs, gate validity and information, bind an executor, and produce versioned DesignSpec and FindingsSpec artifacts."
+description: "Design discriminating hypothesis tests before scientific spend: preserve provenance, compare candidate designs through evidence and limitations, specify analysis and stopping, bind a real executor, and produce versioned DesignSpec and FindingsSpec artifacts without machine admission."
 ---
 
 # Experimental Design
@@ -20,7 +20,7 @@ Experimental design is the deep module between `falsifiability` and measurement.
 
 | Authority | Operational binding |
 |---|---|
-| Platt, “Strong Inference,” DOI `10.1126/science.146.3642.347` | Rival-prediction traceability and discrimination gate. |
+| Platt, “Strong Inference,” DOI `10.1126/science.146.3642.347` | Rival-prediction traceability and discriminating observations. |
 | NIST/SEMATECH Engineering Statistics Handbook, Process Improvement | Design-family selection, randomization/blocking/factorial structure, capable measurement systems, analysis and confirmation. |
 | JCGM 100:2008, DOI `10.59161/JCGM100-2008E`, and VIM | Measurement model, calibration, metrological traceability and uncertainty. |
 | Shadish–Cook–Campbell, *Experimental and Quasi-Experimental Designs for Generalized Causal Inference* (Houghton Mifflin, 2002; ISBN 0395615569) | Structural organizer for the four validity questions — statistical-conclusion, internal, construct, external/transport — mapped onto `DesignSpec` groups 4–7. **Partially verified** (research run `24d7fc791edc83f2`): only the publisher's bibliographic record and stated four-part structure were obtained; no accessible primary full text. Cite as an organizer, never quote, until the primary text is retrieved. |
@@ -33,7 +33,7 @@ Experimental design is the deep module between `falsifiability` and measurement.
 | NASA Glenn, “1901 Wind Tunnel Tests,” and Smithsonian Wright history | Measurement validity and transportability can fail while the focal hypothesis remains exposed: the Smeaton coefficient was revised; Lilienthal’s coefficients were valid for his geometry but did not transport to the Wrights’ different aspect ratio. |
 | Mayo, *Statistical Inference as Severe Testing* (2018) | Optional severity check: a hypothesis is corroborated only when it passed a test that probably would not have passed so well were it false. Never an automatic verdict. |
 | Lakatos, *The Methodology of Scientific Research Programmes* (1978) | The auxiliary-assumption ledger records progressive versus ad-hoc revisions as lineage context. It never protects a focal claim automatically. |
-| Capabilities researcher corpus (`corpus:researcher:`; 121,992 passages) | Cross-domain reminders bound to specific gates, retrieved from the corpus rather than recalled: Henrich (*Why Humans Cooperate*) — experiments permit direct testing of alternative theories, yet what is measured and manipulated may not transport to real life (ED-1 `rivals_differ` and the transportability limit); Lidwell (*Universal Principles of Design*) — artificial context and expectation effects can compromise laboratory validity (ED-1 `measurement_validity`); Miller & Page (*Complex Adaptive Systems*) — eliminate as many alternative hypotheses as possible through well-designed experiments, and ask of any model whether it has confounds and can be reproduced (candidate synthesis and ED-1 `bias_control`/`reproducibility`). Its same-named former skill is retired; query the corpus, never attempt skill activation. |
+| Capabilities researcher corpus (`corpus:researcher:`) | Retrieve cross-domain reminders with source provenance: Henrich on transport to real life, Lidwell on artificial context and expectation effects, Miller & Page on alternative hypotheses, confounds and reproducibility. These inform design questions, not machine admission. Its same-named former skill is retired; query the corpus rather than activating it. |
 
 Ontology anchors: derived-registry rulings are required for `experimental design`, `hypothesis testing`, `measurement uncertainty`, `randomized experiment`, `equivalence testing`, and `preregistration`. Until the runtime carrying those rulings is rebuilt, treat a coarse `5w1h_core` result as a routing state, never a private definition.
 
@@ -55,7 +55,7 @@ Ontology anchors: derived-registry rulings are required for `experimental design
 ## Initial and target condition
 
 - **Initial condition:** the outputs owned by `hypothesis-framer` and `falsifiability`, plus source provenance, unresolved assumptions, constraints, and executor inventory. No confirmatory observation may have been inspected for the design being authored.
-- **Target condition:** either (a) one selected, versioned `DesignSpec` that passed every applicable non-compensatory gate and names the strongest rejected alternative, or (b) a typed stop (`return_to_framer`, `return_to_falsifiability`, `blocked`, `measurement_void`, or `design_void`) naming the owner and missing evidence. After execution, the target extends to a `FindingsSpec` linked to the sealed design and real report references.
+- **Target condition:** a selected, versioned `DesignSpec` with an evidence-based rationale, strongest rejected alternative and disclosed limitations; or an explanation of what prevents a defensible design and who can supply the missing evidence. After execution, produce a `FindingsSpec` linked to the sealed design and real report references. Model-supplied assessments do not authorize execution or establish scientific validity.
 
 ## Step types (D/P labelling)
 
@@ -64,10 +64,9 @@ Ontology anchors: derived-registry rulings are required for `experimental design
 | Contract normalization, candidate generation and auxiliary-failure predictions | P | Source record, operator, domain expert, and the inherited discrimination matrix. |
 | Load-bearing-field ownership check | D over P-classified missing fields | `lisp_eval` ED-0. |
 | Candidate-set cardinality | D over generated drafts | `lisp_eval` ED-C. |
-| Applicability/validity gate | D over P-classified gate inputs | `lisp_eval` ED-1. |
-| Candidate selection after gates | P + D | P ranking among ED-1 survivors; `lisp_eval` ED-1S proves the chosen id is eligible and distinct from the rejected alternative. |
+| Design assessment and comparison | P | Cited evidence, measurement/identification arguments, domain expertise and the user's functional constraints; no boolean admission test. |
 | Formal finite invariants | D when used | `lean_check` with axiom audit; no `sorry`. |
-| Findings outcome rule | D over evidence classifications | `lisp_eval` ED-2I then ED-2. |
+| Findings consistency and label mapping | D over P-classified inputs | ED-2I checks stated consistency/report presence; ED-2 maps those classifications to a label, not scientific truth or clearance. |
 | Grounding and omissions audit | P + D | Decoupled `grounding-verify`, mechanical citation checks, operator review. |
 
 ## Canonical contracts
@@ -140,7 +139,7 @@ A false ED-0R result returns to normalization; no owner or missing field may dis
 (cond ((> (length framer_missing) 0) "return_to_framer") ((> (length falsifiability_missing) 0) "return_to_falsifiability") ((> (length provenance_missing) 0) "blocked: provenance") ((> (length constraints_missing) 0) "blocked: constraints") ((is_null hypothesis_spec) "blocked: malformed_normalization") (t "ready"))
 ```
 
-Only `ready` proceeds to design synthesis; it denotes normalization completeness, not scientific readiness. Keep bounded pilot/calibration objectives separate from powered confirmation of H1; pending design, measurement, precision and execution gates remain pending. A return carries **all** missing field names to their owning skill or operator; the first status identifies the earliest pipeline owner, not permission to drop later owners.
+`ready` denotes normalization completeness, not scientific readiness. Keep bounded pilot/calibration objectives separate from powered confirmation of H1; design, measurement, precision and executor questions still require evidence. A return carries **all** missing field names to their owning skill or operator; the first status identifies the earliest pipeline owner, not permission to drop later owners.
 
 ### 2. Synthesize materially different designs
 
@@ -168,36 +167,25 @@ Deliberately vary the source of discrimination where justified: randomized inter
 
 For every candidate, tabulate the expected observation under each rival **and** each material auxiliary failure: calibration error, leakage, confounding, model misspecification and domain shift. Reject any design whose possible outcomes cannot distinguish rivals or localize major failures. When measurement validity or transportability is uncertain, the draft includes a bounded calibration sub-experiment with its own acceptance criterion and `max_runs`; this localizes the fault without exonerating H1.
 
-### 3. Gate before ranking
+### 3. Assess and compare designs
 
-For each candidate, classify the ED-1 inputs and call `lisp_eval`:
+For each candidate, examine the actual evidence: can the proposed observations distinguish rivals or test a prespecified equivalence claim? What identifies the contrast? Are instruments and reference data calibrated for this population or system? What precision is achievable, which biases remain, and can the analysis, stopping rule and procedure be reproduced? Address ethics, safety and feasibility with concrete controls and constraints, not asserted completeness flags.
 
-```lisp
-(cond ((not ethics_safety) "blocked: ethics_safety") ((not feasibility) "blocked: infeasible") ((not (or rivals_differ equivalence_prespecified)) "design_void: no_discrimination") ((not identification) "design_void: not_identified") ((not measurement_validity) "measurement_void: measurement_invalid") ((not information_adequacy) "no-headroom: no_information") ((not bias_control) "design_void: bias_uncontrolled") ((not preregistration) "design_void: not_preregistered") ((not reproducibility) "design_void: not_reproducible") (t "execute"))
-```
+A suspect instrument, reference table or transport assumption calls for the bounded calibration sub-experiment. Localize instrument error, invalid reference data, analysis error or domain shift; none automatically exonerates H1. Disclose unresolved validity questions rather than converting them to permission through a boolean formula.
 
-A suspect instrument, reference table or transport assumption triggers the candidate's bounded calibration sub-experiment; it never automatically exonerates H1. `measurement_invalid` is deliberately broader than `instrument_invalid`: the auxiliary ledger must localize instrument error, invalid reference data, analysis error or domain shift rather than blame the instrument by default. Preserve literal `no-headroom: no_information` when closing this void through the current registry’s calibration exclusion convention.
-
-If no candidate returns `execute`, return `design_void: no_executable_candidate` with the complete per-candidate gate ledger and every fixable owner; preserve any `no-headroom: no_information` result verbatim in that ledger. Do not rank invalid candidates.
-
-When at least one candidate returns `execute`, render `experimental-design/select-design` over the **unchanged** candidate drafts and their ED-1 receipts:
+Render `experimental-design/select-design` over the retained candidate drafts and source-backed design constraints:
 
 ```json
 {
   "hypothesis_spec": {},
   "candidate_drafts": [],
-  "gate_results": [],
   "design_constraints": {}
 }
 ```
 
-Among `execute` candidates only, compare discrimination/elimination power, expected information gain, measurement and identification strength, robustness to auxiliary failure, cost, time, risk and reversibility. Efficiency cannot compensate for failed validity. Present the selected design and strongest rejected alternative. Then run ED-1S directly over the immutable drafts, deterministic receipts and selection output:
+Compare discrimination/elimination power, expected information, measurement and identification strength, robustness to auxiliary failure, cost, time, risk and reversibility. Efficiency cannot compensate for a known validity failure. Explain the selected design and strongest rejected alternative using their evidence and limitations. Preserve candidate provenance; a revision must say what changed and why, never silently rewrite the comparison.
 
-```lisp
-(begin (define unique-result-ids (lambda (rows seen) (if (= 0 (length rows)) true (let ((id (assoc "candidate_id" (car rows)))) (if (or (is_null id) (member id seen)) false (unique-result-ids (cdr rows) (cons id seen))))))) (define result-for (lambda (id rows) (if (= 0 (length rows)) "" (if (string= id (assoc "candidate_id" (car rows))) (assoc "result" (car rows)) (result-for id (cdr rows)))))) (define every-draft-gated (lambda (drafts rows) (if (= 0 (length drafts)) true (and (not (string= "" (result-for (assoc "candidate_id" (car drafts)) rows))) (every-draft-gated (cdr drafts) rows))))) (let ((selected_id (assoc "candidate_id" selected_design)) (rejected_id (if (is_null strongest_rejected_alternative) "" (assoc "candidate_id" strongest_rejected_alternative)))) (and (= (length candidate_drafts) (length gate_results)) (unique-result-ids gate_results (list)) (every-draft-gated candidate_drafts gate_results) (string= "execute" (result-for selected_id gate_results)) (if (> (length candidate_drafts) 1) (not (string= "" rejected_id)) true) (or (string= "" rejected_id) (and (not (string= "" (result-for rejected_id gate_results))) (not (string= selected_id rejected_id)))))))
-```
-
-A false ED-1S result returns to selection once; it never executes the selected protocol.
+If no defensible design is available, report the missing evidence or unavailable executor and the next useful action; do not fabricate a selection. The human retains functional decisions, judgment and veto. This design comparison neither authorizes measurements nor creates a new mandatory approval loop.
 
 ### 4. Specify precision, analysis and stopping
 
@@ -228,7 +216,7 @@ After execution, render `experimental-design/interpret-findings` with the sealed
 }
 ```
 
-The template classifies evidence but does not type the outcome. Before ED-2, run ED-2I to reject internally inconsistent classifications:
+The template proposes evidence classifications with cited bases; it does not establish their truth. ED-2I checks internal consistency and report presence only:
 
 ```lisp
 (and (not (and prediction_contradicted equivalence_met)) (if equivalence_met equivalence_prespecified true) (if (= (length run_reports) 0) (not measurement_valid) true))
@@ -242,7 +230,7 @@ Then call ED-2:
 (cond ((not design_valid) "design_void") ((not measurement_valid) "measurement_void") ((and prediction_contradicted precision_adequate) "rejected") ((and equivalence_prespecified equivalence_met precision_adequate) "evidence_of_practical_equivalence") ((and severe precision_adequate) "corroborated") (t "inconclusive"))
 ```
 
-Attach the exact ED-2 result as `FindingsSpec.typed_scientific_outcome`; do not ask a model to restate it.
+Attach the exact ED-2 result as `FindingsSpec.typed_scientific_outcome`, alongside the evidence bases and uncertainty of its input classifications. This deterministic mapping is not independent scientific adjudication, execution clearance or human acceptance; a label cannot strengthen its evidence.
 
 - `rejected`: an adequate discriminating design contradicted the prediction.
 - `corroborated`: the hypothesis survived a realistic opportunity for rejection; never proved.
@@ -257,19 +245,19 @@ Attach the exact ED-2 result as `FindingsSpec.typed_scientific_outcome`; do not 
 
 Run `bash kask/scripts/check-skill-lisp-forms.sh`. After corpus parsing, the same gate runs the `scientific_gate_` behavioral regressions in the Lisp checker against the **actual authored forms**, using the production evaluator; zero matching tests is a failure.
 
-The suite pins ED-0R/ED-0 ownership reconciliation and routing, ED-C cardinality/unique ids, every ED-1 admission branch, ED-1S survivor/alternative reconciliation, ED-2I report-presence/consistency checks, and all six ED-2 outcomes. Its negative and boundary cases include measurement/transport failure, underpowered plans, confounding, optional stopping, imprecise contradiction/non-rejection, valid equivalence, unknown selection ids and contradictory findings. In-memory mutations must remain parseable but disagree with the same decision oracles.
+The suite exercises the authored ED-0R/ED-0 ownership reconciliation and routing, ED-C cardinality/unique ids, ED-2I report-presence/consistency checks, and all six ED-2 label mappings. Negative cases include imprecise contradiction, equivalence and contradictory findings. These checks do not establish whether the supplied scientific classifications are correct.
 
 These tests check decision logic over classified inputs, not scientific validity or study execution. JSON null and empty objects/arrays are null-like in Lisp; ED-0R tests use a nonempty versioned spec for the nonnull case.
 
-If a candidate fails for a fixable design reason, re-enter candidate synthesis once with the named failure. Maximum two design passes. A second failure reports the typed stop and open assumption; it does not weaken the gate.
+Revise a design when new evidence or an identified repair warrants it, preserving the reason and lineage. If no useful next step is available, report the limitation rather than looping or weakening the scientific question.
 
 ## Registry Templates
 
 | Template | Purpose |
 |---|---|
 | `normalize-hypothesis.j2` | Normalize upstream framing and falsifiability artifacts into `hypothesis-spec-v1`, preserving provenance and returning missing load-bearing fields to their owner rather than inventing them. |
-| `synthesize-designs.j2` | Generate 2–5 materially different immutable candidate drafts, including rival-and-auxiliary prediction matrices and ED-1 inputs; it neither gates nor selects. |
-| `select-design.j2` | Rank only candidates whose recorded ED-1 result is `execute`, producing the complete selected `design-spec-v1` and strongest rejected alternative for ED-1S validation. |
+| `synthesize-designs.j2` | Generate materially different candidate drafts with rival-and-auxiliary predictions, evidence bases and limitations. |
+| `select-design.j2` | Compare retained drafts and produce the selected `design-spec-v1`, strongest rejected alternative and evidence-based rationale. |
 | `interpret-findings.j2` | Reconcile real executor reports against the sealed `DesignSpec` and emit `findings-spec-v1` with observations, uncertainty, deviations, limitations and ED-2 inputs; never turn imprecision or invalid measurement into support. |
 
 Copy these complete contexts at the render call sites; do not reconstruct them from prose.
@@ -289,7 +277,7 @@ Copy these complete contexts at the render call sites; do not reconstruct them f
 `experimental-design/select-design`:
 
 ```json
-{"hypothesis_spec": {}, "candidate_drafts": [], "gate_results": [], "design_constraints": {}}
+{"hypothesis_spec": {}, "candidate_drafts": [], "design_constraints": {}}
 ```
 
 `experimental-design/interpret-findings`:
@@ -303,8 +291,8 @@ Copy these complete contexts at the render call sites; do not reconstruct them f
 - No confirmatory data inspection before the design is complete and handed to `hypothesis-testing` for declaration. `experiment_propose` is preregistration; `experiment_seal` is the later fingerprint/headroom attestation.
 - Never “blame the instrument first.” Localize faults among hypothesis, instrument, reference data, analysis and domain shift using calibration, controls, orthogonal measurements and rival predictions.
 - Observational causal claims require a causal model and explicit residual-confounding limitations.
-- Optimize information per cost only after validity, ethics and feasibility pass.
+- Cost and speed do not compensate for known validity, ethics or feasibility problems; state the evidence and unresolved constraints.
 - Recorded runs name real executor reports. Synthetic cases are smoke tests, not capability validation.
 - Proposed checks and executed checks are reported separately.
-- Semantic templates classify fields and propose candidates; only the named `lisp_eval` gates authorize readiness, selection, compatibility or a scientific outcome. Never carry a model-typed gate verdict across a seam.
+- Semantic templates propose designs and evidence classifications. Structural checks establish only the invariants they compute; ED-2 maps supplied classifications to labels. None certifies scientific validity or grants execution authority.
 - A findings audit uses `grounding-verify` and is never labeled simply “verified.”

@@ -1,48 +1,34 @@
-{# goal: Rank only candidates whose recorded ED-1 result is `execute`, producing the complete selected `design-spec-v1` and strongest rejected alternative for ED-1S validation. #}
+{# goal: Compare retained candidate designs using evidence and limitations, producing a DesignSpec and the strongest rejected alternative without machine admission. #}
 [inference]
 contract:
   input:
     hypothesis_spec: object
     candidate_drafts: array
-    gate_results: array
     design_constraints: object
   output:
-    selected_design: object
+    selected_design: object|null
     strongest_rejected_alternative: object|null
     ranking_justification: object
 ---
 
-Select from an already-generated, already-gated candidate set. Do not regenerate, revise or add a candidate.
+Compare the retained candidate designs. Preserve their ids, source provenance, scientific content and disclosed limitations; do not silently revise drafts to justify a choice.
 
 ## HypothesisSpec
 
 {{ hypothesis_spec | tojson }}
 
-## Immutable candidate drafts
+## Candidate drafts
 
 {{ candidate_drafts | tojson }}
-
-## Deterministic ED-1 receipts
-
-Each entry carries `candidate_id` and the exact `result` string returned by ED-1.
-
-{{ gate_results | tojson }}
 
 ## Design constraints
 
 {{ design_constraints | tojson }}
 
-## Selection rule
+Compare discrimination/elimination power, expected information, measurement and identification strength, robustness to auxiliary failures, cost, time, risk and reversibility. Cite the evidence behind each material assessment. Explain what remains unknown about ethics/safety, feasibility, calibration/transportability, precision, bias control, analysis/stopping and reproducibility. Cost or speed cannot compensate for a known validity failure.
 
-1. Join candidates and gate receipts only by exact `candidate_id`; every draft must have exactly one receipt.
-2. A candidate is eligible only when its recorded ED-1 result is exactly `execute`.
-3. If no candidate is eligible, do not use this template; the caller returns the typed no-executable-candidate stop with the full gate ledger.
-4. Among eligible candidates, compare discrimination/elimination power, expected information gain, measurement and identification strength, robustness to auxiliary-assumption failure, cost, time, risk and reversibility. Validity is non-compensatory; cost or speed can never rescue a failed gate.
-5. Preserve each draft verbatim as the source of its fields. The selected `design-spec-v1` may organize those fields into the canonical schema, but may not change their scientific content after observing gate results.
-6. Return the strongest non-selected candidate when more than one draft exists, including its exact ED-1 result and why the selected candidate is stronger. A rejected alternative may be scientifically credible but dominated, or invalid with a named gate failure.
+Produce the selected `design-spec-v1` with stable identity/version, `hypothesis_spec_id`, source `candidate_id`, traceability, design, measurement, identification, information justification, analysis, stopping, exact executor/report binding, outcome rule, safety controls, reproducibility and limitations. Keep the candidate comparison and strongest rejected alternative with its `candidate_id` and rejection reason. A revision needs an explicit reason and lineage rather than a rewritten source draft.
 
-`selected_design` must carry `spec_version="design-spec-v1"`, a stable id/version, `hypothesis_spec_id`, the selected draft's `candidate_id` under the key `candidate_id`, complete traceability/design/measurement/identification/information/analysis/stopping/executor/outcome/safety/reproducibility fields, and the complete candidate/gate ledger. When present, `strongest_rejected_alternative` carries its own `candidate_id` and `rejection_reason`.
-
-`ranking_justification` names the eligible ids, comparison criteria, and evidence for the choice. The caller validates the selection through ED-1S; this template does not type that verdict.
+If no defensible design is available, return `selected_design=null` and explain the missing evidence or executor and the next useful action. Do not invent a selection. `ranking_justification` records evidence, comparison criteria and unresolved questions, not an eligibility receipt or execution verdict. The human retains functional decisions, judgment and veto; this comparison does not authorize measurements or impose another approval loop.
 
 Return JSON only with exactly `selected_design`, `strongest_rejected_alternative`, `ranking_justification`.

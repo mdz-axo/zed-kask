@@ -306,6 +306,7 @@ mod tests {
         board.record_failure("task-1", "analyst", "analyze X", "agent not found");
         assert_eq!(board.tasks[0].status, TaskStatus::Failed);
         assert_eq!(board.tasks[0].fail_count, 1);
+        assert_eq!(board.tasks[0].last_evaluator_pass, None, "no predicate ran");
         assert!(
             board.tasks[0]
                 .last_result_summary
