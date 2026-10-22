@@ -1679,7 +1679,7 @@ impl SwarmServer {
                     personality_traits: v.personality_traits.unwrap_or_default(),
                 }),
                 // fermi's create stamps new agents "1.0.0" — mirror it so a
-                // pushed card and its ABW original agree on version.
+                // created card starts at the familiar baseline version.
                 version: "1.0.0".to_string(),
                 // fermi's create does not accept workflow_template (it
                 // stamps None) — local create mirrors that; the declaration
@@ -1703,7 +1703,7 @@ impl SwarmServer {
     /// `model`/`mcp_tools`/`skills`/`model_params` when supplied); preserves
     /// `agent_id`, `agent_type`, `description`, `accepts`, `produces`,
     /// and `dependencies`. The DECIDE
-    /// `reconfigure_agent` action seeds `swarm_generate_prompt` with the
+    /// `reconfigure_agent` action seeds `swarm_generate_prompt_local` with the
     /// blamed agent's failure log to produce the new prompt, then this tool
     /// writes it via `LocalAgentRegistry::write_card` and reloads. No consent
     /// token — local mode.
@@ -1835,10 +1835,9 @@ impl SwarmServer {
     }
 
     /// Permanently delete a local swarm. The roster is dropped with the swarm;
-    /// member agents are NOT touched (they stay in `LocalAgentRegistry`). The
-    /// local counterpart of `swarm_delete_swarm`.
+    /// member agents are NOT touched (they stay in `LocalAgentRegistry`).
     #[tool(
-        description = "Permanently delete a local swarm by swarm_id. The roster is dropped; member agents are NOT deleted (use swarm_remove_local for that). Counterpart of swarm_delete_swarm for the local backend."
+        description = "Permanently delete a local swarm by swarm_id. The roster is dropped; member agents are NOT deleted (use swarm_remove_local for that)."
     )]
     pub(crate) async fn swarm_delete_local_swarm(
         &self,
@@ -1889,10 +1888,9 @@ impl SwarmServer {
     }
 
     /// Remove a local agent from a local swarm's roster (idempotent - removing
-    /// a non-member is a no-op). The local counterpart of `swarm_fire`
-    /// (remove member). Does NOT delete the agent from `LocalAgentRegistry`.
+    /// a non-member is a no-op). Does NOT delete the agent from `LocalAgentRegistry`.
     #[tool(
-        description = "Remove a local agent from a local swarm's roster by swarm_id + agent_name. Idempotent. Does NOT delete the agent (use swarm_remove_local for that). Counterpart of swarm_fire (remove member) for the local backend."
+        description = "Remove a local agent from a local swarm's roster by swarm_id + agent_name. Idempotent. Does NOT delete the agent (use swarm_remove_local for that)."
     )]
     pub(crate) async fn swarm_remove_agent_local(
         &self,
@@ -1918,11 +1916,9 @@ impl SwarmServer {
 
     /// Update a local swarm's display name and mission in place. The
     /// `swarm_id` (on-disk identity) is preserved — only the human-readable
-    /// `name` and `mission` change. No cost, no consent token. The local
-    /// counterpart of an ABW metadata-edit endpoint (ABW has none — PATCH
-    /// /workspaces/{id} is 405, verified live 2026-08-13).
+    /// `name` and `mission` change. No cost, no consent token.
     #[tool(
-        description = "Update a local swarm's name and mission in place (swarm_id preserved). No cost, no consent token. ABW has no metadata-edit endpoint, so this is local-only."
+        description = "Update a local swarm's name and mission in place (swarm_id preserved). No cost, no consent token."
     )]
     pub(crate) async fn swarm_update_local_swarm(
         &self,
@@ -2235,7 +2231,7 @@ impl SwarmServer {
     /// Evaluate a predicate over response text. This checks only the supplied
     /// string, not task accomplishment, factual accuracy, or external state.
     #[tool(
-        description = "Evaluate a response predicate (contains / not_contains / regex). Returns a TaskSuccessVerdict describing only whether the supplied response text matches. This is not certification of task accomplishment or factual truth. No inference or ABW calls."
+        description = "Evaluate a response predicate (contains / not_contains / regex). Returns a TaskSuccessVerdict describing only whether the supplied response text matches. This is not certification of task accomplishment or factual truth. No inference calls."
     )]
     pub(crate) async fn swarm_evaluate_local(
         &self,

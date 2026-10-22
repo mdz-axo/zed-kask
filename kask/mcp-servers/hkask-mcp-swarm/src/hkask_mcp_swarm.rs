@@ -405,7 +405,7 @@ mod smoke_tests {
     }
 
     /// `swarm_list_local_swarms` reads only the local swarms directory — no
-    /// ABW, no network. With an empty (missing) dir it must return
+    /// network. With an empty (missing) dir it must return
     /// the success envelope `{"content": {"count": 0, "swarms": []}}`.
     #[tokio::test]
     async fn list_local_swarms_returns_valid_json_envelope() {

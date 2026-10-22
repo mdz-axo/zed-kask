@@ -17,14 +17,13 @@ use std::sync::Mutex;
 
 use crate::error::LocalSwarmError;
 
-/// A local swarm — the local replica of an ABW workspace.
+/// A local swarm — a named grouping of local agent ids on disk.
 ///
 /// `swarm_id` is a path-safe slug generated from `name` (see `make_swarm_slug`);
 /// it is the on-disk directory name and the stable identity returned to callers.
 /// `members` are `LocalAgentCard::agent_id` values — adding an agent that does
 /// not exist in the registry is allowed (the roster is just ids; resolution to
-/// a card happens at delegation time, mirroring how ABW workspaces carry agent
-/// ids that may not yet be hired).
+/// a card happens at delegation time).
 ///
 /// `member_sources` tracks the provenance of each member's addition (Gap 6
 /// fix — the ecology view needs a provenance signal without the full RBAC
@@ -86,8 +85,8 @@ pub struct MemberSource {
     pub agent_id: String,
     /// How this member was added: `operator` (manual add), `curated_seed`
     /// (loaded from a seed file), `swarm_intelligence` (added by the
-    /// Curator's composition decision), `clone` (cloned from ABW). Default
-    /// `operator`.
+    /// Curator's composition decision), `clone` (copied by swarm clone).
+    /// Default `operator`.
     pub source: String,
     /// RFC 3339 timestamp of when the member was added.
     pub added_at: String,
@@ -262,8 +261,7 @@ impl LocalSwarmRegistry {
     /// Add an agent id to a swarm's roster (idempotent — a duplicate add is a
     /// no-op). Errors if the swarm does not exist. Does NOT verify the agent
     /// exists in `LocalAgentRegistry` — the roster is ids; resolution happens
-    /// at delegation time (mirrors ABW workspaces, which carry agent ids that
-    /// may not yet be hired).
+    /// at delegation time.
     pub fn add_member(
         &self,
         swarm_id: &str,
@@ -346,9 +344,7 @@ impl LocalSwarmRegistry {
     /// stable identity other systems (Steer conversation) reference,
     /// and renaming the directory would orphan those references. Only the
     /// human-readable `name` and `mission` fields are updated. Errors if the
-    /// swarm does not exist or `name` is empty. The local counterpart of an
-    /// ABW metadata-edit endpoint (ABW has none — `PATCH /workspaces/{id}` is
-    /// 405, verified live 2026-08-13).
+    /// swarm does not exist or `name` is empty.
     pub fn update_metadata(
         &self,
         swarm_id: &str,
@@ -375,7 +371,7 @@ impl LocalSwarmRegistry {
     /// in the browse list; the caller may rename it via `update_metadata`.
     ///
     /// Member ids are copied as-is — the roster is ids, and resolution happens
-    /// at delegation time (mirrors ABW workspaces). An id whose card no longer
+    /// at delegation time. An id whose card no longer
     /// exists in `LocalAgentRegistry` is **not** an error here: the clone
     /// preserves the roster faithfully, and the operator sees the gap at
     /// delegation time, not as a silent drop during clone. This satisfies the

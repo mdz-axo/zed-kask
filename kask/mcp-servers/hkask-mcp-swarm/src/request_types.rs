@@ -36,7 +36,7 @@ pub struct DelegateLocalRequest {
     /// (`agents/local/curated/<id>/agent_card.json`).
     pub agent_name: String,
     /// The task text to send to the agent. Leading @mentions are stripped
-    /// (defense-in-depth, mirrors ABW delegate).
+    /// (defense-in-depth).
     pub task: String,
 }
 
@@ -125,8 +125,8 @@ pub struct WhoAnswersLocalRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct RemoveLocalRequest {
     /// The local agent id to remove. The server deletes its card directory
-    /// (`agents/local/curated/<id>/`) after path-safety checks. A synced
-    /// card's ABW agent is NOT touched.
+    /// (`agents/local/curated/<id>/`) after path-safety checks. Nothing
+    /// outside the registry is touched.
     pub agent_name: String,
 }
 
@@ -244,10 +244,10 @@ pub struct ReconfigureLocalAgentRequest {
     pub model_params: Option<AnyJsonValue>,
 }
 
-// ── Local swarm membership (local replica of an ABW workspace) ───────────────
+// ── Local swarm membership ───────────────────────────────────────────
 
-/// Create a local swarm — the local replica of an ABW workspace/team. A named
-/// grouping of local agent ids with a mission. No cost, no consent token (no
+/// Create a local swarm — a named grouping of local agent ids with a mission.
+/// No cost, no consent token (no
 /// local budget exists; nothing gates delegation or roster edits). Optionally seed members.
 /// Returns the new swarm with its generated `swarm_id`.
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -259,8 +259,7 @@ pub struct CreateLocalSwarmRequest {
     pub mission: String,
     /// Optional initial member agent ids to seed the roster with. Each id SHOULD
     /// exist in `LocalAgentRegistry`, but this is not enforced at create time
-    /// (the roster is ids; resolution happens at delegation time, mirroring ABW
-    /// workspaces).
+    /// (the roster is ids; resolution happens at delegation time).
     #[serde(default)]
     pub agents: Vec<String>,
 }
@@ -305,8 +304,7 @@ pub struct RemoveAgentFromLocalSwarmRequest {
 
 /// Update a local swarm's display name and mission in place. The `swarm_id`
 /// (on-disk identity) is preserved — only the human-readable `name` and
-/// `mission` change. ABW has no metadata-edit endpoint (PATCH /workspaces/{id}
-/// is 405), so this is local-only.
+/// `mission` change.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct UpdateLocalSwarmRequest {
     /// The `swarm_id` of the swarm to edit.
@@ -404,12 +402,12 @@ pub struct A2aBroadcastRequest {
     pub context_id: Option<String>,
 }
 
-// ── Local knowledge tools (kask analogs of ABW knowledge/prompt/ontology) ─────
+// ── Local knowledge tools ────────────────────────────────────────────
 
-/// Vector-search an agent's prefix-scoped semantic memory (the local analog of
-/// ABW `swarm_search_knowledge`). Returns matching knowledge fragments
+/// Vector-search an agent's prefix-scoped semantic memory. Returns matching
+/// knowledge fragments
 /// (entity-attribute-value triples) from the operator's consolidated
-/// `hkask-memory`. No ABW calls. Degrades to an empty result with a
+/// `hkask-memory`. Degrades to an empty result with a
 /// `memory_unconfigured` note when `HKASK_DB_PASSPHRASE` is unset.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SearchKnowledgeLocalRequest {
@@ -423,9 +421,9 @@ pub struct SearchKnowledgeLocalRequest {
     pub limit: Option<usize>,
 }
 
-/// Generate a system prompt for a local agent from a description (the local
-/// analog of ABW `swarm_generate_prompt`). Authoring aid — read-only, spends
-/// nothing. Uses the local `InferencePort` (no ABW); optionally seeded with an
+/// Generate a system prompt for a local agent from a description.
+/// Authoring aid — read-only, spends
+/// nothing. Uses the local `InferencePort`; optionally seeded with an
 /// agent's consolidated memory.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GeneratePromptLocalRequest {
@@ -439,8 +437,8 @@ pub struct GeneratePromptLocalRequest {
     pub agent_type: Option<String>,
 }
 
-/// Generate a seed ontology (Mermaid ER diagram) for a domain (the local analog
-/// of ABW `swarm_generate_ontology`). Authoring aid — read-only. Uses the local
+/// Generate a seed ontology (Mermaid ER diagram) for a domain.
+/// Authoring aid — read-only. Uses the local
 /// `InferencePort`; optionally seeded with an agent's semantic-memory graph.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GenerateOntologyLocalRequest {
@@ -476,8 +474,6 @@ pub struct RecallLocalRequest {
 /// AI assist for the swarm panel authoring forms — suggests completions for
 /// partial inputs or validates well-formedness. Authoring aid — read-only,
 /// spends nothing. Uses the local `InferencePort` (one-shot LLM generate).
-/// The `mode` field only tailors the guidance text; no ABW
-/// calls in either mode.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct AiAssistRequest {
     /// "suggest" (complete empty/partial fields) or "validate" (check

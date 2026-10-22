@@ -338,7 +338,7 @@ impl LocalSwarmRuntime {
         dispatch: DispatchStamp,
     ) -> Result<LocalDelegateResult, LocalSwarmError> {
         let started = Instant::now();
-        // Strip leading @mentions (defense-in-depth, mirrors ABW delegate).
+        // Strip leading @mentions (defense-in-depth).
         let task_clean = strip_leading_mentions(task);
 
         // Run the agent (tool loop). A failed run is a real execution

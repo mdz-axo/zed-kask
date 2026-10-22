@@ -518,7 +518,7 @@ impl LocalAgentRegistry {
     /// `<dir>/<agent_id>/agent_card.json`, then reload the registry so the new
     /// card is visible to subsequent `list`/`get` calls. Cybernetic Swarm Plan
     /// C6 — the `reconfigure_agent` DECIDE action rewrites a blamed agent's
-    /// `system_prompt` in place via this method (seed `swarm_generate_prompt`
+    /// `system_prompt` in place via this method (seed `swarm_generate_prompt_local`
     /// with the failure log, write the new card, reload). The `agent_id` is
     /// re-sanitized before joining the registry root (path-traversal defense);
     /// the card is written under a canonicalized, path-contained directory —
