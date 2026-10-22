@@ -1,7 +1,7 @@
-//! Local knowledge tools — semantic-memory search and the local analogs of
-//! the ABW generate tools (prompt/ontology). Split from `hkask_mcp_swarm.rs`
+//! Local knowledge tools — semantic-memory search, prompt generation, and
+//! ontology generation over the local substrate. Split from `hkask_mcp_swarm.rs`
 //! (M2). These read the operator's consolidated `hkask-memory` and use the
-//! local `InferencePort`; no ABW calls.
+//! local `InferencePort`.
 use crate::SwarmServer;
 use crate::error::map_local_swarm_error;
 use crate::local_knowledge;
@@ -11,14 +11,14 @@ use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
 #[tool_router(router = knowledge_router, vis = "pub")]
 impl SwarmServer {
-    /// Search a local agent's prefix-scoped semantic memory (the kask analog of
-    /// ABW `swarm_search_knowledge`). Returns matching knowledge fragments
+    /// Search a local agent's prefix-scoped semantic memory. Returns matching
+    /// knowledge fragments
     /// (entity-attribute-value triples) from the operator's consolidated
-    /// `hkask-memory`. No ABW calls. Degrades to an empty result with a
+    /// `hkask-memory`. Degrades to an empty result with a
     /// `memory_unconfigured` note when the store cannot be opened (e.g., a
     /// passphrase mismatch with an existing DB).
     #[tool(
-        description = "Search a local agent's prefix-scoped semantic memory (the local analog of ABW swarm_search_knowledge). Returns matching knowledge fragments (entity-attribute-value triples) from the operator's consolidated hkask-memory. No ABW calls. Degrades to an empty result with a memory_unconfigured note when the store cannot be opened (e.g., a passphrase mismatch with an existing DB)."
+        description = "Search a local agent's prefix-scoped semantic memory. Returns matching knowledge fragments (entity-attribute-value triples) from the operator's consolidated hkask-memory. Degrades to an empty result with a memory_unconfigured note when the store cannot be opened (e.g., a passphrase mismatch with an existing DB)."
     )]
     pub(crate) async fn swarm_search_knowledge_local(
         &self,
@@ -130,12 +130,12 @@ impl SwarmServer {
         .await
     }
 
-    /// Generate a system prompt for a local agent from a description (the kask
-    /// analog of ABW `swarm_generate_prompt`). Authoring aid — read-only. Uses
-    /// the local `InferencePort` (no ABW); seeded with the agent's consolidated
+    /// Generate a system prompt for a local agent from a description.
+    /// Authoring aid — read-only. Uses
+    /// the local `InferencePort`; seeded with the agent's consolidated
     /// memory when available.
     #[tool(
-        description = "Generate a system prompt for a local agent from a description (the local analog of ABW swarm_generate_prompt). Authoring aid — read-only, spends nothing. Uses the local InferencePort (no ABW); optionally seeded with the agent's consolidated memory."
+        description = "Generate a system prompt for a local agent from a description. Authoring aid — read-only, spends nothing. Uses the local InferencePort; optionally seeded with the agent's consolidated memory."
     )]
     pub(crate) async fn swarm_generate_prompt_local(
         &self,
@@ -190,12 +190,12 @@ impl SwarmServer {
         .await
     }
 
-    /// Generate a seed ontology (Mermaid ER diagram) for a knowledge domain
-    /// (the kask analog of ABW `swarm_generate_ontology`). Authoring aid —
+    /// Generate a seed ontology (Mermaid ER diagram) for a knowledge domain.
+    /// Authoring aid —
     /// read-only. Uses the local `InferencePort`; optionally seeded with an
     /// agent's semantic-memory graph.
     #[tool(
-        description = "Generate a seed ontology (Mermaid ER diagram) for a knowledge domain (the local analog of ABW swarm_generate_ontology). Authoring aid — read-only. Uses the local InferencePort; optionally seeded with an agent's semantic-memory graph."
+        description = "Generate a seed ontology (Mermaid ER diagram) for a knowledge domain. Authoring aid — read-only. Uses the local InferencePort; optionally seeded with an agent's semantic-memory graph."
     )]
     pub(crate) async fn swarm_generate_ontology_local(
         &self,

@@ -31,7 +31,6 @@ async fn drive(
         .swarm_ai_assist(Parameters(AiAssistRequest {
             action: action.into(),
             surface: "agent".into(),
-            mode: "local".into(),
             name: "probe-agent".into(),
             agent_type: "research".into(),
             description: "A probe.".into(),

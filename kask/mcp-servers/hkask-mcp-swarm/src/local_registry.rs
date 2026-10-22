@@ -52,7 +52,7 @@ pub fn validate_typing(
             return Err(LocalSwarmError::InvalidInput(format!(
                 "agent '{}': port label '{}' does not resolve to a registered type. \
                  Valid built-in labels are {:?}. Update the card's accepts/produces to use \
-                 one of these, or clone the card from ABW to import its labels.",
+                 one of these.",
                 card.agent_id,
                 label,
                 crate::port_registry::BUILTIN_PORT_TYPES
@@ -65,20 +65,13 @@ pub fn validate_typing(
 /// A local agent card — the minimal subset of fermi's `AgentCard` we need for
 /// catalogue + future execution. Mirrors the JSON shape in
 /// `agents/local/curated/<id>/agent_card.json`.
-///
-/// The `cloud_swarm_id` field tracks the sync link to an ABW agent: when present,
-/// the agent is `synced` (exists both locally and on ABW). When absent,
-/// the agent is `local` only. The operator sets `cloud_swarm_id` when cloning an
-/// ABW agent to local (Slice 11).
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct LocalAgentCard {
     pub agent_id: String,
     pub agent_type: String,
     pub description: String,
-    /// Human-readable label for UI display. Cloned cards set this to the
-    /// cloud agent's display name (e.g. "Xaman Ek (Clone)") so the local
-    /// row is distinguishable from the cloud original. Locally-created cards
-    /// set this to the operator-supplied name; the panel falls back to
+    /// Human-readable label for UI display. Locally-created cards set this to
+    /// the operator-supplied name; the panel falls back to
     /// `agent_id` when empty.
     #[serde(default)]
     pub display_name: String,
@@ -90,11 +83,6 @@ pub struct LocalAgentCard {
     pub dependencies: LocalAgentDependencies,
     #[serde(default)]
     pub capabilities: LocalAgentCapabilities,
-    /// The ABW agent id this local card is synced with. `None` = local-only.
-    /// When set, the panel shows a "synced" badge and the operator can push
-    /// local changes to ABW or pull ABW changes to local.
-    #[serde(default, rename = "cloud_id")]
-    pub cloud_swarm_id: Option<String>,
     /// Tags for local catalogue discovery. `#[serde(default)]` so existing
     /// cards without this field still deserialize.
     #[serde(default)]
@@ -109,17 +97,13 @@ pub struct LocalAgentCard {
     /// Valence / personality encoding. Optional — not all local agents need it.
     #[serde(default)]
     pub valence: Option<LocalAgentValence>,
-    /// Semantic version of the card (fermi `agents.version`). Defaults to
-    /// "1.0.0" — mirroring fermi's create, which stamps new agents "1.0.0".
-    /// Cloned cards carry the ABW agent's version; `swarm_push_to_cloud`
-    /// sends it back on update (fermi's `AgentUpdate` accepts `version`).
+    /// Semantic version of the card. Defaults to
+    /// "1.0.0" — new cards are stamped "1.0.0".
     #[serde(default = "default_card_version")]
     pub version: String,
-    /// The agent's declared workflow (fermi `workflow_template`) — the
+    /// The agent's declared workflow — the
     /// stages it runs and the member agents that fill them. `None` when the
-    /// card declares no workflow. Cloned from
-    /// the ABW card; pushed back on update (fermi's `AgentUpdate` accepts
-    /// `workflow_template`). Inspect/validate via
+    /// card declares no workflow. Inspect/validate via
     /// `swarm_workflow_check_local` — the execution runner is the next
     /// step on this scaffold.
     #[serde(default)]
@@ -130,7 +114,7 @@ fn default_card_version() -> String {
     "1.0.0".to_string()
 }
 
-/// Valence parameters mirroring the ABW `metadata.valence` object, for local
+/// Valence parameters for local
 /// agent cards. Stored as a struct so local cards round-trip through JSON.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct LocalAgentValence {
@@ -267,7 +251,7 @@ pub struct DeclaredEvaluator {
 }
 
 /// Name of the persisted port-type extension file inside the agents dir.
-/// Cloned cards import their (ABW-catalogue) port labels here so the typing
+/// Cards with labels beyond the built-in set import them here so the typing
 /// gate resolves them on this and every subsequent load.
 pub const PORT_TYPES_FILE: &str = "port_types.json";
 
@@ -393,53 +377,6 @@ impl LocalAgentRegistry {
                 );
             }
         }
-    }
-
-    /// Admit port labels imported with a third-party (cloned ABW) card:
-    /// labels that do not already resolve are registered as extension types
-    /// and persisted to `<dir>/port_types.json`, so the card passes the
-    /// typing gate now and on every future load. Locally-authored cards do
-    /// NOT use this path — a hand-written label still requires an explicit
-    /// registry entry. First import on a fresh data root creates the agents
-    /// directory. Returns once all labels resolve (idempotent).
-    pub fn promote_imported_port_types(&self, labels: &[String]) -> Result<(), LocalSwarmError> {
-        let fresh: Vec<String> = {
-            let merged = self.port_registry();
-            labels
-                .iter()
-                .filter(|label| !merged.resolves(label))
-                .cloned()
-                .collect()
-        };
-        if fresh.is_empty() {
-            return Ok(());
-        }
-        let dir = std::path::Path::new(&self.dir);
-        // Mirror `write_card`: a fresh data root has no registry dir yet and
-        // the first import must create it.
-        std::fs::create_dir_all(dir).map_err(|e| {
-            LocalSwarmError::Io(format!(
-                "failed to create local agents dir '{}': {e}",
-                dir.display()
-            ))
-        })?;
-        let mut extensions = self.lock_port_extensions();
-        for label in &fresh {
-            extensions.insert(label.clone(), PortTypeEntry::default());
-        }
-        let json = serde_json::to_string_pretty(&*extensions).map_err(|e| {
-            LocalSwarmError::InvalidInput(format!("failed to serialize port type extensions: {e}"))
-        })?;
-        let path = dir.join(PORT_TYPES_FILE);
-        // Temp + rename so a crashed write cannot leave a truncated file
-        // that blanks every imported label at the next load.
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, json)
-            .map_err(|e| LocalSwarmError::Io(format!("failed to write {}: {e}", tmp.display())))?;
-        std::fs::rename(&tmp, &path).map_err(|e| {
-            LocalSwarmError::Io(format!("failed to persist {}: {e}", path.display()))
-        })?;
-        Ok(())
     }
 
     /// Load (or reload) agent cards from the directory. Returns the number of

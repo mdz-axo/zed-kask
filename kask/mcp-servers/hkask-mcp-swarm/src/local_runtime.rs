@@ -313,8 +313,8 @@ impl LocalSwarmRuntime {
     ///
     /// The agent-run policy (tool-loop orchestration) lives in
     /// `AgentExecutor::run`; the runtime measures the run without a token
-    /// quota. ABW credit consent is a distinct cloud-swarm operation and is
-    /// not a requirement for this path; model-provider billing still applies.
+    /// quota. Local execution has no consent or credit gate — the operator's
+    /// own substrate runs it; model-provider billing still applies.
     ///
     /// Tool dispatch is allowlisted twice: the declared `mcp_tools` set is
     /// the only tool set shown to the model AND the qualified list travels

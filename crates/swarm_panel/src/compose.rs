@@ -1,7 +1,6 @@
 //! The swarm-composition surface: form state, editor construction, the
-//! `render_compose` renderer (including the Xaman Ek composition
-//! consultant), the compose-form entry points (`load_swarm_into_compose`,
-//! `reset_compose_form_for_create`), and the
+//! `render_compose` renderer, the compose-form entry points
+//! (`load_swarm_into_compose`, `reset_compose_form_for_create`), and the
 //! `create_swarm` submit flow. Extracted from `swarm_panel.rs` — the
 //! renderer and the flows stay methods on `SwarmPanel` (they mutate panel
 //! state via `cx.spawn` + `this.update`); this module owns the form struct,
@@ -11,47 +10,27 @@ use editor::Editor;
 use gpui::{Context, Entity, SharedString, Window};
 use hkask_types::tool_response::parse_tool_response;
 use serde_json::json;
-use ui::{
-    ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonGroupStyle, ToggleButtonSimple, Tooltip,
-    prelude::*,
-};
+use ui::{Tooltip, prelude::*};
 
-use crate::CreateTarget;
 use crate::MIN_AGENTS_TO_LAUNCH;
 use crate::PanelMode;
 use crate::SWARM_SERVER;
 use crate::SwarmPanel;
-use crate::parse::{AgentSource, extract_agent_mentions, extract_wallet_balance};
 use crate::status_is_warning;
 
 /// State for the swarm-composition surface.
 pub(crate) struct ComposeForm {
     pub(crate) name: Entity<Editor>,
     pub(crate) mission: Entity<Editor>,
-    /// Agent names to hire, comma-separated (kept as a single-line editor for v1).
+    /// Local agent ids to seed the roster with, comma-separated.
     pub(crate) agents: Entity<Editor>,
     pub(crate) status: Option<SharedString>,
     pub(crate) busy: bool,
-    /// Xaman Ek consultation: the operator's composition question.
-    pub(crate) xaman_query: Entity<Editor>,
-    /// The active Xaman Ek composition session id (continues across messages).
-    pub(crate) xaman_session: Option<String>,
-    /// The curator's latest response text.
-    pub(crate) xaman_response: Option<SharedString>,
-    /// Agent names Xaman Ek recommended (extracted from a composition plan),
-    /// offered as a one-click pre-fill of the agents field.
-    pub(crate) xaman_suggested_agents: Vec<String>,
-    /// Which backend to create the swarm on (Cloud = ABW, Local = local
-    /// substrate). A per-form choice — not gated on `kask.swarm.mode`.
-    pub(crate) create_target: super::CreateTarget,
-    pub(crate) xaman_busy: bool,
     /// When `Some`, the form is editing an existing swarm (loaded via the
     /// Edit button on the browse card). The name field is read-only for
     /// local swarms (renaming is a separate `swarm_update_local_swarm`
     /// operation). When `None`, the form is creating a new swarm.
     pub(crate) editing_swarm_id: Option<String>,
-    /// The source of the swarm being edited (`Cloud`, `Local`, `Synced`).
-    pub(crate) editing_swarm_source: Option<crate::parse::AgentSource>,
 }
 
 impl ComposeForm {
@@ -69,48 +48,32 @@ impl ComposeForm {
             }),
             agents: cx.new(|cx| {
                 let mut e = Editor::single_line(window, cx);
-                e.set_placeholder_text("Agents to hire, comma-separated (optional)", window, cx);
+                e.set_placeholder_text("Agents to add, comma-separated (optional)", window, cx);
                 e
             }),
             status: None,
             busy: false,
-            xaman_query: cx.new(|cx| {
-                let mut e = Editor::single_line(window, cx);
-                e.set_placeholder_text("Ask Xaman Ek to plan your team…", window, cx);
-                e
-            }),
-            xaman_session: None,
-            xaman_response: None,
-            xaman_suggested_agents: Vec::new(),
-            create_target: super::CreateTarget::Cloud,
-            xaman_busy: false,
             editing_swarm_id: None,
-            editing_swarm_source: None,
         }
     }
 }
 
 impl SwarmPanel {
     /// The swarm-composition surface: name, mission, agents, create. Each
-    /// field carries a tooltip; the create button label reflects the active
-    /// backend (Local vs ABW) and its tooltip explains the cost/consent model.
+    /// field carries a tooltip; the create button creates the swarm on the
+    /// local substrate (no cost, no consent — local delegation runs on the
+    /// operator's own substrate).
     pub(crate) fn render_compose(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let border = cx.theme().colors().border;
-        let is_local = self.compose.create_target == super::CreateTarget::Local;
         let is_editing = self.compose.editing_swarm_id.is_some();
         let create_label: SharedString = if self.compose.busy {
             "Creating…"
-        } else if is_local {
-            "Create Local Swarm"
         } else {
-            "Create Swarm"
+            "Create Local Swarm"
         }
         .into();
-        let create_tooltip: &str = if is_local {
-            "Creates the swarm on the local substrate (agents/local/swarms). No cost, no consent."
-        } else {
-            "Creates the ABW workspace and hires the listed agents. Each hire is pre-flighted for cost and consent-gated; the swarm is not created if any consent fails."
-        };
+        let create_tooltip: &str =
+            "Creates the swarm on the local substrate (agents/local/swarms). No cost, no consent.";
         v_flex()
             .w_full()
             .gap_3()
@@ -132,53 +95,6 @@ impl SwarmPanel {
                         .color(Color::Accent),
                 )
             })
-            // Cloud/Local target toggle — a per-form choice, not a global
-            // setting. Both backends are always available.
-            .child(
-                v_flex().gap_1().child(
-                    h_flex()
-                        .gap_2()
-                        .items_center()
-                        .child(
-                            Label::new("Target:")
-                                .size(LabelSize::XSmall)
-                                .color(Color::Muted),
-                        )
-                        .child(
-                            div().child(
-                                ToggleButtonGroup::single_row(
-                                    "compose-create-target",
-                                    [
-                                        ToggleButtonSimple::new(
-                                            "Cloud",
-                                            cx.listener(|this, _, _, cx| {
-                                                this.compose.create_target =
-                                                    super::CreateTarget::Cloud;
-                                                this.active_backend = super::CreateTarget::Cloud;
-                                                cx.notify();
-                                            }),
-                                        ),
-                                        ToggleButtonSimple::new(
-                                            "Local",
-                                            cx.listener(|this, _, _, cx| {
-                                                this.compose.create_target =
-                                                    super::CreateTarget::Local;
-                                                this.active_backend = super::CreateTarget::Local;
-                                                cx.notify();
-                                            }),
-                                        ),
-                                    ],
-                                )
-                                .style(ToggleButtonGroupStyle::Outlined)
-                                .size(ToggleButtonGroupSize::Custom(rems_from_px(24.0_f32)))
-                                .label_size(LabelSize::XSmall)
-                                .auto_width()
-                                .selected_index(if is_local { 1 } else { 0 })
-                                .into_any_element(),
-                            ),
-                        ),
-                ),
-            )
             .child(
                 v_flex()
                     .gap_1()
@@ -194,7 +110,7 @@ impl SwarmPanel {
                             .border_color(border)
                             .rounded_sm()
                             .tooltip(Tooltip::text(
-                                "Swarm (workspace) name. Required. A path-safe id is \
+                                "Swarm name. Required. A path-safe id is \
                                  derived from this name on the local substrate.",
                             ))
                             .child(self.compose.name.clone()),
@@ -225,13 +141,9 @@ impl SwarmPanel {
                 v_flex()
                     .gap_1()
                     .child(
-                        Label::new(if is_local {
-                            "Agents to add (comma-separated)"
-                        } else {
-                            "Agents to hire (comma-separated)"
-                        })
-                        .size(LabelSize::XSmall)
-                        .color(Color::Muted),
+                        Label::new("Agents to add (comma-separated)")
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
                     )
                     .child(
                         div()
@@ -239,114 +151,14 @@ impl SwarmPanel {
                             .border_1()
                             .border_color(border)
                             .rounded_sm()
-                            .tooltip(Tooltip::text(if is_local {
+                            .tooltip(Tooltip::text(
                                 "Local agent ids to seed the roster with, \
                                  comma-separated. Optional. The agents need not exist \
                                  in the registry yet (the roster is ids; resolution \
-                                 happens at delegation time)."
-                            } else {
-                                "ABW agent names to hire into the new swarm, \
-                                 comma-separated. Optional. Each hire is consent-gated \
-                                 and pre-flighted for cost before the swarm is created."
-                            }))
+                                 happens at delegation time).",
+                            ))
                             .child(self.compose.agents.clone()),
                     ),
-            )
-            // Xaman Ek composition consultant — the panel calls the MCP tool
-            // to plan the team, then offers the recommended agents as a
-            // one-click pre-fill of the field above.
-            .child(
-                v_flex()
-                    .gap_2()
-                    .p_3()
-                    .rounded_sm()
-                    .border_1()
-                    .border_color(border)
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .items_center()
-                            .child(
-                                Label::new("Xaman Ek")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Accent),
-                            )
-                            .child(
-                                Label::new("composition consultant")
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted),
-                            ),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .id("compose-xaman-query")
-                                    .border_1()
-                                    .border_color(border)
-                                    .rounded_sm()
-                                    .tooltip(Tooltip::text(
-                                        "Ask the Xaman Ek curator to recommend a team \
-                                         for your task. The session continues across \
-                                         messages so you can refine the plan.",
-                                    ))
-                                    .child(self.compose.xaman_query.clone()),
-                            )
-                            .child(
-                                Button::new(
-                                    "ask-xaman",
-                                    if self.compose.xaman_busy {
-                                        "Asking…"
-                                    } else {
-                                        "Ask"
-                                    },
-                                )
-                                .style(ButtonStyle::Subtle)
-                                .label_size(LabelSize::XSmall)
-                                .disabled(self.compose.xaman_busy)
-                                .tooltip(Tooltip::text(
-                                    "Sends the question to Xaman Ek (consent-gated \
-                                     curator call; costs no credits).",
-                                ))
-                                .on_click(cx.listener(
-                                    |this, _, _, cx| {
-                                        this.ask_xaman(cx);
-                                    },
-                                )),
-                            ),
-                    )
-                    .when_some(self.compose.xaman_response.clone(), |this, response| {
-                        this.child(
-                            Label::new(response)
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        )
-                    })
-                    .when(!self.compose.xaman_suggested_agents.is_empty(), |this| {
-                        this.child(
-                            h_flex()
-                                .gap_2()
-                                .items_center()
-                                .child(
-                                    Label::new(format!(
-                                        "Suggested: {}",
-                                        self.compose.xaman_suggested_agents.join(", ")
-                                    ))
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted),
-                                )
-                                .child(
-                                    Button::new("apply-xaman", "Use team")
-                                        .style(ButtonStyle::Filled)
-                                        .label_size(LabelSize::XSmall)
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.apply_xaman_suggestions(window, cx);
-                                        })),
-                                ),
-                        )
-                    }),
             )
             // AI Assist + validation — model-backed suggestions and a
             // well-formedness check before create. Same row + banner pattern
@@ -383,36 +195,24 @@ impl SwarmPanel {
     }
 
     /// Open the compose panel with `swarm`'s existing details loaded, so the
-    /// operator can view and edit the composition. Mirrors
-    /// `load_agent_into_author` for swarms: fetches the swarm's roster, pre-fills
-    /// the compose form (name, mission, agents), and switches to Compose mode.
+    /// operator can view and edit the composition. Fetches the swarm's
+    /// roster, pre-fills the compose form (name, mission, agents), and
+    /// switches to Compose mode.
     ///
     /// Sets `editing_swarm_id` on the form so the submit path knows it's an
     /// edit, not a create. The name field is kept editable for local swarms
-    /// (the save calls `swarm_update_local_swarm`); for cloud swarms the name
-    /// is read-only (ABW has no metadata-edit endpoint) but the roster can
-    /// still be reviewed.
+    /// (the save calls `swarm_update_local_swarm`).
     pub(crate) fn load_swarm_into_compose(
         &mut self,
         swarm_id: String,
         name: String,
-        source: AgentSource,
         mission: String,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         // Set editing state on the compose form.
         self.compose.editing_swarm_id = Some(swarm_id.clone());
-        self.compose.editing_swarm_source = Some(source.clone());
-        self.compose.create_target = match source {
-            AgentSource::Cloud => crate::CreateTarget::Cloud,
-            AgentSource::Local | AgentSource::Synced => crate::CreateTarget::Local,
-        };
-        self.compose.status = Some(
-            ["Loading swarm details…", "Loading swarm details…"][0]
-                .to_string()
-                .into(),
-        );
+        self.compose.status = Some("Loading swarm details…".to_string().into());
         self.compose.busy = false;
 
         // Pre-fill the form with the known values. The roster (agents)
@@ -436,69 +236,31 @@ impl SwarmPanel {
             cx.notify();
             return;
         };
-        let is_local = source == AgentSource::Local;
         cx.spawn({
             let invoker = invoker.clone();
             async move |this, cx| {
-                let result = if is_local {
-                    invoker
-                        .invoke_tool(
-                            crate::SWARM_SERVER,
-                            "swarm_get_local_swarm",
-                            json!({ "swarm_id": swarm_id }),
-                        )
-                        .await
-                } else {
-                    invoker
-                        .invoke_tool(
-                            crate::SWARM_SERVER,
-                            "swarm_get_swarm",
-                            json!({ "workspace_id": swarm_id }),
-                        )
-                        .await
-                };
+                let result = invoker
+                    .invoke_tool(
+                        crate::SWARM_SERVER,
+                        "swarm_get_local_swarm",
+                        json!({ "swarm_id": swarm_id }),
+                    )
+                    .await;
                 this.update_in(cx, |this, window, cx| {
                     match result {
                         Ok(output) => {
                             let parsed = parse_tool_response(&output);
                             // Extract member agent ids from the response.
-                            let members: Vec<String> = if is_local {
-                                parsed
-                                    .and_then(|c| {
-                                        c.get("members").and_then(|m| m.as_array()).map(|members| {
-                                            members
-                                                .iter()
-                                                .filter_map(|m| m.as_str().map(str::to_string))
-                                                .collect::<Vec<_>>()
-                                        })
+                            let members: Vec<String> = parsed
+                                .and_then(|c| {
+                                    c.get("members").and_then(|m| m.as_array()).map(|members| {
+                                        members
+                                            .iter()
+                                            .filter_map(|m| m.as_str().map(str::to_string))
+                                            .collect::<Vec<_>>()
                                     })
-                                    .unwrap_or_default()
-                            } else {
-                                // ABW roster: extract agent ids from the
-                                // workspace payload.
-                                parsed
-                                    .and_then(|c| {
-                                        let candidates = [
-                                            c.get("agents"),
-                                            c.get("workspace").and_then(|w| w.get("agents")),
-                                            c.get("team").and_then(|t| t.get("agents")),
-                                        ];
-                                        candidates.into_iter().find_map(|c| c?.as_array()).map(
-                                            |agents| {
-                                                agents
-                                                    .iter()
-                                                    .filter_map(|a| {
-                                                        a.get("agent_id")
-                                                            .or_else(|| a.get("agent_name"))
-                                                            .and_then(|v| v.as_str())
-                                                            .map(str::to_string)
-                                                    })
-                                                    .collect::<Vec<_>>()
-                                            },
-                                        )
-                                    })
-                                    .unwrap_or_default()
-                            };
+                                })
+                                .unwrap_or_default();
                             let agents_str = members.join(", ");
                             this.compose
                                 .agents
@@ -527,18 +289,15 @@ impl SwarmPanel {
         cx: &mut Context<Self>,
     ) {
         self.compose.editing_swarm_id = None;
-        self.compose.editing_swarm_source = None;
-        self.compose.create_target = self.active_backend;
         self.compose.status = None;
         self.compose.name.update(cx, |e, cx| e.clear(window, cx));
         self.compose.mission.update(cx, |e, cx| e.clear(window, cx));
         self.compose.agents.update(cx, |e, cx| e.clear(window, cx));
     }
 
-    /// Create a new swarm from the compose form. Mode-aware: in Local mode the
-    /// swarm is created on the local substrate via `swarm_create_local_swarm`
-    /// (no cost, no consent — members are agent ids); in ABW mode the existing
-    /// consent-gated `swarm_create_swarm` path is used, hiring any listed agents.
+    /// Create a new swarm from the compose form on the local substrate via
+    /// `swarm_create_local_swarm` (no cost, no consent — members are agent
+    /// ids).
     fn create_swarm(&mut self, cx: &mut Context<Self>) {
         // If editing an existing swarm, dispatch to the update path
         // instead of creating a new one. This handles the case where
@@ -574,7 +333,6 @@ impl SwarmPanel {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
-        let is_local = self.compose.create_target == CreateTarget::Local;
 
         // Launch gate: a swarm is not ready for the swarm-intelligence PDCA
         // loop unless it has a mission (the task context SENSE derives
@@ -604,144 +362,17 @@ impl SwarmPanel {
         cx.notify();
 
         cx.spawn(async move |this, cx| {
-            // Local mode: create the swarm on the local substrate directly — no
-            // cost, no consent tokens. Members are agent ids (the local swarm
-            // roster is ids; resolution happens at delegation time).
-            if is_local {
-                let result = invoker
-                    .invoke_tool(
-                        SWARM_SERVER,
-                        "swarm_create_local_swarm",
-                        json!({
-                            "name": name.trim(),
-                            "mission": mission.trim(),
-                            "agents": agents,
-                        }),
-                    )
-                    .await;
-                this.update_in(cx, |this, window, cx| {
-                    this.compose.busy = false;
-                    match result {
-                        Ok(output) => {
-                            // Extract the swarm_id from the response so we can
-                            // select it and navigate to Steer.
-                            let swarm_id = parse_tool_response(&output)
-                                .and_then(|c| c.get("swarm_id").and_then(|v| v.as_str()).map(str::to_string));
-                            this.compose.status =
-                                Some(format!("Local swarm '{}' created.", name.trim()).into());
-                            this.fetch_all(cx);
-                            // Navigate to Steer with the new swarm selected.
-                            if let Some(id) = swarm_id {
-                                this.select_swarm_for_steer(id, true, cx);
-                                // Drop any existing Steer conversation so the
-                                // next construction bakes in the new swarm.
-                                this.steer.invalidate();
-                                this.set_mode(PanelMode::Steer, window, cx);
-                            }
-                        }
-                        Err(err) => {
-                            this.compose.status = Some(format!("Create failed: {err}").into());
-                        }
-                    }
-                    cx.notify();
-                })
-                .ok();
-                return;
-            }
-            // Mint a consent token per agent to hire (each hire is gated).
-            // Fetch the real hire cost per agent first (BH-02): a hardcoded
-            // `credits_authorized: 5` would under-authorize an agent that
-            // costs 20, and the server's re-verify would reject the hire —
-            // but only after the workspace was already created. Fetching the
-            // cost up front lets us abort before any ABW mutation and pass
-            // the real ceiling to the consent token.
-            // A spend path must not silently degrade: if any consent mint
-            // fails, abort the create rather than hiring a partial team.
-            let mut consent_tokens = Vec::new();
-            let mut consent_failures = Vec::new();
-            for agent in &agents {
-                // Step 1: fetch the real hire cost.
-                let cost_result = invoker
-                    .invoke_tool(
-                        SWARM_SERVER,
-                        "swarm_hire_cost",
-                        json!({ "agent_name": agent }),
-                    )
-                    .await;
-                let credits = match cost_result {
-                    Ok(output) => {
-                        parse_tool_response(&output).and_then(|c| {
-                            c.get("total_hire_cost").and_then(|v| v.as_u64())
-                        }).map(|c| c as u32)
-                    }
-                    Err(err) => {
-                        log::warn!("swarm-panel: hire cost fetch for '{agent}' failed: {err}");
-                        consent_failures.push(agent.clone());
-                        continue;
-                    }
-                };
-                let Some(credits) = credits else {
-                    log::warn!("swarm-panel: hire cost fetch for '{agent}' returned no total_hire_cost");
-                    consent_failures.push(agent.clone());
-                    continue;
-                };
-                // Step 2: mint the consent token with the real cost.
-                match invoker
-                    .invoke_tool(
-                        SWARM_SERVER,
-                        "swarm_request_consent",
-                        json!({ "action": "hire", "target": agent, "credits_authorized": credits }),
-                    )
-                    .await
-                {
-                    Ok(output) => {
-                        let token = parse_tool_response(&output).and_then(|c| {
-                            c.get("consent_token")
-                                .and_then(|t| t.as_str())
-                                .map(str::to_string)
-                        });
-                        match token {
-                            Some(t) => consent_tokens.push(t),
-                            None => {
-                                log::warn!("swarm-panel: consent mint for '{agent}' returned no token");
-                                consent_failures.push(agent.clone());
-                            }
-                        }
-                    }
-                    Err(err) => {
-                        log::warn!("swarm-panel: consent mint for '{agent}' failed: {err}");
-                        consent_failures.push(agent.clone());
-                    }
-                }
-            }
-
-            // Abort on any consent failure — do not create a swarm with a
-            // silently under-consented team.
-            if !consent_failures.is_empty() {
-                this.update(cx, |this, cx| {
-                    this.compose.busy = false;
-                    this.compose.status = Some(
-                        format!(
-                            "Consent failed for {} — swarm not created.",
-                            consent_failures.join(", ")
-                        )
-                        .into(),
-                    );
-                    cx.notify();
-                })
-                .ok();
-                return;
-            }
-
+            // Create the swarm on the local substrate — no cost, no consent
+            // tokens. Members are agent ids (the local swarm roster is ids;
+            // resolution happens at delegation time).
             let result = invoker
                 .invoke_tool(
                     SWARM_SERVER,
-                    "swarm_create_swarm",
+                    "swarm_create_local_swarm",
                     json!({
                         "name": name.trim(),
-                        "mission": if mission.trim().is_empty() { None } else { Some(mission.trim()) },
+                        "mission": mission.trim(),
                         "agents": agents,
-                        "consent_tokens": consent_tokens,
                     }),
                 )
                 .await;
@@ -749,44 +380,21 @@ impl SwarmPanel {
                 this.compose.busy = false;
                 match result {
                     Ok(output) => {
-                        if let Some(b) = extract_wallet_balance(&output) {
-                            this.spend.wallet_balance = Some(b);
-                        }
-                        // Surface any per-hire errors the server reported
-                        // (BH-07): the workspace is created but some hires may
-                        // have failed (cost re-verify, network drop). The
-                        // operator must not see "Swarm created." while all
-                        // hires silently failed.
-                        let hire_errors = parse_tool_response(&output)
-                            .and_then(|c| {
-                                c.get("hire_errors").and_then(|e| e.as_array()).cloned()
-                            })
-                            .unwrap_or_default();
-                        if hire_errors.is_empty() {
-                            this.compose.status =
-                                Some(format!("Swarm '{}' created.", name.trim()).into());
-                        } else {
-                            let failed: Vec<String> = hire_errors
-                                .iter()
-                                .filter_map(|e| {
-                                    e.get("agent").and_then(|a| a.as_str()).map(str::to_string)
-                                })
-                                .collect();
-                            this.compose.status = Some(format!(
-                                "Swarm '{}' created, but {} hire(s) failed: {}",
-                                name.trim(),
-                                failed.len(),
-                                failed.join(", ")
-                            ).into());
-                        }
-                        // Extract the workspace_id so we can select it and
-                        // navigate to Steer.
-                        let workspace_id = parse_tool_response(&output)
-                            .and_then(|c| c.get("workspace_id").and_then(|v| v.as_str()).map(str::to_string));
+                        // Extract the swarm_id from the response so we can
+                        // select it and navigate to Steer.
+                        let swarm_id = parse_tool_response(&output).and_then(|c| {
+                            c.get("swarm_id")
+                                .and_then(|v| v.as_str())
+                                .map(str::to_string)
+                        });
+                        this.compose.status =
+                            Some(format!("Local swarm '{}' created.", name.trim()).into());
                         this.fetch_all(cx);
                         // Navigate to Steer with the new swarm selected.
-                        if let Some(id) = workspace_id {
-                            this.select_swarm_for_steer(id, false, cx);
+                        if let Some(id) = swarm_id {
+                            this.select_swarm_for_steer(id, cx);
+                            // Drop any existing Steer conversation so the
+                            // next construction bakes in the new swarm.
                             this.steer.invalidate();
                             this.set_mode(PanelMode::Steer, window, cx);
                         }
@@ -800,135 +408,5 @@ impl SwarmPanel {
             .ok();
         })
         .detach();
-    }
-
-    /// Consult Xaman Ek (composition_design session) from the Compose surface.
-    /// Continues the active session across messages so the operator can refine
-    /// the team iteratively, then surfaces any recommended agents for pre-fill.
-    fn ask_xaman(&mut self, cx: &mut Context<Self>) {
-        let Some(invoker) = crate::shared_tool_invoker() else {
-            self.compose.xaman_response = Some("Tool invoker not wired.".into());
-            cx.notify();
-            return;
-        };
-        let message = self.compose.xaman_query.read(cx).text(cx);
-        if message.trim().is_empty() {
-            return;
-        }
-        self.compose.xaman_busy = true;
-        self.compose.xaman_response = None;
-        // Clear stale suggestions — the "Use team" button must not pre-fill
-        // the previous recommendation while a new query is in flight (L5).
-        self.compose.xaman_suggested_agents.clear();
-        cx.notify();
-        let session_id = self.compose.xaman_session.clone();
-
-        cx.spawn(async move |this, cx| {
-            // Mint a curate consent token before calling the curator. With the
-            // default `curator_consent_default: false`, the server requires a
-            // token (action "curate", target "xaman") — without it, every
-            // "Ask Xaman Ek" click is rejected with ConsentDenied (BH-03).
-            // Curator calls read task content but spend no credits, so the
-            // ceiling is 0.
-            let consent = invoker
-                .invoke_tool(
-                    SWARM_SERVER,
-                    "swarm_request_consent",
-                    json!({ "action": "curate", "target": "xaman", "credits_authorized": 0 }),
-                )
-                .await;
-            let consent_token: Option<String> = match consent {
-                Ok(output) => parse_tool_response(&output).and_then(|c| {
-                    c.get("consent_token")
-                        .and_then(|t| t.as_str())
-                        .map(str::to_string)
-                }),
-                Err(err) => {
-                    this.update(cx, |this, cx| {
-                        this.compose.xaman_busy = false;
-                        this.compose.xaman_response = Some(
-                            format!(
-                                "Consent for Xaman Ek failed: {err}. \
-                             Set kask.swarm.curator_consent_default true to opt in globally."
-                            )
-                            .into(),
-                        );
-                        cx.notify();
-                    })
-                    .ok();
-                    return;
-                }
-            };
-            let Some(consent_token) = consent_token else {
-                this.update(cx, |this, cx| {
-                    this.compose.xaman_busy = false;
-                    this.compose.xaman_response = Some(
-                        "Consent for Xaman Ek returned no token. \
-                         Set kask.swarm.curator_consent_default true to opt in globally."
-                            .into(),
-                    );
-                    cx.notify();
-                })
-                .ok();
-                return;
-            };
-
-            let result = invoker
-                .invoke_tool(
-                    SWARM_SERVER,
-                    "swarm_xaman",
-                    json!({
-                        "message": message.trim(),
-                        "session_type": "composition_design",
-                        "session_id": session_id,
-                        "consent_token": consent_token,
-                    }),
-                )
-                .await;
-            this.update(cx, |this, cx| {
-                this.compose.xaman_busy = false;
-                match result {
-                    Ok(output) => {
-                        if let Some(b) = extract_wallet_balance(&output) {
-                            this.spend.wallet_balance = Some(b);
-                        }
-                        let parsed = parse_tool_response(&output);
-                        if let Some(content) = parsed {
-                            // Continue the session.
-                            if let Some(sid) = content.get("session_id").and_then(|s| s.as_str()) {
-                                this.compose.xaman_session = Some(sid.to_string());
-                            }
-                            if let Some(resp) = content.get("response").and_then(|r| r.as_str()) {
-                                this.compose.xaman_response = Some(resp.to_string().into());
-                            }
-                            // Extract recommended agent names from the response
-                            // text (Xaman Ek lists members by name) so the
-                            // operator can pre-fill the agents field.
-                            this.compose.xaman_suggested_agents = extract_agent_mentions(&content);
-                        }
-                    }
-                    Err(err) => {
-                        this.compose.xaman_response =
-                            Some(format!("Xaman Ek unavailable: {err}").into());
-                    }
-                }
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    /// Pre-fill the agents field with Xaman Ek's recommended team.
-    fn apply_xaman_suggestions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.compose.xaman_suggested_agents.is_empty() {
-            return;
-        }
-        let joined = self.compose.xaman_suggested_agents.join(", ");
-        let agents_editor = self.compose.agents.clone();
-        agents_editor.update(cx, |editor, cx| {
-            editor.set_text(joined, window, cx);
-        });
-        cx.notify();
     }
 }

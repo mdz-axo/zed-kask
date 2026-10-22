@@ -7948,7 +7948,6 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
- "zed-reqwest",
 ]
 
 [[package]]

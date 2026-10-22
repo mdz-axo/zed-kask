@@ -9,9 +9,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 
 use crate::SwarmServer;
-use crate::abw_client::SwarmClient;
 use crate::config::SwarmConfig;
-use crate::consent::ConsentStore;
 use crate::local_knowledge::LazyLocalMemory;
 use crate::local_registry::LocalAgentRegistry;
 use crate::local_runtime::{LazyEventStore, LazyLocalSwarmRuntime, LocalSwarmRuntime};
@@ -312,11 +310,11 @@ pub(crate) fn make_thread_server(
     let swarms = dir.join("swarms").to_string_lossy().into_owned();
     SwarmServer::new(
         hkask_types::WebID::new(),
-        Arc::new(SwarmClient::new(
-            reqwest::Client::new(),
-            SwarmConfig::default(),
-        )),
-        Arc::new(ConsentStore::default()),
+        Arc::new(SwarmConfig {
+            local_agents_dir: agents.clone(),
+            local_swarms_dir: swarms.clone(),
+            ..SwarmConfig::default()
+        }),
         Arc::new(LocalAgentRegistry::new(&agents)),
         Arc::new(LazyLocalSwarmRuntime::with_runtime(
             LocalSwarmRuntime::new_for_test(inference, Arc::new(NoTools), String::new()),

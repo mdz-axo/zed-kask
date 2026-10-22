@@ -834,7 +834,6 @@ mod tests {
                 mcp_tools: vec!["fixture/lookup".into()],
                 ..Default::default()
             },
-            cloud_swarm_id: None,
             tags: vec![],
             visibility: String::new(),
             sample_queries: vec![],

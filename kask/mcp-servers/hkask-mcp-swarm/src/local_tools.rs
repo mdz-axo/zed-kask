@@ -1,25 +1,20 @@
 //! Local swarm tools — delegation execution (delegate/fanout/pipeline), the
-//! local agent store (list/clone/push/remove/create/reconfigure), and local
+//! local agent store (list/remove/create/reconfigure), and local
 //! swarm membership (create/list/get/delete/add/remove). Split from
 //! `hkask_mcp_swarm.rs` (M2). All operate on the local registry/runtime; no
-//! ABW round-trips except `swarm_clone_to_local`/`swarm_push_to_cloud`.
+//! network round-trips — local agents run on the operator's own substrate.
 use crate::SwarmServer;
 #[cfg(test)]
 #[path = "scoped_dispatch_tests.rs"]
 mod scoped_dispatch_tests;
-use crate::abw_util::{create_abw_workspace, url_encode_segment, validate_agent_name};
-use crate::error::{LocalSwarmError, SwarmError, map_local_swarm_error};
+use crate::error::{LocalSwarmError, map_local_swarm_error};
 use crate::local_knowledge;
 use crate::local_registry::{
     LocalAgentCapabilities, LocalAgentCard, LocalAgentDependencies, LocalAgentValence,
 };
 use crate::local_runtime::{LocalDelegateResult, MAX_FANOUT};
 use crate::request_types::*;
-use crate::sanitize::{
-    extract_tool_names, filter_declared_skills, filter_mcp_tools, sanitize_abw_text,
-    sanitize_agent_id, sanitize_workspace_payload,
-};
-use crate::spend_gate;
+use crate::sanitize::{filter_declared_skills, filter_mcp_tools, sanitize_agent_id};
 use crate::task_board::TaskBoard;
 use crate::thread_store::ThreadTurn;
 use hkask_mcp_server::server::{McpToolError, execute_tool};
@@ -281,36 +276,6 @@ fn eval_task_report(
         "pass_rate_std_error": std_error,
         "mean_latency_ms": mean_latency_ms,
     })
-}
-
-/// Extract agent ids from an ABW workspace payload's roster. The roster
-/// shape varies (top-level `agents`, nested `workspace.agents`, `team.agents`,
-/// etc.) — this mirrors the panel's `parse_swarm_roster` candidate paths.
-/// Returns an empty vec when no roster is found (the local swarm is created
-/// with an empty roster; the operator can add agents manually).
-fn extract_roster_member_ids(workspace: &serde_json::Value) -> Vec<String> {
-    let candidates = [
-        workspace.get("agents"),
-        workspace.get("workspace").and_then(|w| w.get("agents")),
-        workspace.get("team").and_then(|t| t.get("agents")),
-        workspace
-            .get("workspace")
-            .and_then(|w| w.get("team"))
-            .and_then(|t| t.get("agents")),
-    ];
-    let agents = match candidates.into_iter().find_map(|c| c?.as_array()) {
-        Some(arr) => arr,
-        None => return Vec::new(),
-    };
-    agents
-        .iter()
-        .filter_map(|a| {
-            a.get("agent_id")
-                .or_else(|| a.get("agent_name"))
-                .and_then(|v| v.as_str())
-                .map(str::to_string)
-        })
-        .collect()
 }
 
 /// Load a swarm's task board for a swarm-scoped run. A load failure warns
@@ -612,11 +577,11 @@ impl SwarmServer {
     /// tool calls are dispatched through the zed IPC bridge's governed
     /// `McpRuntime` — the declared list is the allowlist.
     ///
-    /// No local token quota or ABW credit token. Inference uses configured
+    /// No local token quota. Inference uses configured
     /// platform models and may incur cloud-provider charges; tool authority
     /// and request deadlines remain enforced at their own boundaries.
     #[tool(
-        description = "Delegate a task to an agent in the local registry using configured platform inference models, including cloud models. Declared capabilities.mcp_tools are allowlisted at host dispatch. No local token quota or ABW credit token; model-provider charges may apply. Returns response, model, observed token usage, latency, and tool_calls summary."
+        description = "Delegate a task to an agent in the local registry using configured platform inference models, including cloud models. Declared capabilities.mcp_tools are allowlisted at host dispatch. No local token quota; model-provider charges may apply. Returns response, model, observed token usage, latency, and tool_calls summary."
     )]
     pub(crate) async fn swarm_delegate_local(
         &self,
@@ -1080,12 +1045,9 @@ impl SwarmServer {
     // Local agent store tools (v2 §15 Slice 11).
 
     /// List agents from the local registry. Returns the cards loaded from
-    /// `agents/local/curated/`. Each card carries a `cloud_swarm_id` field: when
-    /// present, the agent is synced with an ABW agent; when absent, it is
-    /// local-only. The panel uses this to show a `source` badge
-    /// (`local`, `synced`) alongside the ABW agent list.
+    /// `agents/local/curated/`.
     #[tool(
-        description = "List all local agents from agents/local/curated/. Each agent card carries a cloud_id field: when present, the agent is synced with an ABW agent; when absent, it is local-only. Returns agents[] with agent_id, agent_type, description, accepts[], produces[], cloud_id."
+        description = "List all local agents from agents/local/curated/. Returns agents[] with agent_id, agent_type, description, accepts[], produces[]."
     )]
     pub(crate) async fn swarm_list_local_agents(
         &self,
@@ -1569,500 +1531,14 @@ impl SwarmServer {
         .await
     }
 
-    /// Clone an ABW agent to the local registry. Fetches the agent card from
-    /// ABW via `swarm_get_agent`, leaves model unset for host-default inheritance, writes it
-    /// to `agents/local/curated/<id>/agent_card.json`, and sets `cloud_swarm_id` to
-    /// the ABW agent id (marking it as synced). The ABW catalogue is open
-    /// (no API key required) — same as `swarm_list_agents`. The clone is a
-    /// read-from-ABW + write-to-local-filesystem operation with no ABW
-    /// mutation, so `require_auth` is not needed.
-    #[tool(
-        description = "Clone an ABW agent to the local registry. Fetches the card from ABW, inherits the host platform model, writes to agents/local/curated/<id>/agent_card.json, and sets cloud_id to mark it as synced. Local means execution location, not a local-model requirement. The ABW catalogue is open — no API key required."
-    )]
-    pub(crate) async fn swarm_clone_to_local(
-        &self,
-        parameters: Parameters<CloneToLocalRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "swarm_clone_to_local", async {
-            let req = parameters.0;
-            if req.agent_name.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "agent_name must be non-empty".to_string(),
-                ));
-            }
-            // Fetch the agent card from ABW.
-            let abw_card = self
-                .client
-                .get(&format!("/agents/{}", url_encode_segment(&req.agent_name)))
-                .await
-                .map_err(SwarmError::into_tool_error)?;
-            // Build the local card from the ABW card.
-            let agent_id = abw_card
-                .get("agent_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or(&req.agent_name)
-                .to_string();
-            // Sanitize the agent_id for filesystem use — the ABW response is
-            // third-party data and could contain path traversal sequences
-            // (e.g. "../../etc"). Only allow alphanumerics, dash, underscore,
-            // and dot. If the sanitized id is empty, fall back to the
-            // operator-supplied agent_name (also sanitized).
-            let safe_agent_id = sanitize_agent_id(&agent_id)
-                .or_else(|| sanitize_agent_id(&req.agent_name))
-                .ok_or_else(|| {
-                    McpToolError::invalid_argument(
-                        "agent_id from ABW contains no safe characters".to_string(),
-                    )
-                })?;
-            // The local clone gets a distinct agent_id so it cannot collide
-            // with the cloud agent's id. This is the root-cause fix for the
-            // panel merge bug where a cloned card with `agent_id ==
-            // cloud_swarm_id` self-suppressed and never appeared as a Local
-            // row. The `-clone` suffix also differentiates the local card
-            // from the cloud card in `swarm_delegate_local` lookups.
-            let clone_agent_id = self.local_registry.unique_clone_id(&safe_agent_id);
-            // Display label: prefer the ABW display_alias (human-readable),
-            // fall back to the agent_name, and append " (Clone)" so the
-            // operator can distinguish the local clone from the cloud
-            // original in the panel.
-            let display_base = abw_card
-                .get("display_alias")
-                .and_then(|d| d.as_str())
-                .filter(|d| !d.is_empty())
-                .unwrap_or(req.agent_name.as_str());
-            let display_name = format!("{} (Clone)", display_base);
-            let agent_type = abw_card
-                .get("agent_type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("research")
-                .to_string();
-            // fermi's `build_agent_json` carries `description` at the top
-            // level; `metadata` is only overlaid for curated agents with a
-            // filesystem card. Read top-level first so API-created agents
-            // (no `metadata` key at all) keep their description.
-            let description = abw_card
-                .get("description")
-                .and_then(|d| d.as_str())
-                .or_else(|| {
-                    abw_card
-                        .get("metadata")
-                        .and_then(|m| m.get("description"))
-                        .and_then(|d| d.as_str())
-                })
-                .unwrap_or("")
-                .to_string();
-            let accepts: Vec<String> = abw_card
-                .get("accepts")
-                .and_then(|a| a.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let produces: Vec<String> = abw_card
-                .get("produces")
-                .and_then(|p| p.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let deps = abw_card
-                .get("dependencies")
-                .and_then(|d| d.as_object())
-                .map(|obj| LocalAgentDependencies {
-                    required: obj
-                        .get("required")
-                        .and_then(|r| r.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                    optional: obj
-                        .get("optional")
-                        .and_then(|o| o.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                })
-                .unwrap_or_default();
-            // Model semantics (the operator's spec): the local clone does
-            // NOT carry the ABW card's model. A local agent runs on the host
-            // session's default model unless the operator sets an explicit
-            // per-agent override — a cloud model id is not a local-run
-            // instruction (it may not even resolve on the local substrate).
-            // The cloud original keeps its model on ABW; `swarm_push_to_cloud`
-            // omits an empty model so fermi keeps its own (round-trip safe).
-            let model = String::new();
-            let system_prompt = abw_card
-                .get("system_prompt")
-                .and_then(|s| s.as_str())
-                .map(sanitize_abw_text);
-            let string_list = |v: Option<&serde_json::Value>| {
-                v.and_then(|x| x.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|x| x.as_str().map(String::from))
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default()
-            };
-            let abw_caps = abw_card.get("capabilities");
-            // fermi emits `capabilities.mcp_tools` as `[{name, description}]`
-            // objects (its `McpTool` shape); older deploys emitted strings.
-            // `extract_tool_names` accepts both, then `filter_mcp_tools`
-            // remains the authority gate — only governed `server/tool`
-            // names survive into the local card's dispatch allowlist.
-            let mcp_tools = filter_mcp_tools(
-                extract_tool_names(abw_caps.and_then(|c| c.get("mcp_tools"))),
-                self.client.config().allowed_tool_servers.as_deref(),
-            );
-            let skills =
-                filter_declared_skills(string_list(abw_caps.and_then(|c| c.get("skills"))));
-            // fermi's `build_agent_json` carries these at the top level:
-            // `output_contract` (the typed schema the agent declares), tags,
-            // visibility, sample_queries, and valence. `input_contract` is
-            // not yet exposed by fermi's GET response — read both the top
-            // level and `capabilities` so the clone picks it up the day
-            // fermi adds it.
-            let output_contract = abw_card
-                .get("output_contract")
-                .filter(|v| !v.is_null())
-                .cloned();
-            let input_contract = abw_card
-                .get("input_contract")
-                .or_else(|| abw_caps.and_then(|c| c.get("input_contract")))
-                .filter(|v| !v.is_null())
-                .cloned();
-            let tags = string_list(abw_card.get("tags"));
-            let visibility = abw_card
-                .get("visibility")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let sample_queries = string_list(abw_card.get("sample_queries"));
-            let valence =
-                abw_card
-                    .get("valence")
-                    .filter(|v| !v.is_null())
-                    .map(|v| LocalAgentValence {
-                        arousal: v.get("arousal").and_then(|a| a.as_f64()),
-                        valence: v.get("valence").and_then(|a| a.as_f64()),
-                        primary_affect: v
-                            .get("primary_affect")
-                            .and_then(|a| a.as_str())
-                            .map(String::from),
-                        personality_traits: string_list(v.get("personality_traits")),
-                    });
-            // fermi's `build_agent_json` carries the card version, the
-            // sampling temperature (under `capabilities`), and the
-            // provider-agnostic `model_params` — all top-level except
-            // temperature. Copy them so the local clone runs with the same
-            // sampling behavior as the cloud original.
-            let version = abw_card
-                .get("version")
-                .and_then(|v| v.as_str())
-                .unwrap_or("1.0.0")
-                .to_string();
-            let temperature = abw_caps
-                .and_then(|c| c.get("temperature"))
-                .and_then(|t| t.as_f64());
-            let model_params = abw_card
-                .get("model_params")
-                .filter(|v| !v.is_null())
-                .cloned();
-            // The agent's declared workflow (fermi
-            // `build_agent_json` carries `workflow_template` top-level).
-            // Parsed into the typed struct so the clone round-trips and the
-            // workflow check can read it; a malformed template is warned
-            // and skipped rather than failing the whole clone.
-            let workflow_template = abw_card
-                .get("workflow_template")
-                .filter(|v| !v.is_null())
-                .and_then(|v| {
-                    serde_json::from_value::<crate::local_registry::LocalWorkflowTemplate>(
-                        v.clone(),
-                    )
-                    .map(Some)
-                    .map_err(|error| {
-                        tracing::warn!(
-                            target: "hkask.mcp.swarm",
-                            agent = %req.agent_name,
-                            %error,
-                            "workflow_template failed to parse — cloned without the \
-                             workflow declaration"
-                        );
-                    })
-                    .ok()
-                })
-                .flatten();
-            let import_labels: Vec<String> =
-                accepts.iter().chain(produces.iter()).cloned().collect();
-            let local_card = LocalAgentCard {
-                agent_id: clone_agent_id.clone(),
-                agent_type,
-                description,
-                display_name,
-                accepts,
-                produces,
-                dependencies: deps,
-                capabilities: LocalAgentCapabilities {
-                    model,
-                    system_prompt,
-                    mcp_tools,
-                    skills,
-                    output_contract,
-                    input_contract,
-                    temperature,
-                    model_params,
-                    ..Default::default()
-                },
-                cloud_swarm_id: Some(req.agent_name),
-                tags,
-                sample_queries,
-                visibility,
-                valence,
-                version,
-                workflow_template,
-            };
-            // The ABW catalogue's port labels are the card's own
-            // taxonomy, not locally-authored free strings. Register them
-            // as persisted extension types so `write_card`'s typing gate
-            // (and every future load) resolves them. Labels that already
-            // resolve are no-ops.
-            self.local_registry
-                .promote_imported_port_types(&import_labels)
-                .map_err(map_local_swarm_error)?;
-            // write_card runs Rung 1 (Presence) + Rung 2 (Typing) +
-            // sanitize/canonicalize/dir-write/load — same invariant as
-            // `swarm_create_local_agent`.
-            let card_path = self
-                .local_registry
-                .write_card(&local_card)
-                .map_err(map_local_swarm_error)?;
-            Ok(serde_json::json!({
-                "cloned": clone_agent_id,
-                "cloud_id": local_card.cloud_swarm_id,
-                "path": card_path,
-                "synced": true,
-            }))
-        })
-        .await
-    }
-
-    /// Push a local agent to ABW. Reads the local card and either creates the
-    /// ABW agent (`POST /api/agents`, when the card has no `cloud_swarm_id`) or
-    /// updates the existing one (`PUT /api/agents/:id`, when it does), then
-    /// records the sync link. Requires the ABW API key.
-    ///
-    /// fermi's create requires `agent_name` (a snake_case slug) and reads flat
-    /// fields; its update accepts the richer card fields (`output_contract`,
-    /// `input_contract`, `valence`). The local card's `mcp_tools` are zed-side
-    /// `server/tool` names dispatched through the zed IPC bridge — a different
-    /// namespace from fermi's dispatch-table tools — so they are NOT pushed
-    /// (fermi would reject them as undispatchable, and a clone re-imports its
-    /// own allowlist anyway). `skills`, `sample_queries`, and `dependencies`
-    /// have no ABW API surface at all (they live only on fermi's filesystem
-    /// cards for curated agents) and are likewise not pushed.
-    #[tool(
-        description = "Push a local agent to ABW. Creates the ABW agent (POST) or updates the existing one (PUT) from the local card, and sets cloud_id on the local card to mark it as synced. Requires ABW API key."
-    )]
-    pub(crate) async fn swarm_push_to_cloud(
-        &self,
-        parameters: Parameters<PushToCloudSwarmRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "swarm_push_to_cloud", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
-            let req = parameters.0;
-            if req.agent_name.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "agent_name must be non-empty".to_string(),
-                ));
-            }
-            // Look up the local card.
-            let local_card = self.local_registry.get(&req.agent_name).ok_or_else(|| {
-                McpToolError::not_found(format!(
-                    "agent '{}' not found in local registry",
-                    req.agent_name
-                ))
-            })?;
-            // The update payload carries the fields fermi's `AgentUpdate`
-            // accepts: description, system_prompt, tags, model, accepts,
-            // produces, output_contract, input_contract, valence. Built once —
-            // the create path issues it as a follow-up PUT after the POST;
-            // the update path issues it directly.
-            let mut update_payload = serde_json::json!({
-                "description": local_card.description,
-                "system_prompt": local_card.capabilities.system_prompt,
-                "tags": local_card.tags,
-                "accepts": local_card.accepts,
-                "produces": local_card.produces,
-                "output_contract": local_card.capabilities.output_contract,
-                "input_contract": local_card.capabilities.input_contract,
-            });
-            // Sampling + version (fermi `AgentUpdate` accepts all three).
-            // Omitted when unset so fermi keeps its own values.
-            if let Some(temperature) = local_card.capabilities.temperature {
-                update_payload["temperature"] = serde_json::json!(temperature);
-            }
-            if let Some(model_params) = &local_card.capabilities.model_params {
-                update_payload["model_params"] = serde_json::json!(model_params);
-            }
-            if !local_card.version.trim().is_empty() {
-                update_payload["version"] = serde_json::json!(local_card.version);
-            }
-            // The agent's declared workflow — fermi's `AgentUpdate`
-            // accepts `workflow_template`. Omitted when the card declares
-            // none so fermi keeps whatever it has.
-            if let Some(workflow_template) = &local_card.workflow_template {
-                update_payload["workflow_template"] =
-                    serde_json::json!(workflow_template);
-            }
-            // An empty model would overwrite fermi's default with "" — omit
-            // the key so fermi keeps whatever it has (create) or its default.
-            if !local_card.capabilities.model.trim().is_empty() {
-                update_payload["model"] =
-                    serde_json::json!(local_card.capabilities.model);
-            }
-            if let Some(valence) = &local_card.valence {
-                update_payload["valence"] = serde_json::json!({
-                    "primary_affect": valence.primary_affect.clone().unwrap_or_else(|| "neutral".to_string()),
-                    "arousal": valence.arousal.unwrap_or(0.5),
-                    "valence": valence.valence.unwrap_or(0.5),
-                    "personality_traits": valence.personality_traits,
-                });
-            }
-            let update_is_empty = update_payload
-                .as_object()
-                .is_some_and(|o| o.is_empty());
-
-            let (cloud_swarm_id, created, result) = if let Some(existing) =
-                local_card.cloud_swarm_id.as_deref()
-            {
-                // Synced card — update the existing ABW agent in place.
-                // fermi's `resolve_agent` accepts the agent_name slug or the
-                // UUID; `cloud_swarm_id` stores the slug.
-                let result = self
-                    .client
-                    .request(
-                        reqwest::Method::PUT,
-                        &format!("/agents/{}", url_encode_segment(existing)),
-                        &[],
-                        Some(&update_payload),
-                    )
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                (existing.to_string(), false, result)
-            } else {
-                // Unsynced card — create a new ABW agent. fermi's create
-                // requires `agent_name` (snake_case slug, 3–64 chars) and
-                // reads flat fields; unknown keys are ignored, so the old
-                // `agent_id`-keyed payload failed deserialization on the
-                // missing `agent_name` — every push returned 400.
-                validate_agent_name(&local_card.agent_id)
-                    .map_err(crate::error::map_local_swarm_error)?;
-                let mut create_payload = serde_json::json!({
-                    "agent_name": local_card.agent_id,
-                    "agent_type": local_card.agent_type,
-                    "description": local_card.description,
-                    "system_prompt": local_card.capabilities.system_prompt,
-                    "tags": local_card.tags,
-                    "visibility": if local_card.visibility.trim().is_empty() {
-                        "private".to_string()
-                    } else {
-                        local_card.visibility.clone()
-                    },
-                    "accepts": local_card.accepts,
-                    "produces": local_card.produces,
-                });
-                if !local_card.capabilities.model.trim().is_empty() {
-                    create_payload["model"] =
-                        serde_json::json!(local_card.capabilities.model);
-                }
-                let result = self
-                    .client
-                    .post("/agents", &create_payload)
-                    .await
-                    .map_err(SwarmError::into_tool_error)?;
-                // Apply the update-only fields (contracts, valence) via a
-                // follow-up PUT to the freshly created agent.
-                if !update_is_empty {
-                    self.client
-                        .request(
-                            reqwest::Method::PUT,
-                            &format!("/agents/{}", url_encode_segment(&local_card.agent_id)),
-                            &[],
-                            Some(&update_payload),
-                        )
-                        .await
-                        .map_err(SwarmError::into_tool_error)?;
-                }
-                // fermi's create response carries `agent_name` (the slug)
-                // and `agent_id` (the UUID). The panel matches
-                // `cloud_swarm_id` against the cloud catalogue's `agent_id`
-                // field, which fermi fills with the agent_name slug — so the
-                // sync link must store the slug, not the UUID.
-                let slug = result
-                    .get("agent_name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(local_card.agent_id.as_str())
-                    .to_string();
-                (slug, true, result)
-            };
-            let mut updated_card = local_card.clone();
-            updated_card.cloud_swarm_id = Some(cloud_swarm_id.clone());
-            // Write the updated card back to the local registry. Sanitize
-            // the agent_id for filesystem use (defense-in-depth — the card
-            // came from disk, but a manually-placed malicious card could
-            // carry a path-traversal id).
-            let dir = self.client.config().local_agents_dir.clone();
-            let safe_id = sanitize_agent_id(&local_card.agent_id).ok_or_else(|| {
-                McpToolError::invalid_argument(format!(
-                    "agent_id '{}' contains no safe characters",
-                    local_card.agent_id
-                ))
-            })?;
-            let card_path = std::path::Path::new(&dir)
-                .join(&safe_id)
-                .join("agent_card.json");
-            let json = serde_json::to_string_pretty(&updated_card)
-                .map_err(|e| McpToolError::internal(format!("failed to serialize: {e}")))?;
-            std::fs::write(&card_path, json).map_err(|e| {
-                hkask_mcp_server::map_io_error(
-                    e,
-                    &format!("failed to write {}", card_path.display()),
-                )
-            })?;
-            self.local_registry.load().map_err(map_local_swarm_error)?;
-            Ok(serde_json::json!({
-                "pushed": local_card.agent_id,
-                "cloud_id": cloud_swarm_id,
-                "created": created,
-                "synced": true,
-                "result": result,
-            }))
-        })
-        .await
-    }
-
     /// Remove a local agent card from the local registry. This is the
     /// local-mode counterpart of firing an agent: it deletes the card
     /// directory (`agents/local/curated/<id>/`), so the agent stops
     /// appearing in `swarm_list_local_agents` and cannot be delegated to.
-    /// A synced card's ABW agent is NOT touched (the sync link is severed
-    /// locally only). No consent token — local mode has no consent gate
-    /// (§15.1.2); the registry write is the action.
+    /// No consent token — local mode has no consent gate (§15.1.2); the
+    /// registry write is the action.
     #[tool(
-        description = "Remove a local agent card from the local registry (deletes agents/local/curated/<id>/). The local counterpart of firing an agent. A synced card's ABW agent is NOT touched. No consent token — local mode has no consent gate."
+        description = "Remove a local agent card from the local registry (deletes agents/local/curated/<id>/). The local counterpart of firing an agent. No consent token — local mode has no consent gate."
     )]
     pub(crate) async fn swarm_remove_local(
         &self,
@@ -2089,7 +1565,7 @@ impl SwarmServer {
                     card.agent_id
                 ))
             })?;
-            let dir = self.client.config().local_agents_dir.clone();
+            let dir = self.config.local_agents_dir.clone();
             let registry_root = std::fs::canonicalize(&dir).map_err(|e| {
                 hkask_mcp_server::map_io_error(
                     e,
@@ -2120,8 +1596,6 @@ impl SwarmServer {
             self.local_registry.load().map_err(map_local_swarm_error)?;
             Ok(serde_json::json!({
                 "removed": card.agent_id,
-                "cloud_id": card.cloud_swarm_id,
-                "synced": card.cloud_swarm_id.is_some(),
             }))
         })
         .await
@@ -2130,8 +1604,7 @@ impl SwarmServer {
     /// Create a new local agent card programmatically. Writes
     /// `agents/local/curated/<id>/agent_card.json` and reloads the registry. The
     /// counterpart of `swarm_remove_local`: remove deletes a card, create
-    /// writes one. No ABW round-trip (unlike `swarm_clone_to_local`, which
-    /// copies from ABW). No consent token — local mode has no consent gate;
+    /// writes one. No consent token — local mode has no consent gate;
     /// card creation is free, and local execution is not gated on funds either (no
     /// local budget exists).
     #[tool(
@@ -2183,7 +1656,7 @@ impl SwarmServer {
                     system_prompt: Some(req.system_prompt),
                     mcp_tools: filter_mcp_tools(
                         req.mcp_tools,
-                        self.client.config().allowed_tool_servers.as_deref(),
+                        self.config.allowed_tool_servers.as_deref(),
                     ),
                     skills: req.skills,
                     output_contract: req.output_contract.map(serde_json::Value::from),
@@ -2193,7 +1666,6 @@ impl SwarmServer {
                     evaluators: req.evaluators.unwrap_or_default(),
                     reasoning: req.reasoning.unwrap_or(false),
                 },
-                cloud_swarm_id: None,
                 tags: req.tags,
                 sample_queries: req.sample_queries,
                 visibility: if req.visibility.trim().is_empty() {
@@ -2231,13 +1703,13 @@ impl SwarmServer {
     /// Plan C6). Updates ONLY the `system_prompt` (and optionally
     /// `model`/`mcp_tools`/`skills`/`model_params` when supplied); preserves
     /// `agent_id`, `agent_type`, `description`, `accepts`, `produces`,
-    /// `dependencies`, and the `cloud_swarm_id` sync link. The DECIDE
+    /// and `dependencies`. The DECIDE
     /// `reconfigure_agent` action seeds `swarm_generate_prompt` with the
     /// blamed agent's failure log to produce the new prompt, then this tool
     /// writes it via `LocalAgentRegistry::write_card` and reloads. No consent
     /// token — local mode.
     #[tool(
-        description = "Reconfigure an existing local agent's system_prompt and optional validated model_params in place (Cybernetic Swarm Plan C6 reconfigure_agent). Preserves agent_id, agent_type, description, accepts, produces, dependencies, and cloud_id. No consent token — local mode."
+        description = "Reconfigure an existing local agent's system_prompt and optional validated model_params in place (Cybernetic Swarm Plan C6 reconfigure_agent). Preserves agent_id, agent_type, description, accepts, produces, dependencies. No consent token — local mode."
     )]
     pub(crate) async fn swarm_reconfigure_local_agent(
         &self,
@@ -2271,7 +1743,7 @@ impl SwarmServer {
             if !req.mcp_tools.is_empty() {
                 card.capabilities.mcp_tools = filter_mcp_tools(
                     req.mcp_tools,
-                    self.client.config().allowed_tool_servers.as_deref(),
+                    self.config.allowed_tool_servers.as_deref(),
                 );
             }
             if !req.skills.is_empty() {
@@ -2288,25 +1760,22 @@ impl SwarmServer {
                 .map_err(map_local_swarm_error)?;
             Ok(serde_json::json!({
                 "reconfigured": card.agent_id,
-                "cloud_id": card.cloud_swarm_id,
-                "synced": card.cloud_swarm_id.is_some(),
                 "path": path,
             }))
         })
         .await
     }
 
-    // ── Local swarm membership (local replica of an ABW workspace) ─────────────
+    // ── Local swarm membership ─────────────────────────────
 
-    /// Create a local swarm - the local replica of an ABW workspace/team. A
-    /// named, mission-bearing grouping of local agent ids. No cost and no
+    /// Create a local swarm - a named, mission-bearing grouping of local
+    /// agent ids. No cost and no
     /// consent token (no local budget exists; nothing gates delegation or
     /// roster edits).
     /// Optionally seeds the roster with `agents`. Returns the new swarm with
-    /// its generated `swarm_id`. The counterpart of `swarm_create_swarm` for
-    /// the local backend.
+    /// its generated `swarm_id`.
     #[tool(
-        description = "Create a local swarm (the local replica of an ABW workspace). A named grouping of local agent ids with a mission. No cost, no consent token. Optionally seed members via `agents`. Counterpart of swarm_create_swarm for the local backend."
+        description = "Create a local swarm. A named grouping of local agent ids with a mission. No cost, no consent token. Optionally seed members via `agents`."
     )]
     pub(crate) async fn swarm_create_local_swarm(
         &self,
@@ -2393,12 +1862,11 @@ impl SwarmServer {
     }
 
     /// Add a local agent to a local swarm's roster (idempotent - a duplicate
-    /// add is a no-op). The local counterpart of `swarm_hire` (add member),
-    /// without the cost or consent gate. The agent need not already exist in
+    /// add is a no-op). No cost or consent gate. The agent need not already exist in
     /// `LocalAgentRegistry` (the roster is ids; resolution happens at
-    /// delegation time, mirroring ABW workspaces).
+    /// delegation time).
     #[tool(
-        description = "Add a local agent to a local swarm's roster by swarm_id + agent_name. Idempotent. No cost, no consent token. The agent need not exist in the registry yet (roster is ids). Counterpart of swarm_hire (add member) for the local backend."
+        description = "Add a local agent to a local swarm's roster by swarm_id + agent_name. Idempotent. No cost, no consent token. The agent need not exist in the registry yet (roster is ids)."
     )]
     pub(crate) async fn swarm_add_agent_local(
         &self,
@@ -2515,148 +1983,12 @@ impl SwarmServer {
         .await
     }
 
-    /// Push a local swarm to ABW: create an ABW workspace from the local
-    /// swarm's name, mission, and roster, hiring each member agent with a
-    /// consent token. On success, the ABW `workspace_id` is stored back on
-    /// the local swarm's `cloud_workspace_id` so the local↔cloud link is
-    /// tracked. Requires ABW API key + consent tokens for each member.
-    #[tool(
-        description = "Push a local swarm to ABW: creates an ABW workspace from the local swarm's name, mission, and roster. Each member agent hire is consent-gated. On success, stores the ABW workspace_id back on the local swarm. Requires ABW API key."
-    )]
-    pub(crate) async fn swarm_push_local_swarm(
-        &self,
-        parameters: Parameters<PushLocalSwarmRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "swarm_push_local_swarm", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
-            let req = parameters.0;
-            let swarm = self.require_local_swarm(&req.swarm_id)?;
-
-            // Create the ABW workspace (free) — the same path as
-            // `swarm_create_swarm`.
-            let workspace_id =
-                create_abw_workspace(&self.client, &swarm.name, Some(swarm.mission.as_str()))
-                    .await?;
-
-            // Hire each member agent, gated by consent tokens — the shared
-            // spend_gate flow. A missing token is reported in hire_errors,
-            // not a hard abort (the workspace is already created).
-            let (hired, hire_errors) = spend_gate::hire_agents(
-                &self.client,
-                &self.consent,
-                &workspace_id,
-                &swarm.members,
-                spend_gate::HireAuthSource::Tokens(&req.consent_tokens),
-            )
-            .await;
-
-            // Store the ABW workspace_id back on the local swarm so the
-            // local↔cloud link is tracked. A failure here is logged, not
-            // fatal — the workspace was created; the link can be set
-            // manually.
-            if let Err(e) = self
-                .local_swarms
-                .set_cloud_workspace_id(&req.swarm_id, Some(workspace_id.clone()))
-            {
-                tracing::warn!(
-                    target: "hkask.mcp.swarm",
-                    "failed to store cloud_workspace_id on local swarm '{}': {e}",
-                    req.swarm_id
-                );
-            }
-
-            Ok(self
-                .client
-                .with_wallet(serde_json::json!({
-                    "workspace_id": workspace_id,
-                    "local_swarm_id": req.swarm_id,
-                    "hired": hired,
-                    "hire_errors": hire_errors,
-                }))
-                .await)
-        })
-        .await
-    }
-
-    /// Pull an ABW workspace to local: read the ABW workspace's name, mission,
-    /// and roster, then create a local swarm copy. No consent token — local
-    /// creates are free. Member ids (ABW agent names) are copied as-is into
-    /// the local roster. On success, the ABW `workspace_id` is stored on the
-    /// new local swarm's `cloud_workspace_id`.
-    #[tool(
-        description = "Pull an ABW workspace to local: creates a local swarm copy from an ABW workspace's name, mission, and roster. No cost, no consent. Stores the ABW workspace_id on the new local swarm for link tracking."
-    )]
-    pub(crate) async fn swarm_pull_swarm_to_local(
-        &self,
-        parameters: Parameters<PullSwarmToLocalRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "swarm_pull_swarm_to_local", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
-            let req = parameters.0;
-            if req.workspace_id.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "workspace_id must be non-empty".to_string(),
-                ));
-            }
-
-            // Fetch the ABW workspace.
-            let data = self
-                .client
-                .get(&format!(
-                    "/workspaces/{}",
-                    url_encode_segment(&req.workspace_id)
-                ))
-                .await
-                .map_err(SwarmError::into_tool_error)?;
-            let workspace = sanitize_workspace_payload(data);
-
-            // Extract name, mission, and roster from the workspace payload.
-            // The roster shape varies (see `parse_swarm_roster` in the
-            // panel); extract agent ids defensively.
-            let name = workspace
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Pulled Swarm")
-                .to_string();
-            let mission = workspace
-                .get("mission")
-                .or_else(|| workspace.get("description"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let members = extract_roster_member_ids(&workspace);
-
-            // Create the local swarm copy.
-            let swarm = self
-                .local_swarms
-                .create(&name, &mission, members)
-                .map_err(map_local_swarm_error)?;
-
-            // Store the ABW workspace_id on the new local swarm.
-            let swarm = self
-                .local_swarms
-                .set_cloud_workspace_id(&swarm.swarm_id, Some(req.workspace_id.clone()))
-                .map_err(map_local_swarm_error)?;
-
-            Ok(serde_json::to_value(&swarm).unwrap_or_else(|_| {
-                serde_json::json!({
-                    "swarm_id": swarm.swarm_id,
-                    "name": swarm.name,
-                    "cloud_workspace_id": req.workspace_id,
-                })
-            }))
-        })
-        .await
-    }
+    /// AI assist for the swarm panel authoring forms: suggests completions for
     /// partial inputs or validates well-formedness. Authoring aid — read-only,
     /// spends nothing. Uses the inference port directly to generate composition
     /// guidance from the form fields.
     #[tool(
-        description = "AI assist for the swarm panel authoring forms (agent/swarm). Suggests completions for partial inputs or validates well-formedness. Authoring aid — read-only, spends nothing. Uses the inference port directly to generate composition guidance. The mode field (abw/local) tailors the guidance; no ABW calls in either mode."
+        description = "AI assist for the swarm panel authoring forms (agent/swarm). Suggests completions for partial inputs or validates well-formedness. Authoring aid — read-only, spends nothing. Uses the inference port directly to generate composition guidance."
     )]
     pub(crate) async fn swarm_ai_assist(
         &self,
@@ -2680,14 +2012,6 @@ impl SwarmServer {
                     )));
                 }
             }
-            match req.mode.as_str() {
-                "abw" | "local" => {}
-                other => {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "mode must be 'abw' or 'local', got '{other}'"
-                    )));
-                }
-            }
 
             // Serialize the form fields as a JSON object string for the
             // inference prompt. The LLM generates composition guidance from
@@ -2695,7 +2019,6 @@ impl SwarmServer {
             let json_task = serde_json::to_string(&serde_json::json!({
                 "action": req.action,
                 "surface": req.surface,
-                "mode": req.mode,
                 "name": req.name,
                 "agent_type": req.agent_type,
                 "description": req.description,
@@ -2714,11 +2037,11 @@ impl SwarmServer {
                 )))
             })?;
 
-            // Validate runs the deterministic ABW contract FIRST (the fermi
-            // `agent_contract` requirement table, ported to `contract.rs`),
+            // Validate runs the deterministic agent contract FIRST (the
+            // requirement table, ported to `contract.rs`),
             // then asks the LLM for advisory warnings. The contract decides
             // `valid`; the LLM can never flip it — the same Error/Warning
-            // split as fermi's publish pipeline. If inference fails, the
+            // split as a publish pipeline. If inference fails, the
             // deterministic verdict still returns (an inference outage must
             // not read as "the agent is malformed").
             if req.action == "validate" {
@@ -2732,7 +2055,6 @@ impl SwarmServer {
                         accepts: crate::contract::split_csv(&req.accepts),
                         produces: crate::contract::split_csv(&req.produces),
                         has_valence: req.has_valence,
-                        mode: req.mode.clone(),
                     };
                     crate::contract::checks_to_payload(
                         &crate::contract::agent_contract_checks(&input),
@@ -2742,7 +2064,6 @@ impl SwarmServer {
                         name: req.name.clone(),
                         mission: req.mission.clone(),
                         agents: crate::contract::split_csv(&req.agents),
-                        mode: req.mode.clone(),
                     };
                     crate::contract::checks_to_payload(
                         &crate::contract::swarm_contract_checks(&input),
@@ -2775,7 +2096,6 @@ impl SwarmServer {
                 }
                 payload["action"] = serde_json::Value::String(req.action.clone());
                 payload["surface"] = serde_json::Value::String(req.surface.clone());
-                payload["mode"] = serde_json::Value::String(req.mode.clone());
                 payload["suggestions"] = serde_json::Value::Null;
                 return Ok(payload);
             }
@@ -2832,7 +2152,6 @@ impl SwarmServer {
                     serde_json::json!({
                         "action": req.action,
                         "surface": req.surface,
-                        "mode": req.mode,
                         "suggestions": suggestions,
                         "valid": serde_json::Value::Null,
                         "issues": serde_json::json!([]),
@@ -2847,7 +2166,6 @@ impl SwarmServer {
                     serde_json::json!({
                         "action": req.action,
                         "surface": req.surface,
-                        "mode": req.mode,
                         "suggestions": serde_json::json!({
                             "name": "", "agent_type": "", "description": "",
                             "system_prompt": "", "mission": "", "agents": "",
@@ -3894,7 +3212,6 @@ mod tests {
                 evaluators: vec![],
                 reasoning: false,
             },
-            cloud_swarm_id: None,
             tags: vec![],
             visibility: String::new(),
             sample_queries: vec![],

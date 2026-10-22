@@ -46,11 +46,35 @@ pub struct LocalSwarm {
     pub member_sources: Vec<MemberSource>,
     #[serde(default)]
     pub created_at: String,
-    /// The ABW workspace id this local swarm is synced with. `None` =
-    /// local-only. Set by `swarm_push_local_swarm` (after ABW workspace
-    /// creation) and `swarm_pull_swarm_to_local` (when copying from ABW).
-    #[serde(default)]
-    pub cloud_workspace_id: Option<String>,
+}
+
+/// Build a swarm id slug from a name base and a timestamp. Local swarm ids
+/// use lowercase letters, digits, and underscores, and are capped at
+/// 3–64 chars. The timestamp suffix disambiguates swarms created with the
+/// same name: the FULL epoch-millis value is used (a truncated suffix would
+/// give two same-named swarms created months apart the same id). The base is
+/// truncated (keeping the trailing underscore-trim) so base + '_' + suffix
+/// fits within 64 chars.
+fn make_swarm_slug(slug_base: &str, now: std::time::SystemTime) -> String {
+    let suffix = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis().to_string())
+        .unwrap_or_else(|_| "0".to_string());
+    let base = slug_base.trim_matches('_');
+    let max_base = 64usize.saturating_sub(suffix.len() + 1);
+    let base = if base.len() > max_base {
+        // Truncate on a char boundary — base may contain multi-byte UTF-8
+        // (create uses char::is_alphanumeric which admits CJK/accented
+        // chars). A byte slice mid-codepoint would panic.
+        let mut end = max_base;
+        while !base.is_char_boundary(end) {
+            end -= 1;
+        }
+        &base[..end]
+    } else {
+        base
+    };
+    format!("{base}_{suffix}")
 }
 
 /// The provenance of a member's addition to a local swarm. Mirrors fermi's
@@ -216,7 +240,7 @@ impl LocalSwarmRegistry {
             .chars()
             .map(|c| if c.is_alphanumeric() { c } else { '_' })
             .collect();
-        let swarm_id = crate::abw_util::make_swarm_slug(&slug_base, std::time::SystemTime::now());
+        let swarm_id = make_swarm_slug(&slug_base, std::time::SystemTime::now());
         let swarm = LocalSwarm {
             swarm_id,
             name: name.to_string(),
@@ -231,7 +255,6 @@ impl LocalSwarmRegistry {
                 .collect(),
             members,
             created_at: chrono::Utc::now().to_rfc3339(),
-            cloud_workspace_id: None,
         };
         self.write_swarm(&swarm)?;
         Ok(swarm)
@@ -367,23 +390,6 @@ impl LocalSwarmRegistry {
         })?;
         let new_name = format!("{} (copy)", source.name);
         self.create(&new_name, &source.mission, source.members.clone())
-    }
-
-    /// Record the ABW workspace id this local swarm is synced with. Called
-    /// after `swarm_push_local_swarm` (ABW workspace created) or
-    /// `swarm_pull_swarm_to_local` (copied from ABW). Passing `None` clears
-    /// the link. Errors if the swarm does not exist.
-    pub fn set_cloud_workspace_id(
-        &self,
-        swarm_id: &str,
-        cloud_workspace_id: Option<String>,
-    ) -> Result<LocalSwarm, LocalSwarmError> {
-        let mut swarm = self.get(swarm_id).ok_or_else(|| {
-            LocalSwarmError::NotFound(format!("local swarm '{swarm_id}' not found"))
-        })?;
-        swarm.cloud_workspace_id = cloud_workspace_id;
-        self.write_swarm(&swarm)?;
-        Ok(swarm)
     }
 
     /// Write (or overwrite) a swarm to `<dir>/<swarm_id>/swarm.json`, then
@@ -530,41 +536,5 @@ mod tests {
         let registry = tmp_registry();
         let err = registry.clone_swarm("nope").unwrap_err();
         assert!(matches!(err, LocalSwarmError::NotFound(_)));
-    }
-
-    #[test]
-    fn cloud_workspace_id_defaults_to_none_on_existing_swarm_json() {
-        // A freshly created swarm has no cloud link.
-        let registry = tmp_registry();
-        let swarm = registry.create("Zeta", "m", vec![]).unwrap();
-        assert!(swarm.cloud_workspace_id.is_none());
-    }
-
-    #[test]
-    fn set_cloud_workspace_id_persists_across_reload() {
-        let registry = tmp_registry();
-        let swarm = registry.create("Eta", "m", vec!["a1".into()]).unwrap();
-
-        let updated = registry
-            .set_cloud_workspace_id(&swarm.swarm_id, Some("ws_abcd".into()))
-            .unwrap();
-        assert_eq!(updated.cloud_workspace_id.as_deref(), Some("ws_abcd"));
-
-        // Persists on disk.
-        let reloaded = registry.get(&swarm.swarm_id).unwrap();
-        assert_eq!(reloaded.cloud_workspace_id.as_deref(), Some("ws_abcd"));
-    }
-
-    #[test]
-    fn set_cloud_workspace_id_can_clear_link() {
-        let registry = tmp_registry();
-        let swarm = registry.create("Theta", "m", vec![]).unwrap();
-        registry
-            .set_cloud_workspace_id(&swarm.swarm_id, Some("ws_xyz".into()))
-            .unwrap();
-        let cleared = registry
-            .set_cloud_workspace_id(&swarm.swarm_id, None)
-            .unwrap();
-        assert!(cleared.cloud_workspace_id.is_none());
     }
 }

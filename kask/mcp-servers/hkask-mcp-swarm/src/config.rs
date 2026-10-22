@@ -1,110 +1,44 @@
-//! Swarm server configuration — backend mode and ABW client config.
+//! Swarm server configuration.
 //!
 //! Extracted from the swarm server root. `SwarmConfig` is the validated
-//! runtime config built from env vars (`from_env`); `SwarmMode` selects the
-//! `Abw` (v1) vs `Local` (v2) backend. Defaults are the single source of truth
-//! here and must stay in sync with `KaskSwarmSettings::default()` in
-//! `kask_bridge/src/settings.rs` (the bridge emits the `HKASK_ABW_*`/`HKASK_SWARM_*`
-//! env vars this reads).
+//! runtime config built from env vars (`from_env`). Defaults are the single
+//! source of truth here and must stay in sync with
+//! `KaskSwarmSettings::default()` in `kask_bridge/src/settings.rs` (the
+//! bridge emits the `HKASK_SWARM_*` env vars this reads).
 
-/// Which backend the swarm server talks to.
+/// Runtime configuration for the swarm server (local substrate only).
 ///
-/// `Abw` (default, v1) routes all tools to the Agent Bestiary World REST API.
-/// `Local` (v2, §15) routes to zed-kask's local substrate crates
-/// (`hkask-inference`). Both tool sets are
-/// available in either mode — the operator chooses the tool explicitly.
-/// There is no `Hybrid` routing layer (§15.1.8 — rejected: the operator does
-/// the routing by choosing the tool).
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Default,
-    serde::Serialize,
-    serde::Deserialize,
-    schemars::JsonSchema,
-)]
-#[serde(rename_all = "lowercase")]
-pub enum SwarmMode {
-    /// Route to Agent Bestiary World (v1 behavior).
-    #[default]
-    Abw,
-    /// Route to local substrate crates (v2, §15).
-    Local,
-}
-
-impl std::fmt::Display for SwarmMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Abw => write!(f, "abw"),
-            Self::Local => write!(f, "local"),
-        }
-    }
-}
-
-impl std::str::FromStr for SwarmMode {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_lowercase().as_str() {
-            "abw" => Ok(Self::Abw),
-            "local" => Ok(Self::Local),
-            other => Err(format!(
-                "unknown swarm mode '{other}' — expected 'abw' or 'local'"
-            )),
-        }
-    }
-}
-
-/// Runtime configuration for the ABW client. Validated at construction.
-///
-/// Defaults are the single source of truth; env vars override. No secrets are
-/// stored here — `api_key` is the resolved credential value, passed in from
-/// the `ServerContext` credentials map at server construction.
+/// Defaults are the single source of truth; env vars override.
 #[derive(Debug, Clone)]
 pub struct SwarmConfig {
-    /// Which backend to route to (§15). Default `Abw` (v1 behavior).
-    pub mode: SwarmMode,
-    /// ABW API base URL (apex — endpoints are `/api/*` under it).
-    pub api_base_url: String,
-    /// Resolved ABW API key. `None` = unauthenticated (catalogue-only mode).
-    pub api_key: Option<String>,
-    /// Per-dispatch credit ceiling for future spend tools (S3 budget gate).
-    pub max_credits_per_dispatch: u32,
-    /// Whether Xaman Ek sessions may be initiated without per-call opt-in (S5 policy).
-    pub curator_consent_default: bool,
-    /// Operator-selected default model for both new ABW agents (when create
-    /// omits `model`) and local agents without a per-card model. Configured
-    /// through `HKASK_ABW_DEFAULT_AGENT_MODEL` (KA-05); empty means cloud
-    /// create omits the model and local execution uses the host session's
-    /// default. Local cards remain unpinned so changing this setting takes
-    /// effect on the next swarm server restart; an explicit card model wins.
+    /// Operator-selected default model for local agents without a per-card
+    /// model. Configured through `HKASK_SWARM_DEFAULT_AGENT_MODEL`; empty
+    /// means local execution uses the host session's default. Local cards
+    /// remain unpinned so changing this setting takes effect on the next
+    /// swarm server restart; an explicit card model wins.
     pub default_agent_model: String,
     /// Directory containing local agent cards (`<id>/agent_card.json`),
-    /// read by `LocalAgentRegistry` in `Local` mode. Default
-    /// `mcp/swarm/agents/curated` relative to the hKask data directory —
-    /// the swarm server owns these cards, so they live under its per-server
-    /// subtree per the Standardized Artifact Storage layout. (Previously
+    /// read by `LocalAgentRegistry`. Default `mcp/swarm/agents/curated`
+    /// relative to the hKask data directory — the swarm server owns these
+    /// cards, so they live under its per-server subtree per the
+    /// Standardized Artifact Storage layout. (Previously
     /// `agents/local/curated` at the data root top level, which broke the
     /// per-server subtree invariant.)
     pub local_agents_dir: String,
     /// Directory containing local swarms (`<id>/swarm.json`), read/written by
     /// `LocalSwarmRegistry`. Default `mcp/swarm/swarms` relative to the
-    /// hKask data directory — the local replica of an ABW workspace roster,
-    /// owned by the swarm server.
+    /// hKask data directory.
     pub local_swarms_dir: String,
     /// Whether to start the A2A HTTP gateway (loopback JSON-RPC server that
     /// exposes local agents to external A2A clients). Default `false` (opt-in
     /// — it opens a loopback port). Set `HKASK_A2A_HTTP_ENABLE=1` to enable.
     pub a2a_http_enabled: bool,
-    /// The governed MCP server ids this server may declare tools for (from
-    /// `HKASK_MCP_SERVER_IDS`, the parent's `BUILT_IN_MCP_SERVERS_IDS`).
-    /// `None` = no server-side filtering (backward compatible). When set,
-    /// `swarm_clone_to_local` drops any cloned card tool whose `server`
-    /// segment is not in this set — a third-party ABW card must not extend
-    /// the delegated tool surface beyond the operator's own governed servers.
+    /// The governed MCP server ids local agent cards may declare tools for
+    /// (from `HKASK_MCP_SERVER_IDS`, the parent's `BUILT_IN_MCP_SERVERS_IDS`).
+    /// `None` = no server-side filtering. When set, agent create/reconfigure
+    /// drops any declared tool whose `server` segment is not in this set — a
+    /// card must not extend the delegated tool surface beyond the operator's
+    /// own governed servers.
     pub allowed_tool_servers: Option<Vec<String>>,
     /// SQLCipher passphrase for the local swarm semantic-memory store (the
     /// `hkask-memory` `MemoryStore` backing the local knowledge tools). Must
@@ -120,8 +54,6 @@ pub struct SwarmConfig {
     /// `<hkask data dir>/mcp/swarm/memory.db` (resolved under the data dir
     /// so the server finds it regardless of CWD). Read from
     /// `HKASK_SWARM_MEMORY_DB` (an absolute override is used as-is).
-    /// Previously `swarm_memory.db` at the data root top level — moved under
-    /// `mcp/swarm/` per the Standardized Artifact Storage layout.
     pub memory_db_path: String,
     /// Embedding vector dimension for the semantic-memory embedding store.
     /// Only relevant if the embedding-search path is used; the EAV-retrieval
@@ -134,8 +66,8 @@ impl Default for SwarmConfig {
     fn default() -> Self {
         // These defaults MUST stay in sync with `KaskSwarmSettings::default()` in
         // `kask/crates/kask_bridge/src/settings.rs`. The bridge emits env vars
-        // (`HKASK_ABW_*` / `HKASK_SWARM_*`) from its `Default`; this server reads
-        // them in `from_env`. The two `Default` impls are deliberately separate
+        // (`HKASK_SWARM_*`) from its `Default`; this server reads them in
+        // `from_env`. The two `Default` impls are deliberately separate
         // (the server crate does not depend on the bridge crate) to avoid a
         // circular dependency — the duplication is the seam between them. If
         // you change a default here, change it there too, and update the
@@ -145,15 +77,7 @@ impl Default for SwarmConfig {
         // setting; the value arrives via the `HKASK_DB_PASSPHRASE` credential
         // (resolved in `run()` from ctx.credentials → env → keychain), with
         // this default as the last-resort fallback.
-        // The bridge emits env vars for non-default values; the server reads
-        // them in `from_env`. Fields the bridge defaults to empty/false use
-        // the server's defaults here as the fallback.
         Self {
-            mode: SwarmMode::default(),
-            api_base_url: "https://agent-bestiary.world".to_string(),
-            api_key: None,
-            max_credits_per_dispatch: 50,
-            curator_consent_default: false,
             default_agent_model: String::new(),
             local_agents_dir: "mcp/swarm/agents/curated".to_string(),
             local_swarms_dir: "mcp/swarm/swarms".to_string(),
@@ -218,22 +142,10 @@ fn non_empty_or_env(input: Option<String>, default: String) -> String {
 use hkask_mcp_server::parse_env_warn;
 
 impl SwarmConfig {
-    /// Build from environment, returning the config plus any warnings about
-    /// degraded operation (missing key → catalogue-only mode).
-    pub fn from_env(api_key: Option<String>) -> (Self, Option<String>) {
+    /// Build from environment.
+    pub fn from_env() -> Self {
         let default = Self::default();
-        let mode = parse_env_warn("HKASK_SWARM_MODE", default.mode);
-        let api_base_url = std::env::var("HKASK_ABW_API_URL")
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or(default.api_base_url);
-        let max_credits_per_dispatch =
-            parse_env_warn("HKASK_ABW_MAX_CREDITS", default.max_credits_per_dispatch);
-        let curator_consent_default = parse_env_warn(
-            "HKASK_ABW_CURATOR_CONSENT_DEFAULT",
-            default.curator_consent_default,
-        );
-        let default_agent_model = std::env::var("HKASK_ABW_DEFAULT_AGENT_MODEL")
+        let default_agent_model = std::env::var("HKASK_SWARM_DEFAULT_AGENT_MODEL")
             .ok()
             .filter(|s| !s.trim().is_empty())
             .unwrap_or(default.default_agent_model);
@@ -285,47 +197,16 @@ impl SwarmConfig {
         } else {
             embedding_dim_parsed
         };
-        let warning = if api_key.is_none() && mode == SwarmMode::Abw {
-            Some(
-                "HKASK_ABW_API_KEY not set and mode=abw — swarm server in catalogue-only mode; \
-                 authenticated tools (get_swarm, execute_agent, curate) will return Auth errors"
-                    .to_string(),
-            )
-        } else if mode == SwarmMode::Local {
-            // In local mode, the ABW key is irrelevant — no warning needed.
-            // But warn if the local agents dir doesn't exist or is empty, so
-            // the operator doesn't silently run with zero agents (the
-            // startup-failure-signal rule).
-            if !std::path::Path::new(&local_agents_dir).exists() {
-                Some(format!(
-                    "HKASK_SWARM_MODE=local but local agents dir '{local_agents_dir}' does not exist \
-                     — local tools will return zero agents. Create the directory and add \
-                     agent cards (<id>/agent_card.json), or set HKASK_LOCAL_AGENTS_DIR."
-                ))
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-        (
-            Self {
-                mode,
-                api_base_url,
-                api_key,
-                max_credits_per_dispatch,
-                curator_consent_default,
-                default_agent_model,
-                local_agents_dir,
-                local_swarms_dir,
-                a2a_http_enabled,
-                allowed_tool_servers,
-                memory_passphrase,
-                memory_db_path,
-                embedding_dim,
-            },
-            warning,
-        )
+        Self {
+            default_agent_model,
+            local_agents_dir,
+            local_swarms_dir,
+            a2a_http_enabled,
+            allowed_tool_servers,
+            memory_passphrase,
+            memory_db_path,
+            embedding_dim,
+        }
     }
 }
 

@@ -1,4 +1,4 @@
-//! The ABW agent/swarm composition contract — zed-kask's port of fermi's
+//! The agent/swarm composition contract — zed-kask's port of fermi's
 //! `workflows/agent_contract.rs` requirement table.
 //!
 //! # Why this module exists
@@ -25,8 +25,8 @@
 //!
 //! - **The typed tier** (`output_contract` schema + grounding map). The
 //!   panel cannot author it yet; a blocking check the form cannot satisfy
-//!   would be theatre. It surfaces as a Warning that names the ABW publish
-//!   gate as the enforcement point.
+//!   would be theatre. It surfaces as a Warning naming the real
+//!   not-yet-authorable surface.
 //! - **Valence-diversity / homophily** for swarms. fermi computes it from
 //!   the hired agents' valence rows (`handlers/composition.rs`); the compose
 //!   form only has agent *names* at validation time. The LLM advisory layer
@@ -75,8 +75,6 @@ pub struct AgentContractInput {
     pub(crate) accepts: Vec<String>,
     pub(crate) produces: Vec<String>,
     pub(crate) has_valence: bool,
-    /// "abw" or "local" — only the name-slug rule differs.
-    pub(crate) mode: String,
 }
 
 /// The swarm-surface fields the contract judges, from the Compose form.
@@ -85,7 +83,6 @@ pub struct SwarmContractInput {
     pub(crate) name: String,
     pub(crate) mission: String,
     pub(crate) agents: Vec<String>,
-    pub(crate) mode: String,
 }
 
 fn check(
@@ -119,7 +116,7 @@ pub fn split_lines(raw: &str) -> Vec<String> {
         .collect()
 }
 
-/// Judge the agent form against the fermi ABW contract. Returns every check
+/// Judge the agent form against the contract. Returns every check
 /// (pass and fail) in the order an author would naturally fill the fields —
 /// same ordering rationale as fermi's `requirements()` table.
 pub fn agent_contract_checks(input: &AgentContractInput) -> Vec<ContractCheck> {
@@ -127,36 +124,21 @@ pub fn agent_contract_checks(input: &AgentContractInput) -> Vec<ContractCheck> {
 
     // ── name ───────────────────────────────────────────────────────
     let name = input.name.trim();
-    let name_valid = if input.mode == "local" {
-        // Local substrate: alphanumeric plus -_. (the substrate sanitizes;
-        // chars outside this set would be stripped, changing the id).
-        !name.is_empty()
-            && name
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
-    } else {
-        // ABW slug rule (fermi `slug::validate_http`): the name is
-        // URL-routed via /api/agents/:id, so a non-slug breaks routing and
-        // the @-mention parser downstream.
-        let len = name.chars().count();
-        (3..=64).contains(&len)
-            && name
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
-    };
+    // Local substrate: alphanumeric plus -_. (the substrate sanitizes;
+    // chars outside this set would be stripped, changing the id).
+    let name_valid = !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.');
     out.push(check(
         "name_set",
         name_valid,
         Severity::Error,
         if name.is_empty() {
             "Agent must have a name.".to_string()
-        } else if input.mode == "local" {
+        } else {
             "Name contains characters the local substrate will strip (allowed: \
              letters, digits, -, _, .) — the id would change."
-                .to_string()
-        } else {
-            "Name must be 3-64 chars: lowercase letters, digits, underscores only \
-             (ABW slug rule — the name is URL-routed and @-mention parsed)."
                 .to_string()
         },
     ));
@@ -226,19 +208,17 @@ pub fn agent_contract_checks(input: &AgentContractInput) -> Vec<ContractCheck> {
          `has_valence`).",
     ));
 
-    // ── typed tier (advisory here) ─────────────────────────────────
-    // fermi blocks publish on the typed tier for new agents
-    // (`card_contract::validate`), but the panel cannot author an
-    // `output_contract` yet. A blocking check the form cannot satisfy
-    // teaches operators the checks are theatre — so it is a Warning that
-    // names the real enforcement point.
+    // ── typed tier (advisory here) ─────────────────────────────
+    // The typed tier (schema + per-field grounding map) is not yet
+    // authorable from the panel. A blocking check the form cannot satisfy
+    // teaches operators the checks are theatre — so it is a Warning naming
+    // the real gap.
     out.push(check(
         "output_contract_present",
         false,
         Severity::Warning,
-        "No `output_contract` declared. ABW blocks *publishing* new agents \
-         without one (schema + per-field grounding map). Not yet authorable \
-         in this form — not enforced here.",
+        "No `output_contract` declared — the typed tier (schema + per-field \
+         grounding map) is not yet authorable in this form. Not enforced here.",
     ));
 
     out
@@ -291,7 +271,7 @@ pub fn swarm_contract_checks(input: &SwarmContractInput) -> Vec<ContractCheck> {
     ));
 
     // Duplicate roster entries: a coherence deficit (near-duplicate roles)
-    // and, on ABW, a wasted consent-gated hire.
+    // and a wasted roster slot.
     let mut seen = std::collections::HashSet::new();
     let duplicates: Vec<&String> = input
         .agents
@@ -313,40 +293,20 @@ pub fn swarm_contract_checks(input: &SwarmContractInput) -> Vec<ContractCheck> {
         ),
     ));
 
-    // Slug validity per mode: ABW hires are URL-routed agent names (strict
-    // slug); local ids are filesystem-safe (the substrate sanitizes, so a
-    // warning rather than an error — but the operator should know the id
-    // will change).
-    let slug_error = if input.mode == "local" {
-        input.agents.iter().any(|a| {
-            a.chars()
-                .any(|c| !(c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.'))
-        })
-    } else {
-        input.agents.iter().any(|a| {
-            let len = a.chars().count();
-            !(3..=64).contains(&len)
-                || a.chars()
-                    .any(|c| !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'))
-        })
-    };
+    // Slug validity: local ids are filesystem-safe (the substrate sanitizes,
+    // so a warning rather than an error — but the operator should know the
+    // id will change).
+    let slug_error = input.agents.iter().any(|a| {
+        a.chars()
+            .any(|c| !(c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.'))
+    });
     out.push(check(
         "roster_slugs_valid",
         !slug_error,
-        if input.mode == "local" {
-            Severity::Warning
-        } else {
-            Severity::Error
-        },
-        if input.mode == "local" {
-            "Some roster ids contain characters the local substrate will strip — \
-             resolution at delegation time would miss them."
-                .to_string()
-        } else {
-            "Some roster ids are not ABW slugs ([a-z0-9_]{3,64}) — the hire would \
-             be rejected at the door."
-                .to_string()
-        },
+        Severity::Warning,
+        "Some roster ids contain characters the local substrate will strip — \
+         resolution at delegation time would miss them."
+            .to_string(),
     ));
 
     out
@@ -401,7 +361,6 @@ mod tests {
             accepts: vec!["text".into()],
             produces: vec!["sentiment_report".into()],
             has_valence: true,
-            mode: "abw".into(),
         }
     }
 
@@ -414,7 +373,6 @@ mod tests {
                 "tech_analyst".into(),
                 "sentiment_tracker".into(),
             ],
-            mode: "abw".into(),
         }
     }
 
@@ -423,7 +381,7 @@ mod tests {
         let payload = checks_to_payload(&agent_contract_checks(&conforming_agent()));
         assert!(payload["valid"].as_bool().unwrap());
         // The typed tier is advisory: a conforming agent still carries the
-        // output_contract warning naming the ABW publish gate.
+        // output_contract warning naming the not-yet-authorable surface.
         let warnings = payload["warnings"].as_array().unwrap();
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].as_str().unwrap().contains("output_contract"));
@@ -461,20 +419,20 @@ mod tests {
     }
 
     #[test]
-    fn abw_slug_rule_is_mode_aware() {
-        // A dash is fine locally but breaks ABW URL routing.
-        let mut local = conforming_agent();
-        local.mode = "local".into();
-        local.name = "my-agent".into();
+    fn dash_names_are_valid_local_slugs() {
+        // Local ids are filesystem-safe; a dash survives (the substrate
+        // sanitizes rather than rejecting).
+        let mut agent = conforming_agent();
+        agent.name = "my-agent".into();
         assert!(
-            checks_to_payload(&agent_contract_checks(&local))["valid"]
+            checks_to_payload(&agent_contract_checks(&agent))["valid"]
                 .as_bool()
                 .unwrap()
         );
 
-        let mut abw = conforming_agent();
-        abw.name = "my-agent".into();
-        let checks = agent_contract_checks(&abw);
+        let mut rejected = conforming_agent();
+        rejected.name = "!!".into();
+        let checks = agent_contract_checks(&rejected);
         assert!(checks.iter().any(|c| c.name == "name_set" && !c.passed));
     }
 

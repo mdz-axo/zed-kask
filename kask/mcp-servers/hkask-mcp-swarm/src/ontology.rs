@@ -24,7 +24,7 @@
 //! lands centrally in `hkask-mcp-server`'s `ToolContext::
 //! annotate_response` hook — one point every tool already routes
 //! through (`execute_tool`), instead of a per-site wrap at each of the
-//! 89 tool returns.
+//! 37 tool returns.
 
 pub use hkask_bridge_ontology::dc_bibo::{DATASET, REPORT};
 pub use hkask_bridge_ontology::pko::{
@@ -40,117 +40,61 @@ use hkask_bridge_ontology::pko::PkoConcept;
 /// registered_tools` (below) fails when a tool is added without one.
 pub(crate) fn tool_to_pko(tool_name: &str) -> Option<PkoConcept> {
     match tool_name {
-        // ── Procedure specification and steps (agent/swarm/app creation) ──
-        // Creating a swarm or an App specifies the composition — a
+        // ── Procedure specification and steps (agent/swarm creation) ──
+        // Creating a swarm specifies the composition — a
         // procedure to be executed. Creating an agent specifies one
-        // addressable member; cloning and pushing specify copies.
-        "swarm_create_swarm"
-        | "swarm_create_local_swarm"
-        | "swarm_create_agent"
-        | "swarm_create_local_agent"
-        | "swarm_create_app"
-        | "swarm_create_app_direct"
-        | "swarm_clone_to_local"
-        | "swarm_clone_local_swarm"
-        | "swarm_fork_agent"
-        | "swarm_fork_workspace_to_app"
-        | "swarm_push_to_cloud"
-        | "swarm_push_local_swarm"
-        | "swarm_pull_swarm_to_local" => Some(PROCEDURE),
+        // addressable member; cloning specifies a copy.
+        "swarm_create_local_swarm" | "swarm_create_local_agent" | "swarm_clone_local_swarm" => {
+            Some(PROCEDURE)
+        }
         // Rostering: adding/removing a member composes one step of the
         // swarm's procedure; updating/reconfiguring revises a step.
         "swarm_add_agent_local"
         | "swarm_remove_agent_local"
-        | "swarm_fire"
-        | "swarm_hire"
-        | "swarm_delete_agent"
         | "swarm_remove_local"
-        | "swarm_delete_swarm"
         | "swarm_delete_local_swarm"
-        | "swarm_archive_app"
-        | "swarm_update_agent"
-        | "swarm_update_app"
         | "swarm_reconfigure_local_agent"
         | "swarm_update_local_swarm" => Some(STEP),
         // ── Execution (the swarm's coordinated work occurring) ────────────
         // Delegation, fan-out, pipelines, and workflow execution are the
         // steps actually occurring — real inference calls, real work.
-        "swarm_delegate"
-        | "swarm_delegate_and_wait"
-        | "swarm_delegate_in_thread_local"
+        "swarm_delegate_in_thread_local"
         | "swarm_delegate_local"
-        | "swarm_fanout"
         | "swarm_fanout_local"
         | "swarm_pipeline_local"
         | "swarm_execute_plan_local"
-        | "swarm_execute_agent"
         | "swarm_run_workflow_local"
         | "swarm_a2a_send"
         | "swarm_a2a_broadcast" => Some(STEP_EXECUTION),
         // ── Verification (evaluating, checking, reading progress) ─────────
-        // Evaluation harnesses, publish checks, workflow checks, gate
-        // readings, and the selection ranking verify what execution
-        // produced. Consent records verify an authorized spend.
+        // Evaluation harnesses and workflow checks verify what
+        // execution produced.
         "swarm_eval_agent_local"
         | "swarm_eval_suite_local"
         | "swarm_evaluate_local"
-        | "swarm_publish_checks"
-        | "swarm_publish_agent"
-        | "swarm_publish_app"
-        | "swarm_workflow_check_local"
-        | "swarm_request_consent"
-        | "swarm_authorize_session" => Some(STEP_VERIFICATION),
+        | "swarm_workflow_check_local" => Some(STEP_VERIFICATION),
         // ── Issue occurrences (assistant surfaces over unexpected states) ─
         // AI assist surfaces authoring help and issue-classified results.
         "swarm_ai_assist" => Some(ISSUE_OCCURRENCE),
         // ── Observations (reads over records of executions) ──────────────
-        // Reading threads, run status, task boards, history, lineage,
+        // Reading threads, task boards, history, lineage,
         // fleets, registries, knowledge, and recall observe the state
         // of executions already occurred.
-        "swarm_run_status"
-        | "swarm_thread_local"
+        "swarm_thread_local"
         | "swarm_list_local_threads"
         | "swarm_task_board"
         | "swarm_list_local_swarms"
         | "swarm_get_local_swarm"
-        | "swarm_get_swarm"
         | "swarm_get_local_agent"
-        | "swarm_get_agent"
         | "swarm_list_local_agents"
-        | "swarm_list_agents"
-        | "swarm_list_apps"
-        | "swarm_get_app"
-        | "swarm_get_app_schema"
-        | "swarm_list_app_workspaces"
-        | "swarm_spawn_app_workspace"
-        | "swarm_hire_cost"
-        | "swarm_generate_ontology"
         | "swarm_generate_ontology_local"
-        | "swarm_generate_prompt"
         | "swarm_generate_prompt_local"
-        | "swarm_ontology_templates"
-        | "swarm_search_knowledge"
         | "swarm_search_knowledge_local"
         | "swarm_recall_local"
         | "swarm_observed_seams_local"
         | "swarm_fleet_digest_local"
         | "swarm_who_answers_local"
-        | "swarm_a2a_card"
-        | "swarm_workspace_list_actions"
-        | "swarm_workspace_list_annotations"
-        | "swarm_workspace_list_files"
-        | "swarm_workspace_pending_actions"
-        | "swarm_workspace_read_file"
-        | "swarm_workspace_accept_action"
-        | "swarm_workspace_reject_action"
-        | "swarm_workspace_fork_state"
-        | "swarm_workspace_annotate"
-        | "swarm_workspace_mutate_document"
-        | "swarm_workspace_write_file" => Some(PROCEDURE_EXECUTION),
-        // The Xaman Ek curator consultation observes curated composition
-        // knowledge — an execution read with generative overlap; the
-        // honest coarse-grained arm is a procedure-execution observation.
-        "swarm_xaman" => Some(PROCEDURE_EXECUTION),
+        | "swarm_a2a_card" => Some(PROCEDURE_EXECUTION),
         _ => None,
     }
 }
@@ -162,59 +106,27 @@ pub(crate) fn tool_to_pko(tool_name: &str) -> Option<PkoConcept> {
 /// surfaces produce issue reports — datasets of the recorded report.
 pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
     match tool_name {
-        "swarm_create_swarm"
-        | "swarm_create_local_swarm"
-        | "swarm_create_agent"
+        "swarm_create_local_swarm"
         | "swarm_create_local_agent"
-        | "swarm_create_app"
-        | "swarm_create_app_direct"
-        | "swarm_clone_to_local"
         | "swarm_clone_local_swarm"
-        | "swarm_fork_agent"
-        | "swarm_fork_workspace_to_app"
-        | "swarm_push_to_cloud"
-        | "swarm_push_local_swarm"
-        | "swarm_pull_swarm_to_local"
         | "swarm_add_agent_local"
         | "swarm_remove_agent_local"
-        | "swarm_fire"
-        | "swarm_hire"
-        | "swarm_delete_agent"
         | "swarm_remove_local"
-        | "swarm_delete_swarm"
         | "swarm_delete_local_swarm"
-        | "swarm_archive_app"
-        | "swarm_update_agent"
-        | "swarm_update_app"
         | "swarm_reconfigure_local_agent"
         | "swarm_update_local_swarm"
-        | "swarm_delegate"
-        | "swarm_delegate_and_wait"
         | "swarm_delegate_in_thread_local"
         | "swarm_delegate_local"
-        | "swarm_fanout"
         | "swarm_fanout_local"
         | "swarm_pipeline_local"
         | "swarm_execute_plan_local"
-        | "swarm_execute_agent"
         | "swarm_run_workflow_local"
         | "swarm_a2a_send"
         | "swarm_a2a_broadcast"
         | "swarm_ai_assist"
         | "swarm_eval_agent_local"
         | "swarm_eval_suite_local"
-        | "swarm_evaluate_local"
-        | "swarm_publish_agent"
-        | "swarm_publish_app"
-        | "swarm_workspace_accept_action"
-        | "swarm_workspace_reject_action"
-        | "swarm_workspace_fork_state"
-        | "swarm_workspace_annotate"
-        | "swarm_workspace_mutate_document"
-        | "swarm_workspace_write_file"
-        | "swarm_request_consent"
-        | "swarm_authorize_session"
-        | "swarm_spawn_app_workspace" => Some(DATASET),
+        | "swarm_evaluate_local" => Some(DATASET),
         // Reads, checks, and generated content are compiled readings —
         // reports.
         _ => Some(REPORT),
@@ -244,15 +156,14 @@ mod tests {
     /// P5.4: "Every MCP server uses BOTH axes" (operator ruling B.2
     /// 2026-10-18: every tool RESPONSE). Every registered swarm tool —
     /// derived from the live `execute_tool` surface in this server's
-    /// four tool files — must carry a process AND a state identity.
-    /// The list is derived by walking the four tool files for
+    /// three tool files — must carry a process AND a state identity.
+    /// The list is derived by walking the tool files for
     /// `execute_tool(self, "...")` call sites at test time (the
     /// cross-seam derived-walk discipline: a name-pinned list breaks on
     /// every rename and silently misses every addition).
     #[test]
     fn dual_axis_covers_all_registered_tools() {
         let source_files = [
-            "src/cloud_swarm_tools.rs",
             "src/local_tools.rs",
             "src/a2a_tools.rs",
             "src/knowledge_tools.rs",
@@ -291,8 +202,8 @@ mod tests {
         live.dedup();
         assert_eq!(
             live.len(),
-            89,
-            "the live execute_tool surface must be the 89 registered tools (the \
+            37,
+            "the live execute_tool surface must be the 37 registered tools (the \
              tool_surface pin count); found {}: {live:?}",
             live.len()
         );

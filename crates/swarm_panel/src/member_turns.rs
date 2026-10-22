@@ -181,15 +181,8 @@ impl MemberTurnsState {
     }
 }
 
-fn selected_member_id<'a>(
-    local_mode: bool,
-    selected_workspace: Option<&'a str>,
-    selected_local_swarm: Option<&'a str>,
-) -> Option<&'a str> {
-    local_mode
-        .then_some(selected_local_swarm)
-        .flatten()
-        .filter(|id| selected_workspace == Some(*id))
+fn selected_member_id<'a>(selected_local_swarm: Option<&'a str>) -> Option<&'a str> {
+    selected_local_swarm
 }
 
 fn inspected_member_id<'a>(
@@ -200,16 +193,9 @@ fn inspected_member_id<'a>(
 }
 
 impl SwarmPanel {
-    pub(crate) fn select_swarm_for_steer(
-        &mut self,
-        id: String,
-        local: bool,
-        cx: &mut Context<Self>,
-    ) {
-        let changed = self.selected_workspace.as_deref() != Some(&id)
-            || self.selected_local_swarm.is_some() != local;
-        self.selected_workspace = Some(id.clone());
-        self.selected_local_swarm = local.then_some(id);
+    pub(crate) fn select_swarm_for_steer(&mut self, id: String, cx: &mut Context<Self>) {
+        let changed = self.selected_local_swarm.as_deref() != Some(&id);
+        self.selected_local_swarm = Some(id);
         if changed {
             self.member_turns.choose_archive(None);
             self.steer.invalidate();
@@ -222,11 +208,7 @@ impl SwarmPanel {
     }
 
     fn selected_member_swarm(&self) -> Option<&str> {
-        selected_member_id(
-            self.last_swarm_mode == Some(kask_bridge::SwarmModeConfig::Local),
-            self.selected_workspace.as_deref(),
-            self.selected_local_swarm.as_deref(),
-        )
+        selected_member_id(self.selected_local_swarm.as_deref())
     }
 
     fn inspected_member_swarm(&self) -> Option<&str> {
@@ -589,11 +571,9 @@ mod tests {
     }
 
     #[test]
-    fn only_the_selected_local_id_in_local_mode_can_be_read() {
-        assert_eq!(selected_member_id(true, Some("a"), Some("a")), Some("a"));
-        assert_eq!(selected_member_id(false, Some("a"), Some("a")), None);
-        assert_eq!(selected_member_id(true, Some("cloud"), Some("a")), None);
-        assert_eq!(selected_member_id(true, None, Some("a")), None);
+    fn only_the_selected_local_id_can_be_read() {
+        assert_eq!(selected_member_id(Some("a")), Some("a"));
+        assert_eq!(selected_member_id(None), None);
     }
 
     #[test]
@@ -667,7 +647,7 @@ mod tests {
         let mut state = MemberTurnsState::default();
         state.choose_archive(Some("deleted".into()));
         assert_eq!(state.archived_choice.as_deref(), Some("deleted"));
-        let active = selected_member_id(true, Some("live"), Some("live"));
+        let active = selected_member_id(Some("live"));
         assert_eq!(
             inspected_member_id(state.archived_choice.as_deref(), active),
             Some("deleted")
@@ -677,7 +657,7 @@ mod tests {
             inspected_member_id(state.archived_choice.as_deref(), None),
             Some("deleted")
         );
-        assert_eq!(selected_member_id(true, None, None), None);
+        assert_eq!(selected_member_id(None), None);
         state.choose_archive(None);
         assert!(state.archived_choice.is_none());
         assert!(crate::parse::SWARM_TOOLS.contains(&"swarm_list_local_threads"));

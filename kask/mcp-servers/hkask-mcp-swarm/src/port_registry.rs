@@ -8,7 +8,7 @@
 //! The registry is seeded from `BUILTIN_PORT_TYPES` (the labels already in
 //! use by existing cards and by `build_task_agent_card` in the kata-kanban
 //! server). Runtime extension is file-backed: `LocalAgentRegistry`'s
-//! `port_types.json` extension file, which the clone path uses to admit third-party (ABW catalogue) port
+//! `port_types.json` extension file admits imported port
 //! labels without papering over the gate for locally-authored cards.
 
 use serde::{Deserialize, Serialize};

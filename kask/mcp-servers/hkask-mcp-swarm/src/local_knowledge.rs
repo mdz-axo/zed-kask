@@ -1,11 +1,10 @@
-//! Local swarm knowledge tools — the kask-vernacular analogs of ABW's
-//! `swarm_search_knowledge`, `swarm_generate_prompt`, and `swarm_generate_ontology`.
+//! Local swarm knowledge tools — the semantic-memory-backed search, recall,
+//! and generation substrate.
 //!
-//! Where ABW backs these with fermi's per-agent dreaming-memory KG + fermi's
-//! LLM generation, the local analogs back them with the operator's own
+//! These are backed with the operator's own
 //! `hkask-memory` `MemoryStore` (the knowledge graph — entity-attribute-value
 //! triples, scoped per agent by an `agent:<agent_id>:` prefix) and the local
-//! `InferencePort` (Ollama/cloud via the zed IPC bridge). No ABW round-trips.
+//! `InferencePort` (Ollama/cloud via the zed IPC bridge).
 //!
 //! Design rationale: `kask/docs/diataxis/swarm_system/reference.md`
 //! (knowledge tools section).
@@ -110,8 +109,7 @@ impl LazyLocalMemory {
     }
 }
 
-/// A knowledge fragment returned by `swarm_search_knowledge_local`. Mirrors
-/// the ABW envelope (matching knowledge fragments) but in kask terms: the
+/// A knowledge fragment returned by `swarm_search_knowledge_local`: the
 /// agent's semantic-memory triples that match the query.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct KnowledgeFragment {

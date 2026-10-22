@@ -1,99 +1,43 @@
 #![forbid(unsafe_code)]
 #![warn(clippy::let_underscore_future)]
-//! hKask MCP Swarm — Agent Bestiary World (ABW) integration server.
+//! hKask MCP Swarm — local swarm substrate server.
 //!
-//! Exposes ABW's agent catalogue, workspaces ("swarms"), and the Xaman Ek
-//! curator as MCP tools, governed by the kask MCP runtime (OCAP, gas, spans).
+//! Exposes local agent swarms, the local agent registry, and the local
+//! semantic-memory knowledge tools as MCP tools, governed by the kask MCP
+//! runtime (OCAP, gas, spans). Agents are read from a local card directory
+//! (`agents/local/curated/` under the data dir) via `LocalAgentRegistry` and
+//! executed through the local runtime (`local_runtime.rs`, backed by
+//! `hkask-inference`). Local delegation has no budget and needs no consent —
+//! local agents run on the operator's own substrate; timeouts are the
+//! enforcement mechanism.
 //!
-//! ## API surface (verified 2026-08-01 against the live service; lifecycle
-//! endpoints — agent create/delete, fire, hire-via-`/add`, workspace delete
-//! via the team route — re-verified 2026-08-02)
-//! - Base URL: `https://agent-bestiary.world` (no `api.` subdomain)
-//! - Auth: `Authorization: Bearer <key>` (Pro-tier API key, scopes read/write/execute)
-//! - Open: `GET /api/agents`, `GET /api/models/catalogue`
-//! - Authed: `/api/workspaces`, `/api/agents/{name}/execute`, `/api/xaman/sessions`,
-//!   `/api/wallet`, `/api/wallet/transactions` (reconciliation read, verified
-//!   2026-08-02)
-//!
-//! ## Error model
-//! ABW returns HTTP 200 envelopes containing upstream LLM errors in the body
-//! (e.g. Xaman Ek passing through Anthropic credit exhaustion verbatim), and
-//! HTTP 500 for domain failures like unfunded agents. `SwarmError` mapping
-//! therefore inspects response bodies, not just status codes.
-//!
-//! ## Tools (both tool sets always available in either mode)
-//! ABW tools: `swarm_list_agents`, `swarm_get_swarm`, `swarm_get_agent`,
-//! `swarm_list_apps`, `swarm_get_app`, `swarm_create_app_direct`,
-//! `swarm_update_app`, `swarm_publish_app`, `swarm_archive_app`,
-//! `swarm_spawn_app_workspace`, `swarm_list_app_workspaces`,
-//! `swarm_get_app_schema`, `swarm_fork_workspace_to_app`,
-//! `swarm_ontology_templates`, `swarm_execute_agent`,
-//! `swarm_hire_cost`, `swarm_request_consent`, `swarm_authorize_session`,
-//! `swarm_hire`, `swarm_delegate`, `swarm_delegate_and_wait`, `swarm_fanout`,
-//! `swarm_run_status`, `swarm_generate_prompt`, `swarm_generate_ontology`,
-//! `swarm_create_agent`, `swarm_create_swarm`, `swarm_xaman`, `swarm_create_app`,
-//! `swarm_fire` (roster removal, verified live), `swarm_delete_agent`
-//! (permanent agent deletion, verified live), `swarm_delete_swarm`
-//! (permanent workspace deletion via the team-scoped route, verified live),
-//! `swarm_search_knowledge` (knowledge-graph search, fermi v0.16.1),
-//! `swarm_publish_checks` (publish preflight, fermi v0.16.1),
-//! `swarm_publish_agent` (catalogue publish, fermi v0.16.1),
-//! `swarm_fork_agent` (derivative fork, fermi v0.16.1),
-//! `swarm_workspace_list_actions`, `swarm_workspace_pending_actions`,
-//! `swarm_workspace_mutate_document`, `swarm_workspace_fork_state`,
-//! `swarm_workspace_accept_action`, `swarm_workspace_reject_action`,
-//! `swarm_workspace_annotate`, `swarm_workspace_list_annotations`,
-//! `swarm_workspace_list_files`, `swarm_workspace_read_file`,
-//! `swarm_workspace_write_file`.
-//! Local substrate tools: local execution `swarm_delegate_local`,
-//! `swarm_delegate_in_thread_local`, `swarm_thread_local`,
-//! `swarm_list_local_threads`,
-//! `swarm_fanout_local`, `swarm_pipeline_local`, `swarm_execute_plan_local`,
-//! `swarm_evaluate_local`, `swarm_eval_suite_local`, `swarm_eval_agent_local`,
-//! `swarm_task_board`; registry `swarm_list_local_agents`,
-//! `swarm_clone_to_local`, `swarm_push_to_cloud`, `swarm_remove_local`, `swarm_create_local_agent`,
+//! ## Tools
+//! Local execution: `swarm_delegate_local`, `swarm_delegate_in_thread_local`,
+//! `swarm_thread_local`, `swarm_list_local_threads`, `swarm_fanout_local`,
+//! `swarm_pipeline_local`, `swarm_execute_plan_local`, `swarm_evaluate_local`,
+//! `swarm_eval_suite_local`, `swarm_eval_agent_local`, `swarm_task_board`;
+//! registry: `swarm_list_local_agents`, `swarm_get_local_agent`,
+//! `swarm_remove_local`, `swarm_create_local_agent`,
 //! `swarm_reconfigure_local_agent` (Cybernetic Swarm Plan C6),
 //! `swarm_create_local_swarm`, `swarm_list_local_swarms`,
 //! `swarm_get_local_swarm`, `swarm_delete_local_swarm`,
-//! `swarm_update_local_swarm`, `swarm_clone_local_swarm`, `swarm_push_local_swarm`,
-//! `swarm_pull_swarm_to_local`, `swarm_add_agent_local`,
-//! `swarm_remove_agent_local`, `swarm_ai_assist`; knowledge
-//! `swarm_search_knowledge_local`, `swarm_recall_local`,
-//! `swarm_generate_prompt_local`, `swarm_generate_ontology_local`; A2A
-//! `swarm_a2a_send` (in-process), `swarm_a2a_card` (Agent Card discovery),
-//! `swarm_a2a_broadcast`.
-//!
-//! Spend-mutating tools (`swarm_hire`, `swarm_delegate`, `swarm_delegate_and_wait`,
-//! `swarm_fanout`, `swarm_create_swarm`, `swarm_xaman`) are consent-gated — see
-//! `kask/docs/diataxis/swarm_system/reference.md`. Workspace update has NO ABW endpoint (405, verified live) and must
-//! not be added. Workspace delete IS implemented as `swarm_delete_swarm` via
-//! the team-scoped `DELETE /api/teams/{id}` (verified live 2026-08-13);
-//! `DELETE /api/workspaces/{id}` is 405. Workspace create (`POST /api/teams`)
-//! is verified; the create-path response shapes are pinned in §0.
-//!
-//! ## v2 Local mode (§15)
-//! `SwarmConfig.mode` selects between `Abw` (v1, default) and `Local`
-//! (v2). In `Local` mode, the server reads agent cards from a local
-//! directory (`agents/local/curated/`) via `LocalAgentRegistry` and executes
-//! them through the local runtime (`local_runtime.rs`, backed by
-//! `hkask-inference`). No ABW calls are made in `Local` mode, and there is no
-//! local budget: local agents run on the operator's own substrate.
-
-use hkask_mcp_server::server::CredentialRequirement;
+//! `swarm_update_local_swarm`, `swarm_clone_local_swarm`,
+//! `swarm_add_agent_local`, `swarm_remove_agent_local`, `swarm_ai_assist`,
+//! `swarm_observed_seams_local`, `swarm_fleet_digest_local`,
+//! `swarm_who_answers_local`, `swarm_run_workflow_local`,
+//! `swarm_workflow_check_local`; knowledge: `swarm_search_knowledge_local`,
+//! `swarm_recall_local`, `swarm_generate_prompt_local`,
+//! `swarm_generate_ontology_local`; A2A: `swarm_a2a_send` (in-process),
+//! `swarm_a2a_card` (Agent Card discovery), `swarm_a2a_broadcast`.
 
 mod a2a;
 mod a2a_http;
 mod a2a_tools;
-mod abw_client;
-mod abw_util;
 mod agent_executor;
 pub mod agent_stats;
 #[cfg(test)]
 mod ai_assist_override_tests;
-mod cloud_swarm;
-mod cloud_swarm_tools;
 mod config;
-mod consent;
 mod contract;
 mod error;
 pub mod fleet_digest;
@@ -108,7 +52,6 @@ pub mod port_registry;
 pub mod request_types;
 mod sanitize;
 pub mod schema_validate;
-mod spend_gate;
 mod task_board;
 #[cfg(test)]
 mod test_support;
@@ -123,42 +66,36 @@ mod workflow;
 // `src/*.rs`. The single source of truth — the tool surface is asserted
 // against the live `combined_router()` surface at test time, so drift is
 // caught. Consumers across the seam (e.g. `swarm_panel`) re-export this
-// const as `parse::SWARM_TOOLS`. `CLOUD_SWARM_TOOL_NAMES` is read only by
-// this crate's cloud-router test (the ABW/local split is a test-time
-// invariant), so the include is wrapped in a module whose dead-code lint
-// tolerates it in a non-test build.
+// const as `parse::SWARM_TOOLS`.
 mod generated_tool_names {
     #![allow(dead_code)]
     include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
 }
-pub use generated_tool_names::{CLOUD_SWARM_TOOL_NAMES, TOOL_NAMES};
+pub use generated_tool_names::TOOL_NAMES;
 
 // ── Public local-swarm surface (reused by other kask MCP servers) ──────────
 //
 // Only the symbols `hkask-mcp-kata-kanban` actually imports are re-exported.
 // `LocalSwarmRuntime` is re-exported because `LazyLocalSwarmRuntime::get_or_init`
 // returns `&LocalSwarmRuntime` and kata-kanban calls `.delegate()` on it. The
-// ABW client, consent store, spend gate, local swarm registry, error type, and
-// the `Dependencies`/`Valence` card sub-structs stay crate-private — they have
-// no external consumer (verified by grep across `kask/` and `crates/` outside
-// this crate's `src/` and `tests/`).
+// local swarm registry, error type, and the `Dependencies`/`Valence` card
+// sub-structs stay crate-private — they have no external consumer (verified
+// by grep across `kask/` and `crates/` outside this crate's `src/` and
+// `tests/`).
 pub use crate::local_registry::{LocalAgentCapabilities, LocalAgentCard, LocalAgentRegistry};
 pub use crate::local_runtime::{
     LazyEventStore, LazyLocalSwarmRuntime, LocalDelegateResult, LocalSwarmRuntime,
     TaskSuccessVerdict, VerdictSource,
 };
 
-use crate::abw_client::SwarmClient;
 use crate::config::SwarmConfig;
-use crate::consent::ConsentStore;
 use crate::local_swarms::LocalSwarmRegistry;
 
 // ── Server struct ──────────────────────────────────────────────────────────
 
 hkask_mcp_server::mcp_server!(
     pub(crate) struct SwarmServer {
-        pub client: std::sync::Arc<SwarmClient>,
-        pub consent: std::sync::Arc<ConsentStore>,
+        pub config: std::sync::Arc<SwarmConfig>,
         pub local_registry: std::sync::Arc<LocalAgentRegistry>,
         pub local_runtime: std::sync::Arc<LazyLocalSwarmRuntime>,
         pub local_swarms: std::sync::Arc<LocalSwarmRegistry>,
@@ -171,10 +108,7 @@ hkask_mcp_server::mcp_server!(
 
 impl SwarmServer {
     fn combined_router() -> rmcp::handler::server::router::tool::ToolRouter<Self> {
-        Self::cloud_swarm_router()
-            + Self::local_router()
-            + Self::a2a_router()
-            + Self::knowledge_router()
+        Self::local_router() + Self::a2a_router() + Self::knowledge_router()
     }
 }
 
@@ -185,32 +119,12 @@ impl rmcp::ServerHandler for SwarmServer {}
 
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Resolve the governed swarm server's durable consent-store path.
-/// `HKASK_SWARM_CONSENT_STORE` overrides the default `mcp/swarm/consent.db`.
-/// Kask MCP servers have a single spawn authority (`McpRuntime`); the old
-/// per-project `ContextServerStore` launch path is removed.
-fn resolve_consent_store_path() -> String {
-    std::env::var("HKASK_SWARM_CONSENT_STORE")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| {
-            // D28 — Standardized Artifact Storage. Consent store lives at
-            // `mcp/swarm/consent.db`.
-            hkask_types::agent_paths::resolve_under_data_dir(
-                &hkask_types::agent_paths::mcp_server_db("swarm", "consent"),
-            )
-            .to_string_lossy()
-            .to_string()
-        })
-}
-
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     hkask_mcp_server::run_server(
         "hkask-mcp-swarm",
         SERVER_VERSION,
         |ctx| {
-            let api_key = ctx.credentials.get("HKASK_ABW_API_KEY").cloned();
-            let (mut config, warning) = SwarmConfig::from_env(api_key);
+            let mut config = SwarmConfig::from_env();
             // The ONE shared DB passphrase — canonical 2-tier resolution
             // (ctx.credentials → env → keychain), same as every other kask
             // SQLCipher DB opener. Overrides the config's default fallback
@@ -226,16 +140,9 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     );
                 }
             }
-            // Catalogue-only mode is degraded, not broken — surface it so an
-            // operator reading logs can distinguish "not configured" from
-            // "configured but broken" (the startup-failure-signal rule).
-            if let Some(w) = warning {
-                tracing::warn!(target: "hkask.mcp.swarm", "{w}");
-            }
             // Surface a missing or too-short DB passphrase so the operator
             // distinguishes "not configured" from "configured but broken"
-            // (the .rules startup-failure-signal rule). The default is
-            // "allostery" (pre-release) so this should not fire on first run.
+            // (the .rules startup-failure-signal rule).
             if config.memory_passphrase.is_empty() {
                 tracing::warn!(
                     target: "hkask.mcp.swarm",
@@ -250,10 +157,10 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     config.memory_passphrase.len()
                 );
             }
-            // Load local agent cards (v2 §15). In Abw mode this is a no-op
-            // if the directory doesn't exist — the registry stays empty and
-            // local tools will return zero agents. In Local mode
-            // the startup warning above already covers the missing-dir case.
+            // Load local agent cards. A missing directory is not an error —
+            // the registry stays empty and local tools return zero agents
+            // (a loud signal for a misconfigured dir belongs to the operator's
+            // log review; the local_swarms load below warns the same way).
             let local_registry =
                 std::sync::Arc::new(LocalAgentRegistry::new(config.local_agents_dir.clone()));
             match local_registry.load() {
@@ -276,9 +183,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             }
 
             // Construct the local swarm runtime (inference only — there is
-            // no local budget; operator ruling 2026-09-04). This is always
-            // constructed — even in Abw mode, the operator can call
-            // `swarm_delegate_local` to mix local execution.
+            // no local budget; operator ruling 2026-09-04).
             //
             // The runtime is constructed lazily on first tool call (the
             // `run_server` factory closure is sync — it cannot `.await` the
@@ -316,8 +221,8 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 config.memory_passphrase.clone(),
             ));
 
-            // Local swarm registry — the local replica of an ABW workspace
-            // roster. A missing directory is not an error (created on first
+            // Local swarm registry — the local swarm roster. A missing
+            // directory is not an error (created on first
             // `swarm_create_local_swarm`); an empty roster is the normal
             // initial state. Created lazily on first write.
             let local_swarms =
@@ -380,45 +285,9 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 );
             }
 
-            // Build the consent store. Default: the shared SQLite store
-            // (mcp/swarm/consent.db, operator-overridable via
-            // `HKASK_SWARM_CONSENT_STORE`) so a token minted by the panel's
-            // governed server process is consumable by the Steer curator's
-            // per-project server process (both resolve the same path). On open
-            // failure, degrade to the session-local in-memory store with a loud
-            // error — same-process consent still works; cross-process flows
-            // (panel confirm → Steer spend) do not.
-            let consent_store = match ConsentStore::open_sqlite(&resolve_consent_store_path()) {
-                Ok(store) => {
-                    tracing::info!(
-                        target: "hkask.mcp.swarm",
-                        "consent store: shared SQLite (cross-process tokens enabled)"
-                    );
-                    store
-                }
-                Err(e) => {
-                    tracing::error!(
-                        target: "hkask.mcp.swarm",
-                        error = %e,
-                        "consent store unavailable — falling back to the session-local in-memory \
-                         store; cross-process consent flows (panel confirm → Steer spend) will \
-                         not work. Set HKASK_SWARM_CONSENT_STORE to a writable path."
-                    );
-                    ConsentStore::default()
-                }
-            };
-
             Ok(SwarmServer::new(
                 ctx.webid,
-                std::sync::Arc::new(SwarmClient::new(
-                    reqwest::Client::builder()
-                        .connect_timeout(std::time::Duration::from_secs(10))
-                        .timeout(std::time::Duration::from_secs(60))
-                        .build()
-                        .unwrap_or_else(|_| reqwest::Client::new()),
-                    config,
-                )),
-                std::sync::Arc::new(consent_store),
+                std::sync::Arc::new(config),
                 local_registry,
                 local_runtime,
                 local_swarms,
@@ -428,44 +297,33 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 thread_store,
             ))
         },
-        vec![CredentialRequirement::optional(
-            "HKASK_ABW_API_KEY",
-            "Agent Bestiary World Pro API key (catalogue-only mode if absent)",
-        )],
+        vec![],
     )
     .await
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 
-// D28 — pins the default consent DB path.
+// D28 — pins the default threads DB path.
 #[test]
 fn default_db_paths_follow_standardized_layout() {
-    let consent = hkask_types::agent_paths::mcp_server_db("swarm", "consent");
+    let threads = hkask_types::agent_paths::mcp_server_db("swarm", "threads");
     assert_eq!(
-        consent,
+        threads,
         std::path::PathBuf::from("mcp")
             .join("swarm")
-            .join("consent.db"),
-        "swarm consent path must follow mcp/swarm/consent.db"
-    );
-    let gate = hkask_types::agent_paths::mcp_server_db("swarm", "gate");
-    assert_eq!(
-        gate,
-        std::path::PathBuf::from("mcp")
-            .join("swarm")
-            .join("gate.db"),
-        "swarm gate-ledger path must follow mcp/swarm/gate.db"
+            .join("threads.db"),
+        "swarm threads path must follow mcp/swarm/threads.db"
     );
 }
 
 // Inline (not a `tests/` file) so the tests can reach `pub(crate)` tool
-// methods and field types. They build a `SwarmServer` with throwaway paths and
-// the in-memory consent store, then drive the simplest read-only tools
-// end-to-end through `execute_tool` to confirm the server wires up
-// and its tools return the canonical `{"content": …}` success envelope as
-// valid JSON. No ABW API key, no network, no on-disk events/memory —
-// the lazy stores are never initialized by these read-only tools.
+// methods and field types. They build a `SwarmServer` with throwaway paths,
+// then drive the simplest read-only tools end-to-end through `execute_tool`
+// to confirm the server wires up and its tools return the canonical
+// `{"content": …}` success envelope as valid JSON. No network, no on-disk
+// events/memory — the lazy stores are never initialized by these read-only
+// tools.
 #[cfg(test)]
 mod smoke_tests {
     use std::sync::Arc;
@@ -474,9 +332,7 @@ mod smoke_tests {
     use serde_json::Value;
 
     use super::SwarmServer;
-    use crate::abw_client::SwarmClient;
     use crate::config::SwarmConfig;
-    use crate::consent::ConsentStore;
     use crate::local_knowledge::LazyLocalMemory;
     use crate::local_registry::LocalAgentRegistry;
     use crate::local_runtime::{LazyEventStore, LazyLocalSwarmRuntime};
@@ -485,20 +341,18 @@ mod smoke_tests {
     use hkask_types::WebID;
 
     /// Build a `SwarmServer` backed by throwaway paths under a per-name
-    /// scratch dir in the test scratch root, with the session-local
-    /// in-memory consent store. The registry dirs need not exist — a
-    /// missing dir yields zero entries (not an error) — and the
+    /// scratch dir in the test scratch root. The registry dirs need not
+    /// exist — a missing dir yields zero entries (not an error) — and the
     /// events/memory stores are lazy, so they are never opened by the
-    /// read-only tools exercised here. No ABW key, no network. The
-    /// scratch name must be unique per test: tests in one binary run in
-    /// parallel, and the read-only smoke tests assert count 0 against
-    /// the same registry a create test writes into. `config` receives
-    /// the derived agents dir so a test can point the client config's
-    /// `local_agents_dir` at the same scratch registry the server uses
-    /// (production tools read it — e.g. `swarm_remove_local`
-    /// canonicalizes it); pass `|_| SwarmConfig::default()` for the
-    /// default. Returns the server and the agents dir (to read written
-    /// cards).
+    /// read-only tools exercised here. No network. The scratch name must be
+    /// unique per test: tests in one binary run in parallel, and the
+    /// read-only smoke tests assert count 0 against the same registry a
+    /// create test writes into. `config` receives the derived agents dir so
+    /// a test can point the config's `local_agents_dir` at the same scratch
+    /// registry the server uses (production tools read it — e.g.
+    /// `swarm_remove_local` canonicalizes it); pass `|_| SwarmConfig::default()`
+    /// for the default. Returns the server and the agents dir (to read
+    /// written cards).
     fn make_server_in(
         scratch_name: &str,
         config: impl FnOnce(&str) -> SwarmConfig,
@@ -514,11 +368,6 @@ mod smoke_tests {
         let events_path = scratch.join("events.db").to_string_lossy().to_string();
         let memory_path = scratch.join("memory.db").to_string_lossy().to_string();
 
-        let client = Arc::new(SwarmClient::new(
-            reqwest::Client::new(),
-            config(&agents_dir),
-        ));
-        let consent = Arc::new(ConsentStore::default());
         let local_registry = Arc::new(LocalAgentRegistry::new(agents_dir.clone()));
         let stats_dir = scratch.join("stats").to_string_lossy().to_string();
         let agent_stats = Arc::new(crate::agent_stats::AgentStatsStore::load(&stats_dir));
@@ -536,8 +385,7 @@ mod smoke_tests {
 
         let server = SwarmServer::new(
             WebID::new(),
-            client,
-            consent,
+            Arc::new(config(&agents_dir)),
             local_registry,
             local_runtime,
             local_swarms,
@@ -868,28 +716,6 @@ mod smoke_tests {
         );
     }
 
-    /// A cloud (ABW) tool without an API key must fail with
-    /// permission_denied NAMING the env var — the broken-feedback-loop rule:
-    /// the operator must be able to distinguish "not configured" from
-    /// "configured but broken".
-    #[tokio::test]
-    async fn cloud_tool_without_key_is_permission_denied_naming_env_var() {
-        use crate::request_types::GetSwarmRequest;
-
-        let server = make_server();
-        let error = server
-            .swarm_get_swarm(Parameters(GetSwarmRequest { workspace_id: None }))
-            .await
-            .expect_err("a cloud tool without a key must fail");
-        assert!(
-            matches!(error.kind, hkask_types::McpErrorKind::PermissionDenied),
-            "the error kind must be permission_denied, got: {error:?}"
-        );
-        assert!(
-            error.message.contains("HKASK_ABW_API_KEY"),
-            "the error must name the env var, got: {error}"
-        );
-    }
     /// Creating a local agent without an explicit model keeps its card empty.
     /// The operator's Swarm default (or, if unset, the host session default)
     /// resolves at execution time; a stamped value would become stale.
@@ -954,27 +780,7 @@ mod tool_surface_tests {
     hkask_mcp_server::tool_surface_pin!(
         SwarmServer::combined_router(),
         "combined_router",
-        89,
-        tool_surface_is_exactly_89_registered_tools,
+        37,
+        tool_surface_is_exactly_37_registered_tools,
     );
-
-    // The cloud partition must match the live cloud router — the swarm panel
-    // renders its ABW/local Steer split from this const, so drift there
-    // degrades to "tool not found" at dispatch.
-    #[test]
-    fn cloud_swarm_tool_names_match_live_cloud_router() {
-        let mut live: Vec<String> = SwarmServer::cloud_swarm_router()
-            .list_all()
-            .iter()
-            .map(|tool| tool.name.to_string())
-            .collect();
-        live.sort();
-        let mut generated = crate::CLOUD_SWARM_TOOL_NAMES.to_vec();
-        generated.sort();
-        assert_eq!(
-            generated, live,
-            "CLOUD_SWARM_TOOL_NAMES (build.rs-generated) must match the live \
-             cloud_swarm_router surface"
-        );
-    }
 }

@@ -13,10 +13,8 @@ use ui::{
     prelude::*,
 };
 
-use crate::CreateTarget;
 use crate::SWARM_SERVER;
 use crate::SwarmPanel;
-use crate::parse::{extract_unsupported_fields_note, extract_wallet_balance};
 use crate::status_is_warning;
 
 /// State for the agent-authoring surface.
@@ -30,12 +28,6 @@ pub(crate) struct AuthorForm {
     /// would change the agent id). When `None`, the form is creating a new
     /// agent. The submit button label and the save path branch on this.
     pub(crate) editing_id: Option<String>,
-    /// The source of the agent being edited (`Cloud`, `Local`, or `Synced`).
-    /// `None` when creating a new agent. Determines which delete tool the
-    /// Delete button dispatches to: `swarm_remove_local` for local/synced
-    /// (severs the local card), `swarm_delete_agent` for cloud (irreversible
-    /// ABW delete). Set by `load_agent_into_author`.
-    pub(crate) editing_source: Option<crate::parse::AgentSource>,
     /// Comma-separated tags for catalogue discovery.
     pub(crate) tags: Entity<Editor>,
     /// Visibility level: "public", "private", or "unlisted".
@@ -58,10 +50,6 @@ pub(crate) struct AuthorForm {
     pub(crate) accepts: Entity<Editor>,
     /// Comma-separated declared output types (fermi `declares_produces`).
     pub(crate) produces: Entity<Editor>,
-    /// Which backend to create the agent on (Cloud = ABW, Local = local
-    /// substrate). A per-form choice — not gated on `kask.swarm.mode`.
-    /// When editing, this is derived from `editing_source`.
-    pub(crate) create_target: super::CreateTarget,
     /// Result of the last create attempt (success id or error).
     pub(crate) status: Option<SharedString>,
     pub(crate) busy: bool,
@@ -100,7 +88,6 @@ impl AuthorForm {
             }),
             agent_type: "research".to_string(),
             editing_id: None,
-            editing_source: None,
             tags: cx.new(|cx| {
                 let mut e = Editor::single_line(window, cx);
                 e.set_placeholder_text("tag1, tag2, tag3 (comma-separated)", window, cx);
@@ -159,7 +146,6 @@ impl AuthorForm {
                 );
                 e
             }),
-            create_target: super::CreateTarget::Cloud,
             status: None,
             busy: false,
         }
@@ -172,22 +158,8 @@ impl SwarmPanel {
     /// has a nudge for what to enter and which backend it targets.
     pub(crate) fn render_author(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let border = cx.theme().colors().border;
-        let is_local = self.author.create_target == super::CreateTarget::Local;
         let is_editing = self.author.editing_id.is_some();
-        let editing_source = self.author.editing_source.clone();
-        let delete_tooltip = match &editing_source {
-            Some(crate::parse::AgentSource::Cloud) => {
-                "Permanently deletes this ABW agent (irreversible). Removes it \
-                 from your library and every workspace roster. A synced local \
-                 card is NOT touched."
-            }
-            Some(crate::parse::AgentSource::Local) | Some(crate::parse::AgentSource::Synced) => {
-                "Permanently deletes this local agent card. A synced card's \
-                 ABW agent is NOT touched (delete that separately from the \
-                 cloud card's More menu)."
-            }
-            None => "",
-        };
+        let delete_tooltip = "Permanently deletes this local agent card directory. Irreversible.";
         let create_label = if self.author.busy {
             if is_editing {
                 "Updating…"
@@ -195,15 +167,9 @@ impl SwarmPanel {
                 "Creating…"
             }
         } else if is_editing {
-            if is_local {
-                "Update Local Agent"
-            } else {
-                "Update Agent"
-            }
-        } else if is_local {
-            "Create Local Agent"
+            "Update Local Agent"
         } else {
-            "Create Agent"
+            "Create Local Agent"
         };
         v_flex()
             .w_full()
@@ -221,67 +187,6 @@ impl SwarmPanel {
                     "Author an Agent"
                 })
                 .size(HeadlineSize::Small),
-            )
-            // Cloud/Local target toggle — a per-form choice, not a global
-            // setting. Both backends are always available; this selects which
-            // tool the create button dispatches (`swarm_create_agent` vs
-            // `swarm_create_local_agent`). Disabled when editing (the target is
-            // derived from the editing source).
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .items_center()
-                            .child(
-                                Label::new("Target:")
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted),
-                            )
-                            .child(
-                                div().child(
-                                    ToggleButtonGroup::single_row(
-                                        "author-create-target",
-                                        [
-                                            ToggleButtonSimple::new(
-                                                "Cloud",
-                                                cx.listener(|this, _, _, cx| {
-                                                    this.author.create_target =
-                                                        super::CreateTarget::Cloud;
-                                                    this.active_backend =
-                                                        super::CreateTarget::Cloud;
-                                                    cx.notify();
-                                                }),
-                                            ),
-                                            ToggleButtonSimple::new(
-                                                "Local",
-                                                cx.listener(|this, _, _, cx| {
-                                                    this.author.create_target =
-                                                        super::CreateTarget::Local;
-                                                    this.active_backend =
-                                                        super::CreateTarget::Local;
-                                                    cx.notify();
-                                                }),
-                                            ),
-                                        ],
-                                    )
-                                    .style(ToggleButtonGroupStyle::Outlined)
-                                    .size(ToggleButtonGroupSize::Custom(rems_from_px(24.0_f32)))
-                                    .label_size(LabelSize::XSmall)
-                                    .auto_width()
-                                    .selected_index(if is_local { 1 } else { 0 })
-                                    .into_any_element(),
-                                ),
-                            ),
-                    )
-                    .when(self.author.editing_id.is_some(), |this| {
-                        this.child(
-                            Label::new("Target is fixed to the editing source.")
-                                .size(LabelSize::XSmall)
-                                .color(Color::Muted),
-                        )
-                    }),
             )
             .child(
                 v_flex()
@@ -706,25 +611,17 @@ impl SwarmPanel {
                         Button::new("create-agent", create_label)
                             .style(ButtonStyle::Filled)
                             .disabled(self.author.busy)
-                            .tooltip(Tooltip::text(if is_local {
+                            .tooltip(Tooltip::text(
                                 "Creates the agent on the local substrate \
-                                 (agents/local/curated). No cost, no consent."
-                            } else {
-                                "Creates the agent in the ABW catalogue. \
-                                 The catalogue may apply its own validation."
-                            }))
+                                 (agents/local/curated). No cost, no consent.",
+                            ))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.save_agent(cx);
                             })),
                     )
-                    .when_some(editing_source, |this, source| {
-                        let delete_label = match source {
-                            crate::parse::AgentSource::Cloud => "Delete Agent",
-                            crate::parse::AgentSource::Local
-                            | crate::parse::AgentSource::Synced => "Delete Local Card",
-                        };
+                    .when(is_editing, |this| {
                         this.child(
-                            Button::new("delete-agent", delete_label)
+                            Button::new("delete-agent", "Delete Local Card")
                                 .style(ButtonStyle::Subtle)
                                 .color(Color::Warning)
                                 .disabled(self.author.busy)
@@ -760,11 +657,6 @@ impl SwarmPanel {
         cx: &mut Context<Self>,
     ) {
         self.author.editing_id = None;
-        self.author.editing_source = None;
-        // Keep the panel's backend context rather than resetting to Cloud —
-        // the operator's last cloud/local choice carries into the next
-        // authoring session (the "doesn't carry over" finding).
-        self.author.create_target = self.active_backend;
         self.author.status = None;
         self.author.name.update(cx, |e, _| e.set_read_only(false));
         // Clear the text fields so the operator starts fresh.
@@ -844,10 +736,8 @@ impl SwarmPanel {
             .ok()
     }
 
-    /// Create a new agent from the authoring form. Mode-aware: in Local mode
-    /// the agent is created on the local substrate via `swarm_create_local_agent`
-    /// (field `agent_id`, no cost, no consent); in ABW mode it is created in the
-    /// ABW catalogue via `swarm_create_agent` (field `agent_name`).
+    /// Create a new agent from the authoring form on the local substrate via
+    /// `swarm_create_local_agent` (field `agent_id`, no cost, no consent).
     pub(crate) fn create_agent(&mut self, cx: &mut Context<Self>) {
         let Some(invoker) = crate::shared_tool_invoker() else {
             self.author.status = Some("Tool invoker not wired.".into());
@@ -862,47 +752,26 @@ impl SwarmPanel {
             cx.notify();
             return;
         }
-        let is_local = self.author.create_target == CreateTarget::Local;
-        // Target-aware slug pre-validation. ABW requires `^[a-z0-9_]{3,64}$` —
-        // a server-side rejection after the operator has filled every field
-        // is a poor round-trip; validate up front so the error is
-        // field-specific and immediate. Local mode allows alphanumeric plus
+        // Slug pre-validation: the local substrate allows alphanumeric plus
         // `-_.` (the local substrate sanitizes the id), but warn if the name
         // contains chars that would be stripped.
         let trimmed_name = name.trim();
-        if is_local {
-            if trimmed_name.is_empty() {
-                self.author.status = Some("Name is required.".into());
-                cx.notify();
-                return;
-            }
-            let has_strippable = trimmed_name
-                .chars()
-                .any(|c| !(c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.'));
-            if has_strippable {
-                self.author.status = Some(
-                    "Name contains characters that will be stripped on the local \
-                     substrate (allowed: letters, digits, -, _, .)."
-                        .into(),
-                );
-                cx.notify();
-                return;
-            }
-        } else {
-            let len = trimmed_name.chars().count();
-            let valid = (3..=64).contains(&len)
-                && trimmed_name
-                    .chars()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
-            if !valid {
-                self.author.status = Some(
-                    "Name must be 3-64 chars: lowercase letters, digits, underscores only \
-                     (ABW slug rule)."
-                        .into(),
-                );
-                cx.notify();
-                return;
-            }
+        if trimmed_name.is_empty() {
+            self.author.status = Some("Name is required.".into());
+            cx.notify();
+            return;
+        }
+        let has_strippable = trimmed_name
+            .chars()
+            .any(|c| !(c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.'));
+        if has_strippable {
+            self.author.status = Some(
+                "Name contains characters that will be stripped on the local \
+                 substrate (allowed: letters, digits, -, _, .)"
+                    .into(),
+            );
+            cx.notify();
+            return;
         }
         let agent_type = self.author.agent_type.clone();
         // The selector enforces the agent_type, but double-check — a stale
@@ -936,63 +805,31 @@ impl SwarmPanel {
         cx.notify();
 
         cx.spawn(async move |this, cx| {
-            let result = if is_local {
-                invoker
-                    .invoke_tool(
-                        SWARM_SERVER,
-                        "swarm_create_local_agent",
-                        json!({
-                            "agent_id": name.trim(),
-                            "agent_type": agent_type,
-                            "system_prompt": system_prompt.trim(),
-                            "description": description.trim(),
-                            "tags": tags,
-                            "visibility": visibility,
-                            "valence": valence,
-                            "temperature": temperature,
-                            "sample_queries": sample_queries,
-                            "accepts": accepts,
-                            "produces": produces,
-                        }),
-                    )
-                    .await
-            } else {
-                invoker
-                    .invoke_tool(
-                        SWARM_SERVER,
-                        "swarm_create_agent",
-                        json!({
-                            "agent_name": name.trim(),
-                            "agent_type": agent_type,
-                            "system_prompt": system_prompt.trim(),
-                            "description": description.trim(),
-                            "tags": tags,
-                            "visibility": visibility,
-                            "valence": valence,
-                            "temperature": temperature,
-                            "sample_queries": sample_queries,
-                            "accepts": accepts,
-                            "produces": produces,
-                        }),
-                    )
-                    .await
-            };
+            let result = invoker
+                .invoke_tool(
+                    SWARM_SERVER,
+                    "swarm_create_local_agent",
+                    json!({
+                        "agent_id": name.trim(),
+                        "agent_type": agent_type,
+                        "system_prompt": system_prompt.trim(),
+                        "description": description.trim(),
+                        "tags": tags,
+                        "visibility": visibility,
+                        "valence": valence,
+                        "temperature": temperature,
+                        "sample_queries": sample_queries,
+                        "accepts": accepts,
+                        "produces": produces,
+                    }),
+                )
+                .await;
             this.update(cx, |this, cx| {
                 this.author.busy = false;
                 match result {
-                    Ok(output) => {
-                        if let Some(b) = extract_wallet_balance(&output) {
-                            this.spend.wallet_balance = Some(b);
-                        }
-                        // Surface the server's honest-drop note (cloud create
-                        // with fields the ABW API cannot store) instead of a
-                        // bare "created" that hides the loss.
-                        let mut status = format!("Agent '{}' created.", name.trim());
-                        if let Some(note) = extract_unsupported_fields_note(&output) {
-                            status.push(' ');
-                            status.push_str(&note);
-                        }
-                        this.author.status = Some(status.into());
+                    Ok(_) => {
+                        this.author.status =
+                            Some(format!("Agent '{}' created.", name.trim()).into());
                         // Refresh so the new agent appears in browse.
                         this.fetch_all(cx);
                     }

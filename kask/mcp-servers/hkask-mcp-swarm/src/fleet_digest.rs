@@ -261,7 +261,6 @@ mod tests {
             produces: vec![],
             dependencies: LocalAgentDependencies::default(),
             capabilities: LocalAgentCapabilities::default(),
-            cloud_swarm_id: None,
             tags: vec![],
             visibility: String::new(),
             sample_queries: vec![],

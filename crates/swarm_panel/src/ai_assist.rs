@@ -2,42 +2,17 @@
 //! integration shared by the Author and Compose forms. Extracted from
 //! `swarm_panel.rs` — the methods and render helpers stay methods on
 //! `SwarmPanel` (they mutate panel state via `cx.spawn` + `this.update`);
-//! this module owns the mode-derivation policy, the state types, the tool
-//! invocation, and the banner rendering. The Compose surface's Xaman Ek
-//! consultant (`ask_xaman`) lives in `compose.rs` — it mutates ComposeForm
-//! state, not this module's state.
+//! this module owns the state types, the tool invocation, and the banner
+//! rendering.
 
 use gpui::{Context, Window};
 use hkask_types::tool_response::parse_tool_response;
 use serde_json::json;
 use ui::{Button, Color, Tooltip, prelude::*};
 
-use crate::CreateTarget;
 use crate::PanelMode;
 use crate::SWARM_SERVER;
 use crate::SwarmPanel;
-
-/// The backend mode string sent to `swarm_ai_assist` for a form surface.
-/// Reads ONLY the named surface's own target toggle: a tuple-match that also
-/// consulted the author form's target for the swarm surface would send ABW
-/// guidance to a Local compose (and vice versa). Pinned by tests including
-/// the exact hole (`swarm` + compose Cloud + author Local → `abw`).
-fn ai_assist_mode(
-    surface: &str,
-    compose_target: CreateTarget,
-    author_target: CreateTarget,
-) -> &'static str {
-    let target = if surface == "swarm" {
-        compose_target
-    } else {
-        author_target
-    };
-    if target == CreateTarget::Local {
-        "local"
-    } else {
-        "abw"
-    }
-}
 
 /// R2: AI Assist / validation state — shared by the Author and Compose
 /// surfaces (suggestions + validation verdict from `swarm_ai_assist`).
@@ -108,14 +83,6 @@ impl SwarmPanel {
             cx.notify();
             return;
         };
-        // The backend mode sent to `swarm_ai_assist` must match the surface's
-        // own target toggle — reading the author form's target for the swarm
-        // surface sent ABW guidance to a Local compose (and vice versa).
-        let mode = ai_assist_mode(
-            surface,
-            self.compose.create_target,
-            self.author.create_target,
-        );
 
         let (name, agent_type, description, system_prompt, mission, agents) = if surface == "agent"
         {
@@ -185,7 +152,6 @@ impl SwarmPanel {
                     json!({
                         "action": action_owned,
                         "surface": surface_owned,
-                        "mode": mode,
                         "name": name,
                         "agent_type": agent_type,
                         "description": description,
@@ -601,50 +567,5 @@ impl SwarmPanel {
                     ),
                 ),
         )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // ── AI Assist mode derivation ──────────────────────────────────────────
-    //
-    // `swarm_ai_assist` must be told the backend of the surface it is
-    // advising. The original inline tuple-match had a hole: the arm
-    // `(_, _, CreateTarget::Local)` let the AUTHOR form's target win for the
-    // swarm surface, so a Local author form + Cloud compose sent "local"
-    // guidance to a Cloud compose. These tests pin the surface-specific read.
-
-    #[test]
-    fn ai_assist_mode_reads_only_the_named_surface() {
-        // The hole: swarm surface must ignore the author form's target.
-        assert_eq!(
-            ai_assist_mode("swarm", CreateTarget::Cloud, CreateTarget::Local),
-            "abw"
-        );
-        // And symmetrically: agent surface must ignore the compose form's target.
-        assert_eq!(
-            ai_assist_mode("agent", CreateTarget::Local, CreateTarget::Cloud),
-            "abw"
-        );
-        // Each surface reads its own target.
-        assert_eq!(
-            ai_assist_mode("swarm", CreateTarget::Local, CreateTarget::Cloud),
-            "local"
-        );
-        assert_eq!(
-            ai_assist_mode("agent", CreateTarget::Cloud, CreateTarget::Local),
-            "local"
-        );
-        // Cloud on both surfaces.
-        assert_eq!(
-            ai_assist_mode("swarm", CreateTarget::Cloud, CreateTarget::Cloud),
-            "abw"
-        );
-        assert_eq!(
-            ai_assist_mode("agent", CreateTarget::Cloud, CreateTarget::Cloud),
-            "abw"
-        );
     }
 }

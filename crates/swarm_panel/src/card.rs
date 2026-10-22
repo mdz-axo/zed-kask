@@ -1,10 +1,10 @@
 //! Agent and swarm card renderer for the browse list.
 //!
 //! Layout: name + truncated description on the left (flex_1, min_w_0,
-//! truncate). Primary actions (Edit, Hire) as visible buttons on the
-//! right (flex_shrink_0). Secondary actions (Clone, Push, Publish,
-//! Remove) collapsed behind an ellipsis PopoverMenu so the button row
-//! never overflows the text column on narrow dock panels.
+//! truncate). Primary actions (Edit) as visible buttons on the right
+//! (flex_shrink_0). The Remove action for agents is collapsed behind an
+//! ellipsis PopoverMenu so the button row never overflows the text column
+//! on narrow dock panels.
 //!
 //! Pattern reference: `agent_panel.rs`, `render_panel_options_menu`
 //! (PopoverMenu + IconButton Ellipsis + ContextMenu::build + WeakEntity
@@ -14,7 +14,6 @@ use gpui::{Context, SharedString, WeakEntity, Window};
 use marketplace_ui_common::MarketplaceCard;
 use ui::{ContextMenu, IconButton, IconName, IconSize, PopoverMenu, Tooltip, prelude::*};
 
-use crate::parse::AgentSource;
 use crate::{SwarmEntry, SwarmPanel};
 
 impl SwarmPanel {
@@ -27,19 +26,8 @@ impl SwarmPanel {
         match entry {
             SwarmEntry::Agent(agent) => {
                 let agent_name = agent.id.clone();
-                let source = agent.source.clone();
-                let show_clone = source == AgentSource::Cloud;
-                let show_push = source == AgentSource::Local;
-                let show_remove = source == AgentSource::Local;
-                let show_publish = source != AgentSource::Local;
-                let has_secondary = show_clone || show_push || show_publish || show_remove;
-                let hire_name = agent_name.clone();
-                let clone_name = agent_name.clone();
-                let push_name = agent_name.clone();
                 let remove_name = agent_name.clone();
-                let publish_name = agent_name.clone();
                 let edit_name = agent_name.clone();
-                let edit_source = source;
                 let panel_handle: WeakEntity<SwarmPanel> = cx.entity().downgrade();
 
                 MarketplaceCard::new().child(
@@ -58,24 +46,16 @@ impl SwarmPanel {
                                 .id("agent-card-body")
                                 .on_click(cx.listener({
                                     let edit_name = edit_name.clone();
-                                    let edit_source = edit_source.clone();
                                     move |this, _event, window, cx| {
-                                        this.load_agent_into_author(
-                                            edit_name.clone(),
-                                            edit_source.clone(),
-                                            window,
-                                            cx,
-                                        );
+                                        this.load_agent_into_author(edit_name.clone(), window, cx);
                                     }
                                 }))
                                 .child(
-                                    Label::new(
-                                        if agent.display_name.is_empty() {
-                                            agent.id.clone()
-                                        } else {
-                                            agent.display_name.clone()
-                                        },
-                                    )
+                                    Label::new(if agent.display_name.is_empty() {
+                                        agent.id.clone()
+                                    } else {
+                                        agent.display_name.clone()
+                                    })
                                     .color(Color::Default)
                                     .truncate(),
                                 )
@@ -86,11 +66,10 @@ impl SwarmPanel {
                                         .truncate(),
                                 ),
                         )
-                        // Right: primary actions (Edit + Hire) as visible
-                        // buttons, secondary actions behind a PopoverMenu
-                        // ellipsis trigger. flex_shrink_0 so the button
-                        // column keeps its width and the text column absorbs
-                        // the squeeze.
+                        // Right: primary action (Edit) as a visible button,
+                        // the destructive Remove behind a PopoverMenu ellipsis
+                        // trigger. flex_shrink_0 so the button column keeps its
+                        // width and the text column absorbs the squeeze.
                         .child(
                             h_flex()
                                 .gap_1()
@@ -111,7 +90,6 @@ impl SwarmPanel {
                                         move |this, _, window, cx| {
                                             this.load_agent_into_author(
                                                 edit_name.clone(),
-                                                edit_source.clone(),
                                                 window,
                                                 cx,
                                             );
@@ -119,149 +97,58 @@ impl SwarmPanel {
                                     })),
                                 )
                                 .child(
-                                    Button::new(
-                                        SharedString::from(format!("hire-{agent_name}")),
-                                        if self.spend.in_flight.as_deref()
-                                            == Some(agent_name.as_str())
-                                        {
-                                            "Hiring…"
-                                        } else {
-                                            "Hire"
-                                        },
+                                    PopoverMenu::new(SharedString::from(format!(
+                                        "agent-secondary-actions-{agent_name}",
+                                    )))
+                                    .trigger_with_tooltip(
+                                        IconButton::new(
+                                            SharedString::from(format!(
+                                                "agent-secondary-trigger-{agent_name}",
+                                            )),
+                                            IconName::Ellipsis,
+                                        )
+                                        .icon_size(IconSize::Small),
+                                        Tooltip::text("More actions"),
                                     )
-                                    .style(ButtonStyle::Filled)
-                                    .label_size(LabelSize::XSmall)
-                                    .disabled(self.spend.in_flight.is_some())
-                                    .tooltip(Tooltip::text(
-                                        "Hire this agent into the selected swarm. \
-                                         Pre-flighted for cost and consent-gated.",
-                                    ))
-                                    .on_click(cx.listener(
-                                        move |this, _, _, cx| {
-                                            this.begin_hire(hire_name.clone(), cx);
-                                        },
-                                    )),
-                                )
-                                .when(has_secondary, |this| {
-                                    this.child(
-                                        PopoverMenu::new(SharedString::from(format!(
-                                            "agent-secondary-actions-{agent_name}",
-                                        )))
-                                            .trigger_with_tooltip(
-                                                IconButton::new(
-                                                    SharedString::from(format!(
-                                                        "agent-secondary-trigger-{agent_name}",
-                                                    )),
-                                                    IconName::Ellipsis,
-                                                )
-                                                .icon_size(IconSize::Small),
-                                                Tooltip::text("More actions"),
-                                            )
-                                            .menu({
-                                                let panel_handle = panel_handle.clone();
-                                                move |window, cx| {
+                                    .menu({
+                                        let panel_handle = panel_handle.clone();
+                                        move |window, cx| {
+                                            let panel_handle = panel_handle.clone();
+                                            let remove_name = remove_name.clone();
+                                            Some(ContextMenu::build(
+                                                window,
+                                                cx,
+                                                |mut menu, _window, _cx| {
                                                     let panel_handle = panel_handle.clone();
-                                                    let clone_name = clone_name.clone();
-                                                    let push_name = push_name.clone();
-                                                    let publish_name = publish_name.clone();
-                                                    let remove_name = remove_name.clone();
-                                                    let show_clone = show_clone;
-                                                    let show_push = show_push;
-                                                    let show_publish = show_publish;
-                                                    let show_remove = show_remove;
-                                                    Some(ContextMenu::build(
-                                                        window,
-                                                        cx,
-                                                        |mut menu, _window, _cx| {
-                                                            if show_clone {
-                                                                let panel_handle =
-                                                                    panel_handle.clone();
-                                                                menu = menu.entry(
-                                                                    "Copy to Local",
-                                                                    None,
-                                                                    move |_, cx| {
-                                                                        if let Some(panel) =
-                                                                            panel_handle.upgrade()
-                                                                        {
-                                                                            panel.update(cx, |this, cx| {
-                                                                                this.clone_to_local(clone_name.clone(), cx);
-                                                                            });
-                                                                        }
-                                                                    },
-                                                                );
+                                                    menu =
+                                                        menu.entry("Remove", None, move |_, cx| {
+                                                            if let Some(panel) =
+                                                                panel_handle.upgrade()
+                                                            {
+                                                                panel.update(cx, |this, cx| {
+                                                                    this.remove_local_agent(
+                                                                        remove_name.clone(),
+                                                                        cx,
+                                                                    );
+                                                                });
                                                             }
-                                                            if show_push {
-                                                                let panel_handle =
-                                                                    panel_handle.clone();
-                                                                menu = menu.entry(
-                                                                    "Push to Cloud",
-                                                                    None,
-                                                                    move |_, cx| {
-                                                                        if let Some(panel) =
-                                                                            panel_handle.upgrade()
-                                                                        {
-                                                                            panel.update(cx, |this, cx| {
-                                                                                this.push_to_cloud_swarm(push_name.clone(), cx);
-                                                                            });
-                                                                        }
-                                                                    },
-                                                                );
-                                                            }
-                                                            if show_publish {
-                                                                let panel_handle =
-                                                                    panel_handle.clone();
-                                                                menu = menu.entry(
-                                                                    "Publish…",
-                                                                    None,
-                                                                    move |_, cx| {
-                                                                        if let Some(panel) =
-                                                                            panel_handle.upgrade()
-                                                                        {
-                                                                            panel.update(cx, |this, cx| {
-                                                                                this.begin_publish(publish_name.clone(), cx);
-                                                                            });
-                                                                        }
-                                                                    },
-                                                                );
-                                                            }
-                                                            if show_remove {
-                                                                let panel_handle =
-                                                                    panel_handle.clone();
-                                                                menu = menu.entry(
-                                                                    "Remove",
-                                                                    None,
-                                                                    move |_, cx| {
-                                                                        if let Some(panel) =
-                                                                            panel_handle.upgrade()
-                                                                        {
-                                                                            panel.update(cx, |this, cx| {
-                                                                                this.remove_local_agent(remove_name.clone(), cx);
-                                                                            });
-                                                                        }
-                                                                    },
-                                                                );
-                                                            }
-                                                            menu
-                                                        },
-                                                    ))
-                                                }
-                                            }),
-                                    )
-                                }),
+                                                        });
+                                                    menu
+                                                },
+                                            ))
+                                        }
+                                    }),
+                                ),
                         ),
                 )
             }
             SwarmEntry::Swarm(swarm) => {
                 let swarm_id = swarm.id.clone();
                 let swarm_name = swarm.name.clone();
-                let swarm_source = swarm.source.clone();
                 let swarm_mission = swarm.description.clone();
                 let detail_id = swarm_id.clone();
                 let detail_name = swarm_name.clone();
-                let detail_source = swarm_source.clone();
                 let detail_mission = swarm_mission;
-                let runs_id = swarm_id.clone();
-                let runs_name = swarm_name;
                 MarketplaceCard::new().child(
                     h_flex()
                         .w_full()
@@ -301,15 +188,10 @@ impl SwarmPanel {
                                     ))
                                     .on_click(cx.listener(
                                         move |this, _, window, cx| {
-                                            this.select_swarm_for_steer(
-                                                detail_id.clone(),
-                                                detail_source != AgentSource::Cloud,
-                                                cx,
-                                            );
+                                            this.select_swarm_for_steer(detail_id.clone(), cx);
                                             this.load_swarm_into_compose(
                                                 detail_id.clone(),
                                                 detail_name.clone(),
-                                                detail_source.clone(),
                                                 detail_mission.clone(),
                                                 window,
                                                 cx,
@@ -317,30 +199,8 @@ impl SwarmPanel {
                                         },
                                     )),
                                 )
-                                .child(
-                                    Button::new(
-                                        SharedString::from(format!("runs-{swarm_id}")),
-                                        "Runs",
-                                    )
-                                    .style(ButtonStyle::Subtle)
-                                    .label_size(LabelSize::XSmall)
-                                    .tooltip(Tooltip::text(
-                                        "Show recent run activity (workspace messages) \
-                                         for this swarm.",
-                                    ))
-                                    .on_click(cx.listener(
-                                        move |this, _, _, cx| {
-                                            this.show_run_status(
-                                                runs_id.clone(),
-                                                runs_name.clone(),
-                                                cx,
-                                            );
-                                        },
-                                    )),
-                                )
-                                // Delete button — visible on the card for
-                                // both backends. Stages a confirmation banner
-                                // in the browse list.
+                                // Delete button — visible on the card. Stages
+                                // a confirmation banner in the browse list.
                                 .child(
                                     Button::new(
                                         SharedString::from(format!("card-delete-{swarm_id}")),
@@ -348,170 +208,23 @@ impl SwarmPanel {
                                     )
                                     .style(ButtonStyle::Subtle)
                                     .label_size(LabelSize::XSmall)
-                                    .disabled(self.spend.in_flight.is_some())
                                     .tooltip(Tooltip::text(
                                         "Delete this swarm. Shows a confirmation \
                                          prompt above the list.",
                                     ))
                                     .on_click(cx.listener({
-                                        let name = swarm.name;
+                                        let name = swarm_name;
                                         move |this, _, _, cx| {
                                             // Stage the delete confirmation —
                                             // the browse list renders the
                                             // confirmation banner.
                                             this.request_delete_swarm(
                                                 swarm_id.clone(),
-                                                swarm_source.clone(),
                                                 name.clone(),
                                                 cx,
                                             );
                                         }
                                     })),
-                                ),
-                        ),
-                )
-            }
-            SwarmEntry::App(app) => {
-                let app_slug = app.slug.clone();
-                let spawn_slug = app_slug.clone();
-                let publish_slug = app_slug.clone();
-                let archive_slug = app_slug.clone();
-                let edit_slug = app_slug;
-                let is_archived = app.archived;
-                let is_public = app.visibility == "public";
-                MarketplaceCard::new().child(
-                    h_flex()
-                        .w_full()
-                        .gap_2()
-                        .child(
-                            v_flex()
-                                .min_w_0()
-                                .flex_1()
-                                .gap_1()
-                                .child(
-                                    h_flex()
-                                        .gap_1()
-                                        .items_center()
-                                        .child(
-                                            Label::new(if app.name.is_empty() {
-                                                app.slug.clone()
-                                            } else {
-                                                app.name.clone()
-                                            })
-                                            .color(Color::Default)
-                                            .truncate(),
-                                        )
-                                        .when(is_archived, |this| {
-                                            this.child(
-                                                Label::new("archived")
-                                                    .color(Color::Warning)
-                                                    .size(LabelSize::XSmall),
-                                            )
-                                        })
-                                        .when(!is_public && !is_archived, |this| {
-                                            this.child(
-                                                Label::new(&app.visibility)
-                                                    .color(Color::Muted)
-                                                    .size(LabelSize::XSmall),
-                                            )
-                                        })
-                                        .when(is_public, |this| {
-                                            this.child(
-                                                Label::new("public")
-                                                    .color(Color::Accent)
-                                                    .size(LabelSize::XSmall),
-                                            )
-                                        }),
-                                )
-                                .child(
-                                    Label::new(if app.tagline.is_empty() {
-                                        app.description
-                                    } else {
-                                        app.tagline
-                                    })
-                                    .color(Color::Muted)
-                                    .size(LabelSize::XSmall)
-                                    .truncate(),
-                                ),
-                        )
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .flex_shrink_0()
-                                .items_center()
-                                .child(
-                                    Button::new(
-                                        SharedString::from(format!("edit-app-{edit_slug}")),
-                                        "Edit",
-                                    )
-                                    .style(ButtonStyle::Subtle)
-                                    .label_size(LabelSize::XSmall)
-                                    .tooltip(Tooltip::text(
-                                        "Open this App's manifest in the App author panel \
-                                         to view and edit its details.",
-                                    ))
-                                    .on_click(cx.listener(
-                                        move |this, _, window, cx| {
-                                            this.load_app_into_form(edit_slug.clone(), window, cx);
-                                        },
-                                    )),
-                                )
-                                .child(
-                                    Button::new(
-                                        SharedString::from(format!("spawn-app-{spawn_slug}")),
-                                        "Spawn",
-                                    )
-                                    .style(ButtonStyle::Subtle)
-                                    .label_size(LabelSize::XSmall)
-                                    .disabled(is_archived || self.spend.in_flight.is_some())
-                                    .tooltip(Tooltip::text(
-                                        "Spawn a new workspace from this App. \
-                                                 Seeds it with the App's initial_budget, \
-                                                 auto_hire, and initial_files.",
-                                    ))
-                                    .on_click(cx.listener(
-                                        move |this, _, _, cx| {
-                                            this.spawn_app_workspace(spawn_slug.clone(), cx);
-                                        },
-                                    )),
-                                )
-                                .child(
-                                    Button::new(
-                                        SharedString::from(format!("publish-app-{publish_slug}")),
-                                        "Publish",
-                                    )
-                                    .style(ButtonStyle::Subtle)
-                                    .label_size(LabelSize::XSmall)
-                                    .disabled(
-                                        is_public || is_archived || self.spend.in_flight.is_some(),
-                                    )
-                                    .tooltip(Tooltip::text(
-                                        "Promote this App's visibility to public. \
-                                                 Makes it browsable in the catalogue.",
-                                    ))
-                                    .on_click(cx.listener(
-                                        move |this, _, _, cx| {
-                                            this.publish_app(publish_slug.clone(), cx);
-                                        },
-                                    )),
-                                )
-                                .child(
-                                    Button::new(
-                                        SharedString::from(format!("archive-app-{archive_slug}")),
-                                        "Archive",
-                                    )
-                                    .style(ButtonStyle::Subtle)
-                                    .label_size(LabelSize::XSmall)
-                                    .disabled(is_archived || self.spend.in_flight.is_some())
-                                    .tooltip(Tooltip::text(
-                                        "Archive this App. Archived apps cannot \
-                                                 spawn new workspaces. Cannot be undone.",
-                                    ))
-                                    .on_click(cx.listener(
-                                        move |this, _, _, cx| {
-                                            this.archive_app(archive_slug.clone(), cx);
-                                        },
-                                    )),
                                 ),
                         ),
                 )

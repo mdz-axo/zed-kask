@@ -87,8 +87,8 @@ pub fn to_a2a_skill(card: &LocalAgentCard) -> AgentSkill {
 }
 
 /// Human-readable name from a snake_case slug: underscores to spaces,
-/// title-case each word. Mirrors fermi's `a2a_card::build_skill` naming so a
-/// local agent and its ABW original render the same skill name.
+/// title-case each word — the card renderer and A2A skill naming share
+/// one convention.
 fn title_case_slug(slug: &str) -> String {
     slug.split('_')
         .map(|word| {
@@ -202,7 +202,6 @@ mod tests {
             produces,
             dependencies: LocalAgentDependencies::default(),
             capabilities: LocalAgentCapabilities::default(),
-            cloud_swarm_id: None,
             tags: vec!["supply-chain".to_string()],
             visibility: "private".to_string(),
             sample_queries: vec!["Price 50g Ashwagandha".to_string()],

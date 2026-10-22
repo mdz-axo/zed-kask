@@ -1,124 +1,17 @@
-//! ABW swarm client error type.
+//! Local swarm error types.
 //!
 //! Extracted from the swarm server root (continues the per-concern extraction).
-//! `SwarmError` maps ABW HTTP errors and body-embedded domain errors (never
-//! leaks reqwest types); `into_tool_error` projects it onto the MCP tool error
-//! surface with the appropriate kind.
+//! [`map_local_swarm_error`] projects each local failure onto the MCP tool
+//! error surface with the appropriate kind.
 
 use hkask_mcp_server::server::McpToolError;
 
-/// Errors from the ABW swarm client. Maps ABW HTTP errors AND body-embedded
-/// domain errors; never leaks reqwest types.
-#[derive(Debug, thiserror::Error)]
-pub enum SwarmError {
-    /// 401 / missing or invalid API key.
-    #[error("ABW authentication failed: {0}. Set HKASK_ABW_API_KEY (Pro tier required).")]
-    Auth(String),
-    /// 402 — credits exhausted (algedonic).
-    #[error("ABW payment required: {0}")]
-    PaymentRequired(String),
-    /// 500 "not funded" — the agent's owner has not configured an LLM key on
-    /// their ABW profile. Execution funding is owner-side, not caller-side.
-    #[error("ABW agent '{agent}' is not funded: {message}")]
-    AgentNotFunded { agent: String, message: String },
-    /// HTTP 200 envelope containing an upstream LLM/provider error string.
-    /// Algedonic-adjacent: surface verbatim, do not retry blindly.
-    #[error("ABW upstream model error ({provider}): {message}")]
-    UpstreamModelError { provider: String, message: String },
-    /// 429.
-    #[error("ABW rate limited: {0}")]
-    RateLimited(String),
-    /// Xaman Ek session creation failed.
-    #[error("ABW curator unavailable: {0}")]
-    CuratorUnavailable(String),
-    /// Serde parse failure on a known endpoint — possible API drift (S4).
-    #[error("ABW API version mismatch: {0}")]
-    ApiVersionMismatch(String),
-    /// A spend tool was invoked without a valid consent token. The gate is
-    /// the enforcement point — this is a hard refusal, not a warning.
-    #[error(
-        "ABW spend refused: {0}. Obtain operator consent via the swarm panel (Hire… → Confirm) and retry with the issued consent token."
-    )]
-    ConsentDenied(String),
-    /// Network/transport failure.
-    #[error("ABW request failed: {0}")]
-    Unavailable(String),
-    /// The request provably never reached ABW — a connection-phase failure
-    /// (DNS resolution, connection refused, TLS handshake) or a request
-    /// construction failure. No external effect is possible, so a held spend
-    /// reservation may be released (operator-ratified settlement policy,
-    /// 2026-09-08).
-    #[error("ABW request never sent: {0}")]
-    DispatchNotSent(String),
-    /// The request was sent but no definitive answer arrived — a timeout or
-    /// connection reset mid-request/response, or a response body lost after
-    /// ABW accepted the request. The external outcome is UNKNOWN: the spend
-    /// may or may not have taken effect. A held reservation must be retained
-    /// and the uncertainty surfaced; never auto-released (operator-ratified
-    /// settlement policy, 2026-09-08: retain + surface, option A).
-    #[error("ABW dispatch outcome uncertain: {0}")]
-    DispatchAmbiguous(String),
-}
-
-impl SwarmError {
-    /// Whether this error PROVES the external dispatch never took effect,
-    /// permitting release of a held spend reservation.
-    ///
-    /// Proven rejections (operator-ratified 2026-09-08): connection-phase /
-    /// construction failures (the request never left), and every HTTP error
-    /// response — ABW answered and rejected the request, including the
-    /// 200-envelope upstream-error case where ABW itself reports the
-    /// operation failed. NOT proven (the reservation must be held):
-    /// `DispatchAmbiguous` (no definitive answer) and `ApiVersionMismatch`
-    /// (ABW accepted the request — HTTP 2xx — but the response was
-    /// unparseable; external acceptance followed by a local failure).
-    /// `ConsentDenied`/`CuratorUnavailable` never arise from a dispatch
-    /// POST and are conservatively excluded.
-    #[must_use]
-    pub(crate) fn is_proven_rejection(&self) -> bool {
-        matches!(
-            self,
-            Self::DispatchNotSent(_)
-                | Self::Auth(_)
-                | Self::PaymentRequired(_)
-                | Self::RateLimited(_)
-                | Self::AgentNotFunded { .. }
-                | Self::UpstreamModelError { .. }
-                | Self::Unavailable(_)
-        )
-    }
-}
-
-impl SwarmError {
-    /// Convert into the MCP tool error surface with the appropriate kind.
-    pub fn into_tool_error(self) -> McpToolError {
-        match self {
-            Self::Auth(m) => McpToolError::permission_denied(m),
-            Self::PaymentRequired(m) => McpToolError::permission_denied(m),
-            Self::AgentNotFunded { .. } => McpToolError::unavailable(self.to_string()),
-            Self::UpstreamModelError { .. } => McpToolError::unavailable(self.to_string()),
-            Self::RateLimited(m) => McpToolError::rate_limited(m),
-            Self::CuratorUnavailable(m) => McpToolError::unavailable(m),
-            Self::ApiVersionMismatch(m) => McpToolError::internal(m),
-            Self::ConsentDenied(m) => McpToolError::permission_denied(m),
-            Self::Unavailable(m) => McpToolError::unavailable(m),
-            Self::DispatchNotSent(m) => McpToolError::unavailable(m),
-            Self::DispatchAmbiguous(m) => McpToolError::unavailable(m),
-        }
-    }
-}
-
-/// Errors from the local swarm runtime layer — the local-runtime counterpart
-/// of [`SwarmError`] (which maps ABW HTTP errors).
-///
-/// `SwarmError` is ABW-specific (auth, payment, upstream model errors); the
-/// local-runtime layer (local agent/swarm registries, local
-/// knowledge tools, consent store, A2A HTTP gateway) has a different failure
-/// surface — filesystem I/O, SQLite ops, input validation, path
-/// sanitization. Carrying these as `String` (the prior `Result<_, String>`
-/// signatures) erased the error kind, forcing the tool-method boundary to
-/// blanket-map everything to `McpToolError::internal` — the `.rules`
-/// "MCP tool error classification" trap. `LocalSwarmError` keeps the kind so
+/// Errors from the local swarm runtime layer — filesystem I/O, SQLite ops,
+/// input validation, path sanitization. Carrying these as `String` (the prior
+/// `Result<_, String>` signatures) erased the error kind, forcing the
+/// tool-method boundary to blanket-map everything to
+/// `McpToolError::internal` — the `.rules` "MCP tool error classification"
+/// trap. `LocalSwarmError` keeps the kind so
 /// [`map_local_swarm_error`] can project each variant onto the right MCP
 /// wire-level kind (`NotFound` → `NotFound`, invalid input → `InvalidArgument`,
 /// …) instead of collapsing the whole surface to `Internal`.
@@ -152,21 +45,6 @@ pub enum LocalSwarmError {
     /// Transient or capability-class → `Unavailable`.
     #[error("unavailable: {0}")]
     Unavailable(String),
-}
-
-/// Compose an ABW [`SwarmError`] into the local error type. ABW upstream/auth
-/// failures become [`LocalSwarmError::Unavailable`] (the operation cannot
-/// proceed); a consent denial is a caller-fixable input problem
-/// ([`LocalSwarmError::InvalidInput`]). Lets a call site that mixes local and
-/// ABW work propagate both through a single `Result<_, LocalSwarmError>` via
-/// `?`.
-impl From<SwarmError> for LocalSwarmError {
-    fn from(e: SwarmError) -> Self {
-        match e {
-            SwarmError::ConsentDenied(m) => LocalSwarmError::InvalidInput(m),
-            other => LocalSwarmError::Unavailable(other.to_string()),
-        }
-    }
 }
 
 /// Row-level storage errors (`hkask_types::DbError` from the SQL driver)

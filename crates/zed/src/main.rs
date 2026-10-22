@@ -2396,7 +2396,7 @@ fn main() {
                     swarm_panel::set_tool_invoker(Some(panel_tool_invoker));
                     log::info!(
                         "Swarm panel tool invoker wired \
-                         (swarm panel ABW calls route through the governed MCP runtime)"
+                         (swarm panel calls route through the governed MCP runtime)"
                     );
 
                     // D8: the condenser serves ingestion-time tool-result

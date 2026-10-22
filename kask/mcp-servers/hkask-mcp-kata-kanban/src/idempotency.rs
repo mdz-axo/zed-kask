@@ -45,8 +45,8 @@
 //! pending claims on uncertain spawn transport errors; known pre-effect
 //! validation/authorization failures may release them for a corrected retry.
 //!
-//! Mirrors `hkask_mcp_swarm::consent`'s store shape deliberately: that code
-//! already proved the cross-process single-use pattern against SQLite.
+//! The store shape deliberately mirrors the cross-process single-use
+//! claim pattern that proved itself against SQLite in prior kask servers.
 
 use std::sync::Arc;
 
