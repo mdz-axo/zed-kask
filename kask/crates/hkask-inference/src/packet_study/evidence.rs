@@ -1,8 +1,12 @@
-//! Offline smoke/instrument controls, not a pilot dataset or a model judge.
+//! Offline evidence policies and contract checks, never a model judge.
 //!
-//! Contract implementations and reference checks share serde_json's trusted parsing
-//! kernel. Their agreement catches implementation mistakes, not shared parser bugs
-//! or scientific validity. Weak checker policies never consult contract truth.
+//! `instrument_cases` remains nine engineering controls, not scientific episodes.
+//! Task-specific calibration contracts live in the wired sibling module. Their
+//! references disclose shared parsing/arithmetic kernels; agreement is not proof
+//! of scientific validity. Weak checker policies never consult contract truth.
+
+#[path = "calibration.rs"]
+mod calibration;
 
 use std::collections::HashSet;
 
@@ -36,6 +40,10 @@ pub(super) enum Contract {
     JsonPreserved,
     IntegerSum,
     SupportedStatus,
+    ExtractedJson,
+    RustErrorSlot,
+    SchemaCoverage,
+    DurationMicros,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
@@ -48,6 +56,18 @@ pub(super) enum Checker {
     StatusFieldPresent,
     StatusNotUnsupported,
     NoResult,
+    ExtractionBoundary,
+    ExtractionArity,
+    JsonObjectOnly,
+    RustErrorSlotTyped,
+    RustLineString,
+    RustTaskErrorToken,
+    SchemaCoverageReport,
+    SchemaKeywordInventory,
+    SchemaStatusValidOnly,
+    DurationUnits,
+    DurationRemainderScale,
+    DurationSuffixReference,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
@@ -123,6 +143,10 @@ deserialize_string_enum!(Contract {
     "json_preserved" => JsonPreserved,
     "integer_sum" => IntegerSum,
     "supported_status" => SupportedStatus,
+    "extracted_json" => ExtractedJson,
+    "rust_error_slot" => RustErrorSlot,
+    "schema_coverage" => SchemaCoverage,
+    "duration_micros" => DurationMicros,
 });
 deserialize_string_enum!(Checker {
     "json_parses" => JsonParses,
@@ -132,6 +156,18 @@ deserialize_string_enum!(Checker {
     "status_field_present" => StatusFieldPresent,
     "status_not_unsupported" => StatusNotUnsupported,
     "no_result" => NoResult,
+    "extraction_boundary" => ExtractionBoundary,
+    "extraction_arity" => ExtractionArity,
+    "json_object_only" => JsonObjectOnly,
+    "rust_error_slot_typed" => RustErrorSlotTyped,
+    "rust_line_string" => RustLineString,
+    "rust_task_error_token" => RustTaskErrorToken,
+    "schema_coverage_report" => SchemaCoverageReport,
+    "schema_keyword_inventory" => SchemaKeywordInventory,
+    "schema_status_valid_only" => SchemaStatusValidOnly,
+    "duration_units" => DurationUnits,
+    "duration_remainder_scale" => DurationRemainderScale,
+    "duration_suffix_reference" => DurationSuffixReference,
 });
 deserialize_string_enum!(CheckerState {
     "accurate" => Accurate,
@@ -258,6 +294,14 @@ impl Case {
     /// preservation accepts only object/array inputs, compares decoded values,
     /// ignores object key order, and retains serde_json's number semantics.
     pub(super) fn oracle(&self) -> Result<bool, String> {
+        self.validate_artifact_size()?;
+        if let Some(result) = calibration::oracle(self) {
+            let (actual, reference) = result?;
+            if actual != reference {
+                return Err("task contract and reference disagree".into());
+            }
+            return Ok(actual);
+        }
         let input = parse_json(&self.input)?;
         // An artifact need not be valid JSON to be a known contract violation.
         self.validate_artifact_size()?;
@@ -322,6 +366,10 @@ impl Case {
                 };
                 (actual, reference)
             }
+            Contract::ExtractedJson
+            | Contract::RustErrorSlot
+            | Contract::SchemaCoverage
+            | Contract::DurationMicros => return Err("task contract dispatch missing".into()),
         };
         if actual != reference {
             return Err("contract and reference disagree".into());
@@ -384,8 +432,33 @@ impl Case {
     /// Executes only the chosen partial predicate. Neither the oracle nor
     /// expected_checker_state may influence the resulting evidence.
     fn check(&self, checker: Checker, id: String) -> Receipt {
+        let (name, result, detail) = self.check_predicate(checker);
+        let outcome = match result {
+            Some(true) => CheckOutcome::Pass,
+            Some(false) => CheckOutcome::Fail,
+            None => CheckOutcome::Inconclusive,
+        };
+        Receipt {
+            id,
+            artifact_sha256: super::digest(self.artifact.as_bytes()),
+            checker: name.to_string(),
+            outcome,
+            detail: if result.is_none() && checker != Checker::NoResult {
+                format!(
+                    "Predicate unavailable: input does not satisfy checker prerequisites. {detail}"
+                )
+            } else {
+                detail.to_string()
+            },
+        }
+    }
+
+    fn check_predicate(&self, checker: Checker) -> (&'static str, Option<bool>, &'static str) {
+        if let Some(result) = calibration::check(self, checker) {
+            return result;
+        }
         let output = parse_json(&self.artifact);
-        let (name, result, detail) = match checker {
+        match checker {
             Checker::JsonParses => (
                 "json_parses",
                 Some(output.is_ok()),
@@ -462,24 +535,11 @@ impl Case {
                 "Artifact has a string status other than unsupported.",
             ),
             Checker::NoResult => ("no_result", None, "Checker policy supplies no result."),
-        };
-        let outcome = match result {
-            Some(true) => CheckOutcome::Pass,
-            Some(false) => CheckOutcome::Fail,
-            None => CheckOutcome::Inconclusive,
-        };
-        Receipt {
-            id,
-            artifact_sha256: super::digest(self.artifact.as_bytes()),
-            checker: name.to_string(),
-            outcome,
-            detail: if result.is_none() && checker != Checker::NoResult {
-                format!(
-                    "Predicate unavailable: input does not satisfy checker prerequisites. {detail}"
-                )
-            } else {
-                detail.to_string()
-            },
+            _ => (
+                "unsupported_task_policy",
+                None,
+                "Task policy dispatch missing.",
+            ),
         }
     }
 }

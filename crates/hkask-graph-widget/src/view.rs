@@ -610,12 +610,7 @@ impl Render for GraphWidget {
                         probability_label(node.marginal_probability)
                     )))
                     .when(is_evidence, |t| {
-                        t.child(
-                            div()
-                                .text_xs()
-                                .text_color(muted)
-                                .child("evidence (overridden)"),
-                        )
+                        t.child(div().text_xs().text_color(muted).child("evidence override"))
                     })
                     .child(
                         div()

@@ -11,6 +11,10 @@ contract:
     hypothesis_spec: object|null
     missing_fields: array
     owner_returns: array
+    framer_missing: array
+    falsifiability_missing: array
+    provenance_missing: array
+    constraints_missing: array
 ---
 
 Build one `hypothesis-spec-v1` from the upstream artifacts. This is normalization, not new hypothesis generation.
@@ -50,6 +54,45 @@ Missing ownership:
 - rivals, predictions, falsifiers, admission, counterfactuals or discrimination matrix → `falsifiability`;
 - missing provenance or constraints → `operator_or_source`.
 
-`missing_fields` contains each absent load-bearing field exactly once. `owner_returns` contains one object per missing field with `field`, `owner` and `reason`; preserve all owners even though ED-0 returns only the earliest pipeline status. The caller checks uniqueness, count reconciliation and nullability before routing.
+`missing_fields` contains each absent load-bearing field exactly once. `owner_returns` contains one object per missing field with `field`, `owner` and a source-bound `reason` identifying the absent evidence. Emit the four partitions in the same output, not a later caller reconstruction:
 
-Return JSON only with exactly `hypothesis_spec`, `missing_fields`, `owner_returns`. If any load-bearing field is missing, `hypothesis_spec` is null; with none missing it is non-null. Do not emit completeness booleans or an ED-0 verdict—the skill computes them deterministically from these arrays.
+- `framer_missing`: exactly the fields owned by `hypothesis-framer`;
+- `falsifiability_missing`: exactly the fields owned by `falsifiability`;
+- `provenance_missing`: provenance or unresolved-assumption disclosure gaps owned by `operator_or_source`;
+- `constraints_missing`: ethical, safety, resource or feasibility constraint gaps owned by `operator_or_source`.
+
+The partitions are disjoint and their union equals `missing_fields`; each owner row must agree with its partition. Preserve all owners even though ED-0 returns only the earliest pipeline status. Derive missingness from the retained source text and provenance, not from a previous missing-field list or a desired ready result. Cite the exact artifact/pointer in each reason; explicit unknowns remain unknown. A documented unresolved scientific assumption is not an absent disclosure; an inapplicable margin is not a missing required margin. Conversely, a claim that a source exists without retained evidence does not fill its field. Preserve scoped threats and prospective matrix semantics; never promote proposed implications into observed eliminations or corroborations.
+
+## Output schema
+
+Return JSON only conforming to this seven-key contract:
+
+```json
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["hypothesis_spec", "missing_fields", "owner_returns", "framer_missing", "falsifiability_missing", "provenance_missing", "constraints_missing"],
+  "properties": {
+    "hypothesis_spec": {"type": ["object", "null"], "properties": {}, "required": [], "additionalProperties": true},
+    "missing_fields": {"type": "array", "items": {"type": "string"}},
+    "owner_returns": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["field", "owner", "reason"],
+        "properties": {
+          "field": {"type": "string"},
+          "owner": {"type": "string", "enum": ["hypothesis-framer", "falsifiability", "operator_or_source"]},
+          "reason": {"type": "string"}
+        }
+      }
+    },
+    "framer_missing": {"type": "array", "items": {"type": "string"}},
+    "falsifiability_missing": {"type": "array", "items": {"type": "string"}},
+    "provenance_missing": {"type": "array", "items": {"type": "string"}},
+    "constraints_missing": {"type": "array", "items": {"type": "string"}}
+  }
+}
+```
+
+If any load-bearing field is missing, `hypothesis_spec` is null; with none missing it is a nonempty `hypothesis-spec-v1` object. Do not emit completeness booleans or an ED-0 verdict—the skill computes them deterministically from these arrays.
