@@ -158,10 +158,8 @@ per-delegation `task_success.pass = false` — the highest-fidelity signal;
 4: tie-break by `delegate_results` array order) with the MANDATORY
 agent-attributability exclusions — an entry is inadmissible for attribution
 when its `bind_matched` is `false`, its `input_contract_check` is `"invalid"`,
-its `dispatch.route_reason` is `"eval"` (rollout-harness measurements feed
-agent stats, never C6 blame), or its agent carries a `strips_everything`
-fault reading from `swarm_gate_readings` (the suspect is the card's grounding
-map or the composition, never a C6 reconfigure). An excluded failure is
+or its `dispatch.route_reason` is `"eval"` (rollout-harness measurements feed
+agent stats, never C6 blame). An excluded failure is
 routing-attributable: the fix is the composition (the plan entry, the roster,
 the router), not the agent's prompt.
 

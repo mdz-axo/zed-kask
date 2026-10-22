@@ -628,7 +628,7 @@ async fn invalid_inputs_are_rejected_with_named_errors() {
         .expect_err("empty genotype refs rejected");
     assert!(error.to_string().contains("genotype_refs"), "{error}");
 
-    // Fitness with no recorded runs is refused — never simulated (§P8.3).
+    // Fitness with no recorded runs is refused (§P8.3).
     let (experiment_id, variant_id) = propose_with_variant(&server, "skill", "v1").await;
     let error = server
         .fitness_record(Parameters(FitnessRecordRequest {
@@ -940,7 +940,7 @@ fn design_proposal(design_spec: serde_json::Value) -> ExperimentProposeRequest {
     ExperimentProposeRequest {
         hypothesis: "Carrier exposure versus targeting dominates ADC efficacy".to_string(),
         layer: "scientific_hypothesis".to_string(),
-        genotype_refs: vec!["experimental-design/ED-1 validity gate form".to_string()],
+        genotype_refs: vec!["experimental-design/design-spec-v1".to_string()],
         eval_set: AnyJsonValue(
             serde_json::json!({"schema": "experimental-design-registry-adapter-v1"}),
         ),

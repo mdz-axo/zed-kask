@@ -112,7 +112,6 @@ pub trait RolloutEventSource: Send + Sync {
 use crate::energy::{CallCapManager, CallMeterOutcome};
 use crate::sensor_provider::{SensorBus, VarietySensor};
 
-use crate::extrapolation::MovingAverageExtrapolator;
 use crate::runtime::RegulationLedger;
 use crate::set_points::SetPoints;
 
@@ -251,8 +250,6 @@ pub struct CyberneticsLoop {
     /// Pluggable metric sensors (Fermi Extractor pattern).
     sensor_registry: Arc<SensorBus>,
     observations: parking_lot::Mutex<HashMap<crate::loops::SignalMetric, crate::loops::Signal>>,
-    /// Trend extrapolator for anticipatory regulation (moving-average projection).
-    extrapolator: MovingAverageExtrapolator,
     /// Runtime-calibratable thresholds — updated by `SetPointCalibrator` background task.
     calibrated_thresholds: Arc<RwLock<CalibratedThresholds>>,
     /// Optional rollout event source (event-substrate phase 6). When wired,
@@ -346,8 +343,6 @@ impl CyberneticsLoop {
             stagnation_detector,
             sensor_registry,
             observations: parking_lot::Mutex::new(HashMap::new()),
-
-            extrapolator: MovingAverageExtrapolator::new(10),
             calibrated_thresholds,
             rollout_events: None,
             context_server_health_source: None,

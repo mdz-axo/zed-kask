@@ -1,7 +1,7 @@
 ---
 title: "hkask-regulation — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-28
+last_updated: 2026-10-22
 version: "2.4.0"
 status: "Active"
 domain: "Regulation"
@@ -18,12 +18,12 @@ Law of Requisite Variety.[^ashby]
 ## Module inventory
 
 The crate root declares the current inventory at
-`kask/crates/hkask-regulation/src/hkask_regulation.rs:9-24`.
+`kask/crates/hkask-regulation/src/hkask_regulation.rs:9-22`.
 
 | Module | Responsibility | Evidence |
 |---|---|---|
 | `algedonic` | runtime alerts and escalation/email sink traits | `kask/crates/hkask-regulation/src/algedonic.rs:22-119` |
-| `cybernetics_loop` | sense→compare→compute→act→verify orchestration | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:197-202,653-664,780-850` |
+| `cybernetics_loop` | sense→compare→compute→act→verify orchestration | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:195-202,588-685,802-941` |
 | `dampener` | directive deduplication and stagnation detection | `kask/crates/hkask-regulation/src/dampener.rs:100-110,231-263` |
 | `energy` | per-agent governed-call caps | `kask/crates/hkask-regulation/src/energy.rs:26-134` |
 | `inference_resilience` | typed snapshots, receipts, and observation source | `kask/crates/hkask-regulation/src/inference_resilience.rs:8-80` |
@@ -32,13 +32,12 @@ The crate root declares the current inventory at
 | `set_points` | defaults, configuration, loading, and validation | `kask/crates/hkask-regulation/src/set_points.rs:10-114,182-253,315-459` |
 | `loops` | shared loop, signal, deviation, and action types | `kask/crates/hkask-regulation/src/loops.rs:9-18` |
 | `sensor_provider` | sensor trait, registry, and built-in sensors | `kask/crates/hkask-regulation/src/sensor_provider.rs:27-71` |
-| `extrapolation` | moving-average metric prediction | `kask/crates/hkask-regulation/src/extrapolation.rs:12-117` |
 | `runtime` | ledger, variety/outcome trackers, and event sink | `kask/crates/hkask-regulation/src/runtime.rs:51-153,509-617` |
 
 ## Public surface
 
 The crate root re-exports its supported cross-crate surface at
-`kask/crates/hkask-regulation/src/hkask_regulation.rs:25-53`.
+`kask/crates/hkask-regulation/src/hkask_regulation.rs:23-52`.
 
 | Cluster | Public items |
 |---|---|
@@ -100,8 +99,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-REG-003
-verified_date: 2026-09-28
-verified_against: kask/crates/hkask-regulation/src/cybernetics_loop.rs:197-202,566-664,780-850; kask/crates/hkask-regulation/src/runtime.rs:509-617; kask/crates/hkask-regulation/src/sensor_provider.rs:45-80; kask/crates/hkask-regulation/src/energy.rs:131-230; kask/crates/hkask-regulation/src/inference_resilience.rs:68-80; kask/crates/hkask-regulation/src/metacognition.rs:171-358; kask/crates/hkask-regulation/src/algedonic.rs:97-119
+verified_date: 2026-10-22
+verified_against: kask/crates/hkask-regulation/src/cybernetics_loop.rs:195-202,588-685,802-941; kask/crates/hkask-regulation/src/runtime.rs:509-617; kask/crates/hkask-regulation/src/sensor_provider.rs:45-80; kask/crates/hkask-regulation/src/energy.rs:131-230; kask/crates/hkask-regulation/src/inference_resilience.rs:68-80; kask/crates/hkask-regulation/src/metacognition.rs:171-358; kask/crates/hkask-regulation/src/algedonic.rs:97-119
 status: VERIFIED
 -->
 
@@ -143,9 +142,9 @@ status: VERIFIED
 
 | Disposition | Implemented behavior | Evidence |
 |---|---|---|
-| `Notify` | Logs an informational observation and returns without incident routing | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:570-577` |
-| `Escalate` | Requires target `LoopId::Curation`; otherwise rejects the disposition | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:578-585` |
-| `Escalate` to Curation | Delivers to the review board first (repeat observations on an open card are suppressed), attempts live Curation delivery, then uses archive/email fallbacks | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:587-720` |
+| `Notify` | Logs an informational observation and returns without incident routing | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:576-583` |
+| `Escalate` | Requires target `LoopId::Curation`; otherwise rejects the disposition | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:584-591` |
+| `Escalate` to Curation | Delivers to the review board first (repeat observations on an open card are suppressed), attempts live Curation delivery, then uses archive/email fallbacks | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:593-723` |
 
 No other central disposition or generic automatic-control extension point is
 implemented.
@@ -177,7 +176,7 @@ unknown agent at `DEFAULT_RUNAWAY_CALL_CEILING`, charges one unit, and returns a
 Curation overrides survive `reset_all` until cleared
 (`kask/crates/hkask-regulation/src/energy.rs:124-133,216-230`). The central loop observes
 exhaustion before resetting caps each tick
-(`kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:480-509`).
+(`kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:485-561`).
 
 ## Procedures
 
@@ -199,7 +198,7 @@ extractor separation associated here with Fermi's measurement practice.[^fermi]
 | `Signal` and `Deviation` | `kask/crates/hkask-regulation/src/loops/signals.rs:189-288` |
 | `RegulationPolicy` | `kask/crates/hkask-regulation/src/regulation_policy.rs:90-102` |
 | `SetPoints` | `kask/crates/hkask-regulation/src/set_points.rs:110-398` |
-| Sensor wiring | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:290-337` |
+| Sensor wiring | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:290-350` |
 | Central dispositions | `kask/crates/hkask-regulation/src/loops/actions.rs:143-160` |
 
 The procedure:
@@ -217,8 +216,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-REG-002
-verified_date: 2026-09-28
-verified_against: kask/crates/hkask-regulation/src/sensor_provider.rs:27-80; kask/crates/hkask-regulation/src/cybernetics_loop.rs:290-337; kask/crates/hkask-regulation/src/loops/signals.rs:14-112,189-288; kask/crates/hkask-regulation/src/regulation_policy.rs:90-102; kask/crates/hkask-regulation/src/loops/actions.rs:143-160; kask/crates/hkask-regulation/src/set_points.rs:110-398
+verified_date: 2026-10-22
+verified_against: kask/crates/hkask-regulation/src/sensor_provider.rs:27-80; kask/crates/hkask-regulation/src/cybernetics_loop.rs:290-350; kask/crates/hkask-regulation/src/loops/signals.rs:14-112,189-288; kask/crates/hkask-regulation/src/regulation_policy.rs:90-102; kask/crates/hkask-regulation/src/loops/actions.rs:143-160; kask/crates/hkask-regulation/src/set_points.rs:110-398
 status: VERIFIED
 -->
 
@@ -268,7 +267,7 @@ metric so one deficit cannot hide another metric's recovery.
 #### 5. Wire the sensor
 
 For a startup-stable source, register the sensor in `CyberneticsLoop::build`
-(`kask/crates/hkask-regulation/src/cybernetics_loop.rs:290-337`). For a source
+(`kask/crates/hkask-regulation/src/cybernetics_loop.rs:290-350`). For a source
 that can be rewired after startup, replace the provider by metric identity through
 `SensorBus::replace` rather than registering a duplicate
 (`kask/crates/hkask-regulation/src/sensor_provider.rs:64-71`).

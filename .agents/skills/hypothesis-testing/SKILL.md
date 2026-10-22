@@ -18,7 +18,7 @@ Keep scientific findings and the human judgment of the research goal separate. N
 
 - `hypothesis-framer`: question, H1/H0 and framing.
 - `falsifiability`: admissibility, rivals, counterfactuals, falsifiers and discrimination matrix.
-- `experimental-design`: `HypothesisSpec`, candidate designs, validity/identification/information gates, selected `DesignSpec`, executor binding and `FindingsSpec` interpretation.
+- `experimental-design`: `HypothesisSpec`, materially different candidate designs, assessment against design constraints, the selected versioned `DesignSpec` with precision, analysis and stopping, executor binding and `FindingsSpec` interpretation.
 - Domain executor: measurements and report references. Physical, biological and human-subject work remains human-operated.
 - Experimentation server: eight-tool registry (`experiment_propose`, `variant_register`, `experiment_seal`, `fitness_record`, `final_evaluation_record`, `selection_record`, `lineage_read`, `population_query`).
 - `grounding-verify`: claims/source audit and material omissions.
@@ -66,7 +66,7 @@ Open a research run before literature-dependent framing or design. Retrieve conc
 
 ### 2. Design before declaration
 
-Call `skill(name="experimental-design")` and follow it through a complete `DesignSpec` or typed stop. The design is complete **before** `experiment_propose`; proposal is the preregistration point. A failed design gate stops before registry declaration or execution.
+Call `skill(name="experimental-design")` and follow it through a complete `DesignSpec` or typed stop. The design is complete **before** `experiment_propose`; proposal is the preregistration point. A typed design stop halts before registry declaration or execution.
 
 Do not author an eval set or choose a harness directly from framing. The retired direct framing-to-harness path did this and is deleted.
 

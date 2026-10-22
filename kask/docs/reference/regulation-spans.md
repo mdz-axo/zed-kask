@@ -106,7 +106,7 @@ The canonical registry currently includes these live roots and selected descenda
 | MCP | `reg.mcp`, `reg.mcp.cap`, `reg.mcp.media.face` |
 | Tool tracing | `reg.tool`; hierarchical descendants such as `reg.tool.agent` are valid |
 | Inference | `reg.inference` and the typed circuit-transition/recovery paths |
-| Outcome | `reg.outcome`, `reg.outcome.predictive` |
+| Outcome | `reg.outcome` |
 | Memory | `reg.memory`, `reg.memory.decay`, `reg.memory.encode` |
 | Skills | `reg.skill` plus hierarchical per-skill outcome and operator-feedback descendants |
 | Pipelines | `reg.pipeline` and registered triage, PDF, chunk, and OCR descendants |

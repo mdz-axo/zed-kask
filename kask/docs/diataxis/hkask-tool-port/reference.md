@@ -45,7 +45,7 @@ comparison was a value against itself
 | `CallMeterOutcome` enum      | `kask/crates/hkask-regulation/src/energy.rs:30-40`                                             |
 | `CallCapManager::charge_metered` | `kask/crates/hkask-regulation/src/energy.rs:176`                                           |
 | `DEFAULT_RUNAWAY_CALL_CEILING` | `kask/crates/hkask-regulation/src/energy.rs:26`                                              |
-| `CyberneticsLoop::charge_call_metered` | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:653`                          |
+| `CyberneticsLoop::charge_call_metered` | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:675`                          |
 | Per-request `tool_allowlist` gate | `kask/crates/kask_bridge/src/inference_ipc_server.rs:895-948`                              |
 | Parent-held grant check     | `kask/crates/kask_bridge/src/delegation_grants.rs:66-77`; `kask/crates/kask_bridge/src/inference_ipc_server.rs:936-943` |
 | Per-agent `mcp_tools` allowlist | `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:262-274,537-548`                    |
@@ -158,7 +158,7 @@ pub struct ToolInfo {
 1. **Call metering** — when governance is wired (`with_governance`,
    `kask/crates/hkask-mcp/src/runtime.rs`), charge one call against the agent's per-tick ceiling
    via `CyberneticsLoop::charge_call_metered`
-   (`cybernetics_loop.rs:653`), which delegates to
+   (`cybernetics_loop.rs:675`), which delegates to
    `CallCapManager::charge_metered` (`energy.rs:176`). Without governance,
    dispatch unmetered (`kask/crates/hkask-mcp/src/runtime.rs`).
 2. **Dispatch** — `call_tool_inner` (`kask/crates/hkask-mcp/src/runtime.rs`) checks for a live

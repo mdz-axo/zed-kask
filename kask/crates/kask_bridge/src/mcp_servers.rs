@@ -391,7 +391,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
     BuiltinMcpServer {
         id: "experimentation",
         binary: "hkask-mcp-experimentation",
-        description: "Experimentation — experiment registry for the sharded experimentation program: registered experiments with pre-registered predictions, variant lineages, grounded fitness records, and selection fossils",
+        description: "Experimentation — experiment registry for the sharded experimentation program: registered experiments with pre-registered predictions, variant lineages, fitness records (caller-asserted report references), and selection fossils",
         // HKASK_DB_PASSPHRASE is the ONE SQLCipher passphrase — the experimentation
         // registry opens with it via the canonical resolve_db_passphrase
         // chain (same as curator/kata-kanban/research/swarm). A

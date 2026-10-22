@@ -304,7 +304,7 @@ II, "Merging Skill Outputs").
 - **Skill rubrics (2026-09-04):** a paragraph after the four moves names
   each side's operational rubric — the `program-manager` skill (the
   agent's side: spec recovery, design-before-coding, definition of done,
-  closure ledger) and the `product-manager` skill (the user's side: what
+  actual verification and honest reporting) and the `product-manager` skill (the user's side: what
   to deliver at intake, decision points, and confirmation) — and directs
   underspecified intake to the product-manager skill rather than
   improvisation.

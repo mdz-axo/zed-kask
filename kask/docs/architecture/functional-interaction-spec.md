@@ -59,7 +59,8 @@ The user keeps authorship; the agent demonstrates comprehension.
 *Operationalization (2026-09-04, operator-ratified):* each side of this
 division now has a skill as its working rubric — the `program-manager`
 skill for the agent's side (spec recovery, design-before-coding,
-definition of done, closure ledger) and the `product-manager` skill for
+definition of done,
+actual verification and honest reporting) and the `product-manager` skill for
 the user's side (the intake contract: requirement, spec provenance,
 acceptance criteria, constraints, decisions, confirmation). The system
 prompt's Division of Responsibilities section names both and routes

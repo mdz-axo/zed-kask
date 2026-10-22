@@ -1,7 +1,7 @@
 ---
 title: "Swarm Systems — Explanation: Why the Loops Are Shaped This Way"
 audience: [architects, developers]
-last_updated: 2026-10-19
+last_updated: 2026-10-22
 version: "2.2.1"
 status: "Active"
 domain: "Swarm"
@@ -12,10 +12,10 @@ mds_categories: [trust, curation]
 
 The swarm system separates cloud authority, local execution, type admission,
 and result evaluation so each decision has one enforcement point. Its live MCP
-surface is 91 tools: 48 cloud tools and 43 non-cloud tools (33 local,
+surface is 89 tools: 48 cloud tools and 41 non-cloud tools (31 local,
 3 swarm-scoped thread, 4
-knowledge, 3 A2A — count by pinning test for the total and per-file grep for
-the partition; `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:981-1011`).
+knowledge, 3 A2A — count by the pinning test for the total and per-file grep for
+the partition; `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:950-966`).
 The Zed-side Steer surface renders its ABW/local tool split from the same
 build-generated name consts, never a hand-maintained list
 (`crates/swarm_panel/src/swarm_panel.rs:154-158`).
@@ -28,8 +28,8 @@ roster membership, reads the encrypted ordered member conversation, runs the
 member with its previous turns, then commits the successful turn. Without a
 swarm id, the local agent call is standalone. The task board and event store
 track progress and observed handoffs; neither is the member conversation
-(`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:278-352` (roster check,
-ordered turn read, commit), `:354-566` (the dispatch tools);
+(`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:426-508` (roster check,
+ordered turn read, commit), `:509-725` (the dispatch tools);
 `kask/mcp-servers/hkask-mcp-swarm/src/thread_store.rs:100,148`).
 
 ```mermaid
@@ -61,11 +61,11 @@ Cloud operations that spend ABW credits use the consent/session gate. Local
 operations use the operator's configured inference substrate and therefore do
 not require cloud-spend consent. They still remain bounded by delegation and
 evaluation caps in the local tools (`MAX_FANOUT` at
-`kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:654`;
+`kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:655`;
 `MAX_EVAL_TASKS`, `MAX_EVAL_REPEATS`, `MAX_EVAL_ROLLOUTS` at
-`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:29-40`), and the eval
+`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:30-41`), and the eval
 harness rolls out and scores through the same local dispatch path
-(`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:2844-3365`).
+(`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:3321`).
 
 ## Why tool counts are split by router
 
@@ -73,14 +73,14 @@ The build script discovers every `pub(crate) async fn swarm_*` function and
 separately derives the cloud subset from `cloud_swarm_router`
 (`kask/mcp-servers/hkask-mcp-swarm/build.rs:36-74`). The live-router tests then
 compare both the total name set and cloud partition against the registered
-routers (`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:981-1011`).
+routers (`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:950-966`).
 
-The 43-tool non-cloud complement is 33 local tools, three swarm-scoped thread
+The 41-tool non-cloud complement is 31 local tools, three swarm-scoped thread
 tools, four knowledge tools, and three A2A tools (per-file grep over the same
 signature pattern). `swarm_get_local_agent`
 supplies one-card detail and execution statistics; `swarm_workflow_check_local`
 validates a card's declared workflow before execution
-(`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:963,1009-1057`).
+(`kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:1186,1222`).
 
 ## Why port labels are registered types
 
@@ -97,16 +97,16 @@ check (`check_bind`) recognizes only universal `text`; all other requests
 remain unclassified rather than being guessed
 (`kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:551-556`).
 
-## Why result trust is produced once
+## Why the result verdict is produced once
 
 The local runtime is the point where the card, response, tool evidence, schema
-verdict, and deterministic evaluator coexist. It stamps the reliance and task
-success data there — one producer, `LocalSwarmRuntime::delegate` — so fanout,
+verdict, and deterministic evaluator coexist. It stamps the task-success and
+contract-check data there — one producer, `LocalSwarmRuntime::delegate` — so fanout,
 pipelines, plans, and workflows read the same `LocalDelegateResult` rather
 than recomputing it downstream
-(`kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:318-423,658-730`;
+(`kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:324-418,583-653`;
 batch parity in `delegate_batch`,
-`kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:425-543`).
+`kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:420-550`).
 
 Cloud single-shot execution preserves ABW's trust envelope rather than reducing
 it to narrative text

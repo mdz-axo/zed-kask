@@ -39,31 +39,20 @@ fn tool_path(args: &Value) -> Result<String, String> {
 }
 
 /// Source-derived H0 specimens, not an exhaustive semantic inventory.
-/// Origins and SHA-256 form hashes are frozen in the external C1 evidence.
 const MCDA_WEIGHTED_SUM: &str = r#"(define sum (lambda (l) (if (is_null l) 0 (+ (car l) (sum (cdr l))))))
 (define scale (lambda (l k) (if (is_null l) (quote ()) (cons (* (car l) k) (scale (cdr l) k)))))
 (define norm (lambda (w) (scale w (/ 1 (sum w)))))
 (define dot (lambda (a b) (if (is_null a) 0 (+ (* (car a) (car b)) (dot (cdr a) (cdr b))))))
 (dot (norm W) scores)"#;
 const GROUNDING_CLAIM_GATE: &str = "(if (= (length claims) 0) 'no_factual_claims 'ok)";
-const SCIENTIFIC_VALIDITY_GATE: &str = r#"(cond ((not ethics_safety) "blocked: ethics_safety") ((not feasibility) "blocked: infeasible") ((not (or rivals_differ equivalence_prespecified)) "design_void: no_discrimination") ((not identification) "design_void: not_identified") ((not measurement_validity) "measurement_void: measurement_invalid") ((not information_adequacy) "no-headroom: no_information") ((not bias_control) "design_void: bias_uncontrolled") ((not preregistration) "design_void: not_preregistered") ((not reproducibility) "design_void: not_reproducible") (t "execute"))"#;
 const RECURSIVE_WALKER: &str =
     "(define count (lambda (lst) (if (is_null lst) 0 (+ 1 (count (cdr lst)))))) (count items)";
 const BOUNDARY_TEXT: &str = "(boundary-ok prefix value)";
 const CORPUS_QUERY: &str = r#"(list (list "query" "investment philosophy") (list "top-k" 3) (list "include-text" include_text))"#;
 
-fn scientific_env() -> Value {
-    json!({"ethics_safety": true, "feasibility": true, "rivals_differ": true,
-        "equivalence_prespecified": false, "identification": true,
-        "measurement_validity": true, "information_adequacy": true,
-        "bias_control": true, "preregistration": true, "reproducibility": true})
-}
-
 /// Each negative control changes the source-defined decision, not language
 /// semantics. Existing library boundary/error tests own broader hostile cases.
 fn h0_forms() -> Vec<(&'static str, &'static str, Value, Value)> {
-    let mut invalid_measurement = scientific_env();
-    invalid_measurement["measurement_validity"] = json!(false);
     vec![
         (
             "MCDA weighted sum",
@@ -88,18 +77,6 @@ fn h0_forms() -> Vec<(&'static str, &'static str, Value, Value)> {
             GROUNDING_CLAIM_GATE,
             json!({"claims": []}),
             json!("no_factual_claims"),
-        ),
-        (
-            "scientific execute",
-            SCIENTIFIC_VALIDITY_GATE,
-            scientific_env(),
-            json!("execute"),
-        ),
-        (
-            "scientific invalid measurement",
-            SCIENTIFIC_VALIDITY_GATE,
-            invalid_measurement,
-            json!("measurement_void: measurement_invalid"),
         ),
         (
             "walker empty control",

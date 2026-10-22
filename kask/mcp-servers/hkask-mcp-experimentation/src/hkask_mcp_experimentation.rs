@@ -6,8 +6,8 @@
 //! One server owns the durable record of experiments across the
 //! six artifact layers (§P8.3 + D2): registered experiments with
 //! pre-registered Brier-scored predictions, typed rubric bundles, variant
-//! lineages with roles, sealed eval contracts (P2), grounded fitness
-//! records (recorded report refs only — never simulated), and selection
+//! lineages with roles, sealed eval contracts (P2), fitness records
+//! (caller-asserted report references — stored, never authenticated), and selection
 //! fossils (selected and rejected both retained, §P8.7-Q4). The registry is
 //! the only record path from day one (§P8.7-Q5 — no backward compatibility,
 //! no legacy-import surface).

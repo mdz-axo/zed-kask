@@ -1,7 +1,7 @@
 ---
 title: "hkask-regulation — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-09-28
+last_updated: 2026-10-22
 version: "2.3.0"
 status: "Active"
 domain: "Regulation"
@@ -25,7 +25,7 @@ response vocabulary. `ActionType` contains only `Escalate` and `Notify` at
 `kask/crates/hkask-regulation/src/loops/actions.rs:143-148`. `Notify` records an
 informational observation; `Escalate` is accepted only when its target is Curation
 and then follows the evidence-bearing review path
-(`kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:570-585`).
+(`kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:576-591`).
 
 Automatic control belongs beside the resource it can actually govern. The central
 loop therefore does not claim generic throttle, circuit-break, calibration,
@@ -47,14 +47,14 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-REG-005
-verified_date: 2026-09-28
-verified_against: kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:305-447 (sense),450-536 (act),569-720 (route_action_as_alert); kask/crates/hkask-regulation/src/loops/actions.rs:143-160
+verified_date: 2026-10-22
+verified_against: kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:336-438 (sense),456-569 (act),575-723 (route_action_as_alert); kask/crates/hkask-regulation/src/loops/actions.rs:143-160
 status: VERIFIED
 -->
 
 The separation also preserves the distinction between observation and causation.
 Inference recovery records explicitly carry `"causal_attribution": "unverified"`
-at `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:247`; seeing a
+at `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:278`; seeing a
 condition improve does not prove that advice caused the improvement.
 
 ## Why inference resilience is local
@@ -121,7 +121,7 @@ before the poll
 This acknowledgment is admission, not a verdict. The next Regulation tick drains
 accepted checks into `verify_impact`; metric assessment and event-store verdict
 write-back remain separate later phases
-(`kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:813`). The production 60-second
+(`kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:819`). The production 60-second
 scheduler invokes the same behavior-tested `poll_once` operation rather than
 assigning a scan cursor before submission (`crates/zed/src/main.rs`).
 
@@ -133,13 +133,13 @@ between operational control and policy oversight.[^beer] The review board is the
 primary durable review path: `route_action_as_alert` delivers the alert to the
 board first, and a repeat observation on an open card suppresses duplicate live
 and archive events so the card's review record stays canonical
-(`kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:569-648`). The live
+(`kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:575-654`). The live
 Curation channel is next; the Regulation archive and email sink are fallbacks
 when that channel is unavailable
-(`kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:650-720`). When the
+(`kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:656-722`). When the
 board is unavailable, a successful archive fallback latches the condition locally
 so an unchanged escalation disposition does not flood history
-(`kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:450-467`).
+(`kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:457-483`).
 
 ```mermaid
 sequenceDiagram
@@ -163,8 +163,8 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-REG-006
-verified_date: 2026-09-28
-verified_against: kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:569-720 (route_action_as_alert: board delivery L629-648, live channel L650-660, archive fallback L664-685, email L700-706); kask/crates/hkask-regulation/src/algedonic.rs:97-119 (AlertDeliveryOutcome, AlertEscalationSink)
+verified_date: 2026-10-22
+verified_against: kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:575-723 (route_action_as_alert: board delivery L619-654, live channel L656-668, archive fallback L670-700, email L702-714); kask/crates/hkask-regulation/src/algedonic.rs:97-119 (AlertDeliveryOutcome, AlertEscalationSink)
 status: VERIFIED
 -->
 
@@ -173,7 +173,7 @@ status: VERIFIED
 `CallCapManager` bounds governed tool invocations per agent, while inference
 resilience bounds inference admission. Exhausted call caps are observed before the
 per-tick reset and produce a targeted warning for that agent
-(`kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:480-509`). They never
+(`kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:485-561`). They never
 become a global inference throttle. This separation keeps a local agent's depleted
 budget from reducing capacity for unrelated agents.
 

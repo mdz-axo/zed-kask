@@ -434,41 +434,11 @@ impl super::CyberneticsLoop {
             ));
         }
 
-        // Feed observed values into the trend extrapolator.
-        for signal in &signals {
-            self.extrapolator.observe(signal.metric, signal.value);
-        }
-
         signals
     }
 
     pub(super) async fn compute(&self, deviations: &[Deviation]) -> Vec<RegulatoryAction> {
         let mut actions = Vec::new();
-
-        // Predictive regulation: check if any metric is approaching its set-point.
-        for dev in deviations {
-            let pred = self.extrapolator.predict(
-                dev.signal.metric,
-                dev.signal.value,
-                dev.signal.set_point,
-            );
-            if let Some(ticks) = pred.ticks_to_threshold
-                && ticks <= 3
-                && pred.reliable
-            {
-                tracing::info!(
-                    target: "reg.outcome.predictive",
-                    metric = dev.signal.metric.as_str(),
-                    current = dev.signal.value,
-                    set_point = dev.signal.set_point,
-                    ticks_to_threshold = ticks,
-                    trend = pred.trend,
-                    "Predictive: metric approaching set-point"
-                );
-                // Predictive threshold proximity is telemetry, not a policy
-                // disposition; record it without synthesizing a deviation.
-            }
-        }
 
         let policy = RegulationPolicy::default();
 

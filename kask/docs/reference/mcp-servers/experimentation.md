@@ -17,10 +17,11 @@ mds_categories: [domain, composition, lifecycle, trust]
 The experimentation server is the **experiment registry** for the sharded
 experimentation program (the repair plan §P8, extended by the
 agentic-scientist-v3 integration, 2026-10-15): the durable record of declared
-experiments, their variant lineages with roles, sealed eval contracts, grounded
-fitness, final evaluations, and selection verdicts. It is a registry, not an
-executor — fitness entries are recorded report references to real harness
-runs, never simulated.
+experiments, their variant lineages with roles, sealed eval contracts, fitness
+records, final evaluations, and selection verdicts. It is a registry, not an
+executor — fitness entries are recorded report references; the caller asserts
+they name real harness runs (the registry stores the declaration, it does not
+authenticate the reports).
 
 ## The protocol
 
@@ -60,7 +61,7 @@ runs, never simulated.
    refusal. Pre-seal, only the baseline records fitness; post-seal, every
    fitness record cites the seal. An identical retried seal converges; a
    different attempt is a typed refusal.
-4. **Test** — `fitness_record`: grounded fitness — report references plus
+4. **Test** — `fitness_record`: fitness — caller-asserted report references plus
    run_count (summed against `budget.max_runs`, typed `budget_exhausted`
    refusal past the ceiling) and per-objective scores. Immutable once
    written.

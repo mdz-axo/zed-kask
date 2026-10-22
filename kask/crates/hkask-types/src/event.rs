@@ -110,7 +110,6 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.sensor.memory",
     // ── Outcome ──
     "reg.outcome",
-    "reg.outcome.predictive",
     // ── Storage ──
     "reg.storage",
     "reg.storage.corruption",

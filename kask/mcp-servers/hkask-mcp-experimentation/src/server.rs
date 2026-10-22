@@ -2,8 +2,8 @@
 //!
 //! One server owns the durable record of experiments: declaration
 //! with a pre-registered prediction, variant registration with lineage,
-//! grounded fitness (recorded report refs only), selection fossils, lineage
-//! reads, and population queries. The registry is the single record path —
+//! fitness records (caller-asserted report refs, stored not verified),
+//! selection fossils, lineage reads, and population queries. The registry is the single record path —
 //! superseded retention mechanisms are deleted in the same change that
 //! lands this server, never run alongside it (§P8.7-Q5).
 
@@ -193,9 +193,9 @@ pub struct ExperimentSealRequest {
 pub struct FitnessRecordRequest {
     pub experiment_id: String,
     pub variant_id: String,
-    /// Recorded report references only — never simulated (§P8.3). Each
-    /// entry names a real harness/evaluator report (e.g. a
-    /// swarm_eval_agent_local run).
+    /// Recorded report references (§P8.3). Each entry is expected to name a
+    /// real harness/evaluator report (e.g. a swarm_eval_agent_local run) —
+    /// the caller's assertion; this server stores refs, it does not verify them.
     pub runs: Vec<String>,
     /// The number of rollouts the referenced reports cover (§P8.9 step 2).
     /// The server sums recorded run counts against the experiment's declared
@@ -424,7 +424,7 @@ impl ExperimentationServer {
     }
 
     #[tool(
-        description = "Record grounded fitness for a variant (protocol step 3, Test): runs are recorded report references ONLY — never simulated; each entry names a real harness or evaluator report (e.g. a swarm_eval_agent_local run) — plus run_count (the number of rollouts those reports cover; the server sums run counts against the experiment's declared budget.max_runs ceiling and refuses the record with a typed budget_exhausted error when it would exceed it, §P8.9 step 2) and per-objective scores computed from those runs. P2: pre-seal, only the baseline variant records fitness; post-seal, every record cites the active seal via seal_id. Immutable once written. A resolved experiment no longer accepts fitness."
+        description = "Record fitness for a variant (protocol step 3, Test): runs are caller-asserted report references — each entry is expected to name a real harness or evaluator report (e.g. a swarm_eval_agent_local run); this server stores the declaration and enforces bookkeeping (ids, seal relations, budget sums), it does not authenticate the referenced reports — plus run_count (the number of rollouts those reports cover; the server sums run counts against the experiment's declared budget.max_runs ceiling and refuses the record with a typed budget_exhausted error when it would exceed it, §P8.9 step 2) and per-objective scores computed from those runs. P2: pre-seal, only the baseline variant records fitness; post-seal, every record cites the active seal via seal_id. Immutable once written. A resolved experiment no longer accepts fitness."
     )]
     pub async fn fitness_record(
         &self,

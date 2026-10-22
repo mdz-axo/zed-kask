@@ -603,9 +603,10 @@ impl ExperimentationStore {
 
     // ── Fitness ────────────────────────────────────────────────────────
 
-    /// Append an immutable, grounded fitness record. Recorded report refs
-    /// only — the caller asserts these name real harness/evaluator reports
-    /// (§P8.3: never simulated). A resolved experiment refuses new fitness.
+    /// Append an immutable fitness record. Recorded report refs only —
+    /// the caller asserts these name real harness/evaluator reports
+    /// (§P8.3); the store validates shape and bookkeeping, not report
+    /// authenticity. A resolved experiment refuses new fitness.
     ///
     /// §P8.9 step 2 (D-1: enforce): `run_count` is the number of rollouts the
     /// referenced reports cover; the store sums recorded run counts against
@@ -2512,7 +2513,7 @@ mod tests {
             .propose_experiment(
                 "Carrier exposure versus targeting dominates ADC efficacy",
                 "scientific_hypothesis",
-                &["experimental-design/ED-1 validity gate form".to_string()],
+                &["experimental-design/design-spec-v1".to_string()],
                 &serde_json::json!({"schema": "experimental-design-registry-adapter-v1"}),
                 "primary interaction confidence width relative to the ratified margin",
                 &serde_json::json!({"tie_rule": "within the practical margin"}),

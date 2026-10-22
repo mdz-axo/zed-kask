@@ -110,7 +110,8 @@ pub enum RubricVerification {
     NotContains { spec: String },
     /// The evidence must match the regex pattern (== swarm "regex").
     Regex { pattern: String },
-    /// A recorded harness report names the evidence (grounded fitness).
+    /// A recorded harness report names the evidence — a declaration this
+    /// server validates and stores, never one it executes.
     ReportRef { harness: String },
 }
 
@@ -274,8 +275,9 @@ pub struct VariantRecord {
     pub created_at: String,
 }
 
-/// A grounded fitness record — recorded report refs only, never simulated
-/// (§P8.3).
+/// A fitness record — recorded report refs the caller asserts name real
+/// reports (§P8.3); the server stores the declaration, it does not
+/// authenticate the reports.
 #[derive(Debug, Clone, Serialize)]
 pub struct FitnessRecord {
     pub id: String,

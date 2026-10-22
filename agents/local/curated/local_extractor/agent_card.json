@@ -21,19 +21,7 @@
     "output_contract": {
       "domain": "extractor",
       "title": "local_extractor output",
-      "description": "The contracted output shape. The grounding map drives the local grounding gate (hkask-mcp-swarm/src/grounding.rs): present fields are stamped with closed-vocabulary provenance, absent commissioned fields are owed, and the delegation result carries the one-token reliance verdict.",
-      "grounding": {
-        "extractions": {
-          "status": "inferred",
-          "from": "the input text",
-          "why": "Each value is the model's reading of the caller's text. The extraction ceiling applies: values are kept and stamped model_inference, never tool_verified \u2014 only a mechanical substring check against the input could elevate them, and none runs here."
-        },
-        "not_found": {
-          "status": "narrative",
-          "from": "the input text",
-          "why": "The list of asked-for fields the text did not contain. Absent from this block means the agent skipped the accounting, not that the fields were found."
-        }
-      }
+      "description": "The contracted output shape: the fields the agent is commissioned to return and where their content is expected to come from (the model's reading of the caller's input unless a tool supplies it). Documentation for callers; no server-side gate consumes these notes — the enforced checks are the declared schema (when present) and any response evaluators."
     }
   },
   "cloud_id": null

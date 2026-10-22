@@ -5,8 +5,8 @@
 //! server's mapping onto those two axes:
 //!
 //! - **Process axis (PKO)** — the experiment registry IS a procedure: a
-//!   declaration, variant registrations, a sealed contract, grounded fitness
-//!   measurements, a final evaluation, and a selection verdict. Those are
+//!   declaration, variant registrations, a sealed contract, fitness records,
+//!   a final evaluation, and a selection verdict. Those are
 //!   `pko:Procedure`, `pplan:Step`, `pko:StepExecution` and
 //!   `pko:StepVerification` occurrences, not metaphors.
 //! - **State axis (DC+BIBO)** — the records the tools return are datasets
@@ -41,8 +41,8 @@ pub(crate) fn tool_to_pko(tool_name: &str) -> Option<PkoConcept> {
         // Sealing freezes the eval contract — a verification of the
         // baseline's headroom before any challenger is measured (P2).
         "experiment_seal" => Some(STEP_VERIFICATION),
-        // Recording grounded fitness is the step actually occurring: real
-        // rollouts, recorded report references (§P8.3).
+        // Recording fitness is the step actually occurring: recorded report
+        // references the caller asserts cover real rollouts (§P8.3).
         "fitness_record" => Some(STEP_EXECUTION),
         // The sealed final evaluation re-scores the leading variant on the
         // disjoint selection set (P3) — a verification, not a measurement.
