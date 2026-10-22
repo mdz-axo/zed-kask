@@ -78,14 +78,16 @@ A normalized, provenance-carrying object with:
 
 - `spec_version`, `spec_id`, `predecessor_spec_id`, `revision_reason`;
 - `research_question`, `domain`;
-- `hypotheses`: H1, H0 and every relevant rival, each with `id`, `statement`, `prediction`, `falsifier`, `provenance`;
+- `hypotheses`: H1, H0 and relevant rivals with `id`, `statement`, `prediction`, `falsifier` and `provenance`; unresolved threats stay disclosed rather than being labeled tested;
 - `unit_population_or_system`, `intervention_or_exposure`, `comparator`;
 - `estimand`, `observable_outcomes`, `practical_effect_or_equivalence_margin` when applicable;
 - `constraints`: ethical, safety, resource and feasibility;
 - `falsifiability_inputs`: admitted target, counterfactuals and discrimination matrix by reference, never regenerated here;
 - `source_provenance`, `unresolved_assumptions`.
 
-Missing ownership is strict: question/H1/H0/unit/intervention/comparator/estimand/outcomes/margin → return to `hypothesis-framer`; rivals/predictions/falsifiers/admission/counterfactuals/discrimination matrix → return to `falsifiability`; provenance/constraints/assumptions → block for the operator or source retrieval. Never fabricate a load-bearing value.
+Missing ownership is strict: question/H1/H0/unit/intervention/comparator/estimand/outcomes/margin → return to `hypothesis-framer`; rivals/predictions/operational falsifiers/admission/counterfactuals/discrimination matrix → return to `falsifiability`; provenance/constraints/assumptions → block for the operator or source retrieval. Never fabricate a load-bearing value.
+
+Preserve the owning `falsifiability` skill's unresolved threats and missing tests. A scoped control does not resolve its broader parent threat.
 
 ### `DesignSpec` — `design-spec-v1`
 
@@ -112,7 +114,7 @@ Contains `design_spec_id`, seal/fingerprint when registered, real executor repor
 
 ### 1. Normalize without stealing ownership
 
-Render `experimental-design/normalize-hypothesis` with the exact upstream artifacts and provenance. Execute the rendered prompt against those sources; rendering alone is not normalization. Retain the render context, rendered prompt and source-bound semantic output separately. The output has exactly seven keys: `hypothesis_spec`, `missing_fields`, `owner_returns`, `framer_missing`, `falsifiability_missing`, `provenance_missing`, `constraints_missing`; it does **not** type the gate result. Check its JSON shape against the rendered output schema and each owner against its partition before ED-0R. Missing or malformed arrays are a normalization failure, never implicitly empty.
+Normalize the actual upstream artifacts using `experimental-design/normalize-hypothesis`. Its seven output fields feed ED-0R and ED-0 directly; missing arrays are errors, not implicit empty lists. Rendering a prompt is not executing normalization.
 
 ```json
 {
@@ -138,7 +140,7 @@ A false ED-0R result returns to normalization; no owner or missing field may dis
 (cond ((> (length framer_missing) 0) "return_to_framer") ((> (length falsifiability_missing) 0) "return_to_falsifiability") ((> (length provenance_missing) 0) "blocked: provenance") ((> (length constraints_missing) 0) "blocked: constraints") ((is_null hypothesis_spec) "blocked: malformed_normalization") (t "ready"))
 ```
 
-Only `ready` proceeds. A return carries **all** missing field names to their owning skill or operator; the first status identifies the earliest pipeline owner, not permission to drop later owners.
+Only `ready` proceeds to design synthesis; it denotes normalization completeness, not scientific readiness. Keep bounded pilot/calibration objectives separate from powered confirmation of H1; pending design, measurement, precision and execution gates remain pending. A return carries **all** missing field names to their owning skill or operator; the first status identifies the earliest pipeline owner, not permission to drop later owners.
 
 ### 2. Synthesize materially different designs
 
@@ -257,7 +259,7 @@ Run `bash kask/scripts/check-skill-lisp-forms.sh`. After corpus parsing, the sam
 
 The suite pins ED-0R/ED-0 ownership reconciliation and routing, ED-C cardinality/unique ids, every ED-1 admission branch, ED-1S survivor/alternative reconciliation, ED-2I report-presence/consistency checks, and all six ED-2 outcomes. Its negative and boundary cases include measurement/transport failure, underpowered plans, confounding, optional stopping, imprecise contradiction/non-rejection, valid equivalence, unknown selection ids and contradictory findings. In-memory mutations must remain parseable but disagree with the same decision oracles.
 
-These tests check decision logic over classified inputs, not scientific validity, calibration execution or a complete study. JSON null and empty objects/arrays are null-like in Lisp; ED-0R tests use a nonempty versioned spec for the nonnull case. The isolated `hkask-lisp` integration test `normalization_seam` checks the authored output schema, positive missing-field fixture, owner agreement and rejected malformed handoffs. Its explicitly ignored live-receipt test must also be run with `NORMALIZATION_RUN_DIR` pointing to the retained `render-context.json`, `rendered-normalize-hypothesis.md`, `normalization-output.json`, `gate-inputs.json` and `gate-receipts.json` (gate keys `ED_0R` and `ED_0`): `bash kask/scripts/cargo-test-nonzero.sh -p hkask-lisp --test normalization_seam -- --include-ignored`. It checks the real rendered context/schema and feeds the actual output unchanged through the authored gates; it is not a scientific-validity oracle. Without those receipts, run only the default fixture test and report the live handoff untested.
+These tests check decision logic over classified inputs, not scientific validity or study execution. JSON null and empty objects/arrays are null-like in Lisp; ED-0R tests use a nonempty versioned spec for the nonnull case.
 
 If a candidate fails for a fixable design reason, re-enter candidate synthesis once with the named failure. Maximum two design passes. A second failure reports the typed stop and open assumption; it does not weaken the gate.
 

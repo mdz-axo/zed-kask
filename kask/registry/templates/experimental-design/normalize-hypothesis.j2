@@ -39,7 +39,7 @@ The normalized object carries:
 
 - `spec_version="hypothesis-spec-v1"`, stable `spec_id`, optional predecessor and revision reason;
 - research question and domain;
-- H1, H0 and every material rival, each with stable id, statement, prediction, falsifier and provenance;
+- H1, H0 and material rivals, with stable id, statement, prediction, falsifier and provenance; retain unresolved threats without claiming they were tested;
 - unit/population/system, intervention/exposure, comparator, estimand and observables;
 - practical effect or equivalence/non-inferiority margin when applicable;
 - ethics, safety, resource and feasibility constraints;
@@ -63,36 +63,8 @@ Missing ownership:
 
 The partitions are disjoint and their union equals `missing_fields`; each owner row must agree with its partition. Preserve all owners even though ED-0 returns only the earliest pipeline status. Derive missingness from the retained source text and provenance, not from a previous missing-field list or a desired ready result. Cite the exact artifact/pointer in each reason; explicit unknowns remain unknown. A documented unresolved scientific assumption is not an absent disclosure; an inapplicable margin is not a missing required margin. Conversely, a claim that a source exists without retained evidence does not fill its field. Preserve scoped threats and prospective matrix semantics; never promote proposed implications into observed eliminations or corroborations.
 
-## Output schema
+Preserve upstream unresolved threats and missing tests. Scoped controls do not resolve broader threats, and proposed tests are not observations.
 
-Return JSON only conforming to this seven-key contract:
-
-```json
-{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["hypothesis_spec", "missing_fields", "owner_returns", "framer_missing", "falsifiability_missing", "provenance_missing", "constraints_missing"],
-  "properties": {
-    "hypothesis_spec": {"type": ["object", "null"], "properties": {}, "required": [], "additionalProperties": true},
-    "missing_fields": {"type": "array", "items": {"type": "string"}},
-    "owner_returns": {
-      "type": "array",
-      "items": {
-        "type": "object", "additionalProperties": false,
-        "required": ["field", "owner", "reason"],
-        "properties": {
-          "field": {"type": "string"},
-          "owner": {"type": "string", "enum": ["hypothesis-framer", "falsifiability", "operator_or_source"]},
-          "reason": {"type": "string"}
-        }
-      }
-    },
-    "framer_missing": {"type": "array", "items": {"type": "string"}},
-    "falsifiability_missing": {"type": "array", "items": {"type": "string"}},
-    "provenance_missing": {"type": "array", "items": {"type": "string"}},
-    "constraints_missing": {"type": "array", "items": {"type": "string"}}
-  }
-}
-```
+Return JSON with exactly the seven fields declared above. `missing_fields` and the four owner partitions are arrays of field-name strings; `owner_returns` contains the field/owner/reason records described above.
 
 If any load-bearing field is missing, `hypothesis_spec` is null; with none missing it is a nonempty `hypothesis-spec-v1` object. Do not emit completeness booleans or an ED-0 verdict—the skill computes them deterministically from these arrays.
