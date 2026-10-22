@@ -679,7 +679,6 @@ mod tests {
             crate::video::YtDlpRunner::detect(),
             crate::jobs::new_job_store(),
             None,
-            None,
         );
         let ga = crate::GalleryAccess {
             gallery_id: gallery.id.clone(),
@@ -799,7 +798,6 @@ mod tests {
             crate::video::FfmpegRunner::detect(),
             crate::video::YtDlpRunner::detect(),
             crate::jobs::new_job_store(),
-            None,
             None,
         );
         let ga = crate::GalleryAccess {

@@ -5,5 +5,4 @@ pub mod gallery;
 pub mod jobs;
 pub mod models;
 pub mod processing;
-pub mod reduct;
 pub mod youtube;

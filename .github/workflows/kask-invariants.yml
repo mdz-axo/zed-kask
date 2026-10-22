@@ -292,8 +292,8 @@ jobs:
       - name: Install native build deps — mold linker (forced by
           .cargo/config.toml), ALSA headers (alsa-sys via cpal), nasm
           (vendored FFmpeg static build), ffmpeg (the runtime binaries
-          hkask-mcp-media shells out to — ffprobe gates Reduct local
-          uploads, ffmpeg renders video; the vendored ffmpeg-sys-next
+          hkask-mcp-media shells out to — ffprobe probes local
+          video metadata, ffmpeg renders video; the vendored ffmpeg-sys-next
           build provides link libraries, not the binaries on PATH),
           poppler-utils (the PDF pipeline binaries hkask-mcp-corpus
           shells out to — pdftotext extracts text, pdftoppm renders

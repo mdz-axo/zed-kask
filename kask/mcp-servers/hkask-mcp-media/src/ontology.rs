@@ -27,15 +27,6 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
         | "model_info"
         | "job_list"
         | "job_status"
-        | "reduct_connection_status"
-        | "reduct_connection_probe"
-        | "reduct_projects_snapshot"
-        | "reduct_recordings_snapshot"
-        | "reduct_recording_status"
-        | "reduct_recording_transcript"
-        | "reduct_recording_highlights"
-        | "reduct_reels_snapshot"
-        | "reduct_reel_detail"
         | "educt_list_transcripts"
         | "educt_get_transcript"
         | "educt_list_layers"
@@ -87,17 +78,6 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
         | "face_scan_folder"
         | "job_submit"
         | "job_cancel"
-        | "reduct_create_recording"
-        | "reduct_import_media"
-        | "reduct_upload_gallery_media"
-        | "reduct_upload_local_media"
-        | "reduct_create_reel"
-        | "reduct_add_reel_clip"
-        | "reduct_add_reel_title"
-        | "reduct_edit_reel_clip_range"
-        | "reduct_publish_reel"
-        | "reduct_add_recording_highlight"
-        | "reduct_edit_recording_highlight"
         | "youtube_search"
         | "video_fetch" => Some(DATASET),
         _ => None,
@@ -132,7 +112,6 @@ hkask_mcp_server::dual_axis_annotate!(
         "image_",
         "model_",
         "job_",
-        "reduct_",
         "youtube_",
         "describe_",
         "record_",
@@ -196,7 +175,6 @@ mod tests {
             crate::video::ffmpeg::FfmpegRunner::detect(),
             crate::video::ytdlp::YtDlpRunner::detect(),
             crate::jobs::new_job_store(),
-            None,
             None,
         );
         let response = server

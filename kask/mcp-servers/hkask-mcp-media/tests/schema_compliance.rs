@@ -38,15 +38,9 @@ use hkask_mcp_media::types::{
     GalleryNameFaceRequest, GalleryOrganizeRequest, GalleryRefreshRequest,
     GalleryRemoveFromAlbumRequest, GallerySearchRequest, GalleryTimelineRequest, JobCancelRequest,
     JobListRequest, JobStatusRequest, JobSubmitRequest, ModelInfoRequest, ModelListRequest,
-    RecordAndTranscribeRequest, ReductCreateRecordingHighlightRequest,
-    ReductCreateRecordingRequest, ReductCreateReelClipRequest, ReductCreateReelRequest,
-    ReductCreateReelTitleRequest, ReductEditRecordingHighlightRequest, ReductEditReelClipRequest,
-    ReductImportMediaRequest, ReductProjectItemsRequest, ReductProjectsRequest,
-    ReductPublishReelRequest, ReductRecordingRequest, ReductReelRequest, ReductTranscriptRequest,
-    ReductUploadLocalMediaRequest, ReductUploadMediaRequest, TranscribeAndStoreRequest,
-    TranscribeBundleRequest, VideoAddCaptionRequest, VideoClipRequest, VideoConcatRequest,
-    VideoExtractFramesRequest, VideoFetchRequest, VideoInfoRequest, VideoToGifRequest,
-    YoutubeSearchRequest,
+    RecordAndTranscribeRequest, TranscribeAndStoreRequest, TranscribeBundleRequest,
+    VideoAddCaptionRequest, VideoClipRequest, VideoConcatRequest, VideoExtractFramesRequest,
+    VideoFetchRequest, VideoInfoRequest, VideoToGifRequest, YoutubeSearchRequest,
 };
 use hkask_types::find_boolean_schema_positions;
 use schemars::schema_for;
@@ -58,8 +52,8 @@ fn live_router_schema_inventory_is_complete_and_clean() {
     let tools = hkask_mcp_media::MediaServer::combined_router().list_all();
     assert_eq!(
         tools.len(),
-        91,
-        "approved surface: 102 - 20 + 9 research tools"
+        71,
+        "approved surface: 91 - 20 Reduct cloud tools"
     );
     let actual = tools
         .iter()
@@ -94,6 +88,26 @@ fn live_router_schema_inventory_is_complete_and_clean() {
         "workflow_list",
         "workflow_load",
         "workflow_delete",
+        "reduct_connection_status",
+        "reduct_connection_probe",
+        "reduct_projects_snapshot",
+        "reduct_recordings_snapshot",
+        "reduct_reels_snapshot",
+        "reduct_reel_detail",
+        "reduct_create_reel",
+        "reduct_add_reel_clip",
+        "reduct_add_reel_title",
+        "reduct_edit_reel_clip_range",
+        "reduct_create_recording",
+        "reduct_import_media",
+        "reduct_upload_gallery_media",
+        "reduct_upload_local_media",
+        "reduct_recording_highlights",
+        "reduct_add_recording_highlight",
+        "reduct_edit_recording_highlight",
+        "reduct_publish_reel",
+        "reduct_recording_status",
+        "reduct_recording_transcript",
     ] {
         assert!(
             !actual.contains(retired),
@@ -245,7 +259,7 @@ schema_clean_test!(
     VideoExtractFramesRequest
 );
 
-// Retained transcript and Reduct request contracts. Tool-local gallery and
+// Retained transcript request contracts. Tool-local gallery and
 // sampled-caption requests are covered below and by the live-router scan.
 
 schema_clean_test!(
@@ -298,46 +312,6 @@ schema_clean_test!(
 schema_clean_test!(educt_render_edl_request_schema, EductRenderEdlRequest);
 schema_clean_test!(educt_export_request_schema, EductExportRequest);
 schema_clean_test!(educt_locate_request_schema, EductLocateRequest);
-schema_clean_test!(reduct_recording_request_schema, ReductRecordingRequest);
-schema_clean_test!(reduct_transcript_request_schema, ReductTranscriptRequest);
-schema_clean_test!(reduct_projects_request_schema, ReductProjectsRequest);
-schema_clean_test!(
-    reduct_project_items_request_schema,
-    ReductProjectItemsRequest
-);
-schema_clean_test!(reduct_reel_request_schema, ReductReelRequest);
-schema_clean_test!(
-    reduct_create_recording_request_schema,
-    ReductCreateRecordingRequest
-);
-schema_clean_test!(reduct_create_reel_request_schema, ReductCreateReelRequest);
-schema_clean_test!(
-    reduct_create_reel_clip_request_schema,
-    ReductCreateReelClipRequest
-);
-schema_clean_test!(
-    reduct_create_reel_title_request_schema,
-    ReductCreateReelTitleRequest
-);
-schema_clean_test!(
-    reduct_edit_reel_clip_request_schema,
-    ReductEditReelClipRequest
-);
-schema_clean_test!(
-    reduct_create_recording_highlight_request_schema,
-    ReductCreateRecordingHighlightRequest
-);
-schema_clean_test!(reduct_publish_reel_request_schema, ReductPublishReelRequest);
-schema_clean_test!(
-    reduct_edit_recording_highlight_request_schema,
-    ReductEditRecordingHighlightRequest
-);
-schema_clean_test!(reduct_import_media_request_schema, ReductImportMediaRequest);
-schema_clean_test!(reduct_upload_media_request_schema, ReductUploadMediaRequest);
-schema_clean_test!(
-    reduct_upload_local_media_request_schema,
-    ReductUploadLocalMediaRequest
-);
 
 // ── Layer 2: deserialization totality (proptest) ──────────────────────────
 // Closes the documented omission: arbitrary tool input must never panic a
@@ -518,9 +492,9 @@ deser_totality_test!(
     VideoExtractFramesRequest
 );
 
-// ── Coverage completion (2026-10-06): the educt + reduct request structs and
+// ── Coverage completion (2026-10-06): the educt request structs and
 // the two pre-existing gaps join the deser battery — arbitrary tool input
-// must never panic a request deserializer on any of the 102 tools' inputs.
+// must never panic a request deserializer on any of the tools' inputs.
 
 deser_totality_test!(
     transcribe_and_store_request_deser_totality,
@@ -584,64 +558,3 @@ deser_totality_test!(
 );
 deser_totality_test!(educt_export_request_deser_totality, EductExportRequest);
 deser_totality_test!(educt_locate_request_deser_totality, EductLocateRequest);
-deser_totality_test!(
-    reduct_recording_request_deser_totality,
-    ReductRecordingRequest
-);
-deser_totality_test!(
-    reduct_transcript_request_deser_totality,
-    ReductTranscriptRequest
-);
-deser_totality_test!(
-    reduct_projects_request_deser_totality,
-    ReductProjectsRequest
-);
-deser_totality_test!(
-    reduct_project_items_request_deser_totality,
-    ReductProjectItemsRequest
-);
-deser_totality_test!(reduct_reel_request_deser_totality, ReductReelRequest);
-deser_totality_test!(
-    reduct_create_recording_request_deser_totality,
-    ReductCreateRecordingRequest
-);
-deser_totality_test!(
-    reduct_create_reel_request_deser_totality,
-    ReductCreateReelRequest
-);
-deser_totality_test!(
-    reduct_create_reel_clip_request_deser_totality,
-    ReductCreateReelClipRequest
-);
-deser_totality_test!(
-    reduct_create_reel_title_request_deser_totality,
-    ReductCreateReelTitleRequest
-);
-deser_totality_test!(
-    reduct_edit_reel_clip_request_deser_totality,
-    ReductEditReelClipRequest
-);
-deser_totality_test!(
-    reduct_create_recording_highlight_request_deser_totality,
-    ReductCreateRecordingHighlightRequest
-);
-deser_totality_test!(
-    reduct_publish_reel_request_deser_totality,
-    ReductPublishReelRequest
-);
-deser_totality_test!(
-    reduct_edit_recording_highlight_request_deser_totality,
-    ReductEditRecordingHighlightRequest
-);
-deser_totality_test!(
-    reduct_import_media_request_deser_totality,
-    ReductImportMediaRequest
-);
-deser_totality_test!(
-    reduct_upload_media_request_deser_totality,
-    ReductUploadMediaRequest
-);
-deser_totality_test!(
-    reduct_upload_local_media_request_deser_totality,
-    ReductUploadLocalMediaRequest
-);

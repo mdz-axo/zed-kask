@@ -130,6 +130,10 @@ pub use rollout_event_bridge::{
 // The credential namespace constant and the test-email helper live in the
 // `credentials` module; re-exported here to preserve the historical public
 // surface (`kask_bridge::KASK_CREDENTIAL_NAMESPACE`, `kask_bridge::spawn_test_email`).
-// `purge_removed_abw_api_key` is the startup purge of the removed ABW key
-// (D5) — called once from zed's app init.
-pub use credentials::{KASK_CREDENTIAL_NAMESPACE, purge_removed_abw_api_key, spawn_test_email};
+// `purge_removed_abw_api_key` and `purge_removed_reduct_api_key` are the
+// startup purges of the removed ABW and Reduct.cloud keys (D5) — called once
+// from zed's app init.
+pub use credentials::{
+    KASK_CREDENTIAL_NAMESPACE, purge_removed_abw_api_key, purge_removed_reduct_api_key,
+    spawn_test_email,
+};

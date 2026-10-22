@@ -1181,6 +1181,11 @@ fn main() {
         // dormant third-party secret survives without a management surface.
         kask_bridge::purge_removed_abw_api_key(cx);
         //
+        // zed-kask: D5/D9 (Reduct.cloud removal, 2026-10-22) — same posture:
+        // the media server's Reduct cloud connection is gone; purge its
+        // orphaned keychain entry once at startup.
+        kask_bridge::purge_removed_reduct_api_key(cx);
+        //
         // D3: McpRuntime is constructed above so it's available for both the
         // skill execution and the post-settings auto-launch. The
         // model-dependent wiring (skill execution, guard, panel) is

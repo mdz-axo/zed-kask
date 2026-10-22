@@ -14,7 +14,7 @@ layers.
 
 ## Reference model and labels
 
-Reduct.video — the transcript bundled with its video as one linked artifact: correct the transcript, highlight passages, and edit the video by selecting transcript ranges, as defined by the Reduct API and user interface (`onto_anchor` → derived `transcript_linked_media`, operator ruling 2026-09-25; text-based video editing per Berthouzoz, Li & Agrawala, 2012 `doi:10.1145/2185520.2185563` → `onto_anchor` `derived:edit_decision_list`). The educt layers are the local form of that model: corrections, speakers, highlights and the EDL are layers over an immutable word-level transcript, so the reel is cut from the text and the timings never move. The `reduct_*` tools reach the Reduct cloud workspace itself. OMC (`omc:Provenance`) names only the provenance vocabulary.
+Reduct.video — the transcript bundled with its video as one linked artifact: correct the transcript, highlight passages, and edit the video by selecting transcript ranges, as defined by the Reduct API and user interface (`onto_anchor` → derived `transcript_linked_media`, operator ruling 2026-09-25; text-based video editing per Berthouzoz, Li & Agrawala, 2012 `doi:10.1145/2185520.2185563` → `onto_anchor` `derived:edit_decision_list`). The educt layers are the local form of that model: corrections, speakers, highlights and the EDL are layers over an immutable word-level transcript, so the reel is cut from the text and the timings never move. OMC (`omc:Provenance`) names only the provenance vocabulary.
 
 - **Initial condition:** a stored transcript with word timings (Phase 1).
 - **Target condition:** the Convergence gate passes and every quote in the summary resolved with `educt_locate`.
@@ -167,12 +167,8 @@ educt tool family plus the convergence form above.
   derived estimates, not newly observed STT timing or confidence.
 - `educt_locate` is the citation gate: no quote goes into a summary
   without a located word range.
-- Local educt never uploads to Reduct. Optional `reduct_*` upload/import
-  transfers selected media to a third party and requires an explicit operator
-  decision. Publication is a separate explicit decision: `publish: true` creates
-  public access. An acknowledgement is submission, not read-back, playback, or
-  successful ingestion; inspect cloud state before retrying an uncertain POST.
-  No automatic cloud fallback, POST retry, or cloud DELETE is part of this skill.
+- Local educt is self-contained: it never uploads to, transfers media to, or
+  falls back to a cloud service. No cloud path is part of this skill.
 - Face identification is opt-in; generic media curation never authorizes it.
 - A zero-text OCR/transcription result is an error, never a success —
   surface it.

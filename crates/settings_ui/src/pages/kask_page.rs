@@ -543,7 +543,7 @@ pub(crate) fn kask_page() -> SettingsPage {
             json_path: Some("kask.data_services"),
             description: Some(
                 "Configure API keys for data services and native provider-backed tools \
-                 (Exa, Tavily, Brave, RunPod OCR, Reduct.video, FRED). \
+                 (Exa, Tavily, Brave, RunPod OCR, FRED). \
                  Keys are stored in the system keychain, not in settings.json."
                     .into(),
             ),
@@ -556,7 +556,6 @@ pub(crate) fn kask_page() -> SettingsPage {
                 "fred",
                 "keychain",
                 "ocr",
-                "reduct",
                 "runpod",
                 "serpapi",
                 "tavily",

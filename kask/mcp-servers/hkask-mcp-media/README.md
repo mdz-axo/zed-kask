@@ -81,9 +81,7 @@ Creative generation/TTS/workflow execution is retired. Historical Asset records,
 lineage, OMC graphs, transcripts, and source-derived excerpts/reels remain
 readable. `gallery_lineage` also returns the saved historical workflow graph
 when one is referenced; no workflow replay or new creative execution is exposed.
-Reduct upload/import transfers selected media externally and requires
-an explicit operator decision; publication is a separate decision creating
-public access. Face identification is opt-in, never implied by generic analysis.
+Face identification is opt-in, never implied by generic analysis.
 
 ## Source-linked visual evidence
 
@@ -332,141 +330,8 @@ precondition is retained as the failure mode for the cases re-anchoring
 genuinely cannot handle (an untimed source, or a cardinality-changing
 correction with no realignment layer). Reduct can re-align such edits
 server-side too; the local path no longer depends on it. The immutable source
-bundle remains available for audit. Local educt never
-uploads to Reduct or silently falls back from a cloud request. The separate
-`reduct_connection_status` reports key delivery without contacting Reduct;
-`reduct_connection_probe` makes a read-only project request without returning
-its body. The `reduct_projects_snapshot` / `reduct_recordings_snapshot` tools
-return bounded provider-supplied ID/title views (server-side pagination is
-unknown). `reduct_recording_status`, `reduct_recording_transcript`, and
-`reduct_recording_highlights` read an existing recording's status, JSON/TXT
-transcript, and provider-native bounded highlight map, respectively.
-`reduct_reels_snapshot` projects bounded reel IDs/titles from project detail;
-`reduct_reel_detail` reads an existing reel's title and blocks while removing
-all nested `share_token` fields. The v3 reference (pages 29â30) says a Reel
-GET omits `publish` and presence of a share token determines publication;
-source now projects `publication_state` as `published`, `unpublished`, or
-`undetermined` for malformed token shapes, without returning the token.
-`reduct_publish_reel` (2026-10-06, MF-1) sets the publication flag against
-the pinned pages 33-34 contract — an explicit bool, never defaulted — and the
-share token VALUE stays unreturned there too (publish state and token
-presence only). The reference still provides no private Reel render/download
-contract. The logged-in v3 API
-reference excerpt supplied by the operator on 2026-09-23 pins the X-Auth-Key
-header, root URL, these recording paths, and the mutating calls below. A live
-OS-keychain-based test retrieved a project, project-scoped recordings, recording
-status, JSON/TXT transcripts, the highlight GET path, and an existing reel's
-ID-keyed block map without logging or printing private content. The sampled
-highlight map was empty; a live reel-detail request returned a populated block
-map. The original running-tool inventory listed twelve `reduct_*` tools;
-a post-restart inventory now lists sixteen, including the four Reel tools.
-That inventory established deployment only; the subsequent Axolotl throwaway
-session confirmed create/add/edit with separate provider read-backs. GET block
-fields alone were never used as the POST write contract.
-
-The same excerpt specifies `POST /project/{project_id}/recording` with JSON
-`{"title": ...}` returning a `recording` ID, and `POST .../media-import`
-with JSON `{"url": ...}` returning `media_ids`. `reduct_create_recording` and
-`reduct_import_media` implement those calls, and `reduct_upload_gallery_media`
-uses the specified raw `POST .../media-upload?filename=...` contract returning
-`media_id`. The gallery tool requires an indexed audio/video Asset with an unchanged
-SHA-256 and a nonempty regular file at most 128 MiB. Separately,
-`reduct_upload_local_media` accepts any absolute local path to a nonempty regular
-file with a decodable audio or video stream, without requiring a gallery; it
-streams the opened file instead of buffering it under the gallery tool's 128 MiB
-limit. Reduct determines final format support; unsupported files may be refused
-by the provider. The provider receives only the filename and bytes, never the
-local path. A local upload intentionally transfers the selected file to Reduct.
-POST transport failures, HTTP 429/5xx, and unreadable
-or unusable acknowledgements state that the mutation **may have succeeded**
-and require inspection before retry, while preserving provider error kinds
-(`rate_limited`/`unavailable`). The shared URL validator rejects embedded
-user-info without returning the supplied credentials. No POST is retried.
-In the authorized Axolotl throwaway project, recording creation returned an
-ID. A YouTube watch-link media import returned an ID but later became `error`;
-that acknowledgement did not mean successful ingestion. An indexed 116 MB
-720p MP4 of the same public talk was then uploaded to a separate test recording,
-which reached `transcribed`; no automatic retry, deletion, or fallback from educt
-occurred. These ingest paths also retain their fixture/contract tests.
-
-The operator supplied `Reduct-Video.pdf` (55-page v3 reference): pages 31â32
-specify Reel creation (`POST .../reel`, `{"title": ...}` â `{"reel": id}`);
-pages 36â38 specify block creation (`POST .../reel/{id}/block`): `doc-range`
-requires `order`, `recording`, `start`, `end`, empty `strikethrough` map;
-`title` requires `order`, `duration` and accepts `title` text. Both return
-`{"block": id}`. Pages 38â39 permit partial `POST .../block/{id}` edits and
-an ID-keyed acknowledgement. `reduct_create_reel`, `reduct_add_reel_clip`,
-`reduct_add_reel_title` and `reduct_edit_reel_clip_range` implement only these
-scoped contracts. Clip edits read back the block type before POST; every
-acknowledgement means submission, not verified composition/rendering. Loopback
-fixtures exercise request path/body, X-Auth-Key header, parsed acknowledgement,
-and HTTP refusal. The PDF's embedded text was cross-checked because corpus OCR
-flagged eleven pages for quality; no PDF text is committed. These four tools
-passed focused source tests, clippy and the Zed check. The `release-mcp`
-binary was installed to `~/.local/bin/hkask-mcp-media`, and a host restart
-exposed all sixteen Reduct tools. A read-only project probe returned HTTP 200, which alone proved no write.
-The authorized throwaway Reel was then created, populated with seven ordered
-title cards and nine `doc-range` blocks, edited once to adjust a clip range,
-and independently read back; its plan totals 10:29. This proves cloud
-composition/edit persistence, **not** a rendered export or published link.
-The post-restart read-only probe now reports `cloud_editing: not_checked`
-with HTTP 200; this fixes the prior false `not_available` claim without
-asserting a Reel edit. The v3 PDF documents publication via `POST .../publish`
-but provides no private Reel render/download contract. The
-`publication_state` projection is fixture-tested and was observed on the
-running child as `unpublished` for the Axolotl throwaway Reel; its sixteen
-ordered blocks remained intact, and no token value was returned. Never
-publish by default: a share token creates a publicly accessible link.
-
-The Reduct write surface is adjudicated per capability against the pinned
-v3 reference (2026-10-06, MF-1). **Implemented:** highlight creation
-(`reduct_add_recording_highlight`, v3 pages 23-24 — POST `.../highlight`
-with `start_time`/`end_time` seconds and optional labels; a color tag like
-`#orange` selects a non-yellow color) and reel publication
-(`reduct_publish_reel`, v3 pages 33-34 — POST `.../publish` with the bool as
-the BARE JSON body, the reference's property-endpoint payload convention
-(page 39: "request payload equal to the new value"); the object form
-`{"publish": true}` was REFUTED by a live probe 2026-10-07 — HTTP 400
-twice, on an empty reel and one with a block, isolating the body shape — and
-the bare-bool form was CONFIRMED by live re-probe 2026-10-14 in both directions
-(`publish: true` and `publish: false`) on the throwaway Axolotl reel
-`c1a49628a0` in project `2771e9d5f4`, returning HTTP 200 with
-`publish: true, share_token_present: true` → `publication_state: "published"`
-and `publish: false, share_token_present: false` →
-`publication_state: "unpublished"` on independent `reduct_reel_detail`
-read-back). The
-publish parameter is never defaulted — `true` asks the provider to create a
-share token, a publicly accessible link — and the token VALUE is never
-returned (the response reports publish state and token presence; the link is
-visible in the Reduct app). Both tools carry loopback fixture tests for
-request path/body, X-Auth-Key header, parsed acknowledgement, and HTTP
-refusal. **Out of scope, with reasons:** strikethroughs — v3 page 41 lists
-the paths without body/response schema, so implementing would guess the wire
-format; redactions — v3 pages 21-22 list the paths without body/response
-schema (the page 47-48 use case describes start/end times but pins no formal
-body), and the reference's own warning says API audio redactions only redact
-the audio, never the transcript text; media download — v3 page 21 lists the
-`media-download` path without body/response schema, and the reference
-provides no private Reel render/download contract; transcript correction —
-the v3 API exposes no transcript-correction endpoint at all (verified across
-the 55-page reference; Reduct's in-app re-alignment has no API surface, and
-local re-alignment exists since 2026-10-06 via `educt_realign_transcript`).
-**Pinned but unimplemented — the cloud-DELETE posture (ruled 2026-10-06,
-media-lead design decision):** the remaining pinned write paths are both
-DELETE operations — highlight delete (v3 page 25, fully pinned including the
-`{"<highlight id>": "deleted"}` acknowledgement) and unpublish via
-`DELETE .../share_token` (v3 page 33, path pinned; the response shape is
-undocumented — the reference lists property-delete endpoints without a
-return spec). This surface does not expose irreversible cloud DELETE
-operations: the zero-DELETE posture (20 tools, zero deletes) is deliberate —
-deletes stay in the Reduct app, where confirmation and trash UX live — and
-it is revisitable on operator demand (highlight delete's contract remains
-pinned for the day the posture changes; unpublish additionally needs its
-response shape pinned). Highlight edit (v3 pages 24-25,
-fully pinned) was implemented 2026-10-06 as the MF-1 follow-up, completing
-the highlight-write symmetry with the block surface's create+edit pattern.
-DELETE is irreversible; POST can overwrite
-named fields. Enter/reset the key in Settings â Kask â Data Services; writes/deletes refresh the child.
+bundle remains available for audit. Local educt never uploads to or falls
+back to a cloud service.
 
 ## Configuration
 

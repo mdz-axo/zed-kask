@@ -172,9 +172,6 @@ hkask_mcp_server::mcp_server!(
         /// SerpApi credential for structured YouTube discovery and metadata.
         /// Binary media retrieval remains the separate `YtDlpRunner` concern.
         pub serpapi_key: Option<String>,
-        /// Reduct key from this child process's credential allowlist. Never
-        /// echoed in tools, logs, or error messages.
-        pub reduct_api_key: Option<String>,
     } = crate::ontology::annotate;
 );
 
@@ -432,7 +429,6 @@ impl MediaServer {
             + Self::jobs_router()
             + Self::educt_router()
             + Self::youtube_router()
-            + Self::reduct_router()
     }
 }
 
@@ -443,7 +439,7 @@ impl rmcp::ServerHandler for MediaServer {}
 mod tool_surface_tests {
     use super::*;
 
-    // One macro call pins the surface two ways: the exact count (91) and
+    // One macro call pins the surface two ways: the exact count (71) and
     // the generated TOOL_NAMES set against the live rmcp surface. Catches
     // silent registration drops — a `#[tool]` impl block without
     // `#[tool_router]`, or a sub-router missing from `combined_router()`,
@@ -456,8 +452,8 @@ mod tool_surface_tests {
     hkask_mcp_server::tool_surface_pin!(
         MediaServer::combined_router(),
         "combined_router",
-        91,
-        tool_surface_is_exactly_91_registered_tools,
+        71,
+        tool_surface_is_exactly_71_registered_tools,
     );
 
     // Coverage: every registered tool must map to an OMC concept. Catches
@@ -618,7 +614,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 YtDlpRunner::detect(),
                 jobs::new_job_store(),
                 ctx.credentials.get("HKASK_SERPAPI_API_KEY").cloned(),
-                ctx.credentials.get("REDUCT_API_KEY").cloned(),
             ))
         },
         vec![
@@ -629,10 +624,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             hkask_mcp_server::CredentialRequirement::optional(
                 "HKASK_SERPAPI_API_KEY",
                 "SerpApi key for YouTube search metadata",
-            ),
-            hkask_mcp_server::CredentialRequirement::optional(
-                "REDUCT_API_KEY",
-                "Reduct.video API key for cloud media (optional; local educt works without it)",
             ),
         ],
     )
@@ -1263,7 +1254,6 @@ mod tool_behavior_tests {
             YtDlpRunner::detect(),
             jobs::new_job_store(),
             None,
-            None,
         );
 
         let response = server
@@ -1551,7 +1541,6 @@ mod tool_behavior_tests {
             video::ytdlp::YtDlpRunner::detect(),
             jobs::new_job_store(),
             None,
-            None,
         );
         (server, gallery_state)
     }
@@ -1591,7 +1580,6 @@ mod tool_behavior_tests {
             fake_successful_ffmpeg(artifacts_root)?,
             video::ytdlp::YtDlpRunner::detect(),
             jobs::new_job_store(),
-            None,
             None,
         ))
     }
@@ -1674,7 +1662,6 @@ mod tool_behavior_tests {
             video::ytdlp::YtDlpRunner::detect(),
             jobs::new_job_store(),
             None,
-            None,
         ));
         Ok(TwoGalleryArms {
             _env,
@@ -1730,7 +1717,6 @@ mod tool_behavior_tests {
             video::ffmpeg::FfmpegRunner::detect(),
             ytdlp,
             jobs::new_job_store(),
-            None,
             None,
         )
     }
@@ -3004,7 +2990,6 @@ mod tool_behavior_tests {
             video::ffmpeg::FfmpegRunner::detect(),
             video::ytdlp::YtDlpRunner::detect(),
             jobs::new_job_store(),
-            None,
             None,
         )
     }
@@ -4849,7 +4834,6 @@ mod gallery_lifecycle_tests {
             FfmpegRunner::detect(),
             YtDlpRunner::detect(),
             jobs::new_job_store(),
-            None,
             None,
         )
     }

@@ -133,43 +133,18 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         | "transcribe_and_store"
         | "audio_trim"
         | "audio_concat"
-        | "reduct_recordings_snapshot"
-        | "reduct_create_recording"
-        | "reduct_import_media"
-        | "reduct_upload_gallery_media"
-        | "reduct_upload_local_media"
-        | "reduct_recording_transcript"
         | "educt_store_transcript"
         | "educt_list_transcripts"
         | "educt_get_transcript"
         | "educt_delete_transcript"
         | "educt_search_transcripts" => Some(CAPTURE),
-        "video_clip"
-        | "video_to_gif"
-        | "video_concat"
-        | "video_add_caption"
-        | "video_info"
-        | "reduct_reels_snapshot"
-        | "reduct_reel_detail"
-        | "reduct_create_reel"
-        | "reduct_add_reel_clip"
-        | "reduct_add_reel_title"
-        | "reduct_edit_reel_clip_range"
-        | "reduct_publish_reel"
+        "video_clip" | "video_to_gif" | "video_concat" | "video_add_caption" | "video_info"
         | "educt_render_edl" => Some(SEQUENCE),
         "image_create_collage" => Some(CREATIVE_WORK),
         "video_extract_frames" => Some(SHOT),
         "gallery_lineage" | "job_submit" | "job_list" | "job_status" | "job_cancel" => Some(TASK),
-        "model_list"
-        | "model_info"
-        | "reduct_connection_status"
-        | "reduct_connection_probe"
-        | "reduct_projects_snapshot" => Some(PARTICIPANT),
-        "reduct_recording_status" => Some(STATE),
-        "reduct_recording_highlights"
-        | "reduct_add_recording_highlight"
-        | "reduct_edit_recording_highlight"
-        | "educt_store_layer"
+        "model_list" | "model_info" => Some(PARTICIPANT),
+        "educt_store_layer"
         | "educt_list_layers"
         | "educt_paragraph_pass"
         | "educt_speaker_pass"

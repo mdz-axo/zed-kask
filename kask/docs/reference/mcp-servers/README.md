@@ -28,7 +28,7 @@ mds_categories: [composition, domain]
 
 ## Server Catalog
 
-9 built-in MCP servers, **343 registered tools** fleet-wide (goal/scenario counts reconciled 2026-10-20; other counts retained from 2026-10-19 against the live `tool_surface_pin!` tests below — every server pins its exact count and generated tool-name set; unified by `ede1ba0ca8`, CI-gated by `kask/scripts/check-mcp-registration.sh`). The earlier 360-tool fleet figure included the companies server (32 tools), removed 2026-10-18, commit `3439db5e00`. `KaskMcpSettings::default()` sets `load_default: true`, so all nine auto-load unless the operator disables the fleet or an individual server (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs`).
+9 built-in MCP servers, **323 registered tools** fleet-wide (goal/scenario counts reconciled 2026-10-20; other counts retained from 2026-10-19 against the live `tool_surface_pin!` tests below — every server pins its exact count and generated tool-name set; unified by `ede1ba0ca8`, CI-gated by `kask/scripts/check-mcp-registration.sh`). The earlier 360-tool fleet figure included the companies server (32 tools), removed 2026-10-18, commit `3439db5e00`. `KaskMcpSettings::default()` sets `load_default: true`, so all nine auto-load unless the operator disables the fleet or an individual server (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs`).
 
 | Server | Crate | Purpose | Tools |
 |--------|-------|---------|------:|
@@ -36,7 +36,7 @@ mds_categories: [composition, domain]
 | Curator | `kask/mcp-servers/hkask-mcp-curator` | Curator agent metacognition (memory, regulation query, algedonic signals, skill-use issue reporting) | 15 |
 | [Experimentation](experimentation.md) | `kask/mcp-servers/hkask-mcp-experimentation` | Experiment registry for the sharded experimentation program: registered experiments with pre-registered predictions, variant lineages, fitness records (caller-asserted report references), selection fossils | 8 |
 | Kata Kanban | `kask/mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards and retained canonical goals with separate human closure | 26 |
-| [Media](media.md) | `kask/mcp-servers/hkask-mcp-media` | AI media generation (image, video, audio, gallery, educt transcripts, Reduct cloud) | 102 |
+| [Media](media.md) | `kask/mcp-servers/hkask-mcp-media` | AI media generation (image, video, audio, gallery, educt transcripts) | 71 |
 
 | [Prediction Markets](prediction-markets.md) | `kask/mcp-servers/hkask-mcp-prediction-markets` | Polymarket/Kalshi base rates, calibration, residuals | 27 |
 | [Research](research.md) | `kask/mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds, evidence scoring, research-run ledger, paper identity | 27 |

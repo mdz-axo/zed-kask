@@ -44,8 +44,7 @@ only; explicit empty values disable the selected pipeline visibly.
 - Queue operations are `transcribe`, `audio_trim`, `audio_concat`, `video_clip`,
   and `video_concat`. History is process-local, not durable transcript storage.
 - Historical media and lineage remain readable. Face identification requires
-  explicit selection; Reduct upload/import and publication are separate
-  operator decisions. Local educt never silently uploads or falls back to cloud.
+  explicit selection. Local educt never silently uploads or falls back to cloud.
 
 Annotations/search are chat-driven; no new dedicated annotation editor or search
 widget is implied. The four viewer tabs and their lifecycle/security boundaries

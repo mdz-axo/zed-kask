@@ -1,5 +1,5 @@
 //! Data Services sub-page — API key entry for Exa, Tavily,
-//! Brave, RunPod OCR, Reduct.video, FRED, and other live descriptors. Keys
+//! Brave, RunPod OCR, FRED, and other live descriptors. Keys
 //! live in the OS keychain. The key's presence is the toggle — there is no
 //! separate enable/disable bool.
 
@@ -95,20 +95,11 @@ fn render_data_service_row(
 
     // Built before the closures below move `credential_url` — the copy names
     // the exact keychain slot this row reads and writes.
-    let storage_copy = if key == "reduct_api_key" {
-        format!(
-            "Stored in the keychain under {credential_url}, or set {env_var}. \
-             Key presence does not verify Reduct access; use reduct_connection_status \
-             in the Media panel to check delivery to the media server. \
-             Media offers project, recording and transcript reads plus explicit cloud uploads/imports. Reel editing and redaction are not connected."
-        )
-    } else {
-        format!(
-            "Enabled when the API key is present. Stored in the \
-             keychain under {credential_url}, or set the \
-             {env_var} environment variable."
-        )
-    };
+    let storage_copy = format!(
+        "Enabled when the API key is present. Stored in the \
+         keychain under {credential_url}, or set the \
+         {env_var} environment variable."
+    );
 
     let key_input = if has_key {
         let reset_id = format!("kask-{key}-reset");
@@ -222,15 +213,18 @@ fn render_data_service_row(
 mod tests {
     use super::*;
 
+    /// The removed Reduct.cloud integration must not reappear as a settings
+    /// row (removed 2026-10-22 with the media server's Reduct cloud tools).
     #[test]
-    fn reduct_row_uses_refreshable_keychain_slot() {
-        let row = data_service_descriptors()
+    fn removed_reduct_cloud_row_is_absent() {
+        let keys = data_service_descriptors()
             .into_iter()
-            .find(|(key, _, _, _, _)| *key == "reduct_api_key")
-            .expect("Reduct must appear on Data Services");
-        assert_eq!(row.3, "REDUCT_API_KEY");
-        assert_eq!(row.4, "kask://credentials/reduct_api_key");
-        assert!(credential_url_feeds_mcp_servers(&row.4));
+            .map(|(key, _, _, _, _)| key)
+            .collect::<std::collections::HashSet<_>>();
+        assert!(
+            !keys.contains("reduct_api_key"),
+            "the Reduct.cloud removal is complete — no Data Services row may carry its key"
+        );
     }
 
     #[test]

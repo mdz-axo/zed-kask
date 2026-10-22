@@ -220,7 +220,6 @@ impl MediaPanel {
                 "transcribe",
                 "record_",
                 "educt_",
-                "reduct_",
                 "model_",
                 "job_",
                 "describe_",
@@ -250,7 +249,6 @@ fn steer_system_prompt() -> SharedString {
             ("Video tools", &["video_"]),
             ("Audio tools", &["audio_", "transcribe", "record_"]),
             ("Transcript store tools (local)", &["educt_"]),
-            ("Reduct cloud connection", &["reduct_"]),
             ("Model tools", &["model_"]),
             ("Job tools", &["job_"]),
         ],
@@ -272,8 +270,7 @@ fn steer_system_prompt() -> SharedString {
          Search stored transcripts with educt_search_transcripts in lexical mode; \
          follow returned continuation offsets and retain source/timing citations. \
          A lexical match is not semantic retrieval or verified evidence. Use face identification \
-         only when explicitly selected by the operator. Reduct cloud uploads and \
-         publication require an explicit operator decision. Do not synthesize \
+         only when explicitly selected by the operator. Do not synthesize \
          research evidence. Media results render inline; the Library, Queue, and \
          Detail tabs expose indexed assets, research jobs, and provenance."
     );
@@ -463,7 +460,6 @@ mod tests {
                 "transcribe",
                 "record_",
                 "educt_",
-                "reduct_",
                 "model_",
                 "job_",
                 "describe_",
@@ -480,7 +476,7 @@ mod tests {
     /// while retaining source processing, annotations, retrieval, and history.
     #[test]
     fn steer_prompt_carries_research_scope_and_boundaries() {
-        assert_eq!(hkask_mcp_media::TOOL_NAMES.len(), 102 - 20 + 9);
+        assert_eq!(hkask_mcp_media::TOOL_NAMES.len(), 71);
         let prompt = steer_system_prompt();
         for required in [
             "gallery_annotation_create",
@@ -540,7 +536,6 @@ mod tests {
             "source/timing citations",
             "neither is verified",
             "explicitly selected by the operator",
-            "publication require an explicit operator decision",
             "historical provenance",
         ] {
             assert!(prompt.contains(boundary), "missing boundary: {boundary}");

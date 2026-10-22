@@ -1044,7 +1044,6 @@ mod curation_tests {
             YtDlpRunner::detect(),
             jobs::new_job_store(),
             None,
-            None,
         )
     }
 

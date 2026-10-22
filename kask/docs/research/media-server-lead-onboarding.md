@@ -28,8 +28,8 @@ This document assumes:
 
 The media MCP server curates existing research evidence: ingest, organize,
 annotate, search, transcribe, and derive source-linked excerpts/reels. The
-operator-approved integration target is **91 tools** (102 − 20 creative
-operations + 9 annotation/search operations), not a claim that a rebuilt child
+operator-approved integration target is **71 tools** (91 − 20 Reduct cloud
+operations, removed 2026-10-22), not a claim that a rebuilt child
 or current integration suite has been validated. The generated `TOOL_NAMES`
 and `MediaServer::combined_router()` are the inventory authority. Shared
 inference-library creative capabilities are not this server's tool surface.
@@ -60,11 +60,6 @@ Synthetic speech, image/video creation, and creative recipe execution are retire
 `educt_store_transcript`, `educt_list_transcripts`, `educt_get_transcript`, `educt_delete_transcript`, `educt_store_layer`, `educt_list_layers`, `educt_paragraph_pass`, `educt_speaker_pass`, `educt_correction_pass`, `educt_apply_corrections`, `educt_realign_transcript`, `educt_highlight_pass`, `educt_edl_from_highlights`, `educt_render_edl`, `educt_export`, `educt_locate`, `educt_annotation_create`, `educt_annotation_list`, `educt_annotation_update`, `educt_annotation_delete`, `educt_search_transcripts`
 
 A local transcript-editing system modeled on Reduct.video's published interaction model: immutable word-level time anchors, text selections as media ranges, labeled highlights, ordered Keep ranges composed into an EDL ("Reel"), deterministic FFmpeg rendering, and durable SRT/highlight-CSV/corpus-text exports (`README.md:230-249`). LLM "passes" (paragraph, speaker, correction, highlight) store validated layers over the immutable word timeline. Researcher annotations are separate supplied observations, not authenticated human identity or verified evidence: gallery CRUD uses stable `gallery_asset_id`, `kind` (`tag`/`note`) and `value`; transcript CRUD uses immutable-source word ranges, label/note and stable annotation IDs. `educt_search_transcripts` is bounded lexical substring matching with exact excerpts, source/timing citations and continuation offsets, not semantic retrieval. Missing/unaligned timing stays visible. See the media reference for exact request fields and bounds.
-
-### Reduct cloud — 20 tools (`src/tools/reduct.rs`)
-`reduct_connection_status`, `reduct_connection_probe`, `reduct_projects_snapshot`, `reduct_recordings_snapshot`, `reduct_reels_snapshot`, `reduct_reel_detail`, `reduct_create_reel`, `reduct_add_reel_clip`, `reduct_add_reel_title`, `reduct_edit_reel_clip_range`, `reduct_create_recording`, `reduct_import_media`, `reduct_upload_gallery_media`, `reduct_upload_local_media`, `reduct_recording_highlights`, `reduct_recording_status`, `reduct_recording_transcript`, `reduct_add_recording_highlight`, `reduct_edit_recording_highlight`, `reduct_publish_reel`
-
-Read paths plus scoped write contracts (recording creation, media import/upload, reel composition and clip-range edits) implemented exactly against the operator-supplied v3 API reference. The local educt system never silently uploads or falls back from a cloud request, and no POST is retried. Upload/import is an explicit operator decision to transfer selected media externally; publication is a separate explicit decision creating public access. Read back provider state after writes; a submission acknowledgement is not successful ingestion, rendering, or playback. Uncertain POST outcomes require inspection before retry. Cloud DELETE operations remain out of scope.
 
 ### Async job queue — 4 tools (`src/tools/jobs.rs`)
 `job_submit`, `job_list`, `job_status`, `job_cancel`
@@ -140,7 +135,7 @@ and recipe-graph operations are not admitted.
 
 ### Integration with the rest of zed-kask
 
-The server is registered as a built-in server (`id: "media"`, `binary: "hkask-mcp-media"`) in `BUILT_IN_MCP_SERVERS` with explicit credential and env allowlists (`kask/crates/kask_bridge/src/mcp_servers.rs:485-528`): credentials `OPENROUTER_API_KEY`, `DEEPINFRA_API_KEY`, `HKASK_SERPAPI_API_KEY`, `REDUCT_API_KEY`; env `HKASK_INFERENCE_SOCKET`, `HKASK_DATA_DIR`, `HKASK_ARTIFACTS_DIR`, `HKASK_MEDIA_DB`, `HKASK_MEDIA_STT_MODEL` and `HKASK_MEDIA_VISION_MODEL` only, and `HKASK_EMBEDDING_MODEL`. On the zed side, `crates/media_panel/` is a **cross-domain Steer conversation with Media/Library/Queue/Detail viewing tabs** — the operator drives media work through the curator conversation, the panel's prompt advertises the server's generated `TOOL_NAMES`, and results render inline via the media block renderer (`crates/media_panel/src/media_panel.rs:1-12`). The widget is `crates/hkask-media-widget/` (D18); benchmarks live in `crates/hkask-media-benchmarks/`.
+The server is registered as a built-in server (`id: "media"`, `binary: "hkask-mcp-media"`) in `BUILT_IN_MCP_SERVERS` with explicit credential and env allowlists (`kask/crates/kask_bridge/src/mcp_servers.rs:347-385`): credentials `OPENROUTER_API_KEY`, `DEEPINFRA_API_KEY`, `HKASK_SERPAPI_API_KEY`; env `HKASK_INFERENCE_SOCKET`, `HKASK_DATA_DIR`, `HKASK_ARTIFACTS_DIR`, `HKASK_MEDIA_DB`, `HKASK_MEDIA_STT_MODEL` and `HKASK_MEDIA_VISION_MODEL` only, and `HKASK_EMBEDDING_MODEL`. On the zed side, `crates/media_panel/` is a **cross-domain Steer conversation with Media/Library/Queue/Detail viewing tabs** — the operator drives media work through the curator conversation, the panel's prompt advertises the server's generated `TOOL_NAMES`, and results render inline via the media block renderer (`crates/media_panel/src/media_panel.rs:1-12`). The widget is `crates/hkask-media-widget/` (D18); benchmarks live in `crates/hkask-media-benchmarks/`.
 
 ---
 
@@ -226,7 +221,7 @@ Both lenses are already written down as skills — read `.agents/skills/product-
 
 1. Read the crate README end-to-end (`kask/mcp-servers/hkask-mcp-media/README.md`) — it carries the ratified contracts, not marketing.
 2. Read the reference doc (`kask/docs/reference/mcp-servers/media.md`) — architecture, per-tool reference, error classification, key paths.
-3. Run the crate's tests and read the pin tests in `src/hkask_mcp_media.rs:449-545` — they encode the invariants that matter most. (Baseline established 2026-09-30: `cargo test -p hkask-mcp-media` — 432 passed, 0 failed, 6 ignored; the ignored six are opt-in live Reduct API probes gated behind `HKASK_REDUCT_LIVE_PROBE=1` and a configured OS keychain. Re-run it yourself to confirm your own working baseline.)
+3. Run the crate's tests and read the pin tests in `src/hkask_mcp_media.rs:439-541` — they encode the invariants that matter most. (Baseline established 2026-09-30: `cargo test -p hkask-mcp-media` — 432 passed, 0 failed, 6 ignored. The six ignored were the opt-in live Reduct probes, removed with the Reduct.cloud capability 2026-10-22; the post-removal serial baseline is 311 passed, 0 failed, 0 ignored, 2026-10-22. Re-run it yourself to confirm your own working baseline.)
 4. Trace one source-derived tool end-to-end: `video_clip` → canonical local
    publication (`src/assets.rs`) → gallery Asset + lineage + OMC graph →
    `media_block` display hint → inline render in the panel. Also check a manual
@@ -256,27 +251,22 @@ explicit opt-ins under the research-curation scope.
 
 Each priority below is a **target condition**, not a backlog item: a measured current condition (cited), an observable target, and the evidence that says it is reached. Work each one with the predict → measure → correct habit: before starting, state the expected observation and falsifier; record a confirmed goal with real source and criteria when useful, omitting routine forecast. After work compare evidence with the expectation. Worker progress, native human closure and independent assessment stay separate; optional forecasts require a complete prospective declaration and frozen resolver. Two things the project's metacognition discipline insists on: never score your own prediction (the outside score is the check), and report a plateau honestly — two unchanged measured iterations while the target still fails means the approach is wrong, not that you need more of it.
 
-**1. Complete the Reduct cloud write surface.**
-*Current condition:* strikethroughs, highlight **writes**, redactions, publishing, media download, and transcript correction remain unimplemented; the v3 reference lists strikethrough paths without body/response schema, and there is no private Reel render/download contract (`README.md:340-344`). Publication must never happen by default — a share token creates a public link (`README.md:338`).
-*Target condition:* each unimplemented capability is either implemented against a pinned provider contract (the way `reduct_create_reel` et al. were — fixture-tested request path/body, parsed acknowledgement, HTTP refusal) or explicitly documented as out of scope with the reason.
-*Reached when:* the capability has contract tests and a docs-reference row, or the README's unimplemented list no longer names it.
-
-**2. Close the transcript re-alignment gap.**
+**1. Close the transcript re-alignment gap.**
 *Current condition:* a correction that changes token cardinality leaves the corrected text readable and corpus-exportable, but timing-dependent navigation, highlighting, and SRT fail with an explicit unaligned precondition — local re-transcription/re-alignment is the honest capability gap (`README.md:252-259`).
 *Target condition:* a re-alignment path (re-transcription or word-level re-anchoring) that restores timed consumers after cardinality-changing corrections, with the unaligned precondition retained as the failure mode for the cases it genuinely cannot handle.
 *Reached when:* a correction that inserts/deletes words can subsequently drive `educt_locate`, highlighting, and SRT export — pinned by a test that does exactly that.
 
-**3. Decide and execute the face-recognition build-out.**
+**2. Decide and execute the face-recognition build-out.**
 *Current condition:* full build-out is explicitly **deferred**; the working core is the two vision-LLM templates (`validate_face_ref`, `match_faces` in `src/templates.rs`), and any expansion is meant to stay on the LLM-template surface (`README.md:379-383`).
 *Target condition:* a decision, recorded with the operator, on whether the deferred build-out happens (e.g. better matching prompts, multi-reference voting) and what its acceptance criteria are — then either the implementation with its tests or an explicit "still deferred" with the triggering condition written down.
 *Reached when:* the README's deferral note names a decision date and outcome instead of an open deferral.
 
-**4. Type the embedding-error classification.**
+**3. Type the embedding-error classification.**
 *Current condition:* `classify_embedding_error` string-matches credential-missing substrings because `EmbeddingGenerationError` has no typed `NotConfigured` variant yet (`media.md:560`, `src/error.rs:211-215`).
 *Target condition:* the typed variant exists and the string-matching is deleted, with the per-variant `permission_denied` classification preserved.
 *Reached when:* `classify_embedding_error` matches on variants, and a test pins missing-credential → `permission_denied` without substring matching.
 
-**5. Treat the DNS-rebinding limitation as a decision, not a footnote.**
+**4. Treat the DNS-rebinding limitation as a decision, not a footnote.**
 *Current condition:* the widget's preflight cannot pin opaque yt-dlp/FFmpeg connect-time DNS, so DNS rebinding inside those subprocesses is an explicitly documented transport limitation rather than a claimed guarantee (`README.md:78-85`).
 *Target condition:* either a documented accepted-risk ruling from the operator, or a mitigation (e.g. subprocess DNS pinning) with tests.
 *Reached when:* the README paragraph states a ruling or a mitigation, not an open limitation.

@@ -365,64 +365,6 @@ into ordered Reel Keep operations; Cut operations implement strikethrough editin
 and render/export are non-destructive projections. These tools remain local
 and never fall back from a Reduct request. A separate `reduct_*` MCP group
 uses the Reduct API key entered in Settings → Kask → Data Services:
-credential-status/probe, bounded project/recording/reel snapshots, recording
-status, JSON/TXT transcript, provider-native highlight retrieval and reel-detail
-read with recursive share-token removal. Project, recording-status, JSON/TXT
-transcript, highlight and reel-detail GET paths passed explicit live tests using
-the stored key; key and response content were not printed in those tests.
-The operator supplied the login-gated API reference's v3 examples and warnings
-in the conversation on 2026-09-23. From those exact contracts, the media server
-also implements cloud recording creation, URL-based media import, and bounded
-SHA-256-verified gallery audio/video upload. Those POST paths are pinned by
-fixtures. Historically, in an operator-authorized throwaway project, recording creation and
-gallery upload were observed live; a YouTube watch-link import was acknowledged
-but subsequently reported `error`, while the indexed video upload reached
-`transcribed` on a separate recording. Rejected import URLs with embedded
-credentials no longer echo user-info in the shared MCP validator, and POST
-429/5xx plus unusable acknowledgements warn that a write may have succeeded:
-inspect before retrying; no automatic retry or local fallback is introduced.
-The new `reduct_upload_local_media` accepts an absolute path to a nonempty
-regular file with an ffprobe-decodable audio/video stream, without a gallery
-requirement. It streams the opened file with its byte length rather than buffering
-it in memory; the provider receives the filename and bytes, not the local path.
-The existing hash-checked gallery upload remains unchanged. Reduct remains the
-final authority on supported formats, and unsupported media may fail at the
-provider; no live local-path upload was attempted. The earlier safety fixes
-were fixture-tested before the historical child restart; the then-current
-102-tool surface pin was checked on 2026-10-06. That receipt does not validate
-the present research-curation integration.
-Project and recording and reel snapshots describe provider-returned subsets,
-not complete
-pagination. Reel read results do not authorize writes: Reduct reel/block payload
-fields are not supplied by the excerpt. A running MCP inventory on 2026-09-23
-advertised twelve `reduct_*` tools including `reduct_reel_detail`; advertisement
-is not a new live read or write verification. Public search returned product/help
-descriptions rather than POST schemas, and the v3 reference remains browser-login
-gated without a session.
-The operator's 55-page v3 PDF supplies the previously missing write schemas:
-Reel creation (page 31), doc-range/title block creation (pages 36–38) and
-partial block editing (pages 38–39). Four explicitly cloud-named tools now
-create a Reel, add clip/title blocks, and edit a clip range. Their loopback
-fixtures pin POST path/body, acknowledgement and refusal. A `release-mcp`
-binary was installed on disk; after the operator restarted, the running child
-advertised all sixteen `reduct_*` tools. Authorized live calls subsequently
-created and read back a throwaway Reel with seven title cards and nine ordered
-clips, then edited and read back one clip range. That verifies persisted cloud
-composition/edit, not playback, rendering, export, or publication state.
-The post-restart read-only probe now returns HTTP 200 and
-`cloud_editing: not_checked`. The v3 reference says a nonempty share token in
-GET reel detail identifies publication; a new token-redacted
-`publication_state` projection is fixture-tested and the restarted MCP
-reported the Axolotl throwaway Reel as `unpublished` with all sixteen blocks
-intact and no token returned. The PDF documents publishing, but no private
-Reel render or download endpoint.
-Read-back via `reduct_reel_detail` is separate; a submitted ID is not proof
-of rendering. Page 41 lists strikethrough paths without a request/response
-schema; strikethroughs, redaction, and media download remain out of scope (see
-the Redesign record below), while highlight creation/edit
-(`reduct_add_recording_highlight`, `reduct_edit_recording_highlight`) and reel
-publication (`reduct_publish_reel`, live-verified 2026-10-14) implement the
-pinned v3 write contracts. See the media server README for the operation boundary.
 
 Transcript, layer, document-export, and rendered-Asset relationships share the
 media database. Deleting a transcript atomically removes its editable layers while
@@ -627,32 +569,6 @@ retrieval handoff. A lexical hit is not verified evidence.
 
 `educt_store_transcript`, `educt_list_transcripts`, `educt_get_transcript`, `educt_delete_transcript`, `educt_store_layer`, `educt_list_layers`, `educt_paragraph_pass`, `educt_speaker_pass`, `educt_correction_pass`, `educt_apply_corrections`, `educt_realign_transcript`, `educt_highlight_pass`, `educt_edl_from_highlights`, `educt_render_edl`, `educt_export`, and `educt_locate` implement the non-destructive transcript/layer/EDL model described above (`kask/mcp-servers/hkask-mcp-media/src/tools/educt.rs`).
 
-### Reduct cloud (`kask/mcp-servers/hkask-mcp-media/src/tools/reduct.rs`, 20 tools)
-
-The Reduct group implements the cloud transcript/reel surface described in the Transcript-as-timeline section above: read-only snapshots and transcripts, the fixture-pinned cloud composition/edit path, the upload/import paths, and the pinned write surface (highlight create/edit and reel publication, MF-1 + follow-up). Their registration must reconcile against the current generated and live-router inventory.
-
-| Tool | Description |
-|------|-------------|
-| `reduct_connection_status` | Check whether the Reduct API key reached the media server; never contacts Reduct and never returns the key |
-| `reduct_connection_probe` | Experimental read-only connection probe (GET the project endpoint) with the stored key |
-| `reduct_projects_snapshot` | List up to limit (1–100) Reduct project IDs and titles from the live project-read endpoint |
-| `reduct_recordings_snapshot` | List up to limit (1–100) recording IDs and titles in an existing project; provider-supplied subset only |
-| `reduct_reels_snapshot` | List up to limit (1–100) reel IDs and titles in an existing project; read-only, excludes private share tokens |
-| `reduct_reel_detail` | Read an existing reel's title, provider-native blocks and publication state (up to 4 MiB); removes all share-token fields; never publishes or renders |
-| `reduct_create_reel` | Create an empty Reduct cloud reel with a title in an existing project; returns its provider ID as submitted |
-| `reduct_add_reel_clip` | Add an ordered doc-range clip from a Reduct recording to an existing cloud reel; returns a submitted block ID |
-| `reduct_add_reel_title` | Add an ordered text title card to an existing cloud reel; duration in seconds; returns a submitted block ID |
-| `reduct_edit_reel_clip_range` | Edit the start/end seconds of an existing cloud doc-range block |
-| `reduct_create_recording` | Create a Reduct cloud recording in an existing project (POST title); returns the provider's recording ID |
-| `reduct_import_media` | Submit a public URL to Reduct to import video or audio into an existing recording |
-| `reduct_upload_gallery_media` | Upload an indexed gallery video/audio asset (up to 128 MiB) to an existing Reduct recording; never an arbitrary path |
-| `reduct_upload_local_media` | Upload a local audio/video file by absolute path to an existing Reduct recording, without gallery indexing; streams the opened file with its byte length rather than buffering it in memory |
-| `reduct_recording_highlights` | Read the provider's ID-keyed highlight JSON for one recording (up to 2 MiB); keeps labels, text and timing fields as returned |
-| `reduct_add_recording_highlight` | Create a highlight on a Reduct recording (v3 pages 23-24: POST start_time/end_time seconds, optional labels; a color tag like #orange selects a non-yellow color); returns a submitted highlight ID — MF-1 |
-| `reduct_edit_recording_highlight` | Partially edit an existing Reduct recording highlight (v3 pages 24-25: POST only the provided fields; a provided labels list OVERWRITES per the reference's warning); returns a submitted acknowledgement — MF-1 follow-up |
-| `reduct_publish_reel` | Set a Reduct reel's publication flag (v3 pages 33-34: POST the bool as the bare JSON body — the property-endpoint payload convention, live-probe-corrected 2026-10-07 and live-confirmed 2026-10-14; true asks the provider to create a share token, a publicly accessible link); the token VALUE is never returned — the response reports publish state and token presence — MF-1 / MF-7 |
-| `reduct_recording_status` | Get Reduct's JSON transcription/recording status for a known project and recording ID; read-only |
-| `reduct_recording_transcript` | Read an existing Reduct recording transcript in json or txt format (up to 8 MiB); provider structure is not re-timed or substituted |
 
 ### Support modules (no registered tools)
 

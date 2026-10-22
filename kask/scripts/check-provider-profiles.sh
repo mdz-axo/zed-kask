@@ -63,7 +63,6 @@ adopted="$(
         case "$k" in
           hkask_db_passphrase | hkask_smtp_password) continue ;;
           runpod) echo runpod ;;
-          reduct_api_key) echo reduct ;;
           *) echo "$k" ;;
         esac
       done
