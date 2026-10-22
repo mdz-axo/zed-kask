@@ -24,7 +24,7 @@
 //! lands centrally in `hkask-mcp-server`'s `ToolContext::
 //! annotate_response` hook — one point every tool already routes
 //! through (`execute_tool`), instead of a per-site wrap at each of the
-//! 91 tool returns.
+//! 89 tool returns.
 
 pub use hkask_bridge_ontology::dc_bibo::{DATASET, REPORT};
 pub use hkask_bridge_ontology::pko::{
@@ -98,8 +98,6 @@ pub(crate) fn tool_to_pko(tool_name: &str) -> Option<PkoConcept> {
         | "swarm_publish_agent"
         | "swarm_publish_app"
         | "swarm_workflow_check_local"
-        | "swarm_gate_readings"
-        | "swarm_select_agent_local"
         | "swarm_request_consent"
         | "swarm_authorize_session" => Some(STEP_VERIFICATION),
         // ── Issue occurrences (assistant surfaces over unexpected states) ─
@@ -293,8 +291,8 @@ mod tests {
         live.dedup();
         assert_eq!(
             live.len(),
-            91,
-            "the live execute_tool surface must be the 91 registered tools (the \
+            89,
+            "the live execute_tool surface must be the 89 registered tools (the \
              tool_surface pin count); found {}: {live:?}",
             live.len()
         );

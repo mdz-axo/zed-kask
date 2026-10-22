@@ -559,13 +559,8 @@ pub(crate) async fn complete_delegate(
     }
 }
 
-/// Execute the single-shot execute POST (`POST /api/agents/:id/execute` —
-/// fermi's envelope route), settling under the same settlement policy as
-/// `complete_delegate`. Distinct from the @mention route on purpose: the
-/// execute route is the only one that returns the trust envelope
-/// (`reliance`, `grounding`, `completeness`, `validation`, the enforced
-/// `document`), so a caller that needs the verdict delegates through here;
-/// a caller that needs workspace chat context keeps `complete_delegate`.
+/// Execute the single-shot POST, settling under the same policy as
+/// `complete_delegate`. The provider payload is returned without local grading.
 pub(crate) async fn complete_execute(
     client: &SwarmClient,
     consent: &ConsentStore,
@@ -803,13 +798,8 @@ mod tests {
         );
     }
 
-    /// The execute completion POSTs to the envelope route
-    /// (`/agents/:id/execute`) — not the @mention route — and returns the
-    /// trust envelope verbatim. A route typo here passes every count-based
-    /// assertion and fails only against live fermi, so the route is pinned
-    /// from the fixture's captured request line, and the envelope fields
-    /// (`reliance`, `document`, `grounding`, `completeness`) are asserted
-    /// to survive the completion untouched — the caller branches on them.
+    /// Pin the HTTP route and preserve provider metadata verbatim; this
+    /// tests forwarding and spend settlement, not the truth of provider labels.
     #[tokio::test]
     async fn complete_execute_posts_the_envelope_route_and_passes_it_through() {
         let dir = tempfile::tempdir().expect("dir");

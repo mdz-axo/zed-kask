@@ -191,12 +191,12 @@ pub(crate) async fn agent_memory_seed(
     }
 }
 
-/// Record a delegation performance annotation to the agent's prefix-scoped
+/// Record a delegation execution annotation to the agent's prefix-scoped
 /// semantic memory — the ACO stigmergic pheromone trail. After each
-/// `swarm_delegate_local`, the latency, task-success verdict, and response
+/// `swarm_delegate_local`, the latency, response-predicate result, and response
 /// text are written as `HMem` triples under `agent:<agent_id>:delegation`. The
 /// SENSE phase (or any caller) can then query these via
-/// `swarm_search_knowledge_local` to assess agent fitness across cascade
+/// `swarm_search_knowledge_local` to inspect execution observations across cascade
 /// invocations, and the condenser's extraction pipeline can be applied to the
 /// persisted responses as a second step.
 ///
@@ -205,7 +205,7 @@ pub(crate) async fn agent_memory_seed(
 /// logs, not silently dropped). The delegation result is still returned to the
 /// caller regardless of whether the annotation was written.
 ///
-/// The stigmergy trail retains the latency, task-success, and response
+/// The stigmergy trail retains the latency, response-predicate, and response
 /// annotations (the ACO pheromone signals + the dreaming substrate for
 /// the condenser).
 pub(crate) async fn record_delegation(
@@ -252,8 +252,8 @@ pub(crate) async fn record_delegation(
         );
     }
 
-    // Write the task-success annotation only when a verdict was supplied
-    // (null task_success = open task, no oracle — do not fabricate).
+    // The historical task_success key stores a response-predicate result only
+    // when evaluated; it is not task-truth certification.
     if let Some(pass) = task_success_pass {
         let mut h_mem = HMem::new(
             &entity,

@@ -122,7 +122,7 @@ fn deterministic_verdict(
         pass,
         score: None,
         detail: Some(format!(
-            "evaluator={}, spec_len={}, pass={}",
+            "response_predicate={}, spec_len={}, pass={}",
             evaluator,
             spec.len(),
             pass
@@ -660,7 +660,7 @@ impl SwarmServer {
             .await
             .map_err(map_local_swarm_error)?;
             // Evaluator contract (phase 4): a card-declared evaluator is the
-            // agent's own oracle. Run each; the verdict passes only if ALL
+            // agent's own response predicate. Run each; the verdict passes only if ALL
             // declared evaluators pass (they are conjunctive expectations
             // about the response, not alternatives). A bad evaluator spec
             // propagates as an error rather than stamping `pass: false` —
@@ -671,7 +671,7 @@ impl SwarmServer {
                 for (declared, evaluator) in agent.capabilities.evaluators.iter().zip(&evaluators) {
                     let passed = evaluator.evaluate(&result.response);
                     detail_parts.push(format!(
-                        "evaluator={}, spec_len={}, pass={}",
+                        "response_predicate={}, spec_len={}, pass={}",
                         declared.evaluator,
                         declared.spec.len(),
                         passed
@@ -1340,7 +1340,7 @@ impl SwarmServer {
                                     })?,
                                 )
                                 .await
-                                .map(|(result, _turn)| (result.response, result.reliance))
+                                .map(|(result, _turn)| result.response)
                                 .map_err(|error| {
                                     crate::workflow::WorkflowDelegateError::Delegate(
                                         error.to_string(),
@@ -1366,7 +1366,7 @@ impl SwarmServer {
                                 })?,
                             )
                             .await
-                            .map(|result| (result.response, result.reliance))
+                            .map(|result| result.response)
                             .map_err(|error| {
                                 crate::workflow::WorkflowDelegateError::Delegate(error.to_string())
                             })
@@ -1564,96 +1564,6 @@ impl SwarmServer {
                 "count": answer.reading.count(),
                 "fleet_size": cards.len(),
                 "reading": answer.reading.as_str(),
-            }))
-        })
-        .await
-    }
-
-    /// Rank candidate local agents for a slot — the measured competition,
-    /// the local analog of fermi's `select_agent`. Candidates narrow by
-    /// `accepts` label or `agent_type` (exactly one — a selection with no
-    /// narrowing enumerates the fleet, the anti-pattern the digest exists
-    /// to avoid). Ranking reads the measured per-agent stats: success rate
-    /// over recorded executions, then evidence volume, then latency. Every
-    /// row carries its own execution count, and the report flags when the
-    /// measurement is too thin for the order to be earned.
-    #[tool(
-        description = "Rank candidate local agents for a slot by measured performance. Narrow with exactly one of accepts_label (candidates whose accepts contains the label — the non-negotiable gate) or agent_type. Ranks by success rate over recorded executions, then evidence volume, then average latency; unmeasured candidates sort last. Every row carries its execution count, and ranking_meaningful is false when the best-measured candidate has fewer than 3 executions — the order is then not earned. Read-only."
-    )]
-    pub(crate) async fn swarm_select_agent_local(
-        &self,
-        parameters: Parameters<SelectAgentLocalRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "swarm_select_agent_local", async {
-            let req = parameters.0;
-            let label = req.accepts_label.as_deref().map(str::trim);
-            let agent_type = req.agent_type.as_deref().map(str::trim);
-            let narrowed = match (label, agent_type) {
-                (Some(label), None) if !label.is_empty() => {
-                    let label = label.to_string();
-                    self.local_registry
-                        .list()
-                        .into_iter()
-                        .filter(|card| card.accepts.iter().any(|accepts| accepts == &label))
-                        .collect::<Vec<_>>()
-                }
-                (None, Some(agent_type)) if !agent_type.is_empty() => {
-                    let agent_type = agent_type.to_string();
-                    self.local_registry
-                        .list()
-                        .into_iter()
-                        .filter(|card| card.agent_type == agent_type)
-                        .collect::<Vec<_>>()
-                }
-                (Some(_), Some(_)) => {
-                    return Err(McpToolError::invalid_argument(
-                        "provide exactly one of accepts_label or agent_type, not both".to_string(),
-                    ));
-                }
-                _ => {
-                    return Err(McpToolError::invalid_argument(
-                        "narrow the selection with accepts_label or agent_type — a selection \
-                         with no narrowing enumerates the fleet (use swarm_fleet_digest_local \
-                         for the shape, swarm_list_local_agents for the index)"
-                            .to_string(),
-                    ));
-                }
-            };
-            let limit = req.limit.unwrap_or(10).max(1);
-            let stats_store = self.agent_stats.clone();
-            let (ranked, meaningful) = crate::agent_stats::rank_for_slot(&narrowed, |agent_id| {
-                stats_store.stats(agent_id)
-            });
-            let total_candidates = ranked.len();
-            let unmeasured = ranked
-                .iter()
-                .filter(|row| row.measured.total_executions == 0)
-                .count();
-            let rows: Vec<serde_json::Value> = ranked
-                .into_iter()
-                .take(limit)
-                .map(|row| {
-                    serde_json::json!({
-                        "rank": row.rank,
-                        "agent_id": row.agent_id,
-                        "agent_type": row.agent_type,
-                        "measured": row.measured.to_json(),
-                    })
-                })
-                .collect();
-            Ok(serde_json::json!({
-                "candidates": rows,
-                "total_candidates": total_candidates,
-                "unmeasured": unmeasured,
-                "ranking_meaningful": meaningful,
-                "note": if meaningful {
-                    "Ranked by measured success rate over recorded executions, then evidence \
-                     volume, then average latency. Every row carries its own execution count."
-                } else {
-                    "The best-measured candidate has fewer than 3 recorded executions — \
-                     the order below is not earned. Run the candidates (swarm_delegate_local \
-                     or the eval harness) before trusting this ranking."
-                },
             }))
         })
         .await
@@ -3006,16 +2916,10 @@ impl SwarmServer {
             .unwrap_or_default())
     }
 
-    /// Deterministic task-success evaluator. The Curator (or a human) calls
-    /// this after `swarm_delegate_local` to stamp a `TaskSuccessVerdict` with
-    /// `provenance: DeterministicEvaluator` onto the delegation result. This is the
-    /// enforcement point for the C5/C6 fault-attribution loop: ORIENT's
-    /// highest-fidelity fault signal (rule 1: per-delegation task failure)
-    /// requires a deterministic `task_success` verdict — an LLM-judged verdict
-    /// is downgraded by ORIENT (Gap S3). No ABW calls —
-    /// evaluation is free.
+    /// Evaluate a predicate over response text. This checks only the supplied
+    /// string, not task accomplishment, factual accuracy, or external state.
     #[tool(
-        description = "Deterministic task-success evaluator for local swarm delegations. Takes an agent's response and a deterministic check (contains / not_contains / regex) and returns a TaskSuccessVerdict with provenance: DeterministicEvaluator. The Curator calls this after swarm_delegate_local to stamp task_success for the C5/C6 fault-attribution loop. No ABW calls — evaluation is free."
+        description = "Evaluate a response predicate (contains / not_contains / regex). Returns a TaskSuccessVerdict describing only whether the supplied response text matches. This is not certification of task accomplishment or factual truth. No inference or ABW calls."
     )]
     pub(crate) async fn swarm_evaluate_local(
         &self,
@@ -3033,15 +2937,13 @@ impl SwarmServer {
 
     /// Execute a swarm-intelligence plan: run each delegation, evaluate each
     /// result (when an evaluator is provided), and return the collected
-    /// `LocalDelegateResult` array with `task_success` verdicts stamped. This
-    /// closes the loop deterministically — the caller passes the plan, the
-    /// tool executes it and stamps verdicts, the caller passes the results
-    /// back to swarm-intelligence. Works in any context: chat, autonomous
-    /// pipeline, or API. With a swarm id, only roster members run, using
+    /// `LocalDelegateResult` array with response-predicate results under
+    /// `task_success`. No evaluator leaves board status Pending; a predicate
+    /// match is not certification of task accomplishment. With a swarm id, only roster members run, using
     /// prior durable turns; without an id, delegation stays standalone.
     /// Capped at 10 delegations (same as fanout). Each runs sequentially.
     #[tool(
-        description = "Execute a swarm-intelligence plan: run each delegation via the local runtime, evaluate each result with a deterministic check (when an evaluator is provided), and return the collected LocalDelegateResult array with task_success verdicts stamped. Capped at 10 delegations. Each delegation runs sequentially. With swarm_id, members use the durable ordered thread; without it, delegations remain standalone. The returned array is ready to feed back to swarm-intelligence as delegate_results. No consent token — local mode."
+        description = "Execute a swarm-intelligence plan: run each delegation via the local runtime, evaluate each result with a deterministic check (when an evaluator is provided), and return the collected LocalDelegateResult array with response-predicate results under task_success (not task-truth certification). No evaluator leaves the task board Pending. Capped at 10 delegations. Each delegation runs sequentially. With swarm_id, members use the durable ordered thread; without it, delegations remain standalone. The returned array is ready to feed back to swarm-intelligence as delegate_results. No consent token — local mode."
     )]
     pub(crate) async fn swarm_execute_plan_local(
         &self,
@@ -3217,39 +3119,6 @@ impl SwarmServer {
         .await
     }
 
-    /// Per-agent grounding-gate readings from the durable counters —
-    /// fermi's gate-account vocabulary, structurally adapted:
-    /// `strips_everything` (fault) is the mis-declared-contract signature —
-    /// the reading names the contract as the suspect, not the agent;
-    /// `never_asked` and `all_clean` (unknown) are inert/never-fired, never
-    /// a pass. Aggregate pattern visibility only (operator ruling
-    /// 2026-10-10): no per-decision rows, no review path — the algedonic
-    /// gemba reads the readings.
-    #[tool(
-        description = "Per-agent grounding-gate readings from the durable counters: reliance-token counts, stripped/owed totals, and the classification. strips_everything (fault) names a mis-declared contract as the suspect, not the agent; never_asked/all_clean (unknown) are never a pass. Filter by agent_id."
-    )]
-    pub(crate) async fn swarm_gate_readings(
-        &self,
-        parameters: Parameters<GateReadingsRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "swarm_gate_readings", async {
-            let req = parameters.0;
-            let readings = self
-                .gate_store
-                .readings(req.agent_id.as_deref())
-                .await
-                .map_err(map_local_swarm_error)?;
-            Ok(serde_json::json!({
-                "readings": readings,
-                "note": "Aggregate pattern visibility only — per-decision rows and the \
-                         review path are deliberately not ported (operator ruling \
-                         2026-10-10). `strips_everything` names the contract as the \
-                         suspect, not the agent.",
-            }))
-        })
-        .await
-    }
-
     /// Regression-test a swarm composition across a dataset of cases. Each
     /// case is a plan (list of delegations with evaluators). The suite runs
     /// each case via `swarm_execute_plan_local`, aggregates pass/fail, and
@@ -3258,7 +3127,7 @@ impl SwarmServer {
     /// loop — the suite is measure-and-report, not measure-improve-remeasure.
     /// Capped at 10 cases.
     #[tool(
-        description = "Swarm eval suite: run a dataset of test cases against a swarm composition, aggregate pass/fail. Each case is a plan with delegations + evaluators. A case passes when all delegations pass. No improve-then-re-evaluate loop — measure-and-report only."
+        description = "Swarm eval suite: run a dataset of test cases against a swarm composition, aggregate pass/fail. Each case is a plan with delegations + response predicates. A case passes only when every delegation has a passing predicate; missing predicates leave it pending. This does not certify task truth. No improve-then-re-evaluate loop — measure-and-report only."
     )]
     pub(crate) async fn swarm_eval_suite_local(
         &self,
@@ -3302,6 +3171,7 @@ impl SwarmServer {
             let mut case_results = Vec::with_capacity(req.cases.len());
             let mut passed = 0usize;
             let mut failed = 0usize;
+            let mut pending = 0usize;
             let mut total_tokens = 0i64;
 
             for case in &req.cases {
@@ -3365,7 +3235,7 @@ impl SwarmServer {
                             delegation_results.push(serde_json::json!({
                                 "agent_name": entry.agent_name,
                                 "ok": true,
-                                "pass": r.task_success.as_ref().map(|t| t.pass).unwrap_or(true),
+                                "pass": r.task_success.as_ref().map(|t| t.pass),
                                 "response_len": r.response.len(),
                                 "tokens_used": r.tokens_used,
                                 "memory": r.memory,
@@ -3384,11 +3254,18 @@ impl SwarmServer {
                     }
                 }
 
-                if case_pass {
-                    passed += 1;
-                } else {
+                let case_pass = if !case_pass {
                     failed += 1;
-                }
+                    Some(false)
+                } else if !case.delegations.is_empty()
+                    && case.delegations.iter().all(|entry| entry.evaluator.is_some())
+                {
+                    passed += 1;
+                    Some(true)
+                } else {
+                    pending += 1;
+                    None
+                };
                 total_tokens += case_tokens;
 
                 case_results.push(serde_json::json!({
@@ -3418,10 +3295,11 @@ impl SwarmServer {
                 "cases": case_results,
                 "passed": passed,
                 "failed": failed,
+                "pending": pending,
                 "total": req.cases.len(),
                 "pass_rate": pass_rate,
                 "total_tokens": total_tokens,
-                "status": if failed == 0 { "PASSED" } else { "FAILED" },
+                "status": if failed > 0 { "FAILED" } else if pending > 0 { "PENDING" } else { "PASSED" },
                 "task_board": task_summary,
             }))
         })
@@ -4097,18 +3975,59 @@ mod tests {
         assert!(!result.response.is_empty());
     }
 
-    /// An inference port that returns a fixed JSON document — the fixture
-    /// for grounding wiring tests (a contracted agent's response shape).
-    struct JsonInference {
-        text: String,
-    }
+    struct FixedDocument;
 
     crate::test_support::inference_generate! {
-        JsonInference,
+        FixedDocument,
         generate(self, _prompt, _parameters, _tools): {
-            let text = self.text.clone();
-            Box::pin(async move { Ok(mock_result(text)) })
+            Box::pin(async { Ok(mock_result(r#"{"price":42}"#.into())) })
         }
+    }
+
+    #[tokio::test]
+    async fn delegate_does_not_return_trust_labels_but_keeps_schema_checks() {
+        let mut agent = mock_agent_card("contracted", "Return JSON.");
+        agent.capabilities.output_contract = Some(serde_json::json!({
+            "schema": {"type":"object", "required":["price"],
+                       "properties":{"price":{"type":"number"}}},
+            "grounding": {"price":{"status":"sourced"}}
+        }));
+        let runtime = crate::local_runtime::LocalSwarmRuntime::new_for_test(
+            Arc::new(FixedDocument),
+            Arc::new(NoopDispatch),
+            String::new(),
+        );
+        let result = runtime
+            .delegate(
+                &agent,
+                "price?",
+                crate::local_runtime::DispatchStamp::new("test", "test").expect("test stamp"),
+            )
+            .await
+            .expect("injected delegation runs");
+        assert_eq!(result.response, r#"{"price":42}"#);
+        assert_eq!(
+            result
+                .output_contract_check
+                .as_ref()
+                .expect("schema checked")["status"],
+            "valid"
+        );
+        for wire in [
+            serde_json::to_value(&result).expect("serialize result"),
+            result.to_result_json(true),
+        ] {
+            for field in ["grounding", "completeness", "reliance"] {
+                assert!(
+                    wire.get(field).is_none(),
+                    "unsupported label {field} must not travel"
+                );
+            }
+        }
+        assert!(
+            result.task_success.is_none(),
+            "completion is not evaluation"
+        );
     }
 
     /// Pin the configured model through the actual local delegation path,
@@ -4217,141 +4136,6 @@ mod tests {
                 Some("Configured/swarm-model".to_string()),
                 Some("Explicit/card-model".to_string())
             ],
-        );
-    }
-
-    /// The grounding gate is wired into the shared delegate path: a
-    /// contracted agent's delegation result carries the grounding report,
-    /// the completeness report, and the one-token reliance verdict — stamped
-    /// by the runtime, not by any tool layer. This is the wiring test the
-    /// `.rules` capability trap demands: the pure functions are unit-tested
-    /// in `grounding.rs`; this proves the runtime path actually calls them.
-    #[tokio::test]
-    async fn delegate_stamps_grounding_completeness_and_reliance() {
-        use crate::local_runtime::LocalSwarmRuntime;
-        use std::sync::Arc;
-
-        // The agent declares `price` sourced and `outlook` inferred. The
-        // mock returns a document with a price — but no tool ran, so the
-        // price has no possible source: stripped, reliance `amended`.
-        let mut agent = mock_agent_card("contracted", "You return JSON.");
-        agent.capabilities.output_contract = Some(serde_json::json!({
-            "grounding": {
-                "price": {"status": "sourced"},
-                "outlook": {"status": "inferred"}
-            }
-        }));
-        let inference: Arc<dyn hkask_types::InferencePort> = Arc::new(JsonInference {
-            text: r#"{"price": 42.50, "outlook": "bullish"}"#.to_string(),
-        });
-        let dispatch: Arc<dyn hkask_types::ToolDispatchPort> = Arc::new(NoopDispatch);
-        let runtime = LocalSwarmRuntime::new_for_test(inference, dispatch, String::new());
-
-        let result = runtime
-            .delegate(
-                &agent,
-                "analyze",
-                crate::local_runtime::DispatchStamp::new("test", "test").expect("test stamp"),
-            )
-            .await
-            .expect("delegation succeeds");
-
-        // The one-token verdict is present and says what happened.
-        let reliance = result.reliance.as_ref().expect("reliance stamped");
-        assert_eq!(
-            reliance.get("status").and_then(serde_json::Value::as_str),
-            Some("amended"),
-            "a sourced value with no tool call is stripped — amended"
-        );
-        assert!(reliance.get("why").is_some(), "the token carries its gloss");
-
-        // The grounding report names the stripped path and carries the
-        // enforced document (the price nulled, the outlook kept).
-        let grounding = result.grounding.as_ref().expect("grounding stamped");
-        let stripped = grounding
-            .get("stripped")
-            .and_then(serde_json::Value::as_array)
-            .expect("stripped list");
-        assert_eq!(stripped.len(), 1);
-        let document = grounding.get("document").expect("enforced document");
-        assert!(
-            document
-                .get("price")
-                .is_some_and(serde_json::Value::is_null)
-        );
-        assert_eq!(
-            document.get("outlook").and_then(serde_json::Value::as_str),
-            Some("bullish")
-        );
-
-        // The completeness report is present (nothing owed here — both
-        // contracted fields were filled).
-        let completeness = result.completeness.as_ref().expect("completeness stamped");
-        assert_eq!(
-            completeness
-                .get("asked_for")
-                .and_then(serde_json::Value::as_u64),
-            Some(2)
-        );
-
-        // The raw response is retained verbatim — the evidence of what the
-        // model claimed (fermi keeps episodes.response_text raw on purpose).
-        assert!(result.response.contains("42.50"));
-    }
-
-    /// An uncontracted agent still gets a verdict: `unchecked` for a
-    /// document, `unusable` for prose — never silence. A caller must be
-    /// able to distinguish "not checked" from "silently skipped".
-    #[tokio::test]
-    async fn delegate_stamps_reliance_even_without_a_contract() {
-        use crate::local_runtime::LocalSwarmRuntime;
-        use std::sync::Arc;
-
-        let agent = mock_agent_card("plain", "You return JSON.");
-        let inference: Arc<dyn hkask_types::InferencePort> = Arc::new(JsonInference {
-            text: r#"{"summary": "hello"}"#.to_string(),
-        });
-        let dispatch: Arc<dyn hkask_types::ToolDispatchPort> = Arc::new(NoopDispatch);
-        let runtime = LocalSwarmRuntime::new_for_test(inference, dispatch, String::new());
-        let result = runtime
-            .delegate(
-                &agent,
-                "summarize",
-                crate::local_runtime::DispatchStamp::new("test", "test").expect("test stamp"),
-            )
-            .await
-            .expect("ok");
-        assert_eq!(
-            result
-                .reliance
-                .as_ref()
-                .and_then(|reliance| reliance.get("status"))
-                .and_then(serde_json::Value::as_str),
-            Some("unchecked"),
-            "a document with no contract is unchecked — not a pass, not silence"
-        );
-
-        // Prose-only: unusable.
-        let prose_inference: Arc<dyn hkask_types::InferencePort> = Arc::new(JsonInference {
-            text: "just prose, no document".to_string(),
-        });
-        let prose_runtime =
-            LocalSwarmRuntime::new_for_test(prose_inference, Arc::new(NoopDispatch), String::new());
-        let prose_result = prose_runtime
-            .delegate(
-                &agent,
-                "summarize",
-                crate::local_runtime::DispatchStamp::new("test", "test").expect("test stamp"),
-            )
-            .await
-            .expect("ok");
-        assert_eq!(
-            prose_result
-                .reliance
-                .as_ref()
-                .and_then(|reliance| reliance.get("status"))
-                .and_then(serde_json::Value::as_str),
-            Some("unusable")
         );
     }
 }

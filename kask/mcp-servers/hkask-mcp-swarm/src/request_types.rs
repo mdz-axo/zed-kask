@@ -527,21 +527,6 @@ pub struct WhoAnswersLocalRequest {
     pub label: String,
 }
 
-/// Rank candidate local agents for a slot — the measured competition.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct SelectAgentLocalRequest {
-    /// The `accepts` label the slot demands. Candidates are local agents
-    /// whose `accepts` contains this label — the non-negotiable gate.
-    pub accepts_label: Option<String>,
-    /// Alternative narrowing: the `agent_type` the slot demands. Provide
-    /// exactly one of `accepts_label` / `agent_type` — a selection with no
-    /// narrowing enumerates the fleet, which is the anti-pattern this tool
-    /// exists to avoid.
-    pub agent_type: Option<String>,
-    /// Max candidates to return. Default 10.
-    pub limit: Option<usize>,
-}
-
 /// Remove a local agent card.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct RemoveLocalRequest {
@@ -1141,12 +1126,8 @@ pub struct AiAssistRequest {
     pub has_valence: bool,
 }
 
-/// Request for `swarm_evaluate_local` — a deterministic task-success evaluator.
-/// The Curator (or a human) calls this after a `swarm_delegate_local` to stamp
-/// a `TaskSuccessVerdict` with `provenance: DeterministicEvaluator` onto the delegation
-/// result. This is the enforcement point for the C5/C6 fault-attribution loop:
-/// without it, `task_success` is always `None` and ORIENT's highest-fidelity
-/// fault signal is inert.
+/// Request for a deterministic response-predicate check. Its result does not
+/// establish task accomplishment, factual truth, or evaluator independence.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct EvaluateLocalRequest {
     /// The agent's response text (the `response` field from
@@ -1172,7 +1153,7 @@ pub struct PlanDelegation {
     pub task: String,
     /// Optional deterministic evaluator. When provided, the tool runs the
     /// check after the delegation and stamps `task_success` onto the result.
-    /// When absent, `task_success` is left null (open task, no oracle).
+    /// When absent, `task_success` is omitted and the board remains Pending.
     pub evaluator: Option<PlanEvaluator>,
     /// Optional stable task identifier for the task board. When omitted,
     /// a synthetic id is derived from (agent_name, task) so the same task
@@ -1193,10 +1174,8 @@ pub struct PlanEvaluator {
 
 /// Request for `swarm_execute_plan_local` — runs a swarm-intelligence plan
 /// (a list of delegations), evaluates each result, and returns the collected
-/// `LocalDelegateResult` array ready to feed back to swarm-intelligence. This
-/// closes the loop deterministically: the caller passes the plan, the tool
-/// executes it and stamps verdicts, the caller passes the results back. Works
-/// in any context — chat, autonomous pipeline, or API.
+/// `LocalDelegateResult` array ready to feed back to swarm-intelligence. These
+/// response-predicate results do not certify task accomplishment.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ExecutePlanLocalRequest {
     /// The delegations to execute, in order. Capped at 10 (same as fanout).
@@ -1574,16 +1553,4 @@ pub struct WriteWorkspaceFileRequest {
     pub path: String,
     /// File content to write.
     pub content: String,
-}
-
-// ── Gate-readings tool (fermi gate-account absorption) ─────────────────────
-
-/// `swarm_gate_readings` — per-agent grounding-gate readings from the
-/// durable counters. Aggregate pattern visibility only (operator ruling
-/// 2026-10-10): no per-decision rows, no review path.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct GateReadingsRequest {
-    /// Filter to one agent's reading (its local agent id). Omit for all
-    /// agents.
-    pub agent_id: Option<String>,
 }

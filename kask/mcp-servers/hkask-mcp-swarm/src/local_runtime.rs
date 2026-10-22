@@ -66,11 +66,6 @@ pub struct LazyLocalSwarmRuntime {
     /// runtime's result path). Passed through to the runtime so recording
     /// and surfacing see one store.
     agent_stats: std::sync::Arc<crate::agent_stats::AgentStatsStore>,
-    /// The grounding-gate counter store — same one-store-two-handles
-    /// shape as the stats store: the runtime counts at the grade sites,
-    /// the gate readings tool surfaces them (fermi's gate-account
-    /// readings analog).
-    gate_store: std::sync::Arc<crate::gate_store::GateCounterStore>,
     default_agent_model: String,
     inner: tokio::sync::OnceCell<LocalSwarmRuntime>,
 }
@@ -146,7 +141,6 @@ impl LazyLocalSwarmRuntime {
     pub(crate) fn with_runtime(runtime: LocalSwarmRuntime) -> Self {
         Self {
             agent_stats: runtime.stats.clone(),
-            gate_store: runtime.gate_store.clone(),
             default_agent_model: String::new(),
             inner: tokio::sync::OnceCell::new_with(Some(runtime)),
         }
@@ -156,12 +150,10 @@ impl LazyLocalSwarmRuntime {
     /// on first call to `get_or_init`.
     pub fn lazy(
         agent_stats: std::sync::Arc<crate::agent_stats::AgentStatsStore>,
-        gate_store: std::sync::Arc<crate::gate_store::GateCounterStore>,
         default_agent_model: String,
     ) -> Self {
         Self {
             agent_stats,
-            gate_store,
             default_agent_model,
             inner: tokio::sync::OnceCell::new(),
         }
@@ -173,12 +165,8 @@ impl LazyLocalSwarmRuntime {
     pub async fn get_or_init(&self) -> Result<&LocalSwarmRuntime, LocalSwarmError> {
         self.inner
             .get_or_try_init(|| async {
-                LocalSwarmRuntime::new(
-                    self.agent_stats.clone(),
-                    self.gate_store.clone(),
-                    self.default_agent_model.clone(),
-                )
-                .await
+                LocalSwarmRuntime::new(self.agent_stats.clone(), self.default_agent_model.clone())
+                    .await
             })
             .await
     }
@@ -205,10 +193,6 @@ pub struct LocalSwarmRuntime {
     /// `measured_exec_stats`. Recorded at the result path (single-writer by
     /// construction) and surfaced by the local agent tools.
     stats: std::sync::Arc<crate::agent_stats::AgentStatsStore>,
-    /// The grounding-gate counter store — every `grade()` outcome is
-    /// counted here (fermi's gate-account readings), so per-agent gate
-    /// readings survive the delegation result.
-    gate_store: std::sync::Arc<crate::gate_store::GateCounterStore>,
 }
 
 impl LocalSwarmRuntime {
@@ -216,7 +200,6 @@ impl LocalSwarmRuntime {
     /// ports once at construction.
     pub(crate) async fn new(
         stats: std::sync::Arc<crate::agent_stats::AgentStatsStore>,
-        gate_store: std::sync::Arc<crate::gate_store::GateCounterStore>,
         default_agent_model: String,
     ) -> Result<Self, LocalSwarmError> {
         // Resolve the agent-run ports once at construction: inference and
@@ -235,7 +218,6 @@ impl LocalSwarmRuntime {
             executor,
             capture_drops: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             stats,
-            gate_store,
         })
     }
 
@@ -261,18 +243,10 @@ impl LocalSwarmRuntime {
         let stats = std::sync::Arc::new(crate::agent_stats::AgentStatsStore::load(
             &stats_dir.to_string_lossy(),
         ));
-        // A throwaway gate-counter store — same rule as the stats store:
-        // tests exercise the delegate logic, not counter persistence (that
-        // is unit-tested on `GateCounterStore` directly).
-        let gate_store = std::sync::Arc::new(crate::gate_store::GateCounterStore::new(
-            stats_dir.join("gate.db").to_string_lossy().into_owned(),
-            "test-passphrase".into(),
-        ));
         Self {
             executor,
             capture_drops: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             stats,
-            gate_store,
         }
     }
 
@@ -356,36 +330,6 @@ impl LocalSwarmRuntime {
         self.delegate_with_history(agent, task, &[], dispatch).await
     }
 
-    /// Count one grounding-gate decision in the durable counters (fermi's
-    /// gate-account analog — every grade, including `unchecked` and
-    /// `unusable`, which are the opportunity counts behind the
-    /// `never_asked` reading). Non-fatal by contract, never silent: a
-    /// failed write warns and the per-agent readings undercount — the warn
-    /// names both.
-    async fn record_gate_counter(
-        &self,
-        agent_id: &str,
-        graded: &crate::grounding::GroundingOutcome,
-    ) {
-        if let Err(error) = self
-            .gate_store
-            .bump(
-                agent_id,
-                crate::grounding::reliance_token(graded),
-                crate::grounding::stripped_count(graded),
-                crate::grounding::owed_count(graded),
-            )
-            .await
-        {
-            tracing::warn!(
-                target: "hkask.mcp.swarm",
-                agent_id = %agent_id,
-                error = %error,
-                "gate counter write failed — per-agent gate readings will undercount"
-            );
-        }
-    }
-
     pub(crate) async fn delegate_with_history(
         &self,
         agent: &LocalAgentCard,
@@ -433,22 +377,6 @@ impl LocalSwarmRuntime {
         );
         result.input_contract_check = input_contract_check;
         result.output_contract_check = output_contract_check;
-        // Grounding + completeness + reliance — stamped in the same shared
-        // path, from the verdicts just computed (one producer: reliance is
-        // derived here, every consumer reads it). Always stamped, even for
-        // prose-only responses and contract-less agents, so a caller never
-        // has to distinguish "not checked" from "silently skipped" — the
-        // token says which (`unusable` / `unchecked`).
-        let graded = crate::grounding::grade(
-            agent.capabilities.output_contract.as_ref(),
-            &result.response,
-            &result.tool_calls,
-            result.output_contract_check.as_ref(),
-        );
-        self.record_gate_counter(&agent.agent_id, &graded).await;
-        result.grounding = Some(graded.report);
-        result.completeness = Some(graded.completeness);
-        result.reliance = Some(graded.reliance);
         Ok(result)
     }
 
@@ -468,7 +396,7 @@ impl LocalSwarmRuntime {
         // point where tokens and latency are both known (fermi's
         // `measured_exec_stats` analog). Non-fatal by contract: a failed
         // flush is warned inside the store and never fails the delegation.
-        self.stats.record_success(agent_id, tokens, latency_ms);
+        self.stats.record_completed(agent_id, tokens, latency_ms);
 
         LocalDelegateResult {
             agent_id: agent_id.to_string(),
@@ -483,9 +411,6 @@ impl LocalSwarmRuntime {
             reasoning_steps: raw.reasoning_steps,
             input_contract_check: None,
             output_contract_check: None,
-            grounding: None,
-            completeness: None,
-            reliance: None,
             memory: None,
             dispatch: None,
         }
@@ -605,18 +530,6 @@ impl LocalSwarmRuntime {
             );
             built.input_contract_check = input_contract_check;
             built.output_contract_check = output_contract_check;
-            // Grounding + completeness + reliance — batch parity with
-            // `delegate` (the same one-producer stamping point).
-            let graded = crate::grounding::grade(
-                contracts[index].1.as_ref(),
-                &built.response,
-                &built.tool_calls,
-                built.output_contract_check.as_ref(),
-            );
-            self.record_gate_counter(agent_id, &graded).await;
-            built.grounding = Some(graded.report);
-            built.completeness = Some(graded.completeness);
-            built.reliance = Some(graded.reliance);
             results.push(Ok(built));
         }
         results
@@ -812,15 +725,10 @@ pub struct LocalDelegateResult {
     /// `server/tool` name + ok/error). Empty when the agent declares no
     /// `mcp_tools` or the model made no calls.
     pub tool_calls: Vec<serde_json::Value>,
-    /// Optional deterministic task-success verdict, populated by the executor
-    /// (the Kask Curator or a human in the loop) after running a declared
-    /// evaluator against `response`. The swarm MCP server cannot judge task
-    /// success — `delegate` returns `None` here — so the executor stamps this
-    /// before feeding `delegate_results` back to swarm-intelligence. ORIENT
-    /// (C5/C6 fault attribution) consumes it to distinguish "executed but
-    /// failed the task" from "crashed" (audit Loop B fidelity fix,
-    /// 2026-08-03). Skipped from serialization when absent, so the server's
-    /// response shape is unchanged for callers that ignore it.
+    /// Optional response-predicate result under the existing `task_success`
+    /// key. A contains/regex match describes the response, not whether the
+    /// task was accomplished or its claims are true. Absent when no evaluator
+    /// ran; execution completion alone does not populate it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_success: Option<TaskSuccessVerdict>,
     /// Rung 4 (Binding): whether the request matched at least one declared
@@ -861,29 +769,6 @@ pub struct LocalDelegateResult {
     /// contradicted its own declared type), not a failed delegation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_contract_check: Option<serde_json::Value>,
-    /// Grounding report — the local analog of fermi's `grounding_trust`
-    /// enforce: contracted fields with no possible source are nulled in the
-    /// enforced `document` carried here, the stripped paths are named, and
-    /// every contracted block is stamped with a closed-vocabulary
-    /// provenance. The raw `response` is kept verbatim — it is the evidence
-    /// of what the model claimed. Always stamped by `delegate` (a prose-only
-    /// response reports `reliance: unusable`, not silence).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub grounding: Option<serde_json::Value>,
-    /// Completeness report — the local analog of fermi's `Gate::Completeness`:
-    /// which contracted fields the agent owed (a named tool never called, or
-    /// commissioned work absent), separated from `no_data` (a tool was asked
-    /// and had nothing — nobody's fault) and `excused` (the contract requires
-    /// null). The count is a floor, not a total.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub completeness: Option<serde_json::Value>,
-    /// The one-token reliance verdict — `{status, why}` — derived from the
-    /// grounding, completeness, and schema verdicts already computed on this
-    /// result (never recomputed by consumers): `unusable | malformed |
-    /// amended | incomplete | unchecked | clean`. The caller's only question
-    /// — can I use this answer? — answered by one field.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reliance: Option<serde_json::Value>,
     /// Durable narrative-memory accounting. Memory is an enhancement: any
     /// degradation is reported here but never changes delegation success.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -924,20 +809,6 @@ impl LocalDelegateResult {
                 entry["reasoning_steps"] =
                     serde_json::to_value(&self.reasoning_steps).unwrap_or(serde_json::Value::Null);
             }
-        }
-        // The verification verdicts travel on every entry shape — a
-        // pipeline step's caller has the same "can I use this answer?"
-        // question as a single delegation's caller, and re-deriving it from
-        // the sub-blocks is the four-vocabularies disease the token exists
-        // to remove.
-        if let Some(grounding) = &self.grounding {
-            entry["grounding"] = grounding.clone();
-        }
-        if let Some(completeness) = &self.completeness {
-            entry["completeness"] = completeness.clone();
-        }
-        if let Some(reliance) = &self.reliance {
-            entry["reliance"] = reliance.clone();
         }
         if let Some(memory) = &self.memory {
             entry["memory"] = serde_json::to_value(memory).unwrap_or(serde_json::Value::Null);
@@ -995,14 +866,12 @@ mod capture_payload_tests {
 /// canonical definition and trust-level documentation.
 pub use hkask_event_store::VerdictSource;
 
-/// A deterministic task-success verdict stamped onto a [`LocalDelegateResult`]
-/// by the executor (the Kask Curator or a human in the loop) after running a
-/// declared evaluator against the delegation `response`. The server returns
-/// `None`; the executor populates this. ORIENT consumes it for C5/C6 fault
-/// attribution (audit Loop B fidelity fix, 2026-08-03).
+/// A response-predicate result attached to a [`LocalDelegateResult`].
+/// The historical type and wire key do not certify task accomplishment:
+/// deterministic evaluators check only the supplied response text.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct TaskSuccessVerdict {
-    /// Whether the delegation's output solved the task per the evaluator.
+    /// Whether the response satisfied the supplied predicate.
     pub pass: bool,
     /// Optional graded score in `[0.0, 1.0]` for evaluators that produce one;
     /// when absent, `pass` is the binary signal. ORIENT maps
@@ -1011,9 +880,8 @@ pub struct TaskSuccessVerdict {
     /// Evaluator-readable detail (which check failed, the diff, the exit
     /// code, etc.).
     pub detail: Option<String>,
-    /// How the verdict was produced. `DeterministicEvaluator` is the
-    /// only automated source trusted for the C0 `s` axis; `LlmJudged`
-    /// triggers an ORIENT warning (Gap S3). See `VerdictSource` for the
+    /// How the result was produced. `DeterministicEvaluator` records a
+    /// response check, not independent verification. See `VerdictSource` for the
     /// full trust-level table.
     pub provenance: VerdictSource,
 }

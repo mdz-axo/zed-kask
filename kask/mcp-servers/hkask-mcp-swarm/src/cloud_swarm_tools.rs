@@ -488,27 +488,11 @@ impl SwarmServer {
         .await
     }
 
-    /// Execute an ABW agent single-shot via the execute route — the envelope
-    /// route. fermi's `POST /api/agents/:id/execute` is the only surface that
-    /// returns the trust envelope: `reliance` (one token for "can I use this
-    /// answer?"), the enforced `document`, `grounding.stripped` (what was
-    /// removed and why), `completeness.owed` (what the agent skipped), and
-    /// `validation`. The @mention path (`swarm_delegate`) returns raw chat
-    /// content and none of these — use this tool when the caller needs to
-    /// know whether the answer was amended; use `swarm_delegate` when the
-    /// task belongs in the workspace chat (context, other agents, the run
-    /// log).
-    ///
-    /// The pre-envelope body of this tool extracted the narrative
-    /// (`metadata.reasoning`) and forwarded four scalar fields — the exact
-    /// "grade then discard the verdict" shape fermi's
-    /// `WHAT_THE_PLATFORM_CAN_REFUSE` §1 documents one layer out: fermi
-    /// amended the document and this wrapper handed back prose with no
-    /// notice of what was stripped. It also bypassed the spend gate — the
-    /// route charges the caller's wallet, so the consent gate applies
-    /// exactly as it does to `swarm_delegate`.
+    /// Execute an ABW agent single-shot and forward the provider response
+    /// after sanitization. Provider-supplied labels are not local verification
+    /// of factual accuracy or task accomplishment. Spend remains consent-gated.
     #[tool(
-        description = "Execute an ABW agent single-shot via the execute route (POST /api/agents/:id/execute) and return the trust envelope: reliance.status (unusable|malformed|amended|incomplete|unchecked|clean — one token for 'can I use this answer?', derived by fermi so the caller does not re-derive it), the enforced document, grounding.stripped (fields removed for having no possible source), completeness.owed (fields the agent skipped), validation.status, metadata.reasoning (amended prose), credits_charged. Spends credits — requires a consent_token from swarm_request_consent (action 'delegate', target = agent_name) or a session token."
+        description = "Execute an ABW agent single-shot (POST /api/agents/:id/execute) and return the sanitized provider response. Any provider-supplied validation or provenance labels are forwarded, not independently verified by this server. Spends credits — requires a consent_token from swarm_request_consent (action 'delegate', target = agent_name) or a session token."
     )]
     pub(crate) async fn swarm_execute_agent(
         &self,
@@ -541,12 +525,7 @@ impl SwarmServer {
                 &req.query,
             )
             .await?;
-            // The envelope is passed through after sanitization — never
-            // re-derived or flattened. fermi computed `reliance` from the
-            // grounding/completeness/validation verdicts so the caller does
-            // not have to (one producer of the verdict); filtering or
-            // recomposing it here would be a second producer that can
-            // disagree with the blocks it summarises.
+            // Preserve provider metadata as provider assertions, not local verdicts.
             let sanitized = sanitize_workspace_payload(data);
             Ok(self
                 .client

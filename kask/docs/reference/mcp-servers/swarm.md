@@ -51,22 +51,10 @@ the existing implementation, not a shell-based oracle.[^response-regex]
 [^response-regex]: Rust regex contributors. *regex crate: performance and untrusted input*. https://docs.rs/regex/latest/regex/#untrusted-input. Parsing is effect-free; semantic validity and held-out acceptance remain operator responsibilities.
 
 **Crate:** `kask/mcp-servers/hkask-mcp-swarm`
-**Tools:** 91 — 48 ABW cloud + 43 non-cloud, **both sets always exposed in either mode**.
-Count is pinned end-to-end by `tool_surface_is_exactly_91_registered_tools`
-(`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:985-990`); the canonical list is build-script-generated:
-`kask/mcp-servers/hkask-mcp-swarm/build.rs` scans router-annotated `swarm_*` functions
-(`kask/mcp-servers/hkask-mcp-swarm/build.rs:34-81`) and emits `TOOL_NAMES`, kept in agreement with the live router by
-`tool_names_const_matches_registered_surface`. The 91 functions split into 48 cloud
-(`cloud_swarm_tools.rs`), 33 local plus 3 swarm-scoped thread tools (`local_tools.rs`),
-3 A2A (`a2a_tools.rs`), and 4 local knowledge (`knowledge_tools.rs`);
-`swarm_fleet_digest_local` and `swarm_select_agent_local` were added 2026-09-09
-with the fermi absorption (grounding gate, reliance verdict, fleet digest,
-agent selection; commit `256f87307c`); `swarm_gate_readings` was added 2026-10-10
-with the fermi gate-account absorption (per-agent grounding-gate readings from
-the durable counters — aggregate pattern visibility only, per the operator's
-2026-10-10 ruling; the per-decision ledger and review path are deliberately
-not ported); `swarm_update_agent` and
-`swarm_get_local_agent` were added 2026-09-03
+**Tools:** 89 — 48 ABW cloud + 41 non-cloud, **both sets always exposed in either mode**.
+The live router is pinned by `tool_surface_is_exactly_89_registered_tools`;
+`TOOL_NAMES` is generated from router-annotated functions in `build.rs`.
+The non-cloud partition is 31 local + 3 swarm-scoped thread + 4 knowledge + 3 A2A tools.
 **Modes:** `kask.swarm.mode` selects the substrate — `abw` (default, ABW REST) or `local` (zed-kask's local substrate)
 **ABW auth:** ABW Pro-tier API key (`Authorization: Bearer`), injected as `HKASK_ABW_API_KEY`
 **Local auth:** none — local agents run on the operator's own substrate; there is no budget and no consent token
@@ -100,13 +88,13 @@ substrate. ABW and local tools both fit the same three surfaces.[^reynolds-swarm
 | **Authoring**   | Create new agents          | `swarm_generate_prompt`, `swarm_generate_ontology`, `swarm_create_agent`, `swarm_ontology_templates`, `swarm_fork_agent`                                                                                                                                                                                                                      | `swarm_create_local_agent`, `swarm_reconfigure_local_agent`, `swarm_generate_prompt_local`, `swarm_generate_ontology_local`, `swarm_clone_to_local`, `swarm_ai_assist`                                                                   |
 | **Composition** | Group agents into teams    | `swarm_create_swarm`, `swarm_create_app`, `swarm_xaman`, `swarm_fanout`, `swarm_publish_agent`, `swarm_publish_checks`                                                                                                                                                                                                                        | `swarm_create_local_swarm`, `swarm_list_local_swarms`, `swarm_get_local_swarm`, `swarm_delete_local_swarm`, `swarm_add_agent_local`, `swarm_remove_agent_local`, `swarm_list_local_agents`, `swarm_fanout_local`, `swarm_pipeline_local` |
 | **Operation**   | Browse, run, spend, manage | `swarm_list_agents`, `swarm_get_agent`, `swarm_list_apps`, `swarm_get_swarm`, `swarm_execute_agent`, `swarm_hire`, `swarm_delegate`, `swarm_delegate_and_wait`, `swarm_run_status`, `swarm_hire_cost`, `swarm_request_consent`, `swarm_authorize_session`, `swarm_search_knowledge`, `swarm_fire`, `swarm_delete_agent`, `swarm_delete_swarm` | `swarm_delegate_local`, `swarm_a2a_send`, `swarm_a2a_card`, `swarm_search_knowledge_local`, `swarm_push_to_cloud`, `swarm_remove_local`                                |
-| **Verification** | Trust, topology, selection | `swarm_execute_agent` (the trust envelope) | `swarm_gate_readings` (per-agent gate readings), `swarm_workflow_check_local`, `swarm_run_workflow_local`, `swarm_observed_seams_local`, `swarm_fleet_digest_local`, `swarm_who_answers_local`, `swarm_select_agent_local` |
+| **Inspection** | Schema checks, topology, response predicates | `swarm_execute_agent` (provider payload, not independent verification) | `swarm_workflow_check_local`, `swarm_run_workflow_local`, `swarm_observed_seams_local`, `swarm_fleet_digest_local`, `swarm_who_answers_local` |
 
 ## Tool reference — ABW cloud (48 tools)
 
 > The tables below document 27 core ABW tools; the canonical cloud list contains
 > 48 names and is separately pinned against `cloud_swarm_router`
-> (`cloud_swarm_tool_names_match_live_cloud_router`, `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:996`; the router is generated at `kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs:214`). The 21 untabulated tools are `swarm_update_agent`, the App surface (`swarm_create_app_direct`,
+> (`cloud_swarm_tool_names_match_live_cloud_router`, `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs`; the router is generated in `kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs`). The 21 untabulated tools are `swarm_update_agent`, the App surface (`swarm_create_app_direct`,
 > `swarm_update_app`, `swarm_publish_app`, `swarm_archive_app`, `swarm_get_app`,
 > `swarm_get_app_schema`, `swarm_spawn_app_workspace`, `swarm_list_app_workspaces`,
 > `swarm_fork_workspace_to_app`) and the workspace file/action surface
@@ -159,7 +147,7 @@ substrate. ABW and local tools both fit the same three surfaces.[^reynolds-swarm
 | `swarm_hire`              | `POST /api/workspaces/{id}/hire`             | Hire an agent. Consumes the token, **re-verifies cost against ABW** before spending.                                                                                                                                                                                        |
 | `swarm_delegate`          | `POST /api/workspaces/{id}/messages`         | Delegate a task via @mention (full tool access, gas-charged). Consumes the token.                                                                                                                                                                                           |
 | `swarm_delegate_and_wait` | `POST` + `GET /api/workspaces/{id}/messages` | Delegate, then poll `swarm_run_status` every 2s until the agent responds or `timeout_secs` (default 60, max 300). Returns the agent's response message or a timeout.                                                                                                        |
-| `swarm_execute_agent`     | `POST /api/agents/{name}/execute`            | Single-shot execute via the envelope route. Returns fermi's trust envelope verbatim (after sanitization): `reliance.status` (one token for "can I use this answer?"), the enforced `document`, `grounding.stripped`, `completeness.owed`, `validation.status`, `metadata.reasoning`, `credits_charged`. Spend-gated like `swarm_delegate` — consent token (action `delegate`, target = agent name) or session token. Use when the caller needs the verification verdict; use `swarm_delegate` for workspace-embedded flows. |
+| `swarm_execute_agent`     | `POST /api/agents/{name}/execute`            | Single-shot execute via the envelope route. Returns the sanitized provider payload; any provider-supplied trust labels are assertions from that provider, not independently verified here. Spend-gated like `swarm_delegate` — consent token (action `delegate`, target = agent name) or session token; use `swarm_delegate` for workspace-embedded flows. |
 
 ### Lifecycle (teardown)
 
@@ -169,16 +157,17 @@ substrate. ABW and local tools both fit the same three surfaces.[^reynolds-swarm
 | `swarm_delete_agent` | `DELETE /api/agents/{id}`        | Permanently delete an authored agent (irreversible; removes it from your library and all rosters). A synced local card is NOT touched. |
 | `swarm_delete_swarm` | `DELETE /api/teams/{id}`         | Permanently delete a workspace and its roster (irreversible).                                                                          |
 
-## Tool reference — Non-cloud (43 tools)
+## Tool reference — Non-cloud (41 tools)
 
-> The non-cloud partition is 33 local tools, 3 swarm-scoped thread tools, 4 knowledge tools, and 3 A2A tools. The source partitions are exact: `kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:506-3506` (36 `#[tool]` annotations), `kask/mcp-servers/hkask-mcp-swarm/src/knowledge_tools.rs:20-197`, and `kask/mcp-servers/hkask-mcp-swarm/src/a2a_tools.rs:27-143`. Together with the 48 cloud tools they reconcile to the pinned 91-tool router.
+> The non-cloud partition is 31 local tools, 3 swarm-scoped thread tools,
+> 4 knowledge tools, and 3 A2A tools. The live router and generated name set
+> are checked together by the server's tool-surface tests.
 
 | Partition | Canonical tools |
 |---|---|
 | Local delegation and workflow | `swarm_delegate_local`, `swarm_fanout_local`, `swarm_pipeline_local`, `swarm_workflow_check_local`, `swarm_run_workflow_local`, `swarm_observed_seams_local`, `swarm_execute_plan_local` |
 | Swarm-scoped threads | `swarm_delegate_in_thread_local`, `swarm_thread_local`, `swarm_list_local_threads` |
-| Local fleet and evaluation | `swarm_fleet_digest_local`, `swarm_who_answers_local`, `swarm_select_agent_local`, `swarm_evaluate_local`, `swarm_task_board`, `swarm_eval_suite_local`, `swarm_eval_agent_local` |
-| Grounding-gate readings | `swarm_gate_readings` |
+| Local fleet and evaluation | `swarm_fleet_digest_local`, `swarm_who_answers_local`, `swarm_evaluate_local`, `swarm_task_board`, `swarm_eval_suite_local`, `swarm_eval_agent_local` |
 | Local agent registry | `swarm_list_local_agents`, `swarm_get_local_agent`, `swarm_clone_to_local`, `swarm_push_to_cloud`, `swarm_remove_local`, `swarm_create_local_agent`, `swarm_reconfigure_local_agent`, `swarm_ai_assist` |
 | Local swarms and synchronization | `swarm_create_local_swarm`, `swarm_list_local_swarms`, `swarm_get_local_swarm`, `swarm_delete_local_swarm`, `swarm_add_agent_local`, `swarm_remove_agent_local`, `swarm_update_local_swarm`, `swarm_clone_local_swarm`, `swarm_push_local_swarm`, `swarm_pull_swarm_to_local` |
 | Knowledge | `swarm_search_knowledge_local`, `swarm_recall_local`, `swarm_generate_prompt_local`, `swarm_generate_ontology_local` |
@@ -243,15 +232,21 @@ registry is read by `swarm_list_local_agents` and
 
 | Tool                       | Purpose                                                                                                                                                                                                              |
 | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `swarm_evaluate_local`     | Run a deterministic evaluator against a delegation response and return a `TaskSuccessVerdict` (pass/fail + detail). The evaluator name + spec are caller-supplied; the verdict feeds the swarm-intelligence ORIENT step. |
-| `swarm_execute_plan_local` | Execute a swarm-intelligence plan: run each delegation via the local runtime, evaluate each result with a deterministic check (when an evaluator is provided), and return the collected `LocalDelegateResult` array with `task_success` verdicts stamped. Capped at 10 delegations. |
+| `swarm_evaluate_local`     | Run a response predicate and return its match result under the historical `TaskSuccessVerdict` type, not task-truth certification. The evaluator name + spec are caller-supplied; the verdict feeds the swarm-intelligence ORIENT step. |
+| `swarm_execute_plan_local` | Execute a swarm-intelligence plan: run each delegation via the local runtime, evaluate each result with a deterministic check (when an evaluator is provided), and return the collected `LocalDelegateResult` array with response-predicate results under `task_success`; without an evaluator, the board stays Pending. Capped at 10 delegations. |
 | `swarm_eval_agent_local`   | Rollout harness: run one local agent against a task set N times each, evaluate each rollout with a deterministic evaluator, and report per-task pass rates with standard error plus totals (tokens, overall pass rate). Each rollout is recorded as `model_request` + `verdict` events in the event store (`mcp/swarm/events.db`, operator-configurable via `HKASK_SWARM_EVENTS_PATH`); a store failure is counted in `events_dropped`, never swallowed. Tasks capped at 10, repeats at 10, total rollouts at 50. |
 
 ### `LocalDelegateResult` shape
 
 Every `swarm_delegate_local` and `swarm_fanout_local` entry returns this shape.
-It is the contract the `swarm-intelligence` ORIENT/CHECK steps and its steering loop consume. Absent fields are `None`/empty arrays, never
-fabricated.
+It is the contract the `swarm-intelligence` ORIENT/CHECK steps and its steering loop consume. Optional fields are omitted when absent; empty traces remain arrays.
+The server does not assign factual-reliability or completeness grades.
+`task_success` is the historical wire key for a response-predicate result, not
+certification of task accomplishment. When no evaluator runs, a recorded attempt remains
+`pending`. Execution statistics report `completed_executions`, errors, tokens,
+and latency only; they do not rank competence. Plan/fanout `succeeded` counts
+returned responses, not accomplished tasks. Suite cases without predicates
+remain `PENDING` (nullable per-case `passed` and per-delegation `pass`).
 
 ```json
 {
@@ -261,31 +256,22 @@ fabricated.
   "tokens_used": 1234,
   "latency_ms": 4200,
   "tool_calls": [{ "tool": "string", "ok": true, "error": null }],
-  "task_success": { "pass": true, "score": null, "detail": "evaluator=...", "provenance": "deterministic" },
+  "task_success": { "pass": true, "score": null, "detail": "response_predicate=...", "provenance": "deterministic" },
   "bind_matched": true,
   "rollout_id": "string — event-store capture id (absent when capture is unwired)",
   "reasoning_steps": [],
   "input_contract_check": { "status": "valid | invalid | unverified_*" },
   "output_contract_check": { "status": "valid | invalid | unverified_*" },
-  "grounding": { "amended": false, "stripped": [], "violations": [], "document": {} },
-  "completeness": { "asked_for": 2, "filled": 2, "owed": [], "no_data": 0, "excused": 0 },
-  "reliance": { "status": "clean", "why": "..." },
   "memory": { "attempted": 1, "stored": 1, "embedded": 1, "failed": 0 },
   "dispatch": { "route_reason": "direct", "question_source": "operator" }
 }
 ```
 
 - `latency_ms` is the C4 latency signal `T_q`.
-- `tool_calls[].ok` and the optional `task_success` verdict provide the observed execution and outcome signals; the result does not carry a separate skill-execution list.
-- `task_success` is absent when the executor has not stamped a verdict; present
-  when `swarm_execute_plan_local` or the Curator has run a deterministic
-  evaluator. `provenance` is `deterministic` (trusted) or `llm_judged`
-  (ORIENT warns, not trusts).
-- `reliance.status` is the one-token trust envelope — worst-first `unusable` →
-  `malformed` → `amended` → `incomplete` → `unchecked` → `clean` — derived
-  from the grounding, completeness and schema verdicts on this result, never
-  recomputed by consumers. `unchecked` (no contract applied) is deliberately
-  not `clean`.
+- `tool_calls[].ok` records tool execution; it does not establish a response claim.
+- `task_success` is absent without evaluation. Its `pass` value records only
+  whether a supplied response predicate matched; its provenance describes
+  how the check was produced, not whether the task was accomplished.
 - `dispatch` is the dispatch-provenance stamp (fermi `stamp_invocation` port):
   `route_reason` names the dispatching surface (`direct`, `thread`, `fanout`,
   `pipeline`, `workflow`, `plan`, `eval`, `a2a`) and `question_source` where
@@ -332,7 +318,7 @@ sequenceDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-SWARM-001
 verified_date: 2026-10-11
-verified_against: kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs; kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:130,380,544; kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:985-990,996; kask/mcp-servers/hkask-mcp-swarm/src/consent.rs:76,221,255
+verified_against: kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs; kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs; kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs; kask/mcp-servers/hkask-mcp-swarm/src/consent.rs:76,221,255
 status: VERIFIED
 -->
 

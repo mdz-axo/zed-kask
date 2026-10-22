@@ -31,6 +31,35 @@ fn scoped_fixture() -> Result<
 }
 
 #[tokio::test]
+async fn suite_keeps_unevaluated_responses_pending() -> Result<(), Box<dyn std::error::Error>> {
+    let (_dir, server, recorder, swarm) = scoped_fixture()?;
+    let result = content(
+        &server
+            .swarm_eval_suite_local(Parameters(serde_json::from_value(json!({
+                "swarm_id": swarm.swarm_id,
+                "cases": [
+                    {"name":"unchecked", "delegations":[{"agent_name":"a", "task":"one"}]},
+                    {"name":"checked", "delegations":[{"agent_name":"b", "task":"two",
+                        "evaluator":{"evaluator":"contains", "spec":"reply"}}]}
+                ]
+            }))?))
+            .await?,
+    )?;
+    assert_eq!(recorder.0.lock().expect("calls").len(), 2);
+    assert_eq!(result["status"], "PENDING");
+    assert_eq!(result["pending"], 1);
+    assert_eq!(result["passed"], 1);
+    assert_eq!(result["failed"], 0);
+    assert!(result["cases"][0]["passed"].is_null());
+    assert!(result["cases"][0]["delegations"][0]["pass"].is_null());
+    assert_eq!(result["cases"][1]["passed"], true);
+    assert_eq!(result["task_board"]["pending"], 1);
+    assert_eq!(result["task_board"]["complete"], 1);
+    assert_eq!(result["task_board"]["all_complete"], false);
+    Ok(())
+}
+
+#[tokio::test]
 async fn scoped_plan_broadcast_send_share_history_and_keep_verdict_and_board()
 -> Result<(), Box<dyn std::error::Error>> {
     let (_dir, server, recorder, swarm) = scoped_fixture()?;
@@ -71,6 +100,18 @@ async fn scoped_plan_broadcast_send_share_history_and_keep_verdict_and_board()
     assert_eq!(scoped["succeeded"], 2);
     assert_eq!(scoped["results"][0]["task_success"]["pass"], true);
     assert_eq!(scoped["task_board"]["total"], 3);
+    assert_eq!(scoped["task_board"]["pending"], 1);
+    let board = crate::task_board::TaskBoard::load(server.local_swarms.dir(), &swarm.swarm_id)?;
+    let unchecked = board
+        .tasks
+        .iter()
+        .find(|entry| entry.agent_name == "b")
+        .expect("unevaluated delegation is recorded");
+    assert_eq!(unchecked.status, crate::task_board::TaskStatus::Pending);
+    assert_eq!(unchecked.attempt_count, 1);
+    assert_eq!(unchecked.last_evaluator_pass, None);
+    assert!(!board.all_terminal());
+    assert!(!board.all_complete());
     // Dispatch provenance (fermi `stamp_invocation` port): the plan surface
     // names itself on every scoped result — the stamp C5/C6 blame reads to
     // split routing-attributable failures from agent-quality ones.

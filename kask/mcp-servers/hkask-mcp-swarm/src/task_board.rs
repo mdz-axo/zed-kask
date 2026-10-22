@@ -48,13 +48,13 @@ pub struct TaskEntry {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
-    /// Not yet attempted.
+    /// Unresolved: not yet attempted, or no response predicate was evaluated.
     Pending,
     /// Currently running (between plan execution and result check).
     InProgress,
-    /// Completed successfully (evaluator passed, or no evaluator + non-empty response).
+    /// The supplied response predicate passed; this does not certify task truth.
     Complete,
-    /// Failed (evaluator failed, or delegation errored).
+    /// The supplied response predicate failed, or delegation errored.
     Failed,
 }
 
@@ -128,7 +128,7 @@ impl TaskBoard {
         let status = match evaluator_pass {
             Some(true) => TaskStatus::Complete,
             Some(false) => TaskStatus::Failed,
-            None => TaskStatus::Complete, // no evaluator = complete (the caller decides to call this only on a non-error delegation)
+            None => TaskStatus::Pending,
         };
 
         if let Some(entry) = self.tasks.iter_mut().find(|t| t.task_id == task_id) {
@@ -164,7 +164,7 @@ impl TaskBoard {
             entry.fail_count += 1;
             entry.status = TaskStatus::Failed;
             entry.last_result_summary = summary;
-            entry.last_evaluator_pass = Some(false);
+            entry.last_evaluator_pass = None;
             entry.last_attempt_at = Some(now);
         } else {
             self.tasks.push(TaskEntry {
@@ -175,7 +175,7 @@ impl TaskBoard {
                 attempt_count: 1,
                 fail_count: 1,
                 last_result_summary: summary,
-                last_evaluator_pass: Some(false),
+                last_evaluator_pass: None,
                 last_attempt_at: Some(now),
             });
         }
