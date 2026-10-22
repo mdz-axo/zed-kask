@@ -2,7 +2,7 @@
 title: "Skill Registry — Reference"
 audience: [developers, skill-authors, agents]
 last_updated: 2026-10-21
-version: "0.43.1"
+version: "0.43.2"
 status: "Active"
 domain: "Core"
 mds_categories: [domain, composition]
@@ -23,7 +23,18 @@ mds_categories: [domain, composition]
 >   `crates/agent/src/tools/lisp_eval_tool.rs:374@LispEvalTool::run`). Defaults remain 100000 steps /
 >   depth 1024 (`lisp_eval_tool.rs:291@default_max_steps`, `:295@default_max_depth`). Titles read
 >   form only; copying/display stay foreground. [Bounds and nonpreemptible phases](../lisp-eval-dialect.md#numeric-admission-and-limits)
->   are not hard time/heap/concurrency guarantees; H4C/H7/H8 remain deferred, H6 installed-editor validation unclaimed.
+>   are not hard time/heap/concurrency guarantees. H7 authorized host decode/eval uses existing
+>   Tokio blocking execution and public shared `evaluate_lisp_controlled`
+>   (`lisp_eval_tool.rs:487@evaluate_lisp_controlled`; `kask/crates/kask_bridge/src/host_skill_tools.rs:119-190@run_lisp`).
+>   A pre-spawn invocation guard signals on owner drop when actual IPC EOF wins;
+>   eventual worker exit is tested, not immediate join or hard deadline.
+>   H8 direct/routed corpus queries share one body; only Lisp options are offloaded and
+>   observe request-context cancellation, leaving downstream inference/retrieval/generation alone
+>   (`kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs:108-243`). Explicit rmcp cancel
+>   reaches the worker; plain EOF does not immediately signal it (tested context cancellation
+>   follows service-owner teardown after drain). No immediate disconnect or shutdown-worker-join promise.
+>   H4C measurements remain deferred; H6 native Stop validation was not performed;
+>   installed live build `1c247be309` predates H7/H8. No new runtime/service/dependency/cache/configuration.
 > - `render_template` — renders Jinja2 templates from `kask/registry/templates/` using `minijinja`.
 >   Strips the `[inference]`-keyed header. Path traversal protection via `canonicalize` + `starts_with` check.
 >   Template base path wired via `agent::set_template_base_path()` (OnceLock) in `main.rs` at startup.

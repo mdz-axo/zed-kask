@@ -2,7 +2,7 @@
 title: "hKask Architecture Diagrams — Ontology Bridge, Skill/MCP/Lisp Seam, Credentials, Tool Port, Event Store, Viz-Core, Skill Learning Loop"
 audience: [architects, developers, agents]
 last_updated: 2026-10-21
-version: "1.2.3"
+version: "1.2.4"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -153,8 +153,19 @@ input decoding/evaluation uses one cooperative cancellation flag, mandatory
 teardown and cleanup join, with publication/weak pending-owner guards. Raw/pure
 APIs are unchanged; titles read form only and copying/display stay foreground.
 [Document bounds and nonpreemptible phases](../reference/lisp-eval-dialect.md#numeric-admission-and-limits)
-are not hard time/heap/concurrency guarantees. H4C measurements and H7/H8
-host/corpus cancellation/offload remain deferred; no H6 installed-editor validation.
+are not hard time/heap/concurrency guarantees. H7 authorized host typed Lisp
+decode/eval uses existing Tokio blocking execution and the public shared helper;
+its pre-spawn invocation guard signals on owner drop when actual IPC EOF wins.
+Eventual worker exit is tested, not immediate join or a hard deadline. H8
+direct/routed corpus queries share one body: only Lisp options are offloaded and
+observe request-context cancellation, leaving downstream inference/retrieval/generation
+alone. Explicit rmcp cancel reaches the worker; plain EOF does not immediately
+signal it (tested context cancellation follows service-owner teardown after drain).
+There is no immediate disconnect or service-shutdown-worker-join promise.
+H4C measurements remain deferred; H6 native Stop validation was not performed;
+installed live build `1c247be309` predates H7/H8. No new runtime, service,
+dependency, cache or configuration. The diagram's native background path does not
+imply native cleanup-join semantics for either Tokio adapter.
 
 **Correction (2026-09-28):** the widget→agent compose-back seam (D21) was
 retired with commit `fa95c2b8c7` — the `hkask-conversation-injector` crate
@@ -205,7 +216,7 @@ architecture-beta
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ARCH-SKILL-MCP-LISP-001
 verified_date: 2026-10-21
-verified_against: crates/agent/src/tools/skill_tool.rs (SkillTool L127, run L194, render_skill_envelope L48, with_invoker L162); crates/agent_skills/agent_skills.rs (read_skill_body L841); crates/agent/src/tools/lisp_eval_tool.rs (LispEvalTool L324, raw_initial_title L362, run L374, lisp_worker L418, evaluate_lisp_controlled L485); crates/agent/src/tools/render_template_tool.rs (RenderTemplateTool L83); crates/agent/src/thread.rs (Thread::enabled_tools L5624, AgentTool::raw_initial_title L7197, Erased::initial_title L7347, Thread::run_turn L3025, Thread::process_tool_result L4326, Thread::owns_pending_message L5407, ThreadEventStream::join_lisp_completions L7448); crates/agent/src/tools/list_mcp_tools_tool.rs (ListMcpToolsTool L58, enumerate_tool_listing L119); kask/crates/hkask-lisp/src/hkask_lisp.rs (eval_sandboxed_with_cancellation L2505, eval_sandboxed_with_budget L2515, format_json_output L2473); kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort L98); kask/crates/hkask-mcp/src/runtime.rs (McpRuntime, impl ToolPort for McpRuntime, start_server_with_env, stop_server, tool_surface_changes); kask/crates/hkask-regulation/src/energy.rs (CallCapManager, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/mcp_servers.rs (BUILT_IN_MCP_SERVERS — 9 servers); crates/hkask-tool-invoker/src/hkask_tool_invoker.rs (ToolInvoker trait L131, shared_tool_invoker L158)
+verified_against: crates/agent/src/tools/skill_tool.rs (SkillTool L127, run L194, render_skill_envelope L48, with_invoker L162); crates/agent_skills/agent_skills.rs (read_skill_body L841); crates/agent/src/tools/lisp_eval_tool.rs (LispEvalTool L324, raw_initial_title L362, run L374, lisp_worker L418, evaluate_lisp_controlled L487); crates/agent/src/tools/render_template_tool.rs (RenderTemplateTool L83); crates/agent/src/thread.rs (Thread::enabled_tools L5624, AgentTool::raw_initial_title L7197, Erased::initial_title L7347, Thread::run_turn L3025, Thread::process_tool_result L4326, Thread::owns_pending_message L5407, ThreadEventStream::join_lisp_completions L7448); crates/agent/src/tools/list_mcp_tools_tool.rs (ListMcpToolsTool L58, enumerate_tool_listing L119); kask/crates/hkask-lisp/src/hkask_lisp.rs (eval_sandboxed_with_cancellation L2505, eval_sandboxed_with_budget L2515, format_json_output L2473); kask/crates/kask_bridge/src/host_skill_tools.rs (LispCancellation::drop L107-137, run_lisp L149-190, invoke L221-231); kask/crates/kask_bridge/src/inference_ipc_server.rs (EOF L827-840, authorization L1093-1124); kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs (storage_router L108, corpus_query_routed L115, corpus_query L148, corpus_query_inner L155-243, parse_lisp_query L605-705, LispQueryCancellation L707-723); kask/mcp-servers/hkask-mcp-corpus/src/retrieval_tests.rs (h8_rmcp_request_cancel_and_disconnect_capture L2358-2499, h8_rmcp_post_lisp_cancellation_preserves_inference L2520-2642); kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort L98); kask/crates/hkask-mcp/src/runtime.rs (McpRuntime, impl ToolPort for McpRuntime, start_server_with_env, stop_server, tool_surface_changes); kask/crates/hkask-regulation/src/energy.rs (CallCapManager, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/mcp_servers.rs (BUILT_IN_MCP_SERVERS — 9 servers); crates/hkask-tool-invoker/src/hkask_tool_invoker.rs (ToolInvoker trait L131, shared_tool_invoker L158)
 status: VERIFIED
 -->
 

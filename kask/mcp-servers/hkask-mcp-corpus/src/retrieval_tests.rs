@@ -79,6 +79,8 @@ struct RecordingPort {
     embedding_error: Option<hkask_types::EmbeddingGenerationError>,
     inputs: Mutex<Vec<String>>,
     pause: Option<(tokio::sync::Notify, tokio::sync::Notify)>,
+    embedding_lifetime: Option<Arc<H8InferenceLifetime>>,
+    generation_lifetime: Option<Arc<H8InferenceLifetime>>,
     short: bool,
     wrong_dimension: bool,
     response: Option<String>,
@@ -107,8 +109,21 @@ impl InferencePort for RecordingPort {
                 .expect("corrupt centroid vector");
         }
         Box::pin(async move {
+            let _lifetime = if let Some(probe) = &self.generation_lifetime {
+                let guard = H8InferenceExit(probe);
+                probe.entered.notify_one();
+                probe.release.notified().await;
+                Some(guard)
+            } else {
+                None
+            };
             if let Some(error) = &self.generation_error {
                 return Err(error.clone());
+            }
+            if let Some(probe) = &self.generation_lifetime {
+                probe
+                    .completed
+                    .store(true, std::sync::atomic::Ordering::Release);
             }
             Ok(InferenceResult {
                 text: response,
@@ -146,12 +161,25 @@ impl InferencePort for RecordingPort {
         let count = texts.len();
         let requested_model = model.to_string();
         Box::pin(async move {
+            let _lifetime = if let Some(probe) = &self.embedding_lifetime {
+                let guard = H8InferenceExit(probe);
+                probe.entered.notify_one();
+                probe.release.notified().await;
+                Some(guard)
+            } else {
+                None
+            };
             if let Some(error) = &self.embedding_error {
                 return Err(error.clone());
             }
             if let Some((entered, release)) = &self.pause {
                 entered.notify_one();
                 release.notified().await;
+            }
+            if let Some(probe) = &self.embedding_lifetime {
+                probe
+                    .completed
+                    .store(true, std::sync::atomic::Ordering::Release);
             }
             Ok(hkask_types::EmbeddingBatch {
                 vectors: (0..if self.short {
@@ -2467,5 +2495,148 @@ async fn h8_rmcp_request_cancel_and_disconnect_capture() {
         }
         // Break the observer's retained peer after all captured events.
         probe.context.lock().expect("context").take();
+    }
+}
+
+#[derive(Default)]
+struct H8InferenceLifetime {
+    entered: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+    exited: tokio::sync::Notify,
+    completed: std::sync::atomic::AtomicBool,
+}
+
+struct H8InferenceExit<'a>(&'a H8InferenceLifetime);
+
+impl Drop for H8InferenceExit<'_> {
+    fn drop(&mut self) {
+        self.0.exited.notify_one();
+    }
+}
+
+/// H8: after Lisp joins, rmcp cancellation must not newly drop downstream
+/// embedding or generation; rmcp response suppression remains its own policy.
+#[tokio::test]
+async fn h8_rmcp_post_lisp_cancellation_preserves_inference() {
+    use rmcp::ServiceExt;
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    for generation in [false, true] {
+        let lifetime = Arc::new(H8InferenceLifetime::default());
+        let port = Arc::new(RecordingPort {
+            embedding_lifetime: (!generation).then(|| lifetime.clone()),
+            generation_lifetime: generation.then(|| lifetime.clone()),
+            ..Default::default()
+        });
+        let server = server(port.clone());
+        let permit = server
+            .index
+            .begin_ephemeral("h8-lifecycle", vec!["h8:original".into()])
+            .expect("permit");
+        server
+            .index
+            .publish_ephemeral(
+                &permit,
+                &[("h8:original".into(), ORIGINAL.into())],
+                vec![vec![1.0; crate::embedding_dim()]],
+                &crate::default_embedding_model().expect("model"),
+            )
+            .expect("original passage");
+        let probe = Arc::new(crate::tools::storage::LispQueryProbe::default());
+        let (server_io, client_io) = tokio::io::duplex(8192);
+        let (read, write) = tokio::io::split(server_io);
+        let transport = H8ObservedTransport {
+            inner: rmcp::transport::async_rw::AsyncRwTransport::<rmcp::RoleServer, _, _>::new(
+                read, write,
+            ),
+            probe: probe.clone(),
+        };
+        let serving = tokio::spawn(async move {
+            server
+                .serve(transport)
+                .await
+                .expect("serve")
+                .waiting()
+                .await
+                .expect("service exit")
+        });
+        let (read, mut write) = tokio::io::split(client_io);
+        let mut read = BufReader::new(read);
+        h8_wire_send(&mut write, json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"h8-post-lisp","version":"1"}}})).await;
+        let mut response = String::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            read.read_line(&mut response),
+        )
+        .await
+        .expect("handshake bound")
+        .expect("handshake");
+        assert!(
+            serde_json::from_str::<Value>(&response)
+                .expect("handshake json")
+                .get("result")
+                .is_some(),
+            "{response}"
+        );
+        h8_wire_send(
+            &mut write,
+            json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+        )
+        .await;
+        let expression =
+            format!("(list (list \"query\" \"river\") (list \"generate-answer\" {generation}))");
+        h8_wire_send(&mut write, json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"corpus_query","arguments":{"query":expression}}})).await;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            lifetime.entered.notified(),
+        )
+        .await
+        .expect("functioning inference entered");
+        // Provider entry proves the real Lisp worker has joined, not just started.
+        tokio::time::timeout(std::time::Duration::from_secs(5), probe.exited.notified())
+            .await
+            .expect("real Lisp evaluator returned");
+        assert!(probe.error.lock().expect("error").is_none());
+        let context = probe
+            .context
+            .lock()
+            .expect("context")
+            .as_ref()
+            .expect("actual context")
+            .clone();
+        h8_wire_send(&mut write, json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":2,"reason":"after Lisp"}})).await;
+        tokio::time::timeout(std::time::Duration::from_secs(5), context.ct.cancelled())
+            .await
+            .expect("actual rmcp cancellation");
+        lifetime.release.notify_one();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            lifetime.exited.notified(),
+        )
+        .await
+        .expect("inference completed or dropped");
+        let completed = lifetime
+            .completed
+            .load(std::sync::atomic::Ordering::Acquire);
+        // Keep IO open until inference exit: EOF cannot cause the observation.
+        drop(read);
+        drop(write);
+        tokio::time::timeout(std::time::Duration::from_secs(7), serving)
+            .await
+            .expect("service bound")
+            .expect("service task");
+        probe.context.lock().expect("context").take();
+        println!(
+            "H8 post-Lisp generation={generation}, context_cancelled=true, inference_completed={completed}"
+        );
+        assert!(
+            completed,
+            "rmcp cancellation after Lisp must not drop downstream inference (generation={generation})"
+        );
+        assert_eq!(port.inputs.lock().expect("inputs").as_slice(), ["river"]);
+        if generation {
+            let prompts = port.prompts.lock().expect("prompts");
+            assert_eq!(prompts.len(), 1);
+            assert!(prompts[0].contains(ORIGINAL));
+        }
     }
 }

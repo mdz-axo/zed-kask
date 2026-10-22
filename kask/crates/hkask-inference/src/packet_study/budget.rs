@@ -1,7 +1,6 @@
-//! Study-local generation-only monetary accounting and separate count attempts.
-//! Count attempts do not price the counting endpoint; its billing remains unknown.
-//! The caller must fsync each count/reserve event before accessing its response;
-//! this offline-replay ledger performs no I/O.
+//! All-in monetary admission and separate count/generation attempts.
+//! Maximum count fees stay outstanding even on success: a token count is not a
+//! billing receipt. Callers sync every provision before transport I/O.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -11,6 +10,7 @@ use serde::{Deserialize, Serialize};
 #[serde(deny_unknown_fields)]
 pub(super) struct Limits {
     pub(super) max_attempts: u64,
+    pub(super) count_request_max_fee_microusd: Option<u64>,
     pub(super) max_input_tokens: u64,
     pub(super) max_output_tokens: u64,
     pub(super) provider_output_max: u64,
@@ -65,6 +65,7 @@ pub(super) struct Usage {
 pub(super) enum Event {
     Count {
         id: String,
+        max_fee_microusd: u64,
     },
     Reserve {
         id: String,
@@ -95,6 +96,7 @@ pub(super) struct Ledger {
     limits: Limits,
     attempts: u64,
     counted: BTreeSet<String>,
+    outstanding_count_microusd: u64,
     incurred_microusd: u64,
     outstanding: BTreeMap<String, u64>,
     stopped: Option<String>,
@@ -109,6 +111,7 @@ impl Ledger {
             limits,
             attempts: 0,
             counted: BTreeSet::new(),
+            outstanding_count_microusd: 0,
             incurred_microusd: 0,
             outstanding: BTreeMap::new(),
             stopped: None,
@@ -126,6 +129,22 @@ impl Ledger {
         if self.count_attempts() >= self.limits.max_attempts {
             return Err("count attempt limit exhausted".into());
         }
+        let fee = self
+            .limits
+            .count_request_max_fee_microusd
+            .ok_or("unknown count-request maximum fee; no HTTP admission")?;
+        let liability = self
+            .incurred_microusd
+            .checked_add(self.outstanding_microusd()?)
+            .and_then(|total| total.checked_add(fee))
+            .ok_or("aggregate liability overflow")?;
+        if liability > self.limits.spending_ceiling_microusd {
+            return Err("spending ceiling exhausted before count request".into());
+        }
+        self.outstanding_count_microusd = self
+            .outstanding_count_microusd
+            .checked_add(fee)
+            .ok_or("count liability overflow")?;
         self.counted.insert(id.into());
         Ok(())
     }
@@ -284,12 +303,22 @@ impl Ledger {
         self.incurred_microusd
     }
 
-    pub(super) fn outstanding_microusd(&self) -> Result<u64, String> {
+    pub(super) fn outstanding_count_microusd(&self) -> u64 {
+        self.outstanding_count_microusd
+    }
+
+    pub(super) fn outstanding_generation_microusd(&self) -> Result<u64, String> {
         self.outstanding.values().try_fold(0_u64, |total, cost| {
             total
                 .checked_add(*cost)
                 .ok_or_else(|| "outstanding cost overflow".into())
         })
+    }
+
+    pub(super) fn outstanding_microusd(&self) -> Result<u64, String> {
+        self.outstanding_generation_microusd()?
+            .checked_add(self.outstanding_count_microusd)
+            .ok_or_else(|| "outstanding cost overflow".into())
     }
 
     pub(super) fn stopped(&self) -> Option<&str> {
@@ -300,7 +329,15 @@ impl Ledger {
         let mut ledger = Self::new(limits)?;
         for event in events {
             match event {
-                Event::Count { id } => ledger.count(id)?,
+                Event::Count {
+                    id,
+                    max_fee_microusd,
+                } => {
+                    if Some(*max_fee_microusd) != ledger.limits.count_request_max_fee_microusd {
+                        return Err("count provision differs from protocol maximum fee".into());
+                    }
+                    ledger.count(id)?;
+                }
                 Event::Reserve {
                     id,
                     input_upper_bound,
@@ -341,6 +378,7 @@ mod tests {
     fn limits() -> Limits {
         Limits {
             max_attempts: 100,
+            count_request_max_fee_microusd: Some(0), // Explicit mock tariff.
             max_input_tokens: 8192,
             max_output_tokens: 1024,
             provider_output_max: 128_000,
@@ -445,8 +483,8 @@ mod tests {
         let mut policy = limits();
         policy.max_attempts = 2;
         let events = [
-            Event::Count { id: "one".into() },
-            Event::Count { id: "two".into() },
+            Event::Count { id: "one".into(), max_fee_microusd: 0 },
+            Event::Count { id: "two".into(), max_fee_microusd: 0 },
             Event::Stop {
                 reason: "count response failed".into(),
             },
@@ -478,15 +516,15 @@ mod tests {
         for (events, expected) in [
             (
                 vec![
-                    Event::Count { id: "one".into() },
-                    Event::Count { id: "one".into() },
+                    Event::Count { id: "one".into(), max_fee_microusd: 0 },
+                    Event::Count { id: "one".into(), max_fee_microusd: 0 },
                 ],
                 "count attempt ID already used: one",
             ),
             (
                 vec![
-                    Event::Count { id: "one".into() },
-                    Event::Count { id: "two".into() },
+                    Event::Count { id: "one".into(), max_fee_microusd: 0 },
+                    Event::Count { id: "two".into(), max_fee_microusd: 0 },
                 ],
                 "count attempt limit exhausted",
             ),
@@ -495,7 +533,7 @@ mod tests {
                     Event::Stop {
                         reason: "stopped".into(),
                     },
-                    Event::Count { id: "one".into() },
+                    Event::Count { id: "one".into(), max_fee_microusd: 0 },
                 ],
                 "ledger stopped: stopped",
             ),

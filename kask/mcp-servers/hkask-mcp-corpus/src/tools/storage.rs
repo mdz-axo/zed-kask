@@ -132,15 +132,7 @@ impl CorpusServer {
                 }
                 parameters
             };
-            // rmcp cancels the context token, but its detached task does not drop
-            // the handler. Only the Lisp branch needs this drop-to-worker signal.
-            tokio::select! {
-                biased;
-                _ = context.ct.cancelled() => {
-                    Err(McpToolError::unavailable("Lisp query request cancelled"))
-                }
-                result = self.corpus_query(parameters) => result,
-            }
+            self.corpus_query_inner(parameters, Some(context)).await
         })
     }
 
@@ -155,6 +147,13 @@ impl CorpusServer {
     )]
     pub async fn corpus_query(
         &self,
+        parameters: Parameters<QueryRequest>,
+    ) -> Result<String, McpToolError> {
+        self.corpus_query_inner(parameters, None).await
+    }
+
+    async fn corpus_query_inner(
+        &self,
         Parameters(QueryRequest {
             query,
             top_k,
@@ -165,6 +164,7 @@ impl CorpusServer {
             #[cfg(test)]
             lisp_probe,
         }): Parameters<QueryRequest>,
+        context: Option<rmcp::service::RequestContext<rmcp::RoleServer>>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_query", async {
             if query.is_empty() {
@@ -199,9 +199,25 @@ impl CorpusServer {
                         }
                         result
                     });
-                    worker.await.map_err(|error| {
-                        McpToolError::internal(format!("Lisp query worker failed: {error}"))
-                    })??
+                    let joined = async {
+                        worker.await.map_err(|error| {
+                            McpToolError::internal(format!("Lisp query worker failed: {error}"))
+                        })?
+                    };
+                    // rmcp signals, rather than drops, its detached handler.
+                    // Observe that signal only while Lisp is pending; subsequent
+                    // inference/retrieval keeps its existing detached lifecycle.
+                    if let Some(context) = context {
+                        tokio::select! {
+                            biased;
+                            _ = context.ct.cancelled() => {
+                                return Err(McpToolError::unavailable("Lisp query request cancelled"));
+                            }
+                            result = joined => result?,
+                        }
+                    } else {
+                        joined.await?
+                    }
                 } else {
                     (
                         query.clone(),

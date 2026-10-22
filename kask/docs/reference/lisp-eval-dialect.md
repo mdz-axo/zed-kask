@@ -2,7 +2,7 @@
 title: "The lisp_eval Dialect"
 audience: [agents, developers]
 last_updated: 2026-10-21
-version: "0.42.1"
+version: "0.42.2"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, trust]
@@ -10,7 +10,7 @@ mds_categories: [composition, trust]
 
 # The `lisp_eval` Dialect
 
-This is the canonical reference for the symbolic-neural scaffolding pattern, the `form`/`env` contract, and the sandboxed dialect exposed by the built-in `lisp_eval` tool. Native execution uses `hkask_lisp::eval_sandboxed_with_cancellation`; pure `evaluate_lisp` / delegated host execution retains `eval_sandboxed_with_budget` (`crates/agent/src/tools/lisp_eval_tool.rs:485@evaluate_lisp_controlled`; `kask/crates/hkask-lisp/src/hkask_lisp.rs:2505@eval_sandboxed_with_cancellation`, `:2515@eval_sandboxed_with_budget`).
+This is the canonical reference for the symbolic-neural scaffolding pattern, the `form`/`env` contract, and the sandboxed dialect exposed by the built-in `lisp_eval` tool. Native and delegated host execution share the public `evaluate_lisp_controlled` helper and `LispEvalToolInput` decoder; with an invocation flag they use `hkask_lisp::eval_sandboxed_with_cancellation`. Pure `evaluate_lisp` remains uncontrolled through `eval_sandboxed_with_budget` (`crates/agent/src/tools/lisp_eval_tool.rs:481-490@evaluate_lisp_controlled`; `kask/crates/hkask-lisp/src/hkask_lisp.rs:2505@eval_sandboxed_with_cancellation`, `:2515@eval_sandboxed_with_budget`).
 
 ## Pattern
 
@@ -51,7 +51,13 @@ H6 uses one per-invocation monotonic `Arc<AtomicBool>`: caller Release-store, co
 
 Native result-task drop requests cancellation; user cancellation also waits for the worker. A constructor-held acknowledgement guard covers never-polled workers and teardown; the turn joins all receipts even after provider early exit, with missing acknowledgements surfaced as errors (`lisp_eval_tool.rs:374@LispEvalTool::run`, `:418@lisp_worker`; `thread.rs:3025@Thread::run_turn`, `:7448@ThreadEventStream::join_lisp_completions`, `:7843@ToolCallEventStream::register_lisp_completion`). A publication fence checks the result's old turn cancellation state before emitting buffered results. Weak pending-owner identity guards history insertion and deferred flushing, so old cleanup cannot mutate a successor (`thread.rs:4326@Thread::process_tool_result`, `:5407@Thread::owns_pending_message`, `:2626@Thread::cancel`).
 
-These are cooperative checkpoints and mandatory cleanup, not hard time, total-memory or concurrency guarantees. H4C CPU/heap/latency measurements and host/corpus cancellation/offload (H7/H8) remain deferred; no new runtime or result cache. C3 runtime evidence is limited to `4edb242f5c`; no H6 installed-editor validation is claimed.
+H7 offloads only authorized `host/lisp_eval` typed decoding/evaluation to existing Tokio `spawn_blocking`, reusing `LispEvalToolInput` and the public `evaluate_lisp_controlled`; the pure entry remains uncontrolled. Card narrowing and the parent grant are checked before invocation (`kask/crates/kask_bridge/src/inference_ipc_server.rs:1093-1124`; `kask/crates/kask_bridge/src/host_skill_tools.rs:149-171@run_lisp`). An invocation-owned drop guard exists before first poll/spawn; when the actual IPC EOF leg wins, dispatch drops the owner and signals its flag (`host_skill_tools.rs:107-137@LispCancellation`, `:221-231`; `inference_ipc_server.rs:827-840`). Connection tests observe eventual real-helper return/worker exit, separately from handler exit, including pre-spawn and queued cases (`inference_ipc_server.rs:1718-2116`). They do not prove an immediate join, hard deadline, whole-runtime shutdown join or EOF priority when result and EOF are simultaneously ready. Held-worker tests stop before decode/core entry; mid-evaluation checkpoint and scope-reclamation evidence belongs to H6A.
+
+H8 keeps the public direct `corpus_query` and metadata-preserving rmcp route on one internal body. Only Lisp-option evaluation/extraction runs on existing `spawn_blocking`; the pre-spawn drop guard and propagated request context cover only evaluation/join, not subsequent embedding, retrieval or generation (`kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs:108-168@corpus_query_inner`, `:179-243`; guard `:707-723@LispQueryCancellation`). The selector remains `query.trim_start().starts_with("(list")`; ordinary NL routing, defaults (top-k 5, include-text false, min-score 0.0, generate-answer false) and fixed 100000 steps / depth 100 are unchanged. Boolean options still require JSON booleans: `true`/`t` or `false`; `nil` is rejected before retrieval. Only the misleading diagnostic changed (`storage.rs:605-705@parse_lisp_query`).
+
+Actual rmcp-route capture distinguishes explicit `notifications/cancelled`, which reaches the pending Lisp worker, from plain EOF, which does **not** immediately signal either request context or worker. In the tested lifecycle the context becomes cancelled only when the service owner is torn down after draining detached handlers. The promise is handler-owner drop / propagated request-context cancellation, not immediate client-disconnect cancellation or service-shutdown-joins-worker completion (`kask/mcp-servers/hkask-mcp-corpus/src/retrieval_tests.rs:2358-2499@h8_rmcp_request_cancel_and_disconnect_capture`). A separate wire-cancellation regression holds embedding and generation after Lisp joins and verifies both complete without the new context observation dropping them (`retrieval_tests.rs:2520-2642@h8_rmcp_post_lisp_cancellation_preserves_inference`). Async IO transport tests are not live stdio-child tests; held-worker exits are not independent mid-core teardown proof.
+
+These are cooperative checkpoints and mandatory cleanup, not hard time, total-memory or concurrency guarantees. H4C's measured CPU/heap/latency operating envelope remains deferred. H6 native Stop validation was not performed; the installed live build `1c247be309` predates H7/H8 and does not demonstrate their deployment. No new runtime, executor service, dependency, cache or configuration is introduced.
 
 Source tokens made of digits with an optional `+`/`-` sign must fit signed `i64`; otherwise parsing returns `LispError::Parse`, not a float fallback (`kask/crates/hkask-lisp/src/hkask_lisp.rs:462@parse_atom`). The sandbox rejects already-parsed unsigned JSON integers outside `i64`, including nested values (`:2191@charge_json`), but cannot recover an integer spelling already rounded into a JSON float.
 

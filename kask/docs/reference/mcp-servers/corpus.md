@@ -77,7 +77,7 @@ the current `ocr_protocol` do not resume; no plain-text compatibility route exis
 
 Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:994-1097`,
 `kask/mcp-servers/hkask-mcp-corpus/src/tools/tagging/ops.rs:578-594`, `kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus.rs:560-698`,
-`kask/mcp-servers/hkask-mcp-corpus/src/tools/compose_tools.rs` (`ComposeRequest`, `RewriteRequest`, `CentroidRequest`), `kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs:444-470`, and
+`kask/mcp-servers/hkask-mcp-corpus/src/tools/compose_tools.rs` (`ComposeRequest`, `RewriteRequest`, `CentroidRequest`), `kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs:541-590`, and
 `kask/mcp-servers/hkask-mcp-corpus/src/tools/gather.rs:46-81`.
 
 | Tool | Inputs and defaults |

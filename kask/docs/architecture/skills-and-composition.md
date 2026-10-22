@@ -2,7 +2,7 @@
 title: "Agent System and Skills — Prompt Surfaces, Skill Anatomy, and Composition"
 audience: [architects, developers, agents]
 last_updated: 2026-10-21
-version: "2.3.1"
+version: "2.3.2"
 status: "Active"
 domain: "architecture"
 mds_categories: [composition, trust, domain, curation]
@@ -499,7 +499,7 @@ The model is the executor. Convergence is the model's judgment, optionally check
 
 | Tool | Location | Purpose |
 |------|----------|---------|
-| `lisp_eval` | `crates/agent/src/tools/lisp_eval_tool.rs` | Sandboxed Lisp for skill-directed convergence, invariants and scoring; no I/O/`eval`/network. Defaults 100000 steps / depth 1024 (`lisp_eval_tool.rs:291@default_max_steps`, `:295@default_max_depth`). Native typed decode/evaluation run in the background with one cooperative cancellation flag, mandatory teardown, cleanup join and publication/weak pending-owner guards (`lisp_eval_tool.rs:374@LispEvalTool::run`; `thread.rs:4326@Thread::process_tool_result`). Raw/pure APIs are unchanged; raw-output copying/display remain foreground. [Admission/output bounds, nonpreemptible phases and deferred H4C/H7/H8](../reference/lisp-eval-dialect.md#numeric-admission-and-limits); no hard time/heap/concurrency quota or H6 installed-editor validation. |
+| `lisp_eval` | `crates/agent/src/tools/lisp_eval_tool.rs` | Sandboxed Lisp for skill-directed convergence, invariants and scoring; no I/O/`eval`/network. Defaults 100000 steps / depth 1024 (`lisp_eval_tool.rs:291@default_max_steps`, `:295@default_max_depth`). Native typed decode/evaluation run in the background with one cooperative cancellation flag, mandatory teardown, cleanup join and publication/weak pending-owner guards (`lisp_eval_tool.rs:374@LispEvalTool::run`; `thread.rs:4326@Thread::process_tool_result`). Raw/pure APIs are unchanged; raw-output copying/display remain foreground. H7 authorized host decode/eval uses existing Tokio blocking execution and public shared `evaluate_lisp_controlled` (`lisp_eval_tool.rs:487@evaluate_lisp_controlled`; `kask/crates/kask_bridge/src/host_skill_tools.rs:119-190@run_lisp`). Its pre-spawn invocation guard signals on owner drop when actual IPC EOF wins; eventual worker exit is tested, not an immediate join or hard deadline. H8 direct/routed corpus queries share one body; only Lisp-option work is offloaded and observes request-context cancellation, not later inference/retrieval/generation (`kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs:108-243`). Explicit rmcp cancel reaches the worker; plain EOF does not immediately signal it (tested context cancellation follows service-owner teardown after drain). No immediate disconnect or service-shutdown-worker-join promise. [Bounds, transport evidence and nonpreemptible phases](../reference/lisp-eval-dialect.md#numeric-admission-and-limits); H4C measurements remain deferred, H6 native Stop validation not performed, installed live build `1c247be309` predates H7/H8. No hard time/heap/concurrency quota or new runtime/service/dependency/cache/configuration. |
 | `render_template` | `crates/agent/src/tools/render_template_tool.rs` | Renders Jinja2 templates from `kask/registry/templates/` using `minijinja`. Strips the `[inference]`-keyed header. Path traversal protection via `canonicalize` + `starts_with` check. Template base path wired via `agent::set_template_base_path()` in `crates/zed/src/main.rs:711-729`. |
 
 ### PDCA Loops Are Model-Coordinated

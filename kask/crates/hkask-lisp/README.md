@@ -70,8 +70,11 @@ Raw conversions, defaults and infix rewriting are unchanged.
 
 ## Skill usage
 
-The native `lisp_eval` tool uses `eval_sandboxed_with_cancellation`; the pure
-`evaluate_lisp` / delegated host path retains `eval_sandboxed_with_budget`.
+Native and delegated `host/lisp_eval` share the public
+`evaluate_lisp_controlled` helper and `LispEvalToolInput` decoder. With an
+invocation flag they use `eval_sandboxed_with_cancellation`; pure
+`evaluate_lisp` retains `eval_sandboxed_with_budget`
+(`crates/agent/src/tools/lisp_eval_tool.rs:481-490@evaluate_lisp_controlled`).
 The SKILL.md instructs the agent to call `lisp_eval` for
 convergence checks, invariant validation, and deterministic scoring:
 
@@ -138,6 +141,31 @@ No hKask crate dependencies — this is a standalone computation library.
   the old turn's cancellation state and weak pending-owner identity prevents stale
   writes/flushes into a successor. Raw/pure APIs are unchanged. Raw-output copying
   and bounded display formatting remain foreground (two counts, one emit).
-  Host/corpus cancellation/offload (H7/H8) and H4C measurements remain deferred;
-  no H6 installed-editor validation, new runtime or result cache is claimed.
+- H7 authorized IPC host calls offload only typed Lisp decode/eval through existing
+  Tokio `spawn_blocking` and the shared agent helper. Card/parent checks remain
+  before invocation (`kask/crates/kask_bridge/src/inference_ipc_server.rs:1093-1124`).
+  The invocation guard exists before first poll/spawn; actual IPC EOF winning the
+  pending-dispatch select drops its owner and signals the flag
+  (`kask/crates/kask_bridge/src/host_skill_tools.rs:107-137`, `:149-190`, `:221-231`;
+  `inference_ipc_server.rs:827-840`). Tests observe eventual helper return/worker
+  exit, not immediate join, hard deadline, runtime-shutdown join or simultaneous
+  EOF/result priority. Held workers enter core only after release; H6A owns
+  mid-evaluation cancellation/scope-reclamation evidence.
+- H8 direct/routed corpus queries share one internal body; only Lisp-option work
+  is offloaded. The pre-spawn guard and rmcp request-context cancellation cover
+  evaluation/join only, leaving downstream inference/retrieval/generation alone
+  (`kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs:108-220`, `:707-723`).
+  Selector/defaults and fixed 100000/100 remain; boolean options accept `true`/`t`
+  or `false`, reject `nil` before retrieval, and now teach that contract
+  (`storage.rs:605-705@parse_lisp_query`). Explicit rmcp cancel reaches the pending
+  worker; plain EOF does not immediately signal it. In the tested lifecycle,
+  context cancellation follows service-owner teardown after handler drain.
+  Promise handler-owner drop / propagated context, not immediate disconnect or
+  service-shutdown-joins-worker
+  (`kask/mcp-servers/hkask-mcp-corpus/src/retrieval_tests.rs:2358-2499@h8_rmcp_request_cancel_and_disconnect_capture`,
+  `:2520-2642@h8_rmcp_post_lisp_cancellation_preserves_inference`).
+  Async IO tests are not live stdio-child or independent mid-core cleanup proof.
+- H4C's measured operating envelope remains deferred. H6 native Stop validation
+  was not performed; installed live build `1c247be309` predates H7/H8.
+  No new runtime, service, dependency, cache or configuration is introduced.
 - `#![forbid(unsafe_code)]` — no unsafe blocks anywhere in the crate
