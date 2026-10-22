@@ -119,6 +119,12 @@ impl Ledger {
         })
     }
 
+    pub(super) fn count_max_fee_microusd(&self) -> Result<u64, String> {
+        self.limits
+            .count_request_max_fee_microusd
+            .ok_or_else(|| "unknown count-request maximum fee; no HTTP admission".into())
+    }
+
     pub(super) fn count(&mut self, id: &str) -> Result<(), String> {
         if let Some(reason) = self.stopped() {
             return Err(format!("ledger stopped: {reason}"));
@@ -483,8 +489,14 @@ mod tests {
         let mut policy = limits();
         policy.max_attempts = 2;
         let events = [
-            Event::Count { id: "one".into(), max_fee_microusd: 0 },
-            Event::Count { id: "two".into(), max_fee_microusd: 0 },
+            Event::Count {
+                id: "one".into(),
+                max_fee_microusd: 0,
+            },
+            Event::Count {
+                id: "two".into(),
+                max_fee_microusd: 0,
+            },
             Event::Stop {
                 reason: "count response failed".into(),
             },
@@ -516,15 +528,27 @@ mod tests {
         for (events, expected) in [
             (
                 vec![
-                    Event::Count { id: "one".into(), max_fee_microusd: 0 },
-                    Event::Count { id: "one".into(), max_fee_microusd: 0 },
+                    Event::Count {
+                        id: "one".into(),
+                        max_fee_microusd: 0,
+                    },
+                    Event::Count {
+                        id: "one".into(),
+                        max_fee_microusd: 0,
+                    },
                 ],
                 "count attempt ID already used: one",
             ),
             (
                 vec![
-                    Event::Count { id: "one".into(), max_fee_microusd: 0 },
-                    Event::Count { id: "two".into(), max_fee_microusd: 0 },
+                    Event::Count {
+                        id: "one".into(),
+                        max_fee_microusd: 0,
+                    },
+                    Event::Count {
+                        id: "two".into(),
+                        max_fee_microusd: 0,
+                    },
                 ],
                 "count attempt limit exhausted",
             ),
@@ -533,7 +557,10 @@ mod tests {
                     Event::Stop {
                         reason: "stopped".into(),
                     },
-                    Event::Count { id: "one".into(), max_fee_microusd: 0 },
+                    Event::Count {
+                        id: "one".into(),
+                        max_fee_microusd: 0,
+                    },
                 ],
                 "ledger stopped: stopped",
             ),

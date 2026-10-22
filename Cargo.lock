@@ -7606,6 +7606,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes 1.11.1",
  "futures-util",
+ "hkask-keystore",
  "hkask-types",
  "minijinja",
  "serde",

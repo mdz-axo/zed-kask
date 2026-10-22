@@ -1,4 +1,4 @@
-//! Offline native Responses request/response codecs for the v1.1.0 study.
+//! Native Responses request/response codecs shared by HTTP and offline replay.
 //! No transport, credentials, retries, or provider fallback belong here.
 
 use serde_json::{Value, json};

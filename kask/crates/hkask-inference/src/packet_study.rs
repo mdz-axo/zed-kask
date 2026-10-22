@@ -1,5 +1,5 @@
-//! Offline evidence-packet study instrument. Replay is instrument verification,
-//! never a provider-cap test or a scientific observation. No live transport exists.
+//! Evidence-packet study controller with native HTTP and digest-bound replay.
+//! Replay/mock verification is never a live provider or scientific observation.
 //!
 //! Replay manifests are JSON arrays of metadata-only `ReplayRecord`s with
 //! separate count and generation HTTP fixtures. Each `response_file` is a safe basename relative to the manifest directory; its
@@ -12,6 +12,7 @@
 
 mod budget;
 mod evidence;
+mod live;
 mod native;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -21,6 +22,7 @@ use std::path::{Path, PathBuf};
 
 use budget::{Event, Ledger, Limits};
 use evidence::{Case, CheckerState, Judgment, Method, Verdict, parse_judgment};
+use live::Source;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
@@ -28,7 +30,7 @@ use sha2::{Digest as _, Sha256};
 const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
-const SCHEMA: &str = "packet-study-instrument-v2";
+const SCHEMA: &str = "packet-study-instrument-v3";
 const GENERATION_ENDPOINT: &str = "https://api.openai.com/v1/responses";
 
 fn digest(bytes: &[u8]) -> String {
@@ -42,6 +44,7 @@ struct Protocol {
     model: String,
     schedule_seed: String,
     limits: Limits,
+    count_tariff: Option<live::CountTariff>,
 }
 
 impl Protocol {
@@ -59,8 +62,7 @@ impl Protocol {
             || self.model.chars().any(char::is_whitespace)
         {
             return Err(
-                "offline native request format requires explicit OpenAI/model without whitespace"
-                    .into(),
+                "native request format requires explicit OpenAI/model without whitespace".into(),
             );
         }
         if self.schedule_seed.is_empty() || self.schedule_seed.len() > 128 {
@@ -108,7 +110,7 @@ struct Prepared {
 #[serde(deny_unknown_fields)]
 struct ReplayRecord {
     request_sha256: String,
-    /// A file-backed scripted native counter, never a validated live measurement.
+    /// Bound acquired counter metadata; mode/provenance lives in the run report.
     count: Option<CountReplay>,
     response: HttpReplay,
 }
@@ -407,7 +409,7 @@ fn cap_request(protocol: &Protocol, index: usize) -> Result<Prepared, String> {
         None,
         Stage::CapCheck,
         vec![
-            json!({"role":"user","content":"Output a long sequence beyond the requested output limit. This request is prepared for cap-validation replay; offline replay cannot prove live cap compliance."}),
+            json!({"role":"user","content":"Output a long sequence beyond the requested output limit. This is a cap-validation probe."}),
         ],
     )
 }
@@ -517,16 +519,15 @@ fn acquire_http(
     Ok((acquired, parsed))
 }
 
-struct Replay<'a> {
-    records: &'a BTreeMap<String, ReplayRecord>,
+struct Controller<'a> {
+    source: Source<'a>,
     ledger: Ledger,
     journal: Journal,
     output: &'a Path,
-    source_dir: &'a Path,
     acquired: Vec<ReplayRecord>,
 }
 
-impl Replay<'_> {
+impl Controller<'_> {
     fn stop(&mut self, reason: &str) -> Result<(), String> {
         self.ledger.stop(reason);
         self.journal.append(Event::Stop {
@@ -548,21 +549,8 @@ impl Replay<'_> {
         if let Some(reason) = self.ledger.stopped() {
             return Err(reason.into());
         }
-        // A missing replay is not a permission to query a provider.
-        let Some(record) = self.records.get(&request.request_sha256) else {
-            self.stop("request-digest replay mismatch; no live fallback")?;
-            return Err("request-digest replay mismatch; no live fallback".into());
-        };
-        let count = record
-            .count
-            .as_ref()
-            .ok_or("missing native count replay; no local token estimate")?;
         let frozen = count_request(&request)?;
-        if count.generation_body_sha256 != frozen.generation_body_sha256
-            || count.count_request_sha256 != frozen.count_request_sha256
-        {
-            return Err("count/generation payload binding mismatch".into());
-        }
+        self.source.check_binding(&request, &frozen)?;
         let count_id = format!("{}.count", request.id);
         write_json(
             &self.output.join(format!("{count_id}.request.json")),
@@ -571,12 +559,12 @@ impl Replay<'_> {
         self.ledger.count(&request.id)?;
         self.journal.append(Event::Count {
             id: request.id.clone(),
+            max_fee_microusd: self.ledger.count_max_fee_microusd()?,
         })?;
-        let (count_response, parsed) =
-            acquire_http(self.source_dir, self.output, &count_id, &count.response)?;
+        let (count_response, parsed) = self.source.acquire(self.output, &request, Some(&frozen))?;
         let retained_count = CountReplay {
-            generation_body_sha256: count.generation_body_sha256.clone(),
-            count_request_sha256: count.count_request_sha256.clone(),
+            generation_body_sha256: frozen.generation_body_sha256.clone(),
+            count_request_sha256: frozen.count_request_sha256.clone(),
             response: count_response,
         };
         // Count-only failures have their own retained index: do not copy an
@@ -600,11 +588,10 @@ impl Replay<'_> {
             &self.output.join(format!("{}.request.json", request.id)),
             &request,
         )?;
-        // First generation-body access: reservation and exact request are durable.
-        let (response, parsed) =
-            acquire_http(self.source_dir, self.output, &request.id, &record.response)?;
+        // First generation I/O: reservation and exact request are durable.
+        let (response, parsed) = self.source.acquire(self.output, &request, None)?;
         self.acquired.push(ReplayRecord {
-            request_sha256: record.request_sha256.clone(),
+            request_sha256: request.request_sha256.clone(),
             count: Some(retained_count),
             response,
         });
@@ -636,6 +623,22 @@ impl Replay<'_> {
         settled?;
         Ok(text)
     }
+}
+
+fn budget_report(ledger: &Ledger, mode: &str) -> Result<Value, String> {
+    Ok(json!({
+        "execution_provenance":mode,
+        "cost_basis":"supplied_tariff_estimate_not_provider_billing",
+        "provider_billed_microusd":null,
+        "costs_are_tariff_estimates_not_provider_charges":true,
+        "attempts":ledger.attempts(), "count_attempts":ledger.count_attempts(),
+        "http_attempts":ledger.attempts()+ledger.count_attempts(),
+        "count_charge_treatment":"maximum fee provision held; not a billing receipt",
+        "incurred_microusd":ledger.incurred_microusd(),
+        "outstanding_count_microusd":ledger.outstanding_count_microusd(),
+        "outstanding_generation_microusd":ledger.outstanding_generation_microusd()?,
+        "outstanding_microusd":ledger.outstanding_microusd()?, "stopped":ledger.stopped(),
+    }))
 }
 
 fn bounds(branches: &[Branch]) -> Value {
@@ -676,7 +679,7 @@ fn bounds(branches: &[Branch]) -> Value {
     json!({"family_count":intervals.len(),"per_family":intervals,
         "lower":if n>0.0 {Some(intervals.iter().filter_map(|v|v["lower"].as_f64()).sum::<f64>()/n)}else{None},
         "upper":if n>0.0 {Some(intervals.iter().filter_map(|v|v["upper"].as_f64()).sum::<f64>()/n)}else{None},
-        "is_confidence_interval":false,"treatment_conclusion":"not_generated_in_instrument_mode"})
+        "is_confidence_interval":false,"treatment_conclusion":"not_generated_by_runner_requires_prespecified_analysis"})
 }
 
 fn run(
@@ -697,16 +700,38 @@ fn run(
             return Err("replay map key/request digest mismatch".into());
         }
     }
+    run_source(
+        protocol,
+        cases,
+        Source::Replay {
+            records,
+            directory: source_dir,
+        },
+        output,
+    )
+}
+
+fn run_source(
+    protocol: &Protocol,
+    cases: &[Case],
+    source: Source<'_>,
+    output: &Path,
+) -> Result<Value, String> {
+    protocol.validate()?;
+    validate_cases(cases)?;
     create_output(output)?;
     write_json(&output.join("protocol.json"), protocol)?;
     write_json(&output.join("private-cases.json"), &cases)?;
+    write_json(
+        &output.join("execution.json"),
+        &json!({"source_mode":source.mode(),"resume_allowed":false}),
+    )?;
 
-    let mut replay = Replay {
-        records,
+    let mut replay = Controller {
+        source,
         ledger: Ledger::new(protocol.limits.clone())?,
         journal: Journal::new(&output.join("budget.jsonl"), protocol)?,
         output,
-        source_dir,
         acquired: Vec::new(),
     };
     for index in 0..2 {
@@ -751,16 +776,17 @@ fn run(
             });
         }
     }
+    let mode = replay.source.mode();
     let report = Report {
         schema: SCHEMA,
-        mode: "instrument_verification_replay",
+        mode,
         protocol_sha256: digest(&serde_json::to_vec(protocol).map_err(|e| e.to_string())?),
         cases_sha256: digest(&serde_json::to_vec(cases).map_err(|e| e.to_string())?),
-        live_execution: "blocked: verified tokenizer, backend/cap evidence and execution authorization unavailable",
+        live_execution: mode,
         paired_bounds: bounds(&branches),
         branches,
-        budget: json!({"costs_are_replay_arithmetic_not_provider_charges":true,"attempts":replay.ledger.attempts(),"count_attempts":replay.ledger.count_attempts(),"http_attempts":replay.ledger.attempts()+replay.ledger.count_attempts(),"count_charge_treatment":"unknown; no live spending authorized","incurred_microusd":replay.ledger.incurred_microusd(),"outstanding_microusd":replay.ledger.outstanding_microusd()?,"stopped":replay.ledger.stopped()}),
-        limitations: "Native count and generation responses are scripted file-backed fixtures, not live measurements or charges. Count billing is unknown. Contract checks share a trusted parsing kernel. No scientific or provider-cap claim follows.",
+        budget: budget_report(&replay.ledger, mode)?,
+        limitations: "Count maximum fees remain outstanding, not billed usage. Tariffs are supplied, not authenticated vendor promises. Replay and local HTTP mocks are not provider measurements. Existing controls share a trusted parsing kernel and are not independently calibrated scientific cases; no treatment conclusion follows. store=false is not ZDR. Scientific protocol/readiness and PI interpretation remain outside this CLI.",
     };
     write_json(&output.join("replay-records.json"), &replay.acquired)?;
     write_json(&output.join("report.json"), &report)?;
@@ -803,8 +829,14 @@ fn audit(output: &Path) -> Result<Value, String> {
     }
     let ledger = Ledger::replay(protocol.limits, &events)?;
     Ok(
-        json!({"mode":"instrument_verification_replay","protocol_sha256":protocol_sha256,
-        "attempts":ledger.attempts(),"count_attempts":ledger.count_attempts(),"http_attempts":ledger.attempts()+ledger.count_attempts(),"count_charge_treatment":"unknown; no live spending authorized","incurred_microusd":ledger.incurred_microusd(),
+        json!({"mode":"journal_accounting_audit","protocol_sha256":protocol_sha256,
+        "execution_provenance":"journal_accounting_audit",
+        "cost_basis":"supplied_tariff_estimate_not_provider_billing",
+        "provider_billed_microusd":null,
+        "costs_are_tariff_estimates_not_provider_charges":true,
+        "attempts":ledger.attempts(),"count_attempts":ledger.count_attempts(),"http_attempts":ledger.attempts()+ledger.count_attempts(),"count_charge_treatment":"maximum fee provision held; not a billing receipt","incurred_microusd":ledger.incurred_microusd(),
+        "outstanding_count_microusd":ledger.outstanding_count_microusd(),
+        "outstanding_generation_microusd":ledger.outstanding_generation_microusd()?,
         "outstanding_microusd":ledger.outstanding_microusd()?,"stopped":ledger.stopped(),
         "audit_status":if incomplete_tail_bytes == 0 {"complete_prefix"} else {"degraded_incomplete_tail"},
         "incomplete_tail_bytes":incomplete_tail_bytes,"balance_is_complete":incomplete_tail_bytes == 0,
@@ -820,6 +852,7 @@ fn smoke_protocol() -> Protocol {
         schedule_seed: "instrument-smoke-only".into(),
         limits: Limits {
             max_attempts: 170,
+            count_request_max_fee_microusd: Some(0), // Explicit deterministic mock, not live pricing.
             max_input_tokens: 8192,
             max_output_tokens: 1024,
             provider_output_max: 128000,
@@ -827,6 +860,11 @@ fn smoke_protocol() -> Protocol {
             prompt_microusd_per_million_tokens: 750_000,
             completion_microusd_per_million_tokens: 4_500_000,
         },
+        count_tariff: Some(live::CountTariff {
+            source: "deterministic fixture; no vendor billing claim".into(),
+            recorded_at: "instrument-fixture".into(),
+            basis: live::TariffBasis::MockOnly,
+        }),
     }
 }
 
@@ -921,12 +959,11 @@ fn smoke_records(
     Ok(records)
 }
 
-/// Command entry point. All supported modes are offline and read no credentials.
-/// Live execution is deliberately absent, rather than guarded by a self-attested
-/// token-count flag or silently using the ordinary inference fallback.
+/// Standalone CLI entry point, never a GPUI foreground operation. Only execute
+/// resolves native OpenAI credentials and creates a current-thread Tokio HTTP runtime.
 pub fn run_cli(args: impl IntoIterator<Item = String>) -> Result<Value, String> {
     let mut args = args.into_iter();
-    let command=args.next().ok_or("usage: packet-study verify|prepare|replay|audit --output DIR [--protocol JSON --cases JSON --responses JSON]")?;
+    let command=args.next().ok_or("usage: packet-study verify|prepare|replay|audit|execute --output DIR [--protocol JSON --cases JSON --responses JSON]")?;
     let mut options = BTreeMap::new();
     while let Some(key) = args.next() {
         if !["--output", "--protocol", "--cases", "--responses"].contains(&key.as_str()) {
@@ -939,8 +976,8 @@ pub fn run_cli(args: impl IntoIterator<Item = String>) -> Result<Value, String> 
             return Err(format!("duplicate option: {key}"));
         }
     }
-    if !["verify", "prepare", "replay", "audit"].contains(&command.as_str()) {
-        return Err("live execution unavailable: validated tokenizer, provider cap/route evidence and separate PI authorization required; use offline verify/prepare/replay/audit".into());
+    if !["verify", "prepare", "replay", "audit", "execute"].contains(&command.as_str()) {
+        return Err("unknown mode; use verify/prepare/replay/audit/execute".into());
     }
     let output = PathBuf::from(options.get("--output").ok_or("--output required")?);
     if command == "audit" {
@@ -975,6 +1012,21 @@ pub fn run_cli(args: impl IntoIterator<Item = String>) -> Result<Value, String> 
     let cases: Vec<Case> = read_json(Path::new(options.get("--cases").ok_or("--cases required")?))?;
     protocol.validate()?;
     validate_cases(&cases)?;
+    if command == "execute" {
+        if options.len() != 3 {
+            return Err("execute requires only --output, --protocol and --cases".into());
+        }
+        if output.exists() {
+            return Err("output already exists; never overwrite or automatically resume".into());
+        }
+        let dispatcher = live::Dispatcher::from_environment(&protocol)?;
+        return run_source(
+            &protocol,
+            &cases,
+            Source::Http(Box::new(dispatcher)),
+            &output,
+        );
+    }
     if command == "prepare" {
         if options.len() != 3 {
             return Err("prepare requires only --output, --protocol and --cases".into());
@@ -1657,7 +1709,7 @@ mod tests {
             );
             assert_eq!(
                 report["count_charge_treatment"],
-                "unknown; no live spending authorized"
+                "maximum fee provision held; not a billing receipt"
             );
             assert!(report["stopped"].is_string(), "{fault}");
             assert!(
