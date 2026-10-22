@@ -4,7 +4,7 @@
 //! transcripts stop
 //! being per-call artifacts and become queryable objects keyed to their media
 //! path and optional gallery Asset. Persistence and selection are local; pass
-//! tools use configured inference providers, never a hidden Reduct cloud path.
+//! tools use configured inference providers, never a hidden cloud path.
 
 use crate::transcript::{TimedWord, TranscriptBundle};
 use crate::transcript_layers::{EdlLayer, HighlightEntry, LayerProvenance, TranscriptLayer};

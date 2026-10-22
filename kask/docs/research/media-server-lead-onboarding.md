@@ -221,7 +221,7 @@ Both lenses are already written down as skills — read `.agents/skills/product-
 
 1. Read the crate README end-to-end (`kask/mcp-servers/hkask-mcp-media/README.md`) — it carries the ratified contracts, not marketing.
 2. Read the reference doc (`kask/docs/reference/mcp-servers/media.md`) — architecture, per-tool reference, error classification, key paths.
-3. Run the crate's tests and read the pin tests in `src/hkask_mcp_media.rs:439-541` — they encode the invariants that matter most. (Baseline established 2026-09-30: `cargo test -p hkask-mcp-media` — 432 passed, 0 failed, 6 ignored. The six ignored were the opt-in live Reduct probes, removed with the Reduct.cloud capability 2026-10-22; the post-removal serial baseline is 311 passed, 0 failed, 0 ignored, 2026-10-22. Re-run it yourself to confirm your own working baseline.)
+3. Run the crate's tests and read the pin tests in `src/hkask_mcp_media.rs:439-515` — they encode the invariants that matter most. (Baseline established 2026-09-30: `cargo test -p hkask-mcp-media` — 432 passed, 0 failed, 6 ignored. The six ignored were the opt-in live Reduct probes, removed with the Reduct.cloud capability 2026-10-22; the post-removal serial baseline is 311 passed, 0 failed, 0 ignored, 2026-10-22. Re-run it yourself to confirm your own working baseline.)
 4. Trace one source-derived tool end-to-end: `video_clip` → canonical local
    publication (`src/assets.rs`) → gallery Asset + lineage + OMC graph →
    `media_block` display hint → inline render in the panel. Also check a manual
@@ -246,8 +246,9 @@ DELETE remain out of scope; local re-alignment exists; face build-out stays
 deferred; embedding errors have typed classification; the subprocess DNS window
 has an operator-accepted risk ruling with deployment/untrusted-input revisit
 conditions. Do not reopen those decisions by treating this historical list as
-a live backlog. In particular, cloud upload/publication and face ID remain
-explicit opt-ins under the research-curation scope.
+a live backlog. In particular, face ID remains an explicit opt-in under the
+research-curation scope; the Reduct cloud upload/publication opt-ins were
+removed with the Reduct.cloud capability (2026-10-22).
 
 Each priority below is a **target condition**, not a backlog item: a measured current condition (cited), an observable target, and the evidence that says it is reached. Work each one with the predict → measure → correct habit: before starting, state the expected observation and falsifier; record a confirmed goal with real source and criteria when useful, omitting routine forecast. After work compare evidence with the expectation. Worker progress, native human closure and independent assessment stay separate; optional forecasts require a complete prospective declaration and frozen resolver. Two things the project's metacognition discipline insists on: never score your own prediction (the outside score is the check), and report a plateau honestly — two unchanged measured iterations while the target still fails means the approach is wrong, not that you need more of it.
 

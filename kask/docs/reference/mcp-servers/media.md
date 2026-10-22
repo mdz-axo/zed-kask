@@ -52,14 +52,14 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-006
-verified_date: 2026-09-28
-verified_against: kask/mcp-servers/hkask-mcp-media/src/main.rs:6-9; kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:153-180,427-439,445-475,544-686; kask/mcp-servers/hkask-mcp-media/src/tools/
+verified_date: 2026-10-22 (Reduct.cloud surface removed; local surface re-verified — 71-tool pin + suite green)
+verified_against: kask/mcp-servers/hkask-mcp-media/src/main.rs:6-9; kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:153-176,422-437,439-515,519-660; kask/mcp-servers/hkask-mcp-media/src/tools/
 status: VERIFIED
 -->
 
 ### Server struct
 
-`MediaServer` is declared via the `mcp_server!` macro with nine state fields (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:153-180`):
+`MediaServer` is declared via the `mcp_server!` macro with eight state fields (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:153-176`):
 
 | Field | Role |
 |-------|------|
@@ -71,11 +71,10 @@ status: VERIFIED
 | `ytdlp: YtDlpRunner` | yt-dlp availability probe (`kask/mcp-servers/hkask-mcp-media/src/video/ytdlp.rs:19`), used by `video_fetch` |
 | `job_store: jobs::JobStore` | Process-local research-job lifecycle (`kask/mcp-servers/hkask-mcp-media/src/jobs.rs`) |
 | `serpapi_key: Option<String>` | Credential for structured YouTube search metadata; never used to download media |
-| `reduct_api_key: Option<String>` | Reduct cloud API credential; not echoed in tool output or logs |
 
 ### Router composition
 
-`combined_router()` sums the research sub-routers, one per registered `tools/` module: `gallery_router` + `processing_router` + `audio_router` + `models_router` + `jobs_router` + `educt_router` + `youtube_router` + `reduct_router`. The handler attribute wires that sum as the runtime surface (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:427-439`).
+`combined_router()` sums the research sub-routers, one per registered `tools/` module: `gallery_router` + `processing_router` + `audio_router` + `models_router` + `jobs_router` + `educt_router` + `youtube_router`. The handler attribute wires that sum as the runtime surface (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:422-437`).
 
 ## Bootstrap and configuration
 
@@ -96,7 +95,7 @@ provider 401/403 maps to `permission_denied`. For migration, qualify saved
 research model settings and remove retired creative model overrides. See the
 [inference policy](../../diataxis/hkask-inference/reference.md#configure-strict-media-routing).
 
-**Credentials:** the media server's registration allowlists `OPENROUTER_API_KEY`, `DEEPINFRA_API_KEY`, `HKASK_SERPAPI_API_KEY`, and `REDUCT_API_KEY` (`kask/crates/kask_bridge/src/mcp_servers.rs:359-367`). The first two serve the child-local `MediaRouter`; SerpApi supplies structured YouTube discovery metadata. Vision/chat/embed use the IPC bridge to zed's `LanguageModelRegistry`. The routes are distinct — `yt-dlp` is not a metadata provider and needs no credential.
+**Credentials:** the media server's registration allowlists `OPENROUTER_API_KEY`, `DEEPINFRA_API_KEY`, and `HKASK_SERPAPI_API_KEY` (`kask/crates/kask_bridge/src/mcp_servers.rs:354-358`). The first two serve the child-local `MediaRouter`; SerpApi supplies structured YouTube discovery metadata. Vision/chat/embed use the IPC bridge to zed's `LanguageModelRegistry`. The routes are distinct — `yt-dlp` is not a metadata provider and needs no credential.
 
 **Environment variables** (all optional; the two research `HKASK_MEDIA_*_MODEL` vars resolve through the server's `models` module — `None` when unset, no constant fallback; callers fail visibly naming the env var, `kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:94-122`):
 
@@ -363,8 +362,7 @@ The 16 `educt_*` tools implement the interaction model published by Reduct.video
 word-timed transcript selections become media ranges; labeled highlights compose
 into ordered Reel Keep operations; Cut operations implement strikethrough editing;
 and render/export are non-destructive projections. These tools remain local
-and never fall back from a Reduct request. A separate `reduct_*` MCP group
-uses the Reduct API key entered in Settings → Kask → Data Services:
+and never fall back to a cloud request.
 
 Transcript, layer, document-export, and rendered-Asset relationships share the
 media database. Deleting a transcript atomically removes its editable layers while
@@ -588,7 +586,7 @@ Non-tool modules hold the shared implementation: `assets.rs` provides rollback-a
 
 ## OMC ontology anchoring
 
-Every tool maps to exactly one MovieLabs OMC concept via `omc::tool_to_omc` (`kask/mcp-servers/hkask-mcp-media/src/omc.rs:100-178`); the concept vocabulary lives in the shared `hkask-bridge-ontology` crate (`kask/mcp-servers/hkask-mcp-media/src/omc.rs:9-12`). The concept is baked into the tool output JSON's `"ontology"` field by `media_block::enrich_with_omc_and_provenance` (`kask/mcp-servers/hkask-mcp-media/src/media_block.rs`), which the media widget consumes for type-aware feedback routing. Regulation spans are emitted by the ordinary `execute_tool` path; ontology remains structured output data.
+Every tool maps to exactly one MovieLabs OMC concept via `omc::tool_to_omc` (`kask/mcp-servers/hkask-mcp-media/src/omc.rs:100-162`); the concept vocabulary lives in the shared `hkask-bridge-ontology` crate (`kask/mcp-servers/hkask-mcp-media/src/omc.rs:9-12`). The concept is baked into the tool output JSON's `"ontology"` field by `media_block::enrich_with_omc_and_provenance` (`kask/mcp-servers/hkask-mcp-media/src/media_block.rs`), which the media widget consumes for type-aware feedback routing. Regulation spans are emitted by the ordinary `execute_tool` path; ontology remains structured output data.
 
 | Concept | Tools |
 |---------|-------|
