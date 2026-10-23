@@ -13,6 +13,15 @@ The user is the product manager and principal investigator: they hold the questi
 
 Requirements engineering supplies spec recovery and traceability; PMI program-management practice supplies dependency and shared-work coordination; the Scrum Guide 2020 Definition of Done supplies the requirement for usable, checked work. These are operating disciplines, not scores computed from an agent's own lists.
 
+## Loop contract
+
+- **Initial:** the user's requirement as stated in their instructions and relevant specifications, with the current tree state known — working tree, affected callers, other streams' in-flight files.
+- **Target:** the requirement implemented and verified through the real capability — machine checks green or their failures honestly reported, obsolete paths removed in the same change, and the functional outcome handed back with evidence; uncommitted work is named as uncommitted and judgment stays with the human.
+
+## D/P labelling
+
+Requirement recovery, scoping, severity calls and the outcome summary are P — the user's requirement is the authority, never a self-authored verdict. Verification commands and their receipts are D — `cargo-test-nonzero.sh`, `./script/clippy`, `cargo check`, identifier sweeps and numstat are the oracle; a zero-match filter must fail rather than pass silently, and no rendered checklist or self-authored score replaces these observations.
+
 ## Work the requirement
 
 1. Recover the current requirement from the user's instructions and relevant specifications. Use history or curator memory when prior intent matters; current code is evidence of behavior, not authority for what should exist. Label reconstructions. Ask only when the functional requirement is genuinely missing or conflicting.
