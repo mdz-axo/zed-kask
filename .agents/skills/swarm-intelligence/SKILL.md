@@ -32,7 +32,7 @@ hasCohesionWithTeam, hasTeamSeparation, hasInfluence }`, `Agent { hasSpeed,
 hasHeading, hasEnergy, hasDistanceToGoal }`, `Formation`. The measurable
   substrate for swarm state.
 - **Reynolds (1987) flocking**: separation / alignment / cohesion — three
-  local rules sufficient for emergent flocking. Scale-invariant (Labra 2026).
+  local rules sufficient for emergent flocking.
 - **PSO** (Kennedy & Eberhart 1995): `v ← ωv + c1·r1·(pbest−x) + c2·r2·(gbest−x)`.
   c1 cognitive, c2 social, ω inertia. The tuning palette for composition.
 - **ACO** (Dorigo 1992): pheromone deposition / evaporation (stigmergy).

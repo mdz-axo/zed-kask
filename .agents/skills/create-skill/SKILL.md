@@ -122,12 +122,11 @@ skill's artifacts.
 | **SEPIO** (Scientific Evidence and Provenance Information Ontology) | Evidence, provenance, scientific claims | The skill models evidence lines and assertions |
 | **Domain-specific** | Any | The research phase finds ontologies specific to the skill's domain |
 
-Resolution state (live `onto_anchor`): Dublin Core is a published ladder
-rung; PKO, GOLEM, MovieLabs OMC and SEPIO currently resolve only to the
-core rung — derived-registry rulings pending. A generated skill anchoring
-on a pending ontology accrues `research_findings` in Phase 4 until the
-ruling lands; cite the ontology as the anchor source, and the ruling
-closes the finding.
+Resolve each selected ontology with `onto_anchor` at use time; retain the
+returned rung, source, definition when supplied, and alternative senses.
+A published anchor needs no pending-ruling finding. If a term genuinely
+resolves coarsely, record that limitation in Phase 4 `research_findings`
+and follow the ruling path; never invent a missing definition.
 
 ### How ontological anchoring shapes the skill
 

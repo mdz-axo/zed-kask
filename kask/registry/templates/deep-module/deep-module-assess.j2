@@ -93,15 +93,15 @@ Depth Score = Behavior Lines / total_interface_items
 (total_interface_items = public functions + types + traits + constants + public sub-modules — every item counted in Step 1)
 ```
 
-| Score | Classification (Ousterhout's empirical observation) |
+| Score | Classification (project-local score bands) |
 |-------|----------------------------------------------------|
-| 100+  | Deep — Ousterhout observes these modules have high benefit/cost |
+| 100+  | Deep — local score band for high benefit/cost |
 | 50–99 | Adequate — moderate benefit/cost |
 | 20–49 | Shallow — low benefit/cost, consider deepening |
 | 0–19  | Very Shallow — minimal benefit relative to interface cost |
 | N/A   | Empty — zero public interface items, division undefined |
 
-**Provenance note**: These numeric thresholds are kask operationalizations of Ousterhout's qualitative narrow-interface criterion (2018, Ch. 4 — the repo's derived `deep_module` anchor defines the criterion qualitatively; the depth score and its thresholds are this project's Evidence-tier operationalization), not Ousterhout's own numbers and not normative mandates. They correlate with deep modules but do not prescribe depth.
+**Provenance note**: These numeric thresholds are kask operationalizations of Ousterhout's qualitative narrow-interface criterion (2018, Ch. 4 — the repo's derived `deep_module` anchor defines the criterion qualitatively; the depth score and its thresholds are this project's Evidence-tier operationalization), not Ousterhout's own numbers and not normative mandates. Use these bands as a local heuristic, not an empirical guarantee of depth.
 
 ### Step 4 — Identify Red Flags
 
@@ -173,5 +173,5 @@ The invoking step computes `[depth_score, classification]` deterministically in 
 - Estimate behavior conservatively — err on the side of undercounting.
 - Flag all red flags even if the depth score is acceptable.
 - Every recommendation MUST carry a lowercase `constraint_force` field: `prohibition`, `guardrail`, `guideline`, `evidence`, or `hypothesis`.
-- Depth score thresholds are Evidence (Ousterhout's empirical observation), not Prohibition — present them as such.
+- Depth score thresholds are project-local Evidence-tier heuristics, not Prohibition — present them as such.
 

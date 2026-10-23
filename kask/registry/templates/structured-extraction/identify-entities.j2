@@ -1,9 +1,13 @@
 {# goal: Identify entities in unstructured text against a target schema with extraction hints and track unmapped text. #}
-{# Reference: Named Entity Recognition (NER), formalized in BBN's 1997 #}
-{#   "Identification of Named Entities" and the MUC-7 / CoNLL-2003 shared tasks. #}
-{#   Entity types follow the BBN / IACE type system (person, organization, #}
-{#   date, quantity, location). Character offsets are ACE2005 standoff #}
-{#   annotation. Confidence scores are standard IE practice. #}
+{# Reference: named-entity recognition as a task family, not a fixed benchmark schema. #}
+{# NER precedent: Nymble — the BBN 1997 learning name-finder (Bikel, Miller, #}
+{# Schwartz & Weischedel, doi:10.3115/974557.974586); the previously claimed BBN #}
+{# 1997 "Identification of Named Entities" title was never identified (operator #}
+{# swap 2026-10-22). #}
+{# MUC-7 / CoNLL-2003 name shared-task precedents, not one shared type inventory. #}
+{# Character offsets are approximate locating hints, not validated ACE2005 annotations. #}
+{# Confidence values are model judgments; empirical calibration is not established. #}
+{# Benchmark and annotation-method fidelity require separate verification. #}
 [inference]
 contract:
   input:

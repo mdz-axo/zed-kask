@@ -45,7 +45,7 @@ General-purpose prompt enhancement skill for the zed-kask platform. Classifies p
 
 ## The 7-Type Taxonomy
 
-The *Taxonomy anchor* column uses the four aspects of Liu et al., "A comprehensive taxonomy of prompt engineering techniques for large language models", *Frontiers of Computer Science* 20(3), 2003601 (2026; online 2025), doi:10.1007/s11704-025-50058-z. The seven types are this project's mapping onto those aspects; the paper does not define them. The term "prompt engineering" reaches only the core rung of `onto_anchor`; a derived-registry ruling is pending with the operator.
+The *Taxonomy anchor* column uses the four aspects of Liu et al., "A comprehensive taxonomy of prompt engineering techniques for large language models", *Frontiers of Computer Science* 20(3), 2003601 (2026; online 2025), doi:10.1007/s11704-025-50058-z. The seven types are this project's mapping onto those aspects; the paper does not define them. Resolve "prompt engineering" with `onto_anchor` at use time and retain the returned published source and alternative senses; request a ruling only for a genuinely coarse result.
 
 | Type             | Taxonomy anchor       | Rewrite focus                                                                          | Key risk                  |
 | ---------------- | --------------------- | -------------------------------------------------------------------------------------- | ------------------------- |
