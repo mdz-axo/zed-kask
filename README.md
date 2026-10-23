@@ -28,27 +28,27 @@ The **Curator** is a native in-process agent — an `Agent::Curator` variant sel
 
 ### Steer panels
 
-Four native panels extend the steering surface. The **swarm panel** composes and steers local agent swarms (agent cards, hiring, PSO/ACO/flocking parameters); the **kanban panel** drives kata-kanban task boards; the **media** panel is Steer-only — chat-driven CRUD over the scoped server's tools instead of hand-written management forms. Any of them can take the steering seat of an agent conversation via a per-context system-prompt overlay scoped to exactly one MCP server, with the advertised tool list mechanically verified against the server's generated tool names — a rename degrades loudly at dispatch, not silently.
+Four native panels extend the steering surface. The **swarm panel** composes and steers local agent swarms (agent cards, PSO/ACO/flocking parameters); the **kanban panel** drives kata-kanban task boards; the **media** panel is Steer-only — chat-driven CRUD over the scoped server's tools instead of hand-written management forms. Any of them can take the steering seat of an agent conversation via a per-context system-prompt overlay scoped to exactly one MCP server, with the advertised tool list mechanically verified against the server's generated tool names — a rename degrades loudly at dispatch, not silently.
 
-### Media generation
+### Media research
 
-The `media` MCP server is the fleet's largest (71 tools): image and video generation, voice synthesis, transcription, face recognition, a persistent gallery, and the educt transcript surfaces. The **media panel** is a Steer-only surface — no browse forms — where the operator asks a scoped curator conversation to generate, search, organize, or transform media, and generated images and videos render **inline in the conversation** via the editor's media block renderer.
+The `media` MCP server is the fleet's largest (71 tools): research-evidence ingestion, transcription with word-level timings, the educt transcript layer system, gallery annotation and search, opt-in face identification, and source-linked excerpt/reel cutting. The **media panel** is a Steer-only surface — no browse forms — where the operator drives media research through the curator conversation, and media results render **inline in the conversation** via the editor's media block renderer.
 
 ### MCP servers
 
-**9 built-in MCP servers** (**323 registered tools** fleet-wide, every count pinned by a test) are launched by the in-process governed `McpRuntime` (D3 — single spawn authority) as child processes over stdio and exposed as agent tools through `rmcp`. Each is a thin surface over in-process domain crates — the binary entrypoint is a one-line wrapper around a library `run()`. The fleet:
+**9 built-in MCP servers** (**258 registered tools** fleet-wide, every count pinned by a test) are launched by the in-process governed `McpRuntime` (D3 — single spawn authority) as child processes over stdio and exposed as agent tools through `rmcp`. Each is a thin surface over in-process domain crates — the binary entrypoint is a one-line wrapper around a library `run()`. The fleet:
 
 | Server               | Surface                                                       | Tools |
 | -------------------- | ------------------------------------------------------------- | ----: |
 | `corpus`             | Gather→process→output document pipeline, QA generation, style replicas | 25 |
 | `curator`            | Curator memory, regulation query, algedonic signals, skill-use reporting | 15 |
 | `experimentation`   | Experiment registry for the sharded experimentation program: registered experiments with pre-registered predictions, variant lineages, grounded fitness, selection fossils | 8 |
-| `kata-kanban`        | Toyota-Kata task boards and persistent functional goals        | 27 |
-| `media`              | AI media generation (image, video, audio, gallery, educt transcripts) | 71 |
+| `kata-kanban`        | Toyota-Kata task boards and persistent functional goals        | 26 |
+| `media`              | Research evidence ingestion, annotation, transcription, excerpts (gallery, educt) | 71 |
 | `prediction-markets` | Polymarket/Kalshi base rates, calibration, residuals | 27 |
 | `research`           | Web search, extraction, browsing, RSS feeds, evidence scoring, research-run ledger, paper identity | 27 |
-| `scenarios`          | Event-tree forecasting (Tetlock/Schwartz/Chermack), equity forecast loop | 21 |
-| `swarm`              | ABW cloud swarms + local swarm substrate + Xaman Ek curator     | 91 |
+| `scenarios`          | Event-tree forecasting (Tetlock/Schwartz/Chermack), equity forecast loop | 22 |
+| `swarm`              | Local swarm agents, local swarms, A2A collaboration, swarm-intelligence substrate | 37 |
 
 Companies, scenarios, and prediction-markets formed a three-layer forecasting stack; the companies layer was removed 2026-10-18 with the companies/FMP/EODHD/FIBO retirement (see [`kask/docs/reference/mcp-servers/README.md`](./kask/docs/reference/mcp-servers/README.md) for the full registry, architecture, and per-server count pins). All nine servers auto-load by default (`load_default: true`) unless the operator disables the fleet or an individual server; the Curator additionally ships as a native in-process agent.
 

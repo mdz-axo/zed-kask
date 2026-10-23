@@ -257,8 +257,8 @@ passphrases or API keys in this list.
 
 The current `media` descriptor is the worked example: three credentials
 (`OPENROUTER_API_KEY`, `DEEPINFRA_API_KEY`, `HKASK_SERPAPI_API_KEY`)
-and ten configuration variables, including the IPC socket,
-data/artifact roots, gallery DB, five media-model fields, and the embedding
+and seven configuration variables, including the IPC socket,
+data/artifact roots, gallery DB, two media-model fields, and the embedding
 model (`kask/crates/kask_bridge/src/mcp_servers.rs:347-385`).
 
 #### 4. Emit new settings through `mcp_env`
