@@ -1,7 +1,7 @@
 ---
 title: "hKask Diagram Index — Mermaid Verification Registry"
 audience: [architects, developers, agents]
-last_updated: 2026-10-19
+last_updated: 2026-10-23
 version: "2.9.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -10,9 +10,9 @@ mds_categories: [curation, composition]
 
 # hKask Diagram Index — Mermaid Verification Registry
 
-This registry is generated from the surviving `DIAGRAM_ALIGNMENT` metadata under `kask/docs/`. As of 2026-10-18 the corpus contains **95 active alignment records representing 95 unique IDs**: 25 records in the five consolidated diagram files and 70 inline records. The 2026-09-28 how-to folds moved eleven inline records from the per-crate how-to documents into their set references' Procedures sections (count unchanged by the folds); the deleted `DIAG-SKILL-CFR` (subject removed with the GSR/CFR skills, commit `5eed0134bf`) reduced the count from 106 to 105.
+This registry is generated from the surviving `DIAGRAM_ALIGNMENT` metadata under `kask/docs/`. As of 2026-10-23 the corpus contains **92 active alignment records representing 92 unique IDs**: 25 records in the five consolidated diagram files and 67 inline records. The 2026-09-28 how-to folds moved eleven inline records from the per-crate how-to documents into their set references' Procedures sections (count unchanged by the folds); the deleted `DIAG-SKILL-CFR` (subject removed with the GSR/CFR skills, commit `5eed0134bf`) reduced the count from 106 to 105.
 
-The corpus contains 95 Mermaid blocks (mechanically counted 2026-10-18: 95 `mermaid` fences, 95 `id: DIAG-` records; the two `DIAG-RF-004`/`DIAG-RF-004A` rows for the deleted `reference/mcp-servers/companies.md` were removed with the companies capability; the CMP program's eight diagrams and the portfolio widget's one were removed with their programs on 2026-10-15, the spreadsheet capability's two — the LogiSheets plan's architecture block and the widget's class diagram — were removed with the capability the same day, and the agentic-scientist integration proposal's three unregistered illustrative fences were removed with the implemented design on 2026-10-16). `architecture/DOCUMENTATION_STANDARDS.md` §3's own lifecycle diagram is exempt by the self-illustration rule (DOCUMENTATION_STANDARDS §4.2, added 2026-09-30: the standards document's own illustrative diagrams depict the standard's definitions rather than the tree's structure) yet retains its pre-exemption record `DIAG-STD-001` (verified 2026-09-28). The compaction pipeline spec's diagram (landed 2026-09-29) carried no record until this run registered it as `DIAG-ARCH-COMPACTION-001` (2026-10-05) — the 2026-09-30 prose had misattributed the gap to the standards' exempt diagram. On 2026-09-26 the skill learning loop registered as `DIAG-ARCH-LEARNING-LOOP-001` in `diagrams/architecture.md`. The LogiSheets plan's architecture block registered as `DIAG-ARCH-SPREADSHEET-001` on 2026-09-19 (implementation began 2026-09-18, converting the plan to `Active` per `kask/docs/architecture/DOCUMENTATION_STANDARDS.md` §4.2). On 2026-09-30 the three-layer review registered two model diagrams in `research/cybernetic-nervous-system-reference-model.md`: `DIAG-RES-CNS-001` (the abstract tiered feedback structure, verified against the external canonical sources) and `DIAG-RES-CNS-002` (the A/B/C pathway mapping, verified against the layer pathway code sites).
+The corpus contains 92 Mermaid blocks (mechanically counted 2026-10-23: 92 `mermaid` fences, 92 `id: DIAG-` records; the 2026-10-18→22 removal waves deleted four inline diagrams — `DIAG-CAP-003`, `DIAG-MCPSRV-031`, `DIAG-RF-SWARM-001`, `DIAG-SWARM-031` — without same-pass row deletion, which left the parity gate red on main (92 fences vs 95 rows) until this pass reconciled it; this pass also registers `DIAG-ARCH-EUREKA-001`, the eureka-cycle implementation plan's loop diagram; the two `DIAG-RF-004`/`DIAG-RF-004A` rows for the deleted `reference/mcp-servers/companies.md` were removed with the companies capability; the CMP program's eight diagrams and the portfolio widget's one were removed with their programs on 2026-10-15, the spreadsheet capability's two — the LogiSheets plan's architecture block and the widget's class diagram — were removed with the capability the same day, and the agentic-scientist integration proposal's three unregistered illustrative fences were removed with the implemented design on 2026-10-16). `architecture/DOCUMENTATION_STANDARDS.md` §3's own lifecycle diagram is exempt by the self-illustration rule (DOCUMENTATION_STANDARDS §4.2, added 2026-09-30: the standards document's own illustrative diagrams depict the standard's definitions rather than the tree's structure) yet retains its pre-exemption record `DIAG-STD-001` (verified 2026-09-28). The compaction pipeline spec's diagram (landed 2026-09-29) carried no record until this run registered it as `DIAG-ARCH-COMPACTION-001` (2026-10-05) — the 2026-09-30 prose had misattributed the gap to the standards' exempt diagram. On 2026-09-26 the skill learning loop registered as `DIAG-ARCH-LEARNING-LOOP-001` in `diagrams/architecture.md`. The LogiSheets plan's architecture block registered as `DIAG-ARCH-SPREADSHEET-001` on 2026-09-19 (implementation began 2026-09-18, converting the plan to `Active` per `kask/docs/architecture/DOCUMENTATION_STANDARDS.md` §4.2). On 2026-09-30 the three-layer review registered two model diagrams in `research/cybernetic-nervous-system-reference-model.md`: `DIAG-RES-CNS-001` (the abstract tiered feedback structure, verified against the external canonical sources) and `DIAG-RES-CNS-002` (the A/B/C pathway mapping, verified against the layer pathway code sites).
 
 ## Consolidated files
 
@@ -34,6 +34,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-ARCH-LEARNING-LOOP-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-28 | VERIFIED |
 | `DIAG-ARCH-SKILL-MCP-LISP-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-10-19 | VERIFIED |
 | `DIAG-ARCH-COMPACTION-001` | [`architecture/compaction-pipeline-spec.md`](./architecture/compaction-pipeline-spec.md) | 2026-10-05 | VERIFIED |
+| `DIAG-ARCH-EUREKA-001` | [`plans/eureka-cycle-implementation-plan.md`](./plans/eureka-cycle-implementation-plan.md) | 2026-10-23 | VERIFIED |
 | `DIAG-ARTIFACT-001` | [`architecture/standardized-artifact-storage.md`](./architecture/standardized-artifact-storage.md) | 2026-09-28 | VERIFIED |
 | `DIAG-BRIDGE-002` | [`diataxis/kask_bridge/reference.md`](./diataxis/kask_bridge/reference.md) | 2026-10-19 | VERIFIED |
 | `DIAG-BRIDGE-003` | [`diataxis/kask_bridge/reference.md`](./diataxis/kask_bridge/reference.md) | 2026-10-19 | VERIFIED |
@@ -42,7 +43,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-BRIDGE-007` | [`diataxis/kask_bridge/explanation.md`](./diataxis/kask_bridge/explanation.md) | 2026-09-28 | VERIFIED |
 | `DIAG-CAP-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-28 | VERIFIED |
 | `DIAG-CAP-002` | [`diagrams/mcp-dispatch.md`](./diagrams/mcp-dispatch.md) | 2026-09-28 | VERIFIED |
-| `DIAG-CAP-003` | [`diataxis/hkask-tool-port/reference.md`](./diataxis/hkask-tool-port/reference.md) | 2026-09-28 | VERIFIED |
+
 | `DIAG-CAP-004` | [`diataxis/hkask-tool-port/reference.md`](./diataxis/hkask-tool-port/reference.md) | 2026-09-28 | VERIFIED |
 | `DIAG-CAP-005` | [`diataxis/hkask-tool-port/reference.md`](./diataxis/hkask-tool-port/reference.md) | 2026-09-28 | VERIFIED |
 | `DIAG-CAP-006` | [`diataxis/hkask-tool-port/reference.md`](./diataxis/hkask-tool-port/reference.md) | 2026-09-28 | VERIFIED |
@@ -69,7 +70,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-MCPSRV-010` | [`diataxis/hkask-mcp-server/reference.md`](./diataxis/hkask-mcp-server/reference.md) | 2026-09-28 | VERIFIED |
 | `DIAG-MCPSRV-020` | [`diataxis/hkask-mcp-server/reference.md`](./diataxis/hkask-mcp-server/reference.md) | 2026-09-28 | VERIFIED |
 | `DIAG-MCPSRV-030` | [`diataxis/hkask-mcp-server/explanation.md`](./diataxis/hkask-mcp-server/explanation.md) | 2026-09-28 | VERIFIED |
-| `DIAG-MCPSRV-031` | [`diataxis/hkask-mcp-server/explanation.md`](./diataxis/hkask-mcp-server/explanation.md) | 2026-09-28 | VERIFIED |
+
 | `DIAG-MDS-001` | [`architecture/core/MDS.md`](./architecture/core/MDS.md) | 2026-10-19 | VERIFIED |
 | `DIAG-MEDIA-PANEL-001` | [`diataxis/media_panel/reference.md`](./diataxis/media_panel/reference.md) | 2026-09-28 | VERIFIED |
 | `DIAG-MEDIA-PANEL-002` | [`diataxis/media_panel/reference.md`](./diataxis/media_panel/reference.md) | 2026-09-28 | VERIFIED |
@@ -100,7 +101,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-RF-008` | [`reference/mcp-servers/media.md`](./reference/mcp-servers/media.md) | 2026-10-13 | VERIFIED |
 | `DIAG-RF-PM` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-28 | VERIFIED |
 | `DIAG-RF-PM-PIPELINE-001` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-28 | VERIFIED |
-| `DIAG-RF-SWARM-001` | [`reference/mcp-servers/swarm.md`](./reference/mcp-servers/swarm.md) | 2026-09-28 | VERIFIED |
+
 | `DIAG-SEQ-MCP-TOOL-CALL-001` | [`diagrams/mcp-dispatch.md`](./diagrams/mcp-dispatch.md) | 2026-09-28 | VERIFIED |
 
 | `DIAG-STATE-GOAL-LIFECYCLE` | [`diagrams/kanban.md`](./diagrams/kanban.md) | 2026-09-28 | VERIFIED |
@@ -115,7 +116,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-SWARM-010` | [`diataxis/swarm_system/reference.md`](./diataxis/swarm_system/reference.md) | 2026-09-28 | VERIFIED |
 | `DIAG-SWARM-020` | [`diataxis/swarm_system/reference.md`](./diataxis/swarm_system/reference.md) | 2026-09-28 | VERIFIED |
 | `DIAG-SWARM-030` | [`diataxis/swarm_system/explanation.md`](./diataxis/swarm_system/explanation.md) | 2026-09-28 | VERIFIED |
-| `DIAG-SWARM-031` | [`diataxis/swarm_system/explanation.md`](./diataxis/swarm_system/explanation.md) | 2026-09-28 | VERIFIED |
+
 | `DIAG-TYPES-002` | [`diataxis/hkask-types/reference.md`](./diataxis/hkask-types/reference.md) | 2026-09-28 | VERIFIED |
 | `DIAG-TYPES-003` | [`diataxis/hkask-types/reference.md`](./diataxis/hkask-types/reference.md) | 2026-09-28 | VERIFIED |
 | `DIAG-TYPES-004` | [`diataxis/hkask-types/reference.md`](./diataxis/hkask-types/reference.md) | 2026-09-28 | VERIFIED |

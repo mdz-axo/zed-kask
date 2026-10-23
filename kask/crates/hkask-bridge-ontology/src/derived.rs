@@ -1959,6 +1959,18 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         ],
         authority: "operator ruling 2026-10-19 (card 75d2211b: resolve the coarse embedding/ANN vocabulary); Malkov & Yashunin, arXiv:1603.09320 (2016/2018); Gao & Long, SIGMOD 2024, arXiv:2405.12497",
     },
+    DerivedConcept {
+        term: "tokenization",
+        aliases: &["tokenizer", "tokenize", "tokenisation"],
+        identity: "the task of segmenting text into words, subwords, or tokens — the discrete units downstream language processing consumes",
+        definition: "Jurafsky & Martin, Speech and Language Processing (3rd ed. draft, August 19, 2026), chapter 2 'Words and Tokens' (web.stanford.edu/~jurafsky/slp3/2.pdf): word and subword tokenization, including byte-pair encoding, segment text into the discrete units (words, subwords, tokens) that language models and NLP tools consume. In zed-kask it grounds the corpus pipeline's approximate token targets (converted to whitespace-word budgets, never tokenizer counts) and inference token accounting (billed_input_tokens vs total_input_tokens). The nameable violation is treating a token as a word: token and word counts are different quantities over the same text, and tokenizer-approximate budgets are never exact counts.",
+        constituents: &[
+            "word tokenization",
+            "subword tokenization",
+            "byte-pair encoding",
+        ],
+        authority: "operator ruling 2026-10-23 (card ffbf5147: resolve the tokenization/tokenizer vocabulary); Jurafsky & Martin, Speech and Language Processing (3rd ed. draft, August 19, 2026), ch. 2, web.stanford.edu/~jurafsky/slp3/2.pdf",
+    },
 ];
 /// Normalization matches the onto_anchor tool's: lowercase alphanumeric
 /// characters only, separators and case folded away.
@@ -3134,6 +3146,31 @@ mod tests {
             assert!(
                 concept.authority.starts_with("operator ruling 2026-10-14"),
                 "{term} cites the 2026-10-14 ruling"
+            );
+        }
+    }
+
+    #[test]
+    fn tokenization_ruling_resolves_with_authority() {
+        for (term, expected_term, marker) in [
+            ("tokenization", "tokenization", "Jurafsky"),
+            ("tokenizer", "tokenization", "ffbf5147"),
+            ("tokenisation", "tokenization", "2026-10-23"),
+        ] {
+            let concept =
+                resolve_derived(term).expect("tokenization ruling must resolve in derived.rs");
+            assert_eq!(
+                concept.term, expected_term,
+                "{term} resolves to {expected_term}"
+            );
+            assert!(
+                concept.authority.contains(marker),
+                "{term}: {}",
+                concept.authority
+            );
+            assert!(
+                concept.authority.starts_with("operator ruling 2026-10-23"),
+                "{term} cites the 2026-10-23 ruling"
             );
         }
     }
