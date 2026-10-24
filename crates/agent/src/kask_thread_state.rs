@@ -467,6 +467,132 @@ pub(crate) fn turn_instrument_summary(
     }
 }
 
+// ── Claim gate v1 (D94 — spec B's observing gate) ────────────────────────
+
+/// A deterministic claim-gate finding on a completed substantive
+/// native-first turn: the delivered assistant text carries an
+/// instrument-shaped claim with no instrument behind it. v1 observes and
+/// records (target `reg.gate`); the corrective re-prompt half (v2) is armed
+/// once these readings calibrate the checker's precision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClaimGateFinding {
+    /// A percentage/computed figure was delivered without `lisp_eval`
+    /// verifying it anywhere in the turn.
+    PercentWithoutDeterministicVerification { excerpt: String },
+    /// A web citation was delivered without the research ledger's
+    /// evidence path in the turn.
+    CitationWithoutResearchLedger { excerpt: String },
+}
+
+impl ClaimGateFinding {
+    /// Stable label for the record surface.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::PercentWithoutDeterministicVerification { .. } => {
+                "percent-without-deterministic-verification"
+            }
+            Self::CitationWithoutResearchLedger { .. } => "citation-without-research-ledger",
+        }
+    }
+
+    /// The bounded excerpt around the matched claim, for the record.
+    pub fn excerpt(&self) -> &str {
+        match self {
+            Self::PercentWithoutDeterministicVerification { excerpt }
+            | Self::CitationWithoutResearchLedger { excerpt } => excerpt,
+        }
+    }
+}
+
+/// Deterministic claim-class detection over a completed turn's messages
+/// (D94 — spec B's observing gate, v1). Call only for substantive
+/// native-first turns — the drift population the native-first sensor
+/// counts — where an instrument-shaped claim is exactly the mismatch the
+/// gate exists to observe. Scans only the FINAL delivered assistant text
+/// (Thinking segments are scratch, not delivered claims); at most one
+/// finding per class (bounded record), each with a bounded excerpt. No
+/// model cooperation — pure string classification.
+pub(crate) fn claim_gate_findings(
+    turn_messages: &[std::sync::Arc<crate::thread::Message>],
+) -> Vec<ClaimGateFinding> {
+    let final_text = turn_messages
+        .iter()
+        .rev()
+        .find_map(|msg| match &**msg {
+            crate::thread::Message::Agent(agent_msg) => Some(
+                agent_msg
+                    .content
+                    .iter()
+                    .filter_map(|content| match content {
+                        crate::thread::AgentMessageContent::Text(text) => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let mut findings = Vec::new();
+    if let Some(excerpt) = first_percent_excerpt(&final_text) {
+        findings.push(ClaimGateFinding::PercentWithoutDeterministicVerification { excerpt });
+    }
+    if let Some(excerpt) = first_url_excerpt(&final_text) {
+        findings.push(ClaimGateFinding::CitationWithoutResearchLedger { excerpt });
+    }
+    findings
+}
+
+/// The first percentage figure: a digit run (with optional decimal parts)
+/// immediately before an optional space and '%'. Returns a bounded excerpt
+/// around the match.
+fn first_percent_excerpt(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    for (index, _) in text.match_indices('%') {
+        let mut end = index;
+        if end > 0 && bytes[end - 1] == b' ' {
+            end -= 1;
+        }
+        let mut start = end;
+        let mut saw_digit = false;
+        while start > 0 {
+            let byte = bytes[start - 1];
+            if byte.is_ascii_digit() {
+                saw_digit = true;
+                start -= 1;
+            } else if byte == b'.' && saw_digit {
+                start -= 1;
+            } else {
+                break;
+            }
+        }
+        if saw_digit {
+            return Some(bounded_excerpt(text, start));
+        }
+    }
+    None
+}
+
+/// The first http(s) URL in the text, as a bounded excerpt.
+fn first_url_excerpt(text: &str) -> Option<String> {
+    let index = text.find("http://").or_else(|| text.find("https://"))?;
+    Some(bounded_excerpt(text, index))
+}
+
+/// A bounded ~80-char window around `index`, snapped to char boundaries —
+/// `.get` returns None on a non-boundary, and the loops guarantee one.
+fn bounded_excerpt(text: &str, index: usize) -> String {
+    let mut start = index.saturating_sub(40);
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    let mut end = (index + 40).min(text.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text.get(start..end).unwrap_or_default().to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::KaskThreadState;
@@ -481,6 +607,117 @@ mod tests {
     };
     use acp_thread::ClientUserMessageId;
     use language_model::LanguageModelToolUseId;
+
+    fn agent_message_with_text(text: &str) -> std::sync::Arc<Message> {
+        let mut message = AgentMessage::default();
+        message
+            .content
+            .push(AgentMessageContent::Text(text.to_string()));
+        std::sync::Arc::new(Message::Agent(message))
+    }
+
+    fn agent_message_with_thinking_and_text(thinking: &str, text: &str) -> std::sync::Arc<Message> {
+        let mut message = AgentMessage::default();
+        message.content.push(AgentMessageContent::Thinking {
+            text: thinking.to_string(),
+            signature: None,
+        });
+        message
+            .content
+            .push(AgentMessageContent::Text(text.to_string()));
+        std::sync::Arc::new(Message::Agent(message))
+    }
+
+    /// D94 — the delivered text carries a percentage with no `lisp_eval`
+    /// behind it: one finding, with the figure in the excerpt.
+    #[test]
+    fn percent_in_delivered_text_fires_with_excerpt() {
+        let findings = super::claim_gate_findings(&[agent_message_with_text(
+            "the native-first rate reads 62% of 26 substantive turns over the window",
+        )]);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].label(),
+            "percent-without-deterministic-verification"
+        );
+        assert!(
+            findings[0].excerpt().contains("62%"),
+            "got: {}",
+            findings[0].excerpt()
+        );
+    }
+
+    /// D94 — a delivered http citation with no research-ledger tools behind
+    /// it: one finding, with the URL in the excerpt.
+    #[test]
+    fn citation_in_delivered_text_fires_with_excerpt() {
+        let findings = super::claim_gate_findings(&[agent_message_with_text(
+            "per the upstream discussion at https://example.com/thread the fix landed",
+        )]);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].label(), "citation-without-research-ledger");
+        assert!(
+            findings[0].excerpt().contains("https://example.com"),
+            "got: {}",
+            findings[0].excerpt()
+        );
+    }
+
+    /// D94 — prose with no instrument-shaped claims fires nothing.
+    #[test]
+    fn clean_delivered_text_fires_nothing() {
+        let findings = super::claim_gate_findings(&[agent_message_with_text(
+            "the fix is in; the tests pass and the tree is clean as of this turn",
+        )]);
+        assert!(findings.is_empty(), "got: {findings:?}");
+    }
+
+    /// D94 — Thinking segments are scratch, never delivered claims: a
+    /// percentage that exists only in thinking must not fire.
+    #[test]
+    fn thinking_scratch_is_not_gated() {
+        let findings = super::claim_gate_findings(&[agent_message_with_thinking_and_text(
+            "maybe the rate is 62% — verify with lisp_eval before sending",
+            "the change is complete and the gates are green.",
+        )]);
+        assert!(findings.is_empty(), "got: {findings:?}");
+    }
+
+    /// D94 — only the FINAL delivered agent message is gated: an earlier
+    /// message's claims are superseded, not the turn's deliverable.
+    #[test]
+    fn only_the_final_agent_message_is_gated() {
+        let findings = super::claim_gate_findings(&[
+            agent_message_with_text("the earlier reading was 50% before the recheck"),
+            agent_message_with_text("the recheck is done and everything is consistent"),
+        ]);
+        assert!(findings.is_empty(), "got: {findings:?}");
+        let findings = super::claim_gate_findings(&[
+            agent_message_with_text("the earlier reading was fine"),
+            agent_message_with_text("the final reading is 50% of the window"),
+        ]);
+        assert_eq!(findings.len(), 1);
+    }
+
+    /// D94 — both classes fire together on one turn, bounded at one finding
+    /// per class.
+    #[test]
+    fn both_classes_fire_together() {
+        let findings = super::claim_gate_findings(&[agent_message_with_text(
+            "coverage improved to 80% and the source is https://example.com/spec",
+        )]);
+        assert_eq!(findings.len(), 2);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.label() == "percent-without-deterministic-verification")
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.label() == "citation-without-research-ledger")
+        );
+    }
 
     fn substantive_prompt() -> String {
         // 24 words — above SUBSTANTIVE_MIN_WORDS (20).

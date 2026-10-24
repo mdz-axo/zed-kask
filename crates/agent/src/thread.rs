@@ -3094,6 +3094,28 @@ impl Thread {
                                     summary.substantive,
                                     summary.native_first,
                                 );
+                                // zed-kask: D94 — spec B's observing gate (v1):
+                                // on the drift population the sensor counts
+                                // (substantive + native-first), detect
+                                // instrument-shaped claims in the delivered
+                                // text — percentages without deterministic
+                                // verification, citations without the research
+                                // ledger. v1 records (target `reg.gate`); the
+                                // corrective re-prompt (v2) is armed once the
+                                // readings calibrate the checker's precision.
+                                if summary.substantive && summary.native_first {
+                                    let findings = this.update(cx, |thread, _| {
+                                        crate::kask_thread_state::claim_gate_findings(
+                                            &thread.messages
+                                                [message_ix.min(thread.messages.len())..],
+                                        )
+                                    });
+                                    if let Ok(findings) = findings {
+                                        if !findings.is_empty() {
+                                            crate::record_claim_gate_findings(&findings);
+                                        }
+                                    }
+                                }
                             }
                         }
 

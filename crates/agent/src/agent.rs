@@ -5078,6 +5078,35 @@ pub fn record_agent_turn_native_first(substantive: bool, native_first: bool) {
     }
 }
 
+// The claim-gate finding type crosses the crate boundary (the zed-side sink
+// labels and excerpts its records), so it rides the agent surface.
+pub use crate::kask_thread_state::ClaimGateFinding;
+
+/// Claim-gate findings recorder (D94 — spec B's observing gate, v1). Fired
+/// at turn completion for substantive native-first turns whose delivered
+/// text carries instrument-shaped claims without instruments behind them
+/// (percentages without `lisp_eval`, citations without the research
+/// ledger). The pure classifier is
+/// `kask_thread_state::claim_gate_findings`; v1's sink is the running log
+/// (`reg.gate`), and the corrective re-prompt (v2) is armed once the
+/// observations calibrate the checker's precision.
+pub type ClaimGateRecorder = Arc<dyn Fn(&[ClaimGateFinding]) + Send + Sync>;
+recorder_hook!(CLAIM_GATE_RECORDER, ClaimGateRecorder);
+
+pub fn set_claim_gate_recorder(recorder: ClaimGateRecorder) {
+    CLAIM_GATE_RECORDER.set(recorder);
+}
+
+pub fn record_claim_gate_findings(findings: &[ClaimGateFinding]) {
+    match CLAIM_GATE_RECORDER.get() {
+        Some(record) => record(findings),
+        None => log::debug!(
+            "claim-gate findings ({} findings) not recorded: unwired",
+            findings.len()
+        ),
+    }
+}
+
 pub fn record_skill_outcome(skill_id: &str, invoker: &str, success: bool, error: Option<&str>) {
     match SKILL_OUTCOME_RECORDER.get() {
         Some(record) => record(skill_id, invoker, success, error),
@@ -5751,6 +5780,49 @@ mod internal_tests {
             relevant_after.len(),
             2,
             "the replaced recorder must no longer receive calls"
+        );
+    }
+
+    /// D94 — the claim-gate recorder hook: records findings, and is
+    /// replaceable (the `RecorderHook` family contract).
+    #[test]
+    fn claim_gate_recorder_records_and_is_replaceable() {
+        let recorded = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = recorded.clone();
+        let recorder_override = CLAIM_GATE_RECORDER.scoped_for_test(std::sync::Arc::new(
+            move |findings: &[ClaimGateFinding]| {
+                if let Ok(mut entries) = captured.lock() {
+                    entries.extend(findings.iter().cloned());
+                }
+            },
+        ));
+        record_claim_gate_findings(
+            &[ClaimGateFinding::PercentWithoutDeterministicVerification {
+                excerpt: "62% of the window".to_string(),
+            }],
+        );
+        record_claim_gate_findings(&[]);
+        let entries: Vec<ClaimGateFinding> = recorded.lock().expect("recorded lock").clone();
+        assert_eq!(entries.len(), 1, "one finding recorded, empty call skipped");
+        assert_eq!(
+            entries[0].label(),
+            "percent-without-deterministic-verification"
+        );
+        drop(recorder_override);
+
+        let replaced = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let captured = replaced.clone();
+        let _guard = CLAIM_GATE_RECORDER.scoped_for_test(std::sync::Arc::new(
+            move |_findings: &[ClaimGateFinding]| {
+                captured.store(true, std::sync::atomic::Ordering::SeqCst);
+            },
+        ));
+        record_claim_gate_findings(&[ClaimGateFinding::CitationWithoutResearchLedger {
+            excerpt: "https://example.com".to_string(),
+        }]);
+        assert!(
+            replaced.load(std::sync::atomic::Ordering::SeqCst),
+            "a second wiring must take over the hook"
         );
     }
 

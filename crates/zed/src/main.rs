@@ -991,6 +991,29 @@ fn main() {
             ));
         }
 
+        // zed-kask: D94 — spec B's observing gate (v1): the claim-gate
+        // recorder receives deterministic findings from completed
+        // substantive native-first turns (the drift population the
+        // native-first sensor counts). The v1 sink is the running log
+        // (target `reg.gate`) — the surface where the operator reads
+        // regulation output; the durable reg_query surface and the
+        // corrective re-prompt land with v2, armed once these observations
+        // calibrate the checker's precision (sense before act).
+        agent::set_claim_gate_recorder(std::sync::Arc::new(
+            |findings: &[agent::ClaimGateFinding]| {
+                let classes: Vec<&'static str> =
+                    findings.iter().map(|finding| finding.label()).collect();
+                let excerpts: Vec<&str> =
+                    findings.iter().map(|finding| finding.excerpt()).collect();
+                tracing::warn!(
+                    target: "reg.gate",
+                    classes = ?classes,
+                    excerpts = ?excerpts,
+                    "claim-gate: a substantive native-first turn delivered instrument-shaped claims (percentages without lisp_eval, citations without the research ledger)"
+                );
+            },
+        ));
+
         // zed-kask: D59 — skill outcome recording, the observe stage of the
         // skill learning loop (DIAG-ARCH-LEARNING-LOOP-001). One recorder for
         // the whole process: every outcome feeds the RegulationLedger
