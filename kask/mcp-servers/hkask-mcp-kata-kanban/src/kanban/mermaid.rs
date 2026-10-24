@@ -11,6 +11,7 @@
 //! kanban
 //! %% kanban board: <optional board name>
 //! %% kanban column status: backlog
+//! %% kanban column wip: 5
 //!   section Backlog
 //!     Task Title 1
 //!     Task Title 2
@@ -20,11 +21,14 @@
 //! ```
 //! ````
 //!
-//! The format is intentionally minimal: columns (sections) and task titles
-//! only. Rich metadata (description, criteria, labels, assignees) is not
-//! preserved — the round-trip is structural, not semantic. Task titles with
-//! special characters (quotes, brackets, unicode, backslashes) are escaped on
-//! export and unescaped on parse so they survive the round-trip unchanged.
+//! The format is intentionally minimal: columns (sections), task titles,
+//! and column WIP limits (the optional `%% kanban column wip: N` line —
+//! without it the pre-change format silently dropped the one flow-control
+//! mechanism a board carries). Rich metadata (description, criteria,
+//! labels, assignees) is not preserved — the round-trip is structural,
+//! not semantic. Task titles with special characters (quotes, brackets,
+//! unicode, backslashes) are escaped on export and unescaped on parse so
+//! they survive the round-trip unchanged.
 //!
 //! ## Why not the official mermaid kanban syntax?
 //!
@@ -50,6 +54,8 @@ pub(crate) enum MermaidParseError {
     MissingColumnStatus { column: String },
     #[error("invalid kanban column status {status:?}")]
     InvalidColumnStatus { status: String },
+    #[error("invalid kanban column WIP limit {wip:?}: expected a non-negative integer")]
+    InvalidColumnWip { wip: String },
 }
 
 /// A parsed column from mermaid kanban markdown: a name and the task titles
@@ -58,6 +64,10 @@ pub(crate) enum MermaidParseError {
 pub(crate) struct ParsedColumn {
     pub name: String,
     pub status: TaskStatus,
+    /// The column's WIP limit when the markdown carried a
+    /// `%% kanban column wip: N` line before the section; absent → no
+    /// limit.
+    pub wip_limit: Option<u32>,
     pub tasks: Vec<String>,
 }
 
@@ -123,6 +133,9 @@ pub(crate) fn export_board_to_mermaid(board: &Board, tasks: &[Task]) -> String {
             "%% kanban column status: {}\n",
             column.status.as_str()
         ));
+        if let Some(wip) = column.wip_limit {
+            out.push_str(&format!("%% kanban column wip: {wip}\n"));
+        }
         out.push_str(&format!("  section {}\n", column.name));
         let mut column_tasks = tasks
             .iter()
@@ -153,6 +166,7 @@ pub(crate) fn parse_mermaid_kanban(markdown: &str) -> Result<ParsedBoard, Mermai
     let mut columns: Vec<ParsedColumn> = Vec::new();
     let mut current_column: Option<usize> = None;
     let mut pending_status: Option<TaskStatus> = None;
+    let mut pending_wip: Option<u32> = None;
 
     let mut saw_kanban_directive = false;
 
@@ -177,6 +191,16 @@ pub(crate) fn parse_mermaid_kanban(markdown: &str) -> Result<ParsedBoard, Mermai
                         status: status.to_string(),
                     }
                 })?);
+            } else if let Some(wip) = rest.strip_prefix("kanban column wip:") {
+                // The most recent wip line before a section applies; a
+                // non-integer is refused visibly, not silently dropped.
+                let wip = wip.trim();
+                let parsed =
+                    wip.parse::<u32>()
+                        .map_err(|_| MermaidParseError::InvalidColumnWip {
+                            wip: wip.to_string(),
+                        })?;
+                pending_wip = Some(parsed);
             }
             continue;
         }
@@ -207,6 +231,7 @@ pub(crate) fn parse_mermaid_kanban(markdown: &str) -> Result<ParsedBoard, Mermai
             columns.push(ParsedColumn {
                 name: column_name.to_string(),
                 status,
+                wip_limit: pending_wip.take(),
                 tasks: Vec::new(),
             });
             current_column = Some(columns.len() - 1);
@@ -286,11 +311,12 @@ pub(crate) fn columns_from_parsed(
                     status: column.status,
                 });
             }
-            Ok(ColumnDef::new(
-                column.name.clone(),
-                column.status,
-                position as u32,
-            ))
+            let mut definition =
+                ColumnDef::new(column.name.clone(), column.status, position as u32);
+            if let Some(wip) = column.wip_limit {
+                definition = definition.with_wip_limit(wip);
+            }
+            Ok(definition)
         })
         .collect()
 }
@@ -339,5 +365,35 @@ mod tests {
         let markdown = "kanban\n%% kanban column status: backlog\n  section One\n%% kanban column status: ready\n  section Two\n%% kanban column status: in_progress\n  section Three\n%% kanban column status: review\n  section Four\n%% kanban column status: done\n  section Five\n%% kanban column status: backlog\n  section Six\n";
         let parsed = parse_mermaid_kanban(markdown).expect("valid mermaid parses");
         assert!(columns_from_parsed(&parsed).is_err());
+    }
+
+    /// expect: "Column WIP limits survive the export/import round-trip."
+    /// pre: a column's markdown carries a `%% kanban column wip: N` line
+    /// post: the parsed column keeps the limit; a column without the line
+    /// keeps none
+    #[test]
+    fn column_wip_limits_round_trip() {
+        let markdown = "kanban\n%% kanban board: WIP Board\n%% kanban column status: ready\n%% kanban column wip: 2\n  section Ready\n%% kanban column status: done\n  section Done\n";
+        let parsed = parse_mermaid_kanban(markdown).expect("wip format parses");
+        assert_eq!(parsed.columns[0].wip_limit, Some(2));
+        assert_eq!(parsed.columns[1].wip_limit, None, "no wip line, no limit");
+        let columns = columns_from_parsed(&parsed).expect("columns map");
+        assert_eq!(columns[0].wip_limit, Some(2));
+        assert_eq!(columns[1].wip_limit, None);
+    }
+
+    /// expect: "A malformed WIP limit is refused visibly, not silently dropped."
+    /// pre: a wip comment carries a non-integer
+    /// post: parsing returns InvalidColumnWip naming the value
+    #[test]
+    fn malformed_column_wip_is_refused() {
+        let error = parse_mermaid_kanban(
+            "kanban\n%% kanban column status: backlog\n%% kanban column wip: many\n  section Backlog\n",
+        )
+        .expect_err("a non-integer wip must be rejected");
+        assert!(
+            matches!(error, super::MermaidParseError::InvalidColumnWip { ref wip } if wip == "many"),
+            "the refusal names the malformed value: {error}"
+        );
     }
 }

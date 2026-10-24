@@ -10,7 +10,7 @@
 //!   kanban:task  → {task_id}  → JSON Task
 //!   kanban:board_tasks:{board_id} → {task_id} → task_id (index)
 
-use hkask_storage::{HMem, HMemError, HMemStore};
+use hkask_storage::{HMem, HMemError, HMemStore, TxnReads};
 use hkask_types::Dimension;
 use hkask_types::HMemOntology;
 use hkask_types::NotFound;
@@ -19,7 +19,7 @@ use hkask_types::id::{BoardId, TaskId};
 use hkask_types::kanban_wire::{ALGEDONIC_BOARD_NAME, KANBAN_BOARD_NAME_MAX_CHARS};
 use serde_json::Value;
 
-use super::types::KanbanError;
+use super::types::{KanbanError, TaskIndexFault, TaskListReport};
 
 use crate::kanban::mermaid::{ParsedBoard, columns_from_parsed};
 use crate::kanban::{
@@ -181,10 +181,23 @@ impl KanbanService {
         Ok(())
     }
 
-    fn build_board(owner: WebID, name: &str, columns: &[ColumnDef]) -> Result<Board, KanbanError> {
+    fn build_board(
+        owner: WebID,
+        name: &str,
+        columns: &[ColumnDef],
+        done_requires_verification: Option<bool>,
+    ) -> Result<Board, KanbanError> {
         let name = Self::validate_board_name(name)?;
         Self::validate_columns(columns)?;
-        Ok(Board::new(name.to_string(), owner, columns.to_vec()))
+        let mut board = Board::new(name.to_string(), owner, columns.to_vec());
+        // The Done-gate policy is structural, persisted on the row. An
+        // explicit choice wins; `None` falls back to the reserved-name
+        // convention (boards named "Algedonic review" are verification-
+        // gated) so the operator's existing review discipline needs no
+        // call-site change.
+        board.done_requires_verification =
+            done_requires_verification.unwrap_or(board.name == ALGEDONIC_BOARD_NAME);
+        Ok(board)
     }
 
     fn board_h_mem(board: &Board) -> Result<HMem, KanbanError> {
@@ -210,13 +223,34 @@ impl KanbanService {
     ///       columns is non-empty
     /// post: board is persisted as a h_mem; returns the created Board
     #[must_use = "result must be used"]
+    /// Create a board deferring the Done-gate policy to the reserved-name
+    /// convention — the test-suite convenience over the real path
+    /// ([`board_create_with_policy`]); production callers (the MCP tool)
+    /// pass their policy explicitly.
+    #[cfg(test)]
     pub(crate) fn board_create(
         &self,
         owner: WebID,
         name: &str,
         columns: &[ColumnDef],
     ) -> Result<Board, KanbanError> {
-        let board = Self::build_board(owner, name, columns)?;
+        self.board_create_with_policy(owner, name, columns, None)
+    }
+
+    /// Create a board with an explicit Done-gate policy: when true, the
+    /// Done column is reachable only through `kanban_task_verify`, never
+    /// an ordinary column move. `None` defers to the reserved-name
+    /// convention stamping in `build_board` — the policy is always
+    /// persisted structurally, never re-derived from the name at move
+    /// time.
+    pub(crate) fn board_create_with_policy(
+        &self,
+        owner: WebID,
+        name: &str,
+        columns: &[ColumnDef],
+        done_requires_verification: Option<bool>,
+    ) -> Result<Board, KanbanError> {
+        let board = Self::build_board(owner, name, columns, done_requires_verification)?;
         let h_mem = Self::board_h_mem(&board)?;
         self.store
             .insert(&h_mem)
@@ -250,7 +284,7 @@ impl KanbanService {
     ) -> Result<(Board, usize), KanbanError> {
         let columns = columns_from_parsed(parsed)
             .map_err(|error| KanbanError::InvalidInput(error.to_string()))?;
-        let board = Self::build_board(owner, name, &columns)?;
+        let board = Self::build_board(owner, name, &columns, None)?;
         let mut records = vec![Self::board_h_mem(&board)?];
         let mut task_count = 0usize;
         for (column, definition) in parsed.columns.iter().zip(&columns) {
@@ -396,6 +430,40 @@ impl KanbanService {
         Ok(board)
     }
 
+    /// Persist the Done-gate policy on a legacy board — the one-time
+    /// migration that retires the name-keyed check: after the first move
+    /// evaluation the policy lives on the row, so renaming the board keeps
+    /// the gate. The write transforms the current row (setting only the
+    /// flag), so a concurrent rename cannot be clobbered; it is convergent,
+    /// so concurrent migrations cannot disagree.
+    fn board_set_done_gate(&self, board_id: BoardId) -> Result<Board, KanbanError> {
+        self.store
+            .update_value_atomic::<_, TaskWriteError>(
+                BOARD_ENTITY,
+                &board_id.to_string(),
+                |current| {
+                    let mut board: Board = serde_json::from_value(current).map_err(|error| {
+                        TaskWriteError(KanbanError::Internal(format!(
+                            "deserialization failed: {error}"
+                        )))
+                    })?;
+                    board.done_requires_verification = true;
+                    let value = serde_json::to_value(&board).map_err(|error| {
+                        TaskWriteError(KanbanError::Internal(format!(
+                            "serialization failed: {error}"
+                        )))
+                    })?;
+                    Ok((Some(value), board))
+                },
+            )?
+            .ok_or_else(|| {
+                KanbanError::NotFound(NotFound {
+                    entity_type: "board".to_string(),
+                    id: board_id.to_string(),
+                })
+            })
+    }
+
     // ── Task operations ───────────────────────────────────────────────────
 
     /// Validate goal citations against the live goal store: the cited goal
@@ -496,58 +564,68 @@ impl KanbanService {
         Ok(task)
     }
 
-    /// Walk a board's task index and parse every indexed task row — the
-    /// shared spine of the per-board task reads (the WIP count and the
-    /// list). The board's existence check stays per-caller (the list tool
-    /// verifies it; the internal count runs on a board the caller already
-    /// verified); a row that fails to parse is skipped (both reads'
-    /// behavior).
-    fn board_tasks(&self, board_id: BoardId) -> Result<Vec<Task>, KanbanError> {
+    /// Walk a board's task index and read every indexed task row — the
+    /// shared spine of the per-board task reads (the listing and the WIP
+    /// admission). The board's existence check stays per-caller (the list
+    /// tool verifies it; the WIP count runs on a board the caller already
+    /// verified). A row that is missing or fails to decode is not silently
+    /// skipped: the read returns it as a [`TaskIndexFault`] so listings
+    /// surface the degradation in their response and the WIP admission can
+    /// fail closed (an unreadable row can only undercount, and
+    /// undercounting over-admits).
+    fn board_tasks_with_faults(
+        &self,
+        board_id: BoardId,
+    ) -> Result<(Vec<Task>, Vec<TaskIndexFault>), KanbanError> {
         let index_entity = format!("{BOARD_TASKS_PREFIX}{board_id}");
         let index_triples = self
             .store
             .query_by_entity(&index_entity)
             .map_err(|e| KanbanError::Internal(format!("index query failed: {e}")))?;
         let mut tasks = Vec::new();
+        let mut undecodable = Vec::new();
         for idx_t in &index_triples {
-            if let Some(task_id_str) = idx_t.value.as_str() {
-                let task_triples = self
-                    .store
-                    .query_by_entity_attribute(TASK_ENTITY, task_id_str)
-                    .map_err(|e| KanbanError::Internal(format!("task query failed: {e}")))?;
-                for t in &task_triples {
-                    if let Ok(task) = serde_json::from_value::<Task>(t.value.clone()) {
-                        tasks.push(task);
-                    }
-                }
+            let Some(task_id_str) = idx_t.value.as_str() else {
+                undecodable.push(TaskIndexFault {
+                    task_id: idx_t.attribute.clone(),
+                    reason: "index entry value is not a task id string".to_string(),
+                });
+                continue;
+            };
+            let task_triples = self
+                .store
+                .query_by_entity_attribute(TASK_ENTITY, task_id_str)
+                .map_err(|e| KanbanError::Internal(format!("task query failed: {e}")))?;
+            let Some(row) = task_triples.into_iter().next() else {
+                undecodable.push(TaskIndexFault {
+                    task_id: task_id_str.to_string(),
+                    reason: "indexed task row is missing".to_string(),
+                });
+                continue;
+            };
+            match serde_json::from_value::<Task>(row.value) {
+                Ok(task) => tasks.push(task),
+                Err(error) => undecodable.push(TaskIndexFault {
+                    task_id: task_id_str.to_string(),
+                    reason: format!("task row failed to decode: {error}"),
+                }),
             }
         }
-        Ok(tasks)
+        Ok((tasks, undecodable))
     }
 
-    /// Count tasks in a given status on a board (for WIP enforcement).
-    fn count_tasks_in_status(
-        &self,
-        board_id: BoardId,
-        status: TaskStatus,
-    ) -> Result<usize, KanbanError> {
-        Ok(self
-            .board_tasks(board_id)?
-            .iter()
-            .filter(|task| task.status == status)
-            .count())
-    }
-
-    /// List tasks on a board, optionally filtered.
+    /// List tasks on a board, optionally filtered. Indexed rows that cannot
+    /// be read are surfaced in `undecodable` — never silently dropped.
     ///
     /// pre:  board_id refers to an existing board
-    /// post: returns tasks matching the filter; empty Vec if none match
+    /// post: returns the readable tasks matching the filter plus the
+    ///       indexed rows that could not be read
     #[must_use = "result must be used"]
     pub(crate) fn task_list(
         &self,
         board_id: BoardId,
         filter: TaskFilter,
-    ) -> Result<Vec<Task>, KanbanError> {
+    ) -> Result<TaskListReport, KanbanError> {
         // Verify board exists
         self.board_get(board_id)?.ok_or_else(|| {
             KanbanError::NotFound(NotFound {
@@ -556,22 +634,19 @@ impl KanbanService {
             })
         })?;
 
-        let mut tasks: Vec<Task> = self
-            .board_tasks(board_id)?
-            .into_iter()
-            .filter(|task| {
-                filter.status.is_none_or(|s| task.status == s)
-                    && filter.assignee.is_none_or(|a| task.assignee == Some(a))
-                    && filter.priority.is_none_or(|p| task.priority == Some(p))
-            })
-            .collect();
+        let (mut tasks, undecodable) = self.board_tasks_with_faults(board_id)?;
+        tasks.retain(|task| {
+            filter.status.is_none_or(|s| task.status == s)
+                && filter.assignee.is_none_or(|a| task.assignee == Some(a))
+                && filter.priority.is_none_or(|p| task.priority == Some(p))
+        });
 
         tasks.sort_by_key(|b| std::cmp::Reverse(b.created_at));
         if let Some(limit) = filter.limit {
             tasks.truncate(limit);
         }
 
-        Ok(tasks)
+        Ok(TaskListReport { tasks, undecodable })
     }
 
     /// Get a task by ID.
@@ -594,7 +669,53 @@ impl KanbanService {
         }
     }
 
+    /// Count a board's tasks in `status` from rows read inside the caller's
+    /// write transaction — the WIP admission's in-lock view. A sibling row
+    /// that is missing or fails to decode fails the count visibly: an
+    /// unreadable row can only undercount, and undercounting over-admits,
+    /// so the move is refused with the offending row named rather than
+    /// admitting against a number known to be a lower bound.
+    fn count_status_in_txn(
+        reads: &TxnReads<'_, '_>,
+        board_id: BoardId,
+        status: TaskStatus,
+    ) -> Result<usize, KanbanError> {
+        let index_entity = format!("{BOARD_TASKS_PREFIX}{board_id}");
+        let indexed = reads.attributes_by_entity(&index_entity).map_err(|error| {
+            KanbanError::Internal(format!("WIP count index read failed: {error}"))
+        })?;
+        let mut count = 0usize;
+        for task_id in indexed {
+            let Some(value) = reads.value_by_key(TASK_ENTITY, &task_id).map_err(|error| {
+                KanbanError::Internal(format!(
+                    "WIP count unreliable: task {task_id} row read failed: {error}"
+                ))
+            })?
+            else {
+                return Err(KanbanError::Internal(format!(
+                    "WIP count unreliable: indexed task {task_id} has no row"
+                )));
+            };
+            let task: Task = serde_json::from_value(value).map_err(|error| {
+                KanbanError::Internal(format!(
+                    "WIP count unreliable: task {task_id} failed to decode: {error}"
+                ))
+            })?;
+            if task.status == status {
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+
     /// Move a task to a new column (state transition).
+    ///
+    /// WIP admission is in-transaction: the sibling-task count is read
+    /// through the same `IMMEDIATE` transaction that commits the move
+    /// (`mutate_task_scanning`), so two concurrent movers into a full
+    /// column cannot both pass the count — the pre-fix shape counted
+    /// before the transaction, leaving exactly that window (observed red:
+    /// `concurrent_moves_into_a_wip_one_column_admit_exactly_one`).
     ///
     /// pre:  task_id refers to an existing task; target is a valid transition from current status
     /// pre:  actor is a valid WebID (P12)
@@ -616,22 +737,20 @@ impl KanbanService {
                 id: task.board_id.to_string(),
             })
         })?;
-        // Cross-task WIP counting stays outside the task transaction: a nested
-        // store read would deadlock a single-connection pool. This does not
-        // provide atomic WIP admission across different tasks.
-        let wip = board
-            .column_for_status(target)
-            .and_then(|col| col.wip_limit.map(|limit| (col, limit)))
-            .map(|(col, limit)| {
-                self.count_tasks_in_status(task.board_id, target)
-                    .map(|count| (col, limit, count))
-            })
-            .transpose()?;
-        let (task, from_status) = self.mutate_task(task_id, |task| {
+        // Legacy migration: boards created before the structural Done-gate
+        // flag carry the reserved name without the flag. Stamp the flag
+        // once, here, so the gate lives on the row and survives a rename
+        // (a name-keyed check moves with the name instead).
+        let board = if board.name == ALGEDONIC_BOARD_NAME && !board.done_requires_verification {
+            self.board_set_done_gate(board.id)?
+        } else {
+            board
+        };
+        let (task, from_status) = self.mutate_task_scanning(task_id, |task, reads| {
             Self::require_task_actor(task, actor)?;
-            // The review board's Done status is a verification outcome,
-            // never an ordinary column move.
-            if (board.name == ALGEDONIC_BOARD_NAME && target == TaskStatus::Done)
+            // On verification-gated boards, the Done status is a
+            // verification outcome, never an ordinary column move.
+            if (board.done_requires_verification && target == TaskStatus::Done)
                 || !board.can_transition(task.status, target)
             {
                 return Err(KanbanError::InvalidTransition {
@@ -640,14 +759,18 @@ impl KanbanService {
                     to: target,
                 });
             }
-            if let Some((col, limit, count)) = wip
-                && count >= limit as usize
+            if let Some((column, limit)) = board
+                .column_for_status(target)
+                .and_then(|column| column.wip_limit.map(|limit| (column.name.clone(), limit)))
             {
-                return Err(KanbanError::WipLimitExceeded {
-                    column: col.name.clone(),
-                    limit,
-                    current: count as u32,
-                });
+                let count = Self::count_status_in_txn(reads, task.board_id, target)?;
+                if count >= limit as usize {
+                    return Err(KanbanError::WipLimitExceeded {
+                        column,
+                        limit,
+                        current: count as u32,
+                    });
+                }
             }
             let from_status = task.status;
             task.status = target;
@@ -779,21 +902,17 @@ impl KanbanService {
         Ok((task, verification))
     }
 
-    // ── Decomposition + Spawn ─────────────────────────────────────────
+    // ── Spawn ─────────────────────────────────────────────────────
 
-    // Moved to decompose.rs and spawn.rs.
+    // Moved to spawn.rs.
 
-    // ── Comments (mini-REPL per task) ─────────────────────────────────
-
-    // Moved to comments.rs.
-
-    // ── Deliverables (file path / URL links) ──────────────────────────
+    // ── Comments (mini-REPL per task) ──────────────────────────────
 
     // Moved to comments.rs.
 
-    // ── Phases ────────────────────────────────────────────────────────
+    // ── Deliverables (file path / URL links) ──────────────────────
 
-    // Moved to phases.rs.
+    // Moved to comments.rs.
 
     // ── Lifecycle operations (P0) ─────────────────────────────────────
 
@@ -955,10 +1074,6 @@ impl KanbanService {
         Ok(task_ids.len())
     }
 
-    // ── LLM Verification ──────────────────────────────────────────────
-
-    // Moved to verification.rs.
-
     // ── Kata Integration (task-scoped scientific thinking) ──────────
 
     // Moved to kata.rs.
@@ -998,6 +1113,50 @@ impl KanbanService {
                         )))
                     })?;
                     let result = change(&mut task).map_err(TaskWriteError)?;
+                    task.updated_at = chrono::Utc::now();
+                    let value = serde_json::to_value(&task).map_err(|error| {
+                        TaskWriteError(KanbanError::Internal(format!(
+                            "serialization failed: {error}"
+                        )))
+                    })?;
+                    Ok((Some(value), (task, result)))
+                },
+            )?
+            .ok_or_else(|| {
+                KanbanError::NotFound(NotFound {
+                    entity_type: "task".to_string(),
+                    id: task_id.to_string(),
+                })
+            })
+    }
+
+    /// Transform the latest task under the existing storage write lock, with
+    /// in-transaction reads over related rows — the admission path for moves
+    /// that must count sibling tasks: the count and the commit share one
+    /// `IMMEDIATE` transaction, so a full column cannot admit two concurrent
+    /// movers (each mover's count includes the other's committed move).
+    /// Callers must validate task-dependent authority/state in `change`, not
+    /// on a snapshot; `change` must not write through `reads` (the guard is
+    /// read-only, and a nested pool acquisition would deadlock the
+    /// connection the transaction already holds).
+    pub(super) fn mutate_task_scanning<T>(
+        &self,
+        task_id: TaskId,
+        change: impl FnOnce(&mut Task, &TxnReads<'_, '_>) -> Result<T, KanbanError>,
+    ) -> Result<(Task, T), KanbanError> {
+        #[cfg(test)]
+        self.pause_before_task_write();
+        self.store
+            .update_value_atomic_with_reads::<_, TaskWriteError>(
+                TASK_ENTITY,
+                &task_id.to_string(),
+                |current, reads| {
+                    let mut task: Task = serde_json::from_value(current).map_err(|error| {
+                        TaskWriteError(KanbanError::Internal(format!(
+                            "deserialization failed: {error}"
+                        )))
+                    })?;
+                    let result = change(&mut task, reads).map_err(TaskWriteError)?;
                     task.updated_at = chrono::Utc::now();
                     let value = serde_json::to_value(&task).map_err(|error| {
                         TaskWriteError(KanbanError::Internal(format!(

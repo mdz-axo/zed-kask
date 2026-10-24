@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 pub(crate) mod board;
 pub(crate) mod column;
 pub(crate) mod goal;
+pub(crate) mod kata;
 
 pub(crate) mod phase;
 pub(crate) mod priority;
@@ -25,6 +26,7 @@ pub(crate) mod verification;
 pub(crate) use board::Board;
 pub(crate) use column::ColumnDef;
 pub(crate) use goal::CriterionCitation;
+pub(crate) use kata::{KataExperimentRecord, TaskKataState};
 
 pub(crate) use hkask_types::TaskStatus;
 pub(crate) use phase::KanbanPhase;

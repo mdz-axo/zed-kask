@@ -37,6 +37,80 @@ impl From<serde_json::Error> for HMemError {
     }
 }
 
+/// Read-only row access inside a caller's `IMMEDIATE` h_mem transaction.
+///
+/// Constructed only by [`HMemStore::update_value_atomic_with_reads`]: the
+/// reads share the transaction's already-held pooled connection, so they can
+/// neither deadlock a single-connection pool nor observe rows outside the
+/// write lock that will commit the caller's change. A change that admits
+/// work against a cross-row count (WIP limits) therefore counts exactly the
+/// state its own commit is serialized against.
+///
+/// The guard borrows the transaction, so it cannot outlive the change
+/// closure; it exposes reads only — no writes, no nested pool acquisition.
+pub struct TxnReads<'a, 'conn> {
+    transaction: &'a rusqlite::Transaction<'conn>,
+}
+
+impl TxnReads<'_, '_> {
+    /// Attributes (row keys) of every row stored under `entity`, sorted
+    /// ascending — the canonical id list of an index entity.
+    pub fn attributes_by_entity(&self, entity: &str) -> Result<Vec<String>, HMemError> {
+        let database = |error: rusqlite::Error| {
+            HMemError::Infra(InfrastructureError::database(error.to_string()))
+        };
+        let mut statement = self
+            .transaction
+            .prepare("SELECT attribute FROM hmems WHERE entity = ?1 ORDER BY attribute")
+            .map_err(database)?;
+        let rows = statement
+            .query_map(rusqlite::params![entity], |row| row.get::<_, String>(0))
+            .map_err(database)?;
+        let mut attributes = Vec::new();
+        for row in rows {
+            attributes.push(row.map_err(database)?);
+        }
+        Ok(attributes)
+    }
+
+    /// The JSON value of one row, or `None` when absent. More than one row
+    /// under the key is refused visibly (the same uniqueness invariant
+    /// [`HMemStore::update_value_atomic`] enforces on the row it
+    /// transforms) rather than silently reading the first.
+    pub fn value_by_key(&self, entity: &str, attribute: &str) -> Result<Option<Value>, HMemError> {
+        let database = |error: rusqlite::Error| {
+            HMemError::Infra(InfrastructureError::database(error.to_string()))
+        };
+        let count: usize = self
+            .transaction
+            .query_row(
+                "SELECT COUNT(*) FROM hmems WHERE entity = ?1 AND attribute = ?2",
+                rusqlite::params![entity, attribute],
+                |row| row.get(0),
+            )
+            .map_err(database)?;
+        match count {
+            0 => return Ok(None),
+            1 => {}
+            other => {
+                return Err(HMemError::Infra(InfrastructureError::database(format!(
+                    "required h_mem key {entity}/{attribute} has {other} rows"
+                ))));
+            }
+        }
+        let serialized: String = self
+            .transaction
+            .query_row(
+                "SELECT value FROM hmems WHERE entity = ?1 AND attribute = ?2",
+                rusqlite::params![entity, attribute],
+                |row| row.get(0),
+            )
+            .map_err(database)?;
+        let value: Value = serde_json::from_str(&serialized)?;
+        Ok(Some(value))
+    }
+}
+
 /// How an h_mem's value was obtained — the extraction ceiling (fermi's
 /// `verification_for_agent_ecologies.md` §5.4/§7: "extraction can never
 /// exceed inference; judgement does not inherit retrieval"). A memory the
@@ -535,6 +609,85 @@ impl HMemStore {
         let current =
             serde_json::from_str(&current).map_err(|error| E::from(HMemError::from(error)))?;
         let (new_value, result) = change(current)?;
+        if let Some(new_value) = new_value {
+            let serialized = serde_json::to_string(&new_value)
+                .map_err(|error| E::from(HMemError::from(error)))?;
+            transaction
+                .execute(
+                    "UPDATE hmems SET value = ?1 WHERE id = ?2",
+                    rusqlite::params![serialized, id],
+                )
+                .map_err(storage_error)?;
+        }
+        transaction.commit().map_err(storage_error)?;
+        Ok(Some(result))
+    }
+
+    /// Transform one EAV value under a single SQLite IMMEDIATE transaction,
+    /// with read access to other rows through the same transaction.
+    ///
+    /// expect: "A change that admits work against a cross-row count observes
+    /// that count under the same write lock that commits the change."
+    /// [P2] Constraining: Transparent Imperfection — the counted state and
+    /// the committed change move together or not at all.
+    /// pre: entity + attribute identify zero or one row; `change` validates
+    /// the current value and may read sibling rows through `reads` (the
+    /// guard borrows the held transaction — it cannot outlive the closure).
+    /// post: returns None if absent; otherwise commits an optional new value
+    /// and returns the change result; rows read through `reads` are not
+    /// modified by this call.
+    pub fn update_value_atomic_with_reads<T, E: From<HMemError>>(
+        &self,
+        entity: &str,
+        attribute: &str,
+        change: impl FnOnce(Value, &TxnReads<'_, '_>) -> Result<(Option<Value>, T), E>,
+    ) -> Result<Option<T>, E> {
+        let storage_error = |error: rusqlite::Error| {
+            E::from(HMemError::Infra(InfrastructureError::database(
+                error.to_string(),
+            )))
+        };
+        let pool = self.driver.sqlite_pool().ok_or_else(|| {
+            E::from(HMemError::Infra(InfrastructureError::database(
+                "atomic h_mem update requires a SqliteDriver",
+            )))
+        })?;
+        let mut connection = pool.get().map_err(|error| {
+            E::from(HMemError::Infra(InfrastructureError::database(
+                error.to_string(),
+            )))
+        })?;
+        let transaction = connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(storage_error)?;
+        let count: usize = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM hmems WHERE entity = ?1 AND attribute = ?2",
+                rusqlite::params![entity, attribute],
+                |row| row.get(0),
+            )
+            .map_err(storage_error)?;
+        if count == 0 {
+            return Ok(None);
+        }
+        if count != 1 {
+            return Err(E::from(HMemError::Infra(InfrastructureError::database(
+                format!("required h_mem key {entity}/{attribute} has {count} rows"),
+            ))));
+        }
+        let (id, current): (String, String) = transaction
+            .query_row(
+                "SELECT id, value FROM hmems WHERE entity = ?1 AND attribute = ?2",
+                rusqlite::params![entity, attribute],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(storage_error)?;
+        let current =
+            serde_json::from_str(&current).map_err(|error| E::from(HMemError::from(error)))?;
+        let reads = TxnReads {
+            transaction: &transaction,
+        };
+        let (new_value, result) = change(current, &reads)?;
         if let Some(new_value) = new_value {
             let serialized = serde_json::to_string(&new_value)
                 .map_err(|error| E::from(HMemError::from(error)))?;

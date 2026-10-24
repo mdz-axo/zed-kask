@@ -3136,7 +3136,6 @@ pub struct ThreadTurnRecord {
     /// The memory port uses this to route ingestion to the correct
     /// perspective-scoped store — Curator turns go to the curator's sovereign DB.
     pub agent_id: Option<AgentId>,
-
 }
 
 /// Port for ingesting completed thread turns into memory (D6).

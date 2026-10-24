@@ -2,6 +2,60 @@ use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_storage::{HMem, HMemStore};
 use hkask_types::{HMemOntology, WebID};
 
+/// The in-transaction read guard (`update_value_atomic_with_reads`) sees the
+/// committed rows its transaction serializes against: existing keys decode,
+/// missing keys are `None` (not an error, not a silent value), and an index
+/// entity enumerates its row keys sorted.
+#[test]
+fn txn_reads_see_committed_rows_and_name_missing_keys() -> anyhow::Result<()> {
+    let store = HMemStore::from_driver(SqliteDriver::in_memory_driver())?;
+    let owner = WebID::new();
+    store.insert(&HMem::new(
+        "guard:index",
+        "task-2",
+        serde_json::json!("task-2"),
+        owner,
+    ))?;
+    store.insert(&HMem::new(
+        "guard:index",
+        "task-1",
+        serde_json::json!("task-1"),
+        owner,
+    ))?;
+    store.insert(&HMem::new(
+        "guard:task",
+        "task-1",
+        serde_json::json!({"status": "ready"}),
+        owner,
+    ))?;
+    store.insert(&HMem::new(
+        "guard:primary",
+        "root",
+        serde_json::json!({"n": 0}),
+        owner,
+    ))?;
+
+    let seen = store.update_value_atomic_with_reads::<_, hkask_storage::HMemError>(
+        "guard:primary",
+        "root",
+        |current, reads| {
+            let indexed = reads.attributes_by_entity("guard:index")?;
+            assert_eq!(indexed, vec!["task-1", "task-2"]);
+            let task = reads.value_by_key("guard:task", "task-1")?;
+            assert_eq!(task, Some(serde_json::json!({"status": "ready"})));
+            assert!(reads.value_by_key("guard:task", "task-2")?.is_none());
+            let mut root: serde_json::Value = current;
+            root["n"] = serde_json::json!(1);
+            Ok((Some(root), ()))
+        },
+    )?;
+    assert!(seen.is_some());
+    let rows = store.query_by_entity_attribute("guard:primary", "root")?;
+    let value = rows.into_iter().next().map(|row| row.value);
+    assert_eq!(value, Some(serde_json::json!({"n": 1})));
+    Ok(())
+}
+
 /// expect: "Deleting a related h_mem set is all-or-nothing when a late row refuses deletion."
 /// [P3] Motivating: Generative Space — compound domain state must remain coherent.
 /// [P2] Constraining: Transparent Imperfection — a failed delete preserves the last durable state.

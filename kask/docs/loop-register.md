@@ -468,7 +468,8 @@ the spec's minimum list, recorded below rather than narrowed away.
 
 ### L9 — Kanban/goal loop — Steer prompt consolidated; two operator decisions deferred
 - **Crate/path:** `kask/mcp-servers/hkask-mcp-kata-kanban/src`
-- **Entry point:** `hkask_mcp_kata_kanban.rs:447` `kanban_goal_create`, `:499` `kanban_goal_judge`, `:544` `kanban_goal_score`, `:580` `kanban_goal_memory_acknowledge`; `kanban/service_impl.rs` and `idempotency.rs` own the board/task side of the cycle
+- **Entry point:** `hkask_mcp_kata_kanban.rs` `kanban_goal_create`/`kanban_goal_judge`/`kanban_goal_get`/`kanban_goal_list` (MCP routes — the score/acknowledge routes named in the historical Phase 1/2 records below were removed by the D58 cutover); `kanban/service_impl.rs` and `idempotency.rs` own the board/task side of the cycle
+- **Superseded (D58 cutover, 2026-10-20):** `kanban_goal_score` and `kanban_goal_memory_acknowledge` are gone — service-owned `goal_assess`/`goal_index_current` (drained via `kask_bridge::GoalHost`, gated by `curator.always_on`) own assessment, scoring, and the ONE `curator:goal:<id>` / `current` recall row (contract: `kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md`). The Phase 1/2 findings below describe the pre-cutover chain and are retained as this pass's historical record.
 - **Trigger:** agent/user MCP actions during work; panels (L7)
 - **Hands off to:** L10 (resolved-goal outcome → curator memory), L7 (widget updates), L2 (goal intake predictions are Brier-scored at resolution)
 - **Prediction:** 1 / 1 / 0.50

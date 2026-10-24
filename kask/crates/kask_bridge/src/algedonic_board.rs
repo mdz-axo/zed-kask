@@ -84,7 +84,7 @@ impl BoardAlertEscalationSink {
                     "kanban_board_create",
                     // First-use status reads and alerts may race. The kanban
                     // service atomically reserves this key across both callers.
-                    json!({ "name": ALGEDONIC_BOARD_NAME, "idempotency_key": "algedonic-review-board" }),
+                    json!({ "name": ALGEDONIC_BOARD_NAME, "done_requires_verification": true, "idempotency_key": "algedonic-review-board" }),
                 )
                 .await?;
             created["board_id"]

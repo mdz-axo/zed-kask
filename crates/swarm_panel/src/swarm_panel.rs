@@ -1544,14 +1544,15 @@ mod tests {
         assert_eq!(hkask_types::kanban_wire::KANBAN_SERVER_NAME, "kata-kanban");
 
         // Pin the count so adding or removing a server tool without updating
-        // this pin is caught. 26 as of 2026-10-22 (the tool-count drift from
-        // the landed tooling removals surfaced here — the server's own
+        // this pin is caught. 27 as of 2026-10-23 (`kanban_task_kata_record`,
+        // kata-state durability; the tool-count drift from the landed
+        // tooling removals surfaced here — the server's own
         // `tool_names_match_live_router` pin keeps its generated TOOL_NAMES
         // honest, so a count change here always reflects a real server
         // change — update this pin in the same pass.
         assert_eq!(
             parse::KANBAN_TOOLS.len(),
-            26,
+            27,
             "tool count changed — update the count pin to match \
              hkask-mcp-kata-kanban #[tool] fns"
         );

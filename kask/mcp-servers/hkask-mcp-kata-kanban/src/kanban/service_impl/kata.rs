@@ -1,23 +1,40 @@
-//! Display-only kata prompt summaries for the `kanban_task_kata_*` MCP tools.
+//! Kata state for the `kanban_task_kata_*` MCP tools.
 //!
-//! These methods produce a human-readable summary of the task's current state
-//! for display in the chat stream. They are **not** the authoritative kata
-//! methodology — that lives in the `kata-improvement` skill
-//! (`.agents/skills/kata-improvement/SKILL.md`, Coaching Kata section) and its registry templates
-//! (`kask/registry/templates/kata-improvement/`), which execute via skill execution
-//! the inference port with structured JSON output.
+//! `task_kata_record` persists the durable Improvement Kata state on a task
+//! (target condition, focus obstacle, last experiment) — the write side the
+//! prompts read back. The prompt methods produce a human-readable summary
+//! of the task's current state — including that kata state — for display in
+//! the chat stream. They are **not** the authoritative kata methodology —
+//! that lives in the `kata-improvement` skill
+//! (`.agents/skills/kata-improvement/SKILL.md`, Coaching Kata section) and
+//! its registry templates (`kask/registry/templates/kata-improvement/`),
+//! which execute via skill execution the inference port with structured
+//! JSON output.
 //!
-//! The split is deliberate: the MCP tools return a sync `String` for immediate
-//! human display; the registry templates run skill execution with
-//! step chaining. This module gathers the task-specific
-//! evidence (criteria, deliverables, comments, status) that makes the display
-//! useful, then points the learner to the canonical skill for the methodology.
+//! The split is deliberate: the MCP tools return a sync result for
+//! immediate human display and durable state for the next session; the
+//! registry templates run skill execution with step chaining. This module
+//! gathers the task-specific evidence (criteria, deliverables, comments,
+//! kata state, status) that makes the display useful, then points the
+//! learner to the canonical skill for the methodology.
 //!
-//! `socratic.rs` dispatches on `task.status` to call these methods — the
-//! contract is "produce a display summary for this stage", not "produce the
-//! authoritative kata questions".
+//! `kanban_task_kata_prompt` dispatches on its `stage` parameter to call
+//! the prompt methods — the contract is "produce a display summary for
+//! this stage", not "produce the authoritative kata questions".
 
 use super::*;
+
+/// One kata-state field update. `None` keeps the field; `focus_obstacle`'s
+/// double-Option distinguishes "keep" (`None`) from "clear"
+/// (`Some(None)`) from "set" (`Some(Some(text))`) — the `task_update`
+/// precedent. At least one field must be present (the service refuses an
+/// empty update instead of recording a no-op).
+#[derive(Debug, Clone)]
+pub(crate) struct KataStateUpdate {
+    pub target_condition: Option<String>,
+    pub focus_obstacle: Option<Option<String>>,
+    pub last_experiment: Option<KataExperimentRecord>,
+}
 
 impl KanbanService {
     /// Display summary for the Coaching Kata stage (task in Backlog).
@@ -143,6 +160,80 @@ context for the full guided drill.",
         ))
     }
 
+    /// Record durable Improvement Kata state on a task — the write side the
+    /// kata prompts read back, so a new session continues the routine
+    /// instead of restarting from zero. Authority is owner-or-assignee
+    /// (the learner works the task). Convergent by construction (the same
+    /// input re-applies the same state), so like `task_update` it needs no
+    /// idempotency key.
+    ///
+    /// Creating the state requires `target_condition` (the kata's step-3
+    /// artifact — an obstacle or experiment cannot be recorded against a
+    /// target nobody wrote down); afterwards every field updates
+    /// independently.
+    pub(crate) fn task_kata_record(
+        &self,
+        task_id: TaskId,
+        actor: WebID,
+        update: KataStateUpdate,
+    ) -> Result<Task, KanbanError> {
+        if update.target_condition.is_none()
+            && update.focus_obstacle.is_none()
+            && update.last_experiment.is_none()
+        {
+            return Err(KanbanError::InvalidInput(
+                "kata record requires at least one field: target_condition, focus_obstacle, or last_experiment"
+                    .to_string(),
+            ));
+        }
+        let (task, ()) = self.mutate_task(task_id, |task| {
+            Self::require_task_actor(task, actor)?;
+            if let Some(experiment) = &update.last_experiment
+                && (experiment.next_step.trim().is_empty()
+                    || experiment.prediction.trim().is_empty())
+            {
+                return Err(KanbanError::InvalidInput(
+                    "last_experiment requires a non-empty next_step and prediction".to_string(),
+                ));
+            }
+            let Some(state) = task.kata_state.as_mut() else {
+                let Some(target_condition) = update.target_condition.clone() else {
+                    return Err(KanbanError::InvalidInput(
+                        "recording kata state on a task with none requires target_condition"
+                            .to_string(),
+                    ));
+                };
+                task.kata_state = Some(TaskKataState {
+                    target_condition,
+                    focus_obstacle: update.focus_obstacle.clone().flatten(),
+                    last_experiment: update.last_experiment.clone(),
+                });
+                return Ok(());
+            };
+            if let Some(target_condition) = &update.target_condition {
+                state.target_condition = target_condition.clone();
+            }
+            if let Some(focus_obstacle) = &update.focus_obstacle {
+                state.focus_obstacle = focus_obstacle.clone();
+            }
+            if let Some(experiment) = &update.last_experiment {
+                state.last_experiment = Some(experiment.clone());
+            }
+            Ok(())
+        })?;
+
+        // P9: Regulation span — kata state recorded
+        tracing::info!(
+            target: "reg.kata",
+            operation = "kata_state_recorded",
+            task_id = %task.id,
+            title = %task.title,
+            "REG"
+        );
+
+        Ok(task)
+    }
+
     /// Build a human-readable evidence summary from a task's current state.
     ///
     /// Shared by all three kata prompt methods. Includes status, assignee,
@@ -165,6 +256,28 @@ Updated: {}",
             task.story_points.map_or("?".into(), |p| format!("{}pt", p)),
             task.updated_at.format("%Y-%m-%d %H:%M"),
         );
+
+        if let Some(kata) = &task.kata_state {
+            summary.push_str("\n\nKata state (recorded via kanban_task_kata_record):");
+            summary.push_str(&format!("\nTarget condition: {}", kata.target_condition));
+            match &kata.focus_obstacle {
+                Some(obstacle) => summary.push_str(&format!("\nFocus obstacle: {obstacle}")),
+                None => summary.push_str("\nFocus obstacle: none recorded"),
+            }
+            match &kata.last_experiment {
+                Some(experiment) => {
+                    summary.push_str(&format!(
+                        "\nLast experiment: {} (expect: {})",
+                        experiment.next_step, experiment.prediction
+                    ));
+                    match &experiment.outcome {
+                        Some(outcome) => summary.push_str(&format!(" — observed: {outcome}")),
+                        None => summary.push_str(" — outcome: pending_check"),
+                    }
+                }
+                None => summary.push_str("\nLast experiment: none yet"),
+            }
+        }
 
         if !task.deliverables.is_empty() {
             summary.push_str("\n\nDeliverables (file links = work output):");

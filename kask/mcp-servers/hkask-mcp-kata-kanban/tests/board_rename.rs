@@ -59,6 +59,7 @@ async fn create_board(server: &KanbanServer, name: &str) -> serde_json::Value {
             name: name.to_string(),
             columns: None,
             idempotency_key: None,
+            done_requires_verification: None,
         }))
         .await
         .expect("tool ok");

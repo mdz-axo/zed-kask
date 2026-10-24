@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# pre-push — net-lines + DIVERGENCE.md seam delta for the pushed range.
+# pre-push — net-lines + DIVERGENCE.md seam delta for the pushed range,
+# plus the diagram-registry parity gate.
 #
 # Simplification program, Phase 1.1 (mission 2026-10-01): "a visible number
 # at every push. Visible bloat gets challenged; invisible bloat compounds."
-# Deliberately NOT a gate — this hook never blocks a push; printing the
-# number is the whole job.
+# The net-lines/seam reporting is deliberately NOT a gate — it never blocks
+# a push; printing the number is its whole job. The diagram-registry parity
+# step below (added 2026-10-23, eureka cycle EUREKA-1) is the one exception:
+# a red parity tree does not leave this machine.
 #
 # stdin (git pre-push protocol), one line per ref being pushed:
 #   <local_ref> <local_sha> <remote_ref> <remote_sha>
@@ -19,6 +22,27 @@
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 cd "$REPO_ROOT" || exit 0
+
+# Diagram-registry parity gate (2026-10-23, eureka cycle EUREKA-1): CI runs
+# this gate on every push to main (kask-invariants.yml), but a red main run
+# blocks nothing for direct pushes (the workflow's own "fix-forward signal"
+# posture) and concurrency cancel-in-progress erases in-progress red results
+# under burst pushing — the 2026-10-18→22 removal waves shipped four stale
+# index rows with the gate red on main. The push stage on the shipping
+# machine is the prevention point for direct-push flows.
+PARITY_GATE="$REPO_ROOT/kask/scripts/check-diagram-registry-parity.sh"
+if [ -f "$PARITY_GATE" ]; then
+  gate_out="$(bash "$PARITY_GATE" 2>&1)" || {
+    printf '%s\n' "$gate_out" >&2
+    echo "pre-push: rejected — diagram registry parity is red" >&2
+    echo "Reconcile DIAGRAMS_INDEX.md rows with surviving mermaid fences and" >&2
+    echo "DIAGRAM_ALIGNMENT records (fences == records == index rows), or push" >&2
+    echo "with --no-verify as an explicit operator choice." >&2
+    exit 1
+  }
+else
+  echo "[pre-push] warning: parity gate script not found at $PARITY_GATE — parity unchecked on this push (CI remains the backstop)" >&2
+fi
 
 ZERO=0000000000000000000000000000000000000000
 

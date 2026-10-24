@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
-# Self-test for the pre-push net-lines hook (kask/githooks/pre-push).
+# Self-test for the pre-push hook (kask/githooks/pre-push): the net-lines
+# reporting and the diagram-registry parity gate.
 #
-# The hook's job is reporting, so the RED proof is that the reported
-# numbers are the TRUE numbers for a known range, and that no input can
-# make the hook block a push:
+# The reporting job's RED proof is that the reported numbers are the TRUE
+# numbers for a known range; the gate's RED proof (added 2026-10-23, eureka
+# cycle EUREKA-1) is that a red parity tree BLOCKS the push and a green or
+# restored tree does not:
 #   1. A range with known content reports the true net line count and the
 #      true DIVERGENCE.md seam delta (+1 added / -1 retired → net 0), and
-#      exits 0.
+#      exits 0 (with the parity gate green).
 #   2. A new-branch push (zero remote sha) with no upstream remote
 #      degrades VISIBLY (names the skip) instead of guessing a range.
 #   3. A ref deletion (zero local sha) measures nothing.
 #   4. A malformed range still exits 0 and reports "no diff in range".
+#   5. A red parity tree (an unregistered mermaid fence) BLOCKS: exit 1
+#      with the parity rejection named.
+#   6. Balance restored → the hook allows again (exit 0).
 #
 # Runs in CI via the kask/scripts/check-*-selftest.sh glob.
 # Exit codes: 0 = every case behaved as expected, 1 = the hook is wrong.
@@ -47,10 +52,36 @@ git -C "$WORK" add -A
 git -C "$WORK" commit -qm tip
 TIP="$(git -C "$WORK" rev-parse HEAD)"
 
+# The parity gate's fixture: the real gate script against a balanced
+# synthetic docs tree (the parity selftest's own pattern), so the hook's
+# gate arm is exercised end-to-end here.
+mkdir -p "$WORK/kask/scripts" "$WORK/kask/docs"
+cp "$KASK_ROOT/scripts/check-diagram-registry-parity.sh" "$WORK/kask/scripts/"
+cat > "$WORK/kask/docs/registered.md" <<'EOF'
+```mermaid
+graph TD
+    A --> B
+```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-TEST-001
+verified_date: 2026-10-23
+verified_against: selftest
+status: VERIFIED
+-->
+EOF
+cat > "$WORK/kask/docs/DIAGRAMS_INDEX.md" <<'EOF'
+# Index
+
+| DIAGRAM_ID | Location | Verified date | Status |
+| --- | --- | --- | --- |
+| `DIAG-TEST-001` | registered.md | 2026-10-23 | VERIFIED |
+EOF
+
 ZERO=0000000000000000000000000000000000000000
 
 run_hook() { # run_hook <stdin-line...> — mirrors git's invocation (cwd = repo root)
-  (cd "$WORK" && printf '%s\n' "$@" | bash githooks/pre-push)
+  (cd "$WORK" && printf '%s\n' "$@" | bash githooks/pre-push 2>&1)
 }
 
 expect_contains() { # expect_contains <label> <needle> <haystack>
@@ -100,9 +131,20 @@ out="$(run_hook "refs/heads/main $TIP refs/remotes/origin/main deadbeefdeadbeefd
 expect_exit "hook exits 0 on a malformed range" 0 "$rc"
 expect_contains "malformed range reports no diff" "no diff in range" "$out"
 
+# Case 5: a red parity tree (unregistered mermaid fence) BLOCKS the push.
+printf '```mermaid\ngraph TD\n    B --> C\n```\n' > "$WORK/kask/docs/unregistered.md"
+out="$(run_hook "refs/heads/main $TIP refs/remotes/origin/main $BASE")"; rc=$?
+expect_exit "hook blocks a red parity tree" 1 "$rc"
+expect_contains "red rejection names the parity gate" "diagram registry parity is red" "$out"
+rm "$WORK/kask/docs/unregistered.md"
+
+# Case 6: balance restored → the hook allows again.
+out="$(run_hook "refs/heads/main $TIP refs/remotes/origin/main $BASE")"; rc=$?
+expect_exit "hook allows once parity is restored" 0 "$rc"
+
 if [ "$FAILURES" -eq 0 ]; then
   echo ""
-  echo "SELFTEST OK: pre-push hook reports true numbers and never blocks (RED + skip + deletion + malformed all pinned)"
+  echo "SELFTEST OK: pre-push hook reports true numbers, and the parity gate blocks red and allows green (report RED + skip + deletion + malformed + gate red/green all pinned)"
   exit 0
 fi
 echo "" >&2

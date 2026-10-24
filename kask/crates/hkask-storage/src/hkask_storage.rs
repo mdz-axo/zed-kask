@@ -38,5 +38,5 @@ pub use embeddings::{
 };
 
 pub use hkask_types::HMemId;
-pub use hmem::{HMem, HMemError, HMemStore, Provenance};
+pub use hmem::{HMem, HMemError, HMemStore, Provenance, TxnReads};
 pub use regulation_store::RegulationArchive;

@@ -63,12 +63,12 @@ carrier of the loop itself.
 
 ---
 
-## Registry counts (re-verified 2026-10-13)
+## Registry counts (re-verified 2026-10-23)
 
 | Surface | Count | Notes |
 |---------|-------|-------|
-| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **59** | filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md` |
-| Template namespaces (`kask/registry/templates/*/`) | **55** (**222** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree |
+| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **59** | filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md`. Composition changed since the 2026-10-19 note's 59: `media-workflow` retired 2026-10-21 (commit `8262bf5b80`, −1) and `eureka-cycle` added 2026-10-23 (+1) — net 59 |
+| Template namespaces (`kask/registry/templates/*/`) | **56** (**221** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree. Since the 2026-10-19 note's 55/222: the media-workflow retirement removed 2 and the program-manager rewrite removed 3 (commit `4deebd6840`), and `eureka-cycle` added 4 — net 56 namespaces / 221 files |
 
 **The SKILL.md is the source of truth.** A skill is its `SKILL.md`. Template crates are
 read-only resources the skill body may reference via `render_template`.
@@ -82,7 +82,7 @@ annual. The embedded seed payload equals the authored tree (pinned in
 
 ---
 
-## Skills (58)
+## Skills (59)
 
 ### Research, markets and forecasting
 
@@ -90,6 +90,7 @@ annual. The embedded seed payload equals the authored tree (pinned in
 |-------|---------|
 | `experimental-design` | Design discriminating hypothesis tests before scientific spend: normalize provenance-carrying hypotheses, compare materially different candidate designs, gate validity and information, bind an executor, and produce versioned DesignSpec and FindingsSpec artifacts |
 | `hypothesis-testing` | Orchestrate one human-gated hypothesis-testing lifecycle: framing, falsifiability, experimental design, preregistration, executor-backed measurement, sealed findings, independent grounding audit, and human review |
+| `eureka-cycle` | Run one human-chaired discovery cycle over the Open Questions board: intake and routing, recall-cited candidate generation, the PI funding gate, delegated lifecycles, sealed pre-registered experiments, resolution at the algedonic review, and a study report whose memory candidates go to the human review — a loop orchestrator and router that owns no lifecycle |
 | `superforecasting` | Calibrated probability forecasting (Tetlock's Good Judgment Project) |
 | `scenario-planning` | Complete scenario project: Schwartz framing, forces and divergent 2x2 narratives with a quality gate and early-warning indicators, Tetlock quantification and propagation, Brier-scored resolution, Chermack assessment |
 | `eqm` | Explanation Quality Markers: score forecast rationales against the predictive 12 of the 60 EQMs via `market_score_rationale`, validate against realized outcomes (Brier), and improve a rationale in-session without changing its probability |
@@ -178,7 +179,7 @@ annual. The embedded seed payload equals the authored tree (pinned in
 | `doc-update` | Realign the kask/docs tree with the code: condensation triage (<85 cap, working target 75), ground-compare-recompose per docs-set, file:line citation gates, corpus-tool decision point |
 | `improv` | Agent interaction grammar (Plussing, Yes And, Freestyling, Riffing) |
 
-> **Filesystem reality (re-verified 2026-10-19):** `.agents/skills/` contains 59
+> **Filesystem reality (re-verified 2026-10-23):** `.agents/skills/` contains 59
 > `SKILL.md` directories (the company-research deep/flash skills were retired
 > 2026-10-18 with the companies capability, commit `6af8ab2e18`;
 > `experimental-design` and `hypothesis-testing` were added 2026-10-16/18
@@ -198,5 +199,7 @@ annual. The embedded seed payload equals the authored tree (pinned in
 > `superforecasting` (Market-prior calibration check). Folded 2026-09-28
 > (commit `ebcd901c80`): `kata-coaching` into `kata-improvement` — the five
 > coaching templates moved to `kask/registry/templates/kata-improvement/`.
-> `kask/registry/templates/` contains 55
-> template namespaces holding 222 `.j2` files.
+> `kask/registry/templates/` contains 56
+> template namespaces holding 221 `.j2` files (re-verified 2026-10-23:
+> `media-workflow` retired with its 2 templates and the program-manager
+> rewrite removed 3 on 2026-10-21; `eureka-cycle` added 4 on 2026-10-23).

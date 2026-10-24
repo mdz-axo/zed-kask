@@ -47,10 +47,15 @@ impl TaskStatus {
         }
     }
 
-    /// Parses a case-insensitive string into a `TaskStatus`. Accepts the five
+    /// Parses a case-insensitive string into a `TaskStatus`. The input is
+    /// normalized first (trimmed; matched surrounding quotes stripped — the
+    /// canonical `normalize_closed_vocab` contract, operator ruling
+    /// 2026-10-13: every closed-vocab MCP field parses through it), so
+    /// padded or quoted values like `" in_progress "` resolve instead of
+    /// burning a retry on an invalid-argument refusal. Accepts the five
     /// standard wire strings plus the aliases `inprogress` and `in-progress`.
     pub fn parse_str(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
+        match crate::normalize_closed_vocab(s).to_lowercase().as_str() {
             "backlog" => Some(TaskStatus::Backlog),
             "ready" => Some(TaskStatus::Ready),
             "in_progress" | "inprogress" | "in-progress" => Some(TaskStatus::InProgress),
@@ -91,5 +96,25 @@ impl std::str::FromStr for TaskStatus {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Self::parse_str(s).ok_or_else(|| format!("invalid TaskStatus: {s}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TaskStatus;
+
+    /// Closed-vocab normalization (operator ruling 2026-10-13): padded and
+    /// quoted wire values resolve instead of burning a retry on an
+    /// invalid-argument refusal.
+    #[test]
+    fn parse_str_normalizes_padding_and_quotes() {
+        assert_eq!(TaskStatus::parse_str(" ready "), Some(TaskStatus::Ready));
+        assert_eq!(TaskStatus::parse_str("\"ready\""), Some(TaskStatus::Ready));
+        assert_eq!(
+            TaskStatus::parse_str(" 'In-Progress' "),
+            Some(TaskStatus::InProgress)
+        );
+        assert_eq!(TaskStatus::parse_str("backlog"), Some(TaskStatus::Backlog));
+        assert_eq!(TaskStatus::parse_str("nonsense"), None);
     }
 }

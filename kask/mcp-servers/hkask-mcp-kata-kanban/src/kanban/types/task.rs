@@ -29,6 +29,12 @@ pub struct Task {
     pub(crate) advances: Vec<CriterionCitation>,
     /// Verification result, if the task has been verified.
     pub verification: Option<Verification>,
+    /// Durable Improvement Kata state for this task, once a kata cycle has
+    /// been recorded (`kanban_task_kata_record`). `None` until first
+    /// recorded; read back by every kata prompt so a new session continues
+    /// the routine instead of restarting from zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) kata_state: Option<crate::kanban::types::TaskKataState>,
     /// Story points (relative sizing, agile convention).
     pub story_points: Option<u32>,
     /// Estimated hours for completion.
@@ -51,11 +57,10 @@ pub struct Task {
     /// local swarm (`kanban_task_spawn`). `None` for tasks not yet delegated
     /// or delegated outside a swarm. The kanban board is the durable
     /// coordination source of truth; this field links the task to its swarm.
-    ///
-    /// TODO(memory-refactor): wire this from the delegation context once the
-    /// hive-memory refactoring lands. The memory agent is rebuilding the
-    /// swarm memory model — this field is the kanban-side coordination tag
-    /// that links a task to its swarm's hive memory store.
+    /// Written by `KanbanService::spawn_task` from the spawn spec before
+    /// worktree admission, and read back by
+    /// `kanban_task_delegate_result` (pinned by
+    /// `spawn_task_writes_swarm_id_when_spec_carries_it`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub swarm_id: Option<String>,
     /// Structured result of the last `kanban_task_spawn` delegation, when the
@@ -101,6 +106,7 @@ impl Task {
             criteria,
             advances,
             verification: None,
+            kata_state: None,
             story_points,
             estimated_hours,
             labels,

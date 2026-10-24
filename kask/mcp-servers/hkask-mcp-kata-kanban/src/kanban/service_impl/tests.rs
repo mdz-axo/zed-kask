@@ -2,13 +2,15 @@ use super::service::KanbanService;
 use crate::VerificationCriterion;
 use crate::kanban::mermaid::{export_board_to_mermaid, parse_mermaid_kanban};
 use crate::kanban::{
-    Board, ColumnDef, CriterionCitation, SpawnSpec, Task, TaskFilter, TaskSpec, TaskStatus,
+    Board, ColumnDef, CriterionCitation, KataExperimentRecord, SpawnSpec, Task, TaskFilter,
+    TaskSpec, TaskStatus,
 };
 use hkask_storage::HMemStore;
 use hkask_types::WebID;
 use hkask_types::id::BoardId;
 use hkask_types::kanban_wire::{ALGEDONIC_BOARD_NAME, KANBAN_BOARD_NAME_MAX_CHARS};
 
+use super::kata::KataStateUpdate;
 use super::types::KanbanError;
 
 fn make_store() -> HMemStore {
@@ -90,6 +92,7 @@ fn assert_board_and_task_retained(env: &FaultEnv, task: &Task) -> anyhow::Result
     assert_eq!(
         env.service
             .task_list(env.board.id, TaskFilter::all())?
+            .tasks
             .len(),
         1
     );
@@ -426,6 +429,454 @@ fn concurrent_comments_preserve_all_successful_appends() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A WIP-limited column admits a move below its limit and refuses the move
+/// that would exceed it — the first server-side pin of the enforcement.
+#[test]
+fn wip_limit_blocks_move_into_full_column() {
+    let svc = KanbanService::new(make_store());
+    let owner = WebID::new();
+    let mut columns = KanbanService::standard_columns();
+    columns[1] = ColumnDef::new("Ready".into(), TaskStatus::Ready, 1).with_wip_limit(1);
+    let board = svc
+        .board_create(owner, "WIP Board", &columns)
+        .expect("board create");
+    let first = svc
+        .task_create(board.id, TaskSpec::new("First".into()), owner)
+        .expect("first task");
+    let second = svc
+        .task_create(board.id, TaskSpec::new("Second".into()), owner)
+        .expect("second task");
+
+    svc.task_move(first.id, TaskStatus::Ready, owner)
+        .expect("count 0 admits below a limit of 1");
+    let refused = svc.task_move(second.id, TaskStatus::Ready, owner);
+    assert!(
+        matches!(refused, Err(KanbanError::WipLimitExceeded { ref column, limit: 1, current: 1 }) if column == "Ready"),
+        "the move that would exceed the limit is refused with the column named: {refused:?}"
+    );
+}
+
+/// WIP admission is atomic under concurrent moves: two tasks race into a
+/// column limited to one, over the file-backed WAL pool (real
+/// multi-connection semantics — the in-memory max_size(1) driver serializes
+/// at the pool and would hide the window). The count and the commit must
+/// share one transaction: counting before the write transaction lets both
+/// movers read the same count and both be admitted into a full column.
+#[test]
+fn concurrent_moves_into_a_wip_one_column_admit_exactly_one() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("wip-race.sqlite");
+    let pool = hkask_storage::SqliteDriver::file_pool_with_schema(
+        path.to_str().expect("utf-8 temp path"),
+    )?;
+    let store =
+        HMemStore::from_driver(std::sync::Arc::new(hkask_storage::SqliteDriver::new(pool)))?;
+    let svc = KanbanService::new(store);
+    let owner = WebID::new();
+    let mut columns = KanbanService::standard_columns();
+    columns[1] = ColumnDef::new("Ready".into(), TaskStatus::Ready, 1).with_wip_limit(1);
+    let board = svc.board_create(owner, "WIP Race", &columns)?;
+    let first = svc.task_create(board.id, TaskSpec::new("First".into()), owner)?;
+    let second = svc.task_create(board.id, TaskSpec::new("Second".into()), owner)?;
+
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let first_mover = {
+        let svc = svc.clone();
+        let barrier = barrier.clone();
+        std::thread::spawn(move || {
+            barrier.wait();
+            svc.task_move(first.id, TaskStatus::Ready, owner)
+        })
+    };
+    let second_mover = {
+        std::thread::spawn(move || {
+            barrier.wait();
+            svc.task_move(second.id, TaskStatus::Ready, owner)
+        })
+    };
+    let first_result = first_mover.join().expect("first mover thread");
+    let second_result = second_mover.join().expect("second mover thread");
+
+    let admitted = [&first_result, &second_result]
+        .iter()
+        .filter(|result| result.is_ok())
+        .count();
+    assert_eq!(
+        admitted, 1,
+        "exactly one mover may enter a WIP-1 column: first={first_result:?}, second={second_result:?}"
+    );
+    let refused = if first_result.is_ok() {
+        &second_result
+    } else {
+        &first_result
+    };
+    assert!(
+        matches!(refused, Err(KanbanError::WipLimitExceeded { column, limit: 1, current: 1 }) if column == "Ready"),
+        "the losing mover is refused by the WIP limit: {refused:?}"
+    );
+    Ok(())
+}
+
+/// An indexed task row that fails to decode is surfaced by the listing —
+/// never silently skipped. The row is named and the reason stated, so a
+/// corrupt row is visible instead of shrinking the board's task set.
+#[test]
+fn task_list_surfaces_undecodable_task_rows() -> anyhow::Result<()> {
+    let (svc, board, owner) = make_service_with_board();
+    let task = svc.task_create(board.id, TaskSpec::new("Doomed".into()), owner)?;
+    // Corrupt the task row directly: a value the current decode cannot
+    // parse (schema drift, a torn write) — the index entry stays intact.
+    svc.store
+        .update_value_atomic::<_, hkask_storage::HMemError>(
+            "kanban:task",
+            &task.id.to_string(),
+            |_| Ok((Some(serde_json::json!({"corrupted": true})), ())),
+        )?
+        .expect("the corrupted row still exists");
+
+    let report = svc.task_list(board.id, TaskFilter::all())?;
+    assert!(
+        report.tasks.is_empty(),
+        "the corrupted row is not listed as a readable task"
+    );
+    assert_eq!(report.undecodable.len(), 1);
+    assert_eq!(report.undecodable[0].task_id, task.id.to_string());
+    assert!(
+        report.undecodable[0].reason.contains("failed to decode"),
+        "the fault names the decode failure: {}",
+        report.undecodable[0].reason
+    );
+    Ok(())
+}
+
+/// The WIP admission fails closed on an unreadable sibling row: the count
+/// would be a lower bound (an unreadable row can only undercount), and
+/// admitting against a lower bound over-admits. The refusal names the row.
+#[test]
+fn wip_count_fails_closed_on_undecodable_sibling() -> anyhow::Result<()> {
+    let svc = KanbanService::new(make_store());
+    let owner = WebID::new();
+    let mut columns = KanbanService::standard_columns();
+    columns[1] = ColumnDef::new("Ready".into(), TaskStatus::Ready, 1).with_wip_limit(1);
+    let board = svc.board_create(owner, "WIP Closed Board", &columns)?;
+    let corrupted = svc.task_create(board.id, TaskSpec::new("Corrupted".into()), owner)?;
+    let mover = svc.task_create(board.id, TaskSpec::new("Mover".into()), owner)?;
+    svc.store
+        .update_value_atomic::<_, hkask_storage::HMemError>(
+            "kanban:task",
+            &corrupted.id.to_string(),
+            |_| Ok((Some(serde_json::json!({"corrupted": true})), ())),
+        )?
+        .expect("the corrupted row still exists");
+
+    let refused = svc.task_move(mover.id, TaskStatus::Ready, owner);
+    assert!(
+        matches!(&refused, Err(KanbanError::Internal(message)) if message.contains("WIP count unreliable")
+            && message.contains(&corrupted.id.to_string())
+            && message.contains("failed to decode")),
+        "the move is refused naming the unreadable row: {refused:?}"
+    );
+    assert_eq!(
+        svc.task_get(mover.id)?.expect("mover survives").status,
+        TaskStatus::Backlog,
+        "the refused move leaves the task untouched"
+    );
+    Ok(())
+}
+
+/// Recording kata state round-trips durably, and the kata prompts read it
+/// back — a new session's prompt reflects the recorded target condition,
+/// focus obstacle, and last experiment instead of restarting from zero
+/// (the pre-fix tree had no durable kata state: prompts showed only status,
+/// assignee, estimates, deliverables, and recent comments).
+#[test]
+fn kata_record_round_trips_and_prompts_reflect_it() -> anyhow::Result<()> {
+    let (svc, board, owner) = make_service_with_board();
+    let task = svc.task_create(board.id, TaskSpec::new("Kata task".into()), owner)?;
+    svc.task_kata_record(
+        task.id,
+        owner,
+        KataStateUpdate {
+            target_condition: Some("95% pass rate within 3 experiments".into()),
+            focus_obstacle: Some(Some("flaky fixture ordering".into())),
+            last_experiment: Some(KataExperimentRecord {
+                next_step: "Run the suite with --test-threads=1".into(),
+                prediction: "the flake disappears (test-order coupling)".into(),
+                outcome: Some("prediction held: green 3x in a row".into()),
+            }),
+        },
+    )?;
+
+    let stored = svc.task_get(task.id)?.expect("task survives");
+    let state = stored.kata_state.as_ref().expect("kata state persisted");
+    assert_eq!(state.target_condition, "95% pass rate within 3 experiments");
+    assert_eq!(
+        state.focus_obstacle.as_deref(),
+        Some("flaky fixture ordering")
+    );
+    let experiment = state
+        .last_experiment
+        .as_ref()
+        .expect("experiment persisted");
+    assert_eq!(experiment.next_step, "Run the suite with --test-threads=1");
+
+    // The prompt reflects the recorded state — the continuity contract a
+    // fresh session relies on.
+    let prompt = svc.task_coaching_prompt(task.id)?;
+    assert!(
+        prompt.contains("95% pass rate within 3 experiments"),
+        "the prompt carries the target condition: {prompt}"
+    );
+    assert!(
+        prompt.contains("flaky fixture ordering"),
+        "the prompt carries the focus obstacle: {prompt}"
+    );
+    assert!(
+        prompt.contains("--test-threads=1"),
+        "the prompt carries the last experiment: {prompt}"
+    );
+    assert!(
+        prompt.contains("prediction held"),
+        "the prompt carries the observed outcome: {prompt}"
+    );
+    Ok(())
+}
+
+/// The first kata record on a task requires the target condition — the
+/// kata's step-3 artifact cannot be skipped.
+#[test]
+fn kata_record_requires_target_condition_to_start() -> anyhow::Result<()> {
+    let (svc, board, owner) = make_service_with_board();
+    let task = svc.task_create(board.id, TaskSpec::new("Kata task".into()), owner)?;
+    let refused = svc.task_kata_record(
+        task.id,
+        owner,
+        KataStateUpdate {
+            target_condition: None,
+            focus_obstacle: Some(Some("premature".into())),
+            last_experiment: None,
+        },
+    );
+    assert!(
+        matches!(&refused, Err(KanbanError::InvalidInput(message)) if message.contains("target_condition")),
+        "an obstacle cannot be recorded before any target exists: {refused:?}"
+    );
+    Ok(())
+}
+
+/// Kata recording is the learner's write: owner or assignee. A stranger is
+/// refused.
+#[test]
+fn kata_record_requires_owner_or_assignee() -> anyhow::Result<()> {
+    let (svc, board, owner) = make_service_with_board();
+    let task = svc.task_create(board.id, TaskSpec::new("Kata task".into()), owner)?;
+    let refused = svc.task_kata_record(
+        task.id,
+        WebID::new(),
+        KataStateUpdate {
+            target_condition: Some("target".into()),
+            focus_obstacle: None,
+            last_experiment: None,
+        },
+    );
+    assert!(
+        matches!(&refused, Err(KanbanError::PermissionDenied(_))),
+        "a stranger cannot record kata state: {refused:?}"
+    );
+    Ok(())
+}
+
+/// The focus obstacle can be cleared without touching the rest of the kata
+/// state (Some(None) clears; None keeps — the task_update precedent).
+#[test]
+fn kata_record_clears_the_focus_obstacle() -> anyhow::Result<()> {
+    let (svc, board, owner) = make_service_with_board();
+    let task = svc.task_create(board.id, TaskSpec::new("Kata task".into()), owner)?;
+    svc.task_kata_record(
+        task.id,
+        owner,
+        KataStateUpdate {
+            target_condition: Some("target".into()),
+            focus_obstacle: Some(Some("first obstacle".into())),
+            last_experiment: None,
+        },
+    )?;
+    svc.task_kata_record(
+        task.id,
+        owner,
+        KataStateUpdate {
+            target_condition: None,
+            focus_obstacle: Some(None),
+            last_experiment: None,
+        },
+    )?;
+    let state = svc
+        .task_get(task.id)?
+        .expect("task")
+        .kata_state
+        .expect("state kept");
+    assert_eq!(state.target_condition, "target");
+    assert!(
+        state.focus_obstacle.is_none(),
+        "the obstacle is cleared, the target kept"
+    );
+    Ok(())
+}
+
+/// The Done-gate policy is structural: a board created with the flag
+/// refuses ordinary moves to Done, while `task_verify` still completes.
+#[test]
+fn done_gate_flag_refuses_direct_moves_to_done() -> anyhow::Result<()> {
+    let svc = KanbanService::new(make_store());
+    let owner = WebID::new();
+    let board =
+        svc.board_create_with_policy(owner, "Gated Board", &make_default_columns(), Some(true))?;
+    let task = svc.task_create(board.id, TaskSpec::new("Gate".into()), owner)?;
+    for status in [
+        TaskStatus::Ready,
+        TaskStatus::InProgress,
+        TaskStatus::Review,
+    ] {
+        svc.task_move(task.id, status, owner)?;
+    }
+    let refused = svc.task_move(task.id, TaskStatus::Done, owner);
+    assert!(
+        matches!(&refused, Err(KanbanError::InvalidTransition { to, .. }) if *to == TaskStatus::Done),
+        "an ordinary move to Done is refused on a gated board: {refused:?}"
+    );
+    let verified = svc.task_verify(task.id, "user confirmed", owner)?;
+    assert!(
+        verified
+            .0
+            .verification
+            .as_ref()
+            .expect("verification recorded")
+            .passed
+    );
+    assert_eq!(verified.0.status, TaskStatus::Done);
+    Ok(())
+}
+
+/// A plain board without the flag allows the ordinary path to Done — the
+/// gate is opt-in (or reserved-name), never global.
+#[test]
+fn plain_board_allows_ordinary_done_moves() -> anyhow::Result<()> {
+    let (svc, board, owner) = make_service_with_board();
+    let task = svc.task_create(board.id, TaskSpec::new("Plain".into()), owner)?;
+    for status in [
+        TaskStatus::Ready,
+        TaskStatus::InProgress,
+        TaskStatus::Review,
+        TaskStatus::Done,
+    ] {
+        svc.task_move(task.id, status, owner)?;
+    }
+    assert_eq!(
+        svc.task_get(task.id)?.expect("task").status,
+        TaskStatus::Done
+    );
+    Ok(())
+}
+
+/// The reserved name stamps the flag at creation — structural, so renaming
+/// the board keeps the gate (the pre-flag name-keyed check moved with the
+/// name instead).
+#[test]
+fn renamed_algedonic_board_keeps_the_done_gate() -> anyhow::Result<()> {
+    let svc = KanbanService::new(make_store());
+    let owner = WebID::new();
+    let board = svc.board_create(owner, ALGEDONIC_BOARD_NAME, &make_default_columns())?;
+    assert!(
+        board.done_requires_verification,
+        "the reserved name stamps the structural flag at creation"
+    );
+    svc.board_rename(board.id, "Renamed Review")?;
+    let task = svc.task_create(board.id, TaskSpec::new("Gate".into()), owner)?;
+    for status in [
+        TaskStatus::Ready,
+        TaskStatus::InProgress,
+        TaskStatus::Review,
+    ] {
+        svc.task_move(task.id, status, owner)?;
+    }
+    let refused = svc.task_move(task.id, TaskStatus::Done, owner);
+    assert!(
+        matches!(&refused, Err(KanbanError::InvalidTransition { to, .. }) if *to == TaskStatus::Done),
+        "the gate survives the rename because it lives on the row: {refused:?}"
+    );
+    Ok(())
+}
+
+/// Legacy migration: a board created before the flag existed carries the
+/// reserved name without the flag. The first move evaluation stamps the
+/// flag persistently — the name check retires, the gate stays.
+#[test]
+fn legacy_board_gets_the_done_gate_stamped_at_first_move() -> anyhow::Result<()> {
+    let svc = KanbanService::new(make_store());
+    let owner = WebID::new();
+    let board = svc.board_create(owner, "Legacy", &make_default_columns())?;
+    // Simulate the pre-flag row: the reserved name without the persisted
+    // policy — the state the operator's existing board carries.
+    let mut legacy = serde_json::to_value(&board).expect("board serializes");
+    legacy["name"] = serde_json::json!(ALGEDONIC_BOARD_NAME);
+    legacy["done_requires_verification"] = serde_json::json!(false);
+    svc.store
+        .update_value_atomic::<_, hkask_storage::HMemError>(
+            "kanban:board",
+            &board.id.to_string(),
+            |_| Ok((Some(legacy), ())),
+        )?
+        .expect("board row exists");
+
+    let task = svc.task_create(board.id, TaskSpec::new("Migrate".into()), owner)?;
+    for status in [
+        TaskStatus::Ready,
+        TaskStatus::InProgress,
+        TaskStatus::Review,
+    ] {
+        svc.task_move(task.id, status, owner)?;
+    }
+    let reloaded_after_moves = svc.board_get(board.id)?.expect("board reloaded");
+    assert!(
+        reloaded_after_moves.done_requires_verification,
+        "the first move migrated the flag onto the row"
+    );
+    let refused = svc.task_move(task.id, TaskStatus::Done, owner);
+    assert!(
+        matches!(&refused, Err(KanbanError::InvalidTransition { to, .. }) if *to == TaskStatus::Done),
+        "the migrated gate refuses the ordinary Done move: {refused:?}"
+    );
+    Ok(())
+}
+
+/// Column WIP limits survive the export → parse → import round-trip — the
+/// one flow-control mechanism a board carries (the pre-fix format dropped
+/// it silently: `columns_from_parsed` rebuilt every column without a
+/// limit).
+#[test]
+fn export_import_round_trip_preserves_wip_limits() -> anyhow::Result<()> {
+    let svc = KanbanService::new(make_store());
+    let owner = WebID::new();
+    let mut columns = KanbanService::standard_columns();
+    columns[1] = ColumnDef::new("Ready".into(), TaskStatus::Ready, 1).with_wip_limit(2);
+    let board = svc.board_create(owner, "WIP Round Trip", &columns)?;
+    let report = svc.task_list(board.id, TaskFilter::all())?;
+    let markdown = export_board_to_mermaid(&board, &report.tasks);
+    let parsed = parse_mermaid_kanban(&markdown)?;
+    let (imported, _) = svc.board_import(owner, "WIP Round Trip 2", &parsed)?;
+    let ready = imported
+        .columns
+        .iter()
+        .find(|column| column.status == TaskStatus::Ready)
+        .expect("Ready column imported");
+    assert_eq!(
+        ready.wip_limit,
+        Some(2),
+        "the WIP limit survives the round-trip"
+    );
+    Ok(())
+}
+
 /// Pause exactly one operation before its write, commit a competing operation,
 /// then release it. On the old path the paused operation has read a stale Task;
 /// on the repaired path its transformation receives the competing commit.
@@ -523,6 +974,7 @@ fn interleaved_comments_moves_and_deliverables_preserve_each_other() {
         assert_eq!(
             svc.task_list(board.id, TaskFilter::default())
                 .expect("indexed read")
+                .tasks
                 .len(),
             1
         );
@@ -941,6 +1393,7 @@ fn interleaved_deletion_returns_not_found_without_resurrecting_task_or_index() {
             assert!(
                 svc.task_list(board.id, TaskFilter::default())
                     .expect("empty index")
+                    .tasks
                     .is_empty()
             );
         }
@@ -1015,6 +1468,7 @@ fn task_create_atomic_when_index_insert_fails() -> anyhow::Result<()> {
     assert!(
         env.service
             .task_list(env.board.id, TaskFilter::all())?
+            .tasks
             .is_empty()
     );
     assert!(env.store.query_by_entity("kanban:task")?.is_empty());
@@ -1178,7 +1632,7 @@ fn task_list_unfiltered() {
         .with_criteria(vec![VerificationCriterion::new("compile".into())]);
     svc.task_create(board.id, spec, owner).unwrap();
 
-    let tasks = svc.task_list(board.id, TaskFilter::all()).unwrap();
+    let tasks = svc.task_list(board.id, TaskFilter::all()).unwrap().tasks;
     assert_eq!(tasks.len(), 2);
     // The criteria text round-trips through the list — a reader sees what
     // "done" means, not just how many criteria exist. The TaskInfo wire
@@ -1202,12 +1656,14 @@ fn task_list_filter_by_status() {
 
     let backlog = svc
         .task_list(board.id, TaskFilter::by_status(TaskStatus::Backlog))
-        .unwrap();
+        .unwrap()
+        .tasks;
     assert_eq!(backlog.len(), 1);
 
     let in_progress = svc
         .task_list(board.id, TaskFilter::by_status(TaskStatus::InProgress))
-        .unwrap();
+        .unwrap()
+        .tasks;
     assert_eq!(in_progress.len(), 1);
 }
 
@@ -1498,6 +1954,7 @@ fn task_delete_removes_task_and_index_rows_but_preserves_board() {
         service
             .task_list(board.id, TaskFilter::all())
             .expect("task list")
+            .tasks
             .is_empty()
     );
     assert!(service.board_get(board.id).expect("query board").is_some());
@@ -1532,7 +1989,12 @@ fn task_delete_after_update_removes_replacement_payload() -> anyhow::Result<()> 
     )?;
     service.task_delete(task.id)?;
     assert!(service.task_get(task.id)?.is_none());
-    assert!(service.task_list(board.id, TaskFilter::all())?.is_empty());
+    assert!(
+        service
+            .task_list(board.id, TaskFilter::all())?
+            .tasks
+            .is_empty()
+    );
     assert!(store.query_by_entity("kanban:task")?.is_empty());
     assert!(
         store
@@ -1565,6 +2027,7 @@ fn task_delete_atomic_when_index_delete_fails() -> anyhow::Result<()> {
     assert_eq!(
         env.service
             .task_list(env.board.id, TaskFilter::all())?
+            .tasks
             .len(),
         1
     );
@@ -1666,7 +2129,8 @@ fn export_import_round_trip_preserves_board_structure() {
     // Export: pull tasks through the service, render to mermaid markdown.
     let tasks = svc
         .task_list(board.id, TaskFilter::all())
-        .expect("task list");
+        .expect("task list")
+        .tasks;
     let markdown = export_board_to_mermaid(&board, &tasks);
 
     // Parse the exported markdown.
@@ -1689,7 +2153,8 @@ fn export_import_round_trip_preserves_board_structure() {
     // tasks by status and compare the title lists against the parsed markdown.
     let new_tasks = svc
         .task_list(new_board.id, TaskFilter::all())
-        .expect("new board task list");
+        .expect("new board task list")
+        .tasks;
     for column in &parsed.columns {
         let target_status = new_board
             .columns
@@ -1737,7 +2202,8 @@ fn export_parse_round_trip_handles_special_characters() {
 
     let tasks = svc
         .task_list(board.id, TaskFilter::all())
-        .expect("task list");
+        .expect("task list")
+        .tasks;
     let markdown = export_board_to_mermaid(&board, &tasks);
     let parsed = parse_mermaid_kanban(&markdown).expect("parse");
 
@@ -1770,7 +2236,8 @@ fn export_import_round_trip_preserves_column_order() {
 
     let tasks = svc
         .task_list(board.id, TaskFilter::all())
-        .expect("task list");
+        .expect("task list")
+        .tasks;
     let markdown = export_board_to_mermaid(&board, &tasks);
     let parsed = parse_mermaid_kanban(&markdown).expect("parse");
 
@@ -1834,7 +2301,8 @@ fn import_empty_board() {
     assert_eq!(board.columns.len(), 1);
     let tasks = svc
         .task_list(board.id, TaskFilter::all())
-        .expect("task list");
+        .expect("task list")
+        .tasks;
     assert!(
         tasks.is_empty(),
         "imported empty board should have no tasks"

@@ -2,7 +2,7 @@
 #![warn(clippy::let_underscore_future)]
 //! hkask-mcp-kata-kanban — Kata-Kanban workflow coordination MCP server.
 //!
-//! Provides 26 MCP tools for kanban board, task, and goal management.
+//! Provides 27 MCP tools for kanban board, task, and goal management.
 //! All tools carry the caller's WebID for P12 compliance.
 //!
 //! The KanbanServer struct and tool methods are exported from the library
@@ -27,7 +27,10 @@ pub use kanban::KanbanError;
 pub use kanban::KanbanService;
 pub use kanban::types::goal::*;
 pub use kanban::types::verification::VerificationCriterion;
-pub(crate) use kanban::{ColumnDef, Priority, SpawnSpec, Task, TaskFilter, TaskSpec, TaskStatus};
+pub(crate) use kanban::{
+    ColumnDef, KataExperimentRecord, KataStateUpdate, Priority, SpawnSpec, Task, TaskFilter,
+    TaskSpec, TaskStatus,
+};
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
@@ -260,13 +263,16 @@ fn derive_task_activity(task: &Task) -> Option<TaskActivity> {
 
 #[tool_router(server_handler)]
 impl KanbanServer {
-    #[tool(description = "Create a new kanban board with optional custom columns")]
+    #[tool(
+        description = "Create a new kanban board with optional custom columns. done_requires_verification gates the Done column behind kanban_task_verify (never an ordinary move); omitted/false except for the reserved \"Algedonic review\" name, which is stamped by convention."
+    )]
     pub async fn kanban_board_create(
         &self,
         Parameters(BoardCreateRequest {
             name,
             columns,
             idempotency_key,
+            done_requires_verification,
         }): Parameters<BoardCreateRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(
@@ -277,7 +283,7 @@ impl KanbanServer {
                 "kanban_board_create",
                 idempotency_key.as_deref(),
                 &self.webid,
-                serde_json::json!({ "name": name, "columns": columns }),
+                serde_json::json!({ "name": name, "columns": columns, "done_requires_verification": done_requires_verification }),
                 async {
                     let column_defs = match columns {
                         Some(inputs) => inputs
@@ -304,7 +310,12 @@ impl KanbanServer {
                         Err(e) => return Err(McpToolError::invalid_argument(e)),
                     };
                     respond(
-                        self.service.board_create(self.webid, &name, &cols),
+                        self.service.board_create_with_policy(
+                            self.webid,
+                            &name,
+                            &cols,
+                            done_requires_verification,
+                        ),
                         |board| BoardCreateResponse {
                             board_id: board.id.to_string(),
                             name: board.name,
@@ -706,9 +717,10 @@ impl KanbanServer {
                 },
                 None => TaskFilter::all(),
             };
-            respond(self.service.task_list(bid, filter), |tasks| {
+            respond(self.service.task_list(bid, filter), |report| {
                 TaskListResponse {
-                    tasks: tasks
+                    tasks: report
+                        .tasks
                         .into_iter()
                         .map(|t| {
                             let activity = derive_task_activity(&t);
@@ -732,6 +744,14 @@ impl KanbanServer {
                             }
                         })
                         .collect(),
+                    undecodable_tasks: report
+                        .undecodable
+                        .into_iter()
+                        .map(|fault| UndecodableTaskInfo {
+                            task_id: fault.task_id,
+                            reason: fault.reason,
+                        })
+                        .collect(),
                 }
             })
         })
@@ -739,7 +759,7 @@ impl KanbanServer {
     }
 
     #[tool(
-        description = "Move a task to a new column (status transition). On the Algedonic review board, use kanban_task_verify in Review to reach Done; moving to Done directly is refused. The response carries pko_execution_status — the new status mapped to its PKO execution status (queued/inProgress/verifying/completed) via the shared vocabulary bridge."
+        description = "Move a task to a new column (status transition). On boards whose Done column is verification-gated (e.g. the Algedonic review board), use kanban_task_verify in Review to reach Done; moving to Done directly is refused. The response carries pko_execution_status — the new status mapped to its PKO execution status (queued/inProgress/verifying/completed) via the shared vocabulary bridge."
     )]
     pub async fn kanban_task_move(
         &self,
@@ -993,7 +1013,10 @@ impl KanbanServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "kanban_task_kata_prompt", async {
             let tid = parse_task_id(&task_id)?;
-            let prompt = match stage.as_str() {
+            let prompt = match hkask_types::normalize_closed_vocab(&stage)
+                .to_lowercase()
+                .as_str()
+            {
                 "coaching" => self
                     .service
                     .task_coaching_prompt(tid)
@@ -1023,6 +1046,75 @@ impl KanbanServer {
                 prompt,
             })
             .map_err(|e| McpToolError::internal(e.to_string()))
+        })
+        .await
+    }
+
+    /// Record durable Improvement Kata state on a task: the target
+    /// condition, the one focus obstacle, and the last PDCA experiment
+    /// (next step, prediction, observed outcome). The kata prompts read
+    /// this state back, so a new session continues the routine instead of
+    /// restarting from zero. At least one field is required; recording on
+    /// a task with no kata state requires `target_condition` first.
+    /// Convergent — the same input re-applies the same state, so like
+    /// `task_update` it needs no idempotency key.
+    ///
+    /// contract: P3-svc-kanban-027
+    /// expect: "I can record my kata state on a task and a later session's prompt reflects it" \[P3\]
+    /// pre:  task_id is a valid task id; the caller is the task owner or assignee
+    /// post: the task's kata state is updated and echoed back
+    #[tool(
+        description = "Record durable Improvement Kata state on a task (target_condition, the one focus_obstacle, last_experiment with next_step/prediction/outcome). The kata prompts read this state back, so a new session continues the routine instead of restarting from zero. At least one field required; a first record requires target_condition. The focus_obstacle double-Option: omit to keep, null to clear, string to set."
+    )]
+    pub async fn kanban_task_kata_record(
+        &self,
+        Parameters(TaskKataRecordRequest {
+            task_id,
+            target_condition,
+            focus_obstacle,
+            last_experiment,
+        }): Parameters<TaskKataRecordRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "kanban_task_kata_record", async {
+            let tid = parse_task_id(&task_id)?;
+            let update = KataStateUpdate {
+                target_condition,
+                focus_obstacle,
+                last_experiment: last_experiment.map(|experiment| KataExperimentRecord {
+                    next_step: experiment.next_step,
+                    prediction: experiment.prediction,
+                    outcome: experiment.outcome,
+                }),
+            };
+            respond(
+                self.service.task_kata_record(tid, self.webid, update),
+                |task| {
+                    // task_kata_record guarantees Some on success; map
+                    // without panicking so a contract break degrades
+                    // honestly instead of crashing the call.
+                    let (target_condition, focus_obstacle, last_experiment) =
+                        match &task.kata_state {
+                            Some(state) => (
+                                state.target_condition.clone(),
+                                state.focus_obstacle.clone(),
+                                state.last_experiment.as_ref().map(|experiment| {
+                                    KataExperimentInfo {
+                                        next_step: experiment.next_step.clone(),
+                                        prediction: experiment.prediction.clone(),
+                                        outcome: experiment.outcome.clone(),
+                                    }
+                                }),
+                            ),
+                            None => (String::new(), None, None),
+                        };
+                    TaskKataRecordResponse {
+                        task_id: tid.to_string(),
+                        target_condition,
+                        focus_obstacle,
+                        last_experiment,
+                    }
+                },
+            )
         })
         .await
     }
@@ -1122,7 +1214,10 @@ impl KanbanServer {
         memory_scope: &Option<String>,
     ) -> Result<hkask_types::TaskId, McpToolError> {
         let tid = parse_task_id(task_id)?;
-        match delegation_level {
+        match hkask_types::normalize_closed_vocab(delegation_level)
+            .to_lowercase()
+            .as_str()
+        {
             "minimal" | "standard" | "maximal" => {}
             other => {
                 return Err(McpToolError::invalid_argument(format!(
@@ -1131,7 +1226,10 @@ impl KanbanServer {
             }
         }
         if let Some(ms) = memory_scope {
-            match ms.as_str() {
+            match hkask_types::normalize_closed_vocab(ms)
+                .to_lowercase()
+                .as_str()
+            {
                 "none" | "episodic" | "full" => {}
                 other => {
                     return Err(McpToolError::invalid_argument(format!(
@@ -1317,14 +1415,14 @@ impl KanbanServer {
                 "created": created.len(),
                 "task_ids": created,
                 "crate": proposals[0].crate_name,
-                "pko": kanban_type_to_pko("contract_propose_expect").map(|s| s.to_string()),
             }))
         })
         .await
     }
 
     /// Export a kanban board as mermaid kanban markdown (structure only:
-    /// columns, task titles, task IDs). The markdown round-trips through
+    /// columns, task titles, and column WIP limits). The markdown round-trips
+    /// through
     /// `kanban_board_import`. Only the board owner can export (P12).
     ///
     /// contract: P3-svc-kanban-012
@@ -1332,7 +1430,7 @@ impl KanbanServer {
     /// pre:  board_id is a valid board id owned by the caller
     /// post: returns the mermaid markdown plus a structural summary
     #[tool(
-        description = "Export a kanban board as mermaid kanban markdown (columns + task titles)."
+        description = "Export a kanban board as mermaid kanban markdown (columns, task titles, and column WIP limits)."
     )]
     pub async fn kanban_board_export(
         &self,
@@ -1350,19 +1448,21 @@ impl KanbanServer {
                     "board {bid} is not owned by caller — cannot export"
                 )));
             }
-            let tasks = self
+            let report = self
                 .service
                 .task_list(bid, TaskFilter::all())
                 .map_err(map_kanban_error)?;
-            let task_count = tasks.len();
+            let task_count = report.tasks.len();
+            let undecodable_count = report.undecodable.len();
             let column_count = board.columns.len();
-            let markdown = kanban::mermaid::export_board_to_mermaid(&board, &tasks);
+            let markdown = kanban::mermaid::export_board_to_mermaid(&board, &report.tasks);
             serde_json::to_value(BoardExportResponse {
                 markdown,
                 board_id: bid.to_string(),
                 board_name: board.name,
                 column_count,
                 task_count,
+                undecodable_count,
             })
             .map_err(|e| McpToolError::internal(e.to_string()))
         })
@@ -1379,7 +1479,7 @@ impl KanbanServer {
     /// pre:  markdown contains a `kanban` directive and at least one `section`
     /// post: returns the new board id and a structural summary
     #[tool(
-        description = "Import mermaid kanban markdown as a new board with tasks in parsed columns."
+        description = "Import mermaid kanban markdown as a new board with tasks in parsed columns (column WIP limits round-trip via the `%% kanban column wip: N` line)."
     )]
     pub async fn kanban_board_import(
         &self,
@@ -1456,7 +1556,12 @@ fn parse_goal_id(goal_id: &str) -> Result<hkask_types::GoalID, McpToolError> {
 /// Parse a goal verdict string ("done" | "continue" | "blocked") into a
 /// `GoalVerdictValue`.
 fn parse_goal_verdict(verdict: &str) -> Result<GoalVerdictValue, McpToolError> {
-    match verdict {
+    // Closed-vocab normalization (operator ruling 2026-10-13): padded or
+    // quoted values resolve instead of burning a retry.
+    match hkask_types::normalize_closed_vocab(verdict)
+        .to_lowercase()
+        .as_str()
+    {
         "done" => Ok(GoalVerdictValue::Done),
         "continue" => Ok(GoalVerdictValue::Continue),
         "blocked" => Ok(GoalVerdictValue::Blocked),
@@ -1648,7 +1753,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     .await
 }
 
-// Pins the registered tool surface end-to-end: the exact count (26) plus
+// Pins the registered tool surface end-to-end: the exact count (27) plus
 // the generated TOOL_NAMES const against the live rmcp surface — a tool
 // added/removed/renamed without regenerating (or a `name =` override the
 // build script can't see) fails here instead of degrading to "tool not
@@ -1656,8 +1761,8 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 hkask_mcp_server::tool_surface_pin!(
     KanbanServer::tool_router(),
     "tool_router",
-    26,
-    tool_surface_is_exactly_26_registered_tools,
+    27,
+    tool_surface_is_exactly_27_registered_tools,
 );
 
 /// expect: "Kanban refuses startup rather than accepting mutations without durable encrypted state."

@@ -9,17 +9,17 @@
 //! ## Module Structure
 //!
 //! - `service` — `KanbanService` struct and all coordination methods
-//! - `types` — `KanbanError`
-//! - `comments` — Task-level comment threads
-//! - `decompose` — Task decomposition operations
-//! - `kata` — Kata cycle execution on tasks
+//! - `types` — `KanbanError`, the task-read fault and report types
+//! - `comments` — Task-level comment threads and deliverables
+//! - `goals` — Canonical goal records and their lifecycle
+//! - `kata` — Durable kata state and the kata prompt summaries
 //! - `spawn` — Agent spawn from task specs
 
 // Imports needed by child submodules via `use super::*`
 #[allow(unused_imports)]
 use crate::kanban::{
-    Comment, KanbanPhase, Priority, SpawnSpec, Task, TaskFilter, TaskSpec, TaskStatus,
-    Verification, VerificationCriterion,
+    Comment, KanbanPhase, KataExperimentRecord, Priority, SpawnSpec, Task, TaskFilter,
+    TaskKataState, TaskSpec, TaskStatus, Verification, VerificationCriterion,
 };
 use hkask_types::WebID;
 use hkask_types::id::TaskId;

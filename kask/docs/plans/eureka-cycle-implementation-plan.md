@@ -182,7 +182,7 @@ becoming durable state):
 | 3 | GENERATE — fan out N candidates across personas; **mandatory context recall**: every candidate cites ≥1 prior artifact (experiment id, fossil, memory) or is dropped; one recombination prompt line (components of previously selected lineages) | P:propose-verify | the triage brief's grounding check (uncited candidates dropped); fanout via swarm |
 | 4 | FUNDING GATE — the PI chairs: rank candidates, fund K within an energy budget | human chair | the gate for steps 2-3; the board's `ready` state records it |
 | 5 | FRAME — per funded candidate: hypothesis-framer (FINER/PICO) → falsifiability (admission, rivals, counterfactuals, discriminating tests) → experimental-design (versioned DesignSpec) | P:propose-verify | `falsifiability-admit` + the declare boundary (step 6 schema validation) |
-| 6 | DECLARE + SEAL — `experiment_propose` (pre-registered prediction + confidence, rubrics, `budget.max_runs`, optional `linked_goal_id`) → `variant_register` (baseline) → `experiment_seal` (fingerprint + headroom pre-check) | D | experimentation server (schema validation, SHA-256 fingerprint, typed no-headroom refusal) |
+| 6 | DECLARE + SEAL — `experiment_propose` (pre-registered prediction + confidence, rubrics, `budget.max_runs`, optional `linked_goal_id`) → `variant_register` (baseline) → the baseline's **pre-seal measurement** via `fitness_record` (`seal_id: null`) — the order the T0 rehearsal was taught by the server's typed refusal — → `experiment_seal` (fingerprint + headroom pre-check; single-arm designs supply `scientific_headroom`, never a fabricated pass rate) | D | experimentation server (schema validation, SHA-256 fingerprint, typed no-headroom refusal) |
 | 7 | EXECUTE — the delegated lifecycle runs the bound protocol (swarm delegation, harness runs, data pulls) | P execution, D measurement | sealed rubric evaluators (`swarm_eval_agent_local`), `lean_check`, pin suites |
 | 8 | MEASURE — `fitness_record` under the server-enforced budget | D | experimentation server (typed `BudgetExhausted` refusal — surface it, never retry silently) |
 | 9 | RESOLVE — `final_evaluation_record` on the selection set; verdict at the algedonic review (the human chair); `selection_record` | human chair, D record | the algedonic review board (single selection surface) |
@@ -201,8 +201,12 @@ cycle — no silent retry loop.
   recombination line baked in);
 - `eureka-triage-brief.j2` — candidates → PI: ranked, each with citations,
   expected-value sketch, budget ask;
-- `eureka-study-report.j2` — the cycle-report skeleton (every claim cites a registry
-  id or research-run id; grounding-verify fields);
+- `eureka-study-report.j2` — the **cycle-aggregation envelope**: per-candidate sections
+  reference the delegated lifecycle's own report output (`hypothesis-testing/report.j2`
+  — the per-inquiry findings report) rather than re-rendering findings, plus the
+  cross-candidate outcomes table, cycle-prediction Brier readback, memory candidates
+  and evaluator-hardening candidates (every claim cites a registry id or research-run
+  id; grounding-verify fields);
 - `eureka-memory-candidate.j2` — the memory-candidate form (evidence h_mem citation
   required).
 
@@ -219,6 +223,62 @@ question reaches a resolution record + study report, or a typed stop); **Step ty
 T0 rehearsal receipt + the T3 first-cycle record); **Constraints** (single selection
 surface; D5; the one-row-mutation rule; no per-cycle doc files;
 proposes-never-commits).
+
+### 3.5 Hardened contracts (the second review pass — soft spots made explicit)
+
+The operator's challenge pass (2026-10-23) asked what was soft or assumed. Each of
+these is now an explicit contract — one line to one paragraph, none adding
+machinery:
+
+1. **Card-state contract + concurrency lock.** The board columns are the cycle's
+   lock: ORIENT pulls only `ready` cards, moves exactly one to `in_progress`, one
+   cycle per card at a time. Column `wip_limit`s stay null by design — your capacity
+   is the budget lever (deliberate softness, now labeled as such).
+2. **Card provenance schema.** Title = the question. Description = provenance
+   (filed-by, signal source, context links). Labels = filing class (`pi-filed` /
+   `machine-filed`) and funding state. Experiment-id links accumulate as card
+   comments (one row-mutating call per batch).
+3. **Empty-context rule.** Mandatory recall binds when history exists. When the
+   question's lineage is empty (first cycle), candidates cite the *source signals*
+   instead (regulation deviations, research-run ids), and the triage brief states
+   the empty context explicitly. The citation requirement never silently drops all
+   candidates.
+4. **Funding units made explicit.** Each candidate's budget ask is stated in the
+   unit its lifecycle will enforce — `max_runs` for experiments, estimated call caps
+   for research runs — and the funded number becomes the declared budget at step 6.
+   "Energy budget" is never vibes.
+5. **Refused-candidate path.** A candidate refused at a gate (falsifiability-admit,
+   no-headroom, registry incompatibility per `hypothesis-testing`'s honest
+   classification) returns to the card as a cheap fossil — "refused at gate X, reason
+   Y" — and the cycle continues with the remaining funded set. A typed stop is a
+   cycle outcome, not a cycle failure.
+6. **Agenda-promotion rule.** The funding gate funds board cards only. Promoting an
+   agenda-registry candidate is the act of filing it on the board with provenance
+   (`promoted from exp_X`) — the two queues never merge.
+7. **Crash-resume contract.** Every step's durable state lands in the board or the
+   registry. An interrupted cycle resumes at ORIENT (state re-read) or the card
+   returns to `ready`; an experiment abandoned mid-flight is the regulation loop's
+   stale-experiment sensor's business (D-3: 7-day advisory).
+8. **Cycle-coverage reconciliation is mechanical.** T4's "registry readback matches
+   the study report" is a checklist, not an eyeball: every funded candidate has a
+   report section; every section's experiment id resolves in `population_query`;
+   every prediction's confidence was recorded pre-seal. A short `lisp_eval`/jq
+   receipt over the report + the registry readback.
+9. **Retired-name hygiene.** The SKILL.md uses current names only
+   (`hypothesis-testing`, `experimental-design`); "co-scientist" is history —
+   mentioned in docs, never in skill text (`check-skill-crossrefs.sh` derives its
+   deleted-name list from the retirement record and guards this).
+10. **Name-referent statement.** The skill's reference-model section states: the name
+    borrows Recursive's loop *topology*, not its autonomy claims — this is the
+    human-chaired pole, and no parity with their machine is claimed.
+11. **Executor breadth.** Swarm delegation is one executor among several
+    (FRED/DBnomics/WB pullers, `lean_check`, job execution, research runs); the
+    delegated lifecycle binds the executor per its DesignSpec — the skill text must
+    not imply swarm-only execution.
+12. **Registry-compatibility acceptance.** The router accepts `hypothesis-testing`'s
+    compatibility classification as binding: a funded candidate that is not
+    registry-compatible resolves through its typed stop — the loop never routes
+    around the classification.
 
 ## 4. The eight disciplines' findings (applied to this plan)
 
@@ -395,7 +455,7 @@ not `done`.
 | T1 | Author the skill + templates to match the rehearsed sequence | `.agents/skills/eureka-cycle/SKILL.md` (new, ~220 lines — flagged >50: text artifact, bounded by house SKILL.md sizes, essentialist-audited); `kask/registry/templates/eureka-cycle/{eureka-generate,eureka-triage-brief,eureka-study-report,eureka-memory-candidate}.j2` (new, 4 × ~50) | every existing SKILL.md; every existing template; all `kask/mcp-servers/`; all `crates/` | ~420 text lines | `kask/scripts/audit/skill-corpus-prescreen.sh` green; `kask/scripts/check-skill-crossrefs.sh` green; D/P + reference-model + calibration sections present; goal lines terminal-punctuated; the seven anti-patterns absent |
 | T2 | Docs governance | `kask/docs/reference/skills/README.md` (registry row); `kask/docs/README.md` (plans-table status: Draft → Active); this plan doc (execution record appended) | everything else | ~40 | the skills-registry row renders; README count reconciles (`find kask/docs -type f \| wc -l`); DIAGRAMS_INDEX unchanged unless the diagram moves |
 | T3 | The live first cycle — **the capability verification** (operator ruling 2026-09-09: the deliverable is the capability functioning, verified by running the task through it): one real platform-self question through the skill, session-chaired, you holding question / funding / selection | none in repo (runtime; the study report lives on the board card + registry) | everything in repo | 0 | one question → resolution record (adopt / fossil / answer) + grounding-verified study report + ≥1 memory candidate proposed; the cycle's own pre-registered prediction recorded via `experiment_propose` |
-| T4 | Post-cycle reconciliation | none | everything | 0 | registry readback matches the study report; cycle-prediction Brier computed; H1/H2 adjudicated; H3 left open (fires at cycle two); docs drift check |
+| T4 | Post-cycle reconciliation | none | everything | 0 | registry readback matches the study report via the §3.5 item-8 mechanical checklist (receipt attached); cycle-prediction Brier computed; H1/H2 adjudicated; H3 left open (fires at cycle two); docs drift check |
 
 This change (the plan itself) touches: `kask/docs/plans/eureka-cycle-implementation-plan.md`
 (new), `kask/docs/README.md` (plans-table row + corpus-size sentence),
@@ -444,3 +504,54 @@ zero new server surface, zero new Cargo dependencies.
   generation-variety instruments (if a deficit is measured).
 - **Phase 3**: background cadence (the §1 trigger); aperture expansion beyond
   platform-self (your call anytime); a typed question entity (the §1 trigger).
+
+## 10. Execution record (T0–T2, 2026-10-23)
+
+**Goal.** `9c5af814-b92e-491b-8d04-16c2845aab0b` — criteria 1–4 registered (spec
+ digest `2800593a…`); source: this plan §8, the operator go ("please proceed
+with the updated plan as proposed", including the reference-models addition).
+
+**T0 — rehearsal (complete, one pass).** Board `8a62f1e1-8f1d-4b3e-a9d1-367aee108029`
+("Open Questions", standard 5 columns) created. Card EUREKA-0
+(`5f4c5ff5-07b3-4c8d-b6c5-22d065605561`) filed with provenance and walked
+backlog → ready → in_progress → review → done. Paired experiment
+`exp_6e55581d74964701837dddad62f7bbb8` (layer scientific_hypothesis, linked to
+the goal): prediction (confidence 0.9) and budget (max_runs 6) recorded at
+declare; baseline variant `var_30632f415c32492db9c242e0bab5df6d`; pre-seal fitness
+`fit_d9010287412a4f41aeefa3eb387b9792` — 4/4 join branches true via `lisp_eval`
+`string-contains` (needle first) over the live `kanban_task_list` /
+`population_query` readbacks; seal `seal_2debfa6efdce459babbe536912f2dd6e`
+(fingerprint `cdc4f09d…`, single-arm headroom with registry precedent as
+evidence); resolution `sel_ac7505f3bf0d4f6e9e9e89341d383509` — **corroborated**
+(the prediction held). Two seam findings, both encoded in the SKILL.md and
+§3.2 above: (1) the seal ordering — the baseline's pre-seal `fitness_record`
+must precede `experiment_seal` (the server's typed `failed_precondition` taught
+the order); (2) `kanban_task_list` does not surface card labels — the
+description is the readback-verifiable provenance carrier; labels are advisory
+(§3.5-2 amended in effect).
+
+**T1 — the skill + templates (complete).** `.agents/skills/eureka-cycle/SKILL.md`
+(~200 lines) + `kask/registry/templates/eureka-cycle/{eureka-generate,
+eureka-triage-brief,eureka-study-report,eureka-memory-candidate}.j2`. The
+reference models carry the Socher/Recursive source materials per the
+operator's instruction (the book vision, the two Recursive posts, research run
+`12a94d05e473d5d5`) alongside the P8 protocol, the delegated lifecycles and
+Tetlock triage. Gates: `skill-corpus-prescreen.sh` exit 0 (59 SKILL.mds,
+0 flagged; 221 templates checked, only the two pre-existing baseline accepts);
+`check-skill-crossrefs.sh` exit 0 (all cross-references resolve; no
+deleted-skill names — the retired-name hygiene held).
+
+**T2 — docs governance (complete).** Skills registry: the `eureka-cycle` row +
+re-verified counts (59 dirs — `media-workflow` retired 2026-10-21 in
+`8262bf5b80`, `eureka-cycle` added 2026-10-23; 56 namespaces / 221 `.j2` —
+three program-manager and two media templates removed in the 2026-10-21 waves,
+four eureka templates added). README plans-table status: Draft → Active.
+Experimentation reference model §4: the Eureka Machine research anchors appended
+(the operator's reference-models request).
+
+**T3 — the live first cycle (awaiting the PI).** EUREKA-1
+(`7cabcc3e-3c1c-4a82-9e62-1a1a18fea4fe`) filed in backlog — the diagram-parity
+gate wiring question, machine-proposed from this session's regulation signal.
+The next cycle awaits your funding gate: routing first (likely
+research-resolvable — a tree investigation of the CI wiring), then generation
+and execution through the authored skill.

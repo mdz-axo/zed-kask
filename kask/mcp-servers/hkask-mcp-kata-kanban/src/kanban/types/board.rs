@@ -20,6 +20,14 @@ pub struct Board {
     pub columns: Vec<ColumnDef>,
     /// Project phases for work grouping and reassembly.
     pub(crate) phases: Vec<KanbanPhase>,
+    /// Structural Done-gate policy: when true, the Done column is a
+    /// verification outcome reachable only through `kanban_task_verify`
+    /// (Review → Done), never an ordinary column move. Stamped at creation
+    /// (explicitly, or by the reserved algedonic review name convention)
+    /// and persisted on the row, so the gate survives a rename — the
+    /// pre-flag name-keyed check moved with the name instead.
+    #[serde(default)]
+    pub(crate) done_requires_verification: bool,
     /// When the board was created.
     pub created_at: DateTime<Utc>,
 }
@@ -35,6 +43,7 @@ impl Board {
             owner,
             columns,
             phases: Vec::new(),
+            done_requires_verification: false,
             created_at: Utc::now(),
         }
     }

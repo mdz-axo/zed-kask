@@ -6,7 +6,7 @@
 //! ## Module Structure
 //!
 //! - `types` — Core types: Board, Task, TaskSpec, TaskStatus, Priority, SpawnSpec, etc.
-//! - `service_impl` — KanbanService + submodules: comments, decompose, kata, phases, spawn, verification
+//! - `service_impl` — KanbanService + submodules: comments, goals, kata, service, spawn, types
 
 pub(crate) mod mermaid;
 mod service_impl;
@@ -16,10 +16,12 @@ pub(crate) mod types;
 
 // Re-export the public API from types
 pub(crate) use types::{
-    Board, ColumnDef, Comment, CriterionCitation, KanbanPhase, Priority, SpawnSpec, Task,
-    TaskFilter, TaskSpec, TaskStatus, Verification, VerificationCriterion,
+    Board, ColumnDef, Comment, CriterionCitation, KanbanPhase, KataExperimentRecord, Priority,
+    SpawnSpec, Task, TaskFilter, TaskKataState, TaskSpec, TaskStatus, Verification,
+    VerificationCriterion,
 };
 
 // Re-export the service and errors from service_impl
 pub use service_impl::KanbanError;
 pub use service_impl::KanbanService;
+pub(crate) use service_impl::kata::KataStateUpdate;

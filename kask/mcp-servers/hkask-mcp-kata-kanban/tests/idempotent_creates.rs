@@ -77,6 +77,7 @@ async fn create_board(server: &KanbanServer, name: &str, key: Option<&str>) -> s
             name: name.to_string(),
             columns: None,
             idempotency_key: key.map(str::to_string),
+            done_requires_verification: None,
         }))
         .await
         .expect("tool ok");
@@ -418,6 +419,7 @@ async fn other_webid_cannot_replay_a_key_on_shared_driver() {
             name: "Owner board".to_string(),
             columns: None,
             idempotency_key: Some("shared-key".to_string()),
+            done_requires_verification: None,
         }))
         .await
         .expect_err("another caller must not see the saved response");
@@ -479,6 +481,7 @@ async fn legacy_unbound_key_is_unknown_and_cannot_be_reused() {
                 name: name.to_string(),
                 columns: None,
                 idempotency_key: Some("legacy".to_string()),
+                done_requires_verification: None,
             }))
             .await
             .expect_err("unbound legacy key must never replay or rerun");

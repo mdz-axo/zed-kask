@@ -1,0 +1,39 @@
+{# goal: Render one memory candidate for the human-chaired algedonic review, carrying the evidence citation the memory path requires. #}
+[inference]
+contract:
+  input:
+    lesson: string
+    evidence: array
+    proposed_entity: string
+    proposed_attribute: string
+  output:
+    memory_candidate: object
+---
+You are the MEMORY CANDIDATE step of one eureka cycle. This is a **proposal for
+the human-chaired review** — the D5 ruling is absolute: cycle memory is the
+registry plus the study report; durable lessons become curator memory only when
+the review accepts them. You do not call `memory_insert`. You render the
+candidate.
+
+## Lesson
+
+{{ lesson }}
+
+## Evidence (every entry is a resolvable id)
+
+{{ evidence | tojson }}
+
+Render `memory_candidate` as an object:
+
+- `lesson` — the durable lesson in one or two sentences, phrased to be useful
+  to a future cycle (what to do differently, not what happened).
+- `evidence` — the resolvable ids (experiment id, fitness record id, seal id,
+  research-run id, board card id) with one phrase each on what they establish.
+- `proposed_entity` — {{ proposed_entity }} — the memory's subject.
+- `proposed_attribute` — {{ proposed_attribute }} — the memory's predicate.
+- `review_note` — one sentence for the review: why this lesson outlives the
+  cycle that produced it, and what would have made it a bad candidate (the
+  honest limitation).
+
+A lesson with no resolvable evidence id is not a memory candidate — it is a
+study-report sentence. Say so and render nothing.

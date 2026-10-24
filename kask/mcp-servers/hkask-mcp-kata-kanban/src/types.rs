@@ -18,6 +18,13 @@ pub struct BoardCreateRequest {
     pub name: String,
     pub columns: Option<Vec<ColumnDefInput>>,
     pub idempotency_key: Option<String>,
+    /// Structural Done-gate policy: when `true`, the Done column is
+    /// reachable only through `kanban_task_verify` (Review → Done), never
+    /// an ordinary column move. Omitted/false except for boards created
+    /// with the reserved "Algedonic review" name, which are stamped by
+    /// convention.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub done_requires_verification: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -178,9 +185,25 @@ pub struct TaskListRequest {
     pub status: Option<String>,
 }
 
+/// One indexed task row that could not be read for a listing — surfaced
+/// degradation, never a silent skip. These rows are excluded from `tasks`
+/// and from the server's WIP counts (which fail closed on them instead of
+/// admitting against a count known to be a lower bound).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct UndecodableTaskInfo {
+    /// The indexed task id whose row could not be read.
+    pub task_id: String,
+    /// Why the row could not be read (missing row, or the decode error).
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TaskListResponse {
     pub tasks: Vec<TaskInfo>,
+    /// Indexed task rows that could not be read — the board listing
+    /// degrades visibly instead of shrinking.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub undecodable_tasks: Vec<UndecodableTaskInfo>,
 }
 
 /// The latest recorded activity on a task — a one-line status the kanban
@@ -338,7 +361,56 @@ pub(crate) struct ContractProposeExpect {
     pub proposals: AnyJsonValue,
 }
 
-// ── Kata prompts ───────────────────────────────────────────────────────────
+// ── Kata prompts ───────────────────────────────────────────────────────
+
+/// One PDCA experiment record: the next step taken, the prediction it
+/// tested, and the observed outcome once checked (`None` until checked —
+/// never filled from a plan).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct KataExperimentInfo {
+    /// The next step taken (one change at a time).
+    pub next_step: String,
+    /// The prediction the step tests — what you expect to learn.
+    pub prediction: String,
+    /// The observed outcome once checked; `None` until checked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<String>,
+}
+
+/// Request for `kanban_task_kata_record` — record durable Improvement Kata
+/// state on a task. At least one field is required; a first record on a
+/// task with no kata state requires `target_condition` (the kata's step-3
+/// artifact cannot be skipped).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TaskKataRecordRequest {
+    pub task_id: String,
+    /// Set the target condition (the measurable target the routine
+    /// converges toward).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_condition: Option<String>,
+    /// Keep (`None`) / clear (`Some(None)`) / set (`Some(Some(text))`) the
+    /// focus obstacle — the ONE obstacle currently being worked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focus_obstacle: Option<Option<String>>,
+    /// Replace the last experiment record (`None` keeps the existing one).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_experiment: Option<KataExperimentInfo>,
+}
+
+/// Response for `kanban_task_kata_record` — the state now recorded on the
+/// task, echoed back.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct TaskKataRecordResponse {
+    pub task_id: String,
+    /// The recorded target condition.
+    pub target_condition: String,
+    /// The recorded focus obstacle, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focus_obstacle: Option<String>,
+    /// The recorded last experiment, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_experiment: Option<KataExperimentInfo>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct TaskKataPromptRequest {
@@ -498,6 +570,9 @@ pub(crate) struct BoardExportResponse {
     pub column_count: usize,
     /// Number of tasks rendered.
     pub task_count: usize,
+    /// Indexed task rows that could not be read and are therefore absent
+    /// from the markdown — the export's silence about them is surfaced.
+    pub undecodable_count: usize,
 }
 
 /// Request for `kanban_board_import` — parse mermaid kanban markdown and
@@ -507,6 +582,8 @@ pub struct BoardImportRequest {
     /// Current-format Mermaid kanban markdown from `kanban_board_export`.
     /// Every section must be preceded by
     /// `%% kanban column status: <wire-status>`; implicit legacy mappings are rejected.
+    /// An optional `%% kanban column wip: <limit>` line before a section
+    /// sets that column's WIP limit.
     pub markdown: String,
     pub board_name: Option<String>,
     pub idempotency_key: Option<String>,

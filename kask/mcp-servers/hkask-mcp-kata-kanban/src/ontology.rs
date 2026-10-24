@@ -87,6 +87,9 @@ pub(crate) fn tool_to_pko(tool_name: &str) -> Option<PkoConcept> {
         // The kata prompt asks a coaching question — the canonical
         // user-question occurrence.
         "kanban_task_kata_prompt" => Some(USER_QUESTION_OCCURRENCE),
+        // Recording kata state executes a step of the improvement-kata
+        // routine on the task.
+        "kanban_task_kata_record" => Some(STEP_EXECUTION),
         // Spawning/delegating executes a step of the parent procedure —
         // the sub-task's work is begun.
         "kanban_task_spawn" => Some(STEP_EXECUTION),
@@ -133,6 +136,7 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
         | "kanban_task_update"
         | "kanban_task_verify"
         | "kanban_task_kata_prompt"
+        | "kanban_task_kata_record"
         | "kanban_task_spawn"
         | "contract_propose_expect" => Some(DATASET),
         _ => None,
@@ -219,6 +223,7 @@ mod tests {
                 name: "dual-axis-pin".into(),
                 columns: None,
                 idempotency_key: None,
+                done_requires_verification: None,
             }))
             .await
             .expect("board create succeeds");

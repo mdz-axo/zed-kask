@@ -7,7 +7,7 @@ Kata-Kanban workflow coordination MCP server — task management with WIP limits
 ### Board management
 | Tool | Description |
 |------|-------------|
-| `kanban_board_create` | Create a new kanban board with optional custom columns |
+| `kanban_board_create` | Create a new kanban board with optional custom columns; `done_requires_verification` gates Done behind `kanban_task_verify` (stamped by convention for the reserved "Algedonic review" name) |
 | `kanban_board_list` | List all kanban boards owned by the caller |
 | `kanban_board_update` | Rename a kanban board (owner only); the name is the board's addressing key |
 | `kanban_board_delete` | Delete a kanban board and all its tasks |
@@ -20,7 +20,7 @@ Kata-Kanban workflow coordination MCP server — task management with WIP limits
 | `kanban_task_create` | Create a new task on a kanban board; `advances` cites the goal criteria the task serves (validated against the goal, captured as documentation) |
 | `kanban_task_update` | Update editable fields on a task (title, description, criteria, priority, labels, `advances` citations); only the task owner can edit |
 | `kanban_task_list` | List tasks on a kanban board, optionally filtered by status |
-| `kanban_task_move` | Move a task to a new column (status transition) |
+| `kanban_task_move` | Move a task to a new column (status transition); on verification-gated boards (e.g. the Algedonic review board), Done is reachable only via `kanban_task_verify` |
 | `kanban_task_assign` | Claim an unassigned task as the authenticated caller (no arbitrary-agent assignment; the caller's identity is the assignee) |
 | `kanban_task_verify` | Record verification evidence for a Review task — the user's confirmation text is the pass signal (criteria guide work but do not gate completion; only the operator's relayed confirmation moves Review to Done) |
 | `kanban_task_reopen` | Reopen a completed task (Done → InProgress) |
@@ -34,9 +34,15 @@ value; a deleted task returns not-found instead of being recreated. Conflicting
 scalar edits follow commit order, and transitions invalidated by an earlier
 commit are rejected. Task/index identity is unchanged.
 
-Board/WIP counts and goal-citation lookups remain outside that task transaction
-to avoid nested store acquisition; this is not atomic WIP admission across
-separate tasks or a transaction spanning task and goal records.
+WIP admission runs inside the task transaction: the sibling-task count is read
+through the same `IMMEDIATE` transaction that commits the move
+(`update_value_atomic_with_reads`), so two concurrent movers into a full column
+cannot both pass the count. An indexed task row that is missing or fails to
+decode is surfaced — listings report it (`undecodable_tasks`), and the WIP
+admission refuses the move naming the row, because an unreadable row can only
+undercount and undercounting over-admits. Goal-citation lookups remain outside
+the task transaction (a nested pool acquisition would deadlock the connection
+the transaction already holds).
 
 ### Goals
 
@@ -92,6 +98,7 @@ See [the exact ownership boundary](GOAL_INTERFACE.md).
 | Tool | Description |
 |------|-------------|
 | `kanban_task_kata_prompt` | Generate a task-scoped prompt; `stage` selects `coaching`, `improvement`, or `practice` (`sub_problem` required for `practice`) |
+| `kanban_task_kata_record` | Record durable kata state (target condition, focus obstacle, last experiment with prediction and outcome) — the prompts read it back, so a new session continues the routine instead of restarting from zero |
 
 ### Agent spawning
 | Tool | Description |
@@ -112,7 +119,12 @@ See [the exact ownership boundary](GOAL_INTERFACE.md).
 
 ## Regulation Spans
 
-All tools emit `reg.tool.*` spans through the MCP framework. The server's one registered domain span is `reg.kata` (coaching-prompt generation, `src/kanban/service_impl/kata.rs:44`); no `reg.kanban` namespace exists.
+All tools emit `reg.tool.*` spans through the MCP framework. Domain spans:
+`reg.kata` (kata prompt generation and kata-state recording,
+`src/kanban/service_impl/kata.rs`) and `hkask.kanban` (board/task lifecycle
+mutations — `board_created`, `board_renamed`, `board_imported`,
+`task_created`, `task_moved`, `task_assigned`, `task_verified`,
+`src/kanban/service_impl/service.rs`).
 
 ## Quick Start
 
