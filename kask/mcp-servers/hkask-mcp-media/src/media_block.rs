@@ -234,7 +234,8 @@ mod tests {
             None,
         );
         let hint = enriched["display_hint"].as_str().expect("hint attached");
-        assert!(hint.contains("\"ontology\":\"omc:Shot\""));
+        let expected_shot_tag = format!("\"ontology\":\"{}\"", hkask_bridge_ontology::omc::SHOT);
+        assert!(hint.contains(&expected_shot_tag));
     }
 
     #[test]
