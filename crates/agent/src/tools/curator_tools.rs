@@ -620,10 +620,10 @@ impl From<CuratorStatusOutput> for language_model::LanguageModelToolResultConten
              Variety Deficit: {}\n\
              Memory: {}\n\
              Algedonic Log: {}\n\
-             Loop Reading: {}\
-             Loop Cycles: {}\
-             Native First Rate: {}\
-             Declared Doors: {},
+             Loop Reading: {}\n\
+             Loop Cycles: {}\n\
+             Native First Rate: {}\n\
+             Declared Doors: {}",
             output.status,
             output
                 .regulation_acceptance_rate
