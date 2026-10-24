@@ -71,6 +71,9 @@ itself; it routes to the owners and carries the cycle's memory.
   `local-research-swarm` (project-work coordination; its own boundary excludes
   domain verdicts).
 - Forecasting one resolvable question — use `superforecasting`.
+- Project-scale scenario construction (forces, 2x2 narratives, early-warning
+  indicators) — use `scenario-planning` directly; this loop's forecasting route
+  estimates probabilities, it does not build scenarios.
 - The question is not on the board — file it first; the board is the only intake
   this loop reads.
 
@@ -82,12 +85,12 @@ itself; it routes to the owners and carries the cycle's memory.
 | 2 | ROUTE — research-resolvable / experiment-requiring / forecasting | P:propose-verify | the PI's confirmation at the funding gate |
 | 3 | GENERATE — recall-cited fanout | P:propose-verify | the triage brief's grounding check |
 | 4 | FUNDING GATE — the PI chairs | human chair | the gate for steps 2-3; the board's `ready` state |
-| 5 | FRAME — hypothesis-framer → falsifiability → experimental-design | P:propose-verify | `falsifiability-admit` + the declare boundary |
+| 5 | FRAME (the handoff) — route each funded candidate to its owning lifecycle: scientific → `hypothesis-testing` (its pipeline runs hypothesis-framer → falsifiability → experimental-design), artifact → `self-improvement`, research-resolvable → the research-run path | P:propose-verify | the funded-kind confirmation at the funding gate; the delegated lifecycle's own gates (`falsifiability-admit`, the declare boundary) apply downstream — this loop never runs them |
 | 6 | DECLARE + SEAL — the registry's contract path | D | schema validation, SHA-256 fingerprint, headroom |
 | 7 | EXECUTE — the delegated lifecycle's bound protocol | P execution, D measurement | sealed rubric evaluators |
 | 8 | MEASURE — `fitness_record` under the budget | D | the server's typed `BudgetExhausted` refusal |
 | 9 | RESOLVE — verdict at the algedonic review | human chair, D record | the single selection surface |
-| 10 | DEPOSIT + BACK-EDGE — study report, memory candidates | P report, D gates | `grounding-verify`; the human review |
+| 10 | DEPOSIT + BACK-EDGE — study report, memory candidates | P report, D gates | `EUR-1` reconciliation + `EUR-2` Brier receipts; `grounding-verify`; the human review |
 
 ## Instructions
 
@@ -99,22 +102,46 @@ itself; it routes to the owners and carries the cycle's memory.
    subject is not funded twice. Move exactly one card to `in_progress` — one cycle
    per card at a time; the board columns are the concurrency lock.
 2. **ROUTE.** Classify each funded question: research-resolvable (answerable by
-   evidence, no experiment), experiment-requiring, or forecasting (route onward
-   to `superforecasting`). Nothing routes to spend without the PI's confirmation
-   at step 4. The classification is a proposal, not a verdict.
-3. **GENERATE.** Render `eureka-cycle/eureka-generate` with the question, the
-   recalled context, personas and aperture. Every candidate cites at least one
-   prior artifact; when the question's lineage is empty, candidates cite the
-   source signals instead and the brief states the empty context explicitly (the
-   citation requirement never silently drops all candidates). Include one
-   recombination candidate over previously selected lineages. Uncited candidates
-   are dropped.
-4. **FUNDING GATE.** Render `eureka-cycle/eureka-triage-brief`: candidates
-   ranked, each with citations, expected-value sketch, and a budget ask **in the
-   unit its lifecycle will enforce** (`max_runs` for experiments, estimated call
-   caps for research runs). The PI funds K. The funding gate funds board cards
-   only — promoting an agenda-registry candidate is the explicit act of filing
-   it on the board with provenance.
+   evidence, no experiment), experiment-requiring, or forecasting. Nothing routes
+   to spend without the PI's confirmation at step 4. The classification is a
+   proposal, not a verdict. A forecasting-routed question is a **typed stop**
+   for this cycle: record a `routed` disposition on the card citing the
+   `superforecasting` invocation, hand the question to that pipeline, and close
+   the cycle's work when the forecast is declared — the forecast's Brier-scored
+   resolution lands as a card comment when it resolves (the forecasting
+   lifecycle owns the resolution; this loop never scores it).
+3. **GENERATE.** Render `eureka-cycle/eureka-generate` with the copyable
+   context below. Every candidate cites at least one prior artifact; when the
+   question's lineage is empty, the source signals ride `prior_context` and the
+   brief states the empty context explicitly (the citation requirement never
+   silently drops all candidates). Include one recombination candidate over
+   previously selected lineages. Uncited candidates are dropped.
+
+   `eureka-cycle/eureka-generate`:
+   ```json
+   {
+     "question": "<the funded question verbatim>",
+     "prior_context": ["<id + what it established, one entry per recalled artifact — carries the source signals when the lineage is empty>"],
+     "personas": ["<persona names>"],
+     "aperture": "<the cycle's aperture>",
+     "n_candidates": <the candidate count>
+   }
+   ```
+4. **FUNDING GATE.** Render `eureka-cycle/eureka-triage-brief` with the copyable
+   context below: candidates ranked, each with citations, expected-value sketch,
+   and a budget ask **in the unit its lifecycle will enforce** (`max_runs` for
+   experiments, estimated call caps for research runs). The PI funds K. The
+   funding gate funds board cards only — promoting an agenda-registry candidate
+   is the explicit act of filing it on the board with provenance.
+
+   `eureka-cycle/eureka-triage-brief`:
+   ```json
+   {
+     "question": "<the funded question verbatim>",
+     "candidates": [{"hypothesis": "...", "citations": ["..."], "expected_value_sketch": "...", "budget_ask": "...", "resolution_path_guess": "..."}],
+     "empty_context_note": "<stated when the lineage is empty, else null>"
+   }
+   ```
 5. **FRAME.** For each funded scientific candidate, hand off to the
    `hypothesis-testing` pipeline (hypothesis-framer → falsifiability →
    experimental-design); artifact candidates go to `self-improvement`;
@@ -141,9 +168,26 @@ itself; it routes to the owners and carries the cycle's memory.
    at the algedonic review (the human chair — the single selection surface;
    adoption is never recorded from this loop or the board's `Done` column).
    `selection_record` is the record path.
-10. **DEPOSIT + BACK-EDGE.** Render `eureka-cycle/eureka-study-report`:
+10. **DEPOSIT + BACK-EDGE.** Compute the cycle's deterministic receipts through
+    `lisp_eval` first — the engine owns the counts and the arithmetic; the
+    report renders around them and never re-types them.
+
+    **`EUR-1` (reconciliation receipt)** — run over the assembled report fields
+    and the `population_query` readback before posting the report:
+    form: `(and (= funded_count section_count) (= unresolved_ids 0) (= missing_pre_seal_confidences 0))`
+    env: `{ "funded_count": <the cycle's funded candidate count>, "section_count": <the report's candidate-section count>, "unresolved_ids": <count of section experiment ids absent from the population_query readback>, "missing_pre_seal_confidences": <count of predictions whose recorded confidence is absent from the sealed declaration> }`
+    The study report's reconciliation field states the EUR-1 receipt verbatim
+    (its four inputs and the returned boolean) — the model never counts.
+
+    **`EUR-2` (per-prediction Brier)** — for each resolved binary claim
+    (outcome 1 = held, 0 = refuted):
+    form: `(* (- probability outcome) (- probability outcome))`
+    env: `{ "probability": <the prediction's recorded pre-seal confidence>, "outcome": <1 or 0> }`
+    The cycle mean Brier is the arithmetic mean of the EUR-2 outputs.
+
+    Render `eureka-cycle/eureka-study-report` with the copyable context below:
     per-candidate sections reference the delegated lifecycle's own report output,
-    plus the cross-candidate outcomes table, the prediction Brier readback, and
+    plus the cross-candidate outcomes table, the EUR-2 Brier readback, and
     evaluator-hardening candidates (filed via `evolve_mcp_tool_schema` when
     gaming was detected — as the search strengthens, the evaluator must
     strengthen too). Memory candidates render through
@@ -151,6 +195,27 @@ itself; it routes to the owners and carries the cycle's memory.
     human-chaired review — never written** (D5 ruling). Post the report on the
     question's board card; spawn or file follow-up questions. Empty generation
     files a finding on the card and ends the cycle — no silent retry loop.
+
+    `eureka-cycle/eureka-study-report`:
+    ```json
+    {
+      "question": "<the funded question verbatim>",
+      "cycle": {"candidates": ["<id, resolution path, registry/experiment id, verdict, prediction (claim + confidence), outcome>"], "question_id": "<the board card id>", "routing": "<the routing summary>"},
+      "brier_readback": {"predictions": ["<claim, confidence, experiment, outcome, single_brier (from EUR-2)>"], "cycle_mean_brier": "<mean of the EUR-2 outputs>"},
+      "memory_candidates": [{"lesson": "...", "evidence": ["<resolvable ids with one phrase each>"], "proposed_entity": "...", "proposed_attribute": "...", "review_note": "..."}],
+      "evaluator_hardening": []
+    }
+    ```
+
+    `eureka-cycle/eureka-memory-candidate`:
+    ```json
+    {
+      "lesson": "<the durable lesson, one or two sentences>",
+      "evidence": ["<resolvable ids with one phrase each>"],
+      "proposed_entity": "<the memory's subject>",
+      "proposed_attribute": "<the memory's predicate>"
+    }
+    ```
 
 Card conventions: title = the question; description = provenance (filed-by,
 signal source, context links) — the description is the readback-verifiable
