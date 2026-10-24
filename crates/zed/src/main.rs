@@ -2100,6 +2100,11 @@ fn main() {
                                 // deferred task drops the second wiring with
                                 // a warn.
                                 if let Some(embedding_port) = embedding_port_for_affordance {
+                                    log::info!(
+                                        "hKask affordance injector wired (gated by \
+                                         kask.affordance.enabled; embedding model: \
+                                         {embedding_model_for_affordance})"
+                                    );
                                     agent::set_affordance_injector(Some(std::sync::Arc::new(
                                         kask_bridge::AffordanceInjector::new(
                                             std::sync::Arc::new(
@@ -2110,11 +2115,6 @@ fn main() {
                                             ),
                                         ),
                                     )));
-                                    log::info!(
-                                        "hKask affordance injector wired (gated by \
-                                         kask.affordance.enabled; embedding model: \
-                                         {embedding_model_for_affordance})"
-                                    );
                                 } else {
                                     log::warn!(
                                         "hKask affordance injector not wired — embedding \

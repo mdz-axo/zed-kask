@@ -284,7 +284,7 @@ fn cosine(a: &[f32], b: &[f32]) -> f64 {
 fn system_message(text: String) -> LanguageModelRequestMessage {
     LanguageModelRequestMessage {
         role: Role::System,
-        content: vec![MessageContent::Text(text.into())],
+        content: vec![MessageContent::Text(text)],
         cache: false,
         reasoning_details: None,
     }
