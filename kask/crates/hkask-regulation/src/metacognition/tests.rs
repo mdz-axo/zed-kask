@@ -83,3 +83,36 @@ async fn malformed_feedback_does_not_create_a_false_drift_window() {
         "two valid observations cannot become a ten-sample drift window"
     );
 }
+
+/// The health snapshot carries the native-first drift reading from the
+/// ledger's rolling window — the reading the curator status surface
+/// renders — and an empty window stays `None`, never a fabricated rate
+/// (an unmeasured window read as perfect instrument compliance).
+#[tokio::test]
+async fn snapshot_carries_the_native_first_drift_reading() {
+    let ledger = Arc::new(TokioRwLock::new(RegulationLedger::default()));
+    {
+        let ledger = ledger.read().await;
+        ledger.record_agent_turn(true, true).await; // substantive, native-first
+        ledger.record_agent_turn(true, false).await; // substantive, instrumented
+        ledger.record_agent_turn(false, true).await; // non-substantive: not recorded
+    }
+    let loop_ = MetacognitionLoop::with_config(ledger, MetacognitionConfig::default());
+    loop_.tick().await;
+    let snapshot = loop_
+        .last_snapshot_blocking()
+        .expect("tick stores a snapshot");
+    assert_eq!(snapshot.native_first_rate, Some((0.5, 2)));
+
+    let empty = Arc::new(TokioRwLock::new(RegulationLedger::default()));
+    let loop_ = MetacognitionLoop::with_config(empty, MetacognitionConfig::default());
+    loop_.tick().await;
+    assert_eq!(
+        loop_
+            .last_snapshot_blocking()
+            .expect("tick stores a snapshot")
+            .native_first_rate,
+        None,
+        "an empty window is no data, never a fabricated 0.0"
+    );
+}

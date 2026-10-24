@@ -100,6 +100,13 @@ pub struct HealthSnapshot {
     /// loop_model, panel_absence, and outcome_trust into a single `Reading`
     /// that distinguishes wiring-closed from turning from working.
     pub loop_view: crate::loops::LoopView,
+    /// Rolling native-first rate over completed substantive agent turns:
+    /// `(rate, samples)` from `RegulationLedger::native_first_rate`. The
+    /// drift reading the curator status surface renders — `None` when no
+    /// substantive turn has been recorded, never a fabricated `0.0` (an
+    /// empty window read as perfect instrument compliance would be the
+    /// `unwrap_or(0)` trap).
+    pub native_first_rate: Option<(f64, u64)>,
 }
 
 /// Escalation alert emitted when a threshold is breached.
@@ -319,6 +326,7 @@ impl MetacognitionLoop {
         let ledger_health = ledger.health().await;
         let regulation_health = ledger.regulation_health().await;
         let drift_alerts = self.sense_feedback_drift(&ledger).await;
+        let native_first_rate = ledger.native_first_rate().await;
         drop(ledger); // release the read lock before acting
 
         let mut snapshot = HealthSnapshot {
@@ -331,6 +339,7 @@ impl MetacognitionLoop {
             regulation_health,
             // Filled in after `compare` produces the alerts below.
             escalation_count: 0,
+            native_first_rate,
         };
 
         // ── Compare + Compute ──────────────────────────────────────────

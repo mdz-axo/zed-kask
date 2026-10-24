@@ -109,6 +109,16 @@ pub struct CuratorStatusOutput {
     /// see the loop turning behind an `unobserved` impact reading. `None`
     /// when the metacognition provider isn't wired.
     pub loop_cycles: Option<u64>,
+    /// Rolling native-first rate: the fraction of completed substantive
+    /// agent turns (user prompt ≥ 20 words) that used zero kask
+    /// instruments — no context-server tool call and none of `lisp_eval` /
+    /// `render_template` / `skill`. The drift reading the native-first-rate
+    /// sensor feeds the regulation loop. `None` when no substantive turn
+    /// has been recorded — no data, never a fabricated 0.0.
+    pub native_first_rate: Option<f64>,
+    /// Sample count behind `native_first_rate` — the rolling window's
+    /// substantive-turn count. `None` alongside a `None` rate.
+    pub native_first_samples: Option<u64>,
     /// Declared human doors for `Manual`/`Prompted` regulation stages
     /// (Fermi `STAGE_ACTIONS`). Each entry is a `(trigger, stage, tools)` tuple.
     /// Empty when the metacognition provider isn't wired or no doors are
@@ -135,6 +145,13 @@ fn read_loop_cycles(snapshot: &serde_json::Value) -> Option<u64> {
     snapshot
         .get("total_cycles")
         .and_then(|value| value.as_u64())
+}
+
+fn read_native_first_rate(snapshot: &serde_json::Value) -> Option<f64> {
+    snapshot
+        .get("native_first_rate")
+        .and_then(|value| value.as_f64())
+        .filter(|rate| (0.0..=1.0).contains(rate))
 }
 
 fn status_line(
@@ -269,6 +286,8 @@ mod status_snapshot_tests {
             alert_log_approaching_cap: Some(false),
             loop_reading: Some("unobserved".to_string()),
             loop_cycles: Some(720),
+            native_first_rate: None,
+            native_first_samples: None,
             declared_doors: Vec::new(),
         };
         match language_model::LanguageModelToolResultContent::from(output) {
@@ -297,6 +316,8 @@ mod status_snapshot_tests {
             alert_log_approaching_cap: None,
             loop_reading: None,
             loop_cycles: None,
+            native_first_rate: None,
+            native_first_samples: None,
             declared_doors: Vec::new(),
         };
         let value = serde_json::to_value(output).expect("status output serializes");
@@ -318,6 +339,8 @@ mod status_snapshot_tests {
             alert_log_approaching_cap: None,
             loop_reading: None,
             loop_cycles: None,
+            native_first_rate: None,
+            native_first_samples: None,
             declared_doors: Vec::new(),
         };
         match language_model::LanguageModelToolResultContent::from(output) {
@@ -338,6 +361,66 @@ mod status_snapshot_tests {
 
         let unknown = rendered(Some(0), None);
         assert!(unknown.contains("Algedonic Review Cards Not Done: unknown (board not readable)"));
+    }
+
+    /// The status output carries the native-first drift reading — the
+    /// fraction of completed substantive turns that used zero kask
+    /// instruments — with its sample count, so the operator can watch the
+    /// sensor's baseline without waiting for a board escalation.
+    #[test]
+    fn status_output_carries_native_first_rate_and_samples() {
+        assert_eq!(
+            read_native_first_rate(&serde_json::json!({"native_first_rate": 0.62})),
+            Some(0.62)
+        );
+        assert_eq!(
+            read_native_first_rate(&serde_json::json!({"native_first_rate": 1.5})),
+            None,
+            "out-of-range rates are dropped, not clamped"
+        );
+        let output = CuratorStatusOutput {
+            status: status_line(Some(false), Some("unobserved"), Some(false)),
+            regulation_acceptance_rate: None,
+            escalation_count: None,
+            pending_escalations: None,
+            critical_alerts: None,
+            variety_deficit: None,
+            memory_degraded: Some(false),
+            alert_log_count: None,
+            alert_log_cap: None,
+            alert_log_approaching_cap: None,
+            loop_reading: None,
+            loop_cycles: None,
+            native_first_rate: Some(0.62),
+            native_first_samples: Some(26),
+            declared_doors: Vec::new(),
+        };
+        match language_model::LanguageModelToolResultContent::from(output) {
+            language_model::LanguageModelToolResultContent::Text(text) => {
+                let text = text.to_string();
+                assert!(
+                    text.contains("Native First Rate: 62% of 26 substantive turns"),
+                    "got: {text}"
+                );
+            }
+            other => panic!("expected text, got {other:?}"),
+        }
+    }
+
+    /// An empty native-first window renders as "not available", never as a
+    /// measured "0%" — a fabricated zero would read an unmeasured window
+    /// as perfect instrument compliance (the `unwrap_or(0)` trap).
+    #[test]
+    fn status_renders_missing_native_first_as_not_available_never_zero() {
+        let text = rendered(None, None);
+        assert!(
+            text.contains("Native First Rate: not available"),
+            "got: {text}"
+        );
+        assert!(
+            !text.contains("Native First Rate: 0%"),
+            "no fabricated compliance; got: {text}"
+        );
     }
 }
 
@@ -380,6 +463,8 @@ impl AgentTool for CuratorStatusTool {
                 alert_log_approaching_cap: None,
                 loop_reading: None,
                 loop_cycles: None,
+                native_first_rate: None,
+                native_first_samples: None,
                 declared_doors: Vec::new(),
             })?;
 
@@ -402,6 +487,8 @@ impl AgentTool for CuratorStatusTool {
                     alert_log_approaching_cap: None,
                     loop_reading: None,
                     loop_cycles: None,
+                    native_first_rate: None,
+                    native_first_samples: None,
                     declared_doors: Vec::new(),
                 });
             };
@@ -419,11 +506,17 @@ impl AgentTool for CuratorStatusTool {
                     alert_log_approaching_cap: None,
                     loop_reading: None,
                     loop_cycles: None,
+                    native_first_rate: None,
+                    native_first_samples: None,
                     declared_doors: Vec::new(),
                 });
             };
             let acceptance_rate = read_regulation_acceptance_rate(&snapshot);
             let loop_cycles = read_loop_cycles(&snapshot);
+            let native_first_rate = read_native_first_rate(&snapshot);
+            let native_first_samples = snapshot
+                .get("native_first_samples")
+                .and_then(|value| value.as_u64());
             let critical = snapshot
                 .get("critical_alerts")
                 .and_then(|v| v.as_u64())
@@ -508,6 +601,8 @@ impl AgentTool for CuratorStatusTool {
                 alert_log_approaching_cap,
                 loop_reading,
                 loop_cycles,
+                native_first_rate,
+                native_first_samples,
                 declared_doors,
             })
         })
@@ -525,9 +620,10 @@ impl From<CuratorStatusOutput> for language_model::LanguageModelToolResultConten
              Variety Deficit: {}\n\
              Memory: {}\n\
              Algedonic Log: {}\n\
-             Loop Reading: {}\n\
-             Loop Cycles: {}\n\
-             Declared Doors: {}",
+             Loop Reading: {}\
+             Loop Cycles: {}\
+             Native First Rate: {}\
+             Declared Doors: {},
             output.status,
             output
                 .regulation_acceptance_rate
@@ -575,6 +671,12 @@ impl From<CuratorStatusOutput> for language_model::LanguageModelToolResultConten
                 .loop_cycles
                 .map(|c| c.to_string())
                 .unwrap_or_else(|| "not available".to_string()),
+            match (output.native_first_rate, output.native_first_samples) {
+                (Some(rate), Some(samples)) => {
+                    format!("{:.0}% of {} substantive turns", rate * 100.0, samples)
+                }
+                _ => "not available".to_string(),
+            },
             if output.declared_doors.is_empty() {
                 "none".to_string()
             } else {

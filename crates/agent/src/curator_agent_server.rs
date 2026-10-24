@@ -226,6 +226,21 @@ pub(crate) fn format_state_block(snapshot: &serde_json::Value) -> String {
         .get("loop_reading")
         .and_then(|value| value.as_str())
         .unwrap_or("unavailable");
+    let native_first_rate = match (
+        snapshot
+            .get("native_first_rate")
+            .and_then(|value| value.as_f64()),
+        snapshot
+            .get("native_first_samples")
+            .and_then(|value| value.as_u64()),
+    ) {
+        (Some(rate), Some(samples)) => {
+            format!("{:.0}% of {samples} substantive turns", rate * 100.0)
+        }
+        // No substantive turns recorded (or no snapshot): unknown, never
+        // a fabricated "0%" that would read as measured compliance.
+        _ => "unavailable".to_string(),
+    };
 
     format!(
         "## Current System State (snapshot at session start — pull curator_status for live updates)\n\
@@ -235,7 +250,8 @@ pub(crate) fn format_state_block(snapshot: &serde_json::Value) -> String {
         - Critical alerts: {critical}\n\
         - Memory degraded: {memory_degraded}\n\
         - Alert log: {alert_log} ({alert_log_status})\n\
-        - Loop reading: {loop_reading}"
+        - Loop reading: {loop_reading}\n\
+        - Native first rate: {native_first_rate}"
     )
 }
 
@@ -368,6 +384,7 @@ mod status_snapshot_tests {
         assert!(state.contains("Memory degraded: unavailable"));
         assert!(state.contains("Alert log: unavailable (unavailable)"));
         assert!(state.contains("Loop reading: unavailable"));
+        assert!(state.contains("Native first rate: unavailable"));
         assert!(!state.contains("nominal"));
     }
 
@@ -381,12 +398,15 @@ mod status_snapshot_tests {
             "alert_log_count": 199,
             "alert_log_cap": 200,
             "alert_log_approaching_cap": true,
-            "loop_reading": "turning"
+            "loop_reading": "turning",
+            "native_first_rate": 0.62,
+            "native_first_samples": 26
         }));
         assert!(state.contains("Regulation acceptance rate: 75%"));
         assert!(state.contains("Memory degraded: false"));
         assert!(state.contains("Alert log: 199/200 (approaching cap)"));
         assert!(state.contains("Loop reading: turning"));
+        assert!(state.contains("Native first rate: 62% of 26 substantive turns"));
     }
 }
 

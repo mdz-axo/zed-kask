@@ -78,6 +78,14 @@ impl agent::MetacognitionProvider for BridgeMetacognitionProvider {
                 "alert_log_count": s.ledger_health.alert_log_count,
                 "alert_log_cap": s.ledger_health.alert_log_cap,
                 "alert_log_approaching_cap": s.ledger_health.alert_log_approaching_cap,
+                // Native-first drift reading (the instrument-affordance
+                // sensor's field quantity): the fraction of completed
+                // substantive turns that used zero kask instruments, with
+                // its sample count. Null when the window is empty — the
+                // consumers render "not available"/"unavailable", never
+                // a fabricated 0%.
+                "native_first_rate": s.native_first_rate.map(|(rate, _)| rate),
+                "native_first_samples": s.native_first_rate.map(|(_, samples)| samples),
                 // Trust/absence assembly verdict (Fermi LoopView). The reading
                 // distinguishes wiring-closed from turning from working — the
                 // dominant failure mode is a loop that reports success while
