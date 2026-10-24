@@ -59,7 +59,7 @@ Server (`kask/mcp-servers/hkask-mcp-swarm/`):
 - `src/sanitize.rs` (312): ABW-response family :146–274 (`sanitize_abw_response[_plain]`,
   `sanitize_abw_text`, `unwrap_abw_envelope`); local keepers `sanitize_agent_id` :17,
   `strip_leading_mentions` :32 (consumers: agent_stats.rs:26, task_board.rs:234,
-  thread_store.rs:39, local_registry.rs:599, local_runtime.rs:21).
+  thread_store.rs:39, local_registry.rs (then-line 599), local_runtime.rs:21).
 - `src/local_registry.rs`: `cloud_swarm_id` field :97 (`serde(default, rename="cloud_id")`,
   no `deny_unknown_fields`) + docs :69–71.
 - `src/local_swarms.rs`: `cloud_workspace_id` :53, `set_cloud_workspace_id` :376–384,
@@ -76,7 +76,7 @@ Server (`kask/mcp-servers/hkask-mcp-swarm/`):
 
 Panel (`crates/swarm_panel/src/`, 10,734 lines total; panel touches the server crate ONLY
 via `hkask_mcp_swarm::{TOOL_NAMES, CLOUD_SWARM_TOOL_NAMES}` — swarm_panel.rs:154,158,2192,
-2668,2726,2732; parse.rs:204):
+2668,2726,2732; parse.rs (then-line 204)):
 - Whole-file deletions: `hire.rs` (405), `app_edit.rs` (800).
 - Rework: `swarm_panel.rs` (3,031; 92 hits): Steer prompt ABW/local split + consent gate +
   credit ceiling :145–:245, mode state/observer, consent banner :1293, publish banner
@@ -156,7 +156,7 @@ substrings (WorldAirports etc.) — not fork-owned surface; binary `.gif` noise.
   `local_tools.rs:10` (`validate_agent_name` for local creation — verify in-phase;
   `create_abw_workspace`/`url_encode_segment` only in bridge/cloud paths).
 - `sanitize` consumers: local keepers listed in §1; ABW family consumers all cloud-side
-  (cloud_swarm_tools.rs:14–15,44,889–1259; local_tools.rs:18–19,:1707 — bridge paths).
+  (cloud_swarm_tools.rs — deleted by this plan; former lines 14–15, 44, 889–1259; local_tools.rs:18–19,:1707 — bridge paths).
 - `consent`/`spend_gate` consumers: curator.rs, cloud_swarm_tools.rs, test_support.rs,
   abw_client.rs tests, spend_gate↔consent, lib-root wiring — all removed with the cloud
   family; remaining mentions in local files are doc comments (swept).

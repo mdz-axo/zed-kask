@@ -694,7 +694,7 @@ live in git history (`1a8c500c12`..`42f885b0e3`).
 - **MF-7 publish wire contract — closed (live-verified 2026-10-14):** the
   object body `{"publish": true}` was REFUTED by the operator-authorized live
   probe 2026-10-07 (HTTP 400 twice, isolating the body shape); the corrected
-  bare-bool body (`serde_json::json!(publish)` in `src/tools/reduct.rs:1085`,
+  bare-bool body (`serde_json::json!(publish)` in `src/tools/reduct.rs` (then-line 1085; file removed 2026-10-22),
   matching the v3 reference's property-endpoint payload convention on page 39)
   was confirmed live 2026-10-14 in both directions (`true` and `false`) after
   rebuilding and restarting `hkask-mcp-media` against the operator's throwaway

@@ -49,7 +49,7 @@ Baseline: generated `TOOL_NAMES` = 91 entries, exactly 20 `reduct_*`
 | OMC arms: CAPTURE :136-141, SEQUENCE :152-158, PARTICIPANT :165-167, STATE :168, highlights :169-171 | `src/omc.rs` |
 | Dual-axis arms: REPORT :30-38, DATASET :90-100, prefix `"reduct_"` :135 | `src/ontology.rs` |
 | 19 `Reduct*Request` structs + section comment | `src/types.rs:734-876` |
-| `MAX_REDUCT_UPLOAD_BYTES` (+doc) — sole consumer is reduct.rs | `kask/crates/hkask-types/src/media_limits.rs:19-22` |
+| `MAX_REDUCT_UPLOAD_BYTES` (+doc) — sole consumer is reduct.rs | `kask/crates/hkask-types/src/media_limits.rs` (deleted by this plan; then-lines 19–22) |
 | Reduct schema/deser tests + imports + count pin 91 | `tests/schema_compliance.rs` |
 | Cloud-connection README blocks (uncertain-POST/no-retry, tool contracts, upload/import, write surface) | `kask/mcp-servers/hkask-mcp-media/README.md:335-460`, `:84-86` |
 | Reduct tool-reference section | `kask/docs/reference/mcp-servers/media.md:630-656` (+ :74, :78, :99, Transcript section :366-425 rework) |
@@ -76,7 +76,7 @@ Baseline: generated `TOOL_NAMES` = 91 entries, exactly 20 `reduct_*`
 
 ### Consumer census (name-visibility, incl. defining crate src/ + tests/)
 
-`reduct_router`: reduct.rs:1217 (definition), hkask_mcp_media.rs:435 (sole caller). `Reduct*Request`: reduct.rs + schema_compliance.rs only. `MAX_REDUCT_UPLOAD_BYTES`: reduct.rs:1562 + media.md:793 (dated Redesign record). `reduct_api_key` field: reduct.rs + lib-root init. `REDUCT_API_KEY`: mcp_servers.rs, inference_providers.rs, data_services.rs, reduct.rs, docs. reqwest stays (assets.rs, gallery/vision.rs, tools/youtube.rs); sha2 stays (six non-reduct consumers). No orphan Cargo deps.
+`reduct_router`: reduct.rs (deleted by this plan; definition at then-line 1217), hkask_mcp_media.rs:435 (sole caller). `Reduct*Request`: reduct.rs + schema_compliance.rs only. `MAX_REDUCT_UPLOAD_BYTES`: reduct.rs (then-line 1562) + media.md (then-line 793 — a dated Redesign record since removed). `reduct_api_key` field: reduct.rs + lib-root init. `REDUCT_API_KEY`: mcp_servers.rs, inference_providers.rs, data_services.rs, reduct.rs, docs. reqwest stays (assets.rs, gallery/vision.rs, tools/youtube.rs); sha2 stays (six non-reduct consumers). No orphan Cargo deps.
 
 ## Phases (dependency-ordered; per-phase verification gate)
 

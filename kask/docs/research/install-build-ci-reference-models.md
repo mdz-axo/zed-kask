@@ -84,7 +84,7 @@ Findings — every one fixed in the same change (§3):
 |----|---------|-------------------------------|------------------------------|
 | F1 | Non-atomic database assembly: `: > "$database"` truncated a possibly-registered database *before* part concatenation — a failed assembly left a corrupt DB at the registered path while the registration still pointed there | `install.sh:636-642` | high — destroys a working install on failure (I6) |
 | F2 | No physical resume: a partial part was `rm -f`'d and re-fetched from zero; `curl --retry` restarts transfers, it does not resume them | `install.sh:616-624` | high — the operator's exact waste class (I4) |
-| F3 | Corpus failure was fatal to the whole install (bare call under `set -e`), contradicting the stage's documented "loud but not fatal to the product install" contract | `install.sh:1029-1033` vs the contract at `install.sh:545-547` | medium (I7 — code contradicted its own spec) |
+| F3 | Corpus failure was fatal to the whole install (bare call under `set -e`), contradicting the stage's documented "loud but not fatal to the product install" contract | `install.sh` (2026-10 lines 1029–1033; the script has since reorganized) vs the contract at `install.sh:545-547` | medium (I7 — code contradicted its own spec) |
 | F4 | The CI rust branch logged "skipping Rust installation" and then returned 1 — the last message before an abort said "skipping" | `install.sh:169-172` | low (I7) |
 | F5 | `cargo build` without `--locked` — a stale Cargo.lock silently re-resolves instead of failing loudly | `install.sh:196,260,272` | medium (I8) |
 | F6 | `verify_installation` did not report corpus registration presence — the installer's own multi-GB artifact was unverified after install | `install.sh:727-825` | low (I2) |
