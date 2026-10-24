@@ -18,7 +18,7 @@
 
 ### Skills
 
-**60 agent-facing skills** execute inside the agent panel. A skill is a _process_, not a prompt: its `SKILL.md` body is injected into the conversation, and the model — the executor — self-iterates against the convergence criteria the body describes, using two built-in tools: `lisp_eval` (a sandboxed Lisp interpreter — no I/O, no network, bounded steps and depth) for deterministic checks, and `render_template` (274 Jinja2 templates across 56 namespaces under [`kask/registry/templates/`](./kask/registry/templates/)) for structured prompt scaffolding.
+**59 agent-facing skills** execute inside the agent panel. A skill is a _process_, not a prompt: its `SKILL.md` body is injected into the conversation, and the model — the executor — self-iterates against the convergence criteria the body describes, using two built-in tools: `lisp_eval` (a sandboxed Lisp interpreter — no I/O, no network, bounded steps and depth) for deterministic checks, and `render_template` (221 Jinja2 templates across 56 namespaces under [`kask/registry/templates/`](./kask/registry/templates/)) for structured prompt scaffolding.
 
 Skills are authored in-repo under [`.agents/skills/`](./.agents/skills/) and seeded **once** to the global skills directory (`~/.local/share/zed-kask/skills/`); the disk copy is the runtime source of truth, and your edits take effect immediately without recompilation. The 14 **core skills** (quality gates, curator methodologies, task coordination) are the exception: always-on, re-seeded on every startup, locked against editing, and unshadowable by a project-local skill of the same name — a hand edit can never silently weaken a gate. See [`kask/docs/reference/skills/README.md`](./kask/docs/reference/skills/README.md) for the registry and [`kask/docs/diataxis/`](./kask/docs/diataxis/) for per-crate explanations.
 
@@ -51,6 +51,10 @@ The `media` MCP server is the fleet's largest (71 tools): research-evidence inge
 | `swarm`              | Local swarm agents, local swarms, A2A collaboration, swarm-intelligence substrate | 37 |
 
 Companies, scenarios, and prediction-markets formed a three-layer forecasting stack; the companies layer was removed 2026-10-18 with the companies/FMP/EODHD/FIBO retirement (see [`kask/docs/reference/mcp-servers/README.md`](./kask/docs/reference/mcp-servers/README.md) for the full registry, architecture, and per-server count pins). All nine servers auto-load by default (`load_default: true`) unless the operator disables the fleet or an individual server; the Curator additionally ships as a native in-process agent.
+
+### The discovery loop
+
+The platform's question-throughput capability. Research questions live on an **Open Questions** kanban board — you file them, or the machine files them from regulation signals. One invocation of the `eureka-cycle` skill runs one full human-chaired cycle: orient on the question's lineage and curator memory, route it (research-resolvable, experiment-requiring, or forecasting), generate cited candidate hypotheses, and bring you a **funding brief — you fund what runs**; nothing routes to spend unconfirmed. Funded work executes through the delegated lifecycles (`hypothesis-testing`, `self-improvement`, research runs) under sealed, pre-registered predictions in the experiment registry, and resolves at the algedonic review with a study report whose memory candidates go to your review. The loop's first live cycle (2026-10-23) closed in a day: it diagnosed why CI drift shipped silently and landed the six-gate pre-push blocking set that now enforces it.
 
 ## Installation
 
