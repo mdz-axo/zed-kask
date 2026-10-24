@@ -21,6 +21,11 @@ fn impact_direction_covers_the_verifiable_metrics() {
         SignalMetric::ExperimentationStuckExperiments.impact_direction(),
         Some(false)
     );
+    assert_eq!(
+        SignalMetric::NativeFirstRate.impact_direction(),
+        Some(false),
+        "an increase in native-first turns is a degradation, not an improvement"
+    );
     assert_eq!(SignalMetric::TestCoverage.impact_direction(), None);
 }
 

@@ -316,6 +316,12 @@ impl CyberneticsLoop {
                     set_points.tool_reliability_threshold,
                 ),
             ));
+            registry.register(Arc::new(
+                crate::sensor_provider::NativeFirstRateSensor::new(
+                    Arc::clone(&ledger),
+                    set_points.native_first_rate_threshold,
+                ),
+            ));
             Arc::new(registry)
         };
 

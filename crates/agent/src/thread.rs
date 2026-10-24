@@ -3066,6 +3066,37 @@ impl Thread {
                         log::debug!("Turn execution completed");
                         event_stream.send_stop(acp_v2::StopReason::EndTurn);
 
+                        // zed-kask: native-first-rate sensor (spec D) — record
+                        // the completed turn's instrument summary for the
+                        // regulation loop. Only completed turns count; failed
+                        // turns (the Err branch below) are not evidence about
+                        // drift. Runs regardless of the memory port: the sensor
+                        // must work even when memory ingestion is unwired. An
+                        // unwired hook (non-kask embedders) drops the record
+                        // with a debug log — best-effort telemetry.
+                        {
+                            let summary = this.update(cx, |thread, cx| {
+                                let context_server_tool_names: std::collections::HashSet<String> =
+                                    thread
+                                        .context_server_registry
+                                        .read(cx)
+                                        .servers()
+                                        .flat_map(|(_, tools)| tools.keys())
+                                        .map(|name| name.to_string())
+                                        .collect();
+                                crate::kask_thread_state::turn_instrument_summary(
+                                    &thread.messages[message_ix.min(thread.messages.len())..],
+                                    &context_server_tool_names,
+                                )
+                            });
+                            if let Ok(summary) = summary {
+                                crate::record_agent_turn_native_first(
+                                    summary.substantive,
+                                    summary.native_first,
+                                );
+                            }
+                        }
+
                         // D6: Ingest the completed turn into hKask memory.
                         // Fire-and-forget — the memory system handles classification
                         // and consolidation asynchronously. When no memory port is

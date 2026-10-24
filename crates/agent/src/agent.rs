@@ -4946,8 +4946,25 @@ pub type OperatorFeedbackRecorder =
     Arc<dyn Fn(&str, bool, Option<&str>) -> Result<(), String> + Send + Sync>;
 recorder_hook!(OPERATOR_FEEDBACK_RECORDER, OperatorFeedbackRecorder);
 
+/// Agent-turn native-first summary: (substantive, native_first) — whether a
+/// completed turn was substantive work (the caller's documented heuristic:
+/// a user prompt of at least
+/// `kask_thread_state::SUBSTANTIVE_MIN_WORDS` words), and if so, whether it
+/// used zero kask instruments (no context-server tool call and none of the
+/// host default instruments). Fired by `Thread::run_turn` at turn
+/// completion; wired in `main.rs` to the app's `RegulationLedger`, which
+/// the `NativeFirstRateSensor` reads. Closes the drift feedback loop's
+/// unsensed leg: tool failures were sensed (`record_mcp_tool_outcome`),
+/// instrument absence was not.
+pub type NativeFirstTurnRecorder = Arc<dyn Fn(bool, bool) + Send + Sync>;
+recorder_hook!(NATIVE_FIRST_TURN_RECORDER, NativeFirstTurnRecorder);
+
 pub fn set_mcp_tool_outcome_recorder(recorder: McpToolOutcomeRecorder) {
     MCP_TOOL_OUTCOME_RECORDER.set(recorder);
+}
+
+pub fn set_native_first_turn_recorder(recorder: NativeFirstTurnRecorder) {
+    NATIVE_FIRST_TURN_RECORDER.set(recorder);
 }
 
 pub fn set_skill_outcome_recorder(recorder: SkillOutcomeRecorder) {
@@ -4973,6 +4990,15 @@ pub fn record_mcp_tool_outcome(
     match MCP_TOOL_OUTCOME_RECORDER.get() {
         Some(record) => record(server_name, tool_name, success, error_kind),
         None => log::debug!("MCP outcome for {server_name}/{tool_name} not recorded: unwired"),
+    }
+}
+
+/// Telemetry recorders are best-effort: an unwired hook (tests, non-kask
+/// embedders) drops the record with a debug log, never failing the turn.
+pub fn record_agent_turn_native_first(substantive: bool, native_first: bool) {
+    match NATIVE_FIRST_TURN_RECORDER.get() {
+        Some(record) => record(substantive, native_first),
+        None => log::debug!("agent turn summary (substantive={substantive}) not recorded: unwired"),
     }
 }
 
@@ -5468,6 +5494,46 @@ mod internal_tests {
         assert!(unwind.is_err());
         record_skill_outcome("after-unwind", "Zed Agent", true, None);
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn native_first_turn_recorder_records_and_is_replaceable() {
+        let recorded = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = recorded.clone();
+        let mut recorder_override = NATIVE_FIRST_TURN_RECORDER.scoped_for_test(
+            std::sync::Arc::new(move |substantive, native_first| {
+                if let Ok(mut entries) = captured.lock() {
+                    entries.push((substantive, native_first));
+                }
+            }),
+        );
+        record_agent_turn_native_first(true, true);
+        record_agent_turn_native_first(true, false);
+        record_agent_turn_native_first(false, true);
+        let entries: Vec<(bool, bool)> = recorded.lock().expect("recorded lock").clone();
+        assert_eq!(
+            entries,
+            vec![(true, true), (true, false), (false, true)],
+            "all three summaries recorded in order"
+        );
+
+        // Re-settable: a second set replaces the first.
+        let replaced_called = std::sync::Arc::new(std::sync::Mutex::new(false));
+        let flag = replaced_called.clone();
+        recorder_override.replace(std::sync::Arc::new(move |_, _| {
+            if let Ok(mut called) = flag.lock() {
+                *called = true;
+            }
+        }));
+        record_agent_turn_native_first(true, true);
+        drop(recorder_override);
+        assert!(*replaced_called.lock().expect("replaced lock"));
+        let entries: Vec<(bool, bool)> = recorded.lock().expect("recorded lock").clone();
+        assert_eq!(
+            entries,
+            vec![(true, true), (true, false), (false, true)],
+            "the original recorder saw no call after replacement"
+        );
     }
 
     #[test]

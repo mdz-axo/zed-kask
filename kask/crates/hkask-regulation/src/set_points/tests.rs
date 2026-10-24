@@ -28,6 +28,34 @@ fn validate_outcome_threshold_bounds_and_order() {
     assert!(points.validate().is_ok());
 }
 
+/// Pins the ceiling for native_first_rate_threshold: 1.0 silently disables
+/// the sensor (no observed rate can exceed it), so it must be rejected —
+/// the mirror image of the tool_reliability 0.0 floor. 0.0 is strict but
+/// meaningful (any native-first substantive turn deviates).
+#[test]
+fn validate_bounds_native_first_rate_threshold() {
+    let mut points = SetPoints::default();
+    assert!(points.validate().is_ok(), "defaults must validate");
+
+    points.native_first_rate_threshold = 1.0;
+    assert!(
+        points.validate().is_err(),
+        "1.0 silently disables the native-first sensor — must be rejected"
+    );
+
+    points.native_first_rate_threshold = 0.0;
+    assert!(
+        points.validate().is_ok(),
+        "0.0 is strict but meaningful — any native-first turn deviates"
+    );
+
+    points.native_first_rate_threshold = -0.1;
+    assert!(points.validate().is_err(), "negative rates are invalid");
+
+    points.native_first_rate_threshold = 0.5;
+    assert!(points.validate().is_ok());
+}
+
 /// Pins the non-zero floor for tool_reliability_threshold: 0.0
 /// configures a silently-vacuous sensor (no outcome can ever breach a
 /// 0.0 floor), and > 1.0 configures an always-firing one. Both must be

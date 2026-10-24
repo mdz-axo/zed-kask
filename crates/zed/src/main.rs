@@ -960,6 +960,37 @@ fn main() {
             ));
         }
 
+        // zed-kask: native-first-rate sensor wiring — the drift feedback
+        // loop's unsensed leg. Tool failures reach the ledger via the
+        // recorder above (and `McpRuntime::with_governance`); instrument
+        // ABSENCE had no sensor: a session completing every substantive
+        // turn from native generation alone read as healthy because no
+        // tool ever failed. The hook fires at turn completion
+        // (`Thread::run_turn`, via `agent::record_agent_turn_native_first`);
+        // this closure forwards each summary to the shared RegulationLedger
+        // on the GPUI-global tokio runtime (`record_agent_turn` is a
+        // tokio-RwLock future — GPUI's background_spawn would panic, per
+        // the .rules GPUI traps).
+        {
+            let tokio_handle = gpui_tokio::Tokio::handle(&*cx);
+            let ledger_for_turn_summaries = regulation_ledger.clone();
+            agent::set_native_first_turn_recorder(std::sync::Arc::new(
+                move |substantive, native_first| {
+                    tracing::trace!(
+                        target: "reg.agent",
+                        substantive,
+                        native_first,
+                        "agent turn instrument summary recorded"
+                    );
+                    let ledger = ledger_for_turn_summaries.clone();
+                    tokio_handle.spawn(async move {
+                        let ledger = ledger.read().await;
+                        ledger.record_agent_turn(substantive, native_first).await;
+                    });
+                },
+            ));
+        }
+
         // zed-kask: D59 — skill outcome recording, the observe stage of the
         // skill learning loop (DIAG-ARCH-LEARNING-LOOP-001). One recorder for
         // the whole process: every outcome feeds the RegulationLedger

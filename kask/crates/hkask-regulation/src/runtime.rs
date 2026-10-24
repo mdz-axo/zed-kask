@@ -468,6 +468,42 @@ struct RegState {
     outcome: HashMap<String, OutcomeTracker>,
     regulation_health: RegulationHealth,
     skill_spans: SkillSpanStore,
+    native_first: NativeFirstWindow,
+}
+
+/// Rolling record of substantive agent turns for the native-first rate
+/// sensor: one boolean per completed substantive turn (true = native-first,
+/// zero kask instruments used). Non-substantive turns (short prompts) are
+/// not recorded — the sensor measures drift on real work, not
+/// acknowledgments. Capped to a rolling window so the ledger's memory stays
+/// bounded.
+const NATIVE_FIRST_WINDOW_CAP: usize = 200;
+
+#[derive(Default)]
+struct NativeFirstWindow {
+    records: std::collections::VecDeque<bool>,
+}
+
+impl NativeFirstWindow {
+    fn record(&mut self, native_first: bool) {
+        if self.records.len() >= NATIVE_FIRST_WINDOW_CAP {
+            self.records.pop_front();
+        }
+        self.records.push_back(native_first);
+    }
+
+    /// The rolling rate: (native-first fraction, samples). `None` when the
+    /// window is empty — the no-data state, never a fabricated 0.0 (the
+    /// `.rules` `unwrap_or(0)` trap: an empty window would read as perfect
+    /// instrument compliance while nothing has been measured).
+    fn rate(&self) -> Option<(f64, u64)> {
+        let total = self.records.len();
+        if total == 0 {
+            return None;
+        }
+        let native = self.records.iter().filter(|&&native| native).count() as f64;
+        Some((native / total as f64, total as u64))
+    }
 }
 
 impl RegState {
@@ -496,6 +532,7 @@ impl RegState {
             outcome,
             regulation_health,
             skill_spans,
+            native_first: NativeFirstWindow::default(),
         }
     }
 }
@@ -907,6 +944,34 @@ impl RegulationLedger {
             state.tracker.counter(domain).increment(state_name);
         }
         self.check_variety(domain).await;
+    }
+
+    /// Record a completed agent turn for the native-first rate sensor.
+    ///
+    /// Non-substantive turns (short prompts, acknowledgments, mode
+    /// toggles) are the legitimate skip, not an error — the sensor measures
+    /// drift on real work only.
+    ///
+    /// expect: "Regulation senses instrument absence on agent turns, not only tool failures"
+    /// [P9] Motivating: Homeostatic Self-Regulation — closes the drift feedback loop's unsensed leg
+    /// pre:  none
+    /// post: substantive turns are recorded into the rolling window; non-substantive turns leave the window unchanged
+    pub async fn record_agent_turn(&self, substantive: bool, native_first: bool) {
+        if !substantive {
+            return;
+        }
+        let mut state = self.state.write().await;
+        state.native_first.record(native_first);
+    }
+
+    /// The rolling native-first rate over recorded substantive turns:
+    /// (rate, samples). Returns `None` when no substantive turns have been
+    /// recorded — the no-data state, never a fabricated 0.0 (which would
+    /// read as perfect instrument compliance while nothing has been
+    /// measured).
+    pub async fn native_first_rate(&self) -> Option<(f64, u64)> {
+        let state = self.state.read().await;
+        state.native_first.rate()
     }
 
     /// Check variety health for a domain.

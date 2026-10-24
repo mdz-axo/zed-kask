@@ -70,6 +70,15 @@ pub(crate) const DEFAULT_BLOCK_WORSENING_RATIO: f64 = 0.20;
 /// looping for minutes without the regulation loop sensing the deviation).
 pub(crate) const DEFAULT_TOOL_RELIABILITY_THRESHOLD: f64 = 0.80;
 
+/// Default ceiling for the native-first rate sensor — the maximum fraction
+/// of completed substantive agent turns that may use zero kask instruments
+/// before the loop escalates. 0.50: at most half of substantive turns may
+/// complete without instruments. The operator's standing drift complaint
+/// says the live rate sits well above this, so the first readings are
+/// expected to deviate — that is the sensor working, not a
+/// misconfiguration; recalibrate once the baseline is known.
+pub(crate) const DEFAULT_NATIVE_FIRST_RATE_THRESHOLD: f64 = 0.50;
+
 /// Default maximum regulation cycles retained for history queries.
 ///
 /// Bounds memory growth in long-running sessions. An operator running a
@@ -181,6 +190,10 @@ pub struct SetPoints {
     /// minimum-sample-floored aggregate (`aggregate_tool_reliability`).
     /// Default: 0.80.
     pub tool_reliability_threshold: f64,
+    /// Maximum fraction of completed substantive agent turns that may use
+    /// zero kask instruments before the native-first sensor deviates.
+    /// Default: 0.50.
+    pub native_first_rate_threshold: f64,
     // ── History retention (v0.33.0) ──
     /// Maximum skill feedback spans retained per skill+phase.
     /// Default: 50.
@@ -245,6 +258,7 @@ pub(crate) struct SetPointsConfig {
     pub block_worsening_ratio: Option<f64>,
 
     pub tool_reliability_threshold: Option<f64>,
+    pub native_first_rate_threshold: Option<f64>,
     pub max_skill_span_history: Option<usize>,
     pub max_alerts: Option<usize>,
     pub algedonic_events_max: Option<usize>,
@@ -288,6 +302,7 @@ impl Default for SetPoints {
             block_worsening_ratio: DEFAULT_BLOCK_WORSENING_RATIO,
 
             tool_reliability_threshold: DEFAULT_TOOL_RELIABILITY_THRESHOLD,
+            native_first_rate_threshold: DEFAULT_NATIVE_FIRST_RATE_THRESHOLD,
             max_skill_span_history: DEFAULT_MAX_SKILL_SPAN_HISTORY,
             max_alerts: DEFAULT_MAX_ALERTS,
             algedonic_events_max: DEFAULT_ALGEDONIC_EVENTS_MAX,
@@ -341,6 +356,9 @@ impl SetPoints {
             tool_reliability_threshold: config
                 .tool_reliability_threshold
                 .unwrap_or(defaults.tool_reliability_threshold),
+            native_first_rate_threshold: config
+                .native_first_rate_threshold
+                .unwrap_or(defaults.native_first_rate_threshold),
             max_skill_span_history: config
                 .max_skill_span_history
                 .unwrap_or(defaults.max_skill_span_history),
@@ -419,6 +437,19 @@ impl SetPoints {
             return Err(anyhow::anyhow!(
                 "tool_reliability_threshold must be in (0.0, 1.0], got {}",
                 self.tool_reliability_threshold
+            ));
+        }
+        // A 1.0 native-first ceiling silently disables the sensor: every
+        // observed rate is <= 1.0, so a 1.0 set point can never be exceeded
+        // and the sensor reads "healthy" forever — the mirror image of the
+        // 0.0 reliability floor above. 0.0 is strict but meaningful (any
+        // native-first substantive turn deviates). Reject the ceiling and
+        // negatives so load_set_points falls back to the 0.50 default
+        // instead of running a blind sensor.
+        if !(0.0 <= self.native_first_rate_threshold && self.native_first_rate_threshold < 1.0) {
+            return Err(anyhow::anyhow!(
+                "native_first_rate_threshold must be in [0.0, 1.0), got {}",
+                self.native_first_rate_threshold
             ));
         }
         // An `algedonic_events_max` at or above `max_alerts` can never be

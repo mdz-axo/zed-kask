@@ -406,6 +406,67 @@ impl Default for KaskThreadState {
     }
 }
 
+// ── Native-first rate sensor (spec D) ─────────────────────────────────────
+
+/// The host default tools that count as kask instruments for the native-first
+/// classification. Context-server (MCP) tools are classified against the
+/// live registry by the caller; these built-ins are name-matched.
+pub(crate) const KASK_HOST_INSTRUMENT_TOOLS: [&str; 3] = ["lisp_eval", "render_template", "skill"];
+
+/// A turn's user prompt under this many words is not substantive work —
+/// acknowledgments and mode toggles must not count as native-first drift.
+pub(crate) const SUBSTANTIVE_MIN_WORDS: usize = 20;
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct TurnInstrumentSummary {
+    pub(crate) substantive: bool,
+    pub(crate) native_first: bool,
+}
+
+/// Classify a completed turn's instrument usage for the native-first rate
+/// sensor. Pure over the turn's messages plus the caller-provided set of
+/// context-server tool names (the live registry read happens in
+/// `Thread::run_turn`, which owns the entity context).
+///
+/// A turn is native-first when it contains no instrument tool use: no
+/// context-server (MCP) tool call and none of the host default instruments
+/// (`lisp_eval`, `render_template`, `skill`). Editor-native tools (terminal,
+/// file tools) are not kask instruments — a turn that only ran a terminal
+/// command is still native-first for this sensor.
+pub(crate) fn turn_instrument_summary(
+    turn_messages: &[std::sync::Arc<crate::thread::Message>],
+    context_server_tool_names: &std::collections::HashSet<String>,
+) -> TurnInstrumentSummary {
+    let substantive = turn_messages
+        .iter()
+        .find_map(|msg| {
+            if let crate::thread::Message::User(user_msg) = &**msg {
+                Some(user_msg.to_markdown().split_whitespace().count())
+            } else {
+                None
+            }
+        })
+        .is_some_and(|words| words >= SUBSTANTIVE_MIN_WORDS);
+    let native_first = !turn_messages.iter().any(|msg| {
+        if let crate::thread::Message::Agent(agent_msg) = &**msg {
+            agent_msg.content.iter().any(|content| match content {
+                crate::thread::AgentMessageContent::ToolUse(tool_use) => {
+                    let name: &str = tool_use.name.as_ref();
+                    context_server_tool_names.contains(name)
+                        || KASK_HOST_INSTRUMENT_TOOLS.contains(&name)
+                }
+                _ => false,
+            })
+        } else {
+            false
+        }
+    });
+    TurnInstrumentSummary {
+        substantive,
+        native_first,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::KaskThreadState;
@@ -413,6 +474,108 @@ mod tests {
     use http_client::StatusCode;
     use language_model::ProviderErrorCategory;
     use language_model::{LanguageModelCompletionError, LanguageModelProviderName};
+
+    use super::{KASK_HOST_INSTRUMENT_TOOLS, turn_instrument_summary};
+    use crate::thread::{
+        AgentMessage, AgentMessageContent, Message, UserMessage, UserMessageContent,
+    };
+    use acp_thread::ClientUserMessageId;
+    use language_model::LanguageModelToolUseId;
+
+    fn substantive_prompt() -> String {
+        // 24 words — above SUBSTANTIVE_MIN_WORDS (20).
+        "please analyze the quarterly revenue trajectory and identify the three largest \
+         cohort deltas with their contribution margins across every region we operate in today"
+            .to_string()
+    }
+
+    fn user_text_message(text: &str) -> std::sync::Arc<Message> {
+        std::sync::Arc::new(Message::User(UserMessage {
+            id: ClientUserMessageId::new(),
+            content: vec![UserMessageContent::Text(text.to_string())].into(),
+        }))
+    }
+
+    fn agent_message_with_tool(name: &str) -> std::sync::Arc<Message> {
+        let mut message = AgentMessage::default();
+        message.content.push(AgentMessageContent::ToolUse(
+            language_model::LanguageModelToolUse {
+                id: LanguageModelToolUseId::from(name),
+                name: std::sync::Arc::from(name),
+                raw_input: "{}".to_string(),
+                input: language_model::LanguageModelToolUseInput::Json(serde_json::json!({})),
+                is_input_complete: true,
+                thought_signature: None,
+            },
+        ));
+        std::sync::Arc::new(Message::Agent(message))
+    }
+
+    #[test]
+    fn substantive_turn_without_instruments_is_native_first() {
+        let summary = turn_instrument_summary(
+            &[user_text_message(&substantive_prompt())],
+            &Default::default(),
+        );
+        assert_eq!(summary.substantive, true);
+        assert_eq!(summary.native_first, true);
+    }
+
+    #[test]
+    fn short_prompt_is_not_substantive() {
+        // Acknowledgments and mode toggles must not count as drift: the
+        // ledger skips non-substantive turns entirely.
+        let summary = turn_instrument_summary(&[user_text_message("thanks")], &Default::default());
+        assert_eq!(summary.substantive, false);
+        assert!(
+            summary.native_first,
+            "the classification is still computed; the ledger skips the record"
+        );
+    }
+
+    #[test]
+    fn context_server_tool_use_clears_native_first() {
+        let mut names = std::collections::HashSet::new();
+        names.insert("corpus_query".to_string());
+        let summary = turn_instrument_summary(
+            &[
+                user_text_message(&substantive_prompt()),
+                agent_message_with_tool("corpus_query"),
+            ],
+            &names,
+        );
+        assert_eq!(summary.substantive, true);
+        assert_eq!(summary.native_first, false);
+    }
+
+    #[test]
+    fn host_instrument_tool_use_clears_native_first() {
+        for name in KASK_HOST_INSTRUMENT_TOOLS {
+            let summary = turn_instrument_summary(
+                &[
+                    user_text_message(&substantive_prompt()),
+                    agent_message_with_tool(name),
+                ],
+                &Default::default(),
+            );
+            assert_eq!(summary.native_first, false, "{name} is a kask instrument");
+        }
+    }
+
+    #[test]
+    fn editor_native_tool_use_is_still_native_first() {
+        // Terminal and file tools are zed-native, not kask instruments: a
+        // turn that only ran a terminal command did real work but used zero
+        // kask instruments — still drift for this sensor.
+        let summary = turn_instrument_summary(
+            &[
+                user_text_message(&substantive_prompt()),
+                agent_message_with_tool("terminal"),
+            ],
+            &Default::default(),
+        );
+        assert_eq!(summary.native_first, true);
+    }
 
     #[test]
     fn max_tokens_warning_names_the_stop_reason_and_content_state() {

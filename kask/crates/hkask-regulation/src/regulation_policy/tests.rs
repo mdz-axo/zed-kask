@@ -31,6 +31,7 @@ fn every_signal_metric_has_a_rule_or_documented_allowlist_entry() {
             | GoalExpiredCount
             | MetacognitionCriticalAlerts
             | ExperimentationStuckExperiments
+            | NativeFirstRate
             | ToolReliability
             | PassRate
             | TestCoverage
@@ -51,6 +52,7 @@ fn every_signal_metric_has_a_rule_or_documented_allowlist_entry() {
                 GoalExpiredCount,
                 MetacognitionCriticalAlerts,
                 ExperimentationStuckExperiments,
+                NativeFirstRate,
                 ToolReliability,
                 PassRate,
                 TestCoverage,

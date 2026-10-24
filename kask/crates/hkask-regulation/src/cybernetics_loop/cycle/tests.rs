@@ -1066,6 +1066,7 @@ fn build_regulation_action_produces_action_for_all_new_reasons() {
             (ContextServerHealth, BelowSetPoint, 0.0, 1.0),
             (OcrSilentFailures, AboveSetPoint, 14.0, 0.0),
             (ExperimentationStuckExperiments, AboveSetPoint, 2.0, 0.0),
+            (NativeFirstRate, AboveSetPoint, 0.7, 0.5),
         ];
 
         for &(metric, direction, value, set_point) in cases {

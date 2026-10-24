@@ -2,6 +2,104 @@ use super::*;
 
 use crate::runtime::RegulationLedger;
 
+/// No recorded turns is the no-data state: the sensor must stay silent, not
+/// emit a 0.0 rate that would read as perfect instrument compliance.
+#[tokio::test]
+async fn native_first_rate_sensor_returns_none_with_no_recorded_turns() {
+    let sensor = NativeFirstRateSensor::new(
+        std::sync::Arc::new(tokio::sync::RwLock::new(RegulationLedger::default())),
+        0.50,
+    );
+    assert!(
+        sensor.sense().await.is_none(),
+        "no recorded turns = no data — None, not a 0.0 rate"
+    );
+}
+
+/// The rate is over SUBSTANTIVE turns only: non-substantive turns (short
+/// prompts) are excluded by the ledger, so acknowledgments cannot dilute
+/// the drift reading. The production `observe` path emits whenever data
+/// exists (healthy readings flow; the compare phase decides) — pinned
+/// alongside the test-only deviating `sense` view.
+#[tokio::test]
+async fn native_first_rate_sensor_reports_the_rate_over_substantive_turns() {
+    let ledger = RegulationLedger::default();
+    ledger.record_agent_turn(true, true).await; // substantive, no instruments
+    ledger.record_agent_turn(true, false).await; // substantive, instrumented
+    ledger.record_agent_turn(false, true).await; // non-substantive: not recorded
+    let sensor =
+        NativeFirstRateSensor::new(std::sync::Arc::new(tokio::sync::RwLock::new(ledger)), 0.25);
+    // Production view (`observe`): emits whenever data exists — the compare
+    // phase, not the sensor, decides whether action is needed.
+    let observed = sensor
+        .observe()
+        .await
+        .expect("observe emits whenever data exists");
+    assert_eq!(observed.metric, SignalMetric::NativeFirstRate);
+    assert_eq!(observed.source, LoopId::Cybernetics);
+    assert!(
+        (observed.value - 0.5).abs() < 1e-9,
+        "1 of 2 substantive turns native-first"
+    );
+    assert_eq!(observed.set_point, 0.25);
+    // Test-only deviating view (`sense`): 0.5 exceeds the 0.25 set point.
+    assert!(
+        sensor.sense().await.is_some(),
+        "0.5 exceeds the 0.25 set point — a deviation in the test view"
+    );
+}
+
+/// A reading AT the set point produces no deviation: `observe` still
+/// emits (healthy readings flow to the compare phase), while the test-only
+/// `sense` view filters it — the same equality contract the tool_reliability
+/// set-point-zero test pins. A reading strictly below the set point is a
+/// BelowSetPoint deviation under the generic comparator (no policy rule
+/// matches this metric in that direction), so equality is the case that
+/// pins.
+#[tokio::test]
+async fn native_first_rate_reading_at_set_point_is_not_a_deviation() {
+    let ledger = RegulationLedger::default();
+    ledger.record_agent_turn(true, true).await; // substantive, no instruments
+    ledger.record_agent_turn(true, false).await; // substantive, instrumented
+    let sensor =
+        NativeFirstRateSensor::new(std::sync::Arc::new(tokio::sync::RwLock::new(ledger)), 0.50);
+    let observed = sensor
+        .observe()
+        .await
+        .expect("observe emits whenever data exists");
+    assert!(
+        (observed.value - 0.5).abs() < 1e-9,
+        "1 of 2 substantive turns native-first"
+    );
+    assert_eq!(observed.set_point, 0.50);
+    assert!(
+        sensor.sense().await.is_none(),
+        "0.5 does not exceed the 0.50 set point — no deviation in the test view"
+    );
+}
+
+/// The window is capped and keeps recency: the oldest records drop out, so
+/// the rate reflects recent behavior, not the whole session.
+#[tokio::test]
+async fn native_first_window_caps_and_keeps_recency() {
+    let ledger = RegulationLedger::default();
+    // First 5 turns instrumented; then 200 native-first. The window cap is
+    // 200, so the 5 instrumented records drop out and the rate reads 1.0 —
+    // recency, not history.
+    for _ in 0..5 {
+        ledger.record_agent_turn(true, false).await;
+    }
+    for _ in 0..200 {
+        ledger.record_agent_turn(true, true).await;
+    }
+    let (rate, samples) = ledger.native_first_rate().await.expect("window non-empty");
+    assert_eq!(samples, 200, "the window is capped at 200 records");
+    assert!(
+        (rate - 1.0).abs() < 1e-9,
+        "the 5 oldest instrumented turns dropped out"
+    );
+}
+
 struct FixedSensor(f64);
 
 #[async_trait::async_trait]

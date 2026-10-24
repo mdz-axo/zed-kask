@@ -1124,6 +1124,28 @@ impl super::CyberneticsLoop {
                     dev.signal.metric.as_str().into(),
                 ))
             }
+            // Carry the observed native-first rate into escalation evidence —
+            // the drift signal the affordance-injection intervention targets.
+            RegulationReason::NativeFirstRateExceeded => {
+                tracing::warn!(
+                    target: "reg.agent",
+                    native_first_rate = dev.signal.value,
+                    set_point = dev.signal.set_point,
+                    "Native-first rate exceeded — substantive turns completing without instruments"
+                );
+                Some(RegulatoryAction::with_metric(
+                    proposed.target,
+                    proposed.action_type,
+                    RegulatoryActionParams::with_data(
+                        proposed.reason.as_str(),
+                        RegulationData::NativeFirstRateExceeded {
+                            rate: dev.signal.value,
+                            threshold: dev.signal.set_point,
+                        },
+                    ),
+                    dev.signal.metric.as_str().into(),
+                ))
+            }
             // Carry typed fleet-health data so extract_deficit_threshold can
             // populate the advisory context with real counts instead of (0, 0).
             RegulationReason::ContextServerFleetDegraded => {

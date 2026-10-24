@@ -44,6 +44,15 @@ pub enum RegulationData {
     /// `ExperimentationHealthSource` at delivery), so the board card names the
     /// experiments to unstick.
     ExperimentationStuckExperimentsExceeded { count: f64, threshold: f64 },
+    /// Native-first rate exceeded the set point — the fraction of completed
+    /// substantive agent turns that used zero kask instruments rose above
+    /// the allowed ceiling.
+    ///
+    /// Carries the observed rate and threshold at escalation time as
+    /// quantitative trigger evidence for the advisory; the corrective is
+    /// operator/harness work (per-turn affordance injection, gates), not a
+    /// self-heal.
+    NativeFirstRateExceeded { rate: f64, threshold: f64 },
 
     /// No typed regulation data — used for non-regulation actions.
     #[serde(rename = "no_data")]

@@ -46,6 +46,7 @@ pub(crate) enum RegulationReason {
     ContextServerFleetDegraded,
     OcrSilentFailuresExceeded,
     ExperimentationStuckExperimentsExceeded,
+    NativeFirstRateExceeded,
 }
 
 impl RegulationReason {
@@ -72,6 +73,7 @@ impl RegulationReason {
             Self::ExperimentationStuckExperimentsExceeded => {
                 "experimentation_stuck_experiments_exceeded"
             }
+            Self::NativeFirstRateExceeded => "native_first_rate_exceeded",
         }
     }
 }
@@ -344,6 +346,22 @@ impl RegulationPolicy {
                         reason: ExperimentationStuckExperimentsExceeded,
                     }],
                 },
+                // ── Native-first rate (Cybernetics Loop 6) ── Substantive
+                // agent turns completing with zero kask instruments is the
+                // drift the affordance-injection intervention targets; the
+                // loop cannot self-heal prompt-surface behavior — the
+                // corrective is operator/harness work (per-turn affordance
+                // injection, gates). Escalate to Curation so the reading
+                // reaches the reviewable board with its rate/threshold.
+                RegulationRule {
+                    metric: NativeFirstRate,
+                    direction: AboveSetPoint,
+                    proposed: &[ProposedAction {
+                        target: Curation,
+                        action_type: Escalate,
+                        reason: NativeFirstRateExceeded,
+                    }],
+                },
             ],
         }
     }
@@ -386,6 +404,9 @@ pub(crate) fn extract_deficit_threshold(data: &RegulationData) -> Option<(u64, u
             reliability,
             threshold,
         } => Some((percent_of(*reliability), percent_of(*threshold))),
+        RegulationData::NativeFirstRateExceeded { rate, threshold } => {
+            Some((percent_of(*rate), percent_of(*threshold)))
+        }
 
         RegulationData::ContextServerFleetHealth {
             healthy_count,

@@ -203,9 +203,60 @@ impl Sensor for ToolReliabilitySensor {
     }
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+// NATIVE-FIRST RATE SENSOR
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Senses the native-first rate — the fraction of completed substantive
+/// agent turns that used zero kask instruments — from the Regulation
+/// runtime's rolling turn window.
+///
+/// Data source: `RegulationLedger::record_agent_turn`, fed by the zed-side
+/// agent loop at turn completion (the same seam family as
+/// `record_mcp_tool_outcome`). This closes the drift feedback loop's
+/// unsensed leg: `ToolReliabilitySensor` senses tool FAILURES, but nothing
+/// sensed instrument ABSENCE — a session that completes every substantive
+/// turn from native generation alone read as "healthy" because no tool
+/// ever failed.
+///
+/// Returns `None` when no substantive turns have been recorded (the
+/// legitimate "no data" state) — not a signal with value 0.0, which would
+/// mask a broken sensor as "perfect compliance" (the `.rules`
+/// `unwrap_or(0)` trap).
+pub(crate) struct NativeFirstRateSensor {
+    ledger: Arc<tokio::sync::RwLock<super::runtime::RegulationLedger>>,
+    set_point: f64,
+}
+
+impl NativeFirstRateSensor {
+    pub fn new(
+        ledger: Arc<tokio::sync::RwLock<super::runtime::RegulationLedger>>,
+        set_point: f64,
+    ) -> Self {
+        Self { ledger, set_point }
+    }
+}
+
+#[async_trait::async_trait]
+impl Sensor for NativeFirstRateSensor {
+    async fn observe(&self) -> Option<Signal> {
+        let rate = {
+            let ledger = self.ledger.read().await;
+            ledger.native_first_rate().await
+        };
+        let (rate, _samples) = rate?;
+        Some(Signal::new(
+            LoopId::Cybernetics,
+            SignalMetric::NativeFirstRate,
+            rate,
+            self.set_point,
+        ))
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // CONTEXT SERVER HEALTH SENSOR
-// ═════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 
 /// Source of context-server health metrics for the cybernetics loop.
 ///

@@ -84,6 +84,16 @@ pub enum SignalMetric {
     /// 0.0 = 0% success rate, 1.0 = 100% success rate.
     /// Set-point: reliability_threshold (default 0.80).
     ToolReliability,
+    /// Native-first rate: the fraction of completed substantive agent turns
+    /// that used zero kask instruments — no context-server (MCP) tool call
+    /// and none of the host default instruments (`lisp_eval`,
+    /// `render_template`, `skill`). Higher is worse: the turn did real work
+    /// from native generation alone, the drift class the
+    /// affordance-injection intervention targets. Set-point:
+    /// native_first_rate_threshold (default 0.50). Without this metric the
+    /// loop senses tool FAILURES but never instrument ABSENCE — the
+    /// unsensed leg of the drift feedback loop.
+    NativeFirstRate,
     /// Fraction of successful evaluations in an externally observed rollout.
     /// This metric is supplied by `RolloutEventSource`, not a periodic sensor.
     PassRate,
@@ -128,6 +138,7 @@ impl SignalMetric {
             SignalMetric::MetacognitionCriticalAlerts => "metacognition_critical_alerts",
             SignalMetric::ExperimentationStuckExperiments => "experimentation_stuck_experiments",
             SignalMetric::ToolReliability => "tool_reliability",
+            SignalMetric::NativeFirstRate => "native_first_rate",
             SignalMetric::PassRate => "pass_rate",
             SignalMetric::TestCoverage => "test_coverage",
             SignalMetric::MutationScore => "mutation_score",
@@ -156,6 +167,7 @@ impl SignalMetric {
             SignalMetric::MetacognitionCriticalAlerts,
             SignalMetric::ExperimentationStuckExperiments,
             SignalMetric::ToolReliability,
+            SignalMetric::NativeFirstRate,
             SignalMetric::PassRate,
             SignalMetric::TestCoverage,
             SignalMetric::MutationScore,
@@ -178,7 +190,8 @@ impl SignalMetric {
             | SignalMetric::PassRate => Some(true),
             SignalMetric::VarietyDeficit
             | SignalMetric::OcrSilentFailures
-            | SignalMetric::ExperimentationStuckExperiments => Some(false),
+            | SignalMetric::ExperimentationStuckExperiments
+            | SignalMetric::NativeFirstRate => Some(false),
             _ => None,
         }
     }
