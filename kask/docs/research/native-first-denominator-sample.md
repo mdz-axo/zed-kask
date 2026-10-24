@@ -1,3 +1,13 @@
+---
+title: "Native-first denominator sample — first per-task skill-applicability adjudication"
+audience: [architects, developers, operators]
+last_updated: 2026-10-24
+version: "1.0.0"
+status: "Active"
+domain: "Agent instrumentation"
+mds_categories: [domain, trust, lifecycle]
+---
+
 # Native-first denominator sample — first per-task skill-applicability adjudication
 
 Date: 2026-10-24 (UTC−7 evening of 2026-10-23). Status: first historical sample,
