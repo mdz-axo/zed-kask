@@ -19,7 +19,7 @@ use serde::Deserialize;
 
 use crate::store::ExperimentationStore;
 use crate::types::{
-    ExperimentationError, LAYERS, Prediction, Rubric, STATUSES, ScientificHeadroom,
+    ExperimentStatus, ExperimentationError, LAYERS, Prediction, Rubric, ScientificHeadroom,
     VARIANT_ROLE_CHALLENGER, validate_design_spec, validate_rubrics, validate_scientific_headroom,
 };
 
@@ -47,7 +47,6 @@ pub fn map_experimentation_error(error: ExperimentationError) -> McpToolError {
         | ExperimentationError::BudgetMissingMaxRuns(_)
         | ExperimentationError::RunCountInvalid(_)
         | ExperimentationError::UnknownVerdict(_)
-        | ExperimentationError::UnknownStatus(_)
         | ExperimentationError::SelectedWithoutVariant
         | ExperimentationError::RejectedWithoutReasons
         | ExperimentationError::Empty(_)
@@ -258,7 +257,7 @@ pub struct PopulationQueryRequest {
     /// Filter by artifact layer.
     pub layer: Option<String>,
     /// Filter by status: proposed, running, or resolved.
-    pub status: Option<String>,
+    pub status: Option<ExperimentStatus>,
     /// Only experiments created at or after this RFC 3339 timestamp.
     pub created_since: Option<String>,
     /// Cap on returned experiments (default 50, max 200).
@@ -670,13 +669,7 @@ impl ExperimentationServer {
                     ));
                 }
             }
-            if let Some(value) = &status {
-                if !STATUSES.contains(&value.as_str()) {
-                    return Err(map_experimentation_error(
-                        ExperimentationError::UnknownStatus(value.clone()),
-                    ));
-                }
-            }
+
             if let Some(value) = &created_since {
                 chrono::DateTime::parse_from_rfc3339(value).map_err(|_| {
                     map_experimentation_error(ExperimentationError::BadTimestamp(value.clone()))
@@ -687,7 +680,7 @@ impl ExperimentationServer {
                 .store
                 .population(
                     layer.as_deref(),
-                    status.as_deref(),
+                    status.map(ExperimentStatus::as_str),
                     created_since.as_deref(),
                     limit,
                 )

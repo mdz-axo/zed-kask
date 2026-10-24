@@ -420,7 +420,7 @@ assertions:
     targets:
       - crate: hkask-types (replaces deleted hkask-pods)
         module: visibility
-        methods: [ingest_turn, recall_context, recall_thread]  # the live MemoryPort surface (kask/crates/hkask-types/src/ports/memory_port.rs:143,155,173)
+        methods: [ingest_turn, recall_context, recall_thread]  # the live MemoryPort surface (kask/crates/hkask-types/src/ports/memory_port.rs:94,106,124)
         gate: require_sovereignty
 ```
 

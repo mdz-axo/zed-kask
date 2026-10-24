@@ -268,7 +268,7 @@ sub-structure and its `mcp_env` emitter, then add that exact environment name to
 the server descriptor. Defaults belong only in `Default` implementations
 (`kask/crates/kask_bridge/src/settings.rs:24-34`). The emitted-default seam is
 pinned by `swarm_settings_default_emits_no_env`
-(`kask/crates/kask_bridge/src/mcp_env.rs:813`).
+(`kask/crates/kask_bridge/src/mcp_env.rs:735`).
 
 Do not invent a batch-size control or a second database-passphrase setting. The
 general settings expose concurrency, timeout, and circuit-breaker controls

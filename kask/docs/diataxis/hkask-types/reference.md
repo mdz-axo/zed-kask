@@ -183,8 +183,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TYPES-006
-verified_date: 2026-09-28
-verified_against: kask/crates/hkask-types/src/ports/inference_port.rs:115-183,184-431; kask/crates/hkask-types/src/ports/memory_port.rs:138-180; kask/crates/hkask-types/src/event.rs:497-515
+verified_date: 2026-10-23
+verified_against: kask/crates/hkask-types/src/ports/inference_port.rs:115-183,184-431; kask/crates/hkask-types/src/ports/memory_port.rs:88-131; kask/crates/hkask-types/src/event.rs:497-515
 status: VERIFIED
 -->
 
@@ -351,20 +351,20 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TYPES-003
-verified_date: 2026-09-28
-verified_against: kask/crates/hkask-types/src/ports.rs:7-23; kask/crates/hkask-types/src/ports/inference_port.rs:17-40,115-183; kask/crates/hkask-types/src/ports/memory_port.rs:125-180; kask/crates/hkask-types/src/hkask_types.rs:74
+verified_date: 2026-10-23
+verified_against: kask/crates/hkask-types/src/ports.rs:7-23; kask/crates/hkask-types/src/ports/inference_port.rs:17-40,115-183; kask/crates/hkask-types/src/ports/memory_port.rs:75,88-131; kask/crates/hkask-types/src/hkask_types.rs:74
 status: VERIFIED
 -->
 
 1. Put the trait in the appropriate `ports/` module. Current public traits are
    `ToolDispatchPort`, `WorktreeSpawnPort`, `InferencePort`, and `MemoryPort`
-   (`kask/crates/hkask-types/src/ports/inference_port.rs:115-183`;
-   `kask/crates/hkask-types/src/ports/memory_port.rs:138-180`).
+   `kask/crates/hkask-types/src/ports/inference_port.rs:115-183`;
+   `kask/crates/hkask-types/src/ports/memory_port.rs:88-131`).
 2. Use explicit `Pin<Box<dyn Future + Send>>` or a named alias when the trait must
    remain object-safe. Current aliases are `EmbedFuture`, `EmbedWithIdentityFuture`,
    `MediaFuture`, `RerankFuture`, and the crate-private `MemoryFuture`
    (`kask/crates/hkask-types/src/ports/inference_port.rs:17-40`;
-   `kask/crates/hkask-types/src/ports/memory_port.rs:125`).
+   `kask/crates/hkask-types/src/ports/memory_port.rs:75`).
 3. Re-export through `kask/crates/hkask-types/src/ports.rs:7-23`; the crate root
    already re-exports `ports::*` at
    `kask/crates/hkask-types/src/hkask_types.rs:74`.

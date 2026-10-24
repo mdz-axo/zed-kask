@@ -132,7 +132,7 @@ narrative generation loop.
   `recall_thread_curator` methods (`kask/crates/kask_bridge/src/memory.rs::RealMemoryPort::recall_context_curator`
   and `RealMemoryPort::recall_thread_curator`).
   The `MemoryPort` trait's `recall_context` / `recall_thread` keep their
-  default no-op implementations as the port contract (`kask/crates/hkask-types/src/ports/memory_port.rs:164,182`);
+  default no-op implementations as the port contract (`kask/crates/hkask-types/src/ports/memory_port.rs:106,124`);
   `RealMemoryPort` no longer overrides them (`kask/crates/kask_bridge/src/memory.rs`,
   `impl MemoryPort for RealMemoryPort`).
 - External-evidence injection is opt-in for Curator chat and off by default.
@@ -1195,7 +1195,7 @@ sovereignty:
 
 - **The user can run without recall.** The zed agent (the default coding
   agent) has no recall — the `MemoryPort` trait's recall methods are
-  no-op defaults (`memory_port.rs:155,173`; `RealMemoryPort` overrides
+  no-op defaults (`memory_port.rs:106,124`; `RealMemoryPort` overrides
   only `ingest_turn`; `kask/crates/kask_bridge/src/memory.rs`, `impl MemoryPort for RealMemoryPort`). Its turns are ingested as shared copies only, so
   the curator observes them, but the zed agent itself never injects
   recalled memory. Setting `kask.memory.auto_inject` to false disables
@@ -1239,8 +1239,8 @@ graph TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MEM-WHO
-verified_date: 2026-09-28
-verified_against: kask/crates/kask_bridge/src/memory/ingest.rs:271-660 (all turns ingested as shared chunk copies; curator-turn detection at :277 is logging-only), kask/crates/hkask-types/src/ports/memory_port.rs:155,173 (zed-agent recall no-op defaults), kask/crates/kask_bridge/src/memory/curator_stores.rs:20-29 (curator.db path), kask/mcp-servers/hkask-mcp-swarm/src/config.rs:118-122 (swarm memory DB path), kask/mcp-servers/hkask-mcp-swarm/src/local_knowledge.rs:304-320 (response-passage chunking)
+verified_date: 2026-10-23
+verified_against: kask/crates/kask_bridge/src/memory/ingest.rs:271-660 (all turns ingested as shared chunk copies; curator-turn detection at :277 is logging-only), kask/crates/hkask-types/src/ports/memory_port.rs:106,124 (zed-agent recall no-op defaults), kask/crates/kask_bridge/src/memory/curator_stores.rs:20-29 (curator.db path), kask/mcp-servers/hkask-mcp-swarm/src/config.rs:118-122 (swarm memory DB path), kask/mcp-servers/hkask-mcp-swarm/src/local_knowledge.rs:304-320 (response-passage chunking)
 status: VERIFIED
 -->
 

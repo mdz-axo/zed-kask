@@ -753,7 +753,7 @@ impl MediaServer {
                 .map_err(map_media_error)?;
 
             if frames.is_empty() {
-                return Err(McpToolError::internal("No keyframes extracted from video."));
+                return Err(McpToolError::failed_precondition("No keyframes extracted from video."));
             }
 
             let mut image_urls = Vec::new();
@@ -850,7 +850,9 @@ impl MediaServer {
                 .map_err(map_media_error)?;
 
             if frames.is_empty() {
-                return Err(McpToolError::internal("No keyframes extracted from video."));
+                return Err(McpToolError::failed_precondition(
+                    "No keyframes extracted from video.",
+                ));
             }
 
             // Only extracted scratch outputs are consumed by the atomic publisher.

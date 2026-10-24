@@ -180,15 +180,26 @@ fn resolve_default_provider() -> ProviderId {
 
 /// Parse a provider code string to a ProviderId.
 ///
-/// Accepted values: full provider names (RunPod,
-/// OpenRouter, ollama). Anything else (including
-/// empty) → OpenRouter.
+/// Accepted values: full provider names (RunPod, OpenRouter, ollama). An
+/// unset or empty value → OpenRouter, the documented default. Any other
+/// value → OpenRouter **with a `warn!` naming the malformed value** — a
+/// malformed `HKASK_DEFAULT_PROVIDER` must be distinguishable from an unset
+/// one (the broken-feedback-loop rule).
 fn parse_provider_code(raw: &str) -> ProviderId {
     match raw {
+        "" => ProviderId::OpenRouter,
         "RunPod" => ProviderId::Runpod,
         "OpenRouter" => ProviderId::OpenRouter,
         "ollama" => ProviderId::Ollama,
-        _ => ProviderId::OpenRouter,
+        other => {
+            tracing::warn!(
+                env_var = "HKASK_DEFAULT_PROVIDER",
+                value = %other,
+                "unknown provider code — defaulting to OpenRouter; accepted values are \
+                 RunPod, OpenRouter, ollama"
+            );
+            ProviderId::OpenRouter
+        }
     }
 }
 
@@ -232,5 +243,21 @@ impl ProviderConfig {
                 .unwrap_or_else(|_| default_base_url.to_string()),
             api_key: resolve_api_key(&format!("{env_prefix}_API_KEY")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_provider_code_maps_known_codes_and_defaults_the_rest() {
+        assert_eq!(parse_provider_code("RunPod"), ProviderId::Runpod);
+        assert_eq!(parse_provider_code("OpenRouter"), ProviderId::OpenRouter);
+        assert_eq!(parse_provider_code("ollama"), ProviderId::Ollama);
+        // Unset stays the silent documented default; a malformed value still
+        // defaults to OpenRouter but warns naming the value (E5 fix).
+        assert_eq!(parse_provider_code(""), ProviderId::OpenRouter);
+        assert_eq!(parse_provider_code("runpod"), ProviderId::OpenRouter);
     }
 }

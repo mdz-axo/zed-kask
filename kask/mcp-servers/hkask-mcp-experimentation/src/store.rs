@@ -191,7 +191,7 @@ fn fitness_from_row(row: &DbRow) -> Result<FitnessRecord, ExperimentationError> 
         experiment_id: row.get_str(1)?.to_string(),
         variant_id: row.get_str(2)?.to_string(),
         runs: row.get_json(3)?,
-        run_count: row.get_int(5).unwrap_or(0).max(0) as u64,
+        run_count: required_int(row, 5)?,
         scores: row.get_json(4)?,
         seal_id: optional_text(row, 7),
         created_at: row.get_str(6)?.to_string(),
@@ -238,7 +238,7 @@ fn final_eval_from_row(row: &DbRow) -> Result<FinalEvaluationRecord, Experimenta
         variant_id: row.get_str(2)?.to_string(),
         seal_id: row.get_str(3)?.to_string(),
         runs: row.get_json(4)?,
-        run_count: row.get_int(5).unwrap_or(0).max(0) as u64,
+        run_count: required_int(row, 5)?,
         scores: row.get_json(6)?,
         created_at: row.get_str(7)?.to_string(),
     })
@@ -707,7 +707,10 @@ impl ExperimentationStore {
                    FROM final_evaluations WHERE experiment_id = ?1), 0)",
                 &[DbValue::Text(experiment_id.to_string())],
             )?;
-            let recorded = row.and_then(|row| row.get_int(0).ok()).unwrap_or(0).max(0) as u64;
+            let recorded = match row {
+                Some(row) => required_int(&row, 0)?,
+                None => 0,
+            };
             return Err(ExperimentationError::BudgetExhausted(
                 experiment_id.to_string(),
                 recorded + run_count,
@@ -982,7 +985,10 @@ impl ExperimentationStore {
                    FROM final_evaluations WHERE experiment_id = ?1), 0)",
                 &[DbValue::Text(experiment_id.to_string())],
             )?;
-            let recorded = row.and_then(|row| row.get_int(0).ok()).unwrap_or(0).max(0) as u64;
+            let recorded = match row {
+                Some(row) => required_int(&row, 0)?,
+                None => 0,
+            };
             return Err(ExperimentationError::BudgetExhausted(
                 experiment_id.to_string(),
                 recorded + run_count,
@@ -1235,7 +1241,7 @@ impl ExperimentationStore {
                     created_at: row.get_str(3)?.to_string(),
                     max_runs: required_int(row, 4)?,
                     prediction_confidence: Some(prediction.confidence),
-                    recorded_runs: row.get_int(6).unwrap_or(0).max(0) as u64,
+                    recorded_runs: required_int(row, 6)?,
                     verdict: optional_text(row, 7),
                     scientific_outcome: optional_text(row, 9),
                     reject_reasons: row.get_json::<Vec<String>>(8).ok().unwrap_or_default(),

@@ -277,8 +277,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MCPSRV-010
-verified_date: 2026-09-28
-verified_against: kask/crates/hkask-mcp-server/src/server/context.rs (CredentialRequirement, ServerContext); kask/crates/hkask-mcp-server/src/server/tool_span.rs:108-170; kask/crates/hkask-mcp-server/src/server/validation.rs:5-169,258-381,590-611; kask/crates/hkask-mcp-server/src/security.rs:334-397
+verified_date: 2026-10-23
+verified_against: kask/crates/hkask-mcp-server/src/server/context.rs (CredentialRequirement, ServerContext); kask/crates/hkask-mcp-server/src/server/tool_execution.rs:1-96; kask/crates/hkask-mcp-server/src/server/validation.rs:5-169,258-381,590-611; kask/crates/hkask-mcp-server/src/security.rs:334-397
 status: VERIFIED
 -->
 
@@ -315,7 +315,7 @@ async fn status(&self) -> Result<String, McpToolError> {
 }
 ```
 
-The future must return `Result<serde_json::Value, McpToolError>`. `execute_tool` returns `Result<String, McpToolError>` (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:145-170`). A successful value becomes a `{"content": value}` JSON string (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:62-74`). A failure remains a typed error; rmcp marks it with `is_error: true` and includes `{"error", "kind"}` as structured content (`kask/crates/hkask-mcp-server/src/server/error.rs`, `IntoCallToolResult for McpToolError`).
+The future must return `Result<serde_json::Value, McpToolError>`. `execute_tool` returns `Result<String, McpToolError>` (`kask/crates/hkask-mcp-server/src/server/tool_execution.rs:78-96`). A successful value becomes a `{"content": value, "duration_ms": …, "usage": …}` JSON string (`kask/crates/hkask-mcp-server/src/server/tool_execution.rs:90-95`). A failure remains a typed error; rmcp marks it with `is_error: true` and includes `{"error", "kind"}` as structured content (`kask/crates/hkask-mcp-server/src/server/error.rs`, `IntoCallToolResult for McpToolError`).
 
 Use the constructor that matches the recovery action:
 
@@ -412,21 +412,17 @@ For non-HTTP failures, use the root exports:
 - `map_infra_error`: not-found and database connection variants retain their categories (`kask/crates/hkask-mcp-server/src/server/validation.rs:106-129`);
 - `map_memory_store_error`: memory/storage variants delegate to the same classification policy (`kask/crates/hkask-mcp-server/src/server/validation.rs:131-163`).
 
-### Inspect `reg.tool` telemetry
+### Inspect tool outcome accounting
 
-Every `execute_tool` call emits one event on success or typed error. If its private guard is dropped before completion, `Drop` emits `dropped` (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:32-60`, `kask/crates/hkask-mcp-server/src/server/tool_span.rs:92-106`).
-
-Filter tracing output for target `reg.tool` and inspect these fields:
+Every `execute_tool` call returns a JSON envelope on success or preserves the typed error (`kask/crates/hkask-mcp-server/src/server/tool_execution.rs:78-96`):
 
 | Field | Value |
 |---|---|
-| `tool` | tool name passed to `execute_tool` |
-| `outcome` | `ok`, `error`, or `dropped` |
+| `content` | the handler's successful value, annotated once by the `ToolContext` |
 | `duration_ms` | elapsed wall-clock milliseconds |
-| `error_kind` | typed `McpErrorKind` string, empty otherwise |
-| `caller` | server `ToolContext.webid()` |
+| `usage` | isolated inference usage for the call (null when none was recorded) |
 
-The event definition is `kask/crates/hkask-mcp-server/src/server/tool_span.rs:108-119`. It is child-process observability; production Regulation outcome recording occurs in host dispatch paths (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:123-139`).
+Inference usage recorded inside the handler via `record_tool_usage` is isolated per call (`kask/crates/hkask-mcp-server/src/server/tool_execution.rs:15-34`) and never mixes across concurrent calls. Identity and outcome recording happen in the caller-side runtime (host dispatch), not by a child-side guard (`kask/crates/hkask-mcp-server/src/server/tool_execution.rs:67-73`).
 
 ## See also
 

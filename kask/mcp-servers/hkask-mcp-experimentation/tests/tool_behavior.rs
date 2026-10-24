@@ -14,7 +14,8 @@ use hkask_mcp_experimentation::server::{
 };
 use hkask_mcp_experimentation::store::ExperimentationStore;
 use hkask_mcp_experimentation::types::{
-    Prediction, RUBRIC_KIND_IMPLEMENTATION, RUBRIC_KIND_METRIC, Rubric, RubricVerification,
+    ExperimentStatus, Prediction, RUBRIC_KIND_IMPLEMENTATION, RUBRIC_KIND_METRIC, Rubric,
+    RubricVerification,
 };
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_types::AnyJsonValue;
@@ -243,7 +244,7 @@ async fn full_protocol_runs_through_the_tool_seam() {
     let population = server
         .population_query(Parameters(PopulationQueryRequest {
             layer: Some("skill".to_string()),
-            status: Some("resolved".to_string()),
+            status: Some(ExperimentStatus::Resolved),
             created_since: None,
             limit: None,
         }))

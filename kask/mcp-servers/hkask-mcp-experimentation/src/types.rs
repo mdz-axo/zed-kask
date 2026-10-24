@@ -25,7 +25,27 @@ pub const STATUS_PROPOSED: &str = "proposed";
 pub const STATUS_RUNNING: &str = "running";
 pub const STATUS_RESOLVED: &str = "resolved";
 
-pub const STATUSES: &[&str] = &[STATUS_PROPOSED, STATUS_RUNNING, STATUS_RESOLVED];
+/// Closed status vocabulary for population queries — parse-don't-validate
+/// at the tool boundary: the tool schema renders the closed set and invalid
+/// values reject at deserialization instead of reaching the handler.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ExperimentStatus {
+    Proposed,
+    Running,
+    Resolved,
+}
+
+impl ExperimentStatus {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Proposed => STATUS_PROPOSED,
+            Self::Running => STATUS_RUNNING,
+            Self::Resolved => STATUS_RESOLVED,
+        }
+    }
+}
 
 pub const VERDICT_SELECTED: &str = "selected";
 pub const VERDICT_REJECTED: &str = "rejected";
@@ -534,8 +554,6 @@ pub enum ExperimentationError {
         "design_spec must be a versioned JSON object carrying a non-empty spec_version string; got {0}"
     )]
     DesignSpecInvalid(String),
-    #[error("status must be one of proposed, running, resolved; got {0:?}")]
-    UnknownStatus(String),
     #[error("a selected experiment must name its selected_variant_id")]
     SelectedWithoutVariant,
     #[error("a rejected experiment must record at least one reject_reason")]

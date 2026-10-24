@@ -633,6 +633,13 @@ live in git history (`1a8c500c12`..`42f885b0e3`).
 
 **The five operator-named target conditions (MF-1…MF-5), all closed:**
 
+> **Removed-surface note (2026-10-22):** the Reduct.cloud write surface that MF-1
+> and MF-7 record below was removed with the cloud integration on 2026-10-22
+> (plan: `kask/docs/plans/reduct-removal-plan-2026-10-22.md`; the 71-tool local
+> pin and suite re-verified green — see the `verified_date` header). These
+> records and their `src/tools/reduct.rs` citations document the 2026-10-06
+> review state, not the current surface.
+
 - **MF-1 Reduct cloud write surface** — closed `f66b136fe2` + follow-up
   `f371a75a74` (pin 99→102): `reduct_add_recording_highlight`,
   `reduct_publish_reel`, and `reduct_edit_recording_highlight` implement

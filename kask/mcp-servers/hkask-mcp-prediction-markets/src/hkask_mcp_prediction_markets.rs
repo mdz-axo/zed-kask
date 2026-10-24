@@ -1033,7 +1033,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         SERVER_VERSION,
         |ctx| {
             let fred_api_key = ctx.credentials.get("HKASK_FRED_API_KEY").cloned();
-            // zed-kask: HTTP client with explicit connect+request timeouts.
+            // HTTP client with explicit connect+request timeouts.
             // Without these, a stalled upstream (Kalshi, Polymarket, FRED)
             // hangs the MCP `tools/call` past the 60s client cap, triggering
             // a server restart + retry that never converges. A 20s request

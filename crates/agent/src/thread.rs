@@ -1534,7 +1534,7 @@ impl Thread {
             parent_thread_id: parent_thread.read(cx).id().clone(),
             depth: parent_thread.read(cx).depth() + 1,
         });
-        // zed-kask: D6/D34 — inherit the parent thread's agent_id so
+        // zed-kask: D6 — inherit the parent thread's agent_id so
         // curator-spawned subagents route their turns to the curator's
         // sovereign DB for memory ingestion and context recall. Without
         // this, a curator subagent's turns are ingested as user-perspective
@@ -2275,7 +2275,7 @@ impl Thread {
 
     /// The agent ID that owns this thread. Always set — `ZED_AGENT_ID` by
     /// construction, overridden by the curator overlay; subagents inherit
-    /// from their parent (D6/D34).
+    /// from their parent (D6).
     pub fn agent_id(&self) -> &AgentId {
         self.kask.agent_id()
     }
@@ -5296,7 +5296,7 @@ impl Thread {
         let temperature = AgentSettings::temperature_for_model(&model, cx);
         let mut request = build_thread_title_request(&self.id, &self.messages, temperature);
 
-        // zed-kask: D38 — respect reasoning-model requirements for thread
+        // zed-kask: D37 — respect reasoning-model requirements for thread
         // title generation. Upstream's `build_thread_title_request` leaves
         // `thinking_allowed` at its default (`false`). When the summarization
         // model is a reasoning-only model (e.g. GLM 5.2, gpt-5, o3), the
@@ -6156,7 +6156,7 @@ impl Thread {
             thread_id: Some(self.id.to_string()),
             prompt_id: Some(self.prompt_id.to_string()),
             intent: Some(CompletionIntent::ThreadContextSummarization),
-            // D38: helper requests must not implicitly disable a reasoning model.
+            // D37: helper requests must not implicitly disable a reasoning model.
             thinking_allowed: model.supports_thinking,
             temperature: AgentSettings::temperature_for_model(&model, cx),
             messages: self.build_request_messages_until(Vec::new(), insertion_ix, cx),
@@ -6955,7 +6955,7 @@ pub async fn stream_thread_title(
     request: LanguageModelRequest,
     cx: &AsyncApp,
 ) -> Result<String> {
-    // zed-kask: D38 — self-healing retry for reasoning-mandatory endpoints.
+    // zed-kask: D37 — self-healing retry for reasoning-mandatory endpoints.
     // Mirrors the D37 commit-message fix. If the initial request was built
     // with thinking disabled (because `supports_thinking()` returned false)
     // and the provider rejects it with a 400 `InvalidRequest`, retry once
@@ -7003,7 +7003,7 @@ async fn stream_thread_title_once(
     Ok(title)
 }
 
-// zed-kask: D38 — classifies whether a title-generation error looks like a
+// zed-kask: D37 — classifies whether a title-generation error looks like a
 // reasoning-required rejection, so the self-healing retry knows when to
 // re-attempt with thinking enabled. Mirrors `GitPanel::is_reasoning_required_error`
 // (D37). The error arrives as an `anyhow::Error` because `stream_thread_title`
@@ -10626,7 +10626,7 @@ mod tests {
         }
     }
 
-    // zed-kask: D38 — pins the self-healing error classifier for thread-title
+    // zed-kask: D37 — pins the self-healing error classifier for thread-title
     // generation. Only `InvalidRequest` (400) rejections trigger the thinking
     // retry; rate limits, auth failures, and transport errors do not. Mirrors
     // the D37 `test_is_reasoning_required_error_classifies_invalid_request`.
@@ -14091,7 +14091,7 @@ mod tests {
         });
     }
 
-    // zed-kask: D6/D34 — subagent inherits parent's agent_id so curator-spawned
+    // zed-kask: D6 — subagent inherits parent's agent_id so curator-spawned
     // subagents route turns to the curator's sovereign DB for memory ingestion.
     #[gpui::test]
     async fn test_subagent_inherits_parent_agent_id(cx: &mut TestAppContext) {

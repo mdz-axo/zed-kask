@@ -728,7 +728,17 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
                 let key = if provider.env_var.is_empty() {
                     String::new()
                 } else {
-                    std::env::var(provider.env_var).unwrap_or_default()
+                    match std::env::var(provider.env_var) {
+                        Ok(key) => key,
+                        Err(_) => {
+                            return Box::pin(futures_util::future::ready(Err(
+                                hkask_types::InferenceError::NotConfigured(format!(
+                                    "{} is not set — the direct-embedding provider {} cannot \n                                     authenticate; the settings chain injects it via \n                                     build_mcp_server_env",
+                                    provider.env_var, provider.id
+                                )),
+                            )));
+                        }
+                    }
                 };
                 (provider.api_url.to_string(), key)
             }

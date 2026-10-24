@@ -28,8 +28,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MCPSRV-001
-verified_date: 2026-09-28
-verified_against: kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:41-54,114-165; kask/crates/hkask-mcp-server/src/server/tool_span.rs:145-170; kask/crates/hkask-mcp-server/src/server/transport.rs (run_stdio_server)
+verified_date: 2026-10-23
+verified_against: kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:41-54,114-165; kask/crates/hkask-mcp-server/src/server/tool_execution.rs:75-96; kask/crates/hkask-mcp-server/src/server/transport.rs (run_stdio_server)
 status: VERIFIED
 -->
 
@@ -138,15 +138,13 @@ For this tutorial's fieldless server, leave `vec![]`. A real server can pass `ct
 
 Launch the binary from an MCP client over stdio. Protocol messages use stdin/stdout; framework logs use stderr (`kask/crates/hkask-mcp-server/src/server/transport.rs:42-48`, `kask/crates/hkask-mcp-server/src/server/transport.rs`, `run_stdio_server`).
 
-Each completed invocation emits a tracing event at target `reg.tool` with:
-
-- `tool`;
-- `outcome` (`ok`, `error`, or `dropped`);
-- `duration_ms`;
-- `error_kind` (empty unless the outcome is `error`);
-- `caller`.
-
-Those fields are emitted at `kask/crates/hkask-mcp-server/src/server/tool_span.rs:108-119`. The child event is observability output; production Regulation outcome recording occurs in the client-side dispatch paths, not by consuming this stderr event (`kask/crates/hkask-mcp-server/src/server/tool_span.rs:123-139`).
+Each completed invocation returns a JSON envelope with `content` (the handler's
+successful value, annotated exactly once by the `ToolContext`), `duration_ms`,
+and `usage` — null unless the handler recorded inference
+(`kask/crates/hkask-mcp-server/src/server/tool_execution.rs:78-96`). Typed
+errors are not wrapped as success content; identity and outcome recording
+happen in the caller-side runtime (host dispatch), not by a child-side guard
+(`kask/crates/hkask-mcp-server/src/server/tool_execution.rs:67-73`).
 
 If `HKASK_WEBID` is missing or invalid, startup uses the anonymous persona and warns; otherwise the parsed identity is attached to the server and tool telemetry (`kask/crates/hkask-mcp-server/src/server/transport.rs:93-107`).
 
@@ -155,7 +153,7 @@ If `HKASK_WEBID` is missing or invalid, startup uses the anonymous persona and w
 - `mcp_server!` generates the standard WebID-bearing server shape.
 - `execute_tool` preserves typed errors and serializes successful content.
 - `run_server` performs credential, identity, and stdio setup.
-- `reg.tool` reports the actual execution outcome fields listed above.
+- The response envelope carries `content`, `duration_ms`, and `usage` (`tool_execution.rs`).
 
 ## Next steps
 

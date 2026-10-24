@@ -79,7 +79,7 @@ Two rules govern it:
 Every rung must demonstrate it can fail. fermi enforces this with a
 falsification registry (each check broken by hand and watched fail); zed-kask
 pins it in tests: the `LoopView`
-composition pins (`core.rs:693-712`), and the skill's Step 6 floor form, which
+composition pins (`kask/crates/hkask-regulation/src/loops/core/tests.rs:149`), and the skill's Step 6 floor form, which
 errors loudly on a graded claim missing its strength (verified live 2026-10-10:
 a mixed set floors over graded claims only; an all-pending set returns null —
 unknown, not clean).
