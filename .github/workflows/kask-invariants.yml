@@ -145,11 +145,15 @@ on:
     branches: [main]
   pull_request:
 
-# Agent-heavy sessions push in rapid bursts; a newer push supersedes the
-# in-progress run for the same ref instead of queueing behind it.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+# Agent-heavy sessions push in rapid bursts. The minutes-tier build jobs
+# (kask-tests, lean-spec-pins, zed-check) each carry a per-job concurrency
+# group with cancel-in-progress: a newer push supersedes that job's
+# in-progress run for the same ref instead of queueing behind it. The
+# seconds-tier check job deliberately has NO concurrency group: every
+# push's check runs to completion, so a red verdict is never erased by a
+# superseding push (the EUREKA-3 erasure finding, 2026-10-24 — under the
+# former workflow-level cancellation, four stale diagram rows and other
+# drift shipped while red check runs were cancelled mid-flight).
 
 jobs:
   goal-traceability-advisory:
@@ -169,6 +173,10 @@ jobs:
 
   check:
     runs-on: ubuntu-latest
+    # Seconds-tier: NO concurrency group — every push's check runs to
+    # completion, so a red verdict is never erased by a superseding push
+    # (the EUREKA-3 erasure finding; the minutes-tier jobs below keep
+    # their per-job cancellation groups).
     steps:
       - uses: actions/checkout@v4
       - name: §13.1 — no hKask crate depends on a zed-kask crate
@@ -269,6 +277,11 @@ jobs:
   lean-spec-pins:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Minutes-tier: a newer push supersedes this job's in-progress run
+    # for the same ref instead of queueing behind it.
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-lean-spec-pins
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
       - name: Lean toolchain cache — elan v4.2.4 + the pinned leanprover/lean4:v4.34.0
@@ -284,6 +297,11 @@ jobs:
     # Cold builds compile vendored FFmpeg + the full kask dependency graph
     # on a 4-core runner; rust-cache makes subsequent runs much faster.
     timeout-minutes: 60
+    # Minutes-tier: a newer push supersedes this job's in-progress run
+    # for the same ref instead of queueing behind it.
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-kask-tests
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
@@ -326,6 +344,11 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    # Minutes-tier: a newer push supersedes this job's in-progress run
+    # for the same ref instead of queueing behind it.
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-zed-check
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
