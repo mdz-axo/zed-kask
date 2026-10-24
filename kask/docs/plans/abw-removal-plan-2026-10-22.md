@@ -1,3 +1,13 @@
+---
+title: "ABW removal plan — collapse the swarm server and panel to local-only"
+audience: [architects, developers, agents]
+last_updated: 2026-10-22
+version: "1.0.0"
+status: "Active"
+domain: "Swarm"
+mds_categories: [domain, lifecycle]
+---
+
 # ABW Removal Plan — Collapse the Swarm Server and Panel to Local-Only
 
 Status: **reviewed, awaiting operator go** (no destructive edit has been made)

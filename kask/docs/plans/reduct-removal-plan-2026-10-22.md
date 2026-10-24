@@ -1,3 +1,13 @@
+---
+title: "Reduct.cloud removal plan"
+audience: [architects, developers, agents]
+last_updated: 2026-10-22
+version: "1.0.0"
+status: "Active"
+domain: "Media"
+mds_categories: [domain, lifecycle]
+---
+
 # Reduct.cloud removal plan — 2026-10-22
 
 Operator-authorized removal of the live Reduct.video cloud capability from the

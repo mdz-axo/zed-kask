@@ -1,3 +1,13 @@
+---
+title: "Eureka-cycle implementation plan"
+audience: [architects, developers, operators]
+last_updated: 2026-10-23
+version: "1.0.0"
+status: "Active"
+domain: "Experimentation"
+mds_categories: [domain, composition, lifecycle]
+---
+
 # Eureka-cycle implementation plan — 2026-10-23
 
 Status: **draft, awaiting operator review** (no implementation edit has been made; this

@@ -1,3 +1,13 @@
+---
+title: "Instrument-affordance experiment: compliance baseline, harness bring-up record, and the production sensor/injection specs"
+audience: [architects, developers, operators]
+last_updated: 2026-10-23
+version: "1.0.0"
+status: "Active"
+domain: "Agent instrumentation"
+mds_categories: [domain, trust, lifecycle]
+---
+
 # Instrument-affordance experiment: compliance baseline, harness bring-up record, and the production sensor/injection specs
 
 Date: 2026-10-23. Status: experiment resolved (rejected at the declared bar; mechanism-consistent
