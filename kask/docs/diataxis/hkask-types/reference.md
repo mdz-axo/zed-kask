@@ -54,7 +54,6 @@ classDiagram
     class tool_schema
     class voice
     class sql_impls
-    class url_utils
     class visibility
     hkask_types o-- agent_paths
     hkask_types o-- block_provenance
@@ -84,7 +83,6 @@ classDiagram
     hkask_types o-- tool_schema
     hkask_types o-- voice
     hkask_types o-- sql_impls
-    hkask_types o-- url_utils
     hkask_types o-- visibility
 ```
 
@@ -119,7 +117,6 @@ items are re-exported; `sql_impls` is feature-gated
 | `time` | RFC 3339 timestamp helpers | `kask/crates/hkask-types/src/time.rs:18-44` |
 | `tool_response` | tool envelopes, parsing, error classification, display hints | `kask/crates/hkask-types/src/tool_response.rs:30-196` |
 | `tool_schema` | `AnyJsonValue` JSON-text wire codec, native object-map codec and boolean-schema inspection | `kask/crates/hkask-types/src/tool_schema.rs` (`AnyJsonValue`, `json_text_schema`, `deserialize_json_text_object`) |
-| `url_utils` | YouTube ID extraction | `kask/crates/hkask-types/src/url_utils.rs:13-35` |
 | `visibility` | visibility, access control, confidence, and 5W1H dimension | `kask/crates/hkask-types/src/visibility.rs:34-269` |
 | `voice` | `VoiceDesign` | `kask/crates/hkask-types/src/voice.rs:15-63` |
 | `ytdlp` | yt-dlp candidate paths, version parsing, and selection policy | `kask/crates/hkask-types/src/ytdlp.rs:3-25` |

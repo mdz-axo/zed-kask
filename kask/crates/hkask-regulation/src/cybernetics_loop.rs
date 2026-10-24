@@ -508,25 +508,6 @@ impl CyberneticsLoop {
         self
     }
 
-    /// Wire a context-server health source after construction.
-    ///
-    /// Used by the composition root to lazily wire the sensor after the
-    /// per-project `ContextServerStore` is available. The `with_*` builder
-    /// method can't be used there because the loop is already wrapped in
-    /// `Arc<RwLock<...>>` by the time the store exists.
-    pub fn set_context_server_health_source(
-        &mut self,
-        source: Arc<dyn crate::sensor_provider::ContextServerHealthSource>,
-    ) {
-        self.sensor_registry.replace(
-            crate::loops::SignalMetric::ContextServerHealth,
-            Arc::new(crate::sensor_provider::ContextServerHealthSensor::new(
-                Arc::clone(&source),
-            )),
-        );
-        self.context_server_health_source = Some(source);
-    }
-
     /// Wire a memory health source after construction.
     ///
     /// Used by the composition root to lazily wire the sensor after the

@@ -811,12 +811,6 @@ impl MemoryStore {
         )?)
     }
 
-    /// Delete one exact embedding ID without touching sibling passages that
-    /// share the same entity_ref.
-    pub fn delete_embedding_by_id(&self, id: &str) -> Result<(), MemoryStoreError> {
-        Ok(self.embedding.delete_by_id(id)?)
-    }
-
     /// Delete the exact embedding row for one (entity_ref, passage) pair,
     /// preserving sibling passages under the same entity_ref — the surgical
     /// delete the model-mismatch re-embed uses to retire a stale-model row

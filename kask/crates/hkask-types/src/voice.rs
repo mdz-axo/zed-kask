@@ -66,63 +66,6 @@ impl Default for VoiceDesign {
     }
 }
 
-impl VoiceDesign {
-    /// Map this voice design to the closest ElevenLabs voice preset.
-    ///
-    /// ElevenLabs-compatible voice presets:
-    /// Rachel (default, warm feminine), Aria (soft feminine), Roger (confident masculine),
-    /// Sarah (warm feminine), Laura (calm feminine), Charlie (friendly masculine),
-    /// George (authoritative masculine), Callum (deep masculine), River (gentle androgynous),
-    /// Liam (young masculine), Charlotte (bright feminine), Alice (clear feminine),
-    /// Matilda (young feminine), Will (warm masculine), Jessica (expressive feminine),
-    /// Eric (steady masculine), Chris (casual masculine), Brian (deep masculine),
-    /// Daniel (measured masculine), Lily (soft feminine), Bill (older masculine).
-    ///
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  self is a valid VoiceDesign with gender_presentation, age_range,
-    ///       timbre, and pitch fields set
-    /// post: returns a &'static str naming one of the known ElevenLabs voice
-    ///       presets; always returns a valid preset name (never panics)
-    pub fn to_elevenlabs_voice(&self) -> &'static str {
-        // Match on gender presentation + age + timbre
-        let feminine = self.gender_presentation == "feminine";
-        let masculine = self.gender_presentation == "masculine";
-        let young = self.age_range == "young" || self.age_range == "young-adult";
-        let senior = self.age_range == "senior";
-        let warm = self.timbre == "warm";
-        let bright = self.timbre == "bright";
-        let deep = self.timbre == "dark" || self.pitch == "low";
-
-        if feminine && warm && senior {
-            "Sarah"
-        } else if feminine && warm && young {
-            "Matilda"
-        } else if feminine && bright {
-            "Charlotte"
-        } else if feminine && deep {
-            "Laura"
-        } else if feminine {
-            "Rachel" // default feminine
-        } else if masculine && deep && senior {
-            "Bill"
-        } else if masculine && deep {
-            "George"
-        } else if masculine && warm && young {
-            "Liam"
-        } else if masculine && warm {
-            "Will"
-        } else if masculine && bright {
-            "Charlie"
-        } else if masculine {
-            "Roger" // default masculine
-        } else if young {
-            "River" // androgynous young
-        } else {
-            "Rachel" // universal default
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

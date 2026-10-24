@@ -476,44 +476,6 @@ impl LocalAgentRegistry {
             .and_then(|cards| cards.iter().find(|c| c.agent_id == agent_id).cloned())
     }
 
-    /// Whether `load` has been called (regardless of result). Used to
-    /// distinguish not-loaded from loaded-empty.
-    /// Produce a clone-specific agent id that does not collide with any card
-    /// already in the registry. The base is the cloud agent's sanitized id;
-    /// the result appends `-clone`, then `-clone-2`, `-clone-3`, etc. on
-    /// collision. Checks the in-memory cache (loaded once at entry) rather
-    /// than re-reading disk per iteration — a collision loop must not do N
-    /// disk reads. The caller is responsible for sanitizing the base id
-    /// before passing it here.
-    pub fn unique_clone_id(&self, base: &str) -> String {
-        // Load once so the cache is fresh for all collision checks below.
-        if let Err(e) = self.load() {
-            tracing::warn!(
-                target: "hkask.mcp.swarm",
-                "local registry reload failed during clone-id allocation (proceeding with cached cards): {e}"
-            );
-        }
-        let cards = self.lock_cards();
-        let taken = |candidate: &str| -> bool {
-            cards
-                .as_ref()
-                .map(|cs| cs.iter().any(|c| c.agent_id == candidate))
-                .unwrap_or(false)
-        };
-        let first = format!("{base}-clone");
-        if !taken(&first) {
-            return first;
-        }
-        let mut suffix = 2;
-        loop {
-            let candidate = format!("{first}-{suffix}");
-            if !taken(&candidate) {
-                return candidate;
-            }
-            suffix += 1;
-        }
-    }
-
     /// Write (or overwrite) a local agent card to
     /// `<dir>/<agent_id>/agent_card.json`, then reload the registry so the new
     /// card is visible to subsequent `list`/`get` calls. Cybernetic Swarm Plan
