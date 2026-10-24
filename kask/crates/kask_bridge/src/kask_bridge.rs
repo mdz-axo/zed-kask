@@ -20,8 +20,10 @@
 //! in a per-user private tmpdir (`/tmp/kask-inference-{uid}/kask-inference-{pid}-{nonce}`,
 //! 0600 in a 0700 dir) that the OS reaps on reboot or tmpdir cleanup.
 
+pub mod affordance;
 mod condenser_bridge;
 mod context_injector;
+pub use affordance::{AffordanceInjector, PortAffordanceEmbedding};
 mod credentials;
 
 mod database_maintenance;

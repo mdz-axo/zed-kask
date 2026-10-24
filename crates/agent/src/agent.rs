@@ -3382,6 +3382,83 @@ pub(crate) fn context_injector_for(
     context_injector()
 }
 
+/// Per-turn instrument-affordance injector (D94 — spec B).
+///
+/// Called from `run_turn_internal` for `UserPrompt`/`Subagent` intents with
+/// the turn's user prompt and the model-invocable skill catalog (read fresh
+/// from the published `SkillIndex`). Returns a bounded block naming the
+/// task-matched skill candidates and the exact instrument handles, appended
+/// at the END of the request — the highest-attention position, immediately
+/// before generation. This converts skill discovery from recall (the
+/// measured 0/3 primary-contract match rate in
+/// `kask/docs/research/native-first-denominator-sample.md`) into
+/// perception, without touching the digest-cached system prompt (the
+/// prefix-cache contract).
+pub trait AffordanceInjector: Send + Sync {
+    /// Match the user prompt against the catalog and return the affordance
+    /// block as request messages for the tail (empty when nothing applies).
+    fn inject_affordance<'a>(
+        &'a self,
+        catalog: &'a [(String, String)],
+        user_prompt: &'a str,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Vec<language_model::LanguageModelRequestMessage>>
+                + Send
+                + 'a,
+        >,
+    >;
+}
+
+/// Global hook for the affordance injector (D94). OnceLock — the same
+/// set-once semantics as the context injector hooks.
+static AFFORDANCE_INJECTOR: std::sync::OnceLock<Option<Arc<dyn AffordanceInjector>>> =
+    std::sync::OnceLock::new();
+
+/// Set the global affordance injector (D94 composition root).
+///
+/// OnceLock — a second wiring attempt (deferred-task re-run) is dropped
+/// with a warn, matching `set_context_injector`.
+pub fn set_affordance_injector(injector: Option<Arc<dyn AffordanceInjector>>) {
+    if let Err(prev) = AFFORDANCE_INJECTOR.set(injector) {
+        log::warn!(
+            "set_affordance_injector: hook already set — second wiring attempt dropped. \
+             The previously-wired injector remains active. \
+             Remediation: restart the app to re-wire from a clean process."
+        );
+        let _ = prev;
+    }
+}
+
+/// Get the global affordance injector, if set.
+pub(crate) fn affordance_injector() -> Option<&'static Arc<dyn AffordanceInjector>> {
+    AFFORDANCE_INJECTOR.get().and_then(|opt| opt.as_ref())
+}
+
+/// The model-invocable skill catalog as fresh `(name, description)` pairs,
+/// read from the published `SkillIndex` at the turn's injection point so
+/// mid-session skill edits take effect without a restart. Skills with
+/// `disable_model_invocation` are excluded — they are user-only and must
+/// not be surfaced to the model.
+pub fn affordance_catalog(cx: &gpui::App) -> Vec<(String, String)> {
+    cx.try_global::<agent_skills::SkillIndex>()
+        .map(|index| {
+            index
+                .global_skills
+                .iter()
+                .chain(
+                    index
+                        .project_skills
+                        .iter()
+                        .flat_map(|group| group.skills.iter()),
+                )
+                .filter(|skill| !skill.disable_model_invocation)
+                .map(|skill| (skill.name.clone(), skill.description.clone()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Thread condenser — compresses incoming tool results at ingestion time (D8).
 ///
 /// Called from the tool-result handling path in `run_turn_internal`.
@@ -5675,6 +5752,76 @@ mod internal_tests {
             2,
             "the replaced recorder must no longer receive calls"
         );
+    }
+
+    /// D94 — the affordance injector's process-global hook: unwired reads
+    /// None; wiring returns the exact instance. OnceLock, so all wiring
+    /// assertions stay in ONE test (the InertInjector precedent). The
+    /// inert impl keeps the permanent wiring observationally inert for
+    /// parallel tests — and the call site additionally gates on
+    /// `kask.affordance.enabled` (default false), so no other test can
+    /// observe an injection.
+    struct InertAffordanceInjector;
+
+    impl AffordanceInjector for InertAffordanceInjector {
+        fn inject_affordance<'a>(
+            &'a self,
+            _catalog: &'a [(String, String)],
+            _user_prompt: &'a str,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Vec<language_model::LanguageModelRequestMessage>>
+                    + Send
+                    + 'a,
+            >,
+        > {
+            Box::pin(std::future::ready(Vec::new()))
+        }
+    }
+
+    #[test]
+    fn affordance_injector_dispatch_returns_the_wired_instance() {
+        assert!(
+            affordance_injector().is_none(),
+            "unwired hook must read None"
+        );
+        let injector: Arc<dyn AffordanceInjector> = Arc::new(InertAffordanceInjector);
+        set_affordance_injector(Some(injector.clone()));
+        let dispatched = affordance_injector().expect("wired hook must dispatch");
+        assert!(Arc::ptr_eq(dispatched, &injector));
+    }
+
+    /// D94 — the catalog read is fresh from the published `SkillIndex` and
+    /// excludes `disable_model_invocation` skills (user-only skills must
+    /// not be surfaced to the model).
+    #[gpui::test]
+    async fn affordance_catalog_reads_published_skills_and_excludes_user_only(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let invocable = agent_skills::parse_skill_frontmatter(
+                std::path::Path::new("/skills/invocable/SKILL.md"),
+                "---\nname: invocable\ndescription: surfaced\n---\n",
+                agent_skills::SkillSource::Global,
+            )
+            .expect("invocable skill parses");
+            let user_only = agent_skills::parse_skill_frontmatter(
+                std::path::Path::new("/skills/user-only/SKILL.md"),
+                "---\nname: user-only\ndescription: hidden\ndisable-model-invocation: true\n---\n",
+                agent_skills::SkillSource::Global,
+            )
+            .expect("user-only skill parses");
+            cx.set_global(agent_skills::SkillIndex::from_agent(
+                vec![invocable, user_only],
+                Vec::new(),
+            ));
+            let catalog = affordance_catalog(cx);
+            assert_eq!(
+                catalog,
+                vec![("invocable".to_string(), "surfaced".to_string())],
+                "user-only skills must not be surfaced"
+            );
+        });
     }
 
     /// An injector that recalls nothing. Wiring it must be observationally

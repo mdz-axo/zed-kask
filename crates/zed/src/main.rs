@@ -1955,6 +1955,13 @@ fn main() {
                         // env.
                         let template_root = kask_settings.resolved_template_root();
 
+                        // zed-kask: D94 — spec B: keep the embedding port and
+                        // model string alive past the RealMemoryPort move for
+                        // the affordance injector wiring below (same deferred
+                        // task, after the context injector).
+                        let (embedding_port_for_affordance, embedding_model_for_affordance) =
+                            (embedding_port.clone(), embedding_model.clone());
+
                         match kask_bridge::RealMemoryPort::new(
                             &passphrase,
                             embedding_model,
@@ -2081,6 +2088,42 @@ fn main() {
                                     "hKask context injector wired (agent: {agent_name}, \
                                      auto_inject={auto_inject})"
                                 );
+
+                                // zed-kask: D94 — spec B: wire the per-turn
+                                // instrument-affordance injector (task-matched
+                                // skill candidates at the request tail). The
+                                // `kask.affordance.enabled` gate is read per
+                                // turn at the call site, so this wiring is
+                                // unconditional — an off flag keeps the hook
+                                // inert and a settings flip applies without a
+                                // restart. OnceLock semantics: a re-run
+                                // deferred task drops the second wiring with
+                                // a warn.
+                                if let Some(embedding_port) = embedding_port_for_affordance {
+                                    agent::set_affordance_injector(Some(std::sync::Arc::new(
+                                        kask_bridge::AffordanceInjector::new(
+                                            std::sync::Arc::new(
+                                                kask_bridge::PortAffordanceEmbedding::new(
+                                                    embedding_port,
+                                                    embedding_model_for_affordance,
+                                                ),
+                                            ),
+                                        ),
+                                    )));
+                                    log::info!(
+                                        "hKask affordance injector wired (gated by \
+                                         kask.affordance.enabled; embedding model: \
+                                         {embedding_model_for_affordance})"
+                                    );
+                                } else {
+                                    log::warn!(
+                                        "hKask affordance injector not wired — embedding \
+                                         port unavailable, so task-matched skill suggestions \
+                                         cannot run (semantic memory recall is in the same \
+                                         degraded state; remediation is the embedding \
+                                         provider's API key)"
+                                    );
+                                }
 
                                 // Wire the memory health source into the cybernetics
                                 // loop so it can sense memory growth, low-confidence

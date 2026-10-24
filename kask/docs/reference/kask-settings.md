@@ -216,6 +216,20 @@ These are the only `KaskCuratorEmailSettings` fields (`kask/crates/kask_bridge/s
 When `email` is `None` or unconfigured, the alert email sink falls back to the
 log-only sink (`LogAlertEmailSink` in `crates/zed/src/main.rs`).
 
+## Affordance (`KaskAffordanceSettings`)
+
+Per-turn instrument-affordance injection (D94, spec B): for substantive
+prompts (≥ 20 words), the skill catalog is matched to the request by embedding
+similarity and the top-3 candidates are surfaced with their exact invocation
+handles in a bounded block at the request tail — converting skill discovery
+from recall into perception (the measured failure: 100% activation when a
+skill is named, 0/3 primary-contract discovery otherwise —
+`research/native-first-denominator-sample.md`).
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `enabled` | `bool` | `false` | Read per turn — a flip applies to the next turn without a restart. Default off so the operator controls the pre/post boundary against the native-first-rate baseline; see `research/instrument-affordance-experiment.md` §5 for the mechanism and the next experiment (n ≥ 30). |
+
 ## Guard
 
 There is no `KaskGuardSettings` struct. Direct chat is unguarded (provider-side safety + refusal fallback); the guard only wraps the skill cascade path. There is no configurable `direct_chat_strategy` — the `cascade_only` behavior is hardcoded.[^owasp-llm-guard-settings]

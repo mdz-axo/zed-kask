@@ -3379,22 +3379,22 @@ impl Thread {
                 let agent_id = this
                     .read_with(cx, |this, _| this.kask.agent_id().clone())
                     .ok();
+                let user_prompt = request
+                    .messages
+                    .iter()
+                    .rev()
+                    .find(|m| m.role == Role::User)
+                    .and_then(|m| {
+                        m.content.iter().find_map(|c| match c {
+                            MessageContent::Text(text) => Some(text.clone()),
+                            _ => None,
+                        })
+                    })
+                    .unwrap_or_default();
                 if let Some(injector) = crate::context_injector_for(agent_id.as_ref()) {
                     let thread_id = this
                         .read_with(cx, |this, _| this.id.to_string())
                         .ok()
-                        .unwrap_or_default();
-                    let user_prompt = request
-                        .messages
-                        .iter()
-                        .rev()
-                        .find(|m| m.role == Role::User)
-                        .and_then(|m| {
-                            m.content.iter().find_map(|c| match c {
-                                MessageContent::Text(text) => Some(text.clone()),
-                                _ => None,
-                            })
-                        })
                         .unwrap_or_default();
                     if !user_prompt.is_empty() {
                         let injected = injector.inject_context(&thread_id, &user_prompt).await;
@@ -3402,6 +3402,40 @@ impl Thread {
                             // Insert after the system prompt (index 0)
                             request.messages.splice(1..1, injected);
                             log::debug!("Injected {} context messages", request.messages.len() - 1);
+                        }
+                    }
+                }
+
+                // zed-kask: D94 — spec B: per-turn instrument-affordance
+                // injection. The block rides the request TAIL (immediately
+                // before generation — the highest-attention position), not
+                // the early splice memory recall uses, and never touches the
+                // digest-cached system prompt (the prefix-cache contract).
+                // The `kask.affordance.enabled` gate is read per turn, so a
+                // settings flip applies on the next turn without a restart;
+                // the catalog is read fresh from the published `SkillIndex`.
+                let affordance_input = this
+                    .read_with(cx, |_, cx| {
+                        let enabled = cx
+                            .global::<settings::SettingsStore>()
+                            .merged_settings()
+                            .kask
+                            .as_ref()
+                            .and_then(|kask| kask.affordance.as_ref())
+                            .and_then(|affordance| affordance.enabled)
+                            .unwrap_or(false);
+                        enabled.then(|| crate::affordance_catalog(cx))
+                    })
+                    .ok()
+                    .flatten();
+                if let (Some(catalog), Some(affordance)) =
+                    (affordance_input, crate::affordance_injector())
+                {
+                    if !catalog.is_empty() && !user_prompt.is_empty() {
+                        let block = affordance.inject_affordance(&catalog, &user_prompt).await;
+                        if !block.is_empty() {
+                            request.messages.extend(block);
+                            log::debug!("Appended instrument-affordance block to the request tail");
                         }
                     }
                 }

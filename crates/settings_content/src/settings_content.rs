@@ -1654,6 +1654,14 @@ pub struct KaskSettingsContent {
     #[serde(default)]
     pub curator: Option<KaskCuratorSettingsContent>,
 
+    /// Per-turn instrument-affordance injection (spec B): surfaces the
+    /// task-matched skill candidates and the exact instrument handles at
+    /// the request tail for substantive prompts. Default false — flip
+    /// after reading the native-first-rate baseline so the pre/post
+    /// comparison stays clean.
+    #[serde(default)]
+    pub affordance: Option<KaskAffordanceSettingsContent>,
+
     /// Memory consolidation and recall configuration.
     #[serde(default)]
     pub memory: Option<KaskMemorySettingsContent>,
@@ -1691,6 +1699,21 @@ pub struct KaskSettingsContent {
     /// `"openrouter/z-ai/glm-5.2"`) that override the kask defaults.
     #[serde(default)]
     pub models: Option<KaskModelsSettingsContent>,
+}
+
+/// Per-turn instrument-affordance injection (D94, spec B). Surfaces the
+/// task-matched skill candidates and the exact instrument handles in a
+/// bounded block at the request tail — converting skill discovery from
+/// recall into perception (the measured failure: 100% activation when the
+/// operator names a skill, 0/3 primary-contract discovery otherwise).
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskAffordanceSettingsContent {
+    /// Inject the per-turn affordance block. Default `false`: the operator
+    /// enables it after reading the native-first-rate baseline
+    /// (`kask/docs/research/instrument-affordance-experiment.md`), keeping
+    /// the pre/post comparison clean. Flips apply to the next turn
+    /// without a restart (read per turn at the call site).
+    pub enabled: Option<bool>,
 }
 
 /// Kask-wide general configuration for inference admission, deadlines, and
