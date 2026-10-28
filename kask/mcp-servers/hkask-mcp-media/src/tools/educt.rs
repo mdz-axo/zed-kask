@@ -882,7 +882,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "List stored transcripts, optionally filtered by media path or gallery asset ID, newest first. Each summary carries words_count and has_word_timings so degradations are visible per record."
+        description = "List stored transcripts, optionally filtered by media path or gallery asset ID, newest first. Each summary carries words_count, has_word_timings, and the five-state alignment (original, aligned, re_anchored, unaligned, untimed) so degradations and annotation capability are visible per record — the alignment is the same working-transcript computation the workspace gate uses, never an approximation."
     )]
     pub async fn educt_list_transcripts(
         &self,
@@ -901,9 +901,29 @@ impl MediaServer {
             };
             let summaries =
                 transcript_store::list_transcripts(driver, &filter).map_err(map_store_error)?;
+            let mut transcripts = Vec::with_capacity(summaries.len());
+            for summary in summaries {
+                // Enrich each row with its alignment — the same
+                // working_transcript computation the workspace gate uses,
+                // so the browser's flag can never disagree with the opened
+                // view (D5: one projection, never a re-implementation). A
+                // transcript deleted between the list read and this load
+                // drops out of the listing.
+                let Some((_, bundle)) = transcript_store::load_transcript(driver, &summary.id)
+                    .map_err(map_store_error)?
+                else {
+                    continue;
+                };
+                let working = working_transcript(driver, &summary.id, &bundle)?;
+                let mut row = serde_json::to_value(&summary)
+                    .map_err(|error| McpToolError::internal(format!("summary: {error}")))?;
+                row["alignment"] = serde_json::to_value(&working.alignment)
+                    .map_err(|error| McpToolError::internal(format!("alignment: {error}")))?;
+                transcripts.push(row);
+            }
             Ok(serde_json::json!({
-                "transcripts": summaries,
-                "count": summaries.len(),
+                "transcripts": transcripts,
+                "count": transcripts.len(),
             }))
         })
         .await
@@ -2671,6 +2691,120 @@ mod researcher_tests {
             "the refusal names the reason: {}",
             error.message
         );
+        Ok(())
+    }
+
+    /// expect: Transcript listings carry the five-state alignment per row —
+    /// original, aligned (cardinality-preserving correction), unaligned
+    /// (cardinality-changing correction), re_anchored (after the
+    /// realignment decision), and untimed — computed by the same
+    /// working-transcript path the workspace gate uses. [P1]
+    #[tokio::test]
+    async fn transcript_listings_carry_alignment_for_every_state()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server = research_server();
+        let driver = &**server.gallery_store.driver();
+        // Original: a timed transcript with no corrections.
+        let original = transcript_store::store_transcript(
+            driver,
+            &recording("/missing/original.wav", &["a", "fracture", "here"]),
+            None,
+        )?;
+        // Untimed: no word timings at all.
+        let untimed = transcript_store::store_transcript(
+            driver,
+            &TranscriptBundle::new("/missing/untimed.wav".into(), 0.0, "no timings".into()),
+            None,
+        )?;
+        // Aligned: a correction whose replacement keeps the word count.
+        let aligned = transcript_store::store_transcript(
+            driver,
+            &recording("/missing/aligned.wav", &["a", "b", "c"]),
+            None,
+        )?;
+        transcript_store::store_layer(
+            driver,
+            &aligned.id,
+            &TranscriptLayer::Correction(crate::transcript_layers::CorrectionLayer {
+                provenance: LayerProvenance {
+                    model: "test".into(),
+                    prompt_template: "correction_pass".into(),
+                    created_at: "2026-10-27T00:00:00Z".into(),
+                },
+                edits: vec![crate::transcript_layers::CorrectionEdit {
+                    start_word: 0,
+                    end_word: 0,
+                    replacement: "alpha".into(),
+                    reason: "same token count".into(),
+                }],
+            }),
+        )?;
+        // Unaligned: a correction that changes the word count.
+        let corrected = transcript_store::store_transcript(
+            driver,
+            &recording("/missing/unaligned.wav", &["a", "b", "c"]),
+            None,
+        )?;
+        let correction = transcript_store::store_layer(
+            driver,
+            &corrected.id,
+            &TranscriptLayer::Correction(crate::transcript_layers::CorrectionLayer {
+                provenance: LayerProvenance {
+                    model: "test".into(),
+                    prompt_template: "correction_pass".into(),
+                    created_at: "2026-10-27T00:00:01Z".into(),
+                },
+                edits: vec![crate::transcript_layers::CorrectionEdit {
+                    start_word: 0,
+                    end_word: 0,
+                    replacement: "one two".into(),
+                    reason: "cardinality change".into(),
+                }],
+            }),
+        )?;
+        let listed = payload(
+            &server
+                .educt_list_transcripts(Parameters(crate::types::EductListTranscriptsRequest {
+                    media_path: None,
+                    gallery_asset_id: None,
+                    limit: None,
+                }))
+                .await?,
+        );
+        let rows = listed["transcripts"].as_array().ok_or("rows")?;
+        let alignment_of = |id: &str| -> Result<&str, Box<dyn std::error::Error>> {
+            rows.iter()
+                .find(|row| row["id"] == id)
+                .and_then(|row| row["alignment"].as_str())
+                .ok_or_else(|| format!("no alignment for {id}").into())
+        };
+        assert_eq!(alignment_of(&original.id)?, "original");
+        assert_eq!(alignment_of(&untimed.id)?, "untimed");
+        assert_eq!(alignment_of(&aligned.id)?, "aligned");
+        assert_eq!(alignment_of(&corrected.id)?, "unaligned");
+        // The realignment decision moves the row to re_anchored.
+        server
+            .educt_realign_transcript(Parameters(crate::types::EductRealignTranscriptRequest {
+                transcript_id: corrected.id.clone(),
+                layer_id: Some(correction.id),
+            }))
+            .await?;
+        let listed = payload(
+            &server
+                .educt_list_transcripts(Parameters(crate::types::EductListTranscriptsRequest {
+                    media_path: None,
+                    gallery_asset_id: None,
+                    limit: None,
+                }))
+                .await?,
+        );
+        let rows = listed["transcripts"].as_array().ok_or("rows")?;
+        let realigned = rows
+            .iter()
+            .find(|row| row["id"] == corrected.id)
+            .and_then(|row| row["alignment"].as_str())
+            .ok_or("no alignment after realignment")?;
+        assert_eq!(realigned, "re_anchored");
         Ok(())
     }
 }

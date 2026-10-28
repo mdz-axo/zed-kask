@@ -63,6 +63,9 @@ struct TranscriptSummaryRow {
     media_path: String,
     words_count: u64,
     has_word_timings: bool,
+    /// The five-state alignment (original, aligned, re_anchored, unaligned,
+    /// untimed) — what the row's capability note keys on.
+    alignment: String,
 }
 
 /// A working-view word as the pane renders it (S3a renders paragraph text
@@ -3510,34 +3513,39 @@ impl MediaViewer {
                     "no word timings"
                 };
                 let transcript_id = transcript.id.clone();
-                sections = sections.child(
-                    div()
-                        .id(SharedString::from(format!(
-                            "media-detail-open-{}",
-                            transcript.id
-                        )))
-                        .cursor_pointer()
-                        .flex()
-                        .flex_wrap()
-                        .gap_2()
-                        .hover(|el| el.bg(cx.theme().colors().element_hover))
-                        .child(
-                            Label::new(SharedString::from(transcript.id.clone()))
-                                .size(LabelSize::XSmall)
-                                .color(ui::Color::Muted),
-                        )
-                        .child(
-                            Label::new(SharedString::from(format!(
-                                "{} words, {timings}",
-                                transcript.words_count
-                            )))
+                let mut row = div()
+                    .id(SharedString::from(format!(
+                        "media-detail-open-{}",
+                        transcript.id
+                    )))
+                    .cursor_pointer()
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .hover(|el| el.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Label::new(SharedString::from(transcript.id.clone()))
                             .size(LabelSize::XSmall)
-                            .color(ui::Color::Default),
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.open_transcript(transcript_id.clone(), cx);
-                        })),
-                );
+                            .color(ui::Color::Muted),
+                    )
+                    .child(
+                        Label::new(SharedString::from(format!(
+                            "{} words, {timings}",
+                            transcript.words_count
+                        )))
+                        .size(LabelSize::XSmall)
+                        .color(ui::Color::Default),
+                    );
+                if let Some(note) = transcript_alignment_note(&transcript.alignment) {
+                    row = row.child(
+                        Label::new(SharedString::from(note))
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Error),
+                    );
+                }
+                sections = sections.child(row.on_click(cx.listener(move |this, _, _, cx| {
+                    this.open_transcript(transcript_id.clone(), cx);
+                })));
             }
         }
         if let ResourceState::Failed(error) = &self.detail_transcripts_request.state {
@@ -4300,29 +4308,37 @@ impl MediaViewer {
                 "no word timings"
             };
             let transcript_id = transcript.id.clone();
-            sections = sections.child(
-                div()
-                    .id(SharedString::from(format!(
-                        "media-transcript-open-{}",
-                        transcript.id
+            let mut row = div()
+                .id(SharedString::from(format!(
+                    "media-transcript-open-{}",
+                    transcript.id
+                )))
+                .cursor_pointer()
+                .flex()
+                .flex_wrap()
+                .gap_2()
+                .hover(|el| el.bg(cx.theme().colors().element_hover))
+                .child(
+                    Label::new(SharedString::from(format!(
+                        "{} — {} words, {timings}",
+                        transcript.media_path, transcript.words_count
                     )))
-                    .cursor_pointer()
-                    .flex()
-                    .flex_wrap()
-                    .gap_2()
-                    .hover(|el| el.bg(cx.theme().colors().element_hover))
-                    .child(
-                        Label::new(SharedString::from(format!(
-                            "{} — {} words, {timings}",
-                            transcript.media_path, transcript.words_count
-                        )))
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Default),
+                );
+            // The capability note says what a click opens before the click:
+            // gated recordings flag their read-only state on the row rather
+            // than surfacing the gate inside the workspace.
+            if let Some(note) = transcript_alignment_note(&transcript.alignment) {
+                row = row.child(
+                    Label::new(SharedString::from(note))
                         .size(LabelSize::XSmall)
-                        .color(ui::Color::Default),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.open_transcript(transcript_id.clone(), cx);
-                    })),
-            );
+                        .color(ui::Color::Error),
+                );
+            }
+            sections = sections.child(row.on_click(cx.listener(move |this, _, _, cx| {
+                this.open_transcript(transcript_id.clone(), cx);
+            })));
         }
         v_flex()
             .id("media-viewer-transcript-browser")
@@ -4642,14 +4658,42 @@ fn parse_transcript_listing(payload: &Value) -> Result<Vec<TranscriptSummaryRow>
                 .get("has_word_timings")
                 .and_then(Value::as_bool)
                 .ok_or_else(|| "transcript summary has no has_word_timings.".to_string())?;
+            let alignment = object
+                .get("alignment")
+                .and_then(Value::as_str)
+                .filter(|alignment| {
+                    matches!(
+                        *alignment,
+                        "original" | "aligned" | "re_anchored" | "unaligned" | "untimed"
+                    )
+                })
+                .ok_or_else(|| {
+                    "transcript summary has no valid alignment (original, aligned, re_anchored, unaligned, or untimed)."
+                        .to_string()
+                })?
+                .to_string();
             Ok(TranscriptSummaryRow {
                 id: id.to_string(),
                 media_path: media_path.to_string(),
                 words_count,
                 has_word_timings,
+                alignment,
             })
         })
         .collect()
+}
+
+/// The recordings-browser / Detail row's capability note for a transcript's
+/// alignment — None for the hand-annotatable states (the Reduct-normal
+/// default: every row is an editable bundle unless flagged), a named gate
+/// note for the read-only ones, so the entry surfaces say what a click
+/// opens (the F10 alignment flags, 2026-10-27).
+fn transcript_alignment_note(alignment: &str) -> Option<&'static str> {
+    match alignment {
+        "re_anchored" => Some("re-anchored — read view (annotation gated)"),
+        "unaligned" => Some("unaligned — needs a realignment layer"),
+        _ => None,
+    }
 }
 
 /// The reel-provenance line for the Detail view, from the detail payload's
@@ -7591,8 +7635,8 @@ mod tests {
     fn transcript_listing_is_strict() {
         let valid = serde_json::json!({
             "transcripts": [
-                {"id": "caa6566e", "media_path": "/generated/vonnegut.mp4", "words_count": 558, "has_word_timings": true},
-                {"id": "t-untimed", "media_path": "/generated/plain.mp3", "words_count": 12, "has_word_timings": false}
+                {"id": "caa6566e", "media_path": "/generated/vonnegut.mp4", "words_count": 558, "has_word_timings": true, "alignment": "re_anchored"},
+                {"id": "t-untimed", "media_path": "/generated/plain.mp3", "words_count": 12, "has_word_timings": false, "alignment": "untimed"}
             ],
             "count": 2
         });
@@ -7604,12 +7648,14 @@ mod tests {
                     media_path: "/generated/vonnegut.mp4".into(),
                     words_count: 558,
                     has_word_timings: true,
+                    alignment: "re_anchored".into(),
                 },
                 TranscriptSummaryRow {
                     id: "t-untimed".into(),
                     media_path: "/generated/plain.mp3".into(),
                     words_count: 12,
                     has_word_timings: false,
+                    alignment: "untimed".into(),
                 }
             ])
         );
@@ -7622,6 +7668,8 @@ mod tests {
             r#"{"transcripts": [{"id": "t", "words_count": 3}], "count": 1}"#,
             r#"{"transcripts": [{"id": "t", "media_path": "", "words_count": 3}], "count": 1}"#,
             r#"{"transcripts": [{"id": "t", "has_word_timings": true}], "count": 1}"#,
+            r#"{"transcripts": [{"id": "t", "media_path": "/m", "words_count": 3, "has_word_timings": true}], "count": 1}"#,
+            r#"{"transcripts": [{"id": "t", "media_path": "/m", "words_count": 3, "has_word_timings": true, "alignment": "sideways"}], "count": 1}"#,
             r#"{"transcripts": ["t"], "count": 1}"#,
             r#"{}"#,
         ] {
@@ -7631,6 +7679,25 @@ mod tests {
                 "expected rejection for {invalid}"
             );
         }
+    }
+
+    /// dcterms:identifier: `transcript_alignment_note`
+    /// expect: The hand-annotatable states carry no note (the default row IS
+    /// the editable bundle); the gated states name their gate, and untimed
+    /// rows rely on the row's existing no-timings text. [P1]
+    #[test]
+    fn transcript_alignment_note_marks_gated_recordings_only() {
+        assert_eq!(transcript_alignment_note("original"), None);
+        assert_eq!(transcript_alignment_note("aligned"), None);
+        assert_eq!(transcript_alignment_note("untimed"), None);
+        assert_eq!(
+            transcript_alignment_note("re_anchored"),
+            Some("re-anchored — read view (annotation gated)")
+        );
+        assert_eq!(
+            transcript_alignment_note("unaligned"),
+            Some("unaligned — needs a realignment layer")
+        );
     }
 
     /// dcterms:identifier: `parse_reel_provenance`
@@ -7684,6 +7751,7 @@ mod tests {
                     media_path: "/generated/new.mp4".into(),
                     words_count: 4,
                     has_word_timings: true,
+                    alignment: "original".into(),
                 }]),
                 cx,
             );
@@ -7704,6 +7772,7 @@ mod tests {
                         media_path: "/generated/new.mp4".into(),
                         words_count: 4,
                         has_word_timings: true,
+                        alignment: "original".into(),
                     }][..]
                 )
             );

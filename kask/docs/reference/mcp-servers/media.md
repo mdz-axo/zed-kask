@@ -627,11 +627,18 @@ direct-manipulation workspace — no agent turn in the loop
 
 - **Browse**: the Transcript tab's idle state lists every stored recording
   (`educt_list_transcripts` at the server's 500 cap; media path + words +
-  timings per row, lifecycle-protected at `load_transcript_listing`,
-  media_viewer.rs:1761); click opens the workspace, and an in-workspace
+  timings + the five-state alignment per row, lifecycle-protected at
+  `load_transcript_listing`, media_viewer.rs:1764) — hand-annotatable rows
+  (original/aligned) carry no extra flag; gated rows say so before the
+  click (`transcript_alignment_note`: "re-anchored — read view (annotation
+  gated)", "unaligned — needs a realignment layer"; untimed rows carry the
+  no-timings text). The alignment is the same working-transcript
+  computation the workspace gate uses, so the browser never disagrees
+  with the opened view. Click opens the workspace, and an in-workspace
   `← all recordings` affordance returns to the browser
   (`close_transcript_workspace`, :1660). Per-asset transcripts remain
-  visible in Detail's section alongside reel provenance.
+  visible in Detail's section alongside reel provenance, carrying the same
+  alignment note.
 - **Workspace**: one strict-parsed `educt_get_transcript` dispatch
   (`parse_transcript_payload`, media_viewer.rs:5294) drives everything:
   paragraph blocks (`build_pane_blocks`, :5183), speaker labels, the layers

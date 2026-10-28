@@ -258,9 +258,12 @@ a failed listing surfaces an unavailable note, never silence.
 
 The Transcript tab is the direct transcript workspace — no agent turn in the
 loop. Its idle state is the recordings browser
-(`load_transcript_listing` :1761); clicking a row opens the workspace
-(`open_transcript` :1642), and an in-workspace `← all recordings` affordance
-returns (`close_transcript_workspace` :1660).
+(`load_transcript_listing` :1764); each row carries the transcript's
+five-state alignment, and the gated states (re-anchored, unaligned) flag
+their read-only status on the row (`transcript_alignment_note` :4691) —
+the entry surface says what a click opens. Clicking a row opens the
+workspace (`open_transcript` :1642), and an in-workspace `← all recordings`
+affordance returns (`close_transcript_workspace` :1660).
 
 - **Workspace**: one strict `educt_get_transcript` dispatch
   (`parse_transcript_payload` :5294) drives paragraph blocks
@@ -371,6 +374,7 @@ widget as of this edit (method: grep for `playback_speed`, `set_rate`,
 | Job list, polling, status, and cancellation | supplied |
 | Recordings browse + transcript workspace with synced reading | supplied |
 | Researcher highlight create/rename/delete via label editor | supplied |
+| Per-recording alignment flag on the browser and Detail rows | supplied (2026-10-27) |
 | Researcher strike (strikethrough cut) with line-through overlay and unstrike | supplied (2026-10-27) |
 | Reel compose (assemble/reduce/mixed), clip toggles, render, and play | supplied (2026-10-27) |
 | Researcher tags/notes create/replace/delete in Detail | supplied (2026-10-27) |
