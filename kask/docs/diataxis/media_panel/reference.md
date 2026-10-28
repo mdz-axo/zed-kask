@@ -111,7 +111,7 @@ classDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MEDIA-PANEL-001
 verified_date: 2026-10-27
-verified_against: crates/media_panel/src/media_panel.rs:101-121 (MediaPanel fields); crates/media_panel/src/media_viewer.rs:46-55 (RequestOwner — eight variants); crates/media_panel/src/media_viewer.rs:181-248 (ResourceState, RequestLifecycle); crates/media_panel/src/media_viewer.rs:282-378 (MediaViewer fields incl. thread, concat_queue, transcript and annotation state, eight request lifecycles)
+verified_against: crates/media_panel/src/media_panel.rs:101-121 (MediaPanel fields); crates/media_panel/src/media_viewer.rs:46-55 (RequestOwner — eight variants); crates/media_panel/src/media_viewer.rs:181-241 (ResourceState, RequestLifecycle); crates/media_panel/src/media_viewer.rs:282-382 (MediaViewer fields incl. thread, concat_queue, transcript and annotation state, eight request lifecycles)
 status: VERIFIED
 -->
 
@@ -119,7 +119,7 @@ status: VERIFIED
 
 Each asynchronous read resource has an independent `RequestLifecycle` with an epoch,
 owner, and `Idle | Loading | Ready | Failed` state
-(`crates/media_panel/src/media_viewer.rs:46-55,178-245`). `begin` suppresses duplicate
+(`crates/media_panel/src/media_viewer.rs:46-55,181-241`). `begin` suppresses duplicate
 requests for the same loading owner; a newer owner advances the epoch. Callback
 handlers mutate state only when they still own that epoch (`apply_gallery_listing`
 :859, `apply_jobs_listing` :1016, `apply_detail_result` :1150,
@@ -140,7 +140,7 @@ be hidden by a later epoch.
 | Detail annotations | stable gallery asset ID | `detail_annotations_request.owns(epoch)` | `load_detail_annotations`, :1260 |
 | Transcript workspace | transcript ID | `transcript_request.owns(epoch)` | `open_transcript`/`apply_transcript_result`, :1645,1724 |
 | Recordings listing | listing resource | `transcript_listing_request.owns(epoch)` | `load_transcript_listing`, :1764 |
-| Edit | one admitted side-effecting operation | `begin_edit` rejects overlap; `edit_request.owns(epoch)` closes it | :647,661 |
+| Edit | one admitted side-effecting operation | `begin_edit` rejects overlap; `edit_request.owns(epoch)` closes it | :647,660 |
 
 Failures retain last-good data and surface degraded status instead of clearing
 the resource: each `apply_*` handler completes its epoch into
@@ -324,7 +324,7 @@ affordance returns (`close_transcript_workspace` :1663).
 
 The selected media entity is owned directly by the viewer so trim marks and the
 playback clock remain reachable; selection replacement resolves through the
-stable-asset weak registry (`crates/media_panel/src/media_viewer.rs:279-302).
+stable-asset weak registry (`crates/media_panel/src/media_viewer.rs:282-305).
 The panel remains a vertically split viewer/director surface with a draggable
 split (`MediaPanel`, `VerticalSplitState`, and `MediaPanel::render` in
 `crates/media_panel/src/media_panel.rs`).

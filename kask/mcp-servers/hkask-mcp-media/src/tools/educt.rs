@@ -441,6 +441,21 @@ fn working_transcript(
     bundle: &TranscriptBundle,
 ) -> Result<WorkingTranscript, McpToolError> {
     let layers = transcript_store::list_layers(driver, transcript_id).map_err(map_store_error)?;
+    // The alignment state machine is total: a source with no word timings
+    // is untimed regardless of any stored layers. The store refuses
+    // corrections over untimed sources (NoWordTimings), so this guard is
+    // defense-in-depth for total semantics — every timing projection
+    // below is meaningless without source timings.
+    if bundle.words.is_empty() {
+        return Ok(WorkingTranscript {
+            text: bundle.full_text.clone(),
+            words: None,
+            alignment: WorkingTranscriptAlignment::Untimed,
+            correction_layer_id: None,
+            realignment_layer_id: None,
+            alignment_error: Some("source transcript has no word-level timings".to_string()),
+        });
+    }
     let mut corrections = layers
         .iter()
         .filter(|record| record.layer.kind() == "correction")
@@ -451,16 +466,6 @@ fn working_transcript(
             .then_with(|| left.id.cmp(&right.id))
     });
     let Some(record) = corrections.pop() else {
-        if bundle.words.is_empty() {
-            return Ok(WorkingTranscript {
-                text: bundle.full_text.clone(),
-                words: None,
-                alignment: WorkingTranscriptAlignment::Untimed,
-                correction_layer_id: None,
-                realignment_layer_id: None,
-                alignment_error: Some("source transcript has no word-level timings".to_string()),
-            });
-        }
         return Ok(WorkingTranscript {
             text: crate::transcript_select::rendered_transcript(&bundle.words),
             words: Some(bundle.words.clone()),
@@ -912,6 +917,11 @@ impl MediaServer {
                 let Some((_, bundle)) = transcript_store::load_transcript(driver, &summary.id)
                     .map_err(map_store_error)?
                 else {
+                    tracing::info!(
+                        target: "hkask.mcp.media",
+                        "transcript {} vanished between list and load; row dropped",
+                        summary.id
+                    );
                     continue;
                 };
                 let working = working_transcript(driver, &summary.id, &bundle)?;
@@ -2348,7 +2358,10 @@ mod researcher_tests {
         };
         let result = payload(&server.educt_annotation_create(create()).await?);
         assert_eq!(result["provenance"], "researcher_supplied");
-        assert_eq!(result["layer"]["provenance"]["model"], "user");
+        assert_eq!(
+            result["layer"]["provenance"]["model"],
+            crate::transcript_layers::RESEARCHER_ANNOTATION_MODEL
+        );
         assert_eq!(result["word_index_basis"], "immutable_source");
         assert_eq!(result["layer"]["highlights"][0]["start_word"], 1);
         let annotation_id = result["annotation_id"].as_str().ok_or("annotation ID")?;
@@ -2448,8 +2461,9 @@ mod researcher_tests {
             &summary.id,
             &TranscriptLayer::Edl(crate::transcript_layers::EdlLayer {
                 provenance: LayerProvenance {
-                    model: "user".into(),
-                    prompt_template: "researcher_annotation".into(),
+                    model: crate::transcript_layers::RESEARCHER_ANNOTATION_MODEL.into(),
+                    prompt_template: crate::transcript_layers::RESEARCHER_ANNOTATION_TEMPLATE
+                        .into(),
                     created_at: "2026-10-27T00:00:00Z".into(),
                 },
                 ops: vec![
@@ -2710,7 +2724,10 @@ mod researcher_tests {
             &recording("/missing/original.wav", &["a", "fracture", "here"]),
             None,
         )?;
-        // Untimed: no word timings at all.
+        // Untimed: no word timings at all. (A correction layer over an
+        // untimed source is refused at store time with NoWordTimings, so
+        // the untimed state cannot be corrupted by layers — the
+        // working_transcript guard is defense-in-depth.)
         let untimed = transcript_store::store_transcript(
             driver,
             &TranscriptBundle::new("/missing/untimed.wav".into(), 0.0, "no timings".into()),
