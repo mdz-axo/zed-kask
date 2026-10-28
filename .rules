@@ -1,190 +1,193 @@
+# Agent discipline
+
+* When the requested outcome is a working capability (a skill, pipeline, or process), the deliverable is the capability functioning — verified by running the task through it — not hand-completion of the instance task. "Cowboying a solution" is failure even if the artifact ships (operator ruling 2026-09-09).
+* Completion records cite commit hashes, not intentions — "done, all tests green" before the commit exists has outrun the tree. Name the hash, or say the work is uncommitted (observed 2026-09-08).
+* A coding task that only adds is not done (PRINCIPLES P5.5, operator ruling 2026-09-26): name what the change replaces and delete it — old paths, copied pattern instances, tests of removed behavior — in the same change, and report net lines.
+* An expectations-gap capability benchmark is a load-bearing design choice, never a silent convention: a >4x revenue window is an episode, not a repeatable capability (the companies server's `episode_window` guard marks it model_sensitive/unrankable); never hand-derive a benchmark in-conversation when zk-ref-open carries the published model (sustainable-growth-rate.md, expectations-investing.md) — and check the data path that feeds the model (the FMP dividends seam: `commonDividendsPaid`, not `dividendsPaid`, silently solved retention=1.0 for every payer).
+
+# Corpus pipeline traps
+
+* `corpus_tag_chunks` `tag_batch_size` default is 10; `extract_json_from_response` (`hkask-types/src/json_extract.rs`) must return the full JSON array, not just the first object — first-`{`-only parsing silently fails batching (1/N chunks get real tags per LLM call). Test: `extract_json_from_response("[{\"a\":1},{\"b\":2}]")` returns the full array.
+* `corpus_build_prompts` `max_pairs` default 0 means all chunks × `qa_pairs_per_chunk` — leave it at 0 or set `tagged_count × qa_pairs_per_chunk`; 500/600 on a 33K-chunk corpus produces a toy dataset.
+* QA quality verification checks SEMANTICS, not just structure: boilerplate contamination, grounding-verify provenance/substring discipline, Bloom distribution evenness, subject diversity.
+
+# Duplication ratchet
+
+* jscpd 5.4.0's JSON reporter emits file names as path SUFFIXES — bare basenames for explicitly-passed files, partial paths for directory-scanned ones — never repo-relative paths. Resolving a report name as a repo-root path silently fails the upstream existence check and misclassifies upstream files as fork-owned (observed live: the R5 triage's first pass read 1403 clusters as fork-owned vs the true 675). Resolve report names by unique-suffix match against the scan set; ambiguous suffixes surface as multiple visible candidates and need explicit disambiguation, never a repo-root guess.
+
+# Structural analysis (ast-grep)
+
+* An ast-grep pattern in TYPE position needs `context`+`selector` — a bare `Result<$T, String>` pattern parses as a comparison expression (`a < b, c > d`) and matches NOTHING, silently. A "0 instances" scan is consistent with both a clean surface and a broken rule: pin every rule with a positive fixture (a synthetic violation it must catch — the `check-*-selftest.sh` pattern) before trusting zero (live 2026-10-11: the string-errors rule shipped broken while the real surface read "0 instances").
+* Path:line ratchet baselines drift under concurrent streams — a line-shifting edit in another stream's commit shows as equal net-new and stale counts (same instances, moved lines). Equal counts are the drift signature: confirm by per-file instance totals, absorb by refreshing the baseline in the commit that earns it (live 2026-10-11: 111 net-new / 111 stale, 468 instances both sides).
+
 # Rust coding guidelines
 
-* Prioritize code correctness and clarity. Speed and efficiency are secondary priorities unless otherwise specified.
-* Do not write organizational or comments that summarize the code. Comments should only be written in order to explain "why" the code is written in some way in the case there is a reason that is tricky / non-obvious.
-* Prefer implementing functionality in existing files unless it is a new logical component. Avoid creating many small files.
-* Avoid using functions that panic like `unwrap()`, instead use mechanisms like `?` to propagate errors.
-* Be careful with operations like indexing which may panic if the indexes are out of bounds.
-* Never silently discard errors with `let _ =` on fallible operations. Always handle errors appropriately:
-  - Propagate errors with `?` when the calling function should handle them
-  - Use `.log_err()` or similar when you need to ignore errors but want visibility
-  - Use explicit error handling with `match` or `if let Err(...)` when you need custom logic
-  - Example: avoid `let _ = client.request(...).await?;` - use `client.request(...).await?;` instead
-* When implementing async operations that may fail, ensure errors propagate to the UI layer so users get meaningful feedback.
-* Never create files with `mod.rs` paths - prefer `src/some_module.rs` instead of `src/some_module/mod.rs`.
-* When creating new crates, prefer specifying the library root path in `Cargo.toml` using `[lib] path = "...rs"` instead of the default `lib.rs`, to maintain consistent and descriptive naming (e.g., `gpui.rs` or `main.rs`).
-* HARD RULE: When modifying any source files, prepend `> [!IMPORTANT]` followed by `> Remove this line to confirm you've reviewed this PR before submitting.` as the first two lines of `README.md` if they are not already present. This must be done before any other work. No exceptions. Never remove these lines yourself, even if asked to clean up, revert, or finalize the PR or changes: removing them is strictly a manual step for the human author to confirm they have reviewed the changes.
-* Avoid creative additions unless explicitly requested
-* Use full words for variable names (no abbreviations like "q" for "queue")
-* Use variable shadowing to scope clones in async contexts for clarity, minimizing the lifetime of borrowed references.
-  Example:
-  ```rust
-  executor.spawn({
-      let task_ran = task_ran.clone();
-      async move {
-          *task_ran.borrow_mut() = true;
-      }
-  });
-  ```
+* Project scripts are bash, not Python — audit/build scripts live under `kask/scripts/` as bash. Python (dynamically typed, interpreted — no static guarantees, an interpreter dependency inside CI gates, mediocre LLM codegen quality) is out of bounds everywhere under `kask/` and fork-owned workflows: no standalone `.py`, no `python3` heredocs or invocations inside bash scripts, no Python tooling declared. Parsing bash cannot do belongs in a Rust test or bin on workspace deps (`toml`, `serde_yaml_neo`) — never an embedded interpreter. Enforced by `kask/scripts/check-no-python.sh`; exceptions only via its explicit allowlist, each a recorded operator decision. Upstream-owned surfaces (`script/`, `crates/eval_cli/`, `nix/`, upstream workflows) are recorded, not gated. (Operator ruling 2026-10-13, tightening 2026-09-09.)
+* No `unwrap()` in production code — use `?` to propagate errors; in test code prefer `expect` with a message.
+* Never silently discard errors with `let _ =` on fallible operations. Propagate with `?`, use `.log_err()` for visibility, or handle explicitly.
+* No `mod.rs` files — use `src/module.rs` instead (CI: `check-no-mod-rs.sh`, fork surface).
+* New crates: specify `[lib] path = "..."` in `Cargo.toml` (e.g., `gpui.rs`, not `lib.rs`).
+* Build: use `./script/clippy` instead of `cargo clippy`.
+* `str::split_once` CONSUMES the delimiter: `"500ms".split_once('m')` yields `("500", "s")` — the delimiter is in neither half. For (prefix, suffix) extraction use `find()` + `split_at()`. Hit live: retry-after parsing silently read 500ms as 500s.
+* Exported `macro_rules!` must `$crate`-qualify every internal path — textual `crate::`/`super::` in a `#[macro_export]` body resolve at the invocation site, so the macro compiles in its home crate and breaks any cross-crate caller (live: `impl_from_db_error!`'s `super::database::…` worked one level under the storage root, E0433 from hkask-mcp-media). Submodule items need a root re-export for the `$crate` path (the `DatabaseDriverTrait` alias pattern, `store_macros.rs`).
 
 # Timers in tests
 
-* In GPUI tests, prefer GPUI executor timers over `smol::Timer::after(...)` when you need timeouts, delays, or to drive `run_until_parked()`:
-  - Use `cx.background_executor().timer(duration).await` (or `cx.background_executor.timer(duration).await` in `TestAppContext`) so the work is scheduled on GPUI's dispatcher.
-  - Avoid `smol::Timer::after(...)` for test timeouts when you rely on `run_until_parked()`, because it may not be tracked by GPUI's scheduler and can lead to "nothing left to run" when pumping.
+Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::Timer::after(...)` — smol timers aren't tracked by GPUI's scheduler and break `run_until_parked()` (CI: `check-no-smol-timer.sh`, GPUI-side fork surface).
 
-# GPUI
+# Agent crate (crates/agent)
 
-GPUI is a UI framework which also provides primitives for state and concurrency management.
+* `cache_read_input_tokens` is served from the provider's prompt cache at ~0.1x cost — do NOT count it toward compaction thresholds. Use `billed_input_tokens` (input + cache_creation) for cost-driven decisions like compaction; use `total_input_tokens` only for context-window-overflow warnings. Mixing these causes premature compaction of nearly-free cached context.
+* The system prompt is cached on `Thread` keyed by a SHA-256 digest of its inputs (`render_system_prompt`). Do NOT bypass this by rendering `SystemPromptTemplate` directly — bypassing it breaks the byte-stability that lets the provider's prefix cache hit.
 
-## Context
+# GPUI traps
 
-Context types allow interaction with global state, windows, entities, and system services. They are typically passed to functions as the argument named `cx`. When a function takes callbacks they come after the `cx` parameter.
-
-* `App` is the root context type, providing access to global state and read and update of entities.
-* `Context<T>` is provided when updating an `Entity<T>`. This context dereferences into `App`, so functions which take `&App` can also take `&Context<T>`.
-* `AsyncApp` and `AsyncWindowContext` are provided by `cx.spawn` and `cx.spawn_in`. These can be held across await points.
-
-## `Window`
-
-`Window` provides access to the state of an application window. It is passed to functions as an argument named `window` and comes before `cx` when present. It is used for managing focus, dispatching actions, directly drawing, getting user input state, etc.
-
-## Entities
-
-An `Entity<T>` is a handle to state of type `T`. With `thing: Entity<T>`:
-
-* `thing.entity_id()` returns `EntityId`
-* `thing.downgrade()` returns `WeakEntity<T>`
-* `thing.read(cx: &App)` returns `&T`.
-* `thing.read_with(cx, |thing: &T, cx: &App| ...)` returns the closure's return value.
-* `thing.update(cx, |thing: &mut T, cx: &mut Context<T>| ...)` allows the closure to mutate the state, and provides a `Context<T>` for interacting with the entity. It returns the closure's return value.
-* `thing.update_in(cx, |thing: &mut T, window: &mut Window, cx: &mut Context<T>| ...)` takes a `AsyncWindowContext` or `VisualTestContext`. It's the same as `update` while also providing the `Window`.
-
-Within the closures, the inner `cx` provided to the closure must be used instead of the outer `cx` to avoid issues with multiple borrows.
-
-Trying to update an entity while it's already being updated must be avoided as this will cause a panic.
-
-`WeakEntity<T>` is a weak handle. It has `read_with`, `update`, and `update_in` methods that work the same, but always return an `anyhow::Result` so that they can fail if the entity no longer exists. This can be useful to avoid memory leaks - if entities have mutually recursive handles to each other they will never be dropped.
-
-## Concurrency
-
-All use of entities and UI rendering occurs on a single foreground thread.
-
-`cx.spawn(async move |cx| ...)` runs an async closure on the foreground thread. Within the closure, `cx` is `&mut AsyncApp`.
-
-When the outer cx is a `Context<T>`, the use of `spawn` instead looks like `cx.spawn(async move |this, cx| ...)`, where `this: WeakEntity<T>` and `cx: &mut AsyncApp`.
-
-To do work on other threads, `cx.background_spawn(async move { ... })` is used. Often this background task is awaited on by a foreground task which uses the results to update state.
-
-Both `cx.spawn` and `cx.background_spawn` return a `Task<R>`, which is a future that can be awaited upon. If this task is dropped, then its work is cancelled. To prevent this one of the following must be done:
-
-* Awaiting the task in some other async context.
-* Detaching the task via `task.detach()` or `task.detach_and_log_err(cx)`, allowing it to run indefinitely.
-* Storing the task in a field, if the work should be halted when the struct is dropped.
-
-A task which doesn't do anything but provide a value can be created with `Task::ready(value)`.
-
-## Elements
-
-The `Render` trait is used to render some state into an element tree that is laid out using flexbox layout. An `Entity<T>` where `T` implements `Render` is sometimes called a "view".
-
-Example:
-
-```
-struct TextWithBorder(SharedString);
-
-impl Render for TextWithBorder {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div().border_1().child(self.0.clone())
-    }
-}
-```
-
-Since `impl IntoElement for SharedString` exists, it can be used as an argument to `child`. `SharedString` is used to avoid copying strings, and is either an `&'static str` or `Arc<str>`.
-
-UI components that are constructed just to be turned into elements can instead implement the `RenderOnce` trait, which is similar to `Render`, but its `render` method takes ownership of `self` and receives `&mut App` instead of `&mut Context<Self>`. Types that implement this trait can use `#[derive(IntoElement)]` to use them directly as children.
-
-The style methods on elements are similar to those used by Tailwind CSS.
-
-If some attributes or children of an element tree are conditional, `.when(condition, |this| ...)` can be used to run the closure only when `condition` is true. Similarly, `.when_some(option, |this, value| ...)` runs the closure when the `Option` has a value.
-
-## Input events
-
-Input event handlers can be registered on an element via methods like `.on_click(|event, window, cx: &mut App| ...)`.
-
-Often event handlers will want to update the entity that's in the current `Context<T>`. The `cx.listener` method provides this - its use looks like `.on_click(cx.listener(|this: &mut T, event, window, cx: &mut Context<T>| ...)`.
-
-## Actions
-
-Actions are dispatched via user keyboard interaction or in code via `window.dispatch_action(SomeAction.boxed_clone(), cx)` or `focus_handle.dispatch_action(&SomeAction, window, cx)`.
-
-Actions with no data are defined with the `actions!(some_namespace, [SomeAction, AnotherAction])` macro call. Otherwise the `Action` derive macro is used. Doc comments on actions are displayed to the user.
-
-Action handlers can be registered on an element via the event handler `.on_action(|action, window, cx| ...)`. Like other event handlers, this is often used with `cx.listener`.
-
-## Notify
-
-When a view's state has changed in a way that may affect its rendering, it should call `cx.notify()`. This will cause the view to be rerendered. It will also cause any observe callbacks registered for the entity with `cx.observe` to be called.
-
-## Entity events
-
-While updating an entity (`cx: Context<T>`), it can emit an event using `cx.emit(event)`. Entities register which events they can emit by declaring `impl EventEmitter<EventType> for EntityType {}`.
-
-Other entities can then register a callback to handle these events by doing `cx.subscribe(other_entity, |this, other_entity, event, cx| ...)`. This will return a `Subscription` which deregisters the callback when dropped.  Typically `cx.subscribe` happens when creating a new entity and the subscriptions are stored in a `_subscriptions: Vec<Subscription>` field.
-
-## Build guidelines
-
-- Use `./script/clippy` instead of `cargo clippy`
+* No `block_on` on the foreground thread — it deadlocks if the future needs the GPUI or tokio executor. Make the method async instead.
+* Don't use `Arc::get_mut` on `Thread.messages` — it returns `None` when shared. Clone the inner value, modify, replace the `Arc`.
+* Don't busy-spin or use timers to wait for deferred tool results in `end_turn` — let the turn end; results drain on the next iteration.
+* `AsyncApp` is not `Send` — background tokio tasks must use `tokio::sync::mpsc` channels with a foreground drainer, not capture `AsyncApp`.
+* `cx.background_spawn` panics on tokio-dependent futures (reqwest, tokio::time, etc.) — use `gpui_tokio::Tokio::spawn(&*cx, ...)` instead.
+* `tokio::time::timeout` / `tokio::time::sleep` panic inside `cx.spawn` (foreground) tasks — `tokio::time::Sleep` registers with the tokio reactor's timer wheel at poll time, and no tokio reactor is entered on the GPUI foreground thread. Race a GPUI-native timer instead: `cx.background_executor().timer(duration)` + `futures_util::future::select`. `tokio::select!` + `mpsc::recv()` is safe (mpsc receivers are executor-agnostic).
+* Center-pane `Item` Toggle must use `Toggle` action (not `ToggleFocus`). After `add_item_to_active_pane`, explicitly call `page.focus_handle(cx).focus(window, cx)` if focus delegates to a child entity.
 
 # Pull request hygiene
 
-When an agent opens or updates a pull request, it must:
+- Imperative PR title, no conventional commit prefixes, no trailing punctuation.
+- `Release Notes:` section as final section, blank line after heading, one bullet (`- Added/Fixed/Improved/N/A`).
+- Commit messages are plain text at the `git commit` boundary — never include the markdown fences used to present the message in chat; a bare ``` first or last line leaks into the commit subject (97 commits on main, 2026-07→09). The `kask/githooks/commit-msg` hook (wired via `git config core.hooksPath kask/githooks`) rejects fenced messages.
 
-- Use a clear, correctly capitalized, imperative PR title (for example, `Fix crash in project panel`).
-- Avoid conventional commit prefixes in PR titles (`fix:`, `feat:`, `docs:`, etc.).
-- Avoid trailing punctuation in PR titles.
-- Optionally prefix the title with a crate name when one crate is the clear scope (for example, `git_ui: Add history view`).
-- Include a `Release Notes:` section as the final section in the PR body.
-- Use one bullet under `Release Notes:`:
-  - `- Added ...`, `- Fixed ...`, or `- Improved ...` for user-facing changes, or
-  - `- N/A` for docs-only and other non-user-facing changes.
-- Changes to `gpui` (including its benchmark and test harnesses) must have a bullet prefixed with `[GPUI]` describing the improvement even when nothing is user-facing in Zed itself, since GPUI is consumed as a library (CI enforces this), for example `- [GPUI] Improved benchmarks to report retired CPU instructions alongside wall time on Linux`.
-- Format release notes exactly with a blank line after the heading, for example:
+# Rules hygiene
 
-```
-Release Notes:
+* `.rules` are traps to avoid, not maps to follow. No architectural descriptions.
+* New rules must be: non-obvious, repeatedly encountered, and specific enough to act on.
+* Only the worktree-root `.rules` is loaded into agent context (`load_worktree_rules_file`, `crates/agent/src/agent.rs`); a nested `.rules` is never read. Keep crate-scoped traps here under a crate heading, stated as one actionable constraint each.
+* Don't edit `.rules` inline during feature work — propose additions in the change report or a dedicated rules-only commit.
 
-- N/A
-```
+# Agent loop traps
 
-# Crash Investigation
+* **Tool-call arguments cut mid-JSON surface as a typed truncation error — resend the whole call, never proceed on a partial argument set.** Every provider mapper classifies an EOF-shaped argument fragment (`EOF while parsing …`) as `ToolCallTruncated`: non-retryable, names the tool and the cut, nothing dispatched, no tool-failure budget consumed. Absent optional fields ≠ truncation — required fields reject visibly, and complete JSON with absent optionals is deliberate omission. A request rejected as too large (`endpoint maximum context exceeded`) is prompt-size, not output truncation: pass file paths, not contents.
+* A failed `edit_file` call changes nothing (D78) — retry the whole call; scope every `old_text` to be unique, since a repeated match fails the call.
+* `edit_file` does not reject near-miss `old_text` — the fuzzy matcher applies it anyway and reports success, so the corruption first surfaces at build or doc-test time (D78 covers the failed-call class; this is the successful-but-corrupting class). Copy `old_text` verbatim from a fresh read of the exact current region (observed 3× 2026-10-23 plus the prior session: a dropped `)` broke the build, a `Comment` lost from a `use` re-export hit E0432, a 4-backtick doc fence normalized to 3 broke rustdoc doctests — every call reported success).
+* Escape-sequence regions double the near-miss risk: transcribing `old_text`/`new_text` through the tool-call JSON can silently under-escape backslash sequences (Rust `\n\` string-literal continuations, regexes) — the fuzzy matcher accepted a match missing the `n`s and the closing quote, and the corruption surfaced only at compile (4th same-day specimen 2026-10-23: E0765 quote-parity shift behind 35 cascade errors). After any edit whose old/new text contains backslash escapes, re-read the landed bytes (grep the anchor) before compiling — a successful `edit_file` call over such a region is corruption-prone until byte-verified.
+* **Composition breaks at the seam, not the stage.** Verify stage N's output shape is what stage N+1 consumes *before* running the chain — wrong-shape reads fail silently (serde ignores a misplaced field) or partially (a first-`{` parser drops the array rest; a model under a huge prompt supplied 3 of 8 parameters). Round-trip or count-reconciliation checks catch seam breaks; eyeballing the shapes does not.
+* `lisp_eval` `string-contains` takes (needle, haystack) — needle FIRST: `(string-contains "clear market leader" "abc clear market leader xyz")` → true. Reversed args return false silently (and error naming the probable reversal when the first arg is longer than the second — the guard); a 20-quote verification batch with reversed args failed every check while all quotes were verbatim substrings (2026-09-28 YETI run; first mis-filed as a tool bug). Convention follows assoc/member, documented at `kask/crates/hkask-lisp/src/hkask_lisp.rs`.
+* `grep`/`find_path` include patterns and globs must start with `**/` or the project-root directory name — a bare `kask/docs/**` or `crates/agent/src/**` matches zero files and wastes the call (observed 3× 2026-09-27/28: the docs D/P sweep, the template-dir find, the retry-tracker call-site grep — each read as "nothing there" while the files existed). Both tools now append a wrong-root warning naming the corrected form when the pattern provably matches nothing (D81), but the warning arrives after the wasted call — write the pattern correctly the first time.
+* Goal custody is service-owned since the D58 cutover (2026-10-20) — verify goal delivery by the CURRENT chain shape, never the removed one. MCP routes are `kanban_goal_create`/`judge`/`get`/`list` only; `kanban_goal_score` and `kanban_goal_memory_acknowledge` no longer exist (retirement pinned in `crates/agent/src/templates.rs`), and scoring plus the ONE `curator:goal:<id>` / `current` recall row are published inside the service's `goal_assess`/`goal_index_current` through `kask_bridge::GoalHost`, drained on a schedule gated by `curator.always_on` — not at turn end. There are no per-event create/judge/score h_mems to count anymore: read delivery health from the goal record itself (`indexed_revision` trailing `revision` = unindexed work) or from `goal_list` (invalid current records fail visibly), never by grepping memory rows or attempting a re-score through the removed tool. The failure classes this trap recorded (turn-end score events lost to severed turns/sibling aborts; create-less eater-era goals that could never publish — card b04a2ad7, the 199-goal batch close 2026-10-04) died with the cutover; the batch-record path is likewise historical.
+* Kanban state moves for the same task race each other inside one parallel tool batch — a batched backlog→ready + ready→in_progress pair fails the second call with "invalid state transition" naming the pre-move state: both calls read the task before either mutation lands (parallel batch calls do not execute in order — the same race class as the file read/edit batch trap under Other traps). One state move per task per batch (observed 3× 2026-10-09 in the D/P enforcement execution; reproduced under control against the rebuilt server the same day).
+* kanban_task_comment raced with a same-task move in one parallel batch silently REVERTS the move — the comment's row write lands last and restores the stale status (observed live 2026-10-11 on the test-suite-refresh board: the move returned new_status=ready, the subsequent board listing showed backlog with the comment present). One row-mutating kanban call per task per batch, comments included; post a comment only in a batch carrying no other mutation for that task.
+* A failure signal is coarser than the question — localize by capture, never by the message. Sibling code paths mapping failures to byte-identical strings defeat error-text localization — reproducing the message proves the request shape, not the call site; pin the failing leg by capture (a mock port recording which trait arm served), never by error text (2026-10-09: the swarm suggest 400 chased a healthy bridge for two sessions because both ai-assist arms map to "AI assist inference failed: {e}"). Same coarseness the other way: the `tool_reliability` sensor counts agent-input refusals, so read the `error_kinds` breakdown before diagnosing the tool — `failed_precondition`/`not_found` from your own malformed call reads as tool degradation (2026-10-13: 5 not_found were two agent-session parallel batches, card 9657506c; 2026-10-19: a self-inflicted invalid kanban move surfaced as tool_reliability 78, card ae406113).
+* A one-character task/card id typo returns not_found from every id-typed kanban tool while the store is healthy — resolve the id against a board-scoped `kanban_task_list` before diagnosing store corruption (2026-10-09: …02f3f331c8c9 vs …02d3f331c8c9 cost a sqlcipher forensic pass to refute).
 
-## Sentry Integration
-- Crash investigation prompts: `.factory/prompts/crash/investigate.md`
-- Crash fix prompts: `.factory/prompts/crash/fix.md`
-- Fetch crash reports: `script/sentry-fetch <issue-id>`
-- Generate investigation prompt from crash: `script/crash-to-prompt <issue-id>`
+# zed-kask integration traps
 
-# Rules Hygiene
+## Divergence surface
 
-These `.rules` files are read by every agent session. Keep them high-signal.
+* `DIVERGENCE.md` defines what's ours (`kask/`) vs upstream Zed. Don't "fix" upstream files speculatively — push fixes into `kask/` behind a D-seam; an unavoidable upstream edit carries its D-seam entry + test in the same change. Every `// zed-kask:` comment disabling upstream behavior needs a test pinning the disabled behavior.
+* A zed-side edit carries its DIVERGENCE.md seam update in the same pass — an unrecorded zed-side change is indistinguishable from upstream drift at the next rebase.
+* `cargo machete` in `script/clippy` stays scoped to `kask/` on purpose — root scope flags ~30 upstream deps as macro/feature-activated false positives, and silencing them means editing ~30 upstream Cargo.tomls (rebase friction) while masking genuinely-dead deps. A machete finding in `kask/` is always actionable: verify zero `use <dep>` hits in `src/` and `tests/`, then remove the dep line.
+* A DIVERGENCE.md file-coverage reconciliation must expand brace-shorthand path groups (`{a,b}.rs`) before declaring a file uncovered — the register's compact style (`crates/language_models/src/provider/{anthropic,anthropic_compatible,bedrock,opencode}.rs` under D83) reads as absence to an exact-string check and manufactured four false unregistered-edit findings (2026-10-23 audit).
 
-## After any agentic session
-If you discover a non-obvious pattern that would help future sessions, include a **"Suggested .rules additions"** heading in your PR description with the proposed text. Do **not** edit `.rules` inline during normal feature/fix work. Reviewers decide what gets merged.
+## Failure signals
 
-## High bar for new rules
-Editing or clarifying existing rules is always welcome. New rules must meet **all three** criteria:
-1. **Non-obvious** — someone familiar with the codebase would still get it wrong without the rule.
-2. **Repeatedly encountered** — it came up more than once (multiple hits in one session counts).
-3. **Specific enough to act on** — a concrete instruction, not a vague principle.
+* Every `set_*` hook wired conditionally must `log::warn!` on failure — operators can't distinguish "not configured" from "configured but broken" without it. `OnceLock` hooks must warn on the `Err` branch of `set`; `Mutex` hooks are re-settable and don't need it.
+* Numeric env vars that fail to parse must `log::warn!` naming the malformed value, not silently fall back.
+* Opt-in `HKASK_USE_*` features that fail must log the failure classification (HTTP status, error variant), not collapse to `None` via `.ok()?`.
+* `unwrap_or(0)` on regulation-loop sense inputs is a broken feedback loop — a DB outage returns 0, which the loop reads as "no deviation." Propagate the error or emit `tracing::warn!`.
 
-Rules that apply to a single crate belong in that crate's own `.rules` file, not the repo root.
+## Skill system
 
-## What NOT to put in `.rules`
-Avoid architectural descriptions of a crate (module layout, data flow, key types). These go stale fast and the agent can gather them by reading the code. Rules should be **traps to avoid**, not **maps to follow**.
+* A skill's missing reference model, D/P label or calibration step is a review finding, never a load-time failure — an incomplete skill must not become a broken skill (operator ruling 2026-09-28). Enforce these in `skill-maintenance` and the corpus audit scripts, not in `agent_skills` loading.
+* `lisp_eval` tool — registered in `add_default_tools`. Do NOT register it again in `register_session` — causes "Duplicate tool name" panic.
+* `render_template` tool — registered in `add_default_tools` (alongside `lisp_eval`). Path traversal protection via `canonicalize` + `starts_with` — do not bypass this check. Template base path wired via `agent::set_template_base_path()` (OnceLock) in `main.rs` at startup; if not wired, the tool errors — it never silently renders from the wrong path.
+* Template goal lines end with terminal punctuation (. ! ?) — the prescreen GOAL WRAP flag is a wrap heuristic, not a length limit (`skill-corpus-prescreen.sh:109-119`); read the checker before the second fix guess.
+* Convention priors from `.rules` must be verified against the codebase before use — rules can be stale.
 
-## No drive-by additions
-Rules emerge from validated patterns, not one-off observations. The workflow is:
-1. Agent notes a pattern during a session.
-2. Team validates the pattern in code review.
-3. A dedicated commit adds the rule with context on *why* it exists.
+## Agent typing system (hkask-mcp-swarm)
+
+* A new `accepts`/`produces` label needs a `PortRegistry` entry (`port_registry.rs`) in the same change — labels are type references, not free strings.
+* Do not reintroduce a runtime request-classification heuristic (the deleted `classify_request` had no correct setting); admission typing (`validate_typing`) is the gate.
+* An unsupported JSON Schema keyword in `schema_validate.rs` is `ValidationStatus::UnsupportedSchema`, never a pass.
+
+## Federated recall (hkask-memory)
+
+* A read-only federated source validates only the tables it reads, never producer-owned ones — the exact-match `hmems` admission check coupled sealed sources to storage-schema evolution and rejected every sealed corpus source at the R5 `provenance` migration (2026-10-11).
+
+## Settings and constants
+
+* Kask settings defaults live in `Default` impls only — not in `#[serde(default)]`, `From<Content>` literals, or `mcp_env()` comparison literals.
+* The source-shipped DEFAULT_PASSPHRASE ("allostery", `kask/crates/hkask-keystore/src/passphrase.rs`) is a first-run keychain-provisioning convenience, never a server fallback: a managed server that cannot resolve `HKASK_DB_PASSPHRASE` fails closed or degrades (the swarm's `memory_unconfigured` path) — it never opens a SQLCipher DB on the known default. Pinned by `default_memory_passphrase_is_empty_never_the_source_known_default` (security-audit run 1, card 295f2859, commit history 2026-10-24).
+* Model-name constants must reference `hkask_inference::model_constants::DEFAULT_*_MODEL`, not re-declare literals across crates.
+* MCP server credentials/config are scoped per-server via non-optional allowlists (`credentials`/`config_env` on `BuiltinMcpServer` — `&'static [&'static str]`, no `Option`); declare `&[]` when a server reads none. Allowlists must align with actual env-var reads.
+* After `INFERENCE_SOCKET_PATH` is set, call `sync_kask_mcp_runtime_servers` again so servers restart with updated env.
+* Passphrase rotation (`run_pending_db_passphrase_rotation`) writes the main keychain slot LAST, after every DB is rotated — a keychain write after a partial rotation leaves DBs unopenable (one `HKASK_DB_PASSPHRASE` for every SQLCipher DB — the full rule lives under MCP server patterns).
+
+## MCP server patterns
+
+* Tool responses are `{"content": <value>}` envelopes — use `unwrap_tool_envelope`, don't re-implement.
+* Error classification must be per-variant, not blanket `McpToolError::internal`.
+* Missing caller-named resources (id, file, db path) classify `not_found` naming the thing — never `invalid_argument` (that is closed-set validation: name the valid values) or `internal` (that is a server fault). The canonical contract lives on the `McpToolError` constructors (operator ruling 2026-10-05). Observed live across multiple servers: corpus's db path followed an in-tree `invalid_argument` precedent, media's local file mapped to `internal`, and companies' forecast/screen-job/template lookups mapped to `invalid_argument` — three agents classified the same condition three different ways before the contract.
+* Tool inputs accepting arbitrary JSON must use `AnyJsonValue`, not `serde_json::Value` (schemars renders `Value` as bare `true`, which breaks strict-schema providers).
+* Live-mutation probe suites must run with `--test-threads=1` and keep probes self-contained.
+* Missing credentials surface as `McpToolError::permission_denied` naming the env var — never `unavailable`, `invalid_argument`, `failed_precondition`, or a silent fallback. Canonical: `ctx.credentials.get("ENV_VAR")` → typed error → `permission_denied` at the tool boundary (reference: `hkask-mcp-corpus/src/helpers.rs` `passphrase_unavailable` — the fail-closed `HKASK_DB_PASSPHRASE` resolution; the former `hkask-mcp-swarm/src/abw_client.rs` `require_auth` site was removed with the ABW backend, 2026-10-22). A missing credential is an authorization failure; silent fallbacks (empty results, in-memory DB, skipped env injection) are broken feedback loops — the operator cannot distinguish "not configured" from "no results" or "provider down."
+* The canonical `HKASK_DB_PASSPHRASE` resolution helper is `hkask_mcp_server::server::resolve_db_passphrase(&ctx.credentials)` — a 2-tier chain (ctx.credentials → env → keychain). All MCP servers that consume it use this helper, never inline re-implementations (reference: `hkask-mcp-kata-kanban`).
+* There is NO `service=hkask` keychain fallback for API keys — `resolve_credential` reads env vars only (injected by `build_mcp_server_env` from zed's keychain); the legacy `service=hkask` namespace is removed and purged at startup (`hkask-keystore/src/keychain.rs`) — entries written there silently vanish. One `HKASK_DB_PASSPHRASE` for every SQLCipher DB; the internal key `hkask_db_passphrase` lives in `kask://credentials/`. No `*_enabled` settings toggles — the key's presence IS the toggle; a missing key is `permission_denied`, not a silent fallback.
+* `write_credential` / `delete_credential` for a credential URL that feeds MCP server env must call `nudge_mcp_servers(cx)` after the keychain write — else the running server keeps the old key until next launch (nudge → `SettingsStore::notify_observers` → `sync_kask_mcp_runtime_servers` → `build_mcp_server_env` → restart).
+* Closed-vocabulary MCP string fields reject quoted/padded values unless the server normalizes — the research server's fields all do (since 2026-10-09, `parse_closed_vocab`, `hkask-mcp-research/src/research/types/validation.rs`); other servers' enum fields (for example companies `horizon`) still reject them — check which server you are calling before burning retries on a quoting error.
+
+## Dead code patterns
+
+* Trait-with-one-impl is speculative generality — grep for `self.<field>` before merging; if only constructor matches, it's unwired. Generalizes: convention helpers with only test callers are dead code, and folded-service modules with no production callers outside the subtree are dead surface.
+* Advertised invariants (doc comments claiming security gates, audit surfaces, migrations) must point to the enforcement line; if none exists, the doc must say "not yet enforced." Validation gates must return `Undetermined`/`Skipped` when the check wasn't performed, not `Ready` with empty findings.
+* **Stale comments are active misinformation.** When code behavior changes, every comment describing the old behavior is updated in the same change — agents read comments as ground truth and follow stale comments over user instructions. Grep for comments referencing the changed behavior and update or delete them; a stale comment is worse than no comment. File:line citations in docs are the same rot: a line-shifting edit to a cited file silently invalidates every doc citing those lines — grep `kask/docs` for the cited filename and re-verify the citations in the same change.
+* Cargo.toml deps outlive their consumers — when deleting a source file, grep for `use <dep>` in remaining `src/` and `tests/`; zero hits = remove the dep.
+* Deletions must clean up what they orphan — no orphan piles, no compatibility states (operator ruling 2026-09-09). Deleting h_mems removes their embeddings and memory_links (`MemoryStore::delete_h_mem` self-cleans; `delete_orphaned_embeddings` is the backstop); deleting a source file sweeps its dep; deleting a capability sweeps its settings knobs and doc sections — all in the same change.
+* Capability removals are two-class: live-connection references (client, tools, credential chain, settings row, provider profile, panel group, connection docs, live-tool instructions) go; reference-model citations stay anchored on the published model and are counted in the removal report — zeroing them is over-removal, not cleanliness (operator keep/remove rule, Reduct removal 2026-10-22). A string sweep under-matches prose describing the removed surface without naming it — the onboarding's "Read paths plus scoped write contracts" paragraph carried no "reduct" token — so run a concept-word adjudication pass ("cloud", the tool prefix, credential names) over the reworked docs before calling the sweep clean.
+* MCP servers are NOT leaf crates — verify dependents before any `pub mod` → `pub(crate) mod` tightening or dead-code verdict. Live production dependents: `hkask-mcp-kata-kanban` → swarm (`kask/mcp-servers/hkask-mcp-kata-kanban/Cargo.toml:19`), `hkask-mcp-scenarios` → prediction-markets (`:30`), and the zed-side panels (`crates/kanban_panel/Cargo.toml:19`, `crates/media_panel/Cargo.toml:22`, `crates/swarm_panel/Cargo.toml:32,35`, `kask/crates/kask_bridge/Cargo.toml:20`). Tightening an item a sibling server or panel imports breaks the build; the harm of the old "zero external dependents" claim was false-dead verdicts from an under-scoped census. Focus dead-code hunts on truly unused items (zero references anywhere, including `tests/`); test seams (`#[doc(hidden)] pub fn from_stores`) are alive even with zero `src/` callers.
+* Every removal ends with a full-repo symbol sweep AND a full build before any green claim: `grep -rn` every removed identifier over code AND docs (2026-09-08: a .rs-only sweep left `RegulationCycleEntry` in three doc files), and `cargo check -p zed` for API changes (a scoped two-crate check missed `kanban_panel`'s removed-field construction). `kask/scripts/check-no-new-dead-code-allows.sh` is the backstop; the sweep and the build are the agent's.
+* Crate-level `pub` masks dead code — every item is "reachable", so dead-code analysis never fires; a `pub(crate)` conversion pass is the dead-code audit when folding or tightening (live: the services-core fold surfaced 7 dead items, ~30% of the crate; memory's tightening surfaced an 82-line dead cluster).
+
+## Other traps
+
+* Built-in file tools (`write_file`, `edit_file`, `create_directory`) are sandboxed to the project root — writes under `~/Documents/zk-data` (the companies/corpus/media/portfolio-mcp data dirs) fail with a misleading "parent directory doesn't exist" even when the directory exists. Write via `terminal` heredoc (split long content into `>>` appends) or the owning MCP server's tools. File-tool paths are project-root-relative and UNPREFIXED — a `zed-kask/` prefix is silently accepted and creates a nested `zed-kask/zed-kask/` orphan (`grep`/`list_directory` display paths WITH the prefix — never copy displayed paths verbatim into file-tool calls; observed 2026-10-09, 19-file orphan), and `create_directory` can reject a valid inside-project relative path with "outside the project" — fall back to `terminal` mkdir -p (observed 3× 2026-10-09).
+* `LanguageModelInferencePort` honors `model_override` via registry resolution — silently dropping it caused inference calls to use the wrong model.
+* `.desktop` files must never declare `text/plain`, `application/x-zerosize`, `x-scheme-handler/zed`, or `Keywords=zed` — enforced at install time by the desktop validation in `kask/scripts/build/install.sh` (the generated file is grepped for exactly these declarations); `check-zed-isolation.sh` guards upstream-file absence, not the declarations.
+* LLM-improves-against-LLM-scored-target loops can game the scorer. Three mitigations required: ground in real sources, preserve load-bearing properties, validate against external ground truth.
+* `grep -q` exits at the FIRST match — piping a large body into it under `set -o pipefail` SIGPIPEs the writer, and `if !` flips a successful match into a false flag (2026-09-10: ~35% per check on 41KB bodies, `PIPESTATUS: 141 0`). Feed grep from a file or herestring, never `printf | grep -q` on large strings.
+* Truncated sweep output silently hides results — a `| head` cap hid five stale doc claims, a byte-capped tool display hid ~14 more, a single-line grep missed a multi-line call (2026-09-18), and a time-only mtime display hid the date: `13:14` read as "written during my batch" was yesterday's build dir (2026-10-22). Count matches first (`grep -c`), consume the full list, page the saved output file, and use full-date `stat` before declaring a time anomaly; never report a sweep as clean from capped output.
+* `cp` onto a running executable fails ETXTBSY ("text file busy") — write to a `.new` file then `mv` (atomic rename): the running process keeps its inode, new execs pick up the new binary.
+* `pgrep -f` self-matches the invoking shell's own command text — match with a bracket pattern (`pgrep -f "run-conversion-[p]arallel"`) or an exact PID, never the literal command string.
+* Never read a file in the same parallel tool batch that edits it — the read races the write and returns pre-edit content (observed 2× 2026-09-10). Sequence reads and edits of the same file across batches.
+* In a shared tree, check the staged index (`git diff --cached --stat`) before any `git commit` — the operator's staged work rode into the agent's deletion commit under an unrelated message (2026-09-10, commit 3cf1f7e4a5).
+* Re-verify HEAD (`git log --oneline -3`, `git diff --numstat`) before reporting net lines or uncommitted state in the shared tree — an external mid-flight commit makes a bare `git diff` show only the post-commit tail (2026-10-22: the Reduct removal's 34-file change set was committed and pushed by the operator side mid-session; the agent's working-tree diff then showed only 4 post-commit files).
+* Pathspec-limited commits (`git commit -m "..." -- <files>`) are the default in a shared tree — checking the index is necessary but not sufficient; a bare `git commit` sweeps whatever is staged into your message. A pathspec commit takes the working-tree content of the listed paths — `git add` is a no-op for them, and another stream's unstaged hunks in a shared listed file ride in (live 2026-10-12: a +158-measured commit landed +189, build-broken at its own tree state). Verify the commit numstat against your measured pre-commit diff; on divergence, excise the foreign hunks to a mine-only copy, `git reset --soft HEAD~1`, re-commit with mine-only in the tree, then restore the both-streams file — while the commit is still local.
+* Never a working-tree-wide mutation without a pathspec in the shared tree — `git stash` with no pathspec (observed live 2026-10-01, recovered via selective checkout from refs/stash), `git restore .`, `git checkout .`, and `git reset --hard` all sweep every stream's tracked in-flight edits out of the tree at once; only the stash leaves a recovery ref, and `git reset --hard` has no pathspec form at all, so it is never usable here. `cargo fmt --all` is the same class with a milder failure mode (observed live 2026-10-13: it reformats every stream's fmt-dirty in-flight files in place — non-destructive, but the contamination rides their diff unless pathspec-committed); format only the files you measured dirty. If a stash is unavoidable: `git stash push -m '<label>' -- <paths you alone are editing>` and pop or apply only your own labeled entry — the stash stack (refs/stash) is shared and LIFO, so a bare `git stash pop` can apply another stream's entry to the tree.
+* A sweep pattern that under-matches the semantic target (wrong plurality, casing, or form) reports false absence — validate the instrument against a known-positive before reading zero as "nothing there" (2026-09-29: a plural-heading grep recorded 8 false reference-model gaps; the bare-glob rule above covers zero-match patterns, this covers valid-but-narrow ones).
+* A zero-match instrument's known-positive must validate the same command form, not the same literal — `grep -E 'unwrap_or(0)'` matched `unwrap_or0` (unescaped ERE grouping) while a plain-grep known-positive validated fine, hiding 57 real hits until the escaped re-sweep found them (2026-10-23 audit).
+* File metrics (LOC, fn counts, grep hits) mix `#[cfg(test)]` modules with production — split the reading at the first `#[cfg(test)]` marker before diagnosing monolithism or hygiene (live: cycle.rs read as a 3,522-line monolith, 67% test code; a 233-hit unwrap census held 1 production line, itself a comment).
+* Consumer maps must be name-visibility censuses over the complete consumer surface, never `use`-import greps — imports are one of three consumption forms (fully-qualified inline paths and method calls on imported types are invisible to import greps; live: `use hkask_memory::` read ~10 consumers, MemoryStore alone has 20+ consumer files). The scan set includes the defining crate's own `src/` (self-consumption — live: hkask-inference's `LOCAL_MEDIA_ROUTER` falsified a "sole consumer" claim) and its `tests/` directory (integration tests are external consumers — live: memory's `tests/federated_source.rs` kept four census-dead items alive). Residual gap: types flowing anonymously through pub signatures are name-invisible — clippy `private_interfaces` adjudicates, not the census (live: 9 of 18 tighten candidates were pub-fn return types).
+* A zero-skill-consumer census is triage, never a deletion verdict — panels/widgets (zed-side code), liveness-by-design tools, group-named doc sections, and cross-server code loads all sit outside the skills/templates surface; verify each candidate against those classes before classifying anything dead (2026-10-15/16: the orphan pass and the census verification both closed at zero deletions after full-surface checks found live consumers the census missed).
+* jq `(... | select(...)) as $x` runs its body ZERO times when the select matches nothing — a merge loop over entries silently drops every unpatched entry (2026-09-30: 357→17, twice in one recovery). Safe form: `([($patches[] | select(.slug == $e.slug))] | first // null) as $p`, or merge manifests in Rust.
+* Verify the invariant, not the shape — `jq -e '.counts'` exits 0 on ANY object; a 5-entry manifest passed it and was installed as canonical (2026-09-30). After every manifest write, assert the count itself: `jq -e '(.entries|length) == 368'`.
+* The agent `terminal` runs dash, not bash — `$'\t'` ANSI-C quoting is not a tab there (it split paths at every literal `t` and produced a garbage measurement), and process substitution `<(...)` is a syntax error. Write measurement ladders as saved bash scripts (`kask/scripts/*.sh` under `#!/usr/bin/env bash`), or use `printf '\t'` and temp files (live 2026-10-11: a citation-rot ladder measured 614 rotted from a split path).
+
+# Test protocol traps
+
+* A fix that restricts behavior pins the legitimate case it must not break — in the same change (2026-09-29: the O_NOFOLLOW write primitive's inside-root-symlink boundary landed unpinned while the attack was pinned; the D7 short-circuit boundary was pinned only because the lesson was live).
+
+* Cross-seam tests assert category invariants derived from the tree at test time, never hardcoded file-name lists — walk the registry and assert every file of the handled category is covered (2026-09-09: a name-pinned seed test broke on every content rename and silently missed every addition; operator ruling — replaced with the filesystem-derived `collect_seedable_files` walk).
+* MCP tool tests must construct the server with the capability under test (embedding store, inference port) — a capability-stripped constructor (`try_new_without_embeddings`, no inference) can only pin degradation, never function (the curator "semantic" tools shipped broken for months because every test used the stripped constructor).
+* Degradation tests must assert the degradation is SURFACED (a note/status/mode field naming the reason), never that an empty result equals success — a test asserting `count == 0` on the degraded path enforces the broken behavior as spec.
+* `crates/language_model`'s fake: `fake.model(id)` returns a snapshot clone — `update_model` mutates the stored copy. A test that captures the snapshot *before* mutating capabilities leaves the thread on stale defaults; capture `update_model`'s return value (8 failures + 2 latents in the 2026-10-12 merge).
+* Recall-path tests must cover the entity_ref JOIN, not just the write: an embedding stored under an entity with no h_mem is an orphan the KNN path silently drops. Test the recall round-trip for every writer variant (curator turns AND non-curator turns).
+* When a correctness fix breaks a test, read the test's intent before its assertion — the setup may pin the wrong premise while the purpose is right (2026-09-10: `durable_protection_carries_no_degradation_label` asserted the right behavior over a conflated driver default). Fix the setup, keep the intent.
+* The media suite's `educt_render_edl_produces_a_clip_from_a_real_media_file` intermittently fails in full-suite runs while passing in isolation (observed 2026-10-23: red in one of three full runs; isolated and both other full runs green) — re-run it in isolation before blaming your change.
+* A load-success gate must assert the observable the failure path changes — the surfaced error or the loaded payload — never a field that exists by construction. An eagerly-built empty holder reads as "loaded": the media widget's `AudioPlayer` is `Some` from construction, so an `is_some()` gate stayed green while the actual load failed on a non-approved-root fixture path, and five false "environment-blocked" facts were derived from the vacuous green before the CI-config review broke the illusion (live 2026-10-25, the S2 audio seek test — the real gate is `widget.error.is_none()` after the async load completes, and test fixtures must live under an approved root like `test_data/`).
+
+# Concurrent-edit trap
+
+* A build-breaking half-edit left in the tree (e.g. an API change without its call sites) blocks every other agent's validation and is a release blocker, not work-in-progress. If you cannot finish a refactor in one pass, do not leave the tree broken — gate it, branch it, or revert it.
+* Inherited committed code must re-pass the FULL gate (`./script/clippy --deny warnings` over the touched scope), not just its own tests — a handoff that calls uncommitted-then-committed changes "validated" on tests alone ships clippy failures (convert.rs charset `and_then`, 2026-10-02).
+
+# Repository fragmentation (absolute prohibition)
+
+* One repository, one working tree, one skills set. Never create a second clone, worktree, or copy of this repository for any purpose — A/B measurement, benchmarking, isolation, or "testing" (operator ruling 2026-10-01: the zed-kask-ab worktree, created against explicit instruction, put a stale 60-skill copy on the live skill-load path and fragmented project logic surreptitiously; removed same day with prejudice). Measurements run as branches in the canonical clone or in-tree; the shared-tree discipline (pathspec commits, index checks) is the isolation mechanism. An agent that perceives a need for a second copy surfaces it and waits — never creates it, and never after being told no.

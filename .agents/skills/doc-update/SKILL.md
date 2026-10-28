@@ -1,0 +1,250 @@
+---
+name: doc-update
+description: Realign the kask/docs tree with the current code. Full recomposition per docs-set (ground → compare → recompose → verify) under the <85-file condensation cap (working target 75), with role-based triage, file:line citation discipline, and the corpus-tool decision point. Use when code changes have drifted docs, when adding a new crate/server to the documented surface, or on a scheduled docs refresh.
+---
+
+# doc-update
+
+Realign `kask/docs/` with the code it documents. Documentation drift is not
+cosmetic: a stale doc is active misinformation — agents read comments and docs
+as ground truth and will follow them over user instructions. This skill exists
+to make every documented claim verifiable against the current tree.
+
+## Ontological anchors
+
+- **Diataxis** (Procida) — the quadrant taxonomy (Tutorial / How-to /
+  Reference / Explanation) that organizes the per-crate doc sets. A doc's
+  quadrant determines its recomposition standard.
+- **Minimalism** (Carroll, *The Nurnberg Funnel*) — fewer, task-oriented
+  documents beat comprehensive ones. Anchors the condensation cap: the tree
+  holds fewer than 85 files (working target 75); leaf docs without a formal role are folded
+  or deleted, never left to rot.
+- **PKO** (Procedural Knowledge Ontology) — this skill IS a procedure with
+  specification/execution separation: the SKILL.md is the spec, the phases
+  below are the execution.
+- **Evidence-grounded documentation** — every factual claim cites `file:line`
+  in the current tree; advertised invariants point to their enforcement line
+  or say "not yet enforced". A claim without a resolvable citation is
+  fabricated until proven otherwise.
+
+## Initial and target condition
+
+- **Initial condition:** the current `kask/docs/` inventory and count, governing documentation specs, the code surfaces each selected docs-set describes, and the existing claims/links/citations to classify.
+- **Target condition:** the tree remains below 85 files, every fold/delete names a successor, and all five Phase 6 gates (count, links, citations, frontmatter, no-deleted-surfaces) return true after registries and diagrams are reconciled. A failed gate re-enters its owning phase at most twice; a third failure ends the pass with that failure reported.
+
+## When to Use
+
+- Code changed and the docs describing it may have drifted (renames, deleted
+  surfaces, new crates/servers, count changes).
+- A new crate, MCP server, widget, or skill was added and needs documentation.
+- A scheduled refresh, or the operator reports a doc contradicting the code.
+- After an upstream rebase that moved D-seam files.
+
+## When NOT to Use
+
+- Writing a brand-new design doc or plan (that is authoring, not realignment).
+- Fixing a single typo or link — do it directly; don't invoke the full loop.
+- Code review of documentation-adjacent comments (use code-review).
+
+## Governing specs (read before editing)
+
+1. `kask/docs/architecture/DOCUMENTATION_STANDARDS.md` — frontmatter,
+   Mermaid-First, DIAGRAM_ALIGNMENT, lifecycle, the <85 cap with 75 working
+   target (§3), verification checklist (§10).
+2. `kask/docs/architecture/core/MDS.md` — the surviving-crate list
+   (Composition Root). A doc naming a crate not in that table, or a deleted
+   surface, is stale by definition.
+3. `kask/docs/README.md` — the portal and the **document lifecycle ledger**:
+   every fold/delete must be recorded there with its successor.
+
+## D/P labelling
+
+Triage (the role-based keep/condense/delete decisions), recomposition, and
+source selection are P — judgment, critiqued by the file:line citation gates
+and the operator. The mechanical gates are D: link and citation resolution
+against the current tree, the document-count reconciliation against the cap,
+and the convergence check (`lisp_eval` over the gate results — a gate that did
+not run is reported, never counted as passed). A recomposed doc whose
+citations were not re-checked is unverified recomposition.
+
+## Instructions
+
+### Phase 0 — Condensation triage (before any recomposition)
+
+1. Count the tree: `find kask/docs -type f | wc -l`. The cap is **< 85**
+   (all files, not only Markdown; working target 75 — operator ruling
+   2026-10-07).
+   If the realignment would add documents, the triage must first make room.
+2. Classify every candidate artifact by role:
+   - **CORE** — referenced from a governing spec (README, INDEX,
+     DOCUMENTATION_STANDARDS, MDS) or mechanically consumed (CI hooks,
+     registries). Keep.
+   - **FOLD** — content worth keeping whose file lacks a formal role. Merge
+     into its natural successor (spec absorbs explanation; reference absorbs
+     how-to; consolidated diagram file absorbs per-diagram files). Delete the
+     source after folding.
+   - **DELETE** — stale plans, implemented designs (successor = the code or
+     skill that implemented them), point-in-time audits, docs referencing
+     deleted surfaces, docs duplicating diataxis/reference coverage.
+3. Render the triage output shapes: call `render_template` with template ref
+   `doc-update/triage` (the template lives in
+   `kask/registry/templates/doc-update/triage.j2` — templates are registry
+   resources, NOT files next to SKILL.md). Record every decision with a
+   successor.
+4. Never delete without a successor named. Git history is the content
+   archive; the ledger is the map to it. Verify the Phase 0 triage cap and successor completeness in `lisp_eval` (`DU-1`) before starting Phase 1: `(and (< count_after 85) (= successorless_folds 0) (= count_after (- count_before deleted_or_folded)))`.
+
+### Phase 1 — Ground (per docs-set, one pass each)
+
+1. Identify the crate(s) the docs-set documents. Extract the actual public
+   surface: modules, tools, types, constants, invariants. Use `grep` /
+   `find_path` / `read_file`; read the lib root and key modules.
+2. **Corpus-tool decision point.** State the choice per pass:
+   - **Direct reading** (default) — crates under ~10K LOC or with a handful
+     of modules. Grounding by grep + targeted reads is faster and the
+     citations are exact.
+   - **Corpus pipeline** (`corpus_convert` → `corpus_chunk` → `corpus_embed`
+     → `corpus_tag_chunks` → `corpus_query`) — only when a pass exceeds what
+     direct reading can ground reliably (very large crates, cross-cutting
+     questions over many files). If used, still re-verify every citation
+     against the raw file before writing it — the pipeline finds evidence,
+     it does not certify line numbers.
+3. Prefer authoritative counts over greps: a pinning test
+   (`tool_surface_is_exactly_N_registered_tools`) or a build-script-generated
+   list beats an attribute grep. When only a grep is available, state the
+   method in the doc.
+
+### Phase 2 — Compare
+
+1. Read the existing docs. Classify every factual claim:
+   - **current** — verified against code this pass.
+   - **stale** — was true, no longer is (renames, moved lines, changed
+     behavior, count drift).
+   - **fabricated** — never true or unverifiable (phantom types, tests that
+     don't exist, aspirational behavior written as current).
+2. Hunt specifically for: deleted surfaces presented as current; counts
+   (crates, servers, tools, skills) that drifted; `file:line` refs that no
+   longer resolve; links to deleted docs; advertised invariants with no
+   enforcement line.
+
+### Phase 3 — Recompose
+
+1. Rewrite the artifact so every factual claim cites `file:line` in the
+   current tree. IS ≠ OUGHT: never document aspirational behavior as
+   current; mark it "not yet enforced" or delete it.
+2. Advertised invariants point to their enforcement line (the test, the
+   gate, the check). If none exists, the doc says "not yet enforced".
+3. Preserve the Diataxis quadrant purpose of each file and its YAML
+   frontmatter; update `last_updated` to the edit date.
+4. When behavior changed, every doc describing the old behavior is updated
+   in the same pass — a stale doc is worse than no doc.
+
+### Phase 4 — Diagrams
+
+1. Every Mermaid diagram is verified against current structure before it
+   is committed: node names exist, counts match, flows match the code path.
+2. Each diagram carries a `DIAGRAM_ALIGNMENT` metadata block (unique id,
+   `verified_date`, `verified_against` citing code files, `status`).
+3. If a diagram's subject was deleted, drop it and note the deletion in the
+   registry (`kask/docs/DIAGRAMS_INDEX.md`).
+4. When a recomposed doc needs a diagram that does not yet exist, or an
+   existing one must be regenerated because its structure changed, run the
+   `diataxis-diagram` skill on the code it describes (it classifies the
+   type, extracts from source, and scores against the doc's Diataxis
+   quadrant) — do not hand-draw it here. For quantity flows use
+   `sankey-flow`. Then apply steps 1–2 to its output before it is committed.
+
+### Phase 5 — Reconcile
+
+1. Update `diataxis/INDEX.md` counts and links to match the tree.
+2. Update the README portal rows and the lifecycle ledger.
+3. Update registries that carry counts (MCP server registry, skills
+   registry, diagram registry) — a count in a doc is a claim like any other.
+4. Sweep for links to deleted artifacts and repoint them to successors.
+
+### Phase 6 — Verify (the gates)
+
+**D/P labelling.** Phases 0–3 (triage, grounding, comparison, recomposition)
+and Phase 4's diagram content are P — judgment over the tree, critiqued by
+these gates and by the operator's review of the recomposed docs. Phase 0's
+tree count, Phase 4's structural verification (node names exist, counts
+match, flows match the code path), Phase 5's counts, and the Phase 6 gates
+are D (`find`/`wc`, link sweep, `file:line` spot-check against `read_file`,
+frontmatter grep).
+
+Run every gate; all must pass before the pass is done:
+
+1. **Count gate**: `find kask/docs -type f | wc -l` → must be < 85
+   (working target 75).
+2. **Link gate**: sweep every `](target)` relative link in every `.md`;
+   zero may be unresolved.
+3. **Citation gate**: sample at least 5 `file:line` citations per recomposed
+   artifact and verify each resolves to the claimed content (`sed -n` /
+   `grep`). If any fails, re-verify all citations in that artifact.
+4. **Frontmatter gate**: every `.md` has the seven-field metadata header
+   (`title`, `audience`, `last_updated`, `version`, `status`, `domain`,
+   `mds_categories` — §2) with a valid `status`.
+5. **No-deleted-surfaces gate**: search all files in the *current* `kask/docs/`
+   subtree, including new untracked documents, without crossing into nested
+   historical worktrees elsewhere in the repo. Use a literal, subtree-scoped
+   search such as `rg -n --no-ignore --fixed-strings -- "$deleted_identifier" kask/docs`
+   for each exact deleted path or identifier (not a generic basename like
+   `tutorial.md` that also names surviving files). Inspect each hit: a live
+   link or claim that the deleted surface exists fails; a lifecycle-ledger
+   tombstone or explicit historical mention passes. An empty exact-name search
+   is not a substitute for checking the links and claims in affected docs.
+
+Convergence check — call `lisp_eval` with the gate results:
+
+```
+form: "(and count_ok links_ok citations_ok frontmatter_ok no_deleted_ok)"
+env:  { "count_ok": <true|false>, "links_ok": <true|false>,
+        "citations_ok": <true|false>, "frontmatter_ok": <true|false>,
+        "no_deleted_ok": <true|false> }
+```
+
+If any gate is false, re-enter the failing phase. Do not end the pass with a
+known-failing gate; report the failure instead. Bound: max 2 re-entries per
+failing phase; a third failure ends the pass with the failure reported.
+
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, batch-12 audit):
+
+- Convergence gate, all five green: count/links/citations/frontmatter/
+  no-deleted all true → `true`.
+- Convergence gate, one failing: `citations_ok: false` → `false` — a single
+  failing gate re-enters its phase; the pass never ends with a known-failing
+  gate.
+
+The skill's form is executed at use time, never anchored in code.
+
+## Failure surfacing
+
+If any tool call fails during a pass, call `curator_report_skill_use_issue`
+with `skill_name: "doc-update"`, the failed tool, and the error — then
+continue with the best available grounding. A grounding failure must degrade
+the doc's claims (mark unverified), never silently pass them through.
+
+## Registry Templates
+
+| Template | Purpose |
+|----------|---------|
+| `triage.j2` | Render the Phase 0 triage output shapes: per-artifact role decisions with successors, fold rows, and ledger rows. |
+
+Template context variables (from the template's `[inference]` contract):
+- `triage.j2`: `date`, `count_before`, `count_after`, `reason_category`, `triage_rows`, `fold_rows`, `ledger_rows`
+
+## Constraints
+
+- The cap is **fewer than 85 files** in `kask/docs/` (working target
+  75) — enforced at Phase 0 and re-checked at Phase 6.
+- Never document a deleted surface as current. Tombstones say "no longer
+  exists" and name the commit or date.
+- Never invent a tool name, test name, or count. Extract from the `#[tool]`
+  attributes, pinning tests, or generated lists.
+- Deletions require a named successor in the README lifecycle ledger.
+- One agent process edits the tree at a time; a half-recomposed docs-set
+  (broken links, unresolved citations) blocks other agents' validation.
+- Prefer folding into an existing doc over creating a new file; prefer
+  deleting a stale doc over patching it.

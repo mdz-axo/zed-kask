@@ -1,0 +1,402 @@
+---
+name: therapy
+description: Memory therapy session — scans curator memory for contradictions, fragmentation, and miscalibrated confidence; resolves them; then reifies useful lessons as skills, templates, or rules and purges/condenses the source memories. The user approves all modifications. Therapy is the process of re-organizing memory to be useful and reifying learned experience into proactive guidance.
+---
+
+# Therapy
+
+Memory therapy session for resolving contradictions, reifying lessons, and shedding cognitive load. The user initiates the session, the skill scans for issues, proposes resolutions, reifies useful patterns into skills/templates/rules, and the user approves all modifications.
+
+Therapy has two concrete goals:
+
+1. **Memory hygiene** — manage the consistency and usefulness of memory. Keep it from being a danger (stale code status, pre-solution configurations, contradictions that mislead agents) and make it a constructive, useful database. This includes condensing and purging low-value information so it doesn't obstruct learning. Hygiene is necessary infrastructure, but it is NOT learning — it's forgetting.
+
+2. **Reification** — extract meaning from memory and reify useful lessons as skills, templates, or rules. This is the step that closes the learning loop. The goal of cognition isn't to recall the past — it's for past experiences to be applied to being more effective in the future. Therapy is where experience gets extracted into meaning and reified into proactive guidance.
+
+**The learning loop** (therapy is the extraction-and-reification step that closes it):
+
+```
+experience → memory → therapy (extract meaning + reify) → proactive guidance (skill/template/rule) → new experience
+```
+
+**Memory hygiene** (runs alongside, not part of the learning loop):
+
+```
+scan for contradictions/stale/fragmented → resolve, purge, condense → clean memory database
+```
+
+Forgetting (purging/condensing) is NOT learning. It is shedding low-value information so it doesn't obstruct learning. The goldfish principle applies here: once a lesson is reified into proactive guidance, the episodic memory that produced the lesson can be forgotten — but the forgetting is a hygiene side-effect, not the learning step. The learning step is the reification.
+
+## Initial and target condition
+
+- **Initial condition:** curator memory (`curator.db`) reachable for a
+  read-only scan, its charter version when the values
+  pass is triggered, and the Phase-2 predicted finding counts recorded before
+  the scan runs. A store that cannot be scanned is a blocked session, never a
+  clean one.
+- **Target condition:** every scan finding carries an operator decision
+  (approved, modified, or rejected); every approved proposal has an execution
+  result; the post-execute re-scan shows zero remaining contradictions on the
+  treated targets (the Check gate); and surviving findings are named in the
+  report's follow-up recommendations rather than silently dropped. An
+  unexecuted approval or an unreported survivor is not a finished session.
+
+## D/P labelling
+
+The scan's counts, the approved-proposal count, the execution check and the post-treatment re-scan gate are D (`lisp_eval` over tool results). Finding classification, Festinger strategy choice and reification drafts are P; every P step except the Phase-2 prediction is critiqued by the operator's per-proposal approval in Phase 4 — nothing unapproved is executed. The prediction is critiqued by the Phase-6 gaps computation (D). Self-assessed memory quality is the Dunning case (`onto_anchor` → derived `metacognition`): the check comes from outside the session.
+
+## When to Use
+
+- When the user wants to run a therapy session on the curator's memory database — run from a Curator agent panel session by default. Therapy from the zed agent is a contract deviation permitted only under explicit operator approval and only with the mitigations that preserve the curator's awareness: the session records a `curator-process|therapy_session_<date>` awareness row, and zed-agent turns ingest into curator memory (verified 2026-10-08; the pre-2026-10-08 text claimed the curator would never observe a zed-agent session, which is false). The curator must remember the act of therapy (the forgetting, the reification, the lessons learned) so the cybernetic loop closes — the awareness row is what carries that memory when the session runs outside the Curator panel.
+
+- When recall is misleading agents by returning old code status or pre-solution configurations.
+- When the user notices contradictions in what agents recall or assert.
+- When confidence values appear miscalibrated.
+- When the user wants to extract lessons from accumulated memory and reify them as skills, templates, or rules.
+- When memory is bloated with episodic detail that has been superseded by learned habits (skills/rules).
+- When the memory system's own wiring is suspect — confidence values escaping the floor, memories invisible to semantic search, unbounded episodic growth. The scan doubles as a wiring audit: systematic patterns in the data are wiring symptoms, and hygiene executed on buggy wiring is re-corrupted by the next write.
+- When the operator requests a values pass, or the charter's `version:` field has changed since the last recorded pass — memory hygiene reviewed against the Magnifica Humanitas values charter (scan category f).
+
+## When NOT to Use
+
+- **From the zed agent without explicit operator approval.** Therapy on curator memory runs from a Curator panel session by default; a zed-agent session is a permitted deviation only under explicit operator approval with the awareness row recorded (see When to Use). The zed agent still has no in-session recall of curator memory — the approval and the awareness row are what keep the loop closed.
+- For routine memory consolidation (that runs automatically on the timer).
+- For adding new memories (use `memory_insert` directly).
+- For single-memory updates (use `memory_update` directly).
+- For evaluating a skill — `algedonic-review`'s gemba walk is where the operator evaluates skills and decides proposals.
+- For mechanical pruning without diagnosis — `curator_memory_prune` is the tool; therapy is for contradictions, miscalibration, and reification.
+
+## Grounding
+
+### Computational models of memory (Cox, 2026, OECS; citing Cox & Shiffrin 2017/2024)
+
+- **Memory traces can be altered once retrieved** — "long-term traces are not necessarily immutable; long-term traces can be altered, augmented, and changed once retrieved." Therapy is the deliberate process of doing this.
+- **Distorted traces** (Loftus, 2005) — "long-term traces may represent events in a distorted manner." Therapy identifies and corrects distortions.
+- **Trace coevolution** (Nelson & Shiffrin, 2013) — "traces can accumulate information across events, enabling event memory and knowledge traces to coevolve." Therapy re-organizes traces so they accumulate correctly, then reifies the accumulated knowledge into skills/rules.
+- **Probe-activation retrieval** — traces activate in proportion to similarity to the probe. Contradictory traces with similar features both activate, producing noise. Therapy reduces noise by resolving contradictions.
+- **REM model** (Shiffrin & Steyvers, 1997) — storage parameters `u` (transfer probability), `c` (correct storage probability), `g` (distinctiveness). Low `c` produces error-prone traces. The scan's miscalibrated-confidence category operationalizes the correction (raise/lower/reset via `memory_update`), not a literal c-value computation.
+
+### Cognitive dissonance (Festinger; Lidwell, *Universal Principles of Design*)
+
+- **Three resolution strategies**: reduce importance (lower confidence), add consonant (insert reconciling memory), remove dissonant (forget — delete). Therapy classifies contradictions by strategy and proposes resolutions.
+
+### Dunning's self-knowledge framework
+
+- **Double curse** (Kruger & Dunning, 1999) — the agent cannot self-evaluate which memories are correct. Therapy requires the human user's judgment, not the agent's self-assessment.
+- **Hypocognition** (Dunning, 2018) — the system may lack a representation for the contradiction. Therapy names contradictions explicitly.
+- **Naive realism** (Ehrlinger & Dunning, 2003) — agents treat recalled context as objective reality. Therapy makes contradictions visible so the user can see them.
+
+### The goldfish principle (Vardy, 2020; Ted Lasso)
+
+- **"Be a goldfish"** — the goldfish has a 10-second memory and is the happiest animal on earth. The principle: don't let the past own the present. Applied to memory therapy: forgetting is a feature, not a bug. Once a lesson is reified into a skill, template, or rule, the episodic memory that produced the lesson can be forgotten (purged or condensed). You don't need to recall the past experience if the lesson is already proactively embedded in your guidance system. This is cognitive load shedding — the process of converting recall-dependent guidance into proactive contextualized guidance, then shedding the recall dependency.
+
+### Reification and the learning loop
+
+- **Reification** is the process of converting abstract experience (episodic memory) into concrete, reusable guidance (skills, templates, rules). It is the memory-to-learning bridge: the past becomes useful not by being recalled, but by being embedded in the system that guides future action.
+- **Therapy is the step that closes the learning loop**: experience → memory → therapy (extract meaning + reify) → proactive guidance → new experience. Without therapy, memory accumulates but never becomes learning — the past is stored but not applied.
+- **Forgetting is NOT learning.** Purging or condensing source memories after reification is memory hygiene, not part of the learning loop. It is shedding low-value information so it doesn't obstruct future learning. The goldfish principle: once the lesson is reified, forget the episodic detail — but the forgetting is a side-effect of successful reification, not the learning step itself.
+
+### The values charter (Magnifica Humanitas)
+
+- **The guidance layer is values-laden.** The memory system is the guidance layer — saved lessons and preferences are recalled and shape future behavior. A lesson can be factually true and still be values-corrupting: a learned "preference" that is actually attention-capture amplifies on every recall. Therapy's other checks review memories against each other (consistency), their evidence (calibration), and their usefulness (dedup) — the values pass reviews them against what the system stands for.
+- **The reference is the values charter** (`kask/docs/architecture/core/magnifica-humanitas.md`): eight values (V1–V8) and the one-line discernment test (§129): *does this make human life more human?* Cite the charter's own vocabulary — never paraphrase it into a private one.
+- **Grounding, not a gate.** The charter adds no enforcement surface: the pass surfaces candidates, the operator is the values judge, nothing auto-modifies. The raw episodic layer is evidence and stays out of review scope — history is what happened, not what the system stands for.
+
+## Instructions
+
+### Phase 1 — Establish curator memory access
+
+1. Therapy always targets curator memory (`curator.db`), the curator's own memory of conversations and observations. Do not ask the user to select a store.
+2. Establish read-only access before scanning. Use `curator_memory_recall` and `curator_semantic_search` for recall; `memory_insert`, `memory_update`, and `memory_resolve_contradiction` are the user-approved modification path.
+
+### Phase 2 — Scan
+
+0. **Predict before scanning (calibration, P).** From the target's h_mem count and age profile alone, state the expected number of findings per class (contradiction, fragmentation, miscalibrated confidence, reification candidate) with one sentence of basis. Record them before the first query; Phase 6 reconciles them.
+1. **Inventory the memory architecture's own valves (before any maintenance proposal).** The memory system maintains itself; a session proposing manual maintenance must first reconcile the store's actual state against what the architecture is already doing — routine architecture behavior is not a finding (operator correction 2026-10-13). For curator memory, enumerate from the tree and live settings: the decay setting (`memory_life_days`, Settings → Kask → Memory — confidence decays with days since last recall, recall resets the clock), the distillation timer (compresses finished conversations into lessons, watermarks what it covered), the forgetting horizon (`forgetting_days`, default 7 days — deletes the covered conversation copies once the watermark ages past the horizon; rides the distillation timer), the manual prune valve (`curator_memory_prune` — the valve for residue the automatic chain can't reach), and the alarm layer (the memory-life and growth sensors). Reconcile the store's state against each valve (e.g., episodic-tier age span vs the forgetting horizon; **sheddable-tier row count — turn storage (`curator:thread:`) plus goal events (`curator:goal:`) — vs the growth ceiling; the additive-by-design knowledge layer is exempt — its growth is distillation working, not a valve stall**, algedonic card 33b0eebb option (A), 2026-10-18) and record the reconciliation. Any manual-maintenance proposal from this session names the valve it replicates or adjusts and the reason the automatic path hasn't already done the work.
+2. Call `render_template` to render the scan template:
+   - template: `therapy/scan.j2`
+   - context: `{}` — curator memory is fixed in the template; no target-selection inputs.
+
+3. Following the template's guidance, scan the memory database for five categories of issues:
+
+   **a. Contradictions** — h_mems with the same entity+attribute but divergent values or confidence. Use `curator_memory_recall` to query by entity, then compare values. Also use `curator_semantic_search` to find related entities that may contradict.
+
+   **b. Fragmentation** — h_mems that are isolated (low connectedness, no co-occurrence links) but semantically similar to well-connected h_mems. These are dilution candidates (Tetlock's dilution effect). Query by embedding similarity and check for isolated vs. connected clusters.
+
+   **c. Miscalibrated confidence** — h_mems with confidence that doesn't match their evidence. Look for:
+   - High-confidence h_mems with no evidence citation (no `evidence_h_mem_id`).
+   - Low-confidence h_mems that have been recalled many times (high `recalled_at` frequency) without contradiction.
+   - Confidence values that diverge significantly from related h_mems on the same topic.
+   - Memories verified accurate by this scan's ground-truth checks (direct read-only DB inspection, code verification, successful reproduction) — these are raise_confidence candidates: verification work is the outcome signal that strengthens confidence (via `memory_update`'s Bayesian combination, never a raw write).
+
+   **d. Reification candidates** — clusters of episodic memories that share a common pattern or lesson but have not yet been reified into a skill, template, or rule. Look for:
+   - Repeated patterns across multiple entities (e.g., "this skill fails 40% of the time when X" appears across multiple skill-use-issue reports).
+   - Accumulated experience on a topic that could inform a rule or template (e.g., "when doing X, always check Y first" — if this lesson appears in multiple memories, it's a reification candidate).
+   - Episodic detail that has been superseded by a learned habit (if a skill or rule already captures the lesson, the episodic memories are purge candidates).
+
+   **e. System wiring defects** — scan findings that indicate the memory system's own wiring is broken, not just the memories. The scan is the memory system's feedback loop: systematic patterns in the data are wiring symptoms. Check:
+   - **Confidence-floor escapes** — rows above the 0.5 floor: the writing path used `HMem::new`'s 1.0 default instead of `.with_confidence(0.5)`. Grep the writers (`rg "HMem::new" --type rust` in the inserting crate) and check each site applies the floor.
+   - **Embedding-invisible memories** — knowledge-layer entities (structured memories, skill-use reports) with no row in the embeddings table: the insert path doesn't embed, so `curator_semantic_search` cannot see them and absence gets read as "no memory exists." Verify every insert path calls the shared embedding contract (`embed_for_semantic_recall` in hkask-mcp-curator).
+   - **Key-scheme drift** — the same knowledge under multiple entity/attribute keys (two writers keyed the same fact differently). Merge candidates — but also check whether the writers share a key convention.
+   - **Isolated knowledge** — structured entities absent from `memory_links` (doubly isolated when they also lack embeddings).
+   - **Unbounded episodic growth** — row-count trend, episodic-to-structured ratio, max value size. Distillation is additive-only by design; without a forgetting path the episodic layer grows monotonically and therapy is the only valve.
+
+   Each wiring finding records the data symptom (from the scan), the root cause (file:line in the writer), and the proposed fix (code edit + pinning test). Wiring defects are fixed BEFORE or alongside memory hygiene — a writer bug re-corrupts cleaned rows (the 2026-09-01 recalibration set every row to 0.5; the skill-use reporting path then re-created 1.0 rows because the recalibration fixed the rows, not the writer).
+
+   **f. Charter alignment (the values pass)** — run on operator request or on charter version change (compare the charter's `version:` field against the version recorded in the latest values-pass awareness row — a deterministic trigger, not habit), not every session; it is a heavier semantic pass than the mechanical checks. Scope: the normative layer only (reified lessons, preferences, rulings, process guidance — the rows that steer behavior); the raw episodic layer is evidence and explicitly out of scope. Two checks:
+   - **Guidance check** — one batched model pass (the distillation-port pattern) over the normative rows: does this guidance steer behavior in a way that conflicts with a charter value? Each candidate conflict cites the lesson h_mem, the charter value (V1–V8), and the discernment-test reasoning. A factually-true lesson can still be values-corrupting.
+   - **Practice check** — per charter value, search lessons and history for evidence the system practices it; values with no practice evidence are flagged (the memory-level analog of the charter's IS vs OUGHT table).
+   Record the pass in a `curator-process|therapy_values_pass_<date>` awareness row carrying the charter version reviewed. Emit the pass as a `values_pass` record for the Phase-6 report: `{ "charter_version": <the version: field reviewed>, "value_states": [ { "value": "V1".."V8", "state": "practiced" | "thin" | "conflicted" } ] }` — one entry per charter value, `conflicted` when the guidance check found a conflict citing it, `practiced`/`thin` from the practice check. The report's counts are computed from this array by the template; a count the model types instead is not the count.
+
+   **Skill-use attribution gate:** before using a `skill_use_issue` as evidence for changing a skill, classify its `failure_origin` as `skill_contract`, `agent_execution`, `tool_implementation`, `provider_transport`, `environment_or_baseline`, `operator_interruption`, `expected_absence`, or `unknown`. Preserve the raw incident and total count. Only `skill_contract` and repeated `agent_execution` failures directly justify skill changes; route other origins to their owning subsystem. Keep `unknown` unresolved rather than averaging it into skill reliability.
+
+   Scan technique: prefer a complete read-only audit over sampling via recall tools — `sqlcipher "file:<db>?mode=ro" "PRAGMA key='<passphrase>'; ..."` against the live DB (WAL allows concurrent readers; the passphrase resolves via `HKASK_DB_PASSPHRASE`, default `allostery` on first run). Sampling through `curator_memory_recall`/`curator_semantic_search` misses systemic patterns and cannot see embedding-less entities at all. The MCP write tools remain the modification path. Direct SQL WRITES to `hmems` bypass the `value` column's JSON serialization — the 2026-09-01 session's bare-string values corrupted 4 rows and broke the first full-store scan (2026-09-04, surfaced by the backfill tool's dry run); if a SQL write is ever unavoidable, `json_quote` the value, and audit prior SQL-written rows with `json_valid(value)` before any full-store scan.
+
+4. Collect all findings as structured data. Each finding includes:
+   - `id`: the finding's own identifier (F001-style) — Phase 3's `finding_id` references it.
+   - `h_mem_id`: the ID of the problematic h_mem (or the cluster ID for reification candidates).
+   - `entity`: the entity of the h_mem.
+   - `attribute`: the attribute.
+   - `issue_type`: "contradiction" | "fragmentation" | "miscalibrated_confidence" | "reification_candidate" | "system_defect" | "charter_alignment".
+   - `failure_origin`: for skill-use findings, the attribution-gate value; omit for other findings.
+   - `root_cause`: for system_defect findings, the file:line of the writing path that produces the bad rows.
+   - `description`: what the issue is.
+   - `contradicting_h_mem_ids`: for contradictions, the IDs of the contradicting h_mems.
+   - `source_h_mem_ids`: for reification candidates, the IDs of the memories that form the pattern.
+   - `evidence`: the values/confidence/connectedness data that supports the finding. (Proposed resolutions are NOT finding fields — Phase 3 owns the proposal list.)
+
+5. Call `lisp_eval` to check the scan is non-trivial:
+   - form: `(length findings)`
+   - env: `{ "findings": <the scan output's findings array> }` — pass the findings array itself, not the whole scan output: an absent `findings` binding refuses with the engine's unbound-symbol error (a scan that produced no findings array is a broken scan, never a clean one), and an empty array legitimately reads 0.
+   - If the result is 0, report "No issues found in curator memory. Memory is clean." and exit.
+   - For recursive helper forms, pass `max_depth` ≥ 8× the list length — helpers consume 2–4 depth frames per element, so the 1024 default only covers lists of a few hundred elements.
+
+### Phase 3 — Classify and propose
+
+1. Call `render_template` to render the classification template:
+   - template: `therapy/classify.j2`
+   - context: `{ "findings": <scan findings> }`
+
+2. Following the template's guidance, classify each finding. For a skill-use finding, verify `failure_origin` first: `skill_contract` and repeated `agent_execution` can produce skill changes; `tool_implementation`, `provider_transport`, `environment_or_baseline`, `operator_interruption`, and `expected_absence` route to those owners; `unknown` remains unresolved. Attribution changes ownership, never suppresses the raw failure.
+
+   **For contradictions** — Festinger's three dissonance resolution strategies:
+
+   **Reduce importance** (lower confidence):
+   - Use when a contradiction is genuine (both memories are plausible) and the system can't determine which is correct.
+   - Action: `memory_update` to lower confidence on both, so neither dominates recall.
+   - Grounding: Festinger — "reduce the importance of dissonant cognitions."
+
+   **Add consonant** (insert reconciling memory):
+   - Use when a contradiction can be resolved by a new insight that reconciles both memories.
+   - Action: `memory_insert` with a new h_mem that synthesizes the contradiction, citing both contradicting h_mems as evidence.
+   - Grounding: Festinger — "add consonant cognitions." Also Nelson & Shiffrin (2013) — "traces can accumulate information across events."
+
+   **Remove dissonant** (forget — delete):
+   - Use when one memory is clearly wrong (e.g., old code status, pre-solution configuration).
+   - Action: `memory_resolve_contradiction` with strategy "forget" (deletes the row from the database; operator ruling 2026-09-04).
+   - Grounding: Festinger — "remove or change dissonant cognitions." Also Loftus (2005) — distorted traces should be corrected. Also the goldfish principle — don't let the past own the present.
+
+   **For fragmentation** — propose:
+   - **Merge**: if an isolated h_mem is a duplicate of a connected one, delete the isolated one.
+   - **Link**: if an isolated h_mem is related but not linked, propose inserting a connecting h_mem.
+   - **Keep**: if the isolation is intentional (a unique perspective), keep it but note it.
+
+   **For miscalibrated confidence** — propose:
+   - **Raise confidence**: if a h_mem has been recalled many times without contradiction, or was verified accurate by this session's ground-truth checks (direct read-only DB inspection, code verification, successful reproduction), `memory_update` to raise confidence — verification work is the outcome signal; combine a modest signal (e.g. 0.6–0.7), never a raw write.
+   - **Lower confidence**: if a h_mem has no evidence citation, `memory_update` to lower confidence.
+   - **Reset to floor**: if confidence is clearly wrong, `memory_update` to 0.5 (the floor).
+
+   **For reification candidates** — propose:
+   - **Create skill**: if the pattern is a repeatable process that could guide future action, propose a skill: a `.agents/skills/<name>/SKILL.md` in the user's project with the lesson as proactive contextualized guidance, shown to the user as a draft before it is written.
+   - **Create template**: if the pattern is a prompt structure or output format that could guide future generation, propose creating a .j2 template.
+   - **Create rule**: if the pattern is a simple constraint or guideline (e.g., "always check X before Y"), propose adding it to the project `.rules` file or the agent's system prompt.
+   - **Purge source memories**: after reification, the source episodic memories are no longer needed — propose `memory_resolve_contradiction` with strategy "forget" to purge them (cognitive load shedding).
+   - **Condense source memories**: if the source memories have ongoing reference value, propose replacing them with a single high-confidence summary h_mem via `memory_insert` + `memory_resolve_contradiction` (forget the originals, keep the summary).
+
+   **For system wiring defects** — these are not contradictions between memories and take no Festinger strategy. The proposal is a code fix: correct the writing path to enforce the invariant it violates (confidence floor, embedding contract, key convention), with a pinning test in the same change. Grounding: the operator's standing rule — fix the tool, never work around the tool failure — applied to the memory system itself.
+
+   **For charter-alignment findings** — the values pass's resolution options (the charter is grounding, not a gate: every option requires operator approval, nothing auto-modifies):
+   - **Annotate**: a true record that steers badly — `memory_update` to lower confidence and mark the tension in the value, keeping the row as history.
+   - **Amend**: `memory_update` with a new_value that rewrites the lesson to respect the cited value.
+   - **Escalate to board**: the conflict indicates live system behavior, not just a stored lesson — file an algedonic card on the review board instead of editing memory.
+   - **Record practice gap**: a thin or unpracticed value with no conflicting lesson — card the gap for the operator.
+
+3. Produce a structured proposal list. Each proposal includes:
+   - `finding_id`: the ID of the finding being addressed.
+   - `process`: hygiene | reification | post_reification_hygiene | values_alignment.
+   - `strategy`: the resolution strategy.
+   - `action`: the specific tool call(s) to execute.
+   - `h_mem_ids`: the h_mems involved.
+   - `failure_origin`: the skill-use attribution value, when the finding carried one.
+   - `owner`: skill | tool | provider | environment | operator | unresolved.
+   - `reification_target`: for reification proposals, the skill/template/rule to create.
+   - `reason`: why this resolution is proposed (citing the finding and the grounding).
+   - `requires_approval`: true (all modifications require user approval).
+   - Verify proposal completeness and approval flags via `lisp_eval` (`TH-1`): `(and (>= proposals_count findings_count) (= findings_without_proposal 0) (= unapproved_auto_count 0))` — every finding must be addressed by at least one proposal, but a single finding may yield several (reification plus the purge/condense of its source memories), so proposals legitimately exceed findings. `findings_without_proposal` is the count of findings with no proposal referencing them.
+
+### Phase 4 — User review and approval
+
+1. Present the proposals to the user in a readable format:
+   - Group by issue type (contradictions, fragmentation, miscalibrated confidence, reification candidates).
+   - For each proposal, show: the finding, the proposed action, and the reason.
+   - For reification proposals, show the proposed skill/template/rule content and ask the user to review it.
+   - Ask the user to approve, modify, or reject each proposal.
+
+2. Record the user's decisions. Only approved proposals are executed.
+
+3. Call `lisp_eval` to count approved proposals:
+   - form: "(define count-approved (lambda (lst) (if (is_null lst) 0 (if (eq (assoc \"approved\" (car lst)) t) (+ 1 (count-approved (cdr lst))) (count-approved (cdr lst)))))) (count-approved proposals)"
+   - env: { "proposals": <your proposal list with user decisions> }
+   - The interpreter has no `filter` builtin — the count is a recursive
+     helper (the floor-strength pattern). Pass `max_depth` ≥ 8× the list
+     length — recursive helpers consume 2–4 depth frames per element.
+   - If the result is 0, report "No proposals approved. Memory unchanged." and exit.
+
+### Phase 5 — Execute
+
+1. For each approved proposal, execute the corresponding tool call:
+
+   **System-defect fixes (the wiring repairs) — execute FIRST:**
+   - Apply the approved code fix with its pinning test, then validate with the crate's test suite and clippy gate. Only after the writer is fixed should hygiene proposals touching the same rows execute — otherwise the next write re-corrupts them. Gate hygiene execution on `lisp_eval` (`TH-2`): `(if (> system_defect_count 0) wiring_repairs_verified true)`.
+
+   **Memory hygiene proposals:**
+   - `memory_insert` for "add_consonant" and "link" strategies.
+   - `memory_update` for "reduce_importance", "raise_confidence", "lower_confidence", "reset_confidence" strategies.
+   - `memory_resolve_contradiction` for "remove_dissonant", "merge" strategies.
+
+   **Values-alignment proposals:**
+   - `memory_update` for "annotate" and "amend" strategies.
+   - `kanban_task_create` on the Algedonic review board for "escalate_to_board" and "record_practice_gap" strategies.
+
+   **Reification proposals (the learning step):**
+   - Create the skill/template/rule as approved by the user. Use `write_file` to write SKILL.md, .j2 templates, or .rules entries.
+
+   **Post-reification hygiene (forgetting — runs after reification, not part of learning):**
+   - **Purge**: `memory_resolve_contradiction` with strategy "forget" for each source h_mem.
+   - **Condense**: `memory_insert` to create the summary h_mem, then `memory_resolve_contradiction` with strategy "forget" for each source h_mem.
+   - **Keep sources**: if the user chose to keep the source memories, no action.
+
+2. For each approved proposal, record one aggregate execution result with `finding_id`, `strategy`, `success` and `outcome` copied from the proposal and tool receipts. If a proposal requires several tool calls, summarize their receipts in that one outcome and set `success: true` only when every required call succeeded. These join keys let the report distinguish approval from actual resolution; a result without them cannot count as resolved.
+
+3. Call `lisp_eval` to verify all executions succeeded:
+   - form: "(define count-failed (lambda (lst) (if (is_null lst) 0 (if (not (eq (assoc \"success\" (car lst)) t)) (+ 1 (count-failed (cdr lst))) (count-failed (cdr lst)))))) (count-failed results)"
+   - env: { "results": <your execution results> }
+   - The interpreter has no `filter` builtin — the count is a recursive
+     helper (the floor-strength pattern). Pass `max_depth` ≥ 8× the list
+     length — recursive helpers consume 2–4 depth frames per element. A
+     missing, null, or explicitly false `success` counts as a failure;
+     only an explicit true passes — an execution reporting `success: false`
+     is a failed execution, never a succeeded one.
+   - If the result is > 0, report the failures and suggest manual remediation.
+
+### Post-execute verification (the loop's Check)
+
+After Phase 5 and before the report: re-run the Phase 2 scan on the
+treated targets only. Gate — call `lisp_eval` with:
+- form: `(eq (length remaining_contradictions) 0)`
+- env: `{ "remaining_contradictions": <contradictions still present on treated targets — the list itself, not the re-scan output object> }`
+Bound: one re-scan per session — survivors are re-proposed (Phase 3)
+only if the operator approves in-session; otherwise they go into the
+report's follow-up recommendations. Fragmentation that remains because
+the operator approved only partial merges is expected, not a failure.
+
+### Phase 6 — Report
+
+0. **Reconcile the prediction (D).** Report predicted vs found per finding class from Phase 2 item 0, gaps computed by `lisp_eval` over the two count lists:
+   - form: `(define gaps (lambda (f p) (if (is_null f) '() (cons (- (car f) (car p)) (gaps (cdr f) (cdr p)))))) (gaps found_counts predicted_counts)`
+   - env: `{ "found_counts": <the four class counts from the scan, in the Phase-2 item-0 order>, "predicted_counts": <the four predicted counts, same order> }`
+   The gap is the session's calibration signal about this memory store, carried into the report's hygiene summary.
+1. Call `render_template` to render the report template:
+   - template: `therapy/report.j2`
+   - context: { "findings": <scan findings>, "proposals": <all proposals, each with its Phase-4 approved flag>, "executions": <execution results, each with finding_id, strategy, success and outcome>, "values_pass": <the Phase-2f values-pass record, or omitted when the pass did not run> }
+
+   Copyable context shape:
+   ```json
+   {
+
+     "findings": [],
+     "proposals": [],
+     "executions": [
+       { "finding_id": "F001", "strategy": "forget", "success": true, "outcome": "<tool receipt summary>" }
+     ],
+     "values_pass": {
+       "charter_version": "<the version: field reviewed>",
+       "value_states": [
+         { "value": "V1", "state": "practiced|thin|conflicted" },
+         { "value": "V2", "state": "practiced|thin|conflicted" },
+         { "value": "V3", "state": "practiced|thin|conflicted" },
+         { "value": "V4", "state": "practiced|thin|conflicted" },
+         { "value": "V5", "state": "practiced|thin|conflicted" },
+         { "value": "V6", "state": "practiced|thin|conflicted" },
+         { "value": "V7", "state": "practiced|thin|conflicted" },
+         { "value": "V8", "state": "practiced|thin|conflicted" }
+       ]
+     }
+   }
+   ```
+   Omit `values_pass` (or pass `{}`) when the values pass did not run — the
+   template then states that explicitly instead of rendering empty counts.
+
+2. Following the template's guidance, produce a therapy session report:
+   - **Memory hygiene summary**: how many contradictions resolved, how many fragmented memories merged/linked, how many confidence values recalibrated — every resolved count is computed by the template from successful execution records joined to the finding IDs; approved-but-unexecuted proposals never count as resolved. Compose prose around the rendered numbers, never re-type a count.
+   - **Reification summary**: how many skills/templates/rules created, how many source memories purged or condensed, the cognitive load shed (estimated reduction in memory database size or retrieval noise).
+   - **Values alignment summary** (when the values pass ran): the charter version reviewed and the practiced/thin/conflicted counts are computed by the template from `values_pass.value_states` — compose prose around the rendered numbers, never re-type a count. Report the conflicts with their lesson + value citations, and the practice gaps carded.
+   - **Per-issue detail**: what was found, what was proposed, what was approved, what was executed, what was the outcome.
+   - **Recommendations**: follow-up actions for the user (e.g., "run another therapy session after the next consolidation cycle", "review the new skill's effectiveness after N invocations", "consider reifying the remaining reification candidates in a future session").
+
+3. Present the report to the user.
+
+## Regression case
+
+All receipts executed live through the tools — `lisp_eval` for the forms, `render_template` for the classify render (2026-09-30, batch-10 audit):
+
+- Scan check `(length findings)`: `{"findings": []}` → 0 (a clean scan);
+  `{"findings": [<two findings>]}` → 2; an absent `findings` binding →
+  `unbound symbol: findings` (a broken scan never reads clean — the
+  pre-repair form read a missing findings key as 0/clean).
+- Approved count `(count-approved proposals)`: `[{"approved": true}, {"approved": false}, {"approved": true}]` → 2.
+- Execution check `(count-failed results)`: `[{"success": true}, {}, {"success": false}]` → 2.
+  Before the repair this returned 1: the old predicate `(eq (assoc "success" ...) nil)`
+  counted an explicit `success: false` as SUCCEEDED. The repaired predicate
+  `(not (eq (assoc "success" ...) t))` counts missing, null, and explicit false
+  as failures; only an explicit true passes.
+- Re-scan gate `(eq (length remaining_contradictions) 0)`: `[]` → true;
+  `[<survivor>]` → false.
+- Prediction reconciliation `(gaps found_counts predicted_counts)`:
+  found `[2,1,0,3]` vs predicted `[1,2,0,2]` → `[1,-1,0,1]`.
+- `therapy/report` values-pass branches: omitted `values_pass` states that the
+  pass did not run; one V1–V8 row each with recognized states renders the
+  exact practiced/thin/conflicted counts; a duplicate/missing value, unknown
+  state, missing version, or wrong row count reports `Values pass incomplete`
+  and never renders alignment counts.
+- `therapy/scan` renders with `{}` and names curator memory without a store-selection branch or corpus/swarm query instructions.
+- `therapy/classify` renders with `{findings}` and the findings list
+  appears in the rendered prompt (before the repair the template never
+  injected the findings it exists to classify).
+
+The skill's forms are executed at audit and use time, never anchored in code.
+
+## Constraints
+
+- **User sovereignty.** The memory system is transparent to the user and respects user sovereignty. The user can see what's in memory (read-only tools available to all threads), approve all modifications (no autonomous editing), run without memory loops (the zed agent has no memory), and purge any memory at any time. The system serves the user, not the other way around.
+- **Therapy on curator memory runs from a Curator agent panel session by default.** Running from a zed-agent session is permitted only under explicit operator approval and only with the `curator-process|therapy_session_<date>` awareness row recorded so the cybernetic loop closes (per the 2026-10-08 ruling in When to Use). Forgetting works as long as it is done with awareness and has a purpose.
+- **User approval required for all modifications.** The skill proposes; the user approves. No autonomous memory modification or skill creation.
+- **Evidence-grounded proposals.** Every proposal must cite the specific h_mems and data that support the finding. No free-association.
+- **Two distinct processes — do not conflate.** Memory hygiene (resolving contradictions, purging, condensing) is forgetting, not learning. Reification (extracting meaning, creating skills/templates/rules) is learning. Forgetting is a hygiene side-effect of successful reification, not part of the learning loop.
+- **Festinger's three strategies only for contradictions.** Every contradiction resolution must use one of: reduce importance, add consonant, remove dissonant.
+- **The values pass is grounding, not a gate.** The charter adds no enforcement surface: the pass surfaces candidates, the operator judges, nothing auto-modifies. The charter-version trigger is deterministic (compare the charter's `version:` field to the latest values-pass awareness row); the alignment judgments are semantic and route through Phase-4 approval like every other proposal.
+- **Fix the writer, not just the written.** When a hygiene finding has a wiring root cause (a code path producing bad rows), the code fix lands in the same session, before or alongside the hygiene execution. Hygiene executed on buggy wiring is re-corrupted by the next write — the 2026-09-01 recalibration set every row to the 0.5 floor, and the skill-use reporting path (which defaulted to 1.0) re-created above-floor rows within days.
+- **Reification requires user review of the proposed skill/template/rule content.** The user must see and approve the actual content before it is written.
+- **Post-reification forgetting requires separate approval.** The user approves reification and forgetting as separate decisions — they may reify a lesson but choose to keep the source memories.
+- **Writes are user-approved, never silent.** The `memory_insert`, `memory_update`, and `memory_resolve_contradiction` tools are curator MCP server tools available to all threads (the curator-thread gate was removed 2026-09-01 by operator decision); the safety properties are the Phase-4 per-proposal approval, the server-side evidence-citation and confidence-floor invariants, and the no-deletion-without-reason constraint below — not a thread gate.
+- **No deletion without reason.** Every `memory_resolve_contradiction` call must include a reason citing the contradiction or the reification.
+- **Confidence floor.** New memories inserted via therapy start at confidence 0.5.
+- **Report honestly.** If no issues are found, say so. If executions fail, report the failures. Do not fabricate success.
+
+## Registry Templates
+
+| Template | Purpose |
+|----------|---------|
+| `therapy/scan.j2` | Guide the scan phase: how to query the memory database for contradictions, fragmentation, miscalibrated confidence, and reification candidates. Defines the expected output shape (findings list). |
+| `therapy/classify.j2` | Guide the classification phase: how to map findings to resolution strategies (Festinger + reification) and propose specific tool actions. Defines the expected output shape (proposal list). |
+| `therapy/report.j2` | Guide the report phase: how to structure the therapy session report, including memory hygiene summary and reification summary. Defines the expected output shape (session summary). |

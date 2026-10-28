@@ -1,0 +1,912 @@
+---
+name: build-corpus-pipeline
+description: "Build or refresh a source-complete corpus from a caller-selected folder through conversion, chunking and retrieval, with optional classification, evidence-carrying QA and centroids. Bind run-specific identities, parameters and approvals at intake; verify each required stage before expansion."
+---
+
+# Build Corpus Pipeline
+
+Build a functioning, verifiable corpus pipeline, not a hand-produced substitute
+for a failed stage. This skill is the reusable procedure; the caller supplies the
+source set, corpus identity, requested outputs and operating limits. Keep names,
+paths, source inventories, approvals, measured counts and calibration in that
+execution's record, never in this skill. A tool return, a nonempty file, and a
+completed capability are different claims.
+
+## When to Use
+
+Build or refresh a corpus from a user-selected folder, optionally producing
+classified passages, evidence-carrying QA exports, style centroids,
+or a shippable distribution bundle from a sealed calibration run. The source
+set need not be literary, single-author or related to a previous run.
+
+## When NOT to Use
+
+For a question over an existing corpus, use `corpus_query`. Model training
+is out of scope for the co-researcher mandate and has no executor here —
+this pipeline's QA output is a research corpus, not a training submission.
+
+## D/P labelling
+
+Intake, source acceptance and parameter binding are P (operator-gated).
+The corpus tools are D: conversion, chunking, embedding, classification
+and generation run as server tools whose measured counts and digests are
+the record — a stage's claimed output is never substituted for its
+measured output. Model passes inside the tools (tagging, QA generation)
+are P, critiqued by each stage's validated layer stats and rejection
+rates. Agent-side model passes are likewise P — Stage 7's adjudication
+render (`docproc/adjudicate-passages.j2`) and Stage 8's decoupled
+`grounding-verify` run — critiqued by the same layer stats, the
+operator's semantic acceptance, and the mechanical gates they feed.
+Stage 10 verification is D (`lisp_eval` over measured stage
+equalities and the separately evidenced semantic-gate boolean — never
+fixed totals, file sizes, or a model's success claim).
+
+## Initial and target condition
+
+- **Initial condition:** the caller-approved source inventory and hashes, corpus identity, requested branches, bound parameters and cost limits, resolved paths/credentials, and a run record with every stage initially unmeasured.
+- **Target condition:** the Stage 10 canonical equality gate is true for every requested branch, the separately evidenced semantic/retrieval/style checks pass where applicable, and every unrequested or failed branch is explicitly recorded. A failed stage re-enters at that exact stage after its capability or premise is repaired; three no-progress attempts halt for operator attention. Distribution is part of the target only when the caller requested a sealed bundle.
+
+## Anchors and contract
+
+- **PKO** separates a procedure from its execution: record each stage's inputs,
+  outputs, measured outcomes and unresolved failures.
+- **Dublin Core / PROV-O** anchor source identity and derivation. A citation is
+  `QaEvidence { chunk_ref, source, quote }`, not a semantic verdict.
+- **Ontology-anchored dense retrieval** grounds `corpus_embed` and `corpus_query`
+  in Su et al., "One Embedder, Any Task: Instruction-Finetuned Text Embeddings"
+  (INSTRUCTOR, *Findings of ACL* 2023, `doi:10.18653/v1/2023.findings-acl.71`) and
+  Karpukhin et al., "Dense Passage Retrieval for Open-Domain Question Answering"
+  (DPR, *EMNLP* 2020, `arXiv:2004.04906`).
+- **Bloom's taxonomy** informs QA difficulty. The engine's five labels are
+  `factual`, `conceptual`, `analyze`, `evaluate`, `create`; labels alone do not
+  establish actual cognitive difficulty.
+
+The [corpus README](../../../kask/mcp-servers/hkask-mcp-corpus/README.md) specifies
+wire contracts; the [tool reference](../../../kask/docs/reference/mcp-servers/corpus.md)
+lists parameters. Enforcement anchors (paths relative to the repository root):
+
+| Invariant | Current enforcement |
+|---|---|
+| One bounded word-window engine, real overlap including explicit zero | `kask/crates/hkask-memory/src/text_chunking.rs:123`; `kask/mcp-servers/hkask-mcp-corpus/src/helpers.rs:373` |
+| Required current-protocol classification, identity correlation and server-resolved published anchors | `kask/crates/hkask-types/src/corpus.rs`; `kask/crates/hkask-bridge-ontology/src/term_resolution.rs`; `kask/mcp-servers/hkask-mcp-corpus/src/tools/tagging/ops.rs` |
+| Full-source stored context and partition-stable prompt IDs | `kask/mcp-servers/hkask-mcp-corpus/src/services/prompt_builder.rs:119`; `kask/crates/hkask-types/src/corpus.rs:38` |
+| Structured evidence across generation and ingestion | `kask/mcp-servers/hkask-mcp-corpus/src/services/qa_pipeline.rs:26`; `kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus/qa_parsing.rs:53` |
+| Exclusive QA output ownership and typed retries | `kask/mcp-servers/hkask-mcp-corpus/src/services/qa_batch.rs:99`; `kask/mcp-servers/hkask-mcp-corpus/src/services/qa_batch.rs:124`; `kask/mcp-servers/hkask-mcp-corpus/src/batch.rs:74` |
+
+## Inputs and preflight
+
+Resolve real paths and credentials before calling tools. Keep sources, accepted
+extractions, stage outputs and scratch controls separate. Never put probes,
+duplicate sources or synthetic fixtures in an extraction input directory.
+
+| Input | Contract |
+|---|---|
+| `corpus_source`, source selection | Caller-selected folder and agreed file scope, including whether nested files are included; freshly inventory every selected file, including unsupported formats |
+| content scope policy | Confirm whether the canonical pre-chunk boilerplate filter matches the requested corpus: page-delimited books remove bounded blank/title/copyright/contents/index pages, and unpaged books use conservative section signals. Use `target_pages` only for an explicit source subset or OCR probe, not to duplicate routine book-furniture filtering |
+| `entity_ref_prefix` | One namespace; use `style:{author}` for an author corpus, with the exact same author identifier in compose/centroid calls |
+| `db_path` | One corpus DB; the server resolves `HKASK_DB_PASSPHRASE` from authorized credentials — never invent, print, or pass it |
+| `max_tokens` | Optional approximate size target; absent uses `HKASK_CHUNK_MAX_TOKENS` / shared settings (code default 256), not a model tokenizer |
+| `overlap_tokens` | Default **64**, yielding **48 words**; explicit `0` disables repetition |
+| `multi_tier` | False for the directory QA substrate; per-file/text retrieval can request coarse/medium/fine tiers |
+| embedding `model`, `batch_size` | Use the configured embedding model and tool's batching; do not substitute a training or chat model |
+| `tag_batch_size` | **10** chunks per tagging inference call by default; distinct from the number of rows in a file partition |
+| `concurrency` | Bound tool concurrency to the endpoint's measured sustained capacity — set `HKASK_MAX_CONCURRENCY` for the run instead of inheriting the global default, which can sit an order of magnitude above one endpoint's real capacity. The shared AIMD limiter starts at up to 2, grows by 1, halves on capacity failure, and pauses outright while the shared inference breaker is open: a breaker-open verdict carries a retry horizon to wait out, not a capacity signal to halve through. The pause makes an accidental trip recoverable, not safe to provoke — an overshooting ramp still burns roughly one failed page per probe past the edge |
+| requested outputs | Retrieval is the core path. Classification, QA/exports and style centroids are explicit branches; QA and tag-selected centroids require classification |
+| `reference_author`, `config_path`, dimension selectors | Optional style branch; caller-supplied identity, current cognition YAML and explicit tag predicates for any requested subsets; the identity does not establish source authorship |
+| `qa_pairs_per_chunk` | Caller-approved positive level count carried by one prepared prompt per chunk; default **2**. Generation uses disposition proposal/review, then QA writing/review only when at least one merged level is supported |
+| `quality_adjudications_jsonl` | Required complete `prepared-qa-adjudication-v2` manifest: one identity-matched row per prepared prompt, with passage decision and level decisions exactly ordered to `qa_types`; there is no unadjudicated generation path, and v1 and partial manifests are invalid |
+| `context_k` | Default **0** for primary-only factual/conceptual QA; positive KNN context requires the corpus DB (the passphrase resolves server-side) |
+| `type_distribution` | Five nonnegative integer weights in canonical label order; default `1,1,1,1,1` |
+| `max_pairs` | Explicit pair cap, or `0` for all `classified_count × qa_pairs_per_chunk`; not a small fixed cap |
+| `dataset`, `owner` | Explicit dataset/owner identity for QA exports; never inherit another corpus's defaults |
+| execution record | Caller-selected record of source identities/hashes, stage paths, parameters, counts, verification and unresolved issues; keep credentials out |
+| pilot and spend bounds | Measured input scope, selected models, request/time/retry limits and approved cost ceiling; changed source/model/volume invalidates old estimates |
+
+QA requires a dedicated non-thinking generator: explicit tool `model`, otherwise
+Settings → Kask → Models → **QA Generation Model** (`kask.models.qa_generation_model`,
+injected as `HKASK_QA_GENERATION_MODEL`). The setting defaults empty. Missing,
+malformed or unresolved configuration must fail visibly. No chat, classifier,
+`HKASK_QA_MODEL`, or training-base fallback. Tagging independently requires the
+configured classifier; OCR requires the configured image-capable OCR model.
+No training base model or LoRA configuration is part of this pipeline.
+
+Use tool concurrency by default. Additional agent threads require explicit
+operator approval and disjoint stage output paths. File partitioning changes
+scheduling only: preserve every row, source, entity reference and prompt ID.
+Never copy source files into nested input directories to simulate partitioning.
+Do not fan out DB ingestion with independently restarting retained-row indices.
+
+## Instructions
+
+### Execution loop
+
+Plan from current inputs → run the smallest discriminating stage probe → compare
+actual identities, counts and quality against that stage's gate → fix the failing
+capability or premise and rerun that stage. Expand only after the probe passes.
+The target is zero unresolved failures across the required source set and stages,
+not a plausible output file. Stop an approach after three no-progress attempts.
+On operator cancellation, stop and ask what was wrong; do not resubmit the call.
+
+### Observable execution contract
+
+A resumable final artifact is not a progress surface. Before any stage call spanning
+more than one natural work unit (source file, JSONL partition, prompt shard), verify
+whether the tool exposes durable status or incremental progress. If it returns only
+a final summary, partition the stage at those natural boundaries and execute bounded
+waves. Never place a large corpus behind one final-only synchronous call merely
+because the implementation can resume after cancellation.
+
+Bind an operator-visible reporting cadence before expansion. Size the next wave from
+the measured pilot duration so one wave completes within that cadence; do not encode
+a corpus-specific file count in this skill. Independent units may run concurrently
+inside a wave when they have disjoint outputs. Reconcile the whole wave before
+starting another; aggregate tools partition JSONL only at record boundaries and
+must reconcile the union of identities with the manifest.
+
+When a stage has no status surface or durable receipt projection, its execution
+ledger is the status API: before a wave record `planned`, `completed`, `succeeded`,
+`failed`, `remaining`, the current unit, `started_at` and `updated_at`; atomically
+update them after each wave. Retrieval calibration is not such a stage: use
+`kask/scripts/audit/inspect-chunk-calibration-run.sh <output-dir>` to derive status
+from its sealed preseal/checkpoint/final receipts, and do not maintain a second
+manual ledger. A stage is not “running” when neither tool status nor a changing
+durable receipt can prove progress.
+
+Cancellation is a state transition, not permission to retry. Inspect worker
+liveness and durable outputs, stop orphaned workers when safe, classify each unit as
+completed/failed/unresolved, and resume only unresolved identities into new outputs.
+Never race a canceled writer, infer zero progress from a missing final response, or
+make the operator ask whether work is still alive.
+
+## Stage 0 — Bind inputs and verify readiness
+
+1. Locate and inventory the caller's current source folder. Record each selected
+   file's identity, relative path, content hash and extraction mapping. For a
+   refresh, diff this against the previous execution: additions, removals and
+   content changes. Do not infer sameness from file counts or inherited notes.
+   An unsupported document format fails `corpus_convert` with a typed error
+   naming the format — exclude such files from the selected scope at intake,
+   or the conversion errors; they do not silently remain gaps. A failed or
+   partial extraction surfaces in the result (`text_extraction_partial`
+   carries `ocr_pages_skipped`) — a visible gap, never silent loss.
+2. Record requested outputs, namespace/DB ownership, chunk/overlap parameters,
+   QA prompt count/type mix and semantic criteria, optional centroid selectors,
+   and pilot/spend bounds. Bind the acceptance bar in the same intake record:
+   the denominator (the freshly inventoried source set), the tolerance for
+   deferrals and failures, and the named-gap policy — which residue is
+   acceptable only with per-file evidence of source impossibility, and which
+   gaps require operator authorization before any workaround. Every later
+   gate reconciles against the intake-bound bar; a bar first stated at a
+   gate reconciles a relaxed definition and passes. Ask only for missing
+   functional choices; do not borrow another execution's identities, volume
+   targets or budget approval.
+3. Verify tool schemas, installed/running components, settings-to-provider routing,
+   template seeding/cache behavior, output paths and canonical credentials before
+   expensive work. Do not hide broken setting propagation with per-call overrides.
+   For a source folder outside permitted MCP roots, stage the approved files under
+   the artifacts root and reconcile hashes/identity mappings. Do not broaden
+   containment, use escaping symlinks or substitute terminal text conversion.
+4. Reuse valid extractions only when they match unchanged source content and pass
+   current checks. Directory conversion/chunking enumerate immediate children;
+   for an agreed nested selection, process files individually with distinct source
+   identities and reconcile the complete set. Never silently omit subdirectories,
+   flatten colliding names or copy duplicates to simulate concurrency.
+5. Mark each stage required or not requested. Verify prerequisites before each
+   paid expansion and reprice from measured counts and current model pricing.
+   A failed optional branch does not block independent work, but remains an open
+   requirement until it succeeds or the operator changes the scope.
+
+### Refresh and invalidation
+
+Use one canonical identity for the requested corpus. When source content,
+chunking, embedding models or schemas invalidate derived state, record which
+outputs depend on it and regenerate those stages; never relabel stale rows as
+current. Remeasure counts rather than forcing a previous total.
+
+Before deleting derived data, inventory exact owned paths/prefixes and coupled
+references, confirm workers are stopped and maintenance locks are respected, and
+verify retained inputs suffice for reconstruction. Deletion/replacement requires
+operator authorization; it is not implied by a docs edit or an ambiguous refresh.
+Never purge unrelated namespaces in a shared DB. Preserve originals and valid
+extractions, keeping out-of-scope retained inputs outside the active source set.
+Record every removed artifact in the execution cleanup manifest with path, reason,
+model/protocol if known, size and disposition, and append each removal under
+`~/Documents/zk-data/` to `INDEX-moves-2026-09-24.log` (storage Cleanup rule).
+A calibration or pilot run superseded by a sealed successor is deleted once the
+successor is recorded. Remove superseded, partial,
+wrong-model and pre-current-protocol derived outputs from active stage directories
+and update their references in the same run; do not leave parallel abandoned
+datasets. Never reinterpret them through a compatibility adapter. Clear warm
+retrieval before selecting a rebuilt DB. Ambiguous ownership or incomplete
+retained inputs blocks deletion.
+
+## Stage 1 — Convert and audit extraction
+
+Conversion preserves the document text and page boundaries needed by the canonical
+pre-chunk boilerplate filter. Do not manually trim routine title/copyright/contents
+or terminal-index pages with `target_pages`; that would create a second content-scope
+authority and bypass the filter's exclusion report. Use `target_pages` only when the
+caller selected an explicit page subset or for a bounded OCR probe.
+
+Build a conversion queue by joining the immutable source manifest to one unique
+expected extraction path per source. Inventory existing outputs before inference:
+reuse a prior extraction only when its source hash and quality evidence match, and
+classify every other identity as pending. Record the queue counts in the execution
+ledger before the first conversion wave.
+
+When `corpus_convert` has no incremental status surface, use file mode for each
+pending source and execute bounded waves with disjoint output files. Reconcile and
+checkpoint each wave before scheduling the next. For conversions long enough that
+the transport can die mid-call, the per-source receipt (the written output plus
+its report companion) is the record — a lost transport response is not a lost
+conversion; reconcile waves from receipts, never from transport responses alone. A wave
+driver must not export the host's inference socket at launch: the transport
+borrows it from the running host per call, so a host restart mid-wave re-points
+queued calls at the new socket instead of grinding them against the dead one.
+In-flight calls still die with their borrowed socket — kill, reconcile from
+receipts, relaunch; the receipt short-circuit makes relaunch cheap. A directory call is allowed only
+when the tool exposes observable progress, or a measured pilot shows the entire
+bounded set completes within the operator's reporting cadence and the operator has
+accepted final-only reporting. Directory convenience never overrides observability.
+
+If a measured pilot shows that one source file alone exceeds the reporting cadence
+and `target_pages` is supported, partition that source into nonoverlapping page
+windows with disjoint fragment outputs. Before every call, reconcile the range
+against the queue and require its fragment output path to be absent; a completed
+range is immutable and is never resubmitted or overwritten. Record
+planned/completed/failed page ranges in the same queue. Publish the final extraction
+only after the ordered range union
+covers the selected physical pages exactly once, every fragment passes its checks,
+and deterministic concatenation preserves page order and explicit form-feed page
+boundaries through a temporary file plus atomic rename. If the tool output cannot be
+assembled without changing source text or losing page identity, block and surface
+the missing capability instead of hiding another long call.
+
+Directory conversion requires an output directory, resumes only quality-passing
+outputs, and places OCR-derived text in `{output}-ocr-staging`. File mode writes its
+requested output; that write is not a quality acceptance verdict. Staged OCR has a
+`.report.json` companion with its complete conversion result; preserve it for
+review. Whether conversion is file or directory mode, retain per-source outcomes
+and aggregate `document_reports` and `verification_failed` separately from
+conversion/I/O `failed`. Check both: a failed page verdict can coexist with a
+successfully written staged file. Selective-OCR page arrays may be indexed within
+the OCR subset rather than by physical PDF page number; map them through the
+ordered `ocr_pages`/triage identities before making any page claim. Blank or failed
+pages that may be routine book furniture remain provisional until Stage 2 joins
+them to the canonical boilerplate exclusion report; do not block the corpus or
+accept the page before that join. Resume requires a matching report; missing or
+mismatched evidence blocks without automatic re-OCR. Do not fabricate a report for old staged text; diagnose it and
+explicitly regenerate only when needed.
+
+For substantive image/diagram-only pages that yield no verbatim text, use a dual
+representation when the caller has approved text collapse without multimodal QA:
+exclude those pages from source-evidence QA, preserve rendered page images in a
+separate hashed archive, and store text descriptions with explicit
+`model_inference` provenance and `included_in_text_qa=false`. Record page identities
+and the text/nontext boundary in the conversion report. Never present inferred
+figure descriptions as source quotes or silently drop the archived pages.
+
+For PDFs, `corpus_is_complex(path, summary=true)` provides cheap routing evidence.
+Preflight required OCR with a small `target_pages` slice and `force_ocr=true`, then
+inspect the report before bulk work. Missing configuration, endpoint errors,
+`error_count`, `quality_failed_pages` or breaker-open results block expansion.
+The shared inference breaker lives in the inference server, not in any corpus
+server instance: every instance — host-managed or per-call — shares it, and a
+fresh instance inherits it open. Probe a tripped breaker with ONE page in its
+half-open window; a bulk probe re-trips it. Order OCR waves
+longest-processing-time-first by triage `ocr_pages`, and size total in-flight
+width (workers × per-file ceiling) to the endpoint's measured sustained
+capacity — probed, not assumed; a width above it burns roughly one failed
+page per probe past the edge even with the limiter pause absorbing the trips.
+A dead endpoint is not a capacity condition: three consecutive
+connection-refused outcomes (`InferenceError::Connection`) abort the run cleanly
+with a typed endpoint-unreachable error — the file stays pending (no receipt)
+and the driver relaunches when the host returns. Waiting out cooldown cycles
+against a dead socket is the wrong action (the 2026-10-03 grind: five hours of
+300s pause cycles against a severed socket); the receipt short-circuit makes
+relaunch nearly free.
+Source-confirmed blank pages can be recorded as such; never infer that every empty
+page is benign. The executor pre-detects confidently blank pages (`ocr::blank`,
+ink under 0.1% of pixels) and skips the vision call entirely — no limiter slot,
+no generation, no deadline risk; blanks surface as the named, non-failing
+`blank_pages` report category, never as empty-page failures. The threshold is
+conservative by design: stamps and sparse pages stay content-ambiguous and go
+to the model. `include_structure=true` is only needed for the block view.
+
+Audit every extraction for word counts, legibility, repetition, script/language
+consistency and deterministic OCR outcomes. Document-level counts are a conversion
+signal, not yet the retained-content verdict: Stage 2 owns the canonical front/index
+filter and retained-page coverage check. The directory resume floor is 50 words plus
+its quality gates; it is not semantic proof. Merge staged OCR into accepted extractions only after review.
+For deliberate replacement of a passing extraction, verify it is derived and
+reproducible from a retained original before deletion/reconversion; no backup
+corpus. Audit failures stay blocked, not promoted by a copy operation.
+
+**Gate:** every inventoried source has exactly one current-run extraction outcome;
+conversion/I/O failures and unambiguously substantive-page OCR failures are zero.
+Page warnings plausibly attributable to routine book furniture may advance only as
+identified provisional items that Stage 2 must resolve before embedding or
+classification. No duplicate/probe artifact remains. Bash and `jq` can measure
+files/JSON; do not introduce Python tooling.
+
+## Stage 2 — Chunk once, measure coverage and overlap
+
+### Reference-model calibration
+
+When the selected chunk policy is unvalidated for the corpus/retriever, changes a
+shared default, or the caller requests calibration, compare it before paid downstream
+expansion. Chunk size is a retrieval policy, not a universal constant. Use one
+candidate-independent gold query/evidence set derived from source pages or other
+pre-chunk source units; QA generated from any candidate chunking cannot evaluate that
+same candidate.
+
+The minimum reference suite is:
+
+1. **Passage baseline** — greedy sentence-bounded 100-word passages, no overlap,
+   merging a final passage below 50 words backward (Lewis et al., 2020,
+   arXiv:2005.11401; Chen et al., 2024 — author-year only, resolve to a
+   full citation before relying on it as provenance).
+2. **Current candidate** — the caller's proposed structure/sentence-aware maximum,
+   floor and overlap, recorded exactly rather than relabeled as the baseline.
+3. **Small-to-big challenger** — fine deterministic child units linked to
+   source-faithful parent passages; retrieve children and expand parents. Generated
+   propositions, summaries and contextual prefixes may be retrieval keys but never
+   source quotations.
+
+Hold corpus, query set, actual embedding model, retriever, top-k and retrieved-word
+budget constant. Run `kask/scripts/audit/calibrate-chunk-retrieval.sh <run-spec-json>
+<output-dir>`; use `--resume` only with the same immutable identity. A fresh run
+stages and re-executes its runner, query builder, host wrapper, evaluator, status
+inspector and corpus binary from a hashed `<output-dir>/runtime` capsule before paid
+work. Never bypass that capsule with a mutable `target/debug` path. Read progress via
+`kask/scripts/audit/inspect-chunk-calibration-run.sh <output-dir>`, which verifies
+receipts and derives the next unresolved unit without writing run state. The run spec must
+name every accepted source with raw/canonical paths and SHA-256 values, one entity-ref
+namespace, the exact embedding model, embedding batch size, query limit, fixed
+`corpus_query_cosine` controls, and complete current/fine/parent shared-contract
+parameters (`min_words`, `max_words`, `overlap_words`, `sentence_boundary`) and a
+caller-approved `selection.max_budgeted_exact_evidence_loss_count`. That count states
+how many held-out exact-evidence hits the caller will trade for better source recall,
+lower duplication or lower index/context cost; never invent a universal materiality
+threshold. Never put a DB passphrase in this record.
+
+The runner derives candidate-independent queries from accepted canonical sources,
+calls `corpus_build_chunk_representations`, embeds reference/current/fine retrieval
+representations into isolated indexes with one actual model, queries all three, and
+records fidelity, Recall@k, MRR, duplicate overlap, retrieved words, index size and
+measured wall/storage costs. The representation builder must apply the same canonical
+furniture filter once per source before every policy, publish a schema-v2 manifest with
+all source exclusion reports, and verify reconstruction against that retained view; a
+manifest without those reports is a calibration seam failure, not a historical baseline. nDCG and answer grounding remain explicitly unavailable
+unless separately measured; never encode absence as zero. Selection admits only
+source-fidelity-passing policies, then ranks retrieval quality under the fixed budget.
+The sealed run identity hashes accepted sources, queries, the actual model, full policy
+and retriever parameters, every representation, the child-parent map, parents and all
+indexes; any resume drift fails. Do not add semantic breakpoint chunking, dynamic
+routing, contextual generation or linked tiers merely to complete the comparison. The
+design taxonomy is segmentation × embedding paradigm (Zhou et al., 2026 —
+author-year only, resolve to a full citation before relying on it as
+provenance);
+in-document needle retrieval and in-corpus retrieval are separate evaluation strata.
+
+After calibration selects a policy, call `corpus_chunk` with `input_dir` set to the
+accepted `.txt` directory, explicit `output`, `entity_ref_prefix`, selected
+`max_tokens`, `overlap_tokens`,
+`multi_tier=false`, and `index=false` when Stage 3 will persist embeddings.
+Directory mode enumerates immediate `.txt` children, not a recursive file tree.
+Every child is containment-checked before reading; broken/escaping symlinks fail.
+
+Before word windows, the shared chunk engine is the one content-scope authority:
+page-delimited books remove bounded blank/title/copyright/contents/index pages;
+form-feed-free books use conservative front/back section signals. Reconcile every
+`boilerplate_exclusion_report` with its source and cross-check provisional Stage-1
+page warnings: an excluded warning is resolved, while a warning on retained content
+returns that source to conversion/OCR. Never reproduce this filter in orchestration.
+
+All chunk modes use the shared structural/sentence word-window engine. Effective
+maximum and overlap are `floor(tokens / 1.33)` whitespace words. Each passage is
+bounded, contributes new source words, and positive overlap repeats the preceding
+suffix exactly; zero follows the same engine with no repetition. A small final
+passage is valid. `max_tokens` must yield at least one word, and positive overlap
+must yield at least one word and remain smaller than the maximum in both units.
+
+Directory source ID components are reversible `utf8-` plus fixed-width hex of
+UTF-8 filename bytes, not punctuation substitution. Keep the original `source`
+string alongside the encoded `entity_ref`. For file/text calls, use a unique
+namespace per source; do not invent IDs by replacing punctuation.
+
+**Gate:** reconcile parsed records with `total_chunks`, unique references,
+`total_documents`, the complete source set and empty `zero_chunk_files`. Measure
+word bounds and adjacent overlap per source. Estimate counts using effective
+stride `max_words - overlap_words`, then measure actual output: structural ends
+and final fragments affect counts. A JSONL line count alone cannot verify any of
+these properties. Never change overlap or remove sources to hit an old count.
+
+## Stage 3 — Persist all embeddings and provenance
+
+Call `corpus_embed(chunks_jsonl, tagged_jsonl=null, db_path, model,
+batch_size)` for every chunk in the single corpus. Tags are optional here.
+The stored original `passage_text` and text h_mem `ontology.dc_source` support
+later context retrieval; vectors alone are insufficient.
+
+**Gate:** successful embeddings equal measured chunk count; reconcile all failed
+and cancelled rows, with none unresolved. Read/store errors are not zero counts.
+Do not accept a small loss merely because a tool's degraded threshold is 10%.
+A bad DB credential is not an excuse to leave a second DB alongside the first.
+
+## Stage 4 — Classify, then count actual outcomes
+
+When classification is required, call `corpus_tag_chunks(chunks_jsonl, output,
+concurrency, tag_batch_size, dry_run=false)`. Start the probe with
+`tag_batch_size=1`; increase only within this execution's approved bounds after
+identity correlation passes. Split JSONL below the tool's byte cap at record
+boundaries, into disjoint files; never split records. When partitioning,
+keep original identities and verify the merged identity set equals the input.
+For a manifest-backed queue, run
+`kask/scripts/audit/run-corpus-classification-queue.sh` with a positive bounded
+`max-units` wave and report its durable queue checkpoint before the next wave;
+do not hide the remaining corpus behind one final-only invocation. If a terminal
+unit contains both classified and failed rows, call
+`kask/scripts/audit/reconcile-corpus-classification-unit.sh` once: it preserves the
+original output, marks the unit `reconciled_partial`, conservatively reserves its
+unknown cost, and appends a new immutable pending unit containing only failed
+source identities. Never relabel the original unit pending or replay its successful
+rows. The committed host runner `call-corpus-tool-via-host.sh` is the queue's
+credential-safe synchronous transport.
+
+Each output `TaggedChunk` requires `classification`:
+
+```json
+{"status":"classified","ontology_protocol":"published-term-resolution-v2"}
+```
+
+or `{"status":"failed","reason":"the actual failure"}` or
+`{"status":"unverified"}`. Missing status/protocol is invalid, not implicit
+success; pre-current-protocol classifier data is stale and receives no
+compatibility upgrade. A classifier response is an outer array of compact tuples:
+`["item-N", ["who", "why"], ["term one", "term two", "term three"]]`.
+Canonical `entity_ref` values remain server-owned and are restored only after
+whole-batch short-ID correlation succeeds. The model returns only exceptional
+`who/when/where/why` dimensions and 3–5 raw candidate terms; the server supplies
+`what/how`, document type, default expertise and Dublin Core subjects. The model
+never assigns ontology namespaces, prefixes, URIs or fallback tiers. The shared
+bridge resolver preserves candidates and derives canonical
+`ontology_tags`/`concepts`. Missing, duplicate, unknown or malformed tuples reject
+the entire affected batch. There is no singleton, positional or string fallback. Failure annotations and deterministic method signals do not make a row
+classified. Synthesized consolidation text is `unverified` and must itself be
+classified.
+
+**Gate:** count current-protocol `.classification.status == "classified"`,
+recompute anchors from every row's `candidate_terms`, require exact equality with
+stored `ontology_tags`/`concepts`, reconcile returned `tagged`, `failed` and
+`total_chunks`, and require all chunk identities classified. Failed, unverified,
+stale or noncanonical rows block embedding-with-tags, assertions and QA; output
+line count and annotation presence are not substitutes. Record planned batches, provider responses,
+successful-response token usage, reported cost and cost-reporting completeness at
+every checkpoint. A null or incomplete provider cost is unknown, never zero; do
+not expand under a dollar ceiling until the remaining bound is supportable from
+reported cost or an explicit conservative estimate. Re-run only after diagnosing
+the failure and replace affected terminal records by identity, never duplicate
+them in a merge.
+If neither QA nor another requested output requires tags, classification may be
+marked not requested.
+
+## Stage 5 — Optional style centroid and measured composition
+
+Call `corpus_centroid(author, db_path)` after complete embedding.
+It selects `style:{author}:` and stores `style:{author}:centroid`. Optional
+`refs_file` selects existing newline-delimited references without copying vectors;
+optional `dimension` stores `style:{author}:{dimension}:centroid`. Select subsets
+using this execution's explicit predicates; subsets may overlap. Report membership
+counts, weak mappings and discrimination limitations instead of silently changing
+the selectors. Calibrate with subset verbatim and contrasting controls, not only
+generated outputs. Do not duplicate embeddings for subsets. Empty or missing
+eligible selections fail; duplicates count once. The shared
+`hkask_types::corpus::is_corpus_passage_ref` excludes empty, `:rule:` and all
+suffix-`:centroid` refs from centroid sources, compose exemplars and prompt context.
+Recomputation replaces the destination, not a new centroid version.
+
+Use `corpus_compose` with the same author/DB and current cognition `config_path`.
+The YAML places `centroid_entity_ref` inside `embedding`. Compare measured
+`centroid_distance`/`style_passed` to the config thresholds; calibrate thresholds
+against real corpus text, not a universally hardcoded distance or exemplar count.
+`centroid_missing=true` with null distance/pass is unvalidated, not a pass.
+`no_validate=true` explicitly skips validation. Rewrite always targets its
+requested dimension (default `composite`), even with a literary config.
+
+**Gate:** requested centroid exists and the measured style criterion is met,
+or report the branch blocked. Independent QA may continue, not erase the blocker.
+
+## Stage 6 — Build complete-source QA prompts
+
+Call `corpus_build_prompts` with `tagged_jsonl`, `output`, explicit `prefix`,
+`context_k`, approved `qa_pairs_per_chunk`, `type_distribution`, and
+`max_pairs=classified_count*qa_pairs_per_chunk` (or `0` for all). Default
+`context_k=0` is primary-only and requires no DB credential. Positive context
+requires the single `db_path` (the passphrase resolves server-side). No inference occurs.
+
+The builder rejects nonclassified/duplicate refs, blank source/text and prefix
+mismatches. Positive KNN context reads complete-source passages and provenance,
+selects same-source neighbors, and stores canonical mappings as `p0`, `p1`, etc.
+Canonical identities never enter rendered model messages.
+
+One compact `PreparedQaPrompt` per chunk contains `prompt_id`, protocol,
+`passages`, `candidate_terms`, and ordered `qa_types`. No rendered messages,
+salience or canonical concept cache is persisted. IDs are deterministic from
+source, chunk ref and the ordered level set.
+
+**Gate:** `prompts_written == classified_count` when uncapped,
+`pairs_requested == classified_count*qa_pairs_per_chunk`, unique prompt IDs, full
+primary coverage, sequential local passage IDs, and expected context metrics. At
+two pairs and equal weights each request selects factual/conceptual. Report actual
+pair distribution; do not increase pair count without operator approval.
+
+## Stage 7 — Generate QA with owned outputs
+
+Start with an operator-authorized bounded pilot, keeping the full source/prompt
+inventory as the target. Produce reviewer decisions with
+`kask/registry/templates/docproc/adjudicate-passages.j2` over the prepared prompts;
+its output is **directly** the `prepared-qa-adjudication-v2` JSONL, not flat
+passage/conceptual shorthand. Copy `prompt_id` and primary `p0` `chunk_ref`/`source`,
+and emit one passage decision plus ordered decisions for every requested `qa_type`.
+If adjudication is sliced, reconcile the union of slices against the entire
+prepared file before calling generation via `lisp_eval` (`BCP-1`):
+
+```
+form: "(and (> prompts_prepared 0) (= (+ reviewed_passage_admits reviewed_passage_skips) prompts_prepared) (= (+ reviewed_level_generates reviewed_level_skips) qa_levels_requested) (= duplicate_prompt_ids 0))"
+env:  { "prompts_prepared": <measured PreparedQaPrompt count>,
+        "reviewed_passage_admits": <measured>, "reviewed_passage_skips": <measured>,
+        "reviewed_level_generates": <measured>, "reviewed_level_skips": <measured>,
+        "qa_levels_requested": <measured total requested levels across prompts>,
+        "duplicate_prompt_ids": <measured duplicate prompt_id count in merged manifest> }
+```
+
+Do not feed a partial manifest or reinterpret legacy rows as v2. Build a source-balanced pilot input with
+`kask/scripts/audit/select-position-diverse-chunks.sh <tagged-jsonl> <new-output-jsonl> <chunks-per-source>`;
+it preserves complete classified records and selects deterministic interior quantiles,
+rather than silently treating each source's `:0` chunk as representative. Run Stage 8
+on that pilot before expanding to full production; a pilot is evidence for a gate,
+never a reduced completion scope. Call
+`corpus_generate_qa_batch(prompts_jsonl, quality_adjudications_jsonl, output,
+concurrency, model)`. A complete identity-bound `prepared-qa-adjudication-v2`
+manifest is required — there is no unadjudicated generation path and no
+verification-model argument. Generation produces **unverified candidates only**: no second model
+reviews, corrects, or accepts anything during generation, and no verification
+model exists. Generated rows carry
+`prompt_protocol=prepared-qa-grounding-candidate-v1` and
+`grounding_status=pending_external_verification` (skips:
+`not_applicable_skip`). Preflight validates the whole prepared file, the complete
+v2 manifest, and the model before creating output. Record
+prompt-level tokens, provider responses, reported cost and cost completeness at
+every shard; null/incomplete cost is unknown and blocks paid expansion.
+Input/output aliases (including symlink and hard-link aliases) are rejected.
+A process-wide lease owns the canonical output across service instances and both
+transports. It remains owned until workers are destroyed, not merely until abort
+is requested. Never race a timed-out/cancelled call with a replacement writer.
+
+Synchronous inference retries only typed Connection/Overloaded/Timeout failures,
+at most **3 total attempts**, with 2s/4s backoff. Configuration/auth/model failures
+do not retry. A returned disposition-plan or writer payload that fails its typed
+schema receives exactly one metered correction attempt; a second rejection fails
+the whole prompt without partial rows. There is one synchronous prepared-prompt
+transport; no provider-batch side path.
+
+Reviewed passage skips write terminal rows before inference; reviewed admits send
+the ordered level mandates to the generator. The server deterministically
+compares the plan to those mandates, sends the exact mismatch back once for generator
+correction, and fails the prompt on a second mismatch. A supported level is a grounded
+QA tuple; an unsupported or contaminated level is an explicit quality skip:
+
+```json
+[["factual","What is the delay?","72 hours",["e0"]],["conceptual",null,"conceptual_support_absent",[]]]
+```
+
+A generated pair requires a nonblank question, answer and one to three server-owned
+evidence IDs. The server restores canonical `QaEvidence` only after those IDs
+resolve. Conceptual QA must require an explicitly supported mechanism, relationship,
+distinction, purpose, framework or transferable principle; direct recall of a name,
+list, title, number or sentence paraphrase is factual. Legal notices, publication
+metadata, navigation, marketing, watermarks, isolated captions and garbled text are
+not QA material. `non_substantive_passage` and `contaminated_or_garbled` are
+prompt-wide: every requested level must carry the same skip, even if another span
+appears usable. Use only the closed skip reasons `non_substantive_passage`,
+`contaminated_or_garbled`, or the requested level's `<level>_support_absent` reason.
+For an admitted reviewed passage, factual must generate; conceptual generation requires
+one closed relation, while conceptual or later-level skips use the exact support-absent
+reason. Malformed,
+ambiguous, wrong-level or evidence-bearing skips reject the whole prompt.
+Generated envelopes retain primary identity, candidate terms, QA type, canonical
+evidence and protocol/model provenance. Skip envelopes retain primary identity,
+requested QA type, closed reason and provenance but no response, and are never
+admitted QA rows. Usage and cost totals include every returned disposition-plan,
+mandate-correction, QA-writing and writer-schema-correction provider response and are not repeated per pair. Matching quotation bytes
+still does not validate answer synthesis or cognitive difficulty.
+
+**Gate:** reconcile `prompts_total = prompts_succeeded + prompts_failed` against
+all prepared IDs and require no unresolved failed prompts. Separately reconcile
+`qa_levels_requested = qa_rows_written + qa_levels_skipped` for accepted prompts,
+inspect `skip_reason_counts`; for reviewed runs also reconcile
+`reviewed_passage_admits + reviewed_passage_skips = prompts_total` and
+`reviewed_level_generates + reviewed_level_skips = qa_levels_requested`. Require every
+physical row to be either an accepted QA envelope, explicit skip, or identified prompt failure. A prompt may
+yield multiple pairs and/or skips; QA row count is neither prompt nor requested-level
+coverage. Failure and skip rows are never admitted QA rows. Before expansion, audit
+both retained QA and skip decisions: a model that generates factual recall under a
+conceptual label or skips substantive support has failed the semantic gate.
+Writes/flushes can fail and leave explicit partial output. Cancellation warns;
+no automatic resume, atomic replacement or fsync guarantee exists. Once owners
+stop, inspect/reconcile partial records before any explicit rerun, which overwrites
+the destination. Do not append blindly or treat `degraded=false` as completion.
+
+## Stage 8 — Audit before ingestion
+
+Run the read-only mechanical checker on current generated envelopes and the
+complete chunks file:
+
+```bash
+bash kask/scripts/audit-qa-quality.sh <generated.jsonl> <chunks.jsonl>
+```
+
+Use actual discovered paths in execution. Inputs use structured evidence in both
+envelopes and flat QA; source rows carry `entity_ref`, `source`, `text`. Verify
+each quote against its own unique chunk **and** source. Bare string quotes,
+missing metadata, malformed rows, duplicate refs and generation errors are gaps
+or findings, not silently repaired evidence. A canonical quality-gated
+`status="skipped"` disposition is a reconciled terminal non-QA row: its claim,
+citation and narrative checks are genuinely inapplicable, while malformed skips
+remain invalid shapes. An empty evidence array on generated QA is valid generation
+structure but a missing-citation quality gap.
+
+The audit reports reconciled physical rows, citation verification, six-gram
+**document frequency** (5% review-candidate threshold), QA-label distribution and
+identified source coverage. These are not semantic contamination, actual Bloom
+difficulty or subject-diversity verdicts. It does not extract every factual/IS/OUGHT
+claim, check paraphrase entailment, compute sourced derivations, judge reasoning
+or completeness, or perform narrative-leak review. Ordinary prose retains
+unperformed claim/narrative checks even if verbatim. Exact evidence does not
+promote answer prose beyond `model_inference`.
+
+Canonical provenance vocabulary: `tool_verified`, `platform_derived`,
+`model_inference`, `unavailable`, `tool_no_match`, `pending_check`, `rejected`.
+Keep claim/source, cross-check and a substantive `why` (at least 40 characters).
+SAR/CVR/HFR/NLR weights are **0.30/0.25/0.20/0.25**. Missing applicable checks,
+zero checked claims/citations or incomplete rows propagate null; never average
+only passing/measurable rows. Only the explicit citation-only control, where
+`output` encodes a JSON array of canonical citation objects also present in
+`evidence_quotes`, has no narrative fields: disclose “NLR vacuous”. Do not convert
+ordinary QA into that control to manufacture a score.
+
+Exit codes: 0 narrow mechanical checks complete; 1 high citation findings;
+2 missing checks/data; 64 usage error. **None authorizes ingestion or a live run.**
+Use `bash kask/scripts/test-audit-qa-quality.sh` and, if available, `shellcheck`
+for bounded synthetic controls in scratch; preserve real controls read-only.
+The checker loads inputs in memory: bound controls before full-artifact audits
+and disclose coverage. No synthetic controls belong in production input paths.
+
+**Separate checks before pilot expansion, full generation or ingestion:**
+`corpus-qa-grounding-v1` is a mechanical ingestion gate: at least one citation
+must be byte-exact in its identified canonical chunk, and every citation must
+pass that check. A non-byte-exact answer can still be ingested with
+`answer_provenance=model_inference`; the gate does not establish answer
+entailment. Before pilot expansion or full generation, run the canonical
+`grounding-verify` skill decoupled from generation against retained sources.
+Use its factual grounding findings as evidence, not as a certificate of
+answer entailment, actual cognitive difficulty or subject diversity. Review
+those semantic questions and boilerplate contamination separately against the
+sources; record the outcome or an explicit unperformed check for operator
+acceptance before proceeding. Neither a reviewer judgment nor a compensatory
+score can lift a `model_inference` answer to verified or override the server's
+citation gate. A partial mechanical audit or missing applicable semantic
+review leaves process approval incomplete; the ingestion tool itself enforces
+the mechanical gate, not operator approval. Retain current verification
+evidence and correction findings, not duplicate corpus versions.
+
+## Stage 9 — Ground, ingest, and export the QA corpus
+
+1. Stage 7's immutable generated JSONL contains QA envelopes **and** terminal
+   `status="skipped"` rows. Stage 9's grounding tool rejects mixed files. After
+   the Stage 7 and Stage 8 gates pass, derive one disjoint, immutable
+   `candidate_jsonl` with `jq -c 'select(.status != "skipped")'` over the
+   complete generated file. Preserve the original for skip auditing; refuse a
+   zero-candidate projection, jq errors, unexpected non-skip rows, or a mismatch
+   between generated physical rows and candidate rows plus reconciled skips.
+   Record both file hashes, paths and counts; do not hand-edit candidate rows,
+   filter other failure states, or submit an unfinished writer's output. Ground
+   the projected file with `corpus_ground_generated_qa(candidate_jsonl,
+   source_chunks_jsonl, output_dir)`. Deterministic and zero-inference: it
+   verifies every evidence quote byte-exactly against the canonical tagged
+   chunks (which must be classified under `published-term-resolution-v2` with
+   reconciling candidate terms), records byte spans, and recomputes ontology
+   resolutions for the preserved candidate terms. The bundle records
+   mechanical facts only — no verified/authorized/confidence fields exist in
+   it, and rows whose answers are not byte-exact inside their own evidence are
+   recorded honestly as `model_inference`. It authorizes nothing.
+2. Dry-run `corpus_ingest_qa(candidate_jsonl, grounding_manifest,
+   source_chunks_jsonl, output, db_path, dataset, owner,
+   dry_run=true)`. The gate runs before dedup, output, and DB access: it
+   re-hashes the bundle, checks row bijection against the candidate file,
+   recomputes the ontology resolutions, re-derives every claim, requires each
+   artifact row to equal its re-execution, and admits a row when every citation
+   claim is strength 2 and at least one exists. A synthesized answer that is not
+   byte-exact in its own evidence is admitted as `model_inference` and persisted
+   as model-mediated in the row's `grounding.answer_provenance`; it is never
+   relabelled verified, and no model-mediated oracle can open the gate —
+   self-reported strengths, spans, or resolutions cannot either. With the gate
+   satisfied, admission also requires nonblank instruction, output, QA type,
+   source and chunk ref; complete structured evidence entries. Concise
+   answers survive. First valid case-insensitive exact instructions win; no
+   minimum length, semantic dedup, DB dedup or semantic quality test is
+   implied. Stage 8 remains the external semantic audit, advisory only;
+   byte-exactness of the citation does not certify answer entailment.
+3. After semantic acceptance, ingest with `dry_run=false`. For re-ingestion,
+   inspect the exact legacy `training:qa:{dataset}:` prefix in the named DB and
+   explicitly purge it before replacement. The prefix is retained only as durable
+   compatibility for existing QA records; it does not name a training executor.
+   Do not infer/broaden a purge or retain parallel
+   datasets. Retained-row indices restart per call; arbitrary partitioned calls
+   to the same dataset are not a safe replacement for whole-dataset reconciliation.
+4. Reconcile the **candidate-only** file: `total_nonblank_rows = parsed`
+   with zero `generator_errors`/`malformed`; reconcile the original mixed
+   file's skipped count separately against Stage 7. Then require
+   `parsed = filter_drops + duplicates + retained`, and non-dry
+   `retained = stored + failed`. `stored_h_mems = stored`, `deduped = retained`,
+   `filtered = duplicates + retained`. `status=partial_failure` and each
+   `storage_errors` entry block completion. The file includes all retained rows
+   even if storage fails; file writing and DB inserts are not one transaction.
+5. Preserve `evidence_quotes`, source/chunk identity, `prompt_id`, `provenance`,
+   concepts, difficulty, QA type, the grounding identity object (protocol,
+   manifest SHA-256, `row_key`), and the candidate terms resolved through the
+   shared published-ontology resolver in the retained QA JSONL/h_mems for
+   audits. Reconcile actual retained totals with stored survivors and the
+   agreed size target.
+6. The QA export is the pipeline's terminal artifact: an evidence-carrying,
+   auditable corpus. Model training is out of scope for the co-researcher
+   mandate, so there is no downstream submission step — do not treat a valid
+   dataset as a staging artifact for one.
+
+## Stage 10 — Verify and report actual state
+
+Query with explicit `db_path`, `include_text=true` and a relevant question.
+An empty in-memory index queries the durable database through disk KNN;
+a nonempty index (same-process published passages) ignores `db_path` —
+clear it to re-verify from a fresh index. Nothing is cached into memory.
+Verify source/text identity and relevant retrieval, not merely a positive count.
+
+Use `lisp_eval` to check measured stage equalities and a separately evidenced
+semantic-gate boolean. Require all requested sources, complete embeddings,
+classification and the approved prompt count when required, reconciled generation/ingestion/export,
+semantic acceptance, relevant retrieval and requested style validation. Never
+substitute fixed totals, incomplete coverage, a model's success claim or file size.
+
+The canonical form — bind every value from this run's measured stage records,
+never from a target, a previous run, or a model's claim; omit a not-requested
+branch's clause (classification, prompts/pairs, export, style) and record the
+omission in the run record, never bind both sides equal to fake a pass:
+
+```
+form: "(and (= sources_present sources_expected) (= embeddings_stored chunks_measured) (= classified_count classified_target) (= prompts_written prompts_expected) (= pairs_requested pairs_expected) (= prompts_total (+ prompts_succeeded prompts_failed)) (= unresolved_failed 0) (= candidate_parsed candidate_nonblank) (= candidate_parsed (+ filter_drops duplicates retained)) (= retained (+ stored failed)) (= storage_errors 0) (= qa_export_rows retained) style_ok semantic_gate retrieval_ok)"
+env:  { "sources_present": <measured>, "sources_expected": <inventoried>,
+        "embeddings_stored": <measured>, "chunks_measured": <measured>,
+        "classified_count": <measured>, "classified_target": <total chunks, when classification is required>,
+        "prompts_written": <measured>, "prompts_expected": <classified_count when uncapped — one PreparedQaPrompt per chunk; the chunk count the approved pair cap selects when capped>,
+        "pairs_requested": <measured>, "pairs_expected": <classified_count × qa_pairs_per_chunk, or the approved max_pairs>,
+        "prompts_total": <measured>, "prompts_succeeded": <measured>, "prompts_failed": <measured>,
+        "unresolved_failed": <identified prompts with no terminal outcome>,
+        "candidate_parsed": <measured>, "candidate_nonblank": <measured>, "filter_drops": <measured>, "duplicates": <measured>,
+        "retained": <measured>, "stored": <measured>, "failed": <measured>,
+        "storage_errors": <measured>,
+        "qa_export_rows": <measured QA export rows, when export is requested>,
+        "style_ok": <the Stage 5 measured style criterion, when the style branch is requested>,
+        "semantic_gate": <the separately evidenced Stage 8 boolean>,
+        "retrieval_ok": <the live query's source/text identity verdict> }
+```
+
+The prompt identity and the pairs identity are distinct: Stage 6 writes one
+`PreparedQaPrompt` per chunk and requests `qa_pairs_per_chunk` pairs per
+prompt — never bind the pair count into a prompt clause.
+
+Report every stage as not requested, blocked/failed, partial, or verified with
+its actual tool outcome and evidence. Manual extraction merges, file partitions,
+cleanup, audits and reruns carry the same status/accounting discipline. A blocked
+optional branch is not an overall pass. Name unresolved IDs/errors and the next
+owner/action; three no-progress retries halt for operator attention. Report tool
+failures via `curator_report_skill_use_issue`, never silently bypass the engine.
+No claim of a rebuild, ingestion, centroid or QA-export completion is valid without
+the corresponding run. Code/doc work cites its commit, or explicitly says
+**uncommitted**; a valid QA export is evidence of a research corpus, not a trained capability.
+
+## Stage 11 — Distribute: export and ship the sealed corpus
+
+Distribution is a pipeline stage with one canonical path — never a hand-copied
+directory or a per-corpus script. `corpus_export_bundle` (hkask-mcp-corpus) turns
+one sealed calibration run into a shippable package: it verifies the run's seal
+(database and representations digests against `run-identity.json`), rekeys a
+copy from the machine passphrase to a caller-named PUBLIC bundle key, measures
+the content pins (model, dimensions, passage count), splits the database into
+hash-pinned 1 GiB parts, and writes `bundle.json` — the manifest federated
+admission consumes. The sealed run is never modified.
+
+The bundle key is public data, not a secret: the corpus is openly licensed, and
+the encryption is the transport wrapper the database format requires. Because
+the shipped database stays bundle-keyed forever, a fresh install performs no
+per-machine rekey and a passphrase rotation can never orphan a shipped corpus.
+
+Shipping a bundle (operator steps, outside tool execution):
+
+1. Commit the exported `bundle.json` as `kask/registry/<corpus-id>/bundle.json`
+   — the git-pinned trust root the installer verifies against.
+2. Upload the part files and metadata assets to the corpus's release
+   (`corpus-<corpus-id>` tag; override the base with `HKASK_CORPUS_URL_BASE`).
+3. The installer's corpus stage (`install_corpus_bundle` in
+   `kask/scripts/build/install-common.sh`, driven by `install.sh`) downloads
+   each asset, verifies it against the committed hashes, reassembles the
+   database atomically, writes the materialization receipt, and registers
+   the source for federated recall. `--skip-corpora` opts out. A failed
+   corpus install is loud but not fatal to the product install, and is
+   retried by re-running the installer; verified assets are not
+   re-downloaded and interrupted parts resume.
+
+Admission at query time verifies the provenance chain (receipt hashes against
+the bundle manifest, run-id binding, content pins) and opens the database under
+the bundle's declared key — the same checks for every shipped corpus. Updating a
+corpus flows through the same path: rebuild, re-seal, re-export, commit the new
+`bundle.json`, re-upload the release. Never hand-copy a sealed run to another
+machine or hand-edit `federated-sources.json`.
+
+The installer is idempotent by run identity: before downloading anything it
+checks the machine's existing federated registration — a registration naming
+the same `run_id` with an existing database IS the bundle's content (a prior
+install's materialized copy or the build machine's sealed registration), and
+the install skips the download entirely. Only a different `run_id` (a genuinely
+new corpus run) downloads. Never bypass this with a manual re-download when the
+run is unchanged.
+
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, batch-13 audit):
+
+- Stage 10 verification, green: 12 inventoried sources all present, 400
+  embeddings equal to 400 measured chunks, classification complete
+  (400/400), 400 prompts equal to 400 expected (one per chunk), 800 pairs
+  requested equal to 800 expected, generation reconciled (400 = 400 + 0)
+  with zero unresolved failures, the candidate file reconciled
+  (800 nonblank = 800 parsed = 0 drops + 0 duplicates + 800 retained),
+  ingestion reconciled (800 = 800 + 0) with zero storage errors, export
+  reconciled (640 train + 160 validation = 800 retained), style gate,
+  semantic gate and retrieval all true → `true`.
+- Stage 10 verification, embedding loss: same env with
+  `embeddings_stored: 399` vs `chunks_measured: 400` → `false` — one lost
+  embedding fails the whole verification; a tool's degraded threshold is
+  not a pass.
+- Stage 10 verification, unresolved generation failure: same env with
+  `unresolved_failed: 1` → `false` — an identified-but-unresolved prompt
+  failure blocks completion.
+- Stage 10 verification, prompt/pairs conflation: same env with
+  `prompts_written: 800` (the pair count bound into the prompt clause) vs
+  `prompts_expected: 400` → `false` — the pairs identity is not the prompt
+  identity; Stage 6 keeps them distinct and the form enforces both.
+
+The skill's form is executed at use time, never anchored in code.
+
+## Registry Templates
+
+This skill owns no registry templates under its own directory. Stage 7 renders
+`docproc/adjudicate-passages.j2` — a registry template under the `docproc/`
+namespace — with its 5 required `contract.input` keys (`row_start`, `row_end`,
+`row_count`, `prompts_path`, `decisions_path`) to produce reviewer adjudication
+decisions consumed directly as the `prepared-qa-adjudication-v2` JSONL.
+
+## Constraints
+
+- Keep this procedure independent of corpus names, locations, historical totals,
+  model aliases and one execution's approval. Such values belong in the run record.
+- Retain source coverage, identity, evidence and explicit failure states across
+  every stage; neither a file's existence nor a green mechanical check authorizes
+  the next semantic or paid stage.
+- Fix the capability rather than hand-completing its output. Prefer the existing
+  tool path and the smallest requirement-derived repair; remove superseded paths.
+- Validate generalization with a small independent source set and different run
+  parameters as well as the requested corpus. Keep fixtures outside production
+  inputs and disclose which branches were actually exercised.
+- No downstream training submission exists; the evidence-carrying QA export is
+  the terminal artifact.

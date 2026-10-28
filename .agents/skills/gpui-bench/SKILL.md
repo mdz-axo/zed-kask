@@ -9,11 +9,24 @@ description: >-
 
 # GPUI Benchmarks
 
+## Initial and target condition
+
+- **Initial condition:** the user-visible slowdown, frame drop or hang as observed (or explicitly unmeasured), the production path and competing UI work, baseline commit, fixed workload, platform, feature graph, and measurement configuration. If there is no measured baseline, do not describe it as a regression.
+- **Target condition:** for *benchmark design*, a production-shaped fixture that reproduces the symptom on the baseline while asserting completion and work counts. For *fix evaluation*, a predeclared user-visible responsiveness threshold or direction, with the same benchmark/config on baseline and candidate, no correctness loss, and observed results including timing uncertainty. A threshold invented after reading the candidate result is not a target.
+
+## When to Use
+
 Use this skill when a user asks to benchmark GPUI code, reproduce a UI hang or frame drop, evaluate a performance fix, use `#[gpui::bench]`, interpret `BenchReport`, or review whether a GPUI benchmark represents production.
 
 The primary goal is UI responsiveness. Throughput matters, but a UI that finishes work quickly while blocking input and frames is still regressed.
 
-## Start with the performance question
+## When NOT to Use
+
+- Non-GPUI benchmarks — the APIs, feature gates, and frame-data paths are GPUI-specific.
+- Running measured benchmarks concurrently — parallel benchmark processes contaminate each other's results (its own rule).
+- Performance claims without a reproducing benchmark — a fix should include or extend a benchmark that reproduces its problem, or explain why not.
+
+## Instructions — start with the performance question
 
 Before editing, establish or derive:
 
@@ -27,7 +40,24 @@ Before editing, establish or derive:
 
 Ask only for inputs that cannot be derived from the repository, issue, trace, or existing benchmark.
 
-## Non-negotiable rules
+## Step types (D/P labelling)
+
+| Step | Type | Oracle / critique |
+|------|------|-------------------|
+| Plan | P | the predeclared target and falsifier, set before any candidate run |
+| Do, Check | D | Criterion output, `BenchReport` frame data, the fixture's completion and work-count assertions |
+| Act | P | bounded to one fixture correction; the implementation owner decides the next experiment |
+
+No template: the arithmetic is Criterion's and the work is benchmark code.
+
+## Local PDCA — benchmark evidence, not a formatting loop
+
+1. **Plan:** state which target above applies, the expected observation and falsifier, the baseline and candidate identities (when applicable), workload, competing-frame signal, correctness invariant, and a predeclared target. The target may be a directional improvement with uncertainty rather than an arbitrary fixed millisecond cutoff.
+2. **Do:** use the production-shaped setup below; run bounded smoke before measured runs, then follow the identical before-and-after method. Keep receipts and traces under `~/Documents/zk-data/skills/gpui-bench/{date}-{run}/`. Never run measured variants concurrently.
+3. **Check:** compare actual baseline/candidate readings with the predeclared target, including frame responsiveness, total completion, correctness/work counts, sample variation and fixture fidelity. A compiler pass, empty trace, timeout, unsupported platform or missing baseline is `unverified`, not a performance pass. A faster median with worse frames or lost work fails the target.
+4. **Act (bounded):** if the *measurement fixture* is invalid or noisy, correct one specified fixture/measurement defect and repeat the same smoke and comparison once, with the original target unchanged. If a valid measurement shows a real regression or no supported improvement, report that result and hand the next experiment to the implementation owner; do not tune the benchmark to make it pass. Stop after the first valid passing Check or this one correction, and report any remaining gap. The operator's outcome judgment remains separate from this run.
+
+## Constraints
 
 - A benchmark must not enable any crate's `test-support` feature, directly or transitively.
 - Use production constructors, storage, executors, rendering, synchronization, and data sizes whenever practical.
@@ -252,7 +282,7 @@ cx.bench_renderer(view, |view, _window, cx| {
 });
 ```
 
-Do not benchmark a detached entity and call the result rendering performance. Do not call `run_until_idle` inside a measured loop merely to make the fixture pass: production does not drain all asynchronous work before every frame, and doing so erases the scheduling behavior being measured.
+Do not benchmark a detached entity and call the result rendering performance. Do not call `run_until_idle` inside a measured loop merely to make the fixture pass: production does not drain all asynchronous work before every frame, and doing so erases the scheduling behavior being measured. For deadline-driven workloads, `bench_renderer_session` (`crates/gpui/src/app/bench_context.rs:840`) provides a timeout-bounded renderer session with deadline checks between polls and frames — currently without callers outside its own module; inspect it before choosing an API.
 
 ## Headless rendering and frame data
 
@@ -340,7 +370,7 @@ Parameterize workload sizes and report throughput units when they clarify scalin
 
 1. Add the benchmark before changing the production rule when practical.
 2. Prove it reproduces the symptom on the baseline.
-3. Keep benchmark code identical between baseline and candidate. Use a benchmark-only commit that can be applied to both revisions or a separate comparison worktree.
+3. Keep benchmark code identical between baseline and candidate. Use a benchmark-only commit that can be applied to both revisions, building the baseline binary, then switching to the candidate and building again — the two binaries persist side by side without a second working tree. Never create a second clone, worktree, or copy of this repository for the comparison (`.rules`, Repository fragmentation — a working tree here is a governance surface: its skills and docs load into agent sessions).
 4. Build both with the same optimized profile, features, Rust flags, and lockfile.
 5. Run on the same machine under similar thermal and power conditions.
 6. Run a short smoke first, then a bounded measured run with the same warmup, measurement time, sample size, and input filter.
@@ -370,11 +400,16 @@ dsymutil target/release-fast/deps/<target>-<hash>
 
 Prefer the `zed-bench` Instruments template, which combines Time Profiler data, CPU counters, and hang or microhang tables. Fall back to `Time Profiler` if it is unavailable:
 
+Traces are user-facing artifacts: keep them under the skill's artifacts route,
+`~/Documents/zk-data/skills/gpui-bench/{date}-{run}/`, not `/tmp`.
+
 ```sh
-rm -rf /tmp/zed-profiles/<name>.trace
+OUT=~/Documents/zk-data/skills/gpui-bench/<date>-<run>
+mkdir -p "$OUT"
+rm -rf "$OUT/<name>.trace"
 xctrace record \
   --template "zed-bench" \
-  --output /tmp/zed-profiles/<name>.trace \
+  --output "$OUT/<name>.trace" \
   --launch -- target/release-fast/deps/<target>-<hash> \
   --bench <workload-filter> --profile-time 10
 ```
@@ -383,7 +418,7 @@ Running a Criterion executable directly requires `--bench`. `--profile-time` rep
 
 Inspect the trace table of contents and export only focused tables such as `time-sample`; never load a complete `.trace` or large XML export into agent context. Filter by target PID, main thread when investigating foreground stalls, running state, and timer-fired samples. Symbolicate with the exact binary, dSYM, architecture, and load address using `atos`, then use `rustfilt` for Rust names.
 
-If the profile contains a large `<deduplicated_symbol>` bucket or implausible functions, stop treating its symbol-level attribution as actionable and recapture with `-Wl,-no_deduplicate`. Report both flat leaf and inclusive bottom-up profiles. Load the `xctrace-rust-profile` skill for the complete export and symbolication workflow.
+If the profile contains a large `<deduplicated_symbol>` bucket or implausible functions, stop treating its symbol-level attribution as actionable and recapture with `-Wl,-no_deduplicate`. Report both flat leaf and inclusive bottom-up profiles. (There is no `xctrace-rust-profile` skill in this corpus — the export and symbolication workflow is the one in this section: focused-table exports, `atos` with the exact binary, dSYM, architecture, and load address, `rustfilt` for Rust names.)
 
 Trace bundles can contain process environments, paths, source, and credentials. Keep them local, inspect focused exports, and never paste raw trace metadata into a shared thread.
 
@@ -444,6 +479,40 @@ Lead with whether the user-visible responsiveness problem was reproduced and whe
 4. Feature-isolation evidence.
 5. Headless-renderer limitations and sources of noise.
 6. Remaining expensive work and the next profile or optimization to pursue.
+
+## Regression case
+
+All receipts executed live (2026-10-01, batch-13 audit):
+
+- Feature-isolation probe, clean: `cargo tree -p hkask-media-benchmarks -e
+  normal,build,dev,features` (5,414 lines) greps zero
+  `feature "test-support"` occurrences — the kask-owned benchmark package
+  passes the isolation rule. The upstream `crates/benchmarks` package
+  intentionally enables `test-support` in its dev-dependencies and fails
+  this probe; it is upstream's package, outside this skill's isolation
+  rule — do not "fix" it, and do not host production-shaped kask benchmarks
+  there (the separate-package rule is what `hkask-media-benchmarks` exists
+  to satisfy).
+- Work-count reconciliation, green: 1,000 enqueued = 1,000 completed +
+  0 dropped, 0 ordering violations, final state asserted → `true`.
+- Work-count reconciliation, dropped work: 1,000 = 998 + 2 → `false` —
+  the `(= work_dropped 0)` clause fails; a faster run cannot hide dropped
+  work.
+- Work-count reconciliation, ordering violation: counts green but
+  `ordering_violations: 1` → `false`.
+
+The pre-run isolation/timeout gate (`GPB-1`) and post-run work-conservation & frame-budget gate (`GPB-2`, grounded in Georges, Buytaert & Eeckhout, "Statistically rigorous Java performance evaluation", OOPSLA 2007 `doi:10.1145/1297027.1297033` and `derived:frame_budget` / `derived:instructions_per_cycle`) execute over flat scalar bindings in `lisp_eval`:
+
+```
+GPB-1 form: "(and (= test_support_occurrences 0) (<= timeout_ms 300000) (= concurrent_bench_runs 0))"
+GPB-1 env:  { "test_support_occurrences": 0, "timeout_ms": 180000, "concurrent_bench_runs": 0 }
+
+GPB-2 form: "(and (= work_enqueued work_completed) (= work_dropped 0) (= ordering_violations 0) (<= candidate_p99_ms frame_budget_ms))"
+GPB-2 env:  { "work_enqueued": <fixture counter>, "work_completed": <fixture counter>, "work_dropped": <fixture counter>,
+              "ordering_violations": <fixture counter>, "candidate_p99_ms": <observed p99 frame ms>, "frame_budget_ms": <predeclared target ms, e.g. 8.33 at 120 FPS> }
+```
+
+The skill's forms are executed at use time, never anchored in code.
 
 ## References
 

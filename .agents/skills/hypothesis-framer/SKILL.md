@@ -1,0 +1,98 @@
+---
+name: hypothesis-framer
+description: "Research question framing and hypothesis formulation using FINER criteria and PICO process. Evaluates topics through Feasibility, Interest, Novelty, Ethics, and Relevance gates, structures questions, derives testable hypotheses."
+---
+
+# Hypothesis Framer
+
+Research question framing and hypothesis formulation using FINER criteria and PICO process. Evaluates broad research topics through Feasibility, Interest, Novelty, Ethics, and Relevance (FINER) gates, structures questions via Population-Intervention-Comparison-Outcome (PICO) framework, derives testable hypotheses with null hypothesis formulation, operationalizes into aims and objectives, and verifies alignment. Iterative PDCA refinement until the question-hypothesis-aims chain is coherent and testable.
+
+## Reference models
+
+FINER — Hulley, Cummings et al., *Designing Clinical Research* (1988; 4th ed. 2013). PICO — Richardson, Wilson, Nishikawa & Hayward, "The well-built clinical question", *ACP Journal Club* 123 (1995). Testability delegates to `falsifiability` (Popper). `onto_anchor` → derived `finer_criteria` and `pico` (operator ruling 2026-09-25).
+
+## Conditions and labels
+
+- **Initial condition (T1):** the broad topic, domain and research context, measured by step 1's per-dimension FINER scores; on a refinement cycle, the prior cycle's gate inputs (misalignments, weak dimensions, testability, admissibility, feasibility).
+- **Target condition (T2):** the step 13 gate passes.
+- **D/P labelling:** steps 1–12 are P (judgment), critiqued by the `falsifiability-admit` delegation (step 10), the five-link alignment check (step 11), and the operator. Step 13 is D (`lisp_eval`). FINER scores are ordinal judgments; do not average them or treat a 7 as a measured quantity — the gate uses only the count of dimensions below 7.
+
+## When to Use
+
+- When you have a broad research topic that needs evaluation against FINER criteria (Feasibility, Interest, Novelty, Ethics, Relevance) before committing to a study design
+- When a research question needs structuring via the PICO framework (Population, Intervention, Comparison, Outcome) to ensure precision and testability
+- When you need to derive a testable hypothesis with null hypothesis formulation from a PICO-structured question
+- When hypothesis operationalization into research aims and objectives is required, with alignment verification and feasibility recheck
+- When iterative PDCA refinement is needed to converge the question-hypothesis-aims chain into a coherent, testable, decision-ready framing — including the convergence gate (FINER compliance, PICO completeness, hypothesis coherence, aims alignment) that terminates the loop
+
+## When NOT to Use
+
+- Bug root-cause hypotheses — `diagnose` + `falsifiability` own that shape; PICO is clinical/research framing.
+- Testability adjudication alone — `falsifiability`'s admissibility gate is the shared instrument; this skill builds the full question-hypothesis-aims chain.
+- Forecasting questions — use `superforecasting`; a forecast is not a research hypothesis.
+
+## Instructions
+
+1. **Evaluate the broad research topic against FINER criteria.** For each of the five dimensions — Feasible (subjects, expertise, resources, institutional support), Interesting (audience, applicability, engagement), Novel (knowledge gap, methodology, confirmation), Ethical (regulatory compliance, risk, informed consent, animal welfare), and Relevant (clinical impact, knowledge contribution, generalizability, timeliness) — assign a score from 0–10 with specific, justified rationale.
+2. **Identify the most concerning FINER dimension** (lowest score) and compute `overall_finer_rating` deterministically in `lisp_eval` (`HF-1`): `(let ((m (min f (min i (min n (min e r)))))) (cond ((< m 3) "critical_flaw") ((< m 7) "weak") ((>= m 8) "strong") (t "adequate")))`. Formulate a refined research question that addresses the weaknesses. Provide actionable refinement suggestions for each dimension scoring below 7. The refined question must be a question (not a declarative statement), hypothesis-driven (not data-driven), and open inquiry rather than closeable with yes/no.
+3. **Apply the PICO framework** to structure the refined research question. Define the Population (condition, demographics, setting, inclusion/exclusion criteria, justification), Intervention (type, description, dose/intensity/frequency, duration, delivery), Comparison (type, description, justification — acknowledge if no comparator exists), and Outcome (primary and secondary outcomes, measurement methods, timing, clinical significance).
+4. **Synthesize the PICO elements into a single structured question** using the appropriate template (intervention, diagnostic, prognostic, or etiology format). Assess PICO completeness for each element as complete, partial, or missing. Assemble `pico_elements` — the object bundling pico-structure's four outputs (`population`, `intervention`, `comparison`, `outcome`) — for the next step's render.
+5. **Determine the hypothesis type** — difference, association, superiority, non-inferiority, equivalence, diagnostic accuracy, or prognostic — based on the PICO structure and study design.
+6. **Formulate the research hypothesis (H₁)** as a declarative statement predicting the expected outcome. Reference PICO elements explicitly, use directional language when possible, and ensure falsifiability. Format: "In [population], [intervention] will [direction] [outcome] compared to [comparison]."
+7. **Formulate the null hypothesis (H₀)** for the chosen design: no difference/no relationship for superiority, difference or association; inferior by at least δ for non-inferiority; outside ±δ for equivalence. Do not use a no-difference null for margin-based designs.
+8. **Define the primary aim** as a broad, overarching purpose directly linked to the research question, referencing PICO elements. Format: "The primary aim of this study is to [verb] [what] in [population]."
+9. **Define 2–4 primary objectives** as specific, measurable steps that accomplish the primary aim, linked to the primary outcome measure. Define secondary aims with clear rationale if applicable — avoid "fishing expeditions."
+10. **Assess testability** now that objectives are specified: verify measurable outcome with validated method, specified population, defined comparison, suggested statistical test, clinically meaningful effect size, non-inferiority/equivalence margin (δ) if applicable, and sample size feasibility. Verify the primary objectives count `[2..4]` and CONSORT δ-margin presence via `lisp_eval` (`HF-2`): `(and (>= objectives_count 2) (<= objectives_count 4) (if (or (string= hyp_type "non_inferiority") (string= hyp_type "equivalence")) has_delta_margin true))`. Render `falsifiability/falsifiability-admit` with the formulated H₁ as `target`, the domain, and PICO/objectives as `context`; consume its admissibility result. Rendering is not a test result: if no concrete falsifying observation exists, mark the framing not testable.
+11. **Verify five-link alignment**: question→hypothesis, hypothesis→primary aim, primary aim→objectives, objectives→PICO outcome, and hypothesis→null hypothesis. Flag any misalignments honestly and propose corrections.
+12. **Recheck feasibility** in light of operational aims and objectives: sample size, methods, timeline, and resources. Identify any new concerns that emerged during aims/objectives development.
+13. **Check convergence (the gate).** Call `lisp_eval` with:
+    - form: `(and (= misalignment_count 0) (= (length weak_finer) 0) testable admissible feasible)`
+    - env: `{ "misalignment_count": <five-link misalignments flagged in step 11>,
+              "weak_finer": <FINER dimensions still scoring below 7>,
+              "testable": <overall_testability is testable AND a required delta is defined>,
+              "admissible": <falsifiability-admit's flat `admissible` field is true>,
+              "feasible": <feasibility_recheck is confirmed> }`
+    - env values are FLAT SCALARS and a plain list — `misalignment_count` a number, `weak_finer` a plain array of strings, the rest booleans; never wrap a value in an object (`{"n": 1}` instead of `1` fails the form with a type error — the 2026-10-02 step-13 receipt: 5 identical failures from wrapped env values).
+    Bound: max 2 refinement cycles — on a failing gate, re-enter step 2
+    (refine the question) with the flagged weaknesses; misalignments that
+    survive the second cycle are reported honestly (step 11's
+    flag-don't-paper-over rule). A remaining failed testability or admissibility
+    gate is reported as `not_testable`/`blocked`, never `testable-with-reservations`.
+
+## Registry Templates
+
+| Template | Purpose |
+|----------|---------|
+| `finer-evaluate.j2` | Apply FINER criteria to a broad research topic. Evaluate feasibility (subjects, expertise, resources), interest (audience relevance), novelty (knowledge contribution), ethics (compliance), and relevance (clinical impact). Produces per-dimension scores with rationale and refinement suggestions. |
+| `pico-structure.j2` | Apply PICO framework to structure the research question. Identifies Population characteristics, Intervention/exposure, Comparison/control, and Outcome measures. Produces a structured question and completeness assessment. |
+| `hypothesis-operationalize.j2` | Single cognitive act: derive a testable hypothesis from the PICO-structured question, formulate the null hypothesis, classify type, operationalize into research aims and objectives, assess testability against the specified objectives, verify five-link alignment, and recheck feasibility. Merges what were previously separate hypothesis and aims steps — because you cannot assess testability without knowing the objectives. |
+
+To render a template, call the `render_template` tool with the template ref (e.g., `hypothesis-framer/finer-evaluate`) and a context object with the required variables.
+
+Template context variables (from each template's [inference] contract):
+- `finer-evaluate.j2`: `broad_topic`, `domain`, `research_context`, `question_hint`
+- `hypothesis-operationalize.j2`: `structured_question`, `pico_elements`, `domain`, `finer_result`
+- `pico-structure.j2`: `research_question`, `domain`, `finer_result`, `population_hints`
+
+## Regression case
+
+Run the convergence gate form through `lisp_eval` with representative envs,
+both directions: all clean (misalignment_count=0, weak_finer=[],
+testable=true, admissible=true, feasible=true) → true; any single
+condition failing → false. Verify all five distinct failure paths:
+misalignment_count=1 (a five-link misalignment), weak_finer=["Ethical"]
+(a FINER dimension still below 7), testable=false (the falsifiability
+admission or the delta-margin requirement failed), admissible=false
+(the falsifiability-admit result rejected the H₁), and feasible=false
+(the feasibility recheck failed). All receipts executed through the
+live tool 2026-09-29.
+
+## Constraints
+
+- The research question must be a question, not a declarative statement; the research hypothesis must be a declarative statement, not a question
+- The null must match the design: no difference/no relationship for difference or association; a justified δ-boundary null for non-inferiority or equivalence
+- Non-inferiority and equivalence hypotheses require a defined δ margin — without it, the hypothesis is not testable
+- Aims must be broader than objectives; objectives must be measurable — "to improve understanding" is not measurable
+- Secondary aims must have clear rationale — avoid "nice to know" add-ons
+- The alignment check must be honest — flag misalignments, do not paper over them
+- If PICO comparison is "none," acknowledge the descriptive/pre-post design limitation rather than fabricating a comparator

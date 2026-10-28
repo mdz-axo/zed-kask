@@ -1,0 +1,66 @@
+---
+name: algedonic-review
+core: true
+description: "Human-in-the-loop algedonic review and skill gemba walk through the Algedonic review kanban board. The board is the worklist and durable review record; skill evaluation happens only in this review."
+---
+
+# Algedonic Review
+
+The **Algedonic review** board in the kanban panel is the shared worklist for the operator and Curator. The regulation loop places new alerts in Backlog and records changed repeat observations or hourly unchanged-condition checkpoints as comments on the same open card; identical ten-second ticks do not each add a comment. Skill-change proposals also enter this board, not a separate folder. The capped algedonic log is context, not the review backlog; it self-evicts and is never cleared merely to finish a review.
+
+## Reference model, conditions and labels
+
+Beer, *Brain of the Firm* (1972) — the algedonic channel (`onto_anchor` → derived `algedonic_signal`, operator ruling 2026-09-25): an alarm from System 1 to System 5 that carries only the signal that something breached; the policy level (the operator) decides. Rother, *Toyota Kata* (2010) for the gemba walk (`onto_anchor` → derived `gemba_walk`).
+
+- **Initial condition:** the board's columns as read by `kanban_task_list`, the `curator_status` `loop_reading` field, and the `reg.skill` window — or an explicit visibility gap where a read failed.
+- **Target condition:** every card in Review carries the observation that settles it, every open alert names its next action, and every proposal card has an operator verdict recorded on the card.
+- **D/P labelling:** board reads, column moves, `kanban_task_verify` receipts, and the Step 7 (`ALG-1`) and Step 10 (`ALG-2`) `lisp_eval` closure gates are D (the kanban tools and deterministic counters are the oracle); severity triage, the fix decision and the skill verdict are P — the operator's, never this session's. The one bounded loop: steps 1–10 run once per review; a card whose settling observation is missing re-enters at step 3 for that card only, and the review ends when the target condition holds or the remaining gaps are named on their cards.
+
+## SENSE — Read the worklist
+
+1. Call `kanban_board_list` to find **Algedonic review**, then `kanban_task_list` for every column. If the board/tool cannot be read, report the backlog as unknown, not empty. Open the board in the kanban panel with the operator; the panel and its existing kanban widget are the visual artifact. `curator_status` supplies loop health, the awaiting-review count (all board cards not Done), and log-cap readings; `curator_algedonic_log` provides recent diagnostic events. Do not confuse latest-cycle new alerts with cards awaiting review.
+2. If `loop_reading` is `wiring-closed` or `broken`, investigate the loop wiring before judging its alerts. If the reading is unavailable, state the uncertainty. A heartbeat absent for more than two observed hourly intervals is a structural concern, not proof of a healthy quiet loop. Gate SENSE health via `lisp_eval` (`ALG-1a`):
+   - form: `(and board_read_ok (not (string= loop_reading "wiring-closed")) (not (string= loop_reading "broken")) (<= missed_hourly_heartbeats 2))`
+   - env: `{"board_read_ok": <bool>, "loop_reading": "<string>", "missed_hourly_heartbeats": <int>}`
+3. Read each open card's description, comments, deliverables and verification criteria. An unreadable card is unknown. Backlog means arrived, Ready triaged, In Progress decided/delegated, Review fixed or self-recovered with evidence, Done verified.
+
+## TRIAGE and ACT — Work the standard columns
+
+4. Brief the operator using card IDs, observed severity, evidence and next action. Missing/invalid severity stays unknown; confidence is not a severity substitute. Record triage in a comment and move Backlog → Ready. Ask the operator for the actual decision; do not infer it.
+5. For a decided item, record the decision and source observation on its card, assign it or use `kanban_task_spawn` / `spawn_agent` with clear instructions when work is delegated, and move Ready → In Progress. Attach outputs with `kanban_task_add_deliverable`. Do not create a second worklist, a dashboard or a dated review note.
+6. After a fix or self-recovery, attach the fresh observation to that card and move to Review through the standard columns. Self-recovery is evidence for review, **not** authorization to mark Done. If the condition worsens again before verification, the connector comments on the same card and moves it from Review back to In Progress; investigate the fresh observation before verifying. A 7-day post-advice observation is recorded as the verification evidence on this same card using `kanban_task_verify` only when the operator (or Curator under a recorded grant) actually judges the evidence; do not recreate an advice baseline/receipt/publication protocol in comments.
+7. Done requires `kanban_task_verify` on a card in Review with the actual observation. The operator verifies by default. A Curator verification requires a grant recorded on that card with its scope; if verification is explicitly skipped under an authorized grant, record who skipped and why without pretending that an unverified change is verified. Re-query `kanban_task_list` after actions; tool-call intent is not a receipt and failed reads do not prove clearance. Gate each Review → Done transition via `lisp_eval` (`ALG-1`):
+   - form: `(and (= cards_moved_to_done cards_verified_with_receipt) (= ungranted_curator_verifications 0) (= self_recovery_marked_done_without_verify 0))`
+   - env: `{"cards_moved_to_done": <int>, "cards_verified_with_receipt": <int>, "ungranted_curator_verifications": <int>, "self_recovery_marked_done_without_verify": <int>}`
+
+## GEMBA WALK — Skill evaluation with the operator
+
+8. Go to skill execution: call `reg_query` for `reg.skill` over the review window (default seven days), inspect `skill_use_issue:<skill>` memories for affected skills and look at prior `record_skill_feedback` entries. Activation means the skill loaded, not that its work was good. Classify tool failures by `failure_origin` before blaming a skill. Read skill-proposal cards and their linked evidence from the same Algedonic review board; a self-assessment on a card is a claim, not independent evidence.
+9. Present observed outcomes, operator feedback, issues, missing evidence and each proposal card to the operator. **Skill evaluation happens only here**, separately from the executing session. Wait for the operator's actual verdict; record it via `record_skill_feedback` and on the proposal card with a cited observation. The operator holds proposal authority unless a scoped grant to the Curator is recorded on the card. As a standing question, sample a few decisions from the review window against the values charter's discernment test — does this make human life more human? (`kask/docs/architecture/core/magnifica-humanitas.md`) — and present any misfit as its own observation.
+10. An accepted proposal or schema-evolution request is executed through an assigned or spawned agent from its card, with affected files, evidence and verification criteria recorded there. Move it to In Progress; attach the result, then move to Review. Verify through `kanban_task_verify` only after the operator or authorized Curator checks the predeclared work. An undecided or unverified card remains open for the next review. Before closing the review session, verify the target condition via `lisp_eval` (`ALG-2`):
+    - form: `(and (= board_read_failed 0) (= review_cards_missing_observation 0) (= open_alerts_missing_next_action 0) (= decided_proposals_missing_verdict_record 0))`
+    - env: `{"board_read_failed": <0|1>, "review_cards_missing_observation": <int>, "open_alerts_missing_next_action": <int>, "decided_proposals_missing_verdict_record": <int>}`
+
+## Regression case
+
+Receipt executed live (2026-10-01, batch-14 audit), read-only:
+
+- SENSE phase board read: `kanban_board_list` returns the **Algedonic
+  review** board (5 columns: Backlog / Ready / In Progress / Review /
+  Done) — the shared worklist the skill documents, read without
+  mutating it. A failed read would be reported as a visibility gap,
+  never as an empty backlog.
+
+The skill's oracle is the kanban tool receipts themselves (board reads,
+column moves, `kanban_task_verify`) plus the `ALG-1` and `ALG-2`
+`lisp_eval` closure gates (`{"cards_moved_to_done": 3, "cards_verified_with_receipt": 3, "ungranted_curator_verifications": 0, "self_recovery_marked_done_without_verify": 0}` → `true`; `{"board_read_failed": 0, "review_cards_missing_observation": 0, "open_alerts_missing_next_action": 0, "decided_proposals_missing_verdict_record": 0}` → `true`); the review never mutates the board merely to produce a receipt.
+
+## Registry Templates
+
+This skill owns no registry templates — the worklist is the Algedonic
+review board and the kanban/curator tools.
+
+## Constraints
+
+- A failed status/board/log/memory read remains an explicit visibility gap. The algedonic log approaching its cap triggers review, not deletion of the log.
+- A memory-maintenance finding proposed from this review names the memory-architecture valve it replicates or adjusts (decay setting, distillation cadence, forgetting horizon, manual prune valve, alarm sensors) and reconciles the store's state against that valve — routine architecture behavior is not a finding (operator correction 2026-10-13).
