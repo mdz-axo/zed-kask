@@ -2,7 +2,7 @@
 title: "media_panel — Reference: Media Viewer Interaction Model"
 audience: [developers extending the media panel or media widget]
 last_updated: 2026-10-27
-version: "2.2.0"
+version: "2.3.0"
 status: "Active"
 domain: "Media"
 mds_categories: [domain, composition, lifecycle]
@@ -279,7 +279,8 @@ returns (`close_transcript_workspace` :1658).
   `confirm_label_edit` :2477). Create/rename/delete dispatch
   `educt_annotation_create`/`update`/`delete` (:1916, :2363, :2274);
   researcher detection mirrors the server's researcher-annotation guard
-  exactly, so the compose flow's gather layers never render as annotations.
+  exactly, so the legacy gather layers and compose EDLs never render as
+  annotations.
   Hand highlights exist only on index-identical views — the pure five-state
   gate `highlight_range_gate` (:4880) surfaces the reason otherwise; the panel
   never re-implements the server's projection (D5).
@@ -293,13 +294,21 @@ returns (`close_transcript_workspace` :1658).
   click-to-seek rows and unstrike via the shared kind-dispatched delete
   (`delete_workspace_annotation` :2274). The pane parses strikes under the
   server's strike identity only (user + researcher_annotation + exactly one
-  Cut op), so multi-op compose EDLs and model EDLs never render as strikes.
-- **Reels**: per-clip include/exclude toggles shape the next compose
-  (`gather_reel_params` :5001, provenance-keyed membership); one click chains
-  `educt_store_layer` → `educt_edl_from_highlights` → `educt_render_edl`
-  (`compose_workspace_reel` :2130) and the rendered reel lands as a playable
-  asset through display-hint ingestion, with the compose progress visible on
-  the tab status line.
+  Cut op), so compose EDLs (pane_reel_compose provenance) and model EDLs
+  never render as strikes.
+- **Reels (R3, 2026-10-27)**: three compose modes build the reel EDL
+  directly from the pane's annotations (`compose_reel_params` :5050 over
+  `union_word_ranges` :5022) — assemble keeps the toggled-in researcher
+  highlights (union-merged so overlapping selections stay disjoint), reduce
+  cuts every strike out of the whole transcript, mixed carries both; each
+  affordance shows only when its inputs exist and chains `educt_store_layer`
+  → `educt_render_edl` (`compose_workspace_reel` :2132) under the single
+  edit admission. The compose provenance carries the pane_reel_compose
+  template — never researcher_annotation — so the compose flow's own output
+  never re-parses as a researcher strike. The rendered reel lands as a
+  playable asset through display-hint ingestion, with the per-mode compose
+  progress visible on the tab status line. Membership keys on provenance
+  and the per-clip include/exclude toggles, never the label text.
 
 ## Playback and layout contracts
 
@@ -356,7 +365,7 @@ widget as of this edit (method: grep for `playback_speed`, `set_rate`,
 | Recordings browse + transcript workspace with synced reading | supplied |
 | Researcher highlight create/rename/delete via label editor | supplied |
 | Researcher strike (strikethrough cut) with line-through overlay and unstrike | supplied (2026-10-27) |
-| Reel compose, clip toggles, render, and play | supplied |
+| Reel compose (assemble/reduce/mixed), clip toggles, render, and play | supplied (2026-10-27) |
 | Researcher tags/notes create/replace/delete in Detail | supplied (2026-10-27) |
 | Trim on audio through the same Media-tab marks | supplied (2026-10-27) |
 | Per-tab purpose copy | supplied (2026-10-27) |

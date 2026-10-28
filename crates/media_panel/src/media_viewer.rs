@@ -2124,24 +2124,25 @@ impl MediaViewer {
         cx.notify();
     }
 
-    /// The pane's compose flow (S5): gather every research-highlight
-    /// selection into one derived highlight layer, compose the EDL from it,
-    /// and render the reel — a three-invoke chain under the single edit
-    /// admission, ending in the render's display hint (which lands the reel
-    /// as a playable asset via the existing ingestion).
-    fn compose_workspace_reel(&mut self, cx: &mut Context<Self>) {
+    /// The pane's compose flow (R3): build the reel EDL directly from the
+    /// pane's annotations — Keep ops from the toggled-in researcher
+    /// highlights and Cut ops from the strikes, per the mode — store it via
+    /// `educt_store_layer`, and render via `educt_render_edl` with the
+    /// stored layer id: a two-invoke chain under the single edit admission,
+    /// ending in the render's display hint (which lands the reel as a
+    /// playable asset through the existing ingestion).
+    fn compose_workspace_reel(&mut self, mode: ReelComposeMode, cx: &mut Context<Self>) {
         let Some(state) = self.transcript.as_ref() else {
             return;
         };
-        let gather_selection = self.reel_selection.clone();
-        let Some(gather_params) = gather_reel_params(state, &gather_selection) else {
-            self.status =
-                Some("No pane highlights to compose — create some in select mode first.".into());
+        let selection = self.reel_selection.clone();
+        let Some(compose_params) = compose_reel_params(state, &selection, mode) else {
+            self.status = Some(mode.empty_status().into());
             cx.notify();
             return;
         };
         let transcript_id = state.transcript_id.clone();
-        let epoch = match self.begin_edit("educt_edl_from_highlights") {
+        let epoch = match self.begin_edit("educt_store_layer") {
             Ok(epoch) => epoch,
             Err(error) => {
                 self.status = Some(error);
@@ -2149,7 +2150,7 @@ impl MediaViewer {
                 return;
             }
         };
-        self.edit_progress = Some("composing reel from pane highlights…".into());
+        self.edit_progress = Some(mode.progress().into());
         let Some(invoker) = hkask_tool_invoker::shared_tool_invoker() else {
             self.apply_edit_result(
                 epoch,
@@ -2160,7 +2161,7 @@ impl MediaViewer {
             return;
         };
         cx.notify();
-        let gather_task = invoker.invoke_tool(MEDIA_SERVER, "educt_store_layer", gather_params);
+        let store_task = invoker.invoke_tool(MEDIA_SERVER, "educt_store_layer", compose_params);
         cx.spawn(async move |this, cx| {
             fn finish(
                 this: &gpui::WeakEntity<MediaViewer>,
@@ -2174,7 +2175,7 @@ impl MediaViewer {
                 })
                 .log_err();
             }
-            let gather_text = match gather_task.await {
+            let store_text = match store_task.await {
                 Ok(text) => text,
                 Err(error) => {
                     finish(
@@ -2187,7 +2188,7 @@ impl MediaViewer {
                     return;
                 }
             };
-            let Some(gather_id) = hkask_types::tool_response::parse_tool_response(&gather_text)
+            let Some(edl_id) = hkask_types::tool_response::parse_tool_response(&store_text)
                 .and_then(|value| {
                     value
                         .pointer("/stored/id")
@@ -2199,48 +2200,7 @@ impl MediaViewer {
                     &this,
                     epoch,
                     "educt_store_layer",
-                    Err("educt_store_layer returned no gather layer id.".into()),
-                    cx,
-                );
-                return;
-            };
-            let compose_task = invoker.invoke_tool(
-                MEDIA_SERVER,
-                "educt_edl_from_highlights",
-                serde_json::json!({
-                    "transcript_id": transcript_id,
-                    "layer_id": gather_id,
-                }),
-            );
-            let compose_text = match compose_task.await {
-                Ok(text) => text,
-                Err(error) => {
-                    finish(
-                        &this,
-                        epoch,
-                        "educt_edl_from_highlights",
-                        Err(format!(
-                            "educt_edl_from_highlights failed: {}",
-                            error.message()
-                        )),
-                        cx,
-                    );
-                    return;
-                }
-            };
-            let Some(edl_id) = hkask_types::tool_response::parse_tool_response(&compose_text)
-                .and_then(|value| {
-                    value
-                        .pointer("/stored/id")
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::to_string)
-                })
-            else {
-                finish(
-                    &this,
-                    epoch,
-                    "educt_edl_from_highlights",
-                    Err("educt_edl_from_highlights returned no EDL layer id.".into()),
+                    Err("educt_store_layer returned no EDL layer id.".into()),
                     cx,
                 );
                 return;
@@ -3906,28 +3866,44 @@ impl MediaViewer {
                     .color(ui::Color::Error),
                 );
             }
-            // S5: compose + render the pane's selections into a reel —
-            // offered whenever a researcher-authored highlight exists.
-            if state
+            // R3: the three compose affordances — assemble the toggled
+            // highlights into a reel, reduce by cutting the strikes out of
+            // the whole transcript, or mixed (keeps minus strikes). Each
+            // shows only when its inputs exist.
+            let any_researcher_highlight = state
                 .highlights
                 .iter()
-                .any(|highlight| highlight.researcher_supplied)
-            {
+                .any(|highlight| highlight.researcher_supplied);
+            let affordances = [
+                (ReelComposeMode::Assemble, any_researcher_highlight),
+                (ReelComposeMode::Reduce, !state.strikes.is_empty()),
+                (
+                    ReelComposeMode::Mixed,
+                    any_researcher_highlight && !state.strikes.is_empty(),
+                ),
+            ];
+            for (mode, visible) in affordances {
+                if !visible {
+                    continue;
+                }
                 sections = sections.child(
                     div()
-                        .id("media-transcript-compose-reel")
+                        .id(SharedString::from(format!(
+                            "media-transcript-compose-reel-{}",
+                            mode.key()
+                        )))
                         .cursor_pointer()
                         .flex()
                         .flex_wrap()
                         .gap_2()
                         .hover(|el| el.bg(cx.theme().colors().element_hover))
                         .child(
-                            Label::new(SharedString::from("Compose reel from pane highlights"))
+                            Label::new(SharedString::from(mode.label()))
                                 .size(LabelSize::XSmall)
                                 .color(ui::Color::Default),
                         )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.compose_workspace_reel(cx);
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.compose_workspace_reel(mode, cx);
                         })),
                 );
             }
@@ -4991,46 +4967,137 @@ fn highlight_update_params(
     })
 }
 
-/// The gather layer for the pane's compose flow (S5): the
-/// researcher-authored selections the operator has toggled IN, as one
-/// derived highlight layer — the pane's annotations each store as
-/// single-entry layers, so the reel needs them gathered into one layer the
-/// compose tool accepts. Membership keys on provenance, never the label
-/// text: free-text labels (S4-3) name clips for the human without
-/// affecting reel composition. `None` when no selections are included.
-fn gather_reel_params(
+/// The pane's three reel compose modes (R3): assemble keeps the toggled-in
+/// researcher highlights, reduce cuts the strikes out of the whole
+/// transcript, and mixed keeps the toggled-in highlights minus the strikes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReelComposeMode {
+    Assemble,
+    Reduce,
+    Mixed,
+}
+
+impl ReelComposeMode {
+    /// The compose affordance's element-id slug.
+    fn key(self) -> &'static str {
+        match self {
+            Self::Assemble => "assemble",
+            Self::Reduce => "reduce",
+            Self::Mixed => "mixed",
+        }
+    }
+
+    /// The compose affordance's label.
+    fn label(self) -> &'static str {
+        match self {
+            Self::Assemble => "Compose reel from toggled highlights",
+            Self::Reduce => "Compose reel minus strikes",
+            Self::Mixed => "Compose highlights minus strikes",
+        }
+    }
+
+    /// The nothing-to-compose status for the mode.
+    fn empty_status(self) -> &'static str {
+        match self {
+            Self::Assemble => "No pane highlights to compose — toggle some in first.",
+            Self::Reduce => "No strikes to reduce — strike a range from the label editor first.",
+            Self::Mixed => "Nothing to compose — toggle highlights in and strike ranges first.",
+        }
+    }
+
+    /// The in-flight edit progress for the mode.
+    fn progress(self) -> &'static str {
+        match self {
+            Self::Assemble => "composing reel from pane highlights…",
+            Self::Reduce => "composing reel minus strikes…",
+            Self::Mixed => "composing highlights-minus-strikes reel…",
+        }
+    }
+}
+
+/// Union inclusive word ranges: sort, then merge overlapping AND adjacent
+/// ranges — mirroring the server's union_ranges (adjacent ranges share no
+/// words between them, so merging adds none). Keeps stay pairwise disjoint
+/// through this, satisfying the selection algebra's disjoint-Keep check.
+fn union_word_ranges(ranges: &[(usize, usize)]) -> Vec<(usize, usize)> {
+    let mut sorted: Vec<(usize, usize)> = ranges.to_vec();
+    sorted.sort();
+    let mut union: Vec<(usize, usize)> = Vec::new();
+    for (start, end) in sorted {
+        match union.last_mut() {
+            Some((_, last_end)) if start <= last_end.saturating_add(1) => {
+                if end > *last_end {
+                    *last_end = end;
+                }
+            }
+            _ => union.push((start, end)),
+        }
+    }
+    union
+}
+
+/// The exact `educt_store_layer` request for a pane-composed reel (R3): the
+/// EDL built directly from the pane's annotations — Keep ops from the
+/// toggled-in researcher highlights (union-merged so overlapping
+/// selections never trip the algebra's disjoint-Keep check) and Cut ops
+/// from every strike. Assemble keeps only, reduce cuts only, mixed carries
+/// both; `None` when the mode has nothing to compose. Provenance carries
+/// the pane_reel_compose template — never researcher_annotation — so a
+/// single-cut reduce EDL can never masquerade as a researcher strike when
+/// the pane re-parses its own transcript. Membership keys on provenance
+/// and the toggle, never the label text: free-text labels name clips for
+/// the human without affecting reel composition.
+fn compose_reel_params(
     state: &TranscriptPaneState,
     selection: &HashSet<(usize, usize)>,
+    mode: ReelComposeMode,
 ) -> Option<serde_json::Value> {
-    let selections: Vec<_> = state
-        .highlights
-        .iter()
-        .filter(|highlight| {
-            highlight.researcher_supplied
-                && selection.contains(&(highlight.start_word, highlight.end_word))
-        })
-        .map(|highlight| {
-            serde_json::json!({
-                "start_word": highlight.start_word,
-                "end_word": highlight.end_word,
-                "label": highlight.label,
-                "note": "gathered for the pane reel",
+    let keeps: Vec<(usize, usize)> = match mode {
+        ReelComposeMode::Reduce => Vec::new(),
+        ReelComposeMode::Assemble | ReelComposeMode::Mixed => state
+            .highlights
+            .iter()
+            .filter(|highlight| {
+                highlight.researcher_supplied
+                    && selection.contains(&(highlight.start_word, highlight.end_word))
             })
-        })
-        .collect();
-    if selections.is_empty() {
+            .map(|highlight| (highlight.start_word, highlight.end_word))
+            .collect(),
+    };
+    let cuts: Vec<(usize, usize)> = match mode {
+        ReelComposeMode::Assemble => Vec::new(),
+        ReelComposeMode::Reduce | ReelComposeMode::Mixed => state
+            .strikes
+            .iter()
+            .map(|strike| (strike.start_word, strike.end_word))
+            .collect(),
+    };
+    let mut ops = Vec::new();
+    for (start_word, end_word) in union_word_ranges(&keeps) {
+        ops.push(serde_json::json!({
+            "op": "keep",
+            "range": {"start_word": start_word, "end_word": end_word},
+        }));
+    }
+    for (start_word, end_word) in cuts {
+        ops.push(serde_json::json!({
+            "op": "cut",
+            "range": {"start_word": start_word, "end_word": end_word},
+        }));
+    }
+    if ops.is_empty() {
         return None;
     }
     Some(serde_json::json!({
         "transcript_id": state.transcript_id,
         "layer": {
-            "kind": "highlight",
+            "kind": "edl",
             "provenance": {
                 "model": "user",
-                "prompt_template": "workspace_reel_gather",
+                "prompt_template": "pane_reel_compose",
                 "created_at": hkask_types::time::now_rfc3339(),
             },
-            "highlights": selections,
+            "ops": ops,
         }
     }))
 }
@@ -5269,7 +5336,7 @@ fn parse_transcript_payload(payload: &Value) -> Result<TranscriptPaneState, Stri
             // The pane's researcher affordances mirror the server's
             // mutate_user_highlight guard exactly: model "user" AND the
             // researcher_annotation template. Other user-authored highlight
-            // layers — the compose flow's workspace_reel_gather — are pane
+            // layers — the legacy workspace_reel_gather compose copies — are pane
             // bookkeeping, never annotations: their entries are excluded
             // (2026-10-26 review: they re-entered the list as researcher
             // rows whose rename/delete the server always refuses, and every
@@ -8019,12 +8086,15 @@ mod tests {
         assert_eq!(typed.text(), " ");
     }
 
-    /// dcterms:identifier: `gather_reel_params`
-    /// expect: The gather layer carries exactly the researcher-authored
-    /// selections the operator toggled IN — free-text labels never affect
-    /// membership, model-pass rows never gather; no selections yields None.
+    /// dcterms:identifier: `compose_reel_params`
+    /// expect: The three compose modes build the reel EDL directly —
+    /// assemble keeps only the toggled-in researcher highlights
+    /// (overlapping and adjacent selections union-merge), reduce cuts every
+    /// strike, mixed carries both; empty op sets yield None, model-pass rows
+    /// never compose, and the pane_reel_compose provenance never matches
+    /// the pane strike identity. [P1]
     #[test]
-    fn gather_reel_params_collects_pane_selections_only() {
+    fn compose_reel_params_builds_each_mode() {
         let state = TranscriptPaneState {
             transcript_id: "t-1".into(),
             media_path: "/m".into(),
@@ -8037,11 +8107,27 @@ mod tests {
             layers: Vec::new(),
             highlights: vec![
                 PaneHighlight {
-                    start_word: 34,
-                    end_word: 51,
-                    label: "research-highlight".into(),
+                    start_word: 0,
+                    end_word: 3,
+                    label: "a".into(),
                     note: "n".into(),
-                    annotation_id: "layer-34".into(),
+                    annotation_id: "layer-0".into(),
+                    researcher_supplied: true,
+                },
+                PaneHighlight {
+                    start_word: 2,
+                    end_word: 5,
+                    label: "b".into(),
+                    note: "n".into(),
+                    annotation_id: "layer-2".into(),
+                    researcher_supplied: true,
+                },
+                PaneHighlight {
+                    start_word: 6,
+                    end_word: 7,
+                    label: "c".into(),
+                    note: "n".into(),
+                    annotation_id: "layer-6".into(),
                     researcher_supplied: true,
                 },
                 PaneHighlight {
@@ -8052,60 +8138,75 @@ mod tests {
                     annotation_id: "layer-100".into(),
                     researcher_supplied: false,
                 },
-                PaneHighlight {
-                    start_word: 200,
-                    end_word: 210,
-                    label: "thesis".into(),
-                    note: "n".into(),
-                    annotation_id: "layer-200".into(),
-                    researcher_supplied: true,
-                },
             ],
-            strikes: Vec::new(),
+            strikes: vec![PaneStrike {
+                start_word: 4,
+                end_word: 4,
+                annotation_id: "strike-4".into(),
+            }],
         };
-        let all_selected: HashSet<(usize, usize)> = [(34, 51), (200, 210)].into_iter().collect();
-        let params = gather_reel_params(&state, &all_selected).expect("selections present");
-        assert_eq!(params["transcript_id"], serde_json::json!("t-1"));
-        let layer = &params["layer"];
-        assert_eq!(layer["kind"], serde_json::json!("highlight"));
-        assert_eq!(layer["provenance"]["model"], serde_json::json!("user"));
-        assert_eq!(
-            layer["provenance"]["prompt_template"],
-            serde_json::json!("workspace_reel_gather")
-        );
-        let selections = layer["highlights"].as_array().expect("entries");
-        assert_eq!(
-            selections.len(),
-            2,
-            "only researcher-authored selections gather"
-        );
-        assert_eq!(selections[0]["start_word"], serde_json::json!(34));
-        assert_eq!(
-            selections[0]["label"],
-            serde_json::json!("research-highlight")
-        );
-        assert_eq!(selections[1]["end_word"], serde_json::json!(210));
-        assert_eq!(
-            selections[1]["label"],
-            serde_json::json!("thesis"),
-            "free-text labels gather"
-        );
+        let toggled: HashSet<(usize, usize)> = [(0, 3), (2, 5), (6, 7)].into_iter().collect();
 
-        // Reel editing: an excluded clip drops out of the gather.
-        let one_selected: HashSet<(usize, usize)> = [(34, 51)].into_iter().collect();
-        let params = gather_reel_params(&state, &one_selected).expect("one selected");
-        let selections = params["layer"]["highlights"].as_array().expect("entries");
-        assert_eq!(selections.len(), 1);
-        assert_eq!(selections[0]["end_word"], serde_json::json!(51));
+        // Assemble: the three overlapping/adjacent keeps union-merge into
+        // one disjoint Keep op [0,7]; the model row never composes.
+        let assemble =
+            compose_reel_params(&state, &toggled, ReelComposeMode::Assemble).expect("assemble");
+        assert_eq!(assemble["transcript_id"], serde_json::json!("t-1"));
+        assert_eq!(assemble["layer"]["kind"], serde_json::json!("edl"));
+        assert_eq!(
+            assemble["layer"]["provenance"]["prompt_template"],
+            serde_json::json!("pane_reel_compose")
+        );
+        let ops = assemble["layer"]["ops"].as_array().expect("ops");
+        assert_eq!(ops.len(), 1, "overlapping and adjacent keeps union-merge");
+        assert_eq!(ops[0]["op"], serde_json::json!("keep"));
+        assert_eq!(ops[0]["range"]["start_word"], serde_json::json!(0));
+        assert_eq!(ops[0]["range"]["end_word"], serde_json::json!(7));
 
-        let mut none = state.clone();
-        none.highlights
-            .retain(|highlight| !highlight.researcher_supplied);
-        assert!(gather_reel_params(&none, &HashSet::new()).is_none());
+        // Reduce: one Cut op per strike, no keeps.
+        let reduce =
+            compose_reel_params(&state, &toggled, ReelComposeMode::Reduce).expect("reduce");
+        let ops = reduce["layer"]["ops"].as_array().expect("ops");
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0]["op"], serde_json::json!("cut"));
+        assert_eq!(ops[0]["range"]["start_word"], serde_json::json!(4));
+
+        // Mixed: the merged keep plus the cut.
+        let mixed = compose_reel_params(&state, &toggled, ReelComposeMode::Mixed).expect("mixed");
+        let ops = mixed["layer"]["ops"].as_array().expect("ops");
+        assert_eq!(ops.len(), 2);
+        assert_eq!(ops[0]["op"], serde_json::json!("keep"));
+        assert_eq!(ops[1]["op"], serde_json::json!("cut"));
+
+        // Empty op sets yield None.
+        let none_toggled: HashSet<(usize, usize)> = HashSet::new();
+        assert!(compose_reel_params(&state, &none_toggled, ReelComposeMode::Assemble).is_none());
+        let no_strikes = TranscriptPaneState {
+            strikes: Vec::new(),
+            ..state
+        };
+        assert!(compose_reel_params(&no_strikes, &toggled, ReelComposeMode::Reduce).is_none());
+
+        // The pane_reel_compose provenance never matches the pane strike
+        // identity: a single-cut reduce EDL re-parsed as a transcript layer
+        // renders no strike row — the compose flow's own output cannot
+        // masquerade as a researcher strike.
+        let payload = serde_json::json!({
+            "summary": {"id": "t-1", "media_path": "/m", "words_count": 8, "has_word_timings": true},
+            "working_transcript": {"text": "a b c d e f g h", "alignment": "original", "words": [
+                {"word": "a", "start_ms": 0, "end_ms": 100}
+            ]},
+            "layers": [
+                {"id": "compose-1", "created_at": "c1", "layer": reduce["layer"].clone()}
+            ],
+            "exports": [], "renders": []
+        });
+        let parsed = parse_transcript_payload(&payload).expect("parses");
         assert!(
-            gather_reel_params(&state, &HashSet::new()).is_none(),
-            "no clips toggled in yields no reel"
+            parsed.strikes.is_empty(),
+            "a composed single-cut EDL is not a researcher strike"
         );
+        assert_eq!(parsed.layers.len(), 1, "it stays in the Layers strip");
     }
 
     /// dcterms:identifier: `transcript_media_body`

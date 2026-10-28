@@ -654,7 +654,7 @@ direct-manipulation workspace — no agent turn in the loop
   `educt_annotation_create` (`create_workspace_highlight`, :1916);
   researcher-authored rows (layer-provenance identified — the pane's
   detection mirrors the server's researcher-annotation guard exactly, so
-  the compose flow's gather layers never render as annotations) also offer
+  the legacy gather layers and compose EDLs never render as annotations) also offer
   rename via `educt_annotation_update` with the typed label over the
   unchanged range and note (`rename_workspace_highlight`, :2363) and delete
   via `educt_annotation_delete` (`delete_workspace_annotation`, :2274 —
@@ -669,17 +669,22 @@ direct-manipulation workspace — no agent turn in the loop
   `create_workspace_strike`, :2016). Struck words render line-through
   (index-identical views only), a Strikes list offers click-to-seek rows and
   unstrike, and the pane parses strikes under the server's strike identity
-  only (user + researcher_annotation + exactly one Cut op) — multi-op
-  compose EDLs and model EDLs never render as strikes.
-- **Reel editing + generation**: per-clip include/exclude toggles shape the
-  next compose (`gather_reel_params`, :5001 gathers only toggled-in
-  researcher-authored selections into one derived layer — membership keys
-  on provenance, never the label text, so free-text labels never affect
-  the reel); one click chains `educt_store_layer` →
-  `educt_edl_from_highlights` → `educt_render_edl`
-  (`compose_workspace_reel`, :2130) and the rendered reel lands as a playable
-  gallery asset through the display-hint ingestion; the compose progress
-  surfaces on the tab's status line.
+  only (user + researcher_annotation + exactly one Cut op) — compose EDLs
+  (pane_reel_compose provenance) and model EDLs never render as strikes.
+- **Reel editing + generation (2026-10-27)**: the pane offers three compose
+  modes, each building the reel EDL directly from its annotations
+  (`compose_reel_params`, :5050) — assemble from the toggled-in
+  researcher-authored highlights (union-merged so overlapping selections
+  stay disjoint), reduce by cutting every strike out of the whole
+  transcript, and mixed (keeps minus strikes). Membership keys on provenance
+  and the per-clip include/exclude toggles, never the label text. Each
+  affordance shows only when its inputs exist and chains `educt_store_layer`
+  → `educt_render_edl` (`compose_workspace_reel`, :2132); the compose
+  provenance carries the pane_reel_compose template — never
+  researcher_annotation — so a composed single-cut EDL never re-parses as a
+  researcher strike. The rendered reel lands as a playable gallery asset
+  through the display-hint ingestion; the per-mode compose progress surfaces
+  on the tab's status line.
 - **Alignment gating (D5)**: text overlays and hand highlights exist only on
   index-identical views (original/aligned) — the pure five-state gate with
   visible reasons is `highlight_range_gate`, :4880; re-anchored views list
