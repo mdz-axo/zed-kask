@@ -40,9 +40,9 @@ use std::time::Duration;
 pub const FIRST_PROBE_DELAY: Duration = Duration::from_secs(20);
 
 /// The bounded backoff between probes once a transient failure is observed:
-/// five retries spanning ~15 minutes. Exhausting the schedule is the final
-/// warn's condition — the session keeps its existing degraded-state warnings
-/// either way.
+/// five retries whose delays sum to 750s (~12.5 minutes). Exhausting the
+/// schedule is the final warn's condition — the session keeps its existing
+/// degraded-state warnings either way.
 const RETRY_DELAYS: [Duration; 5] = [
     Duration::from_secs(30),
     Duration::from_secs(60),

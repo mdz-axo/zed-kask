@@ -2687,7 +2687,6 @@ fn main() {
                             InferenceStackWiring::WiredToZedDefault
                         )),
                     );
-                    let kask_settings_for_rewire = kask_settings.clone();
                     let cybernetics_loop_for_rewire = cybernetics_loop_for_panel_deferred.clone();
                     let embedding_port_for_rewire = embedding_port_for_ipc.clone();
                     let mcp_runtime_for_rewire = mcp_runtime_for_deferred.clone();
@@ -2713,17 +2712,28 @@ fn main() {
                             if rewire_wired.load(std::sync::atomic::Ordering::SeqCst) {
                                 return;
                             }
+                            // Live settings, not a deferred-task snapshot: the
+                            // operator may retarget or clear
+                            // `kask.models.default_model` mid-session while the
+                            // stack is unwired or on the fallback — the
+                            // re-wire must honor the latest intent.
+                            let live_kask_settings =
+                                kask_bridge::KaskSettings::get_global(cx).clone();
                             if stack_on_fallback.load(std::sync::atomic::Ordering::SeqCst) {
                                 // Wired, but on the zed-default fallback: only
                                 // re-wire when the configured model now
                                 // resolves — one registry lookup per event,
                                 // no port churn on the ones where it doesn't.
                                 let kask_default =
-                                    kask_settings_for_rewire.models.default_model.trim();
+                                    live_kask_settings.models.default_model.trim();
                                 if kask_default.is_empty() {
-                                    // The operator cleared the configured
-                                    // default mid-session — the zed default IS
-                                    // the intended model now; latch.
+                                    // The configured default is now empty —
+                                    // the zed default IS the intended model;
+                                    // latch.
+                                    log::info!(
+                                        "kask.models.default_model is empty — the zed \
+                                         default is the intended model; the re-wire latches"
+                                    );
                                     rewire_wired.store(
                                         true,
                                         std::sync::atomic::Ordering::SeqCst,
@@ -2751,7 +2761,7 @@ fn main() {
                                     return;
                                 }
                                 match wire_kask_inference_stack(
-                                    &kask_settings_for_rewire,
+                                    &live_kask_settings,
                                     &cybernetics_loop_for_rewire,
                                     embedding_port_for_rewire.clone(),
                                     mcp_runtime_for_rewire.clone(),
@@ -2771,16 +2781,22 @@ fn main() {
                                         );
                                     }
                                     _ => {
-                                        // The model vanished again between the
-                                        // resolve-check and the wiring — stay
-                                        // armed on the fallback and retry on
-                                        // the next event.
+                                        // Unreachable within one handler turn —
+                                        // the resolve-check and the wiring are
+                                        // both synchronous on the main
+                                        // thread, so nothing can interleave
+                                        // between them. The reachable case
+                                        // this arm guards is the registry's
+                                        // DEFAULT model vanishing between
+                                        // events: the wiring then reports
+                                        // NotWired and we stay armed on the
+                                        // fallback for the next event.
                                     }
                                 }
                                 return;
                             }
                             match wire_kask_inference_stack(
-                                &kask_settings_for_rewire,
+                                &live_kask_settings,
                                 &cybernetics_loop_for_rewire,
                                 embedding_port_for_rewire.clone(),
                                 mcp_runtime_for_rewire.clone(),
