@@ -1,0 +1,614 @@
+---
+title: "Upstream Rebase Management Process — zed-kask"
+audience: [architects, integrators, release engineers]
+last_updated: 2026-09-28
+version: "1.4.0"
+status: "Active"
+domain: "Lifecycle"
+mds_categories: [lifecycle, composition]
+---
+
+# Upstream Rebase Management Process — zed-kask
+
+**Purpose:** a repeatable, auditable process for bringing zed-kask up to upstream
+Zed's `main` while preserving the fork's functional kask-wiring changes *without*
+carrying forward accumulated cruft (use-before-def bugs, duplicate clones,
+stale refactor artifacts). Produced 2026-08-06 after the first full-cycle rebase
+(merge of `b5796233bd`) revealed that a naive git merge inherits the fork's
+evolutionary debt; a mapped re-application onto clean upstream is the disciplined
+alternative.
+
+**Scope:** applies to any D-seam file where the fork has accumulated significant
+divergence (currently `crates/zed/src/main.rs` is the worst case: 4115 lines vs
+upstream's 2022, with only 4 `// zed-kask:` markers for 111 kask call sites).
+Files that auto-merge cleanly with all markers preserved (`markdown.rs`,
+`git_graph.rs`, `agent_panel.rs`, etc.) do not need this process.
+
+**Companion skill:** this process is encoded in the installed
+`upstream-rebase` skill (`.agents/skills/upstream-rebase/SKILL.md`), which adds
+the merge & rebase protocol (fetch/merge strategy, conflict classes, commit
+hygiene, recovery) on top of Steps 1–8 below. The skill's Process Document
+pointer names this file (`SKILL.md:231-233`).
+
+**D-seam surface:** [`DIVERGENCE.md`](../../../DIVERGENCE.md) is the current authority for numbered and retired seams. Retired numbers are never reused; the retired-seams ledger at `DIVERGENCE.md:369` currently records eighteen — D4, D10, D11, D12, D13, D15, D17, D19, D21, D22, D30, D38, D47, D48, D49, D50, D53, D62 (as of 2026-09-28). Trust the table and retired ledger rather than copied range labels in secondary documents.
+
+**Removal principles:** what may be removed from upstream Zed (and why) is
+governed by the principle set in §9 — folded here 2026-09-09 from the former
+sibling `upstream-removal-principles.md` (git history preserves the full
+original, including the MCDA sensitivity report and the metacognition
+coverage loop that derived the ranking).
+
+---
+
+## 1. The three strategies and when to use each
+
+| Strategy | When to use | Risk | Effort |
+|---|---|---|---|
+| **Git merge** (preserve fork's evolved file) | Fork's file is well-marked (every deviation has `// zed-kask:` + test) and compiles cleanly | Low — single conflict-resolution pass | Low |
+| **Mapped re-application** (this process) | Fork's file is under-marked, has accumulated cruft, or has compile bugs | Medium — must map every functional unit | High |
+| **Destroy and rebuild** | Never | Catastrophic — loses semantic intent | High |
+
+**Decision rule:** if the fork's file has > 2× the upstream line count, or
+< 50% of kask call sites carry `// zed-kask:` markers, use mapped re-application.
+Otherwise use git merge.
+
+For `crates/zed/src/main.rs` on 2026-08-06: 4115 vs 2022 lines (2.03×), 4/111
+markers (3.6%) → **mapped re-application**.
+
+---
+
+## 2. The mapped re-application process (Steps 1–8; Step 0 and Step 9 are in `SKILL.md`)
+
+These steps apply only to seams that survive the per-seam purpose decision
+(`SKILL.md` Step 0: retire, simplify, retain, or needs operator decision).
+A retired seam is removed with its coupled code and pins, not re-applied.
+
+### Step 1 — Establish the functional inventory (code-graph extraction)
+
+Extract every kask-wiring functional unit from the fork's file. A *functional
+unit* is a contiguous block that implements one kask capability (e.g., "wire the
+cybernetics loop", "register kask MCP servers"). Use `grep` and
+`git diff upstream/main HEAD -- <file>` to extract section headers and kask symbols.
+
+Output: a numbered list of functional units (F1, F2, …) with line ranges and
+one-sentence purpose. See §4 for the `main.rs` inventory (28 units).
+
+### Step 2 — Classify each unit by constraint force (semantic-mode audit)
+
+Classify every functional unit by pragmatic-semantics constraint force:
+
+- **Prohibition** — must be re-applied or the system breaks (e.g., a load-bearing
+  hook: without it, skill execution runs blind). These are the load-bearing wirings.
+- **Guardrail** — should be re-applied; omitting degrades behavior but doesn't
+  break (e.g., algedonic threshold: without it, the setting is dead config).
+- **Guideline** — nice-to-have; omitting is a regression but not a failure
+  (e.g., kask extensions panel wiring).
+- **Evidence** — diagnostic/observability (e.g., `log::info!("CyberneticsLoop
+  tick cycle started")`).
+- **Hypothesis** — speculative/future-facing (e.g., a hook wired for a
+  not-yet-landed consumer).
+
+Output: a table mapping each functional unit to its constraint force + the
+enforcement point (the line that realizes it) + the pinning test (or "not yet
+pinned" — which must be fixed before the re-application is complete).
+
+### Step 3 — Build the dependency graph (ordering constraints)
+
+For each functional unit, identify what it *defines* (variables, hooks, entities)
+and what it *uses* (references defined by earlier units). This produces a DAG.
+The re-application order must be a topological sort of this DAG — this is where
+the fork's use-before-def bugs come from: the fork's incremental evolution
+violated the DAG by inserting a use before its definition.
+
+Output: a dependency table (unit → defines → uses → must-come-after).
+
+### Step 4 — Map insertion points in clean upstream
+
+For each functional unit, identify the insertion point in clean upstream's
+file — the landmark line after which the unit should be inserted (e.g., "after
+`settings::init(cx)`", "after `copilot_chat::init(...)`"). This requires
+reading upstream's structure and understanding what each unit depends on from
+upstream (e.g., `cx`, `app_state`, `client`, `fs`).
+
+Output: a table mapping each unit to its upstream insertion landmark.
+
+### Step 5 — Re-apply (manual editing)
+
+Take clean upstream's file and insert each functional unit at its mapped
+insertion point, in topological order. For each insertion:
+- Add a `// zed-kask: D<N>` marker pointing to the DIVERGENCE.md row.
+- Ensure the unit's `let` bindings are placed before any use.
+- Ensure no duplicate definitions (the fork's duplicate `cybernetics_loop_for_tick`
+  bug came from inserting the same binding twice across two edits).
+
+### Step 6 — Pin surviving behavior at the smallest meaningful boundary
+
+Each retained seam needs a test that fails when its purpose is lost, placed at
+the cheapest boundary that exercises it (a `kask/` crate or an existing
+fork-owned test module). Do not add a test to an upstream-owned file without
+operator approval; if no other boundary exists, record "pinned by review only"
+in the D-row. For
+`main.rs` wirings (which are process-global hooks, not unit-testable functions),
+the pinning test is typically:
+- A test asserting the hook is `Some` after init (e.g.,
+  `assert!(agent::memory_port().is_some())`).
+- A test asserting the wired behavior fires (e.g., the cybernetics loop tick
+  populates the regulation ledger).
+- A compile-time pin: the `set_*` hook signature requires a type from a kask
+  crate, so removing the wiring breaks compilation.
+
+Output: a test file (or additions to an existing test module) with one test per
+Prohibition/Guardrail unit.
+
+### Step 7 — Update DIVERGENCE.md
+
+Update the D-seam row in `DIVERGENCE.md` to reflect the re-applied file:
+- List the file in the D-row's file list.
+- Document every functional unit's constraint force and pinning test.
+- If the re-application introduced a new D-seam (e.g., a new hook), add a D-row.
+
+### Step 8 — Run post-rebase cleanup
+
+`git merge upstream/main` can restore files zed-kask deliberately deleted under
+D7/D16 (icons, `.desktop` templates, bundle scripts, release workflows).
+`kask/scripts/build/check-zed-isolation.sh` is the enforcement point — it
+enumerates every forbidden path (from `kask/scripts/build/check-zed-isolation.sh:25`)
+and names the offending path on failure.
+
+1. `bash kask/scripts/build/check-zed-isolation.sh`
+2. If it fails, re-delete every path it names and re-run.
+3. Repeat until it passes.
+
+Run it locally as the fast loop; CI runs the same script in
+`.github/workflows/kask-invariants.yml`.
+
+---
+
+## 3. Verification gate (before committing the re-application)
+
+1. `cargo check -p <crate>` — the file compiles.
+2. `cargo test -p <crate> -- <pinning tests>` — all pinning tests pass.
+3. `bash kask/scripts/check-hkask-no-zed-deps.sh` — §13.1 invariant holds
+   (`DIVERGENCE.md:457-462`).
+4. `grep -c "// zed-kask:" <file>` — marker count matches the functional unit
+   count (every unit is marked).
+5. `git diff upstream/main -- <file>` — the diff is *only* kask additions (no
+   upstream code modified outside the D-seam).
+
+---
+
+## 4. Functional inventory for `crates/zed/src/main.rs` (2026-08-06)
+
+> **Historical case study.** The inventory below is the dated 2026-08-06
+> snapshot that motivated the process. Line numbers and some units (F1, F11,
+> F12 — since removed) no longer match `main.rs` today; it is retained as the
+> worked example of Steps 1–4, not as a current map.
+
+28 functional units extracted from the fork's `main.rs` (4115 lines) vs
+upstream's (2022 lines). Classified by constraint force; ordering constraints
+noted.
+
+### 4.1 Inventory table
+
+| ID | Lines | Purpose | Force | Defines | Uses | Must-come-after |
+|---|---|---|---|---|---|---|
+| F1 | — | **REMOVED** — `.env` loading via dotenvy has been removed. API keys are configured via the settings UI (keychain) or shell env vars. The keychain is the single source of truth. | — | — | — | — |
+| F2 | 617 | `gpui_tokio` init from kask tokio runtime handle | Prohibition | `kask_runtime_handle` | — | after `app` built, before any `Tokio::spawn` |
+| F3 | 677 | Alert channel: CyberneticsLoop → MetacognitionLoop | Prohibition | `alert_tx`, `alert_rx`, `regulation_ledger`, `event_sink` | `kask_runtime_handle` | F2 |
+| F4 | 700 | Algedonic threshold → `variety_max_deficit` wiring | Guardrail | `set_points`, `cybernetics_loop_inner` | `kask_settings_for_mcp` (F9), `regulation_ledger` (F3) | F3, F9 |
+| F5 | 725 | `swarm-panel` call-cap persona (call cap seed) | Prohibition | (call cap registration) | `cybernetics_loop_inner` (F4) | F4 |
+| F6 | 750 | CyberneticsLoop + MetacognitionLoop tick cycles (`Tokio::spawn`) | Prohibition | `cybernetics_loop`, `cybernetics_loop_for_tick`, `cybernetics_loop_for_panel`, `mcp_runtime`, `metacognition_loop` | F2, F3, F4, F5 | F4, F5 |
+| F7 | 804 | Metacognition provider hook (`set_metacognition_provider`) | Prohibition | (hook set) | `metacognition_loop` (F6) | F6 |
+| F8 | 835 | Global `Fs` registration (`<dyn Fs>::global`) | Prohibition | (global set) | `fs` (upstream) | after `fs` defined |
+| F9 | 845 | `kask_settings_for_mcp` + MCP server launch list | Prohibition | `kask_settings_for_mcp` | `KaskSettings::get_global` | after `settings::init` |
+| F10 | 851 | `curator.always_on` gating of tick cycles | Guardrail | (tick spawn conditional) | `kask_settings_for_mcp` (F9), `cybernetics_loop_for_tick` (F6), `metacognition_loop_for_tick` (F6) | F6, F9 |
+| F11 | — | **REMOVED** — `ensure_openai_compatible_entries` has been removed. Providers are registered via zed's native Settings → AI → LLM Providers. | — | — | — | — |
+| F12 | — | **REMOVED** — `openai_compatible` re-sync observer has been removed with `ensure_openai_compatible_entries`. | — | — | — | — |
+| F13 | 1004 | `sync_kask_mcp_servers` (ContextServerStore registration) | Prohibition | (descriptors registered) | `kask_settings_for_mcp` (F9), `resolve_mcp_binary` (F22), `kask_server_env` (F23) | F9, F22, F23 |
+| F14 | 1182 | Embedding credentials resolution (deferred task) | Prohibition | (credentials bound) | `kask_settings` (deferred), `gpui_tokio` (F2) | F2, in deferred task |
+| F15 | 1337 | MCP re-sync (curator server, deferred) | Guardrail | (re-sync call) | F13 | F13, in deferred task |
+| F16 | 1396 | `LazyToolRouter` hook (`set_tool_router`) | Prohibition | (hook set) | `kask_settings` (deferred) | in deferred task |
+| F17 | 1559 | kask extensions panel wiring | Guideline | (panel registered) | upstream panel infra | after panel infra init |
+| F18 | 1582 | Collab binary path resolution (dev) | Guideline | (path resolved) | — | early, before collab init |
+| F19 | 1919 | MCP re-sync (inference socket, deferred) | Prohibition | (re-sync call) | F13, `INFERENCE_SOCKET_PATH` | F13, in deferred task |
+| F20 | 2211 | Deferred task (model-dependent hooks: `set_memory_port`, `set_thread_condenser`, `set_tool_invoker`, `set_context_injector`, `set_curator_context_injector`) | Prohibition | (all model-dependent hooks) | `LanguageModelRegistry::default_model`, F2 | after user resolves, F2 |
+| F21 | 2496 | `sync_kask_mcp_servers` fn definition | Prohibition | (fn) | F22, F23, F24 | — (fn definition, hoisted) |
+| F22 | 2501 | `resolve_mcp_binary` fn definition | Prohibition | (fn) | `HKASK_MCP_*_BIN` env | — (fn definition, hoisted) |
+| F23 | 2563 | `kask_server_env` (env var resolution for MCP servers) | Prohibition | (fn) | `KaskSettings`, credentials | — (fn definition, hoisted) |
+| F24 | 2618 | `sync_kask_mcp_servers` impl (descriptor registration) | Prohibition | (fn body) | F22, F23, `KaskMcpDescriptor` | F22, F23 |
+| F25 | 2701 | `sync_kask_mcp_runtime_servers` (governed McpRuntime restart) | Prohibition | (fn) | `McpRuntime`, `kask_server_env` (F23) | F23 |
+| F26 | 2706 | `tool_invoker` hook (`set_tool_invoker`) | Prohibition | (hook set) | `swarm_panel::ToolInvoker` | in deferred task (F20) |
+| F27 | 2808 | `tool_invoke` IPC (inference IPC server) | Prohibition | (IPC methods) | `ToolPort` | F20 |
+| F28 | 2810 | Skill executor resolution (resolves at call time) | Prohibition | (resolver fn) | (F20) | F20 |
+
+### 4.2 Dependency DAG (topological order for re-application)
+
+```
+F1 (.env)           → before settings::init
+F2 (gpui_tokio)     → after app built
+F18 (collab path)   → early (before collab init)
+F22 (resolve_mcp_binary) → fn (hoisted)
+F23 (kask_server_env)     → fn (hoisted)
+F21 (sync_kask_mcp_servers fn) → fn (hoisted, depends on F22/F23)
+F24 (sync_kask_mcp_servers impl) → fn (hoisted, depends on F22/F23)
+F25 (sync_kask_mcp_runtime_servers) → fn (hoisted, depends on F23)
+F3 (alert channel)  → after F2
+F9 (kask_settings_for_mcp) → after settings::init
+F4 (algedonic)      → after F3, F9
+F5 (swarm-panel cap) → after F4
+F6 (cybernetics loop + mcp_runtime) → after F2, F3, F4, F5
+F7 (metacognition provider) → after F6
+F8 (global Fs)      → after fs defined
+F10 (curator.always_on gating) → after F6, F9
+F11 (ensure_openai_compatible) → after F9, before language_models::init
+F12 (openai_compatible re-sync) → after F11
+F13 (sync_kask_mcp_servers call) → after F9, F22, F23
+F17 (kask extensions panel) → after panel infra
+F20 (deferred task) → after user resolves, F2
+  F14 (embedding creds) → in F20
+  F15 (MCP re-sync curator) → in F20, after F13
+  F16 (LazyToolRouter) → in F20
+  F19 (MCP re-sync inference socket) → in F20, after F13
+  F26 (tool_invoker) → in F20
+  F27 (tool_invoke IPC) → in F20
+  F28 (skill executor resolver) → in F20
+```
+
+### 4.3 The fork's 2 bugs, explained by the DAG
+
+1. **`kask_settings_for_mcp` use-before-def (F4 uses F9, but F4 was placed at
+   L700 and F9 at L849).** The DAG says F4 must come after F9. The fork's
+   incremental evolution inserted F4 (algedonic wiring) before F9 (settings
+   load) because F4 was added in a later commit (`0ae806eb6d`) without moving
+   F9 up. **Re-application fixes this by placing F9 before F4 per the DAG.**
+
+2. **`cybernetics_loop_for_tick` duplicate (F6 defines it at L742, then a
+   duplicate `let` at L769).** The fork added the tick-cycle spawn block (F10)
+   in `0ae806eb6d` and re-cloned the binding instead of reusing the F6 clone.
+   **Re-application fixes this by defining once in F6 and reusing in F10.**
+
+### 4.4 Upstream insertion landmarks
+
+| Unit | Insert after (upstream landmark) | Upstream line |
+|---|---|---|
+| F1 | after `app` built, before `settings::init` | ~L343 (`build_application()`) |
+| F2 | after `app` built, before any tokio use | ~L343 |
+| F18 | early, before collab init | ~L400 |
+| F22–F25 | end of file (fn definitions, hoisted) | EOF |
+| F3 | after F2, before `settings::init` | ~L490 |
+| F9 | after `settings::init` | ~L498 |
+| F4 | after F3, F9 | after F9 |
+| F5 | after F4 | after F4 |
+| F6 | after F2, F3, F4, F5 | after F5 |
+| F7 | after F6 | after F6 |
+| F8 | after `fs` defined | ~L435 |
+| F10 | after F6, F9 | after F9 |
+| F11 | after F9, before `language_models::init` | ~L698 (before `language_models::init`) |
+| F12 | after F11 | after F11 |
+| F13 | after F9, F22, F23 | after F12 |
+| F17 | after panel infra | ~L700+ |
+| F20 | in the deferred task (after user resolves) | upstream's deferred task |
+
+---
+
+## 5. Semantic-mode audit findings (constraint-force classification)
+
+### 5.1 Prohibition-force units (must re-apply — 20 units)
+
+F2, F3, F5, F6, F7, F8, F9, F13, F14, F16, F19, F20, F21, F22, F23, F24,
+F25, F26, F27, F28. Removing any of these breaks compilation or silently
+disables a load-bearing kask capability (skill execution, MCP launch,
+cybernetics feedback, tool invocation).
+
+### 5.2 Guardrail-force units (should re-apply — 4 units)
+
+F4 (algedonic threshold), F10 (`curator.always_on` gating), F15 (curator
+MCP re-sync), F18 (collab dev path). Omitting degrades behavior without
+breaking compilation.
+
+### 5.3 Guideline-force units (nice-to-have — 2 units)
+
+F17 (kask extensions panel wiring). Omitting is a UX regression.
+
+### 5.4 Evidence-force units (observability — distributed across units)
+
+Log lines inside F6/F20 (e.g., cybernetics tick logging) — re-apply with
+their parent unit.
+
+### 5.5 Pinning test gaps (the under-marking problem)
+
+At audit time, only 4 of 111 kask call sites in `main.rs` carried
+`// zed-kask:` markers, and most Prohibition units lacked a pinning test.
+The re-application plan (§6, Task R8) closes this: one pinning test per
+Prohibition unit, one marker per unit.
+
+---
+
+## 6. Re-application execution plan for `main.rs`
+
+> Historical plan for the 2026-08-06 case study (see §4 caveat).
+
+- **Task R1:** Branch + clean upstream base — `git restore --source upstream/main -- crates/zed/src/main.rs`.
+- **Task R2:** Insert fn definitions (F22, F23, F21, F24, F25) at EOF.
+- **Task R3:** Insert early wirings (F1, F2, F18) before `settings::init`.
+- **Task R4:** Insert F3 (alert channel) + F9 (kask_settings_for_mcp) after F2/`settings::init`.
+- **Task R5:** Insert F4, F5, F6, F7 (cybernetics loop stack) in DAG order.
+- **Task R6:** Insert F8, F10, F11, F12, F13, F17.
+- **Task R7:** Insert F20 (deferred task) with F14, F15, F16, F19, F26, F27, F28.
+- **Task R8:** Add pinning tests for all Prohibition units.
+- **Task R9:** Update DIVERGENCE.md D3/D8 rows.
+- **Task R10:** Verify (§3 gate) + commit.
+
+---
+
+## 7. Generalization: when to invoke this process
+
+Invoke this process (via the `upstream-rebase` skill) when:
+1. A git merge of upstream leaves a D-seam file with conflicts that touch
+   kask-wiring regions.
+2. A D-seam file's `// zed-kask:` marker density is < 50% of its kask call sites.
+3. A D-seam file has known compile bugs from incremental fork evolution.
+4. After any upstream merge, as an audit step: re-run the functional inventory
+   and confirm marker density + pinning test coverage.
+
+The process is **not** needed for:
+- Files under `kask/` (upstream never touches them).
+- D-seam files that auto-merge cleanly with all markers preserved.
+- Additive-only crates (`hkask-*`, `swarm_panel`, `kanban_panel`, `hkask-*-widget`).
+
+---
+
+## 8. The `upstream-rebase` skill
+
+The skill exists and is installed at `.agents/skills/upstream-rebase/SKILL.md`.
+It encodes this process plus:
+
+- **Deletion D-seam scope note:** Steps 1–7 apply to D-seam *files*; deletion
+  D-seams (file column `—` or struck through, e.g. D4, D10) skip to Step 8.
+- **Merge & rebase protocol:** merge-not-rebase convention
+  (`git fetch upstream && git merge upstream/main`, `DIVERGENCE.md:466`),
+  five conflict classes (D-seam modify/modify, kask-additive no-conflict,
+  workspace `Cargo.toml` arrays, modify/delete both directions), commit
+  hygiene, and recovery procedures.
+- **Merge-level verification gate ordering** (the `DIVERGENCE.md` runbook,
+  `DIVERGENCE.md:483-505`): §13.1 script (`check-hkask-no-zed-deps.sh`) →
+  `cargo check -p kask_bridge -p hkask-types -p hkask-mcp-server` →
+  isolation script (`check-zed-isolation.sh`) → `./script/clippy` → the full
+  verification gate (`cargo fmt --check`, `cargo nextest run -p 'hkask-*' -p
+  kask_bridge`) → pinning tests.
+- **Registry templates:** `map.j2`, `decide.j2`, `execute.j2`,
+  `document.j2`, `reflect.j2` under `kask/registry/templates/upstream-rebase/`, rendered
+  via the `render_template` tool, with `lisp_eval` verification gates between
+  LLM steps.
+
+See the skill's SKILL.md for the full protocol; this document remains the
+process + case-study companion.
+
+---
+
+## 9. Removal principles — what to remove from upstream Zed and why
+
+> Folded 2026-09-09 from `upstream-removal-principles.md` (v1.2.0,
+> consolidated 2026-08-28). A testable principle set governing **what to
+> remove from upstream Zed** (everything outside `kask/` and outside the
+> named D-seams in `DIVERGENCE.md`, with retired numbers preserved in its
+> ledger) and **why**.
+
+**Meta-constraint (inviolable):** the D-seam discipline is a *boundary on
+the mechanism*, not a removal *reason*. Never edit upstream files outside
+the named D-seams; push any fix into a `kask/` crate behind a D-seam and
+pin it with a test (`.rules:63`). No principle below authorizes forking
+upstream outside a D-seam. For upstream surface, "removal" means
+**disable-behind-a-D-seam + test-pin**, not **delete-the-file**. File
+deletion is reserved for `kask/`-side surface.
+
+Each category carries five fields: **Definition** (one sentence, IS not
+OUGHT), **Decision test** (a falsifiable predicate an agent evaluates
+against a diff), **Failure mode if mis-applied** (counterfactual stress),
+**Anchoring evidence** (`.rules` / `DIVERGENCE.md` file:line, or an
+explicit "no existing anchor — proposed" note), and **Scope boundary**
+(what the category does NOT authorize). The categories are **ranked** by
+MCDA and are **decision-test-disjoint**, not instance-disjoint: a single
+removal may satisfy multiple tests; classify by the one capturing the
+**load-bearing risk**.
+
+### Rank 1 — Category 1: Install/runtime collision
+
+- **Definition:** Removing upstream-declared install/runtime surface that,
+  if retained, would cause zed-kask to hijack or be hijacked by the user's
+  real Zed install (or vice versa).
+- **Decision test:** Does the retained upstream surface cause a
+  desktop-environment, file-association, URL-scheme, auto-update, or
+  install-path collision? **Mechanical check:**
+  `bash kask/scripts/build/check-zed-isolation.sh` passes with the
+  surface removed and fails with it retained. Forbidden strings in any
+  `.desktop` template: `text/plain`, `application/x-zerosize`,
+  `x-scheme-handler/zed`, `Keywords=zed` (`.rules:120`).
+- **Failure mode:** zed-kask silently hijacks the user's real Zed (or vice
+  versa) — the "complements, not replaces" premise fails. Happened in
+  commit `dcc5aa6dd3` (Jul 26 2026): the URL scheme was fixed but
+  `text/plain`, `application/x-zerosize`, and `Keywords=zed` were left.
+- **Anchoring evidence:** `.rules:120`; `DIVERGENCE.md` D7 (Hard
+  Zed-isolation invariant, enforced by `check-zed-isolation.sh`); D16
+  (upstream update actions removed, replaced by the safe zed-kask
+  updater). Verified: both scripts exist at `kask/scripts/build/`.
+- **Scope boundary:** does NOT authorize removing upstream functionality
+  merely because kask has a parallel feature — only *collision surface*.
+
+### Rank 2 — Category 2: Platform scope
+
+- **Definition:** Removing upstream code paths that exist only to build,
+  package, or run for non-Linux targets that zed-kask does not ship.
+- **Decision test:** (a) Does the code path compile or execute only behind
+  a `#[cfg(target_os = "...")]` gate for a non-Linux OS, or is it a
+  non-Linux bundler/release workflow? AND (b) is it absent from the
+  zed-kask build matrix? **Negative test:** a *cross-platform library*
+  that Linux also benefits from is NOT platform-scope removal — leave it.
+- **Failure mode:** (a) removing a cross-platform library Linux uses →
+  silent loss of Linux functionality; (b) leaving a non-Linux bundler →
+  wasted build surface and re-introduced collision risk.
+- **Anchoring evidence:** `DIVERGENCE.md` D7 — legacy Zed bundlers for
+  Linux, macOS, Windows, and Snap are fail-closed; upstream release
+  workflows, the Zed desktop template, and Flatpak/Snap resources are
+  deleted; macOS `[package.metadata.bundle-*]` sections (including
+  `osx_url_schemes = ["zed"]`) are removed. Verified:
+  `script/bundle-mac`, `script/bundle-windows.ps1`, `script/snap-build`
+  exist (fail-closed); `script/bundle-linux` is the active bundler. D7
+  also records the 2026-08-27 removal of upstream's CLI `mod flatpak`
+  (sandbox escape via `flatpak-spawn --host` hard-coding upstream Zed's
+  `FLATPAK_ID`).
+- **Scope boundary:** does NOT authorize removing cross-platform shared
+  libraries or the Linux bundler/build matrix — only target-gated or
+  bundler-gated non-Linux surface.
+
+### Rank 3 — Category 4: Dead surface rendered unreachable (sharpened "elegance")
+
+- **Definition:** Removing upstream surface that kask has rendered
+  *unreachable* (no production caller in the zed-kask build), where removal
+  reduces upstream-merge friction without changing observed behavior. The
+  **only** acceptable form of "simplification": not "the code is inelegant"
+  but "the code is provably never reached."
+- **Decision test (essentialist G1 Exist + G2 Surface):** Delete the
+  candidate in your head. (G1) Does the complexity it was hiding reappear
+  at the call sites? (G2) Does any test or production path assert the
+  surface is reachable? **Removable iff** G1 = no AND G2 = no AND no
+  `.rules`/`DIVERGENCE.md` invariant depends on the surface. If G1 = yes →
+  NOT removable (load-bearing despite looking dead). If G2 = yes → NOT
+  removable (a test pins its reachability; update or remove the test
+  first).
+- **Failure mode:** (a) removing surface that *appears* dead but is reached
+  via a dynamic path (reflection, trait-object dispatch, URL scheme
+  handler, `observe_new`) the grep missed → silent breakage; (b) an agent
+  declares surface "dead" to reduce a merge-friction score without
+  genuinely verifying G1 (the LLM-improves-against-LLM-scored-target
+  gaming trap — `.rules` "Other traps").
+- **Anchoring evidence:** `.rules` "Dead code patterns" section. All
+  current instances are `kask/`-side (e.g. ocap/`OcapConfig`/
+  `required_capabilities`; `AdapterPort`/`AdapterRouter`). **No existing
+  *upstream* anchor — proposed.** Applying this to upstream is unproven;
+  it MUST be exercised as disable-behind-a-D-seam + test-pin, never as
+  file deletion.
+- **Scope boundary:** does NOT authorize deleting upstream files — only
+  disabling via a D-seam with a test pin. Does NOT authorize removing
+  surface that is merely "rarely used" or "inelegant" — it must be
+  *unreachable*, with reachability asserted by nothing (G2 guard).
+
+### Rank 4 — Category 3: Redundant surface superseded by kask
+
+- **Definition:** Removing upstream behavior/surface that kask has
+  deliberately replaced with an equivalent or better kask-side facility,
+  where retaining the upstream surface causes a *concrete defect*
+  (duplicate UI, wrong warning, conflicting updater, double-budgeting).
+- **Decision test (two-part):** (a) Does kask provide a replacement that is
+  **wired and load-bearing** — grep its enforcement point; it must be
+  *called in production*, not merely declared? AND (b) Does retaining the
+  upstream surface produce a **concrete defect**? **Removable iff both
+  (a) and (b).** If only (a) without (b) → NOT removable: a kask
+  preference is not a removal reason.
+- **Failure mode:** removing upstream surface that kask *appears* to
+  replace but the kask replacement is unwired (the
+  "advertised-invariants-need-enforcement-points" trap) → silent loss of
+  functionality with no error. Highest-risk mis-application because the
+  (a) check is easy to fake by pointing at a constructor that is never
+  read.
+- **Anchoring evidence:** `DIVERGENCE.md` D1 (catalog budget + description
+  length warnings disabled — "skills execute via body injection"; pinned
+  by `test_select_catalog_skills_*` in `crates/agent/src/agent.rs` and
+  `test_parse_description_too_long_loads_with_warning` in
+  `crates/agent_skills/agent_skills.rs`); D3 ("Daemon transport deleted;
+  identity from `ServerContext.webid`"); D16 (upstream update actions
+  removed). Historical: `crates/kask_extensions_ui/` removed 2026-08-20,
+  citation kept only as precedent; the former `crates/auto_update/`
+  citation is **deleted surface** — the auto-update removal is anchored
+  entirely in D7/D16.
+- **Scope boundary:** does NOT authorize removing upstream surface merely
+  because kask *also* does the same thing — the upstream surface must
+  produce a *concrete defect* when retained alongside the kask
+  replacement. Does NOT authorize fork-fixing a *real upstream bug* — file
+  an upstream issue (D31/D32 record two such fixes landed as D-seams *and*
+  flagged for upstream reporting).
+
+### Rejected: pure "elegance / simplification"
+
+Removing upstream code because it is "ugly," "could be cleaner," or "has a
+nicer alternative" is **rejected** as a removal reason. It would authorize
+forking upstream outside a D-seam (`.rules:63`). Only Category 4's
+*provably unreachable* test survives.
+
+### D-seam-compatibility audit (A1)
+
+| Category | Upstream edit authorized? | Mechanism | Verdict |
+| --- | --- | --- | --- |
+| C1 Collision | Only on a **D-seam file** (`crates/zed/resources/zed.desktop.in` is a D7 seam; menu files are D16 seams). New collision surface → new D-seam entry + test pin. | disable-behind-D-seam + `check-*-no-collision.sh` | compatible |
+| C2 Platform scope | Non-Linux bundlers are D7-seam files. New non-Linux surface → D7 seam or kask-side `kask/scripts/build/` installer. | disable/fail-closed-behind-D7 | compatible |
+| C4 Dead surface | For upstream: **disable-behind-a-D-seam + test-pin, never file deletion**. File deletion is `kask/`-side only. | disable-behind-D-seam + test pin | compatible (provisional) |
+| C3 Redundant | All current instances are D-seam files (D1, D3, D16). New redundant surface → new D-seam entry + test pin. | disable-behind-D-seam + test pin | compatible |
+
+No category authorizes editing upstream outside a D-seam. Any upstream
+edit demanded by a category must be expressible as (a) an edit to an
+existing D-seam file, or (b) a new D-seam entry in `DIVERGENCE.md` pinned
+by a test in the same PR.
+
+### Cross-category overlap resolution
+
+Categories are decision-test-disjoint (each test keys on a distinct
+observable: C1 → collision script output; C2 → `cfg` gate + build matrix;
+C3 → wired-replacement grep + concrete-defect; C4 → G1 call-site
+complexity + G2 reachability assertion). Co-occurrence resolution:
+
+- **C1 × C2** (e.g. D7 macOS `osx_url_schemes` removal): **C1** — collision
+  is safety-critical.
+- **C1 × C3** (e.g. D16 update actions): **C1** — the
+  installer-replaces-real-Zed risk is load-bearing.
+- **C2 × C3**: classify by whether the *non-Linux* gate or the
+  *kask-replacement* defect is the trigger; if both, **C2** (smaller blast
+  radius).
+- **C3 × C4**: mutually exclusive on the reachability axis (C3 = still
+  *reachable* but *wrong*; C4 = *unreachable*).
+- **C2 × C4**: either test suffices; prefer **C2** (sharper, mechanically
+  checkable).
+
+> **Provenance:** the ranking was derived by MCDA (direct weighting,
+  ±20% one-at-a-time sensitivity) with a metacognition coverage prediction
+> (p=0.70, Brier 0.09 against a retrospective proxy) and an essentialist
+> review that eliminated two candidate `.rules` additions as pass-through
+> restatements. The full derivation is in git history
+> (`upstream-removal-principles.md`, folded 2026-09-09).
+
+## 10. Held-out cases for the next sync
+
+`SKILL.md` Step 9 uses these. They are **not** reading material for the agent
+running a merge: score them with a fresh sub-agent that sees only the skill
+text and the pre-merge tree, then compare its decisions with the recorded
+outcome at the cited commit. An amendment's case must fail on the pre-amendment
+skill text and pass on the amended text.
+
+| Case | Origin commit | Situation | Outcome recorded at |
+| --- | --- | --- | --- |
+| C1 | `d2f29c3827` | Operator deprecated a capability; upstream changed the seam's files (D13). | `DIVERGENCE.md` retired list |
+| C2 | seam-audit commit | A row's premise is false; upstream never touched its file (D11). | `DIVERGENCE.md` retired list |
+| C3 | `d2f29c3827` | Upstream rewrote a seam's code; one fork parameter still needed (D14). | D14 row |
+| C4 | 2026-09-24 recovery | A resolved, uncommitted merge is about to be aborted. | This doc, `SKILL.md` Recovery |
+| C5 | 2026-09-24 attempt | `-X ours` leaves a both-changed file identical to the fork parent. | Verification gate step 0 |
+
+> Hash note (2026-10-27; amended at the history collapse): the `8e32d2a127`
+> citations below name the 2026-10-12 merge as recorded in the pre-rebuild
+> repo; the same merge was re-recorded pre-collapse as `319e2d5268`. Both
+> hashes reference the erased pre-collapse history (see DIVERGENCE.md,
+> "History collapse and layered reconstruction") and no longer resolve in
+> this repository. The recorded outcomes remain valid evidence for the
+> cases; for current-tree lookups use the seam table in DIVERGENCE.md, not
+> commit hashes.
+>
+| Case | Origin commit | Situation | Outcome recorded at |
+| --- | --- | --- | --- |
+| C6 | `8e32d2a127` | A merged fork test fails with arithmetic implying default model capabilities (a pre-shrink panic reporting ~1M-token windowing; `thinking_allowed` false where the fork set it true) — the fake-snapshot class: `fake.model()` returns a clone, so a test that mutates the stored model after capturing the snapshot leaves the thread on stale capabilities. | `thread.rs` test fixes at the merge (capture `update_model`'s return) |
+| C7 | `8e32d2a127` | A merged test hangs with the turn never completing — mid-turn title generation races the tool-result follow-up on the one registered fake; position-based `pop()`/`send_last_*` feeds the answer to the wrong stream. Diagnose by skip-harvesting the other panics, then running the hang isolated with `RUST_LOG=agent=debug -- --nocapture` and reading the last log lines (the suspected timer deadlock was wrong). | Intent-based selection fixes in `agent.rs`/`tests/mod.rs`; DIVERGENCE.md 2026-10-12 record |
+| C8 | `8e32d2a127` | A failing merged test could be fixed in the test or the code — the parent-of-record decides: the ambiguous-match test was byte-identical to upstream's, so the fork's D78 rollback condition (buffer diff) was the defect, not a stale expectation. | D78 row; `edit_session.rs` at the merge |
+| C9 | `8e32d2a127` | Gate item 0's affected crates — fallout landed in edit_prediction (7) and agent_ui (1) outside every memorized list; derive the crate set from the merge's touched files instead. | DIVERGENCE.md 2026-10-12 record |
+| C10 | `8e32d2a127` | Gate item 0's upstream-match check at merge scale — `comm -23` of upstream-changed minus fork-changed files, then diff HEAD vs upstream over the remainder: 587/588 byte-identical, the one exception the recorded D89 re-home. The both-changed direction still relies on the Step 0 records. | DIVERGENCE.md 2026-10-12 record; D89 row |
+| C11 | `8e32d2a127` | Landing the merge — the skill's branch/PR proposal is falsified: both the 2026-09-24 sync and this merge landed directly on `main`. | `git log` main: `8e32d2a127`; DIVERGENCE.md sync history |
+| C12 | 2026-10-27 sync | `git fetch upstream` reports a forced update of `upstream/main`; `git merge-base main upstream/main` resolves to a 2021 commit, far older than the last recorded sync. An agent following the pre-amendment text would run the plain merge and compute against a years-old tree. | SKILL.md "Upstream history rewrite"; DIVERGENCE.md 2026-10-27 record |
+| C13 | 2026-10-27 sync | `git status` shows zero unmerged paths but a staged file still carries conflict markers; the first symptom is a `mismatched closing delimiter` compile error naming a file already counted as resolved. | SKILL.md "Post-resolution sweeps" item 1 |
+| C14 | 2026-10-27 sync | A conflicted file resolves cleanly, but a fork block between two conflict hunks in the same file was silently dropped or grafted onto upstream's deleted structure — no marker ever names it. | SKILL.md "Post-resolution sweeps" item 2 |
+| C15 | 2026-10-27 sync | Gate item 0 over the upstream-only file list reports every file as differing — because `git diff <upstream> HEAD` compares against the pre-merge commit while the merge is in progress. | SKILL.md Verification gate step 0 |

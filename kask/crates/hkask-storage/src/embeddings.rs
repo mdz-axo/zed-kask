@@ -1,0 +1,1225 @@
+//! Embedding store — sqlite-vec backed KNN similarity search.
+//!
+//! Two tables: `embeddings` (metadata + vector BLOB) + `vec_embeddings`
+//! (sqlite-vec virtual table for KNN, keyed on implicit integer rowid).
+//!
+//! The vector BLOB is intentionally stored in both tables. vec0 requires
+//! the vector for KNN MATCH; `embeddings.vector` provides uniform retrieval
+//! via the backend-agnostic `DatabaseDriver` query path (get/get_all_by_prefix).
+//! Deduplicating would require backend-conditional retrieval (join vec0 for
+//! the KNN path, read the column for the metadata path) — more complexity
+//! for ~4 KB/embedding savings. The redundancy earns its keep by preserving
+//! the uniform retrieval abstraction.
+//!
+//! The previously documented escape hatch — a vec0 auxiliary column
+//! (`+vector BLOB`) to eliminate the `embeddings.vector` copy — does not
+//! work, and was measured rather than assumed (sqlite-vec 0.1.9 source read
+//! 2026-10-18): an auxiliary column is materialized into its own shadow
+//! table (`{table}_auxiliary(rowid PRIMARY KEY, value00 …)`, written by a
+//! separate `INSERT INTO …_auxiliary`), so it stores a SECOND copy of the
+//! vector rather than referencing the one vec0 already holds. Adding it
+//! would grow the database, not shrink it.
+//!
+//! A real dedupe is available and was verified: vec0 returns its `embedding`
+//! column byte-for-byte identical to the canonical blob (pinned by
+//! `tests/vector_dedupe_probe.rs`), so `embeddings.vector` could be dropped
+//! and the vector read back from vec0. That is a canonical-store change
+//! touching `store`, `get_by_ids`, `get_by_prefix`, `get_all_by_prefix`,
+//! `search`, and `rebuild_vector_index` — i.e. every database, including the
+//! read-write curator store — so it needs its own design and evaluation, not
+//! a side effect of the distribution path. `strip_producer_tables`
+//! (`rotation.rs`) is the distribution-side reduction that ships today.
+use hkask_types::InfrastructureError;
+use hkask_types::NotFound;
+
+use crate::database::value::DbValue;
+
+impl From<crate::database::types::DbError> for EmbeddingError {
+    fn from(e: crate::database::types::DbError) -> Self {
+        // Preserve error kind via InfrastructureError::from(DbError)
+        EmbeddingError::Infrastructure(InfrastructureError::from(e))
+    }
+}
+/// Stored embedding record.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StoredEmbedding {
+    pub id: String,
+    pub entity_ref: String,
+    pub vector: Vec<f32>,
+    pub model: String,
+    pub passage_text: Option<String>,
+}
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SimilarityResult {
+    pub embedding: StoredEmbedding,
+    pub distance: f64,
+}
+/// KNN search result plus the model-gate degradation count.
+///
+/// `excluded_model_mismatch` counts stored rows dropped from the
+/// over-fetched KNN window because their recorded `model` matches neither
+/// the query's requested model nor the provider-confirmed actual model —
+/// the visible signal that the store holds vectors from another embedding
+/// model (a migration window). Same-width vectors from different models
+/// produce meaningless cosine distances; they are filtered and counted,
+/// never silently ranked. Zero on a model-homogeneous store.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SearchOutcome {
+    pub results: Vec<SimilarityResult>,
+    pub excluded_model_mismatch: usize,
+}
+/// One row's identity and passage text without its vector — the hybrid
+/// lexical index builds from a full-table scan once per sealed-source
+/// admission, and decoding every stored vector for a text-only scan would
+/// be pure cost.
+#[derive(Debug, Clone)]
+pub struct PassageRow {
+    pub id: String,
+    pub entity_ref: String,
+    pub passage_text: Option<String>,
+}
+/// KNN over-fetch factor for the model gate: each search fetches
+/// `limit × this` candidates so matching-model rows can still fill `limit`
+/// while rows from another embedding model are filtered out. vec0 KNN scans
+/// every row regardless of `k`, so the wider window costs only the decode
+/// of the rows it returns — and only the surviving rows are decoded.
+const MODEL_GATE_OVERFETCH: usize = 8;
+#[derive(Debug, thiserror::Error)]
+pub enum EmbeddingError {
+    #[error("Embedding not found: {0}")]
+    NotFound(NotFound),
+    #[error("Dimension mismatch: expected {expected}, got {actual}")]
+    DimensionMismatch { expected: usize, actual: usize },
+    #[error("Storage error: {0}")]
+    Storage(#[source] rusqlite::Error),
+    #[error(transparent)]
+    Infrastructure(#[from] hkask_types::InfrastructureError),
+    #[error("Corrupt vector data: {0}")]
+    Decode(String),
+}
+impl From<rusqlite::Error> for EmbeddingError {
+    fn from(e: rusqlite::Error) -> Self {
+        EmbeddingError::Storage(e)
+    }
+}
+use crate::SqliteConnectionManager;
+use r2d2::Pool;
+
+use std::sync::Arc;
+
+/// EmbeddingStore — vector embedding storage backed by sqlite-vec.
+pub struct EmbeddingStore {
+    pool: Pool<SqliteConnectionManager>,
+    dim: usize,
+    driver: Arc<dyn crate::database::driver::DatabaseDriver>,
+}
+impl EmbeddingStore {
+    /// Create from a DatabaseDriver.
+    ///
+    /// The driver must be a `SqliteDriver` (the only supported backend).
+    ///
+    /// `dim == 0` is clamped to 1024 (with a `log::warn!`) because a
+    /// zero-dimensional store can never accept any vector — every `store`
+    /// call would fail with `DimensionMismatch { expected: 0, actual: N }`,
+    /// silently disabling embedding-based recall. This has been observed in
+    /// production when a user's settings file explicitly sets `embedding_dim:
+    /// 0`; the `unwrap_or(1024)` default only fires for `None`, not for
+    /// `Some(0)`. Clamping keeps the system functional (degraded) instead of
+    /// panicking, per the `.rules` trap "Process-global hooks set at runtime
+    /// need a startup-failure signal".
+    pub fn from_driver(
+        driver: Arc<dyn crate::database::driver::DatabaseDriver>,
+        dim: usize,
+    ) -> Result<Self, EmbeddingError> {
+        let dim = if dim == 0 {
+            tracing::warn!(
+                target: "reg.storage",
+                embedding_dim = dim,
+                "EmbeddingStore::from_driver called with dim == 0 — \
+                 clamping to 1024 to avoid a zero-dimensional store. \
+                 Set kask_settings.corpus.embedding_dim (or HKASK_EMBEDDING_DIM) \
+                 to the width embed requests should ask MRL-capable models
+                 for via the `dimensions` parameter (default 1024)."
+            );
+            1024
+        } else {
+            dim
+        };
+        // SqliteDriver always provides a pool (constructed with one in
+        // `SqliteDriver::new`). A `None` return here means the driver
+        // is not a SqliteDriver — a logic error that cannot be recovered from.
+        let pool = driver.sqlite_pool().cloned().ok_or_else(|| {
+            EmbeddingError::Infrastructure(hkask_types::InfrastructureError::database(
+                "EmbeddingStore requires a SqliteDriver, but sqlite_pool() returned None",
+            ))
+        })?;
+        Ok(Self { pool, dim, driver })
+    }
+
+    /// Semantic row/vector publication requires one shared database handle.
+    pub fn uses_driver(&self, driver: &Arc<dyn crate::database::driver::DatabaseDriver>) -> bool {
+        Arc::ptr_eq(&self.driver, driver)
+    }
+
+    fn dim(&self) -> usize {
+        self.dim
+    }
+
+    /// Query rows through the driver.
+    fn query_driver(
+        &self,
+        sql: &str,
+        params: &[crate::database::value::DbValue],
+    ) -> Result<Vec<crate::database::value::DbRow>, EmbeddingError> {
+        Ok(self.driver.query(sql, params)?)
+    }
+
+    /// Encode f32 vector as binary blob for sqlite-vec.
+    fn encode_vector(vector: &[f32]) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(vector.len() * 4);
+        for &f in vector {
+            bytes.extend_from_slice(&f.to_le_bytes());
+        }
+        bytes
+    }
+    /// Decode binary blob back into f32 vector.
+    fn decode_vector(blob: &[u8], expected_dim: usize) -> Result<Vec<f32>, EmbeddingError> {
+        if blob.len() != expected_dim * 4 {
+            return Err(EmbeddingError::DimensionMismatch {
+                expected: expected_dim * 4,
+                actual: blob.len(),
+            });
+        }
+        let mut vector = Vec::with_capacity(expected_dim);
+        for chunk in blob.chunks_exact(4) {
+            let f = f32::from_le_bytes(chunk.try_into().map_err(|_| {
+                EmbeddingError::Decode("corrupt vector blob: chunk not 4 bytes".into())
+            })?);
+            vector.push(f);
+        }
+        Ok(vector)
+    }
+    /// Validate vector dimension.
+    fn validate_dim(&self, vector: &[f32]) -> Result<(), EmbeddingError> {
+        if vector.len() != self.dim() {
+            return Err(EmbeddingError::DimensionMismatch {
+                expected: self.dim(),
+                actual: vector.len(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Validate the vector against the store dimension and prepare the new
+    /// row's identity and vec0 blob — the shared prologue of the two write
+    /// paths (`store`, `replace`), which diverge in transaction handling.
+    fn prepare_new_row(&self, vector: &[f32]) -> Result<(String, Vec<u8>), EmbeddingError> {
+        self.validate_dim(vector)?;
+        let id = hkask_types::EmbeddingID::new().to_string();
+        let blob = Self::encode_vector(vector);
+        Ok((id, blob))
+    }
+}
+impl EmbeddingStore {
+    /// Store embedding in both tables (single transaction). Returns the embedding ID.
+    /// Store an embedding vector.
+    ///
+    /// expect: "The system provides durable storage for embedding data"
+    /// \[P3\] Motivating: Generative Space — store an embedding vector
+    /// pre:  entity_ref is non-empty, vector matches store dimension, model is non-empty
+    /// post: embedding stored and indexed by entity_ref
+    /// post: returns embedding ID
+    pub fn store(
+        &self,
+        entity_ref: &str,
+        vector: &[f32],
+        model: &str,
+        passage_text: Option<&str>,
+    ) -> Result<String, EmbeddingError> {
+        let (id, blob) = self.prepare_new_row(vector)?;
+        let dim = vector.len() as i32;
+
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| InfrastructureError::database(e.to_string()))?;
+        conn.execute_batch("BEGIN TRANSACTION;")?;
+        let result = conn.execute(
+            "INSERT INTO embeddings (id, entity_ref, vector, dimensions, model, passage_text) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![id, entity_ref, blob, dim, model, passage_text],
+        );
+        if let Err(e) = result {
+            if let Err(rb_err) = conn.execute_batch("ROLLBACK;") {
+                tracing::warn!(target: "reg.storage", error = %rb_err, "ROLLBACK failed after embeddings INSERT error");
+            }
+            return Err(EmbeddingError::Storage(e));
+        }
+        // vec0 is keyed on its implicit integer rowid, which mirrors
+        // embeddings.rowid. Link the vector to the metadata row by
+        // reusing the rowid SQLite just assigned.
+        // SAFETY (connection affinity): last_insert_rowid() is per-
+        // connection state. This is safe because the INSERT above and
+        // this call happen on the same PooledConnection within the
+        // same transaction. Refactoring to self.exec() (which acquires
+        // a different pool connection) would break this — the rowid
+        // would be from the wrong connection.
+        let rowid: i64 = conn.last_insert_rowid();
+        let vec_result = conn.execute(
+            "INSERT INTO vec_embeddings (rowid, embedding) VALUES (?1, ?2)",
+            rusqlite::params![rowid, &blob],
+        );
+        if let Err(e) = vec_result {
+            if let Err(rb_err) = conn.execute_batch("ROLLBACK;") {
+                tracing::warn!(target: "reg.storage", error = %rb_err, "ROLLBACK failed after vec_embeddings INSERT error");
+            }
+            return Err(EmbeddingError::Storage(e));
+        }
+        conn.execute_batch("COMMIT;")?;
+        tracing::debug!(
+            target: "storage.embedding",
+            id = %id, entity_ref = %entity_ref, model = %model, dimensions = dim,
+            "Embedding stored"
+        );
+        Ok(id)
+    }
+    /// Atomically replace all embeddings for a destination, preserving the old
+    /// value if either metadata or vector-index insertion fails. Ordinary
+    /// `store` calls remain append-only.
+    pub fn replace(
+        &self,
+        entity_ref: &str,
+        vector: &[f32],
+        model: &str,
+        passage_text: Option<&str>,
+    ) -> Result<String, EmbeddingError> {
+        let (id, blob) = self.prepare_new_row(vector)?;
+        let mut conn = self
+            .pool
+            .get()
+            .map_err(|e| InfrastructureError::database(e.to_string()))?;
+        // Acquire the writer lock before selecting/deleting destination rows so
+        // concurrent replacements cannot retain each other's prior value.
+        let transaction =
+            conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        transaction.execute(
+            "DELETE FROM vec_embeddings WHERE rowid IN (SELECT rowid FROM embeddings WHERE entity_ref = ?1)",
+            rusqlite::params![entity_ref],
+        )?;
+        transaction.execute(
+            "DELETE FROM embeddings WHERE entity_ref = ?1",
+            rusqlite::params![entity_ref],
+        )?;
+        transaction.execute(
+            "INSERT INTO embeddings (id, entity_ref, vector, dimensions, model, passage_text) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![id, entity_ref, blob, vector.len() as i32, model, passage_text],
+        )?;
+        let rowid = transaction.last_insert_rowid();
+        transaction.execute(
+            "INSERT INTO vec_embeddings (rowid, embedding) VALUES (?1, ?2)",
+            rusqlite::params![rowid, &blob],
+        )?;
+        transaction.commit()?;
+        Ok(id)
+    }
+
+    /// Publish a memory and its exact passage vector in one transaction.
+    /// A revision consumes the old row handle; failed publication preserves it.
+    /// Only the matching passage's vectors are replaced, never sibling passages.
+    pub fn publish_h_mem(
+        &self,
+        h_mem: &crate::HMem,
+        replacing: Option<(&hkask_types::HMemId, Option<&str>)>,
+        vector: &[f32],
+        model: &str,
+        passage: &str,
+        passage_for_value: impl Fn(&str, &serde_json::Value) -> Option<String>,
+    ) -> Result<(), crate::HMemError> {
+        let storage_error = |error: EmbeddingError| {
+            crate::HMemError::Infra(InfrastructureError::database(error.to_string()))
+        };
+        let (id, blob) = self.prepare_new_row(vector).map_err(storage_error)?;
+        let mut connection = self.pool.get().map_err(|error| {
+            crate::HMemError::Infra(InfrastructureError::database(error.to_string()))
+        })?;
+        let database_error = |error: rusqlite::Error| {
+            crate::HMemError::Infra(InfrastructureError::database(error.to_string()))
+        };
+        let transaction = connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(database_error)?;
+        if let Some((previous_id, _)) = replacing {
+            let deleted = transaction
+                .execute(
+                    "DELETE FROM hmems WHERE id = ?1 AND entity = ?2 AND attribute = ?3",
+                    rusqlite::params![previous_id.to_string(), h_mem.entity, h_mem.attribute],
+                )
+                .map_err(database_error)?;
+            if deleted != 1 {
+                return Err(crate::HMemError::NotFound(NotFound {
+                    entity_type: "h_mem".into(),
+                    id: previous_id.to_string(),
+                }));
+            }
+        }
+        crate::HMemStore::insert_on(&transaction, h_mem)?;
+        if let Some((_, Some(previous_passage))) =
+            replacing.filter(|(_, old)| *old != Some(passage))
+        {
+            // The projection belongs to the memory domain. Run it under this
+            // writer lock so another publisher cannot race the reference check.
+            let rows = {
+                let mut statement = transaction
+                    .prepare("SELECT attribute, value FROM hmems WHERE entity = ?1")
+                    .map_err(database_error)?;
+                statement
+                    .query_map(rusqlite::params![h_mem.entity], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                    })
+                    .map_err(database_error)?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(database_error)?
+            };
+            let mut shared = false;
+            for (attribute, value) in rows {
+                let value = serde_json::from_str(&value)?;
+                if passage_for_value(&attribute, &value).as_deref() == Some(previous_passage) {
+                    shared = true;
+                    break;
+                }
+            }
+            if !shared {
+                transaction.execute(
+                    "DELETE FROM vec_embeddings WHERE rowid IN (SELECT rowid FROM embeddings WHERE entity_ref = ?1 AND passage_text = ?2)",
+                    rusqlite::params![h_mem.entity, previous_passage],
+                ).map_err(database_error)?;
+                transaction
+                    .execute(
+                        "DELETE FROM embeddings WHERE entity_ref = ?1 AND passage_text = ?2",
+                        rusqlite::params![h_mem.entity, previous_passage],
+                    )
+                    .map_err(database_error)?;
+            }
+        }
+        transaction.execute(
+            "DELETE FROM vec_embeddings WHERE rowid IN (SELECT rowid FROM embeddings WHERE entity_ref = ?1 AND passage_text = ?2)",
+            rusqlite::params![h_mem.entity, passage],
+        ).map_err(database_error)?;
+        transaction
+            .execute(
+                "DELETE FROM embeddings WHERE entity_ref = ?1 AND passage_text = ?2",
+                rusqlite::params![h_mem.entity, passage],
+            )
+            .map_err(database_error)?;
+        transaction.execute(
+            "INSERT INTO embeddings (id, entity_ref, vector, dimensions, model, passage_text) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![id, h_mem.entity, blob, vector.len() as i32, model, passage],
+        ).map_err(database_error)?;
+        transaction
+            .execute(
+                "INSERT INTO vec_embeddings (rowid, embedding) VALUES (?1, ?2)",
+                rusqlite::params![transaction.last_insert_rowid(), blob],
+            )
+            .map_err(database_error)?;
+        transaction.commit().map_err(database_error)?;
+        Ok(())
+    }
+
+    /// Retrieve an embedding by entity reference.
+    /// Retrieve an embedding by entity_ref.
+    ///
+    /// expect: "The system provides durable storage for embedding data"
+    /// \[P3\] Motivating: Generative Space — retrieve embedding by entity
+    /// pre:  entity_ref is non-empty
+    /// post: returns StoredEmbedding if found
+    /// post: returns Err(NotFound) if not found
+    #[must_use = "result must be used"]
+    pub fn get(&self, entity_ref: &str) -> Result<StoredEmbedding, EmbeddingError> {
+        use crate::database::value::DbValue;
+        let rows = self.query_driver(
+            "SELECT id, entity_ref, vector, dimensions, model, passage_text FROM embeddings WHERE entity_ref = ?",
+            &[DbValue::Text(entity_ref.to_string())],
+        )?;
+        match rows.first() {
+            Some(row) => {
+                let id = row.get(0)?.as_text()?.to_string();
+                let er = row.get(1)?.as_text()?.to_string();
+                let blob = row.get(2)?.as_blob()?.to_vec();
+                let model = row.get(4)?.as_text()?.to_string();
+                let passage_text = row
+                    .get(5)
+                    .ok()
+                    .and_then(|v| v.as_text().ok())
+                    .map(|s| s.to_string());
+                let vector = Self::decode_vector(&blob, self.dim())?;
+                Ok(StoredEmbedding {
+                    id,
+                    entity_ref: er,
+                    vector,
+                    model,
+                    passage_text,
+                })
+            }
+            None => Err(EmbeddingError::NotFound(NotFound {
+                entity_type: "embedding".to_string(),
+                id: entity_ref.to_string(),
+            })),
+        }
+    }
+    /// Return whether one entity already has an embedding for exact passage text.
+    #[must_use = "result must be used"]
+    pub fn contains_entity_passage(
+        &self,
+        entity_ref: &str,
+        passage_text: &str,
+    ) -> Result<bool, EmbeddingError> {
+        let rows = self.query_driver(
+            "SELECT 1 FROM embeddings WHERE entity_ref = ?1 AND passage_text = ?2 LIMIT 1",
+            &[
+                DbValue::Text(entity_ref.to_string()),
+                DbValue::Text(passage_text.to_string()),
+            ],
+        )?;
+        Ok(!rows.is_empty())
+    }
+
+    /// True only when the exact passage has a vector-index row from the
+    /// specified producer model and the freshly generated vector. Comparing
+    /// the producer output also detects a retargeted alias echoed as actual.
+    /// Callers resolving aliases must pass the
+    /// provider-confirmed identity, not assume equal widths or alias names
+    /// establish semantic compatibility.
+    pub fn contains_entity_passage_with_model(
+        &self,
+        entity_ref: &str,
+        passage_text: &str,
+        producer_model: &str,
+        fresh_vector: &[f32],
+    ) -> Result<bool, EmbeddingError> {
+        self.validate_dim(fresh_vector)?;
+        let rows = self.query_driver(
+            "SELECT 1 FROM embeddings e JOIN vec_embeddings v ON v.rowid = e.rowid WHERE e.entity_ref = ?1 AND e.passage_text = ?2 AND e.model = ?3 AND e.vector = ?4 LIMIT 1",
+            &[
+                DbValue::Text(entity_ref.to_string()),
+                DbValue::Text(passage_text.to_string()),
+                DbValue::Text(producer_model.to_string()),
+                DbValue::Blob(Self::encode_vector(fresh_vector)),
+            ],
+        )?;
+        Ok(!rows.is_empty())
+    }
+
+    /// KNN search using sqlite-vec MATCH operator, gated on model identity.
+    ///
+    /// Returns up to `limit` nearest embeddings by cosine distance whose
+    /// recorded `model` matches the query's model identity — the requested
+    /// model, or the provider-confirmed actual model when present (the two
+    /// can differ in echo form, e.g. `OpenRouter/qwen/qwen3-embedding-8b`
+    /// vs `Qwen/Qwen3-Embedding-8B`; durable rows record whichever form the
+    /// writing path stored). Rows from any other model are excluded and
+    /// counted in `excluded_model_mismatch`: same-width vectors from
+    /// different embedding models produce meaningless cosine distances, so
+    /// a model change must degrade loudly (filtered + surfaced), never
+    /// silently poison rankings. vec0 v0.1.x does not support WHERE
+    /// constraints on the distance column for threshold-based filtering
+    /// (sqlite-vec#165); the model gate uses the same documented pattern —
+    /// over-fetch a wider window and post-filter in Rust.
+    ///
+    /// expect: "The system provides durable storage for embedding data"
+    /// \[P3\] Motivating: Generative Space — vector similarity search
+    /// pre: query_vector matches store dimension, limit > 0
+    /// post: returns matching-model `SimilarityResult`s ordered by ascending
+    /// distance, plus the count of mismatched-model rows dropped from the
+    /// fetched window
+    #[must_use = "result must be used"]
+    pub fn search(
+        &self,
+        query_vector: &[f32],
+        limit: usize,
+        query_model: &str,
+        query_actual_model: Option<&str>,
+    ) -> Result<SearchOutcome, EmbeddingError> {
+        self.validate_dim(query_vector)?;
+
+        let fetch_k = limit.saturating_mul(MODEL_GATE_OVERFETCH);
+        let query_blob = Self::encode_vector(query_vector);
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| InfrastructureError::database(e.to_string()))?;
+        // vec0 is keyed on its implicit integer rowid; the UUID lives
+        // only in the embeddings table. Join on rowid (integer B-tree
+        // lookup) instead of a TEXT metadata column.
+        let mut stmt = conn.prepare(
+            "SELECT e.id, v.distance, e.entity_ref, e.vector, e.model, e.passage_text
+             FROM vec_embeddings v
+             JOIN embeddings e ON v.rowid = e.rowid
+             WHERE v.embedding MATCH ?1 AND v.k = ?2
+             ORDER BY v.distance",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![&query_blob, fetch_k as i64], |row| {
+            let id: String = row.get(0)?;
+            let distance: f64 = row.get(1)?;
+            let entity_ref: String = row.get(2)?;
+            let vector_blob: Vec<u8> = row.get(3)?;
+            let model: String = row.get(4)?;
+            let passage_text: Option<String> = row.get(5)?;
+            Ok((id, distance, entity_ref, vector_blob, model, passage_text))
+        })?;
+        // Partition before decoding: the mismatch count must cover the
+        // whole fetched window, and only the surviving rows pay the decode.
+        let mut matching: Vec<(String, f64, String, Vec<u8>, String, Option<String>)> = Vec::new();
+        let mut excluded_model_mismatch = 0usize;
+        for row in rows {
+            let candidate = row.map_err(EmbeddingError::Storage)?;
+            let model = &candidate.4;
+            if model != query_model && !query_actual_model.is_some_and(|actual| actual == model) {
+                excluded_model_mismatch += 1;
+                continue;
+            }
+            matching.push(candidate);
+        }
+        matching.truncate(limit);
+        let mut results = Vec::with_capacity(matching.len());
+        for (id, distance, entity_ref, blob, model, passage_text) in matching {
+            let vector = Self::decode_vector(&blob, self.dim())?;
+            results.push(SimilarityResult {
+                embedding: StoredEmbedding {
+                    id,
+                    entity_ref,
+                    vector,
+                    model,
+                    passage_text,
+                },
+                distance,
+            });
+        }
+        Ok(SearchOutcome {
+            results,
+            excluded_model_mismatch,
+        })
+    }
+
+    /// List every row's id, entity_ref, and passage_text — without
+    /// vectors. The hybrid lexical index builds from this full-table scan
+    /// once per sealed-source admission; the sealed database is never
+    /// modified.
+    pub fn list_passage_rows(&self) -> Result<Vec<PassageRow>, EmbeddingError> {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| InfrastructureError::database(e.to_string()))?;
+        let mut stmt = conn.prepare("SELECT id, entity_ref, passage_text FROM embeddings")?;
+        let rows = stmt.query_map([], |row| {
+            Ok(PassageRow {
+                id: row.get(0)?,
+                entity_ref: row.get(1)?,
+                passage_text: row.get(2)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    /// Fetch full rows (with decoded vectors) by embedding id. The hybrid
+    /// fusion path materializes lexical-leg hits that fall outside the
+    /// dense KNN window, so their rows are fetched after fusion rather
+    /// than over-fetching vectors for every candidate. Returns only the
+    /// rows that exist; the fusion caller enforces the count — a missing
+    /// id in a sealed store is a consistency failure it reports loudly.
+    pub fn get_by_ids(&self, ids: &[&str]) -> Result<Vec<StoredEmbedding>, EmbeddingError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| InfrastructureError::database(e.to_string()))?;
+        let mut stmt = conn.prepare(
+            "SELECT id, entity_ref, vector, model, passage_text FROM embeddings WHERE id = ?1",
+        )?;
+        let mut rows = Vec::with_capacity(ids.len());
+        for id in ids {
+            let mut matched = stmt.query_map(rusqlite::params![id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                ))
+            })?;
+            if let Some(row) = matched.next() {
+                let (id, entity_ref, blob, model, passage_text) = row?;
+                let vector = Self::decode_vector(&blob, self.dim())?;
+                rows.push(StoredEmbedding {
+                    id,
+                    entity_ref,
+                    vector,
+                    model,
+                    passage_text,
+                });
+            }
+        }
+        Ok(rows)
+    }
+    /// Delete one exact embedding from both tables in one transaction.
+    ///
+    /// expect: "A failed compound publication can remove exactly the vector it created."
+    /// \[P3\] Motivating: Generative Space — compensation must not delete a sibling passage.
+    /// \[P4\] Constraining: Clear Boundaries — embedding identity, not entity breadth, bounds deletion.
+    /// pre: id names one stored embedding
+    /// post: matching metadata and vec0 rows are deleted; sibling embeddings survive
+    pub fn delete_by_id(&self, id: &str) -> Result<(), EmbeddingError> {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| InfrastructureError::database(e.to_string()))?;
+        conn.execute_batch("BEGIN TRANSACTION;")?;
+        if let Err(error) = conn.execute(
+            "DELETE FROM vec_embeddings WHERE rowid = (SELECT rowid FROM embeddings WHERE id = ?1)",
+            rusqlite::params![id],
+        ) {
+            if let Err(rollback_error) = conn.execute_batch("ROLLBACK;") {
+                tracing::warn!(target: "reg.storage", error = %rollback_error, "ROLLBACK failed after vec_embeddings DELETE error");
+            }
+            return Err(EmbeddingError::Storage(error));
+        }
+        let deleted = match conn.execute(
+            "DELETE FROM embeddings WHERE id = ?1",
+            rusqlite::params![id],
+        ) {
+            Ok(deleted) => deleted,
+            Err(error) => {
+                if let Err(rollback_error) = conn.execute_batch("ROLLBACK;") {
+                    tracing::warn!(target: "reg.storage", error = %rollback_error, "ROLLBACK failed after embeddings DELETE error");
+                }
+                return Err(EmbeddingError::Storage(error));
+            }
+        };
+        if deleted == 0 {
+            if let Err(rollback_error) = conn.execute_batch("ROLLBACK;") {
+                tracing::warn!(target: "reg.storage", error = %rollback_error, "ROLLBACK failed after missing embedding ID");
+            }
+            return Err(EmbeddingError::NotFound(NotFound {
+                entity_type: "embedding".to_string(),
+                id: id.to_string(),
+            }));
+        }
+        conn.execute_batch("COMMIT;")?;
+        Ok(())
+    }
+
+    /// Delete the first embedding stored for an entity.
+    ///
+    /// expect: "The system provides durable storage for embedding data"
+    /// \[P3\] Motivating: Generative Space — delete embedding
+    /// pre: entity_ref is non-empty
+    /// post: one embedding is deleted if it exists
+    pub fn delete(&self, entity_ref: &str) -> Result<(), EmbeddingError> {
+        let rows = self.query_driver(
+            "SELECT id FROM embeddings WHERE entity_ref = ?",
+            &[DbValue::Text(entity_ref.to_string())],
+        )?;
+        let id = rows
+            .first()
+            .ok_or_else(|| {
+                EmbeddingError::NotFound(NotFound {
+                    entity_type: "embedding".to_string(),
+                    id: entity_ref.to_string(),
+                })
+            })?
+            .get(0)?
+            .as_text()?
+            .to_string();
+        self.delete_by_id(&id)
+    }
+
+    /// Delete the embeddings selected by `sql` — vector rows AND metadata
+    /// rows, transactionally — returning how many were deleted. The
+    /// entity-ref and passage-scoped bulk deletes share this choreography
+    /// and differ only in how they select the ids.
+    fn delete_selected_ids(&self, sql: &str, params: &[DbValue]) -> Result<usize, EmbeddingError> {
+        let rows = self.query_driver(sql, params)?;
+        let mut ids = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let id = row.get(0)?.as_text()?.to_string();
+            ids.push(id);
+        }
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| InfrastructureError::database(e.to_string()))?;
+        conn.execute_batch("BEGIN TRANSACTION;")?;
+        for id in &ids {
+            // vec0 is rowid-keyed; resolve the UUID to the embeddings
+            // rowid and delete the vector by integer key (same pattern
+            // as delete).
+            if let Err(e) = conn.execute(
+                "DELETE FROM vec_embeddings WHERE rowid = (SELECT rowid FROM embeddings WHERE id = ?1)",
+                rusqlite::params![id],
+            ) {
+                if let Err(rb_err) = conn.execute_batch("ROLLBACK;") {
+                    tracing::warn!(target: "reg.storage", error = %rb_err, "ROLLBACK failed after vec_embeddings DELETE error");
+                }
+                return Err(EmbeddingError::Storage(e));
+            }
+            // Delete from embeddings on the SAME connection — not via
+            // self.exec, which would acquire a second pool connection and
+            // self-deadlock on SQLite's single-writer lock.
+            if let Err(e) = conn.execute(
+                "DELETE FROM embeddings WHERE id = ?1",
+                rusqlite::params![id],
+            ) {
+                if let Err(rb_err) = conn.execute_batch("ROLLBACK;") {
+                    tracing::warn!(target: "reg.storage", error = %rb_err, "ROLLBACK failed after embeddings DELETE error");
+                }
+                return Err(EmbeddingError::Storage(e));
+            }
+        }
+        conn.execute_batch("COMMIT;")?;
+        Ok(ids.len())
+    }
+
+    /// Delete every embedding under an entity — the vector rows AND the
+    /// metadata rows, transactionally. `delete` resolves only the first
+    /// id for an entity; a thread entity holds one embedding per chunk,
+    /// and the forgetting pass must remove all of them.
+    pub fn delete_all_by_entity_ref(&self, entity_ref: &str) -> Result<usize, EmbeddingError> {
+        self.delete_selected_ids(
+            "SELECT id FROM embeddings WHERE entity_ref = ?",
+            &[DbValue::Text(entity_ref.to_string())],
+        )
+    }
+
+    /// Delete the embedding rows of one entity whose `passage_text` is in
+    /// `passages` — vector rows AND metadata rows, transactionally, same
+    /// pattern as [`delete_all_by_entity_ref`]. The forgetting pass uses
+    /// this to remove only the embeddings of chunks a distillation
+    /// watermark covers, leaving newer chunks' embeddings recallable.
+    /// Rows whose passage is absent from the list (including NULL-passage
+    /// legacy rows) are left in place — the caller decides what is covered.
+    pub fn delete_by_entity_ref_and_passages(
+        &self,
+        entity_ref: &str,
+        passages: &[String],
+    ) -> Result<usize, EmbeddingError> {
+        if passages.is_empty() {
+            return Ok(0);
+        }
+        let placeholders = vec!["?"; passages.len()].join(",");
+        let sql = format!(
+            "SELECT id FROM embeddings WHERE entity_ref = ? AND passage_text IN ({placeholders})"
+        );
+        let mut params = Vec::with_capacity(passages.len() + 1);
+        params.push(DbValue::Text(entity_ref.to_string()));
+        params.extend(
+            passages
+                .iter()
+                .map(|passage| DbValue::Text(passage.clone())),
+        );
+        self.delete_selected_ids(&sql, &params)
+    }
+
+    /// Delete vector rows whose rowid has no embeddings metadata row —
+    /// orphans left when metadata was deleted without vec access (e.g.
+    /// a therapy SQL pass). KNN's inner join already ignores them; this
+    /// reclaims the shadow-table space.
+    pub fn delete_orphaned_vectors(&self) -> Result<usize, EmbeddingError> {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| InfrastructureError::database(e.to_string()))?;
+        conn.execute(
+            "DELETE FROM vec_embeddings WHERE rowid NOT IN (SELECT rowid FROM embeddings)",
+            rusqlite::params![],
+        )
+        .map_err(EmbeddingError::Storage)
+    }
+    /// Count total embeddings stored.
+    /// Count stored embeddings.
+    ///
+    /// expect: "The system provides durable storage for embedding data"
+    /// \[P8\] Motivating: Semantic Grounding — count embeddings
+    /// post: returns total count of embeddings
+    pub fn count(&self) -> Result<usize, EmbeddingError> {
+        let rows = self.query_driver("SELECT COUNT(*) FROM embeddings", &[])?;
+        let count: i64 = rows
+            .first()
+            .ok_or_else(|| {
+                EmbeddingError::Infrastructure(InfrastructureError::database(
+                    "COUNT query returned no rows",
+                ))
+            })?
+            .get(0)?
+            .as_int()?;
+        Ok(count as usize)
+    }
+    /// Bulk-load all (entity_ref, vector) pairs matching a prefix.
+    ///
+    /// Returns entity_ref + decoded vector for every embedding whose entity_ref
+    /// starts with `prefix`. Used by corpus dedup to load all chunk embeddings
+    /// in a single query instead of N individual `get()` calls.
+    ///
+    /// expect: "The system provides durable storage for embedding data"
+    /// \[P3\] Motivating: Generative Space — bulk vector retrieval by prefix
+    /// pre:  prefix is non-empty
+    /// post: returns Vec of (entity_ref, vector) pairs matching prefix
+    pub fn get_all_by_prefix(
+        &self,
+        prefix: &str,
+    ) -> Result<Vec<(String, Vec<f32>)>, EmbeddingError> {
+        let dim = self.dim();
+        let pattern = format!("{}%", prefix);
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| InfrastructureError::database(e.to_string()))?;
+        let mut stmt =
+            conn.prepare("SELECT entity_ref, vector FROM embeddings WHERE entity_ref LIKE ?1")?;
+        let rows = stmt.query_map(rusqlite::params![pattern], |row| {
+            let entity_ref: String = row.get(0)?;
+            let blob: Vec<u8> = row.get(1)?;
+            Ok((entity_ref, blob))
+        })?;
+        let mut results = Vec::new();
+        for row in rows {
+            let (entity_ref, blob) = row.map_err(EmbeddingError::Storage)?;
+            let vector = Self::decode_vector(&blob, dim)?;
+            results.push((entity_ref, vector));
+        }
+        Ok(results)
+    }
+
+    /// Query entity_refs matching a prefix.
+    /// Query entity_refs by prefix.
+    ///
+    /// expect: "The system provides durable storage for embedding data"
+    /// \[P3\] Motivating: Generative Space — query entity refs by prefix
+    /// pre:  prefix is non-empty
+    /// post: returns Vec of entity_refs matching prefix
+    pub fn query_by_prefix(&self, prefix: &str) -> Result<Vec<String>, EmbeddingError> {
+        let pattern = format!("{}%", prefix);
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| InfrastructureError::database(e.to_string()))?;
+        let mut stmt =
+            conn.prepare("SELECT entity_ref FROM embeddings WHERE entity_ref LIKE ?1")?;
+        let rows = stmt.query_map(rusqlite::params![pattern], |row| row.get(0))?;
+        let mut refs = Vec::new();
+        for row in rows {
+            let entity_ref: String = row.map_err(EmbeddingError::Storage)?;
+            refs.push(entity_ref);
+        }
+        Ok(refs)
+    }
+
+    /// Return durable `(entity_ref, model)` rows for an exact requested set.
+    ///
+    /// expect: "A calibration recovery can distinguish absent vectors from vectors stored under another model."
+    /// [P4] Motivating: durable identity evidence fails closed instead of replaying or trusting response files.
+    /// [P1] Constraining: only caller-supplied entity references are disclosed.
+    /// pre: entity_refs contains the exact identities being reconciled.
+    /// post: every returned row exists durably and matches one requested identity.
+    pub fn models_for_entity_refs(
+        &self,
+        entity_refs: &[String],
+    ) -> Result<Vec<(String, String)>, EmbeddingError> {
+        const QUERY_CHUNK_SIZE: usize = 500;
+        let mut found = Vec::new();
+        for refs in entity_refs.chunks(QUERY_CHUNK_SIZE) {
+            if refs.is_empty() {
+                continue;
+            }
+            let placeholders = std::iter::repeat_n("?", refs.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "SELECT entity_ref, model FROM embeddings WHERE entity_ref IN ({placeholders})"
+            );
+            let params = refs.iter().cloned().map(DbValue::Text).collect::<Vec<_>>();
+            for row in self.query_driver(&sql, &params)? {
+                found.push((
+                    row.get(0)?.as_text()?.to_string(),
+                    row.get(1)?.as_text()?.to_string(),
+                ));
+            }
+        }
+        Ok(found)
+    }
+
+    /// Load all embeddings with their passage text and model for in-memory
+    /// index hydration.
+    ///
+    /// Returns `(entity_ref, vector, passage_text, model)` for every stored
+    /// embedding. Used by the corpus server to rebuild the in-memory vector
+    /// index after a restart, so `corpus_query` returns full passage text
+    /// without requiring a re-embed from the source JSONL — and so the
+    /// index's model gate can see each row's recorded model.
+    pub fn all_with_text(
+        &self,
+    ) -> Result<Vec<(String, Vec<f32>, Option<String>, String)>, EmbeddingError> {
+        let dim = self.dim();
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| InfrastructureError::database(e.to_string()))?;
+        let mut stmt =
+            conn.prepare("SELECT entity_ref, vector, passage_text, model FROM embeddings")?;
+        let rows = stmt.query_map([], |row| {
+            let entity_ref: String = row.get(0)?;
+            let blob: Vec<u8> = row.get(1)?;
+            let passage_text: Option<String> = row.get(2)?;
+            let model: String = row.get(3)?;
+            Ok((entity_ref, blob, passage_text, model))
+        })?;
+        let mut results = Vec::new();
+        for row in rows {
+            let (entity_ref, blob, passage_text, model) = row.map_err(EmbeddingError::Storage)?;
+            let vector = Self::decode_vector(&blob, dim)?;
+            results.push((entity_ref, vector, passage_text, model));
+        }
+        Ok(results)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Approved slice 1: real pooled writers (not an in-memory single-
+    /// connection queue) must leave exactly one paired replacement value.
+    #[test]
+    fn replacement_serializes_file_backed_writers_and_preserves_append() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let db = crate::Database::open(
+            &dir.path().join("replacement.db").to_string_lossy(),
+            "replacement-fixture",
+        )?;
+        let pool = db.sqlite_pool()?;
+        assert!(pool.max_size() > 1, "test must allow independent writers");
+        let driver = Arc::new(crate::database::sqlite::SqliteDriver::new(pool.clone()));
+        let dim = crate::embedding_dim();
+        let store = EmbeddingStore::from_driver(driver, dim)?;
+        let source = vec![1.0; dim];
+        let first = store.store("passages", &source, "source", Some("first"))?;
+        let second = store.store("passages", &source, "source", Some("second"))?;
+        assert_ne!(first, second);
+        store.store("centroid", &source, "old", None)?;
+        store.store("centroid", &source, "old", None)?;
+        assert_eq!(store.count()?, 4);
+        {
+            let a = pool.get()?;
+            let b = pool.get()?;
+            for conn in [&a, &b] {
+                let count: i64 =
+                    conn.query_row("SELECT COUNT(*) FROM embeddings", [], |row| row.get(0))?;
+                assert_eq!(count, 4, "independent connections share the fixture DB");
+            }
+        }
+        let barrier = std::sync::Barrier::new(8);
+        std::thread::scope(|scope| -> anyhow::Result<()> {
+            let handles: Vec<_> = (0..8)
+                .map(|writer| {
+                    let store = &store;
+                    let barrier = &barrier;
+                    scope.spawn(move || -> Result<(), EmbeddingError> {
+                        let vector = vec![(writer + 1) as f32; dim];
+                        barrier.wait();
+                        for _ in 0..4 {
+                            store.replace(
+                                "centroid",
+                                &vector,
+                                &writer.to_string(),
+                                Some("current"),
+                            )?;
+                        }
+                        Ok(())
+                    })
+                })
+                .collect();
+            for handle in handles {
+                handle
+                    .join()
+                    .map_err(|_| anyhow::anyhow!("replacement writer panicked"))??;
+            }
+            Ok(())
+        })?;
+        assert_eq!(store.count()?, 3);
+        let current = store.get("centroid")?;
+        let writer: usize = current.model.parse()?;
+        assert_eq!(current.vector, vec![(writer + 1) as f32; dim]);
+        assert_eq!(current.passage_text.as_deref(), Some("current"));
+        let conn = pool.get()?;
+        let vectors: i64 =
+            conn.query_row("SELECT COUNT(*) FROM vec_embeddings", [], |row| row.get(0))?;
+        assert_eq!(vectors, 3);
+        let indexed: Vec<u8> = conn.query_row(
+            "SELECT v.embedding FROM vec_embeddings v JOIN embeddings e ON e.rowid = v.rowid WHERE e.entity_ref = 'centroid'",
+            [], |row| row.get(0),
+        )?;
+        assert_eq!(
+            EmbeddingStore::decode_vector(&indexed, dim)?,
+            current.vector
+        );
+        let ids: Vec<String> = conn
+            .prepare("SELECT id FROM embeddings WHERE entity_ref = 'passages' ORDER BY rowid")?
+            .query_map([], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        assert_eq!(
+            ids,
+            vec![first, second],
+            "ordinary append rows survive replacement"
+        );
+        Ok(())
+    }
+
+    /// expect: "Compensating a failed publication removes only its new vector, not sibling passages."
+    /// [P4] Motivating: Clear Boundaries — embedding identity bounds the rollback.
+    /// pre: two embeddings share one entity_ref
+    /// post: deleting the first ID leaves the second metadata and vec0 row searchable
+    #[test]
+    fn delete_by_id_preserves_sibling_embeddings() -> anyhow::Result<()> {
+        let dim = crate::embedding_dim();
+        let store = EmbeddingStore::from_driver(
+            crate::database::sqlite::SqliteDriver::in_memory_driver(),
+            dim,
+        )?;
+        let first_vector = vec![0.25; dim];
+        let second_vector = vec![0.75; dim];
+        let first = store.store("curator:goal:test", &first_vector, "m", Some("first"))?;
+        let second = store.store("curator:goal:test", &second_vector, "m", Some("second"))?;
+
+        store.delete_by_id(&first)?;
+
+        assert_eq!(store.count()?, 1);
+        let hits = store.search(&second_vector, 4, "m", None)?;
+        assert_eq!(hits.results.len(), 1);
+        assert_eq!(hits.excluded_model_mismatch, 0);
+        assert_eq!(hits.results[0].embedding.id, second);
+        assert_eq!(
+            hits.results[0].embedding.passage_text.as_deref(),
+            Some("second")
+        );
+        Ok(())
+    }
+
+    /// The model gate: same-width vectors from a different embedding model
+    /// are excluded from KNN and counted, never silently ranked — the
+    /// 0.6B→8B migration class where both models emit 1024-wide vectors.
+    /// The matching row is stored under the provider-confirmed actual form
+    /// (what `corpus_embed` writes) while the query carries the requested
+    /// form — the gate must match either identity.
+    #[test]
+    fn search_filters_mismatched_model_rows_and_surfaces_count() -> anyhow::Result<()> {
+        let dim = crate::embedding_dim();
+        let store = EmbeddingStore::from_driver(
+            crate::database::sqlite::SqliteDriver::in_memory_driver(),
+            dim,
+        )?;
+        let query_vector = vec![0.75; dim];
+        store.store(
+            "current:model",
+            &query_vector,
+            "Qwen/Qwen3-Embedding-8B",
+            Some("current"),
+        )?;
+        let legacy_vector = vec![0.25; dim];
+        store.store(
+            "legacy:model",
+            &legacy_vector,
+            "qwen3-embedding:0.6b",
+            Some("legacy"),
+        )?;
+
+        let outcome = store.search(
+            &query_vector,
+            5,
+            "OpenRouter/qwen/qwen3-embedding-8b",
+            Some("Qwen/Qwen3-Embedding-8B"),
+        )?;
+
+        assert_eq!(
+            outcome.results.len(),
+            1,
+            "only the current-model row is ranked"
+        );
+        assert_eq!(outcome.results[0].embedding.entity_ref, "current:model");
+        assert_eq!(
+            outcome.excluded_model_mismatch, 1,
+            "the legacy-model row is counted, not silently mixed"
+        );
+        Ok(())
+    }
+
+    /// A fully stale store must read as loud degradation — zero results with
+    /// every fetched row counted as excluded — never as an empty store.
+    #[test]
+    fn search_all_model_mismatch_returns_empty_with_loud_count() -> anyhow::Result<()> {
+        let dim = crate::embedding_dim();
+        let store = EmbeddingStore::from_driver(
+            crate::database::sqlite::SqliteDriver::in_memory_driver(),
+            dim,
+        )?;
+        let query_vector = vec![0.75; dim];
+        let legacy_one = vec![0.25; dim];
+        store.store(
+            "legacy:one",
+            &legacy_one,
+            "qwen3-embedding:0.6b",
+            Some("one"),
+        )?;
+        let legacy_two = vec![0.5; dim];
+        store.store(
+            "legacy:two",
+            &legacy_two,
+            "qwen3-embedding:0.6b",
+            Some("two"),
+        )?;
+
+        let outcome = store.search(
+            &query_vector,
+            5,
+            "OpenRouter/qwen/qwen3-embedding-8b",
+            Some("Qwen/Qwen3-Embedding-8B"),
+        )?;
+
+        assert!(
+            outcome.results.is_empty(),
+            "no cross-model row may be ranked"
+        );
+        assert_eq!(outcome.excluded_model_mismatch, 2);
+        Ok(())
+    }
+
+    /// Rows stored under the requested-form model string (the memory write
+    /// paths' convention) match a query that carries no provider-confirmed
+    /// actual identity.
+    #[test]
+    fn search_matches_requested_form_without_actual_identity() -> anyhow::Result<()> {
+        let dim = crate::embedding_dim();
+        let store = EmbeddingStore::from_driver(
+            crate::database::sqlite::SqliteDriver::in_memory_driver(),
+            dim,
+        )?;
+        let query_vector = vec![0.75; dim];
+        store.store(
+            "requested:form",
+            &query_vector,
+            "OpenRouter/qwen/qwen3-embedding-8b",
+            Some("row"),
+        )?;
+
+        let outcome = store.search(&query_vector, 5, "OpenRouter/qwen/qwen3-embedding-8b", None)?;
+
+        assert_eq!(outcome.results.len(), 1);
+        assert_eq!(outcome.excluded_model_mismatch, 0);
+        Ok(())
+    }
+}

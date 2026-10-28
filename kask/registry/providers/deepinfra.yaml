@@ -1,0 +1,54 @@
+# Provider profile — DeepInfra. Structural contract pinned by
+# kask/scripts/check-provider-profiles.sh; semantic reading owned by the
+# provider-audit skill.
+id: deepinfra
+name: DeepInfra
+status: active
+roles:
+  - chat-inference
+  - embedding-provider
+  - media-provider
+  - rerank
+keychain:
+  slot: https://api.deepinfra.com/v1/openai
+  env_var: DEEPINFRA_API_KEY
+  note: the 2026-08-31 401 split-brain (a stale kask-slot copy feeding MCP
+    children a dead key) preceded the one-key-one-location consolidation
+    (DIVERGENCE.md D5) — the provider api_url slot is now the single location.
+consumed_capabilities:
+  - capability: chat completions (OpenAI-compatible, pre-seeded)
+    source: assets/settings/default.json (DIVERGENCE.md D69)
+  - capability: embeddings (/embeddings)
+    source: kask/crates/kask_bridge/src/inference_providers.rs
+  - capability: media ops — generate_image, image_to_image, remove_background, upscale, generate_speech, transcribe, generate_video, image_to_video
+    source: kask/crates/hkask-inference/src/media_providers.rs
+  - capability: rerank — Qwen/Qwen3-Reranker-8B
+    source: kask/crates/hkask-inference/src/model_constants.rs
+deliberate_non_consumption: []
+data_terms:
+  # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
+  extracted_at: "2026-10-13"
+  trains_on_customer_data: >-
+    no — "We will not store, sell, or train using this data unless we have
+    your explicit consent" (inference inputs/outputs; Privacy Policy,
+    deepinfra.com/privacy, last modified 2026-08-15, extracted 2026-10-13).
+  retention_published: >-
+    yes — Data Retention section: personal information retained while the
+    account is active / as required by law; "After an account is deleted,
+    your personal information is removed after 30 days" (same policy,
+    extracted 2026-10-13).
+status_surface:
+  status_page: >-
+    https://status.deepinfra.com live (extracted 2026-10-13): API 100% uptime over
+    the 90-day window, 154 monitored models, dated deprecation schedule
+    (3 models, first 2026-10-18).
+  sla: >-
+    no SLA page found; security posture SOC 2 + ISO 27001 certified
+    (site footer, read 2026-10-13).
+pricing:
+  machine_readable: >-
+    pricing published (deepinfra.com/pricing, extracted 2026-10-13: per-model
+    token tables, service tiers Standard 1x / Priority 1.5x / Flex 0.8x,
+    custom-LLM GPU-hour rates); no public machine-readable pricing API
+    found this run — web tables only.
+first_audit_pending: false

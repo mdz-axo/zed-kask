@@ -1,0 +1,598 @@
+//! regulation record types — Cross-cutting infrastructure
+//!
+//! regulation records are the cybernetic audit trail emitted by all loops.
+//! They are not owned by any single loop — they are the shared
+//! observability substrate that the Regulation (Loop 6) senses and the
+//! Curator (Loop 5) audits.
+
+use crate::id::{EventID, WebID};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::str::FromStr;
+
+/// regulation record — Cybernetic observation event
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegulationRecord {
+    pub id: EventID,
+    pub timestamp: DateTime<Utc>,
+    pub observer_webid: WebID,
+    pub span: Span,
+    pub phase: CyclePhase,
+    pub observation: Value,
+    pub regulation: Option<Value>,
+    pub outcome: Option<Value>,
+    pub recursion_depth: u8,
+    pub parent_event: Option<EventID>,
+    pub visibility: String,
+}
+
+impl RegulationRecord {
+    /// Create a new RegulationRecord.
+    ///
+    /// expect: "System types preserve semantic identity and are provenance-aware"
+    /// pre:  observer is valid, span is valid, phase is valid
+    /// post: returns RegulationRecord
+    pub fn new(
+        observer_webid: WebID,
+        span: Span,
+        phase: CyclePhase,
+        observation: Value,
+        recursion_depth: u8,
+    ) -> Self {
+        Self {
+            id: EventID::new(),
+            timestamp: Utc::now(),
+            observer_webid,
+            span,
+            phase,
+            observation,
+            regulation: None,
+            outcome: None,
+            recursion_depth,
+            parent_event: None,
+            visibility: "private".to_string(),
+        }
+    }
+}
+
+/// Validated Regulation span namespace.
+///
+/// Constructed via `SpanNamespace::new()` which validates against
+/// the canonical set. The module path IS the loop assignment.
+/// Cannot be forged — construction requires a valid namespace string.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SpanNamespace(String);
+
+/// Canonical Regulation span namespaces — mirrors `RegulationSpan::as_str()` output plus namespaces
+/// used by `SpanKind` (e.g. `reg.variety`).
+/// Canonical Regulation span namespaces — all valid namespace strings for span construction.
+///
+/// This is the single source of truth for what Regulation spans exist. All domain span
+/// strings must be registered here. `SpanNamespace::new()` and `::parse()` validate
+/// against this set. Domain span enums construct `SpanNamespace` through `from_observable()`
+/// which also validates against this set.
+const CANONICAL_NAMESPACES: &[&str] = &[
+    // ── Core infrastructure ──
+    "reg.alert",
+    // ── Seam architecture ──
+    // reg.architecture.seam.* removed 2026-08-30 — the "seam watcher"
+    // that would have emitted them was never built; zero emitters.
+    // Email notification span — emitted by hkask-email (hkask_email.rs) and
+    // kask_bridge credentials (credential-alert emails).
+    "reg.email.sent",
+    "reg.consolidation",
+    // ── Curation / Curator ──
+    "reg.curation",
+    "reg.curator.directive",
+    "reg.curator.metacognition",
+    // ── Cybernetics ──
+    "reg.cybernetics",
+    // Variety (algedonic alerts): the SpanKind::VarietyAlgedonicAlert path
+    // constructs ("reg.variety", "algedonic_alert") — the regulation loop's
+    // pain-signal span. Live via Span::from_kind, not string literals.
+    "reg.variety",
+    // ── Inference ──
+    "reg.inference",
+    // ── Kata / Skill / Keystore ──
+    "reg.kata",
+    "reg.keystore",
+    // ── MCP ──
+    "reg.mcp",
+    "reg.mcp.cap",
+    // ── MCP Media ──
+    "reg.mcp.media.face",
+    "reg.memory",
+    "reg.memory.decay",
+    "reg.memory.encode",
+    // ── Regulation sensors (loop sense inputs; e.g. memory health) ──
+    "reg.sensor",
+    "reg.sensor.memory",
+    // ── Outcome ──
+    "reg.outcome",
+    // ── Storage ──
+    "reg.storage",
+    "reg.storage.corruption",
+    // ── Tool subsystems (hierarchical: reg.tool.* descendants validate via the root) ──
+    "reg.tool",
+    // ── Web research (per-provider outcome spans — cybernetic feedback for
+    // provider selection. Emitted by ProviderPool::search_compound and
+    // search_single_provider. Read by the curator's MetacognitionLoop and
+    // reg_query to compute rolling success-rate/latency per provider.) ──
+    "reg.web.provider",
+    // ── Wallet span names removed 2026-08-30 — residuals of the wallet
+    // module deleted in 219c74b180; no emitter constructs them.
+    // ── Well ──
+    // (removed with the wallet economy — no emitter)
+    // ── Pipeline (corpus) ──
+    "reg.pipeline",
+    "reg.pipeline.triage",
+    "reg.pipeline.ocr",
+    "reg.pipeline.ocr.circuit_breaker",
+    "reg.pipeline.ocr.inference_failure",
+    "reg.pipeline.ocr.low_confidence",
+    "reg.pipeline.ocr.rate_limit",
+    "reg.pipeline.ocr.silent_failure",
+    "reg.pipeline.ocr.model_class",
+    "reg.pipeline.ocr.protocol",
+    // OCR health snapshot persistence — the file the regulation loop senses
+    // (a write failure blinds the loop to OCR degradation).
+    "reg.pipeline.ocr.health",
+    // Zero-chunk surfacing: a source that produces no chunks after processing
+    // is pipeline degradation, surfaced not skipped.
+    "reg.pipeline.chunk",
+    "reg.pipeline.pdf_extract",
+    // ── Batch (corpus AIMD concurrency ramp — ratified spec, PM decision
+    // 2026-09-03) ──
+    "reg.batch.concurrency",
+    // ── Skill (activation outcomes and operator feedback) ──
+    // The editor records reg.skill.<skill-id>.outcome and
+    // reg.skill.<skill-id>.operator_feedback (kask_bridge curator_stores);
+    // ancestor matching makes every <skill-id> valid. Skills themselves emit
+    // no spans.
+    "reg.skill",
+    // ── Widget (viz widget render + compose-back telemetry — D18/D21 seams) ──
+    // Hierarchical: reg.widget.* children (render, disagree, graph_render,
+    // evidence_set, whatif_discarded, reask) are valid via ancestor match.
+    "reg.widget",
+];
+
+/// Hierarchical namespace validation — a sub-namespace like
+/// `reg.pipeline.decimation.binarize` is valid if any prefix
+/// segment (including the full string) is registered.
+fn is_canonical(namespace: &str) -> bool {
+    // MIRRORED in scripts/check-reg-canonical.sh::is_canonical — update both together.
+    if CANONICAL_NAMESPACES.contains(&namespace) {
+        return true;
+    }
+    if let Some(last_dot) = namespace.rfind('.') {
+        is_canonical(&namespace[..last_dot])
+    } else {
+        false
+    }
+}
+
+impl SpanNamespace {
+    /// Create a validated span namespace. Returns None if the namespace is
+    /// not canonical (not registered in CANONICAL_NAMESPACES or a descendant).
+    ///
+    /// expect: "System types preserve semantic identity and are provenance-aware"
+    /// pre:  namespace is non-empty
+    /// post: returns Some(SpanNamespace) if valid, None otherwise
+    pub fn new(namespace: &str) -> Option<Self> {
+        if is_canonical(namespace) {
+            Some(Self(namespace.to_string()))
+        } else {
+            None
+        }
+    }
+
+    /// Fallible construction — returns Err for invalid namespaces.
+    /// Accepts both short ("tool") and full ("reg.tool") forms.
+    ///
+    /// Implements `FromStr` so that `"variety".parse::<SpanNamespace>()` works.
+    /// Parse a SpanNamespace from string.
+    ///
+    /// expect: "System types preserve semantic identity and are provenance-aware"
+    /// post: returns Some(SpanNamespace) if valid, None otherwise
+    pub fn parse(s: &str) -> Option<Self> {
+        let full = if s.starts_with("reg.") {
+            s.to_string()
+        } else {
+            format!("reg.{s}")
+        };
+        if is_canonical(&full) {
+            Some(Self(full))
+        } else {
+            None
+        }
+    }
+
+    /// expect: "System types preserve semantic identity and are provenance-aware"
+    /// pre:  self is a valid SpanNamespace (canonical)
+    /// post: returns the full namespace string (e.g. "reg.tool")
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// expect: "System types preserve semantic identity and are provenance-aware"
+    /// pre:  self is a valid SpanNamespace (starts with "reg.")
+    /// post: returns the short name after the "reg." prefix (e.g. "tool"),
+    ///       or the full namespace if it doesn't start with "reg."
+    pub fn short_name(&self) -> &str {
+        if let Some(rest) = self.0.strip_prefix("reg.") {
+            rest
+        } else {
+            &self.0
+        }
+    }
+
+    /// expect: "System types preserve semantic identity and are provenance-aware"
+    /// pre:  self is a valid SpanNamespace (canonical)
+    /// post: returns the SpanCategory for this namespace; unknown prefixes return SpanCategory::Unknown
+    ///
+    /// F-SYN-009: classify this namespace into a `SpanCategory` for
+    /// typed dispatch.
+    ///
+    /// Hierarchical matches by `short_name()` prefix are preserved
+    /// (e.g. `reg.variety.sensor` → `Variety`). Unknown namespaces
+    /// return `SpanCategory::Unknown` so the caller can decide the
+    /// fallback policy explicitly.
+    pub fn category(&self) -> SpanCategory {
+        SpanCategory::from_short_name(self.short_name())
+    }
+}
+
+/// F-SYN-009: typed dispatch key for span-category-dependent logic
+/// (a `match` over `SpanCategory`).
+///
+/// Replaces the previous `&str` dispatch with a closed enum, while
+/// preserving the hierarchical `.starts_with` matches that the old
+/// string-based dispatch used. An `Unknown` variant makes the
+/// fallback policy explicit at the type level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpanCategory {
+    /// `reg.variety*` — the cybernetics loop.
+    Cybernetics,
+    /// `reg.curation*` — the curation loop.
+    Curation,
+    /// `reg.inference*` — the inference loop.
+    Inference,
+    /// Historical: `reg.pod*` / `reg.connector*` (pods removed 2026-09-09);
+    /// the variant remains so archived events still classify.
+    Memory,
+    // Wallet variant removed 2026-08-30 — residual of the wallet module
+    // deleted in 219c74b180; no span emitter constructed `reg.wallet*`
+    // namespaces anymore.
+    /// `reg.skill*` — per-skill feedback spans. The `reg.skill` root is
+    /// registered; per-skill descendants (`reg.skill.<id>.<phase>`) validate
+    /// hierarchically without per-skill registration. Skill outcome
+    /// measurement also flows through `RegulationLedger::record_skill_span`.
+    Skill,
+    /// Any other namespace. Callers decide the fallback policy.
+    Unknown,
+}
+
+impl SpanCategory {
+    /// expect: "System types preserve semantic identity and are provenance-aware"
+    /// pre:  s is a short_name() string (e.g. "variety", "variety.sensor")
+    /// post: returns the matching SpanCategory; unrecognised prefixes return SpanCategory::Unknown
+    pub fn from_short_name(s: &str) -> Self {
+        let prefix = s.split('.').next().unwrap_or(s);
+        match prefix {
+            "cybernetics" | "variety" | "outcome" | "alert" | "sensor" => Self::Cybernetics,
+            "curation" | "curator" | "spec" => Self::Curation,
+            "inference" => Self::Inference,
+            "memory" | "consolidation" | "pod" | "connector" => Self::Memory,
+            "skill" | "kata" => Self::Skill,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+impl std::fmt::Display for SpanCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            SpanCategory::Cybernetics => "cybernetics",
+            SpanCategory::Curation => "curation",
+            SpanCategory::Inference => "inference",
+            SpanCategory::Memory => "memory",
+            SpanCategory::Skill => "skill",
+            SpanCategory::Unknown => "unknown",
+        };
+        f.write_str(s)
+    }
+}
+
+impl FromStr for SpanNamespace {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s).ok_or(())
+    }
+}
+
+impl std::fmt::Display for SpanNamespace {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+// ── RegulationSpan ↔ SpanNamespace bridges ──────────────────────────────────────
+
+impl SpanNamespace {
+    /// Shared validation path — both `From<RegulationSpan>` and `from_observable()` route through here.
+    fn from_str_validated(s: &str) -> Option<Self> {
+        Self::new(s)
+    }
+}
+
+impl TryFrom<crate::regulation::RegulationSpan> for SpanNamespace {
+    type Error = &'static str;
+
+    /// Convert a typed `RegulationSpan` to a `SpanNamespace`, validating against
+    /// the canonical namespace registry.
+    ///
+    /// Returns `Err` if the span's namespace string is not in the canonical
+    /// registry. This should not happen if `RegulationSpan::as_str()` is correct;
+    /// if it does, the `RegulationSpan` variant needs to be added to
+    /// `CANONICAL_NAMESPACES`.
+    fn try_from(span: crate::regulation::RegulationSpan) -> Result<Self, Self::Error> {
+        Self::from_str_validated(span.as_str())
+            .ok_or("RegulationSpan namespace not registered in CANONICAL_NAMESPACES")
+    }
+}
+
+/// Unified Regulation span — namespace + fully-qualified path
+///
+/// Constructed via `Span::new()` with a validated namespace.
+/// The namespace is validated at construction time by `SpanNamespace`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Span {
+    /// The validated namespace (e.g., SpanNamespace::new("reg.tool"))
+    pub namespace: SpanNamespace,
+    /// Fully-qualified span path (e.g., "reg.tool.invoked")
+    pub path: String,
+}
+
+impl Span {
+    /// Create a new span with validated namespace.
+    ///
+    /// Example: `Span::new(SpanNamespace::new("reg.tool"), "invoked")`
+    /// Create a new Span.
+    ///
+    /// expect: "System types preserve semantic identity and are provenance-aware"
+    /// pre:  namespace is valid, path is non-empty
+    /// post: returns Span
+    pub fn new(namespace: SpanNamespace, path: &str) -> Self {
+        let full_path = format!("{}.{}", namespace.as_str(), path);
+        Self {
+            namespace,
+            path: full_path,
+        }
+    }
+
+    /// Create a span from a typed `SpanKind` variant.
+    ///
+    /// Eliminates string typos at construction sites for the most common
+    /// span paths. Each variant maps to a canonical (namespace, path) pair.
+    /// Create a Span from a SpanKind.
+    ///
+    /// expect: "System types preserve semantic identity and are provenance-aware"
+    /// pre:  kind is valid
+    /// post: returns Span with canonical namespace and path
+    pub fn from_kind(kind: SpanKind) -> Self {
+        let (ns, local_path) = kind.namespace_and_path();
+        Span::new(
+            SpanNamespace::new(ns).expect("canonical namespace"),
+            local_path,
+        )
+    }
+}
+
+/// Typed span kind — canonical (namespace, path) pairs for common spans.
+///
+/// Use `Span::from_kind()` to construct spans without string literals,
+/// reducing the risk of typos in span paths at construction sites.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SpanKind {
+    // ── Tool spans (reg.tool.*) ──
+    /// Tool invocation completed: `reg.tool.completed`
+    ToolCompleted,
+
+    // ── Curation spans (reg.curation.*) ──
+    /// Curation directive acknowledged: `reg.curation.directive_acknowledged`
+    CurationDirectiveAcknowledged,
+
+    // ── Variety spans (reg.variety.*) ──
+    /// Algedonic alert emitted: `reg.variety.algedonic_alert`
+    VarietyAlgedonicAlert,
+
+    // ── Regulation spans (reg.outcome.*) — v0.31.0 Fermi impact-gate ──
+    /// Impact verification completed: `reg.outcome.impact_verified`
+    ImpactVerified,
+    /// Action blocked due to severe counterproductivity: `reg.outcome.action_blocked`
+    ActionBlocked,
+    /// Regulatory plateau detected — escalation triggered: `reg.outcome.plateau_detected`
+    RegulatoryPlateauDetected,
+    /// Loop-quality telemetry recorded: `reg.outcome.loop_quality`
+    LoopMetricsTelemetry,
+
+    /// Per-domain tool-outcome breakdown (success rates, operation counts,
+    /// per-error-kind tallies): `reg.outcome.tool_domains`
+    ToolOutcomeBreakdown,
+    /// Inference circuit state changed: `reg.inference.circuit_transition`.
+    InferenceCircuitTransition,
+    /// A later observation found the circuit recovered: `reg.inference.observed_recovery`.
+    InferenceObservedRecovery,
+}
+
+impl SpanKind {
+    /// Return the (namespace, local_path) pair for this span kind.
+    fn namespace_and_path(&self) -> (&'static str, &'static str) {
+        match self {
+            SpanKind::ToolCompleted => ("reg.tool", "completed"),
+            SpanKind::CurationDirectiveAcknowledged => ("reg.curation", "directive_acknowledged"),
+            SpanKind::VarietyAlgedonicAlert => ("reg.variety", "algedonic_alert"),
+            SpanKind::ImpactVerified => ("reg.outcome", "impact_verified"),
+            SpanKind::ActionBlocked => ("reg.outcome", "action_blocked"),
+            SpanKind::RegulatoryPlateauDetected => ("reg.outcome", "plateau_detected"),
+            SpanKind::LoopMetricsTelemetry => ("reg.outcome", "loop_quality"),
+
+            SpanKind::ToolOutcomeBreakdown => ("reg.outcome", "tool_domains"),
+            SpanKind::InferenceCircuitTransition => ("reg.inference", "circuit_transition"),
+            SpanKind::InferenceObservedRecovery => ("reg.inference", "observed_recovery"),
+        }
+    }
+}
+
+// ── Regulation loop board-sensing: the journal-skip policy ────────────────
+//
+// The regulation loop's board connector (BoardAlertEscalationSink, wired in
+// zed's main.rs through PanelToolInvoker) polls the algedonic review board
+// every 10s to sense the awaiting-review count. Those polls arrive at the
+// governed MCP runtime under the swarm-panel persona — the identity
+// PanelToolInvoker stamps on every call (verified 2026-10-02:
+// WebID::for_agent_name("swarm-panel") is the observer owning 91,355 of the
+// journal's reg.tool.completed records, 89,631 of them the two sensing tools
+// below — pure write-only audit volume with no reader).
+
+/// The machine persona shared by the swarm panel UI and the regulation
+/// loop's board connector — `PanelToolInvoker` stamps every call with
+/// `WebID::for_agent_name(SWARM_PANEL_PERSONA)`.
+pub const SWARM_PANEL_PERSONA: &str = "swarm-panel";
+
+/// The regulation loop's board-sensing reads — the 10s
+/// `awaiting_review_count` polls. These carry no audit value as per-call
+/// journal records: the tool-reliability and variety sensors feed from the
+/// in-process RegulationLedger (`record_outcome` / `record_variety`), never
+/// from the journal. The loop's non-sensing interventions (card creates,
+/// comments, moves — the escalation audit trail) are NOT in this set and
+/// keep their per-call journal records.
+pub const REGULATION_BOARD_SENSING_TOOLS: &[&str] = &["kanban_board_list", "kanban_task_list"];
+
+/// Whether a governed tool call is the regulation loop's own board-sensing
+/// poll — the per-call `reg.tool.completed` journal record is skipped for
+/// these. The call itself is untouched: it still executes, still charges the
+/// call meter, and still feeds the in-process reliability/variety ledger.
+#[must_use]
+pub fn is_regulation_board_sensing_call(agent: &WebID, tool: &str) -> bool {
+    *agent == WebID::for_agent_name(SWARM_PANEL_PERSONA)
+        && REGULATION_BOARD_SENSING_TOOLS.contains(&tool)
+}
+
+/// Phase of the cybernetic cycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CyclePhase {
+    Sense,
+    Compute,
+    Compare,
+    Act,
+}
+
+impl CyclePhase {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CyclePhase::Sense => "sense",
+            CyclePhase::Compute => "compute",
+            CyclePhase::Compare => "compare",
+            CyclePhase::Act => "act",
+        }
+    }
+
+    /// Parse a phase string into a CyclePhase variant.
+    #[allow(clippy::should_implement_trait)]
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "sense" | "Sense" => CyclePhase::Sense,
+            "compute" | "Compute" => CyclePhase::Compute,
+            "compare" | "Compare" => CyclePhase::Compare,
+            "act" | "Act" => CyclePhase::Act,
+            _ => CyclePhase::Sense,
+        }
+    }
+}
+
+/// RegulationSink — Trait for persisting Regulation events
+///
+/// Implemented by storage backends (e.g., RegulationArchive in hkask-storage).
+pub trait RegulationSink: Send + Sync {
+    fn persist(&self, event: &RegulationRecord) -> Result<(), crate::InfrastructureError>;
+
+    /// Persist an event only when its external source identity has not been observed.
+    ///
+    /// The default preserves compatibility for sinks without durable deduplication.
+    fn persist_if_absent(
+        &self,
+        _source_event_id: &str,
+        event: &RegulationRecord,
+    ) -> Result<bool, crate::InfrastructureError> {
+        self.persist(event)?;
+        Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::regulation::RegulationSpan;
+
+    #[test]
+    fn all_span_kinds_and_regulation_spans_resolve_in_canonical_namespaces() {
+        for kind in [
+            SpanKind::ToolCompleted,
+            SpanKind::CurationDirectiveAcknowledged,
+            SpanKind::VarietyAlgedonicAlert,
+            SpanKind::ImpactVerified,
+            SpanKind::ActionBlocked,
+            SpanKind::RegulatoryPlateauDetected,
+            SpanKind::LoopMetricsTelemetry,
+            SpanKind::ToolOutcomeBreakdown,
+            SpanKind::InferenceCircuitTransition,
+            SpanKind::InferenceObservedRecovery,
+        ] {
+            let span = Span::from_kind(kind);
+            assert!(
+                CANONICAL_NAMESPACES.contains(&span.namespace.as_str()),
+                "SpanKind::{kind:?} namespace '{}' must be in CANONICAL_NAMESPACES",
+                span.namespace.as_str()
+            );
+        }
+
+        for reg_span in [RegulationSpan::Curation, RegulationSpan::MemoryEncode] {
+            let ns = SpanNamespace::try_from(reg_span)
+                .expect("RegulationSpan must convert to SpanNamespace");
+            assert_eq!(ns.as_str(), reg_span.as_str());
+        }
+    }
+
+    #[test]
+    fn span_category_classifies_canonical_loop_families() {
+        for (namespace, expected) in [
+            ("reg.cybernetics", SpanCategory::Cybernetics),
+            ("reg.variety", SpanCategory::Cybernetics),
+            ("reg.outcome", SpanCategory::Cybernetics),
+            ("reg.alert", SpanCategory::Cybernetics),
+            ("reg.sensor.memory", SpanCategory::Cybernetics),
+            ("reg.curation", SpanCategory::Curation),
+            ("reg.curator.directive", SpanCategory::Curation),
+            ("reg.curator.metacognition", SpanCategory::Curation),
+            ("reg.inference", SpanCategory::Inference),
+            ("reg.memory", SpanCategory::Memory),
+            ("reg.memory.encode", SpanCategory::Memory),
+            ("reg.memory.decay", SpanCategory::Memory),
+            ("reg.consolidation", SpanCategory::Memory),
+            ("reg.skill", SpanCategory::Skill),
+            ("reg.kata", SpanCategory::Skill),
+        ] {
+            let parsed = SpanNamespace::new(namespace).expect("canonical namespace");
+            assert_eq!(
+                parsed.category(),
+                expected,
+                "namespace '{namespace}' misclassified"
+            );
+        }
+    }
+}

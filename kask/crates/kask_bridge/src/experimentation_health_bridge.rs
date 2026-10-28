@@ -1,0 +1,178 @@
+//! Experimentation registry health source bridge (§P8.9 step 1).
+//!
+//! Implements `hkask_regulation::ExperimentationHealthSource` over the experimentation
+//! server's own store: opens the same SQLCipher registry the MCP child
+//! serves (`HKASK_EXPERIMENTATION_DB` override → the per-agent default under the
+//! hKask data dir) and reads `ExperimentationStore::health_snapshot()`.
+//!
+//! ## The blind-feedback-loop gap this closes
+//!
+//! Without this source, the cybernetics loop reports `signal_count=0` while
+//! an experimentation experiment sits unresolved forever: a running experiment
+//! stranded past the stale set point (D-3: 7 days) or at its declared budget
+//! ceiling with no verdict produces no signal. The registry is the record of
+//! record; this bridge is its Layer-A afferent pathway.
+//!
+//! ## Path parity with the MCP child
+//!
+//! Both the bridge and the experimentation server's `run()` resolve the registry
+//! through `hkask_mcp_experimentation::registry_path()` — one source of truth;
+//! parity is structural, not mirrored. A drift there would read a different
+//! registry than the one the tools write; the shared helper is pinned by
+//! `registry_path_override_and_default` in the experimentation crate.
+
+use std::sync::Arc;
+
+use hkask_mcp_experimentation::store::ExperimentationStore;
+use hkask_regulation::{ExperimentationHealthError, ExperimentationHealthSource};
+use hkask_storage::database::driver::DatabaseDriver;
+use hkask_storage::database::sqlite::SqliteDriver;
+
+/// A `ExperimentationHealthSource` over the experimentation registry's health snapshot.
+///
+/// The composition root opens one `Arc<BridgeExperimentationHealthSource>` in the
+/// deferred wiring task (where the DB passphrase is in scope) and passes it
+/// to `CyberneticsLoop::set_experimentation_health_source`. The snapshot is
+/// re-read on every sense call — the store is a plain SQLCipher handle, and
+/// the MCP child's writes are visible to this reader (the same multi-process
+/// shape as the curator memory stores).
+pub struct BridgeExperimentationHealthSource {
+    store: ExperimentationStore,
+}
+
+impl BridgeExperimentationHealthSource {
+    /// Open the registry the experimentation MCP child serves.
+    ///
+    /// Resolution is shared with the child (`registry_path()`): the
+    /// `HKASK_EXPERIMENTATION_DB` override or the per-agent default under the
+    /// hKask data dir — never a private copy.
+    pub fn open(passphrase: &str) -> Result<Self, String> {
+        let db_path = hkask_mcp_experimentation::registry_path()
+            .to_string_lossy()
+            .to_string();
+        let db = hkask_storage::open_or_repair(&db_path, passphrase)
+            .map_err(|error| format!("experimentation registry {db_path}: {error}"))?;
+        let pool = db
+            .sqlite_pool()
+            .map_err(|error| format!("sqlite pool: {error}"))?;
+        let driver: Arc<dyn DatabaseDriver> =
+            Arc::new(SqliteDriver::new_labeled(pool, db_path.as_str()));
+        let store = ExperimentationStore::with_driver(driver)
+            .map_err(|error| format!("experimentation store schema: {error}"))?;
+        Ok(Self { store })
+    }
+
+    /// Build over an existing store — the test seam (mirrors the experimentation
+    /// server's in-memory test construction).
+    #[cfg(test)]
+    fn with_store(store: ExperimentationStore) -> Self {
+        Self { store }
+    }
+}
+
+#[async_trait::async_trait]
+impl ExperimentationHealthSource for BridgeExperimentationHealthSource {
+    async fn stuck_running_experiments(
+        &self,
+        stale_days: u32,
+    ) -> Result<Vec<String>, ExperimentationHealthError> {
+        let snapshot = self
+            .store
+            .health_snapshot()
+            .map_err(|error| ExperimentationHealthError::Snapshot(error.to_string()))?;
+        Ok(snapshot.stuck_running(stale_days as u64))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hkask_mcp_experimentation::types::{
+        Prediction, RUBRIC_KIND_IMPLEMENTATION, RUBRIC_KIND_METRIC, Rubric, RubricVerification,
+        VARIANT_ROLE_BASELINE,
+    };
+    use hkask_storage::database::sqlite::SqliteDriver;
+
+    fn rubrics() -> Vec<Rubric> {
+        vec![
+            Rubric {
+                id: "pass_rate_threshold".to_string(),
+                description: "evaluator pass rate on the fixed set reaches 0.8".to_string(),
+                kind: RUBRIC_KIND_METRIC.to_string(),
+                verification: RubricVerification::ReportRef {
+                    harness: "swarm_eval_agent_local".to_string(),
+                },
+            },
+            Rubric {
+                id: "uses_lisp_gate".to_string(),
+                description: "the skill routes its gate through lisp_eval".to_string(),
+                kind: RUBRIC_KIND_IMPLEMENTATION.to_string(),
+                verification: RubricVerification::Contains {
+                    spec: "lisp_eval".to_string(),
+                },
+            },
+        ]
+    }
+
+    /// §P8.9 step 1 through the bridge: a running experiment whose whole
+    /// declared budget is recorded with no verdict is stuck; a fresh
+    /// under-budget experiment is not.
+    #[tokio::test]
+    async fn bridge_senses_budget_spent_running_experiments() {
+        let store = ExperimentationStore::with_driver(SqliteDriver::in_memory_driver())
+            .expect("in-memory experimentation store");
+        let experiment = store
+            .propose_experiment(
+                "Variant B beats the baseline",
+                "skill",
+                &[".agents/skills/x/SKILL.md".to_string()],
+                &serde_json::json!({"task_set": "fixed"}),
+                "pass rate",
+                &serde_json::json!({"cost_band_pct": 10}),
+                &rubrics(),
+                &Prediction {
+                    claim: "variant B wins".to_string(),
+                    confidence: 0.5,
+                },
+                &serde_json::json!({"max_runs": 9}),
+                9,
+                None,
+                None,
+                None,
+            )
+            .expect("propose");
+        // The baseline measures pre-seal (P2) — 9 runs at the ceiling.
+        let variant = store
+            .register_variant(
+                &experiment.id,
+                &serde_json::json!({"name": "baseline"}),
+                None,
+                VARIANT_ROLE_BASELINE,
+                None,
+            )
+            .expect("variant");
+        store
+            .record_fitness(
+                &experiment.id,
+                &variant.id,
+                &["harness report".to_string()],
+                9,
+                &serde_json::json!({"pass_rate": 0.5}),
+                None,
+            )
+            .expect("fitness at the ceiling");
+
+        let source = BridgeExperimentationHealthSource::with_store(store);
+        let stuck = source
+            .stuck_running_experiments(7)
+            .await
+            .expect("snapshot read");
+        assert_eq!(stuck, vec![experiment.id.clone()]);
+
+        // A verdict un-sticks it: the experiment resolves and leaves the
+        // running set entirely.
+        // (Resolved experiments are never stuck — stuck_running filters on
+        // STATUS_RUNNING; this is pinned in the experimentation crate's snapshot
+        // tests. Here the budget-spent branch is the bridge's own path.)
+    }
+}

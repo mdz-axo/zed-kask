@@ -1,0 +1,14 @@
+# ast-grep project config — the structural-rule index (UC-1 of the
+# tree-sitter adoption proposal, kask/docs/research/tree-sitter-adoption-proposal.md).
+#
+# Rules are data, not code. A rule's admission bar is the .rules bar —
+# non-obvious, repeatedly encountered, specific — and a rule for a trap
+# that stops recurring is deleted with the trap. The capability boundary
+# (proposal §2/§5): tree-sitter is a parser, not a graph engine —
+# structural pattern queries only; type-based call graphs and semantic
+# resolution stay with rust-analyzer/LSP.
+#
+# Scan the project surface:
+#   kask/scripts/ast-grep.sh scan --config kask/ast-grep/sgconfig.yml --json=stream <paths>
+ruleDirs:
+  - rules

@@ -1,0 +1,41 @@
+# Provider profile — arXiv. Structural contract pinned by
+# kask/scripts/check-provider-profiles.sh; semantic reading owned by the
+# provider-audit skill.
+id: arxiv
+name: arXiv
+status: active
+roles:
+  - research-provider
+keychain:
+  slot: none
+  env_var: ""
+  note: free scholarly provider — no credential consumed
+consumed_capabilities:
+  - capability: academic preprint search
+    source: kask/mcp-servers/hkask-mcp-research/src/research/providers/arxiv.rs
+deliberate_non_consumption: []
+data_terms:
+  # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
+  extracted_at: "2026-10-13"
+  trains_on_customer_data: >-
+    n/a — metadata/catalog API. API Terms of Use read
+    (info.arxiv.org/help/api/tou.html, extracted 2026-10-13): descriptive metadata
+    is CC0 1.0; e-print content retrievable/storable for research or
+    personal use; serving e-prints requires copyright-holder permission.
+    No training clause (arXiv trains nothing; it is a distribution service).
+  retention_published: >-
+    n/a for e-print content — the ToU governs use, not storage duration;
+    API-user personal info is covered by the arXiv privacy policy linked
+    from the ToU (read 2026-10-13).
+status_surface:
+  status_page: >-
+    https://status.arxiv.org live (HTTP 200, probed 2026-10-13).
+  sla: >-
+    none found — arXiv is an independent nonprofit (per site banner read
+    2026-10-13); no SLA page located.
+pricing:
+  machine_readable: >-
+    n/a — the APIs are free ("at no cost to authors or readers", ToU read
+    2026-10-13); no pricing surface exists. Rate limit: 1 request / 3 s on the
+    legacy APIs (ToU read 2026-10-13).
+first_audit_pending: false

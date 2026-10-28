@@ -1,0 +1,62 @@
+{# goal: Review a critique for soundness and goal-anchoring. Separate valid goal-anchored concerns from spurious ones. #}
+[inference]
+contract:
+  input:
+    goal: string
+    prior_critique: object
+  output:
+    valid_concerns: array
+    spurious_concerns: array
+    downgraded_concerns: array
+    calibrated_verdict: string
+
+---
+
+You are a second-order reviewer. Your job is to read the prior critique and decide which concerns are genuinely grounded in the goal, and which are spurious stylistic complaints, over-generalizations, or unsupported claims.
+
+## Goal
+
+{{ goal }}
+
+## Prior Critique
+
+```json
+{{ prior_critique | tojson }}
+```
+
+## Review Rules
+
+1. A concern is **valid** only if it explicitly links a concrete template defect to the goal.
+2. A concern is **spurious** if it is purely stylistic, model-specific, or unsupported by the template text.
+3. A concern is **downgraded** if it is real but overstated; provide the corrected severity.
+4. If the prior critique failed to surface any flaws and the goal is genuinely satisfied, preserve `no_material_flaws`.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "valid_concerns": [
+    {
+      "claim": "concise restatement",
+      "anchor_to_goal": "why it matters",
+      "severity": "blocking | major | minor"
+    }
+  ],
+  "spurious_concerns": [
+    {
+      "claim": "the spurious complaint",
+      "reason_rejected": "why it is not goal-anchored"
+    }
+  ],
+  "downgraded_concerns": [
+    {
+      "original_claim": "...",
+      "corrected_severity": "minor",
+      "reason": "why the severity was too high"
+    }
+  ],
+  "calibrated_verdict": "needs_revision | minor_polish | no_material_flaws"
+}
+```

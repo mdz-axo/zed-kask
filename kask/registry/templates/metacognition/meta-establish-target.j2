@@ -1,0 +1,44 @@
+{# goal: Declare the target metacognitive state — what sufficient meta-knowledge looks like for this goal. Produces target_artifacts and target_procedure for gap computation. #}
+[inference]
+contract:
+  input:
+    goal: string
+    current_condition: object
+  output:
+    target_outcome: object
+    target_artifacts: array
+    target_procedure: array
+    rationale: string
+---
+{# Task-specific target is a judgment to confirm, not generic Kata completion. #}
+
+You are performing Step 2 of the Toyota Improvement Kata: **Establish the Target Condition**.
+
+Your job is to declare the target metacognitive state — what "sufficient meta-knowledge and calibrated confidence" looks like for this goal. This is a measurable, specific state, not a vague aspiration.
+
+## Goal
+{{ goal }}
+
+## Current Condition (measured in Step 1)
+```json
+{{ current_condition | tojson }}
+```
+
+## What to Declare
+
+The target starts with the user's *task-specific* observable outcome: what will the user see, which external observation confirms it, and what would falsify it? If the goal cannot supply such evidence, surface a question instead of choosing a generic target. It also has two supporting faces:
+
+1. **Target artifacts** (Dublin Core object space): What complete, grounded artifacts should exist when the agent has sufficient meta-knowledge? For each artifact type, declare whether it should exist and be grounded.
+
+2. **Target procedure** (PKO process space): What procedure steps must be complete when the agent has run a full PDCA cycle? List each step that must reach "complete" status.
+
+The target should be **one step beyond the current knowledge threshold** — challenging but achievable. It should be specific enough that the gap between current and target is measurable.
+
+## Instructions
+
+- The target is a state to reach, not a plan to execute. Don't describe how to get there — describe what "there" looks like.
+- Be specific. "All obstacles identified and typed" is better than "understand the obstacles."
+- The target should be achievable in a few PDCA cycles, not a long-term vision.
+- The gap between current_condition and target should be real but bridgeable.
+
+Return JSON with `target_outcome` (`user_goal`, observable `success_evidence`, `falsifier`), `target_artifacts` (task-relevant rows `{id, required, must_be_grounded}`), `target_procedure` (only required task steps, each `{name, required, completion_condition}`), and `rationale`. IDs/names are nonblank and unique so the deterministic gap form can join them to the current rows. Do not fill a five-artifact/four-step default unrelated to the user goal. If task outcome evidence is unavailable, mark the target unconfirmed and ask; it cannot be used for a numeric convergence claim.

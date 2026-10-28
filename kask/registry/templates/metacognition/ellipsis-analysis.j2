@@ -1,0 +1,147 @@
+{# goal: Apply Bloom's five-step method to detect gaps in context, classify them as ellipsis (deliberate) or leak (unintentional), and find what is not inferno (Calvino: the exceptional, supported element worth preserving). Used by the experiment step for ellipsis perspective. #}
+[inference]
+contract:
+  input:
+    text: string
+    expectations: array
+    biases: array
+    assumptions: array
+    domain: string
+  output:
+    analysis: object
+---
+# Ellipsis Analysis — Bloom Method Cognition Template
+# ℏKask v0.28.0 - A Sovereign In-Process Agent Platform
+
+{#
+  Bloom-inspired cognition method for detecting meaning in gaps and omissions.
+
+  Harold Bloom (1930-2019) was Sterling Professor of Humanities at Yale.
+  Key works informing this template:
+  - "How to Read and Why" (2000): "We owe mediocrity nothing"
+  - "Shakespeare: The Invention of the Human" (1998): "Shakespeare is the major dealer in ellipsis"
+  - "The Anatomy of Influence" (2011): "The heart of criticism is appreciation"
+
+  This template operationalizes Bloom's ellipsis analysis technique:
+  - Read deeply, not to believe/accept/contradict, but to learn
+  - Mind the gaps — what is said AND what is not said
+  - Differentiate ellipsis (deliberate) from leak (unintentional)
+  - See past yourself — reject mediocrity
+  - Find what is not inferno, give it space (Calvino)
+
+  License: CC-BY-4.0 (attribution required)
+#}
+
+{# =============================================================================
+   CORE BLOOM METHOD MACROS
+   ============================================================================= #}
+
+{% macro read_deeply(text) %}
+{#
+  Bloom Step 1: Read deeply, not to believe, accept, contradict, but to learn.
+  Engage with text as "program that reaches through time into your imagination."
+#}
+{{ text }}
+{% endmacro %}
+
+{% macro mind_the_gaps(expectations) %}
+{#
+  Bloom Step 2: Mind the gaps — what is said AND what is not said.
+  Check each baseline expectation against the text read in step 1.
+
+  Expectations are candidates for evidence review, not substring checks:
+  a mention may explicitly say the topic is absent.
+#}
+{%- for expectation in expectations %}
+- Check {{ expectation }}: cite the text that addresses it, explicitly denies it,
+  or mark it not established. Do not infer intention from absence.
+{%- endfor -%}
+{% endmacro %}
+
+{% macro see_past_yourself(biases, assumptions) %}
+{#
+  Bloom Step 4: See past yourself — reject received narratives.
+  Dunning-style calibration of own biases.
+
+  Args:
+    biases: List of known cognitive biases to check
+    assumptions: List of assumptions to question
+
+  Returns:
+    Calibrated analysis that rejects mediocrity
+#}
+{% for bias in biases %}
+- Check bias: {{ bias }}
+{% endfor %}
+{% for assumption in assumptions %}
+- Question assumption: {{ assumption }}
+{% endfor %}
+See clearly; do not assume intention.
+{% endmacro %}
+
+{# =============================================================================
+   ELLIPSIS DETECTION MACROS
+   ============================================================================= #}
+
+{# =============================================================================
+   BLOOM-STYLE ANALYSIS TEMPLATES
+   ============================================================================= #}
+
+{# =============================================================================
+   CURATOR'S BLOOM METHOD TEMPLATE
+   ============================================================================= #}
+
+{# =============================================================================
+   OUTPUT — Invoke macros against contract inputs
+   Contract: (text, expectations, biases, assumptions, domain) → (analysis: object)
+   ============================================================================= #}
+
+{% set text = text | default('') %}
+{% set expectations = expectations | default([]) %}
+{% set biases = biases | default([]) %}
+{% set assumptions = assumptions | default([]) %}
+{% set domain = domain | default('general') %}
+
+{% if text | length > 0 %}
+
+# Ellipsis Analysis
+
+**Domain:** {{ domain }}
+**Biases checked:** {{ biases | length }}
+**Assumptions questioned:** {{ assumptions | length }}
+**Expectations mapped:** {{ expectations | length }}
+
+---
+
+## 1. Read Deeply
+
+{{ read_deeply(text) }}
+
+## 2. Mind the Gaps
+
+{{ mind_the_gaps(expectations) }}
+
+## 3. Classify only grounded gaps
+
+For each expectation not established by the text, explain the evidence for its absence. Mark it `ellipsis` only with evidence of deliberate omission, `leak` only with evidence of unintentional information loss, or `unknown` otherwise. An explicit denial is not an omission. Do not treat keyword matches as proof of coverage.
+
+## 4. See Past Yourself
+
+{{ see_past_yourself(biases, assumptions) }}
+
+## 5. Find What Is Not Inferno
+
+Identify any exceptional, supported element in the text worth preserving, or say none was established. Return an `analysis` object with each expectation's status, supporting quote or evidence gap, and any justified ellipsis/leak classification. Separate observed text from inferred intent.
+
+---
+
+*Ellipsis Analysis — Bloom Method*
+*"We owe mediocrity nothing." — Harold Bloom*
+
+{% else %}
+
+# Ellipsis Analysis — BLOCKED
+
+No source text was provided. Do not claim an ellipsis or leak classification or score the experiment; obtain the text and re-run the analysis.
+
+{% endif %}

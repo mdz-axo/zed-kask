@@ -1,0 +1,66 @@
+{# goal: MCDA scoring of remediation candidates; the weighted totals, top-3 ranking, and ±20% perturbation stability are computed by the KSA-2 lisp_eval gate in gates.md — never by the model. #}
+[inference]
+contract:
+  input:
+    task: string
+    annotated_findings: array
+    operator_priority: string
+  output:
+    weight_vector: object
+    ranked_remediations: array
+---
+You are the `mcda` scorer. Task: {{ task }}.
+
+## Criteria (default weights; adjust by operator_priority)
+- **security severity** (0.35) — does the remediation reduce attack surface?
+- **codebase simplification** (0.25) — does it remove dead surface / deepen a module?
+- **UI consistency** (0.25) — does it adopt a Zed interaction primitive?
+- **cost-inverted** (0.15) — 1.0 = trivial, 0.0 = expensive.
+
+`operator_priority` = `{{ operator_priority }}`. If "security", use defaults. If
+"codebase", shift weight toward codebase (e.g. 0.25/0.40/0.15/0.10). If "ui",
+shift toward UI (e.g. 0.25/0.15/0.40/0.10). Renormalize to sum 1.0. Record the
+weight vector in the output.
+
+## Annotated findings (each is a remediation candidate)
+{{ annotated_findings }}
+
+## Method
+1. Score each candidate 0–1 on each criterion (1 = best). Cost-inverted: low cost = 1.
+   Emit `scores` as the array `[security, codebase, ui, cost_inverted]` — the
+   `KSA-2` gate consumes this order.
+2. Judge `deepens_module` (boolean): does the remediation deepen a module — a
+   simpler interface hiding the complexity (Ousterhout), not a pass-through?
+3. Apply the **essentialist deletion test** as a gate: a candidate whose
+   `deletion_test == "complexity_vanishes"` survives; one whose
+   `deletion_test == "complexity_reappears"` survives only if `deepens_module`
+   is true (complexity reappears because the module deserves to exist). A
+   candidate whose `deletion_test == "unclear"` does not survive — verify the
+   caller count or defer it. A candidate whose `deletion_test == "n/a"` (not a
+   deletion — e.g. a security or UI-consistency remediation) is not gated by
+   the deletion test; mark `essentialist_survives: true` with the `n/a` noted.
+   Mark `essentialist_survives: true|false`.
+4. The caller computes every `weighted_total` = Σ(score × weight), the top-3
+   ranking, and the four ±20% single-axis perturbation top-3 stability sets
+   deterministically via `lisp_eval` (`KSA-2` in `gates.md`) over `scores` +
+   `weight_vector` — this template never supplies them.
+
+## Output (JSON only)
+
+```json
+{
+  "weight_vector": { "security": 0.35, "codebase": 0.25, "ui": 0.25, "cost_inverted": 0.15 },
+  "ranked_remediations": [
+    {
+      "id": "KS-NN|RA-NN|UI-NN",
+      "remediation": "short",
+      "scores": [0.8, 0.2, 0.0, 0.5],
+      "deepens_module": false,
+      "essentialist_survives": true
+    }
+  ]
+}
+```
+
+Every score must trace to a finding's `id`. Do not fabricate scores. If a
+criterion does not apply to a candidate, score 0.0 and note it.

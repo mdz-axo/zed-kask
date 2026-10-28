@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+# pre-push — net-lines + DIVERGENCE.md seam delta for the pushed range,
+# plus the seconds-tier invariant gates.
+#
+# Simplification program, Phase 1.1 (mission 2026-10-01): "a visible number
+# at every push. Visible bloat gets challenged; invisible bloat compounds."
+# The net-lines/seam reporting is deliberately NOT a gate — it never blocks
+# a push; printing the number is its whole job. The invariant gates below
+# BLOCK: a red gate tree does not leave this machine.
+#
+# Gate set (each blocks; --no-verify is the operator's explicit bypass):
+# - check-diagram-registry-parity.sh (2026-10-23, EUREKA-1): mermaid fences
+#   == DIAGRAM_ALIGNMENT records == DIAGRAMS_INDEX rows.
+# - check-docs-count-gate.sh, check-skill-crossrefs.sh,
+#   check-docs-frontmatter.sh, check-retired-record.sh,
+#   check-docs-citations.sh (2026-10-24, EUREKA-2): the five gate families
+#   whose drift classes shipped through the wired-but-non-blocking CI
+#   exposure (measured evidence on the EUREKA-2 card). The four cheap gates
+#   run all-and-report (one push shows every drift class); citations runs
+#   last and only when the cheap set is green — its ~12s cost is never paid
+#   on an already-red push.
+#
+# stdin (git pre-push protocol), one line per ref being pushed:
+#   <local_ref> <local_sha> <remote_ref> <remote_sha>
+# The all-zero sha marks a creation (no remote counterpart) or a deletion.
+#
+# Output per pushed ref:
+#   [pre-push] <ref>: <git diff --shortstat> — net <±N> lines
+#   [pre-push] seams: +<A> added / -<R> retired (DIVERGENCE.md '^| D<digits>' rows) — net <±S>
+#
+# Self-test: kask/scripts/check-pre-push-selftest.sh (runs in CI via the
+# gate-selftest glob).
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+cd "$REPO_ROOT" || exit 0
+
+ZERO=0000000000000000000000000000000000000000
+
+# Stash the pushed refs first: the range-based gate needs a pushed range,
+# and the reporting loop below needs every line.
+ref_lines=()
+while read -r local_ref local_sha remote_ref remote_sha; do
+  ref_lines+=("$local_ref $local_sha $remote_ref $remote_sha")
+done
+[ "${#ref_lines[@]}" -eq 0 ] && exit 0 # nothing pushed: nothing to gate
+
+# The pushed range from the first non-creation, non-deletion ref.
+range_base=""
+range_head=""
+for line in "${ref_lines[@]}"; do
+  read -r _l l_sha _r r_sha <<<"$line"
+  if [ "$l_sha" != "$ZERO" ] && [ "$r_sha" != "$ZERO" ]; then
+    range_base="$r_sha"
+    range_head="$l_sha"
+    break
+  fi
+done
+
+# ── Invariant gates (blocking) ─────────────────────────────────────────────
+gate_failures=()
+
+run_gate() { # run_gate <failure-name> <script> [args...] — records failures, never aborts
+  local name="$1"; shift
+  local script="$1"; shift
+  if [ ! -f "$script" ]; then
+    echo "[pre-push] warning: gate script not found at $script — unchecked on this push (CI remains the backstop)" >&2
+    return 0
+  fi
+  local out
+  if ! out="$(bash "$script" "$@" 2>&1)"; then
+    gate_failures+=("$name")
+    printf '%s\n' "$out" >&2
+  fi
+  return 0
+}
+
+GATES_DIR="$REPO_ROOT/kask/scripts"
+
+# Diagram-registry parity (EUREKA-1, the proven pattern).
+run_gate "diagram-registry-parity" "$GATES_DIR/check-diagram-registry-parity.sh"
+
+# The four cheap docs/skills gates — run all, report all.
+run_gate "docs-count-gate"  "$GATES_DIR/check-docs-count-gate.sh"
+run_gate "skill-crossrefs"  "$GATES_DIR/check-skill-crossrefs.sh"
+run_gate "docs-frontmatter" "$GATES_DIR/check-docs-frontmatter.sh"
+if [ -n "$range_base" ]; then
+  run_gate "retired-record" "$GATES_DIR/check-retired-record.sh" --range "$range_base" "$range_head"
+else
+  echo "[pre-push] note: no resolvable pushed range — retired-record unchecked on this push" >&2
+fi
+
+# Citations last, only on an otherwise-green push (fail-fast on cost).
+if [ "${#gate_failures[@]}" -eq 0 ]; then
+  run_gate "docs-citations" "$GATES_DIR/check-docs-citations.sh"
+fi
+
+if [ "${#gate_failures[@]}" -gt 0 ]; then
+  echo "pre-push: rejected — invariant gate(s) red: ${gate_failures[*]}" >&2
+  echo "Fix each gate's findings above (its output precedes this line), or push" >&2
+  echo "with --no-verify as an explicit operator choice." >&2
+  exit 1
+fi
+
+# ── Net-lines/seam reporting (advisory — never blocks) ─────────────────────
+for line in "${ref_lines[@]}"; do
+  read -r local_ref local_sha remote_ref remote_sha <<<"$line"
+  [ "$local_sha" = "$ZERO" ] && continue # ref deletion: nothing to measure
+
+  if [ "$remote_sha" = "$ZERO" ]; then
+    # New branch: no remote counterpart. Fall back to the upstream merge
+    # base so the number still means "what the fork adds"; if that is
+    # unavailable too, say so and skip — never guess a range.
+    base="$(git merge-base upstream/main "$local_sha" 2>/dev/null)"
+    if [ -z "$base" ]; then
+      echo "[pre-push] $local_ref: new branch, no upstream/main merge base — net-lines skipped"
+      continue
+    fi
+    range="$base..$local_sha"
+    note=" (new branch, vs upstream merge base)"
+  else
+    range="$remote_sha..$local_sha"
+    note=""
+  fi
+
+  shortstat="$(git diff --shortstat "$range" 2>/dev/null)"
+  if [ -n "$shortstat" ]; then
+    net="$(git diff --numstat "$range" 2>/dev/null | awk '{a += $1; d += $2} END {printf "%+d", a - d}')"
+    echo "[pre-push] $local_ref$note: $shortstat — net $net lines"
+  else
+    echo "[pre-push] $local_ref$note: no diff in range"
+  fi
+
+  seam_added="$(git diff "$range" -- DIVERGENCE.md 2>/dev/null | grep -c '^+| D[0-9]')"
+  seam_retired="$(git diff "$range" -- DIVERGENCE.md 2>/dev/null | grep -c '^-| D[0-9]')"
+  echo "[pre-push] seams: +$seam_added added / -$seam_retired retired (DIVERGENCE.md '^| D<digits>' rows) — net $((seam_added - seam_retired))"
+done
+
+exit 0

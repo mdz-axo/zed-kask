@@ -1,0 +1,198 @@
+use super::*;
+
+/// Task — a single work item on a kanban board.
+///
+/// Every task carries `owner: WebID` (P12) — the creator of the task.
+/// Assignment is separate and requires agent consent (P1).
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Task {
+    /// Unique task identifier.
+    pub id: TaskId,
+    /// The board this task belongs to.
+    pub board_id: BoardId,
+    /// Short title.
+    pub title: String,
+    /// Optional longer description.
+    pub description: Option<String>,
+    /// Current status (determines which column the task is in).
+    pub status: TaskStatus,
+    /// The agent who created this task (P12).
+    pub owner: WebID,
+    /// The agent assigned to work on this task (requires consent).
+    pub assignee: Option<WebID>,
+    /// Acceptance criteria for task completion.
+    pub(crate) criteria: Vec<VerificationCriterion>,
+    /// Goal criteria this task advances (documentation-grade citations —
+    /// see `CriterionCitation`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) advances: Vec<CriterionCitation>,
+    /// Verification result, if the task has been verified.
+    pub verification: Option<Verification>,
+    /// Durable Improvement Kata state for this task, once a kata cycle has
+    /// been recorded (`kanban_task_kata_record`). `None` until first
+    /// recorded; read back by every kata prompt so a new session continues
+    /// the routine instead of restarting from zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) kata_state: Option<crate::kanban::types::TaskKataState>,
+    /// Story points (relative sizing, agile convention).
+    pub story_points: Option<u32>,
+    /// Estimated hours for completion.
+    pub estimated_hours: Option<f64>,
+    /// Priority level.
+    pub priority: Option<Priority>,
+    /// Labels/tags for categorization and filtering.
+    pub labels: Vec<String>,
+    /// Task comments — mini-REPL thread for in-process communication.
+    pub comments: Vec<Comment>,
+    /// Deliverable links — file paths or URLs pointing to work outputs.
+    pub deliverables: Vec<String>,
+    /// Optional phase grouping for work reassembly.
+    pub phase_id: Option<PhaseId>,
+    /// When the task was created.
+    pub created_at: DateTime<Utc>,
+    /// When the task was last updated.
+    pub updated_at: DateTime<Utc>,
+    /// The swarm this task belongs to, when the task is coordinated via a
+    /// local swarm (`kanban_task_spawn`). `None` for tasks not yet delegated
+    /// or delegated outside a swarm. The kanban board is the durable
+    /// coordination source of truth; this field links the task to its swarm.
+    /// Written by `KanbanService::spawn_task` from the spawn spec before
+    /// worktree admission, and read back by
+    /// `kanban_task_delegate_result` (pinned by
+    /// `spawn_task_writes_swarm_id_when_spec_carries_it`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub swarm_id: Option<String>,
+    /// Structured result of the last `kanban_task_spawn` delegation, when the
+    /// task has been spawned. Replaces the free-text comment as the
+    /// programmatic record; the comment is kept for human readability. Read
+    /// by `kanban_task_delegate_result` and by the swarm-intelligence SENSE
+    /// phase when `kanban_board_id` is provided.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegate_result: Option<hkask_mcp_swarm::LocalDelegateResult>,
+    /// Deterministic task-success verdict stamped by the executor (the Kask
+    /// Curator or a human in the loop) after running a declared evaluator
+    /// against the delegation response. `None` until the executor stamps it;
+    /// the swarm MCP server returns `None` and the executor populates this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deterministic_verdict: Option<hkask_mcp_swarm::TaskSuccessVerdict>,
+}
+
+impl Task {
+    /// expect: "System types preserve semantic identity and are provenance-aware"
+    /// pre:  board_id is a valid BoardId; spec contains non-empty title; owner is valid
+    /// post: returns a new Task with status=Backlog, created_at=now, updated_at=now
+    pub(crate) fn new(board_id: BoardId, spec: TaskSpec, owner: WebID) -> Self {
+        let TaskSpec {
+            title,
+            description,
+            criteria,
+            advances,
+            story_points,
+            estimated_hours,
+            labels,
+            priority,
+            phase_id,
+        } = spec;
+        let now = Utc::now();
+        Self {
+            id: TaskId::new(),
+            board_id,
+            title,
+            description,
+            status: TaskStatus::Backlog,
+            owner,
+            assignee: None,
+            criteria,
+            advances,
+            verification: None,
+            kata_state: None,
+            story_points,
+            estimated_hours,
+            labels,
+            priority,
+            comments: Vec::new(),
+            deliverables: Vec::new(),
+            phase_id,
+            created_at: now,
+            updated_at: now,
+            swarm_id: None,
+            delegate_result: None,
+            deterministic_verdict: None,
+        }
+    }
+}
+
+// ── Comment ────────────────────────────────────────────────────────────────
+
+/// Comment — a text note appended to a task by an agent.
+///
+/// Forms a mini-REPL thread attached to each task: agents append notes
+/// as they work, and the coordinating agent responds inline.
+/// Every comment carries `author: WebID` (P12).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Comment {
+    pub id: CommentId,
+    pub task_id: TaskId,
+    pub author: WebID,
+    pub body: String,
+    pub created_at: DateTime<Utc>,
+}
+
+impl Comment {
+    /// expect: "System types preserve semantic identity and are provenance-aware"
+    /// pre:  task_id is valid; author is a valid WebID; body is non-empty
+    /// post: returns a new Comment with created_at=now
+    pub(crate) fn new(task_id: TaskId, author: WebID, body: String) -> Self {
+        Self {
+            id: CommentId::new(),
+            task_id,
+            author,
+            body,
+            created_at: Utc::now(),
+        }
+    }
+}
+
+// ── Filter ─────────────────────────────────────────────────────────────────
+
+/// TaskFilter — criteria for listing/filtering tasks on a board.
+#[non_exhaustive]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct TaskFilter {
+    /// Filter by status (column).
+    pub status: Option<TaskStatus>,
+    /// Filter by assignee.
+    pub assignee: Option<WebID>,
+    /// Filter by priority.
+    pub priority: Option<Priority>,
+    /// Limit the number of results.
+    pub limit: Option<usize>,
+}
+
+impl TaskFilter {
+    /// expect: "System types preserve semantic identity and are provenance-aware"
+    /// post: returns an empty filter (matches all tasks)
+    pub fn all() -> Self {
+        Self {
+            status: None,
+            assignee: None,
+            priority: None,
+            limit: None,
+        }
+    }
+
+    /// expect: "System types preserve semantic identity and are provenance-aware"
+    /// pre:  arguments are valid
+    /// post: returns expected result
+    /// pre:  status is a valid TaskStatus
+    /// post: returns a filter matching only tasks with the given status
+    pub fn by_status(status: TaskStatus) -> Self {
+        Self {
+            status: Some(status),
+            assignee: None,
+            priority: None,
+            limit: None,
+        }
+    }
+}

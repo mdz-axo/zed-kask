@@ -1,0 +1,3536 @@
+//! Local swarm tools — delegation execution (delegate/fanout/pipeline), the
+//! local agent store (list/remove/create/reconfigure), and local
+//! swarm membership (create/list/get/delete/add/remove). Split from
+//! `hkask_mcp_swarm.rs` (M2). All operate on the local registry/runtime; no
+//! network round-trips — local agents run on the operator's own substrate.
+use crate::SwarmServer;
+#[cfg(test)]
+#[path = "scoped_dispatch_tests.rs"]
+mod scoped_dispatch_tests;
+use crate::error::{LocalSwarmError, map_local_swarm_error};
+use crate::local_knowledge;
+use crate::local_registry::{
+    LocalAgentCapabilities, LocalAgentCard, LocalAgentDependencies, LocalAgentValence,
+};
+use crate::local_runtime::{LocalDelegateResult, MAX_FANOUT};
+use crate::request_types::*;
+use crate::sanitize::{DroppedTool, filter_declared_skills, filter_mcp_tools, sanitize_agent_id};
+use crate::task_board::TaskBoard;
+use crate::thread_store::ThreadTurn;
+use hkask_mcp_server::server::{McpToolError, execute_tool};
+use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
+
+/// Task-set cap for `swarm_eval_agent_local`. Bounds one harness call's
+/// breadth; the total-rollout cap below bounds its depth × breadth.
+pub const MAX_EVAL_TASKS: usize = 10;
+
+/// Default and cap for `repeats` in `swarm_eval_agent_local`. The default (3)
+/// is enough to expose a hard 0-or-1 failure mode; the cap keeps a single
+/// call's cost bounded.
+pub const DEFAULT_EVAL_REPEATS: u32 = 3;
+pub const MAX_EVAL_REPEATS: u32 = 10;
+
+/// Total rollouts (tasks × repeats) cap for `swarm_eval_agent_local`. Each
+/// rollout is a real inference call with real token cost, so the product —
+/// not just the factors — needs a ceiling.
+pub const MAX_EVAL_ROLLOUTS: usize = 50;
+
+fn validate_model_params(
+    input: Option<hkask_types::AnyJsonValue>,
+) -> Result<Option<serde_json::Value>, McpToolError> {
+    let Some(input) = input else {
+        return Ok(None);
+    };
+    let overlay = serde_json::Value::from(input);
+    let Some(overlay_object) = overlay.as_object() else {
+        return Err(McpToolError::invalid_argument(
+            "model_params must be a JSON object",
+        ));
+    };
+    let mut merged =
+        serde_json::to_value(hkask_types::LLMParameters::default()).map_err(|error| {
+            McpToolError::internal(format!("failed to validate model_params: {error}"))
+        })?;
+    let merged_object = merged.as_object_mut().ok_or_else(|| {
+        McpToolError::internal("LLMParameters did not serialize as a JSON object")
+    })?;
+    for (key, value) in overlay_object {
+        merged_object.insert(key.clone(), value.clone());
+    }
+    serde_json::from_value::<hkask_types::LLMParameters>(merged).map_err(|error| {
+        McpToolError::invalid_argument(format!("model_params contains an invalid value: {error}"))
+    })?;
+    Ok(Some(overlay))
+}
+
+/// Pure response checks. Parsing performs no effects and can run before inference.
+/// Deterministic scoring is not proof of evaluator independence or task utility.
+enum ResponseEvaluator<'a> {
+    Contains(&'a str),
+    NotContains(&'a str),
+    Regex(regex::Regex),
+}
+
+impl<'a> ResponseEvaluator<'a> {
+    fn parse(kind: &str, spec: &'a str) -> Result<Self, McpToolError> {
+        if spec.is_empty() {
+            return Err(McpToolError::invalid_argument(
+                "evaluator spec must be non-empty",
+            ));
+        }
+        match kind {
+            "contains" => Ok(Self::Contains(spec)),
+            "not_contains" => Ok(Self::NotContains(spec)),
+            "regex" => regex::Regex::new(spec).map(Self::Regex).map_err(|error| {
+                McpToolError::invalid_argument(format!("invalid regex spec: {error}"))
+            }),
+            other => Err(McpToolError::invalid_argument(format!(
+                "evaluator must be 'contains', 'not_contains', or 'regex'; got '{other}'"
+            ))),
+        }
+    }
+
+    fn evaluate(&self, response: &str) -> bool {
+        match self {
+            Self::Contains(spec) => response.contains(spec),
+            Self::NotContains(spec) => !response.contains(spec),
+            Self::Regex(regex) => regex.is_match(response),
+        }
+    }
+}
+
+fn run_evaluator(response: &str, evaluator: &str, spec: &str) -> Result<bool, McpToolError> {
+    Ok(ResponseEvaluator::parse(evaluator, spec)?.evaluate(response))
+}
+
+/// Run one deterministic evaluator over a response and build the
+/// `DeterministicEvaluator`-provenance verdict every consumer stamps —
+/// `swarm_evaluate_local` returns it directly; the plan and suite tools
+/// attach it as `task_success`.
+fn deterministic_verdict(
+    response: &str,
+    evaluator: &str,
+    spec: &str,
+) -> Result<crate::local_runtime::TaskSuccessVerdict, McpToolError> {
+    let pass = run_evaluator(response, evaluator, spec)?;
+    Ok(crate::local_runtime::TaskSuccessVerdict {
+        pass,
+        score: None,
+        detail: Some(format!(
+            "response_predicate={}, spec_len={}, pass={}",
+            evaluator,
+            spec.len(),
+            pass
+        )),
+        provenance: crate::local_runtime::VerdictSource::DeterministicEvaluator,
+    })
+}
+
+/// The event kind for one observed delegation edge — the fact that one
+/// agent's output flowed into another agent's input. Written by every
+/// surface that pipes artifacts between agents (pipeline steps, the
+/// workflow runner) and read by `swarm_observed_seams_local`.
+pub(crate) const DELEGATION_EDGE_EVENT_KIND: &str = "delegation_edge";
+
+/// Record one observed delegation edge to the event store. One producer of
+/// the payload shape: every write site goes through here so the
+/// observed-seams report can rely on the fields. Non-fatal by the stats
+/// contract (an observation is an enhancement, not a dependency — the
+/// delegation is the product): a store that cannot open or an append that
+/// fails is `warn`-ed, never fails the delegation. The read side surfaces
+/// store unavailability as an error, so a silent gap cannot read as
+/// "no edges observed".
+fn record_delegation_edge(
+    lazy_store: &crate::local_runtime::LazyEventStore,
+    rollout_id: &str,
+    from_agent: &str,
+    to_agent: &str,
+    via: &str,
+) {
+    let store = match lazy_store.get_or_init() {
+        Ok(store) => store,
+        Err(error) => {
+            tracing::warn!(
+                target: "hkask.mcp.swarm",
+                %error,
+                "delegation edge not recorded — event store unavailable"
+            );
+            return;
+        }
+    };
+    if let Err(error) = store.append(
+        rollout_id,
+        DELEGATION_EDGE_EVENT_KIND,
+        &serde_json::json!({
+            "from_agent": from_agent,
+            "to_agent": to_agent,
+            "via": via,
+        }),
+    ) {
+        tracing::warn!(
+            target: "hkask.mcp.swarm",
+            %error,
+            from = %from_agent,
+            to = %to_agent,
+            "delegation edge append failed"
+        );
+    }
+}
+
+async fn attach_narrative_memory(
+    memory: &crate::local_knowledge::LazyLocalMemory,
+    inference: &std::sync::Arc<dyn hkask_types::InferencePort>,
+    task: &str,
+    result: &mut LocalDelegateResult,
+) {
+    result.memory = Some(
+        local_knowledge::ingest_turn(
+            memory,
+            inference,
+            &result.agent_id,
+            task,
+            &result.response,
+            &result.model,
+            hkask_inference::model_constants::classifier_model().as_deref(),
+            hkask_inference::model_constants::embedding_model().as_deref(),
+        )
+        .await,
+    );
+}
+
+/// Unscoped delegation plus narrative ingestion — the shared-recall opt-in
+/// for callers whose delegations do not commit to a durable thread.
+/// (Scoped thread turns deliberately do NOT write semantic memory — pinned
+/// in `thread_tests`; the encrypted thread is their record.) Degradation
+/// rides on the result, never the call.
+async fn delegate_and_ingest(
+    memory: &crate::local_knowledge::LazyLocalMemory,
+    runtime: &crate::local_runtime::LocalSwarmRuntime,
+    agent: &crate::local_registry::LocalAgentCard,
+    task: &str,
+    stamp: crate::local_runtime::DispatchStamp,
+) -> Result<LocalDelegateResult, crate::error::LocalSwarmError> {
+    let mut result = runtime.delegate(agent, task, stamp).await?;
+    attach_narrative_memory(memory, &runtime.inference(), task, &mut result).await;
+    Ok(result)
+}
+
+/// Fingerprint of a harness task set: the ordered tasks, evaluators, specs
+/// and repeat count. Two runs are comparable only when this matches — the
+/// regression monitor reads it from `harness_summary.task_set_digest` so a
+/// changed test is never reported as the agent getting worse (observed
+/// 2026-09-26: local_extractor "regressed" 1.0 → 0.33 across runs whose
+/// task sets differed).
+fn harness_task_set_digest(tasks: &[EvalAgentTask], repeats: u32) -> String {
+    use sha2::{Digest, Sha256};
+    let canonical = serde_json::json!({
+        "repeats": repeats,
+        "tasks": tasks
+            .iter()
+            .map(|t| [&t.task, &t.evaluator.evaluator, &t.evaluator.spec])
+            .collect::<Vec<_>>(),
+    });
+    let digest = Sha256::digest(canonical.to_string().as_bytes());
+    digest.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Build the per-task report for one `swarm_eval_agent_local` task. Pure —
+/// takes the counted outcomes, returns the JSON entry. Extracted so the
+/// pass-rate and standard-error math is unit-testable without inference.
+fn eval_task_report(
+    task: &EvalAgentTask,
+    attempts: usize,
+    passes: usize,
+    errors: usize,
+    latencies_ms: &[u64],
+) -> serde_json::Value {
+    let pass_rate = if attempts == 0 {
+        // `repeats >= 1` is enforced by the caller, so attempts == 0 is
+        // unreachable; guard anyway rather than divide by zero.
+        f64::NAN
+    } else {
+        passes as f64 / attempts as f64
+    };
+    // Standard error of a proportion: sqrt(p(1-p)/n). With small n this is
+    // wide — that is the point: a pass rate without variance is noise
+    // (non-determinism risk in the event-substrate proposal).
+    let std_error = if attempts > 1 {
+        (pass_rate * (1.0 - pass_rate) / attempts as f64).sqrt()
+    } else {
+        f64::NAN
+    };
+    let mean_latency_ms = if latencies_ms.is_empty() {
+        None
+    } else {
+        Some(latencies_ms.iter().sum::<u64>() / latencies_ms.len() as u64)
+    };
+    serde_json::json!({
+        "task": task.task,
+        "evaluator": task.evaluator.evaluator,
+        "spec": task.evaluator.spec,
+        "repeats": attempts,
+        "passes": passes,
+        "errors": errors,
+        "incorrect": attempts - passes - errors,
+        "pass_rate": pass_rate,
+        "pass_rate_std_error": std_error,
+        "mean_latency_ms": mean_latency_ms,
+    })
+}
+
+/// Load a swarm's task board for a swarm-scoped run. A load failure warns
+/// and degrades to `None` — the run proceeds board-less; persistence is
+/// best-effort by design, never a hard failure. The warn message is
+/// caller-supplied so each tool keeps its own phrasing.
+fn load_task_board(dir: &str, swarm_id: Option<&str>, warn_message: &str) -> Option<TaskBoard> {
+    let sid = swarm_id?;
+    match TaskBoard::load(dir, sid) {
+        Ok(board) => Some(board),
+        Err(e) => {
+            tracing::warn!(
+                target: "hkask.mcp.swarm",
+                swarm_id = %sid,
+                error = %e,
+                "{}",
+                warn_message
+            );
+            None
+        }
+    }
+}
+
+/// The stable task-board id for a delegation: the entry's own `task_id`
+/// when provided, else the synthetic id derived from (agent_name, task) —
+/// so the same task accumulates attempts across invocations rather than
+/// growing a new id per call.
+fn board_task_id(entry: &PlanDelegation) -> String {
+    entry
+        .task_id
+        .clone()
+        .unwrap_or_else(|| crate::task_board::derive_task_id(&entry.agent_name, &entry.task))
+}
+
+/// Record a delegation failure on the task board (when one was loaded).
+fn record_board_failure(board: &mut Option<TaskBoard>, entry: &PlanDelegation, reason: &str) {
+    let Some(board) = board.as_mut() else { return };
+    board.record_failure(
+        &board_task_id(entry),
+        &entry.agent_name,
+        &entry.task,
+        reason,
+    );
+}
+
+/// Record a delegation attempt on the task board (when one was loaded),
+/// with the 200-char response summary the ORIENT phase reads.
+fn record_board_attempt(
+    board: &mut Option<TaskBoard>,
+    entry: &PlanDelegation,
+    response: &str,
+    pass: Option<bool>,
+) {
+    let Some(board) = board.as_mut() else { return };
+    let summary = if response.len() > 200 {
+        format!("{}...", &response[..200])
+    } else {
+        response.to_string()
+    };
+    board.record_attempt(
+        &board_task_id(entry),
+        &entry.agent_name,
+        &entry.task,
+        pass,
+        Some(summary),
+    );
+}
+
+/// Persist the task board (when one was loaded for a swarm-scoped run).
+/// A save failure warns — never fails the tool: progress persistence is
+/// best-effort by design. The warn message is caller-supplied so each tool
+/// keeps its own phrasing.
+fn save_task_board(
+    dir: &str,
+    board: &Option<TaskBoard>,
+    swarm_id: Option<&str>,
+    warn_message: &str,
+) {
+    let Some(board) = board.as_ref() else { return };
+    let Some(sid) = swarm_id else { return };
+    if let Err(e) = board.save(dir, sid) {
+        tracing::warn!(
+            target: "hkask.mcp.swarm",
+            swarm_id = %sid,
+            error = %e,
+            "{}",
+            warn_message
+        );
+    }
+}
+
+/// The counts summary both swarm-scoped tools attach as `task_board` in
+/// their response, so callers see durable progress without a separate
+/// `swarm_task_board` query.
+fn task_board_counts_summary(board: &Option<TaskBoard>) -> Option<serde_json::Value> {
+    board.as_ref().map(|b| {
+        let c = b.counts();
+        serde_json::json!({
+            "total": c.total,
+            "pending": c.pending,
+            "in_progress": c.in_progress,
+            "complete": c.complete,
+            "failed": c.failed,
+            "all_terminal": b.all_terminal(),
+            "all_complete": b.all_complete(),
+        })
+    })
+}
+
+impl SwarmServer {
+    /// Scoped dispatch returns the typed result, not a re-parsed MCP envelope.
+    /// Lock order is process gate, then OS file lock, then roster/history/inference/append.
+    pub(crate) async fn dispatch_in_thread(
+        &self,
+        swarm_id: &str,
+        agent_name: &str,
+        task: &str,
+        dispatch: crate::local_runtime::DispatchStamp,
+    ) -> Result<(LocalDelegateResult, ThreadTurn), McpToolError> {
+        if swarm_id.trim().is_empty() || agent_name.trim().is_empty() || task.trim().is_empty() {
+            return Err(McpToolError::invalid_argument(
+                "swarm_id, agent_name and task must be non-empty",
+            ));
+        }
+        let _guard = self
+            .thread_store
+            .lock(swarm_id)
+            .await
+            .map_err(map_local_swarm_error)?;
+        let swarm = self
+            .local_swarms
+            .get_checked(swarm_id)
+            .map_err(map_local_swarm_error)?
+            .ok_or_else(|| {
+                McpToolError::not_found(format!("local swarm '{swarm_id}' not found"))
+            })?;
+        if !swarm.members.iter().any(|member| member == agent_name) {
+            return Err(McpToolError::invalid_argument(format!(
+                "agent '{agent_name}' is not a member of swarm '{swarm_id}'"
+            )));
+        }
+        let agent = self.local_registry.get(agent_name).ok_or_else(|| {
+            McpToolError::not_found(format!("local agent '{agent_name}' not found"))
+        })?;
+        let turns = self
+            .thread_store
+            .turns(swarm_id)
+            .await
+            .map_err(map_local_swarm_error)?;
+        let history = turns
+            .iter()
+            .flat_map(|turn| {
+                [
+                    hkask_types::ChatMessage {
+                        role: "user".into(),
+                        content: turn.task.clone(),
+                    },
+                    hkask_types::ChatMessage {
+                        role: "assistant".into(),
+                        content: turn.response.clone(),
+                    },
+                ]
+            })
+            .collect::<Vec<_>>();
+        let runtime = self
+            .local_runtime
+            .get_or_init()
+            .await
+            .map_err(map_local_swarm_error)?;
+        let result = runtime
+            .delegate_with_history(&agent, task, &history, dispatch)
+            .await
+            .map_err(map_local_swarm_error)?;
+        let turn = self
+            .thread_store
+            .append(swarm_id, agent_name, task, &result.response)
+            .await
+            .map_err(map_local_swarm_error)?;
+        // Deliberately no narrative-memory ingestion here: thread turns must
+        // not write semantic memory (pinned by
+        // `thread_tests::scoped_thread_is_structured_durable_isolated_and_archived`).
+        // The encrypted durable thread IS the record for scoped dispatch;
+        // the shared cross-agent memory is an opt-in that composition callers
+        // take via `delegate_and_ingest` / their own post-dispatch attach.
+        Ok((result, turn))
+    }
+}
+
+#[tool_router(router = local_router, vis = "pub")]
+impl SwarmServer {
+    /// Execute one roster member with ordered prior turns as chat messages.
+    /// The standalone delegation path deliberately does not read this thread.
+    #[tool(
+        description = "Delegate to a member of a local swarm. Prior turns are sent as ordered user/assistant messages. Successful responses are committed to a separate encrypted thread database. Nonmembers are refused before inference."
+    )]
+    pub(crate) async fn swarm_delegate_in_thread_local(
+        &self,
+        parameters: Parameters<DelegateInThreadLocalRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_delegate_in_thread_local", async {
+            let req = parameters.0;
+            if req.swarm_id.trim().is_empty()
+                || req.agent_name.trim().is_empty()
+                || req.task.trim().is_empty()
+            {
+                return Err(McpToolError::invalid_argument(
+                    "swarm_id, agent_name and task must be non-empty".to_string(),
+                ));
+            }
+            let (result, turn) = self
+                .dispatch_in_thread(
+                    &req.swarm_id,
+                    &req.agent_name,
+                    &req.task,
+                    // Dispatch provenance: the scoped thread-dispatch surface.
+                    crate::local_runtime::DispatchStamp::new("thread", "operator")
+                        .map_err(map_local_swarm_error)?,
+                )
+                .await?;
+            Ok(serde_json::json!({
+                "swarm_id": req.swarm_id, "sequence": turn.sequence, "result": result,
+            }))
+        })
+        .await
+    }
+
+    /// Read the durable thread, including after its roster is deleted.
+    #[tool(
+        description = "Read a local swarm's ordered durable turns as {swarm_id,turns,archived}. A deleted swarm's recorded turns remain readable with archived=true."
+    )]
+    pub(crate) async fn swarm_thread_local(
+        &self,
+        parameters: Parameters<GetLocalSwarmRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_thread_local", async {
+            let swarm_id = parameters.0.swarm_id;
+            if swarm_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "swarm_id must be non-empty".to_string(),
+                ));
+            }
+            let present = self
+                .local_swarms
+                .get_checked(&swarm_id)
+                .map_err(map_local_swarm_error)?
+                .is_some();
+            let turns = self
+                .thread_store
+                .turns(&swarm_id)
+                .await
+                .map_err(map_local_swarm_error)?;
+            if !present && turns.is_empty() {
+                return Err(McpToolError::not_found(format!(
+                    "local swarm '{swarm_id}' not found"
+                )));
+            }
+            Ok(serde_json::json!({
+                "swarm_id": swarm_id, "turns": turns, "archived": !present,
+            }))
+        })
+        .await
+    }
+
+    /// List durable member conversations, including those retained after swarm deletion.
+    #[tool(
+        description = "List recorded local swarm conversations with swarm_id, turn_count and archived status. Includes deleted swarms so their history can be reopened in Steer. Read-only."
+    )]
+    pub(crate) async fn swarm_list_local_threads(
+        &self,
+        _parameters: Parameters<ListLocalSwarmsRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_list_local_threads", async {
+            let ids = self
+                .thread_store
+                .list_thread_ids()
+                .await
+                .map_err(map_local_swarm_error)?;
+            let mut threads = Vec::with_capacity(ids.len());
+            for (swarm_id, turn_count) in ids {
+                let archived = self
+                    .local_swarms
+                    .get_checked(&swarm_id)
+                    .map_err(map_local_swarm_error)?
+                    .is_none();
+                threads.push(serde_json::json!({
+                    "swarm_id": swarm_id, "turn_count": turn_count, "archived": archived,
+                }));
+            }
+            Ok(serde_json::json!({ "threads": threads }))
+        })
+        .await
+    }
+
+    /// Delegate a task to a local agent. The agent must exist in the local
+    /// registry (`agents/local/curated/<id>/agent_card.json`). The task is
+    /// executed via `hkask-inference`. When the
+    /// agent's card declares `capabilities.mcp_tools` (qualified
+    /// `server/tool` names), those tools are declared to the model and model
+    /// tool calls are dispatched through the zed IPC bridge's governed
+    /// `McpRuntime` — the declared list is the allowlist.
+    ///
+    /// No local token quota. Inference uses configured
+    /// platform models and may incur cloud-provider charges; tool authority
+    /// and request deadlines remain enforced at their own boundaries.
+    #[tool(
+        description = "Delegate a task to an agent in the local registry using configured platform inference models, including cloud models. Declared capabilities.mcp_tools are allowlisted at host dispatch. No local token quota; model-provider charges may apply. Returns response, model, observed token usage, latency, and tool_calls summary."
+    )]
+    pub(crate) async fn swarm_delegate_local(
+        &self,
+        parameters: Parameters<DelegateLocalRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_delegate_local", async {
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() || req.task.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name and task must be non-empty".to_string(),
+                ));
+            }
+            // Look up the agent in the local registry.
+            let agent = self.local_registry.get(&req.agent_name).ok_or_else(|| {
+                McpToolError::not_found(format!(
+                    "agent '{}' not found in local registry — load agents from agents/local/curated/<id>/agent_card.json",
+                    req.agent_name
+                ))
+            })?;
+            let evaluators = agent.capabilities.evaluators.iter()
+                .map(|declared| ResponseEvaluator::parse(&declared.evaluator, &declared.spec))
+                .collect::<Result<Vec<_>, _>>()?;
+            let runtime = self.local_runtime.get_or_init().await.map_err(map_local_swarm_error)?;
+            // Rung 4 (Binding): check the request against the agent's declared
+            // `accepts` labels. `None` = no accepts declared or non-text label
+            // (absence ≠ contradiction, paper Rule 5.3). `Some(true)` = the
+            // agent declares `accepts: ["text"]` (universal accept). The
+            // classification heuristic was deleted — the typing layer at
+            // admission (`validate_typing`) is the gate.
+            let bind_matched = crate::local_runtime::check_bind(&agent, &req.task);
+            // Execute via the local runtime.
+            let mut result = delegate_and_ingest(
+                &self.local_memory,
+                &runtime,
+                &agent,
+                &req.task,
+                // Dispatch provenance: the direct operator delegation surface.
+                crate::local_runtime::DispatchStamp::new("direct", "operator")
+                    .map_err(map_local_swarm_error)?,
+            )
+            .await
+            .map_err(map_local_swarm_error)?;
+            // Evaluator contract (phase 4): a card-declared evaluator is the
+            // agent's own response predicate. The result passes only if ALL
+            // declared evaluators pass (they are conjunctive expectations
+            // about the response, not alternatives). A bad evaluator spec
+            // propagates as an error rather than stamping `pass: false` —
+            // the agent must not be blamed for a broken oracle.
+            if !agent.capabilities.evaluators.is_empty() {
+                let mut all_passed = true;
+                let mut detail_parts = Vec::new();
+                for (declared, evaluator) in agent.capabilities.evaluators.iter().zip(&evaluators) {
+                    let passed = evaluator.evaluate(&result.response);
+                    detail_parts.push(format!(
+                        "response_predicate={}, spec_len={}, pass={}",
+                        declared.evaluator,
+                        declared.spec.len(),
+                        passed
+                    ));
+                    if !passed {
+                        all_passed = false;
+                    }
+                }
+                result.task_success = Some(crate::local_runtime::TaskSuccessVerdict {
+                    pass: all_passed,
+                    score: None,
+                    detail: Some(detail_parts.join("; ")),
+                    provenance: crate::local_runtime::VerdictSource::DeterministicEvaluator,
+                });
+            }
+            // Stamp the bind check result onto the delegation result.
+            result.bind_matched = bind_matched;
+            // Rung 2 (Typing) post-invocation: validate the agent's output
+            // against the schema for its `produces` port type (paper's "one
+            // artifact, two uses").
+            self.validate_produces(&req.agent_name, &agent.produces, &result.response);
+            // Stigmergy (ACO pheromone trail): record the delegation's
+            // execution annotation to the agent's prefix-scoped semantic
+            // memory. The SENSE phase can read these via
+            // `swarm_search_knowledge_local` to inspect execution observations across
+            // cascade invocations. Failures are logged (non-fatal) — the
+            // delegation result is returned regardless. The narrative-passage
+            // ingestion rode in `delegate_and_ingest` above.
+            local_knowledge::record_delegation(
+                &self.local_memory,
+                &req.agent_name,
+                result.latency_ms,
+                result.task_success.as_ref().map(|t| t.pass),
+                &result.response,
+            )
+            .await;
+            Ok(serde_json::to_value(&result).unwrap_or_else(|_| {
+                serde_json::json!({ "error": "failed to serialize result" })
+            }))
+        })
+        .await
+    }
+
+    /// Parallel multi-agent fan-out: dispatch N local agents in one call and
+    /// aggregate (Cybernetic Swarm Plan — PSO social term + C4 latency
+    /// measurement). Capped at `MAX_FANOUT`. No consent token — local mode.
+    /// Returns per-agent results plus aggregates (total tokens/latency,
+    /// failed/succeeded counts).
+    #[tool(
+        description = "Dispatch N local agents and aggregate. Optional swarm_id dispatches sequentially into its ordered thread and rejects nonmembers; parallel=true with swarm_id is invalid. Unscoped parallel=true runs inference concurrently. Capped at MAX_FANOUT (10)."
+    )]
+    pub(crate) async fn swarm_fanout_local(
+        &self,
+        parameters: Parameters<FanoutLocalRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_fanout_local", async {
+            let req = parameters.0;
+            if req.delegations.is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "delegations must be non-empty".to_string(),
+                ));
+            }
+            if req.delegations.len() > MAX_FANOUT {
+                return Err(McpToolError::invalid_argument(format!(
+                    "fanout cap is {MAX_FANOUT} agents, got {}",
+                    req.delegations.len()
+                )));
+            }
+            if let Some(swarm_id) = &req.swarm_id {
+                if req.parallel {
+                    return Err(McpToolError::invalid_argument(
+                        "parallel=true is not supported with swarm_id: scoped fanout requires ordered dispatch",
+                    ));
+                }
+                let mut results = Vec::with_capacity(req.delegations.len());
+                let mut failed = 0usize;
+                let mut total_tokens = 0i64;
+                let mut total_latency_ms = 0u64;
+                for entry in &req.delegations {
+                    match self
+                        .dispatch_in_thread(
+                            swarm_id,
+                            &entry.agent_name,
+                            &entry.task,
+                            // Dispatch provenance: the fanout surface (scoped branch).
+                            crate::local_runtime::DispatchStamp::new("fanout", "operator")
+                                .map_err(map_local_swarm_error)?,
+                        )
+                        .await
+                    {
+                        Ok((result, _turn)) => {
+                            total_tokens += result.tokens_used;
+                            total_latency_ms = total_latency_ms.saturating_add(result.latency_ms);
+                            results.push(result.to_result_json(true));
+                        }
+                        Err(error) => {
+                            failed += 1;
+                            results.push(LocalDelegateResult::error_json(
+                                &entry.agent_name,
+                                &error.to_string(),
+                            ));
+                        }
+                    }
+                }
+                return Ok(serde_json::json!({
+                    "results": results,
+                    "total_tokens": total_tokens,
+                    "total_latency_ms": total_latency_ms,
+                    "failed": failed,
+                    "succeeded": req.delegations.len() - failed,
+                }));
+            }
+            let runtime = self
+                .local_runtime
+                .get_or_init()
+                .await
+                .map_err(map_local_swarm_error)?;
+
+            if req.parallel {
+                // Parallel mode: run inference concurrently, then process
+                // the per-delegation side effects sequentially after the
+                // batch returns.
+                //
+                // Save the side-effect context (agent_name, task, produces)
+                // for each found delegation so we can run validate_produces +
+                // ingest_turn after delegate_batch returns — the batch
+                // consumes the owned cards.
+                let mut found_context: Vec<(&FanoutEntry, LocalAgentCard)> = Vec::new();
+                let mut delegations: Vec<(LocalAgentCard, String)> = Vec::new();
+                let mut not_found: Vec<String> = Vec::new();
+                for entry in &req.delegations {
+                    match self.local_registry.get(&entry.agent_name) {
+                        Some(agent) => {
+                            found_context.push((entry, agent.clone()));
+                            delegations.push((agent, entry.task.clone()));
+                        }
+                        None => {
+                            not_found.push(entry.agent_name.clone());
+                        }
+                    }
+                }
+                let raw_results = runtime
+                    .delegate_batch(
+                        delegations,
+                        // Dispatch provenance: the fanout surface (unscoped
+                        // branch) — one stamp for the whole batch.
+                        crate::local_runtime::DispatchStamp::new("fanout", "operator")
+                            .map_err(map_local_swarm_error)?,
+                    )
+                    .await;
+                let mut results = Vec::new();
+                let mut failed = 0usize;
+                let mut total_tokens = 0i64;
+                for name in &not_found {
+                    failed += 1;
+                    results.push(LocalDelegateResult::error_json(
+                        name,
+                        &format!("agent '{name}' not found in local registry"),
+                    ));
+                }
+                for (result, (entry, agent)) in raw_results.into_iter().zip(found_context.iter()) {
+                    match result {
+                        Ok(mut r) => {
+                            self.validate_produces(&entry.agent_name, &agent.produces, &r.response);
+                            // Stigmergy (ACO pheromone trail) — mirrors
+                            // swarm_delegate_local so parallel fan-out
+                            // delegations record performance annotations.
+                            // Non-fatal.
+                            local_knowledge::record_delegation(
+                                &self.local_memory,
+                                &entry.agent_name,
+                                r.latency_ms,
+                                r.task_success.as_ref().map(|t| t.pass),
+                                &r.response,
+                            )
+                            .await;
+                            // Narrative response passages build shared recall;
+                            // degradation is attached to the successful result.
+                            attach_narrative_memory(
+                                &self.local_memory,
+                                &runtime.inference(),
+                                &entry.task,
+                                &mut r,
+                            )
+                            .await;
+                            total_tokens += r.tokens_used;
+                            results.push(r.to_result_json(true));
+                        }
+                        Err(e) => {
+                            failed += 1;
+                            results.push(LocalDelegateResult::error_json(
+                                &entry.agent_name,
+                                &e.to_string(),
+                            ));
+                        }
+                    }
+                }
+                return Ok(serde_json::json!({
+                    "results": results,
+                    "total_tokens": total_tokens,
+                    "total_latency_ms": 0u64,
+                    "failed": failed,
+                    "succeeded": req.delegations.len() - failed,
+                    "parallel": true,
+                }));
+            }
+
+            // Sequential mode (default).
+            let mut results = Vec::new();
+            let mut failed = 0usize;
+            let mut total_tokens = 0i64;
+            let mut total_latency_ms = 0u64;
+            for entry in &req.delegations {
+                let agent = self.local_registry.get(&entry.agent_name);
+                let Some(agent) = agent else {
+                    failed += 1;
+                    results.push(LocalDelegateResult::error_json(
+                        &entry.agent_name,
+                        &format!("agent '{}' not found in local registry", entry.agent_name),
+                    ));
+                    continue;
+                };
+                match delegate_and_ingest(
+                    &self.local_memory,
+                    &runtime,
+                    &agent,
+                    &entry.task,
+                    // Dispatch provenance: the fanout surface (operator task).
+                    crate::local_runtime::DispatchStamp::new("fanout", "operator")
+                        .map_err(map_local_swarm_error)?,
+                )
+                .await
+                {
+                    Ok(r) => {
+                        self.validate_produces(&entry.agent_name, &agent.produces, &r.response);
+                        // Stigmergy (ACO pheromone trail) — mirrors
+                        // swarm_delegate_local so fan-out delegations
+                        // record performance annotations. Non-fatal; the
+                        // narrative passages rode in with the delegation.
+                        local_knowledge::record_delegation(
+                            &self.local_memory,
+                            &entry.agent_name,
+                            r.latency_ms,
+                            r.task_success.as_ref().map(|t| t.pass),
+                            &r.response,
+                        )
+                        .await;
+                        total_tokens += r.tokens_used;
+                        total_latency_ms = total_latency_ms.saturating_add(r.latency_ms);
+                        results.push(r.to_result_json(true));
+                    }
+                    Err(e) => {
+                        failed += 1;
+                        results.push(LocalDelegateResult::error_json(
+                            &entry.agent_name,
+                            &e.to_string(),
+                        ));
+                    }
+                }
+            }
+            Ok(serde_json::json!({
+                "results": results,
+                "total_tokens": total_tokens,
+                "total_latency_ms": total_latency_ms,
+                "failed": failed,
+                "succeeded": req.delegations.len() - failed,
+            }))
+        })
+        .await
+    }
+
+    /// Sequential pipeline: run N local agents in order, passing each agent's
+    /// output as context to the next via `{prev_output}` substitution. Capped
+    /// at `MAX_PIPELINE_STEPS` (10). No consent token — local mode.
+    #[tool(
+        description = "Sequential local pipeline with {prev_output} substitution. Optional swarm_id dispatches each step into its ordered thread and rejects nonmembers. Capped at 10 steps. No consent token — local mode."
+    )]
+    pub(crate) async fn swarm_pipeline_local(
+        &self,
+        parameters: Parameters<PipelineLocalRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_pipeline_local", async {
+            let req = parameters.0;
+            if req.steps.is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "steps must be non-empty".to_string(),
+                ));
+            }
+            const MAX_PIPELINE_STEPS: usize = 10;
+            if req.steps.len() > MAX_PIPELINE_STEPS {
+                return Err(McpToolError::invalid_argument(format!(
+                    "pipeline cap is {MAX_PIPELINE_STEPS} steps, got {}",
+                    req.steps.len()
+                )));
+            }
+            let runtime = self
+                .local_runtime
+                .get_or_init()
+                .await
+                .map_err(map_local_swarm_error)?;
+            let mut results = Vec::new();
+            let mut prev_output = String::new();
+            let mut prev_agent: Option<String> = None;
+            let mut total_tokens = 0i64;
+            // One rollout id per pipeline run — the event-store grouping for
+            // the observed delegation edges this run records.
+            let rollout_id = format!("pipeline-{}", chrono::Utc::now().timestamp_millis());
+            for (i, step) in req.steps.iter().enumerate() {
+                // Substitute {prev_output} with the previous step's response.
+                let task = if i == 0 {
+                    step.task.clone()
+                } else {
+                    step.task.replace("{prev_output}", &prev_output)
+                };
+                let agent = self.local_registry.get(&step.agent_name);
+                let Some(agent) = agent else {
+                    results.push(serde_json::json!({
+                        "step": i,
+                        "agent_name": step.agent_name,
+                        "ok": false,
+                        "error": format!(
+                            "agent '{}' not found in local registry",
+                            step.agent_name
+                        ),
+                    }));
+                    break; // pipeline stops on agent-not-found
+                };
+                // Observed delegation edge: the previous step's output flowed
+                // into this dispatch (the {prev_output} placeholder was
+                // present, so the artifact travelled). Recorded at dispatch —
+                // a step that runs and fails still received the artifact, so
+                // the edge is real (fermi's parent_episode_id semantics).
+                if i > 0 && step.task.contains("{prev_output}") {
+                    if let Some(from) = &prev_agent {
+                        record_delegation_edge(
+                            &self.event_store,
+                            &rollout_id,
+                            from,
+                            &step.agent_name,
+                            "pipeline",
+                        );
+                    }
+                }
+                let dispatched = if let Some(swarm_id) = &req.swarm_id {
+                    self.dispatch_in_thread(
+                        swarm_id,
+                        &step.agent_name,
+                        &task,
+                        // Dispatch provenance: the pipeline surface (scoped branch).
+                        crate::local_runtime::DispatchStamp::new("pipeline", "pipeline-stage")
+                            .map_err(map_local_swarm_error)?,
+                    )
+                    .await
+                    .map(|(result, _turn)| result)
+                    .map_err(|error| error.to_string())
+                } else {
+                    runtime
+                        .delegate(
+                            &agent,
+                            &task,
+                            // Dispatch provenance: the pipeline surface.
+                            crate::local_runtime::DispatchStamp::new("pipeline", "pipeline-stage")
+                                .map_err(map_local_swarm_error)?,
+                        )
+                        .await
+                        .map_err(|error| error.to_string())
+                };
+                match dispatched {
+                    Ok(mut r) => {
+                        self.validate_produces(&step.agent_name, &agent.produces, &r.response);
+                        // Narrative response memory uses the substituted task
+                        // as provenance and exposes any non-fatal degradation
+                        // on this pipeline result.
+                        attach_narrative_memory(
+                            &self.local_memory,
+                            &runtime.inference(),
+                            &task,
+                            &mut r,
+                        )
+                        .await;
+                        prev_output = r.response.clone();
+                        prev_agent = Some(step.agent_name.clone());
+                        total_tokens += r.tokens_used;
+                        let mut entry = r.to_result_json(false);
+                        entry["step"] = serde_json::json!(i);
+                        results.push(entry);
+                    }
+                    Err(e) => {
+                        let mut entry = LocalDelegateResult::error_json(&step.agent_name, &e);
+                        entry["step"] = serde_json::json!(i);
+                        results.push(entry);
+                        break; // pipeline stops on failure
+                    }
+                }
+            }
+            Ok(serde_json::json!({
+                "steps_completed": results.len(),
+                "results": results,
+                "total_tokens": total_tokens,
+                "final_output": prev_output,
+            }))
+        })
+        .await
+    }
+
+    // Local agent store tools (v2 §15 Slice 11).
+
+    /// List agents from the local registry. Returns the cards loaded from
+    /// `agents/local/curated/`.
+    #[tool(
+        description = "List all local agents from agents/local/curated/. Returns agents[] with agent_id, agent_type, description, accepts[], produces[]."
+    )]
+    pub(crate) async fn swarm_list_local_agents(
+        &self,
+        parameters: Parameters<ListLocalAgentsRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_list_local_agents", async {
+            let req = parameters.0;
+            let limit = req.limit.unwrap_or(200) as usize;
+            let mut agents = self.local_registry.list();
+            // Optional type filter.
+            if let Some(agent_type) = req.agent_type
+                && !agent_type.trim().is_empty()
+            {
+                agents.retain(|a| a.agent_type == agent_type);
+            }
+            agents.truncate(limit);
+            let count = agents.len();
+            // fermi parity: the catalogue list carries `execution_stats` on
+            // every agent row (`build_agent_json`). The panel and the
+            // Curator read the same signal from cloud and local lists. A
+            // card that fails to serialize is skipped with a warning — a
+            // null row would fail the panel's `Vec<LocalAgentInfo>` parse
+            // and silently drop EVERY local agent, not just the bad one.
+            let agents_with_stats: Vec<serde_json::Value> = agents
+                .iter()
+                .filter_map(|card| {
+                    let mut value = match serde_json::to_value(card) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            tracing::warn!(
+                                target: "hkask.mcp.swarm",
+                                agent = %card.agent_id,
+                                %error,
+                                "local agent card failed to serialize — skipped from the list"
+                            );
+                            return None;
+                        }
+                    };
+                    if let Some(obj) = value.as_object_mut() {
+                        obj.insert(
+                            "execution_stats".to_string(),
+                            self.agent_stats.stats_json(&card.agent_id),
+                        );
+                    }
+                    Some(value)
+                })
+                .collect();
+            Ok(serde_json::json!({
+                "agents": agents_with_stats,
+                "total": count,
+            }))
+        })
+        .await
+    }
+
+    /// Get a single local agent's full card. Returns the complete
+    /// `LocalAgentCard` (system prompt, contracts, sampling, valence,
+    /// dependencies) for one agent, so a caller does not have to
+    /// list the whole registry and filter.
+    /// Resolve a local agent's card by name — the shared admission of the
+    /// local-agent tools: a non-empty name, then a registry lookup that
+    /// fails `not_found` naming the agent.
+    fn require_local_agent(
+        &self,
+        agent_name: &str,
+    ) -> Result<crate::local_registry::LocalAgentCard, McpToolError> {
+        if agent_name.trim().is_empty() {
+            return Err(McpToolError::invalid_argument(
+                "agent_name must be non-empty".to_string(),
+            ));
+        }
+        self.local_registry.get(agent_name).ok_or_else(|| {
+            McpToolError::not_found(format!("agent '{agent_name}' not found in local registry"))
+        })
+    }
+
+    /// Resolve a local swarm by id — the shared admission of the
+    /// local-swarm tools: a non-empty id, then a registry lookup that
+    /// fails `not_found` naming the swarm.
+    fn require_local_swarm(
+        &self,
+        swarm_id: &str,
+    ) -> Result<crate::local_swarms::LocalSwarm, McpToolError> {
+        if swarm_id.trim().is_empty() {
+            return Err(McpToolError::invalid_argument(
+                "swarm_id must be non-empty".to_string(),
+            ));
+        }
+        self.local_swarms
+            .get(swarm_id)
+            .ok_or_else(|| McpToolError::not_found(format!("local swarm '{swarm_id}' not found")))
+    }
+
+    #[tool(
+        description = "Get a single local agent's full card. Returns the complete LocalAgentCard — system prompt, input/output contracts, sampling, valence, and dependencies."
+    )]
+    pub(crate) async fn swarm_get_local_agent(
+        &self,
+        parameters: Parameters<GetLocalAgentRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_get_local_agent", async {
+            let req = parameters.0;
+            let card = self.require_local_agent(&req.agent_name)?;
+            let mut card_value = serde_json::to_value(&card)
+                .map_err(|e| McpToolError::internal(format!("failed to serialize card: {e}")))?;
+            // fermi parity: `build_agent_json` carries `execution_stats` on
+            // every agent (get and list). Zeros are real (never ran), labeled
+            // by `source` — the fermi `episodes`/`agents_row` honesty pattern.
+            if let Some(obj) = card_value.as_object_mut() {
+                obj.insert(
+                    "execution_stats".to_string(),
+                    self.agent_stats.stats_json(&req.agent_name),
+                );
+            }
+            Ok(card_value)
+        })
+        .await
+    }
+
+    /// Validate a local agent's declared `workflow_template` — the scaffold
+    /// for the run-the-declared-workflow pattern (the execution analog of
+    /// how fermi agents with a declared workflow orchestrate). Resolves each
+    /// stage's slot against the
+    /// local registry (does the declared agent exist? do its actual
+    /// `accepts`/`produces` match the stage's declared ports?) and
+    /// seam-checks consecutive stages (upstream `produces` must overlap
+    /// downstream `accepts` — the `pipeline_strategist` seam rule; empty
+    /// ports are permissive). Advisory: a violation describes what a runner
+    /// would trip over, it blocks nothing.
+    #[tool(
+        description = "Validate a local agent's declared workflow_template. Resolves each stage's slot against the local registry and seam-checks consecutive stages (upstream produces must overlap downstream accepts). Advisory — reports what a workflow runner would trip over; blocks nothing. Returns per-stage resolution, seam violations, and a valid flag."
+    )]
+    pub(crate) async fn swarm_workflow_check_local(
+        &self,
+        parameters: Parameters<WorkflowCheckLocalRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_workflow_check_local", async {
+            let req = parameters.0;
+            let card = self.require_local_agent(&req.agent_name)?;
+            let Some(template) = &card.workflow_template else {
+                return Ok(serde_json::json!({
+                    "agent_id": req.agent_name,
+                    "workflow": serde_json::Value::Null,
+                    "note": "agent declares no workflow_template",
+                }));
+            };
+            let registry = self.local_registry.clone();
+            let report = crate::workflow::check_workflow(&req.agent_name, template, |agent_id| {
+                registry
+                    .get(agent_id)
+                    .map(|card| (card.accepts.clone(), card.produces))
+            });
+            serde_json::to_value(&report)
+                .map_err(|e| McpToolError::internal(format!("failed to serialize report: {e}")))
+        })
+        .await
+    }
+
+    /// Run a local agent's declared `workflow_template` end-to-end — the
+    /// execution counterpart of `swarm_workflow_check_local`, built on the
+    /// same pure functions (`workflow::run_workflow`). Sequential stages;
+    /// the artifact flows verbatim (fermi's `coordination_graph` feeding
+    /// rule — stage 1 receives the task, each later stage its
+    /// predecessor's response). Stops at the first open slot (the outcome
+    /// names it — fill the slot and re-run), missing agent, or failed
+    /// stage; prior outcomes are kept. Each downstream dispatch that
+    /// carries upstream output records an observed delegation edge to the
+    /// event store (`swarm_observed_seams_local` reads them).
+    #[tool(
+        description = "Run a local agent's declared workflow_template end-to-end. Stage 1 receives the task; later stages receive the previous response. Optional swarm_id dispatches each stage into its ordered thread and rejects nonmembers. Stops at the first open slot, missing agent, or failed stage; prior outcomes are kept. Returns the check report, per-stage outcomes, and final output."
+    )]
+    pub(crate) async fn swarm_run_workflow_local(
+        &self,
+        parameters: Parameters<RunWorkflowLocalRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_run_workflow_local", async {
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() || req.task.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name and task must be non-empty".to_string(),
+                ));
+            }
+            let runtime = self
+                .local_runtime
+                .get_or_init()
+                .await
+                .map_err(map_local_swarm_error)?;
+            let card = self.require_local_agent(&req.agent_name)?;
+            let Some(template) = &card.workflow_template else {
+                return Ok(serde_json::json!({
+                    "agent_id": req.agent_name,
+                    "workflow": serde_json::Value::Null,
+                    "note": "agent declares no workflow_template",
+                }));
+            };
+            const MAX_WORKFLOW_STAGES: usize = 10;
+            if template.stages.len() > MAX_WORKFLOW_STAGES {
+                return Err(McpToolError::invalid_argument(format!(
+                    "workflow cap is {MAX_WORKFLOW_STAGES} stages, got {}",
+                    template.stages.len()
+                )));
+            }
+            // The check report rides along — the caller sees the slot
+            // resolution and seam notes for the run they just executed,
+            // from the same pure functions the check tool uses.
+            let registry = self.local_registry.clone();
+            let report = crate::workflow::check_workflow(&req.agent_name, template, |agent_id| {
+                registry
+                    .get(agent_id)
+                    .map(|card| (card.accepts.clone(), card.produces))
+            });
+            let rollout_id = format!(
+                "workflow-{}-{}",
+                req.agent_name,
+                chrono::Utc::now().timestamp_millis()
+            );
+            // The delegate closure resolves the card and runs the runtime's
+            // delegate loop; the runner owns the flow semantics (verbatim
+            // artifact, stop conditions, edge timing).
+            let delegate_registry = self.local_registry.clone();
+            let swarm_id = req.swarm_id.as_deref();
+            let outcomes = crate::workflow::run_workflow(
+                template,
+                &req.task,
+                |agent_id| {
+                    delegate_registry
+                        .get(agent_id)
+                        .map(|card| (card.accepts.clone(), card.produces))
+                },
+                |agent_id, task| {
+                    let agent_id = agent_id.to_string();
+                    let task = task.to_string();
+                    let registry = &delegate_registry;
+                    async move {
+                        if let Some(swarm_id) = swarm_id {
+                            return self
+                                .dispatch_in_thread(
+                                    swarm_id,
+                                    &agent_id,
+                                    &task,
+                                    // Dispatch provenance: the workflow surface
+                                    // (scoped branch).
+                                    crate::local_runtime::DispatchStamp::new(
+                                        "workflow",
+                                        "workflow-stage",
+                                    )
+                                    .map_err(|error| {
+                                        crate::workflow::WorkflowDelegateError::Delegate(
+                                            error.to_string(),
+                                        )
+                                    })?,
+                                )
+                                .await
+                                .map(|(result, _turn)| result.response)
+                                .map_err(|error| {
+                                    crate::workflow::WorkflowDelegateError::Delegate(
+                                        error.to_string(),
+                                    )
+                                });
+                        }
+                        let agent = registry.get(&agent_id).ok_or_else(|| {
+                            crate::workflow::WorkflowDelegateError::AgentNotFound(agent_id.clone())
+                        })?;
+                        runtime
+                            .delegate(
+                                &agent,
+                                &task,
+                                // Dispatch provenance: the workflow surface.
+                                crate::local_runtime::DispatchStamp::new(
+                                    "workflow",
+                                    "workflow-stage",
+                                )
+                                .map_err(|error| {
+                                    crate::workflow::WorkflowDelegateError::Delegate(
+                                        error.to_string(),
+                                    )
+                                })?,
+                            )
+                            .await
+                            .map(|result| result.response)
+                            .map_err(|error| {
+                                crate::workflow::WorkflowDelegateError::Delegate(error.to_string())
+                            })
+                    }
+                },
+                |from, to| {
+                    record_delegation_edge(&self.event_store, &rollout_id, from, to, "workflow")
+                },
+            )
+            .await;
+            let stages_completed = outcomes.iter().filter(|outcome| outcome.ok).count();
+            let final_output = outcomes
+                .iter()
+                .rev()
+                .find(|outcome| outcome.ok)
+                .and_then(|outcome| outcome.response.clone());
+            Ok(serde_json::json!({
+                "agent_id": req.agent_name,
+                "check": report,
+                "stages": outcomes,
+                "stages_completed": stages_completed,
+                "final_output": final_output,
+                "rollout_id": rollout_id,
+            }))
+        })
+        .await
+    }
+
+    /// Report the observed delegation topology — which local agents'
+    /// outputs have actually flowed into which agents' inputs — and
+    /// compare each edge against the two cards' declared ports. The local
+    /// analog of fermi's `port_trust::OBSERVED_SEAMS_SQL` + `seam_agreement`:
+    /// fermi measured that declared ports predict NONE of the real
+    /// hand-offs (3 of 3 production compositions had zero label overlap),
+    /// so `undeclared` is the norm, not a fault — the report is a note,
+    /// never a block. Edges accumulate as `swarm_pipeline_local` and
+    /// `swarm_run_workflow_local` dispatch with upstream output.
+    #[tool(
+        description = "Report the observed delegation topology: which local agents' outputs have actually flowed into which agents' inputs (edges recorded at dispatch by swarm_pipeline_local and swarm_run_workflow_local), aggregated as from/to/hops/last_seen/via, each compared against the two cards' declared ports. Agreement is 'declared' when upstream produces overlaps downstream accepts (empty ports are permissive — absence is not contradiction), 'undeclared' otherwise, 'unknown_agent' when a card has since been removed. fermi measured that declared ports predict none of the real hand-offs, so 'undeclared' is the norm, not a fault. Read-only."
+    )]
+    pub(crate) async fn swarm_observed_seams_local(
+        &self,
+        parameters: Parameters<ObservedSeamsLocalRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_observed_seams_local", async {
+            let req = parameters.0;
+            let limit = req.limit.unwrap_or(50).max(1);
+            // The store IS the data source here — unavailability is an
+            // error, not an empty report (the broken-feedback-loop trap: a
+            // DB outage must not read as "no edges observed").
+            let store = self
+                .event_store
+                .get_or_init()
+                .map_err(map_local_swarm_error)?;
+            let events = store
+                .query(&hkask_event_store::EventFilter {
+                    kind: Some(DELEGATION_EDGE_EVENT_KIND.to_string()),
+                    ..Default::default()
+                })
+                .map_err(|error| {
+                    McpToolError::internal(format!("event store query failed: {error}"))
+                })?;
+            // Aggregate (from, to) → hops, last_seen, via set.
+            let mut aggregated: std::collections::BTreeMap<
+                (String, String),
+                (usize, String, std::collections::BTreeSet<String>),
+            > = std::collections::BTreeMap::new();
+            for event in &events {
+                let Some(from) = event.payload.get("from_agent").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let Some(to) = event.payload.get("to_agent").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let via = event
+                    .payload
+                    .get("via")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+                let entry = aggregated
+                    .entry((from.to_string(), to.to_string()))
+                    .or_insert((0, event.created_at.clone(), Default::default()));
+                entry.0 += 1;
+                if event.created_at > entry.1 {
+                    entry.1 = event.created_at.clone();
+                }
+                entry.2.insert(via);
+            }
+            let mut edges: Vec<serde_json::Value> = aggregated
+                .into_iter()
+                .map(|((from, to), (hops, last_seen, via))| {
+                    // Compare against the declared ports — the same pure
+                    // function the seam checks use, so the permissive-empty
+                    // rule and the overlap test cannot drift between the
+                    // two surfaces.
+                    let registry = &self.local_registry;
+                    let (agreement, note) =
+                        crate::workflow::observed_seam_agreement(&from, &to, |agent_id| {
+                            registry
+                                .get(agent_id)
+                                .map(|card| (card.accepts.clone(), card.produces))
+                        });
+                    serde_json::json!({
+                        "from_agent": from,
+                        "to_agent": to,
+                        "hops": hops,
+                        "last_seen": last_seen,
+                        "via": via.into_iter().collect::<Vec<_>>(),
+                        "agreement": agreement,
+                        "note": note,
+                    })
+                })
+                .collect();
+            // Most recently observed first.
+            edges.sort_by(|a, b| {
+                let a_seen = a.get("last_seen").and_then(|v| v.as_str()).unwrap_or("");
+                let b_seen = b.get("last_seen").and_then(|v| v.as_str()).unwrap_or("");
+                b_seen.cmp(a_seen)
+            });
+            let total_edges = edges.len();
+            edges.truncate(limit);
+            Ok(serde_json::json!({
+                "edges": edges,
+                "total_edges": total_edges,
+                "returned": limit.min(total_edges),
+                "note": "Observed edges are the fact; declared ports are the aspiration. \
+                         fermi measured 3 of 3 production hand-offs with zero declared-label \
+                         overlap — 'undeclared' is the norm, not a fault. The report is a \
+                         note, never a block.",
+            }))
+        })
+        .await
+    }
+
+    /// The local fleet's shape — the prompt tier of fermi's meta-agent
+    /// fleet-awareness pattern. A fixed-size digest of categories and
+    /// counts (never individual agents), the staleness anchor (the fleet
+    /// size it was built from), and the what-you-do-not-know counterweight
+    /// that names the tools serving the territory. The companion tool
+    /// tier: `swarm_list_local_agents` (the index), `swarm_get_local_agent`
+    /// (per-agent facts), `swarm_who_answers_local` (cohorts).
+    #[tool(
+        description = "The local fleet's shape as a fixed-size digest: agent-type counts and accepts-label cohorts with three-state readings (bespoke / cohort / universal — a label above 10% of the fleet is the calling convention, not a specialisation). Names categories and counts, never individual agents. Carries the fleet size it was built from (staleness self-detection) and the what-you-do-not-know note naming the tools that serve per-agent facts. Read-only, computed from the live registry."
+    )]
+    pub(crate) async fn swarm_fleet_digest_local(
+        &self,
+        parameters: Parameters<FleetDigestLocalRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_fleet_digest_local", async {
+            let req = parameters.0;
+            let cards = self.local_registry.list();
+            let digest = crate::fleet_digest::digest(&cards);
+            let mut value = digest.to_json();
+            if let Some(object) = value.as_object_mut() {
+                object.insert(
+                    "live_fleet_size".to_string(),
+                    serde_json::json!(cards.len()),
+                );
+                object.insert(
+                    "stale".to_string(),
+                    serde_json::json!(!digest.describes(cards.len())),
+                );
+                if req.include_rendered {
+                    object.insert("rendered".to_string(), serde_json::json!(digest.render()));
+                }
+            }
+            Ok(value)
+        })
+        .await
+    }
+
+    /// Who else answers the same ask — the cohort query. Unlike the digest
+    /// (which never names agents), this names them: it is a tool-tier
+    /// answer to a specific question, not a prompt-tier map.
+    #[tool(
+        description = "Which local agents accept a given asks label, with the cohort reading: bespoke (only this one — a real answer, not a missing one), cohort (a genuine set of interchangeable answerers), or universal (so widely accepted the label describes the calling convention). Returns the sorted agent list. Read-only."
+    )]
+    pub(crate) async fn swarm_who_answers_local(
+        &self,
+        parameters: Parameters<WhoAnswersLocalRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_who_answers_local", async {
+            let req = parameters.0;
+            if req.label.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "label must be non-empty".to_string(),
+                ));
+            }
+            let cards = self.local_registry.list();
+            let answer = crate::fleet_digest::answerers(&cards, &req.label);
+            Ok(serde_json::json!({
+                "question": answer.question,
+                "agents": answer.agents,
+                "count": answer.reading.count(),
+                "fleet_size": cards.len(),
+                "reading": answer.reading.as_str(),
+            }))
+        })
+        .await
+    }
+
+    /// Remove a local agent card from the local registry. This is the
+    /// local-mode counterpart of firing an agent: it deletes the card
+    /// directory (`agents/local/curated/<id>/`), so the agent stops
+    /// appearing in `swarm_list_local_agents` and cannot be delegated to.
+    /// No consent token — local mode has no consent gate (§15.1.2); the
+    /// registry write is the action.
+    #[tool(
+        description = "Remove a local agent card from the local registry (deletes agents/local/curated/<id>/). The local counterpart of firing an agent. No consent token — local mode has no consent gate."
+    )]
+    pub(crate) async fn swarm_remove_local(
+        &self,
+        parameters: Parameters<RemoveLocalRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_remove_local", async {
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name must be non-empty".to_string(),
+                ));
+            }
+            // Must exist locally (list/get reload from disk, so a freshly
+            // added card is seen).
+            let card = self.local_registry.get(&req.agent_name).ok_or_else(|| {
+                McpToolError::not_found(format!(
+                    "agent '{}' not found in local registry",
+                    req.agent_name
+                ))
+            })?;
+            let safe_id = sanitize_agent_id(&card.agent_id).ok_or_else(|| {
+                McpToolError::invalid_argument(format!(
+                    "agent_id '{}' contains no safe characters",
+                    card.agent_id
+                ))
+            })?;
+            let dir = self.config.local_agents_dir.clone();
+            let registry_root = std::fs::canonicalize(&dir).map_err(|e| {
+                hkask_mcp_server::map_io_error(
+                    e,
+                    &format!("failed to resolve local agents dir {}", dir),
+                )
+            })?;
+            let card_dir = registry_root.join(&safe_id);
+            // Defense-in-depth: refuse to remove anything outside the registry
+            // root (the id is sanitized, but a canonicalized check costs
+            // nothing and pins the invariant).
+            let target = match std::fs::canonicalize(&card_dir) {
+                Ok(t) => t,
+                Err(_) => card_dir,
+            };
+            if !target.starts_with(&registry_root) {
+                return Err(McpToolError::invalid_argument(
+                    "refusing to remove a path outside the local agents dir".to_string(),
+                ));
+            }
+            if target.exists() {
+                std::fs::remove_dir_all(&target).map_err(|e| {
+                    hkask_mcp_server::map_io_error(
+                        e,
+                        &format!("failed to remove local agent dir {}", target.display()),
+                    )
+                })?;
+            }
+            self.local_registry.load().map_err(map_local_swarm_error)?;
+            Ok(serde_json::json!({
+                "removed": card.agent_id,
+            }))
+        })
+        .await
+    }
+
+    /// Create a new local agent card programmatically. Writes
+    /// `agents/local/curated/<id>/agent_card.json` and reloads the registry. The
+    /// counterpart of `swarm_remove_local`: remove deletes a card, create
+    /// writes one. No consent token — local mode has no consent gate;
+    /// card creation is free, and local execution is not gated on funds either (no
+    /// local budget exists).
+    #[tool(
+        description = "Create a new local agent card programmatically, including validated model_params sampling overrides. Writes agents/local/curated/<id>/agent_card.json and reloads the registry. No consent token — local mode has no consent gate."
+    )]
+    pub(crate) async fn swarm_create_local_agent(
+        &self,
+        parameters: Parameters<CreateLocalAgentRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_create_local_agent", async {
+            let req = parameters.0;
+            if req.agent_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_id must be non-empty".to_string(),
+                ));
+            }
+            if req.agent_type.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_type must be non-empty".to_string(),
+                ));
+            }
+            if req.system_prompt.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "system_prompt must be non-empty".to_string(),
+                ));
+            }
+            let safe_id = sanitize_agent_id(&req.agent_id).ok_or_else(|| {
+                McpToolError::invalid_argument(
+                    "agent_id must contain only alphanumerics, dash, underscore, or dot"
+                        .to_string(),
+                )
+            })?;
+            // An empty model inherits the configured Swarm default at run
+            // time (or the host session model if unset). Keep cards unpinned
+            // so settings changes affect existing agents. A non-empty model
+            // remains an explicit per-agent override.
+            let model = req.model.clone();
+            let model_params = validate_model_params(req.model_params)?;
+            let (mcp_tools, mcp_tools_dropped) =
+                filter_mcp_tools(req.mcp_tools, self.config.allowed_tool_servers.as_deref());
+            let card = LocalAgentCard {
+                agent_id: safe_id.clone(),
+                agent_type: req.agent_type,
+                description: req.description,
+                display_name: String::new(),
+                accepts: req.accepts,
+                produces: req.produces,
+                dependencies: LocalAgentDependencies::default(),
+                capabilities: LocalAgentCapabilities {
+                    model,
+                    system_prompt: Some(req.system_prompt),
+                    mcp_tools,
+                    dropped_mcp_tools: mcp_tools_dropped.clone(),
+                    skills: req.skills,
+                    output_contract: req.output_contract.map(serde_json::Value::from),
+                    input_contract: req.input_contract.map(serde_json::Value::from),
+                    temperature: req.temperature,
+                    model_params,
+                    evaluators: req.evaluators.unwrap_or_default(),
+                    reasoning: req.reasoning.unwrap_or(false),
+                },
+                tags: req.tags,
+                sample_queries: req.sample_queries,
+                visibility: if req.visibility.trim().is_empty() {
+                    "private".to_string()
+                } else {
+                    req.visibility
+                },
+                valence: req.valence.map(|v| LocalAgentValence {
+                    arousal: v.arousal,
+                    valence: v.valence,
+                    primary_affect: v.primary_affect,
+                    personality_traits: v.personality_traits.unwrap_or_default(),
+                }),
+                // fermi's create stamps new agents "1.0.0" — mirror it so a
+                // created card starts at the familiar baseline version.
+                version: "1.0.0".to_string(),
+                // fermi's create does not accept workflow_template (it
+                // stamps None) — local create mirrors that; the declaration
+                // flows via clone/push/card-edit.
+                workflow_template: None,
+            };
+            let card_path = self
+                .local_registry
+                .write_card(&card)
+                .map_err(map_local_swarm_error)?;
+            let mut result = serde_json::json!({
+                "created": safe_id,
+                "path": card_path,
+            });
+            // The drop report rides the result so the caller — not just the
+            // operator's log — sees every filtered declaration and why.
+            if !mcp_tools_dropped.is_empty() {
+                result["mcp_tools_dropped"] = serde_json::json!(mcp_tools_dropped);
+            }
+            Ok(result)
+        })
+        .await
+    }
+
+    /// Reconfigure an existing local agent's prompt in place (Cybernetic Swarm
+    /// Plan C6). Updates ONLY the `system_prompt` (and optionally
+    /// `model`/`mcp_tools`/`skills`/`model_params` when supplied); preserves
+    /// `agent_id`, `agent_type`, `description`, `accepts`, `produces`,
+    /// and `dependencies`. The DECIDE
+    /// `reconfigure_agent` action seeds `swarm_generate_prompt_local` with the
+    /// blamed agent's failure log to produce the new prompt, then this tool
+    /// writes it via `LocalAgentRegistry::write_card` and reloads. No consent
+    /// token — local mode.
+    #[tool(
+        description = "Reconfigure an existing local agent's system_prompt and optional validated model_params in place (Cybernetic Swarm Plan C6 reconfigure_agent). Preserves agent_id, agent_type, description, accepts, produces, dependencies. No consent token — local mode."
+    )]
+    pub(crate) async fn swarm_reconfigure_local_agent(
+        &self,
+        parameters: Parameters<ReconfigureLocalAgentRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_reconfigure_local_agent", async {
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name must be non-empty".to_string(),
+                ));
+            }
+            if req.system_prompt.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "system_prompt must be non-empty".to_string(),
+                ));
+            }
+            // Look up the existing card — reconfigure updates in place, it
+            // does not create. A missing agent is not_found, not created.
+            let mut card = self.local_registry.get(&req.agent_name).ok_or_else(|| {
+                McpToolError::not_found(format!(
+                    "agent '{}' not found in local registry — reconfigure updates an existing card; use swarm_create_local_agent to create",
+                    req.agent_name
+                ))
+            })?;
+            card.capabilities.system_prompt = Some(req.system_prompt);
+            let model_params = validate_model_params(req.model_params)?;
+            if !req.model.trim().is_empty() {
+                card.capabilities.model = req.model;
+            }
+            let mut reconfigured_drops: Vec<DroppedTool> = Vec::new();
+            if !req.mcp_tools.is_empty() {
+                let (kept, dropped) = filter_mcp_tools(
+                    req.mcp_tools,
+                    self.config.allowed_tool_servers.as_deref(),
+                );
+                card.capabilities.mcp_tools = kept;
+                // The drop report describes the active declaration — a
+                // reconfigure that replaces mcp_tools replaces its report.
+                card.capabilities.dropped_mcp_tools = dropped.clone();
+                reconfigured_drops = dropped;
+            }
+            if !req.skills.is_empty() {
+                card.capabilities.skills = filter_declared_skills(req.skills);
+            }
+            if let Some(model_params) = model_params {
+                card.capabilities.model_params = Some(model_params);
+            }
+            // write_card sanitizes the id, path-contains against the registry
+            // root, writes, and reloads — the single enforcement point for C6.
+            let path = self
+                .local_registry
+                .write_card(&card)
+                .map_err(map_local_swarm_error)?;
+            let mut result = serde_json::json!({
+                "reconfigured": card.agent_id,
+                "path": path,
+            });
+            // The drop report rides the result so the caller — not just the
+            // operator's log — sees every filtered declaration and why.
+            if !reconfigured_drops.is_empty() {
+                result["mcp_tools_dropped"] = serde_json::json!(reconfigured_drops);
+            }
+            Ok(result)
+        })
+        .await
+    }
+
+    // ── Local swarm membership ─────────────────────────────
+
+    /// Create a local swarm - a named, mission-bearing grouping of local
+    /// agent ids. No cost and no
+    /// consent token (no local budget exists; nothing gates delegation or
+    /// roster edits).
+    /// Optionally seeds the roster with `agents`. Returns the new swarm with
+    /// its generated `swarm_id`.
+    #[tool(
+        description = "Create a local swarm. A named grouping of local agent ids with a mission. No cost, no consent token. Optionally seed members via `agents`."
+    )]
+    pub(crate) async fn swarm_create_local_swarm(
+        &self,
+        parameters: Parameters<CreateLocalSwarmRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_create_local_swarm", async {
+            let req = parameters.0;
+            if req.name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "name must be non-empty".to_string(),
+                ));
+            }
+            let swarm = self
+                .local_swarms
+                .create(&req.name, &req.mission, req.agents)
+                .map_err(map_local_swarm_error)?;
+            Ok(serde_json::to_value(&swarm).unwrap_or_else(
+                |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "name": swarm.name }),
+            ))
+        })
+        .await
+    }
+
+    /// List all local swarms (id, name, mission, members, created_at).
+    #[tool(
+        description = "List all local swarms. Each entry has swarm_id, name, mission, members (agent ids), and created_at. Read-only."
+    )]
+    pub(crate) async fn swarm_list_local_swarms(
+        &self,
+        _parameters: Parameters<ListLocalSwarmsRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_list_local_swarms", async {
+            let swarms = self.local_swarms.list();
+            Ok(serde_json::json!({
+                "count": swarms.len(),
+                "swarms": swarms,
+            }))
+        })
+        .await
+    }
+
+    /// Get a single local swarm by id, including its roster.
+    #[tool(
+        description = "Get a single local swarm by swarm_id, including its member roster (agent ids). Returns not-found if the swarm does not exist."
+    )]
+    pub(crate) async fn swarm_get_local_swarm(
+        &self,
+        parameters: Parameters<GetLocalSwarmRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_get_local_swarm", async {
+            let req = parameters.0;
+            let swarm = self.require_local_swarm(&req.swarm_id)?;
+            Ok(serde_json::to_value(&swarm).unwrap_or_else(
+                |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "name": swarm.name }),
+            ))
+        })
+        .await
+    }
+
+    /// Permanently delete a local swarm. The roster is dropped with the swarm;
+    /// member agents are NOT touched (they stay in `LocalAgentRegistry`).
+    #[tool(
+        description = "Permanently delete a local swarm by swarm_id. The roster is dropped; member agents are NOT deleted (use swarm_remove_local for that)."
+    )]
+    pub(crate) async fn swarm_delete_local_swarm(
+        &self,
+        parameters: Parameters<DeleteLocalSwarmRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_delete_local_swarm", async {
+            let req = parameters.0;
+            if req.swarm_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "swarm_id must be non-empty".to_string(),
+                ));
+            }
+            self.local_swarms
+                .delete(&req.swarm_id)
+                .map_err(map_local_swarm_error)?;
+            Ok(serde_json::json!({ "deleted": req.swarm_id }))
+        })
+        .await
+    }
+
+    /// Add a local agent to a local swarm's roster (idempotent - a duplicate
+    /// add is a no-op). No cost or consent gate. The agent need not already exist in
+    /// `LocalAgentRegistry` (the roster is ids; resolution happens at
+    /// delegation time).
+    #[tool(
+        description = "Add a local agent to a local swarm's roster by swarm_id + agent_name. Idempotent. No cost, no consent token. The agent need not exist in the registry yet (roster is ids)."
+    )]
+    pub(crate) async fn swarm_add_agent_local(
+        &self,
+        parameters: Parameters<AddAgentToLocalSwarmRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_add_agent_local", async {
+            let req = parameters.0;
+            if req.swarm_id.trim().is_empty() || req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "swarm_id and agent_name must be non-empty".to_string(),
+                ));
+            }
+            let swarm = self
+                .local_swarms
+                .add_member(&req.swarm_id, &req.agent_name)
+                .map_err(map_local_swarm_error)?;
+            Ok(serde_json::to_value(&swarm).unwrap_or_else(
+                |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "members": swarm.members }),
+            ))
+        })
+        .await
+    }
+
+    /// Remove a local agent from a local swarm's roster (idempotent - removing
+    /// a non-member is a no-op). Does NOT delete the agent from `LocalAgentRegistry`.
+    #[tool(
+        description = "Remove a local agent from a local swarm's roster by swarm_id + agent_name. Idempotent. Does NOT delete the agent (use swarm_remove_local for that)."
+    )]
+    pub(crate) async fn swarm_remove_agent_local(
+        &self,
+        parameters: Parameters<RemoveAgentFromLocalSwarmRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_remove_agent_local", async {
+            let req = parameters.0;
+            if req.swarm_id.trim().is_empty() || req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "swarm_id and agent_name must be non-empty".to_string(),
+                ));
+            }
+            let swarm = self
+                .local_swarms
+                .remove_member(&req.swarm_id, &req.agent_name)
+                .map_err(map_local_swarm_error)?;
+            Ok(serde_json::to_value(&swarm).unwrap_or_else(
+                |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "members": swarm.members }),
+            ))
+        })
+        .await
+    }
+
+    /// Update a local swarm's display name and mission in place. The
+    /// `swarm_id` (on-disk identity) is preserved — only the human-readable
+    /// `name` and `mission` change. No cost, no consent token.
+    #[tool(
+        description = "Update a local swarm's name and mission in place (swarm_id preserved). No cost, no consent token."
+    )]
+    pub(crate) async fn swarm_update_local_swarm(
+        &self,
+        parameters: Parameters<UpdateLocalSwarmRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_update_local_swarm", async {
+            let req = parameters.0;
+            if req.swarm_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "swarm_id must be non-empty".to_string(),
+                ));
+            }
+            if req.name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "name must be non-empty".to_string(),
+                ));
+            }
+            let swarm = self
+                .local_swarms
+                .update_metadata(&req.swarm_id, &req.name, &req.mission)
+                .map_err(map_local_swarm_error)?;
+            Ok(serde_json::to_value(&swarm).unwrap_or_else(
+                |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "name": swarm.name }),
+            ))
+        })
+        .await
+    }
+
+    /// Clone a local swarm: create a new swarm with a fresh slug id,
+    /// copying the source's mission and roster. The new name is suffixed
+    /// with " (copy)". Member ids are preserved as-is — a member whose card
+    /// no longer exists is not an error (the roster is ids; resolution
+    /// happens at delegation time). No cost, no consent token.
+    #[tool(
+        description = "Clone a local swarm by swarm_id: creates a new swarm with a fresh id, copying the mission and roster. Member ids are preserved as-is (a member whose card was deleted is not an error). No cost, no consent token."
+    )]
+    pub(crate) async fn swarm_clone_local_swarm(
+        &self,
+        parameters: Parameters<CloneLocalSwarmRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_clone_local_swarm", async {
+            let req = parameters.0;
+            if req.swarm_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "swarm_id must be non-empty".to_string(),
+                ));
+            }
+            let swarm = self
+                .local_swarms
+                .clone_swarm(&req.swarm_id)
+                .map_err(map_local_swarm_error)?;
+            Ok(serde_json::to_value(&swarm).unwrap_or_else(
+                |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "name": swarm.name }),
+            ))
+        })
+        .await
+    }
+
+    /// AI assist for the swarm panel authoring forms: suggests completions for
+    /// partial inputs or validates well-formedness. Authoring aid — read-only,
+    /// spends nothing. Uses the inference port directly to generate composition
+    /// guidance from the form fields.
+    #[tool(
+        description = "AI assist for the swarm panel authoring forms (agent/swarm). Suggests completions for partial inputs or validates well-formedness. Authoring aid — read-only, spends nothing. Uses the inference port directly to generate composition guidance."
+    )]
+    pub(crate) async fn swarm_ai_assist(
+        &self,
+        parameters: Parameters<AiAssistRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_ai_assist", async {
+            let req = parameters.0;
+            match req.action.as_str() {
+                "suggest" | "validate" => {}
+                other => {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "action must be 'suggest' or 'validate', got '{other}'"
+                    )));
+                }
+            }
+            match req.surface.as_str() {
+                "agent" | "swarm" => {}
+                other => {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "surface must be 'agent' or 'swarm', got '{other}'"
+                    )));
+                }
+            }
+
+            // Serialize the form fields as a JSON object string for the
+            // inference prompt. The LLM generates composition guidance from
+            // these fields directly.
+            let json_task = serde_json::to_string(&serde_json::json!({
+                "action": req.action,
+                "surface": req.surface,
+                "name": req.name,
+                "agent_type": req.agent_type,
+                "description": req.description,
+                "system_prompt": req.system_prompt,
+                "mission": req.mission,
+                "agents": req.agents,
+                "tags": req.tags,
+                "sample_queries": req.sample_queries,
+                "accepts": req.accepts,
+                "produces": req.produces,
+                "has_valence": req.has_valence,
+            }))
+            .map_err(|e| {
+                map_local_swarm_error(LocalSwarmError::Unavailable(format!(
+                    "failed to serialize ai-assist task: {e}"
+                )))
+            })?;
+
+            // Validate runs the deterministic agent contract FIRST (the
+            // requirement table, ported to `contract.rs`),
+            // then asks the LLM for advisory warnings. The contract decides
+            // `valid`; the LLM can never flip it — the same Error/Warning
+            // split as a publish pipeline. If inference fails, the
+            // deterministic verdict still returns (an inference outage must
+            // not read as "the agent is malformed").
+            if req.action == "validate" {
+                let mut payload = if req.surface == "agent" {
+                    let input = crate::contract::AgentContractInput {
+                        name: req.name.clone(),
+                        description: req.description.clone(),
+                        system_prompt: req.system_prompt.clone(),
+                        tags: crate::contract::split_csv(&req.tags),
+                        sample_queries: crate::contract::split_lines(&req.sample_queries),
+                        accepts: crate::contract::split_csv(&req.accepts),
+                        produces: crate::contract::split_csv(&req.produces),
+                        has_valence: req.has_valence,
+                    };
+                    crate::contract::checks_to_payload(
+                        &crate::contract::agent_contract_checks(&input),
+                    )
+                } else {
+                    let input = crate::contract::SwarmContractInput {
+                        name: req.name.clone(),
+                        mission: req.mission.clone(),
+                        agents: crate::contract::split_csv(&req.agents),
+                    };
+                    crate::contract::checks_to_payload(
+                        &crate::contract::swarm_contract_checks(&input),
+                    )
+                };
+
+                // Advisory layer: the LLM reviews the same fields for what a
+                // table cannot judge (prompt quality, role overlap, mission
+                // fit). Its findings are appended to `warnings` — never to
+                // `issues` — and an inference failure is reported as a note
+                // while the deterministic verdict stands.
+                match self.ai_assist_advisory(&json_task).await {
+                    Ok(advisory) => {
+                        if let Some(warnings) = payload["warnings"].as_array_mut() {
+                            for issue in advisory {
+                                warnings.push(serde_json::Value::String(issue));
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            target: "hkask.mcp.swarm",
+                            "swarm_ai_assist advisory layer failed — deterministic contract verdict stands: {err}"
+                        );
+                        payload["notes"] = serde_json::Value::String(format!(
+                            "Advisory review unavailable: {err}. The contract checks above \
+                             are deterministic and unaffected."
+                        ));
+                    }
+                }
+                payload["action"] = serde_json::Value::String(req.action.clone());
+                payload["surface"] = serde_json::Value::String(req.surface.clone());
+                payload["suggestions"] = serde_json::Value::Null;
+                return Ok(payload);
+            }
+
+            // Use the inference port directly for AI-assisted composition
+            // guidance. Route through the classifier-class model
+            // (`kask.models.classifier_model`, env `HKASK_CLASSIFIER_MODEL`),
+            // resolved or refused — never a silent None fallback to the host
+            // default chat model, which can be thinking-mandatory (OpenRouter
+            // 400 "Reasoning is mandatory for this endpoint and cannot be
+            // disabled" — live 2026-10-08, card d58fd87b; refuse-on-None
+            // ruling 2026-10-09). The same resolution the validate advisory
+            // and the eval runtime use.
+            let classifier = hkask_inference::model_constants::resolve_classifier_model()
+                .map_err(|e| {
+                    map_local_swarm_error(LocalSwarmError::Unavailable(format!(
+                        "AI assist requires the classifier model: {e}"
+                    )))
+                })?;
+            let runtime = self
+                .local_runtime
+                .get_or_init()
+                .await
+                .map_err(map_local_swarm_error)?;
+            let inference = runtime.inference();
+            let result = inference
+                .generate_with_model(
+                    &format!("You are an expert at composing AI agent teams. Based on the following request, generate a JSON response with suggested agent/swarm configuration:\n\n{}", json_task),
+                    &hkask_types::LLMParameters::default(),
+                    Some(classifier.as_str()),
+                    None,
+                )
+                .await
+                .map_err(|e| {
+                    map_local_swarm_error(LocalSwarmError::Unavailable(format!(
+                        "AI assist suggest inference failed: {e}"
+                    )))
+                })?;
+            let text = result.text;
+
+            let parsed = serde_json::from_str::<serde_json::Value>(&text).ok();
+            // Only "suggest" reaches here — validate returned early via the
+            // deterministic contract path above.
+            let result = match parsed {
+                Some(v) => {
+                    let suggestions = serde_json::json!({
+                        "name": v.get("name").and_then(|x| x.as_str()).unwrap_or(""),
+                        "agent_type": v.get("agent_type").and_then(|x| x.as_str()).unwrap_or(""),
+                        "description": v.get("description").and_then(|x| x.as_str()).unwrap_or(""),
+                        "system_prompt": v.get("system_prompt").and_then(|x| x.as_str()).unwrap_or(""),
+                        "mission": v.get("mission").and_then(|x| x.as_str()).unwrap_or(""),
+                        "agents": v.get("agents").and_then(|x| x.as_str()).unwrap_or(""),
+                    });
+                    serde_json::json!({
+                        "action": req.action,
+                        "surface": req.surface,
+                        "suggestions": suggestions,
+                        "valid": serde_json::Value::Null,
+                        "issues": serde_json::json!([]),
+                        "notes": "",
+                    })
+                }
+                None => {
+                    tracing::warn!(
+                        target: "hkask.mcp.swarm",
+                        "swarm_ai_assist (suggest) output was not valid JSON — returning raw text in notes"
+                    );
+                    serde_json::json!({
+                        "action": req.action,
+                        "surface": req.surface,
+                        "suggestions": serde_json::json!({
+                            "name": "", "agent_type": "", "description": "",
+                            "system_prompt": "", "mission": "", "agents": "",
+                        }),
+                        "valid": serde_json::Value::Null,
+                        "issues": serde_json::json!([]),
+                        "notes": text,
+                    })
+                }
+            };
+            Ok(result)
+        })
+        .await
+    }
+
+    /// The advisory layer for `swarm_ai_assist` validate: one inference call
+    /// over the serialized form fields, returning advisory warnings only.
+    /// The caller appends these to `warnings` — they can never flip `valid`.
+    async fn ai_assist_advisory(&self, json_task: &str) -> Result<Vec<String>, LocalSwarmError> {
+        let runtime = self.local_runtime.get_or_init().await?;
+        let inference = runtime.inference();
+        // The advisory is a small non-thinking generation task. The host
+        // session's default chat model can be thinking-mandatory (OpenRouter
+        // 400 "Reasoning is mandatory for this endpoint and cannot be
+        // disabled" — live 2026-10-03, every advisory call), which left the
+        // advisory layer dead while the deterministic verdict stood. Route
+        // through the classifier-class model, resolved or refused — never a
+        // silent None fallback (refuse-on-None ruling 2026-10-09) — the same
+        // resolution the suggest path and the eval runtime use.
+        let classifier =
+            hkask_inference::model_constants::resolve_classifier_model().map_err(|e| {
+                LocalSwarmError::Unavailable(format!(
+                    "AI assist advisory requires the classifier model: {e}"
+                ))
+            })?;
+        let result = inference
+            .generate_with_model(
+                &format!(
+                    "You are reviewing an AI agent or swarm composition form for \
+                     quality issues a checklist cannot judge: prompt coherence, role \
+                     overlap in the roster, mission fit, missing methodology steps. \
+                     The deterministic contract (names, required fields, roster size) \
+                     has already been checked — do NOT repeat those. Return ONLY a JSON \
+                     array of short advisory strings (empty array if nothing to add):\n\n{}",
+                    json_task
+                ),
+                &hkask_types::LLMParameters::default(),
+                Some(classifier.as_str()),
+                None,
+            )
+            .await
+            .map_err(|e| {
+                LocalSwarmError::Unavailable(format!("AI assist advisory inference failed: {e}"))
+            })?;
+        let text = result.text.trim();
+        let parsed = serde_json::from_str::<serde_json::Value>(text).map_err(|e| {
+            LocalSwarmError::Unavailable(format!("advisory output was not a JSON array: {e}"))
+        })?;
+        Ok(parsed
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    /// Evaluate a predicate over response text. This checks only the supplied
+    /// string, not task accomplishment, factual accuracy, or external state.
+    #[tool(
+        description = "Evaluate a response predicate (contains / not_contains / regex). Returns a TaskSuccessVerdict describing only whether the supplied response text matches. This is not certification of task accomplishment or factual truth. No inference calls."
+    )]
+    pub(crate) async fn swarm_evaluate_local(
+        &self,
+        parameters: Parameters<EvaluateLocalRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_evaluate_local", async {
+            let req = parameters.0;
+            // Empty output is a measurable response, not an evaluator failure.
+            let verdict = deterministic_verdict(&req.response, &req.evaluator, &req.spec)?;
+            Ok(serde_json::to_value(&verdict)
+                .unwrap_or_else(|_| serde_json::json!({ "error": "failed to serialize verdict" })))
+        })
+        .await
+    }
+
+    /// Execute a swarm-intelligence plan: run each delegation, evaluate each
+    /// result (when an evaluator is provided), and return the collected
+    /// `LocalDelegateResult` array with response-predicate results under
+    /// `task_success`. Without an evaluator, board status stays Pending; a predicate
+    /// match is not certification of task accomplishment. With a swarm id, only roster members run, using
+    /// prior durable turns; without an id, delegation stays standalone.
+    /// Capped at 10 delegations (same as fanout). Each runs sequentially.
+    #[tool(
+        description = "Execute a swarm-intelligence plan: run each delegation via the local runtime, evaluate each result with a deterministic check (when an evaluator is provided), and return the collected LocalDelegateResult array with response-predicate results under task_success (not task-truth certification). Without an evaluator, the task board stays Pending. Capped at 10 delegations. Each delegation runs sequentially. With swarm_id, members use the durable ordered thread; without it, delegations remain standalone. The returned array is ready to feed back to swarm-intelligence as delegate_results. No consent token — local mode."
+    )]
+    pub(crate) async fn swarm_execute_plan_local(
+        &self,
+        parameters: Parameters<ExecutePlanLocalRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_execute_plan_local", async {
+            let req = parameters.0;
+            if req.delegations.is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "delegations must be non-empty".to_string(),
+                ));
+            }
+            if req.delegations.len() > MAX_FANOUT {
+                return Err(McpToolError::invalid_argument(format!(
+                    "plan cap is {MAX_FANOUT} delegations, got {}",
+                    req.delegations.len()
+                )));
+            }
+            for entry in &req.delegations {
+                if let Some(evaluator) = &entry.evaluator {
+                    ResponseEvaluator::parse(&evaluator.evaluator, &evaluator.spec)?;
+                }
+            }
+            let runtime = self
+                .local_runtime
+                .get_or_init()
+                .await
+                .map_err(map_local_swarm_error)?;
+            // Load the task board when a swarm_id is provided so task
+            // progress persists across swarm-intelligence PDCA iterations.
+            let mut task_board = load_task_board(
+                self.local_swarms.dir(),
+                req.swarm_id.as_deref(),
+                "Failed to load task board — task progress will not persist",
+            );
+            let mut results = Vec::new();
+            let mut failed = 0usize;
+            let mut total_tokens = 0i64;
+            for entry in &req.delegations {
+                let agent = self.local_registry.get(&entry.agent_name);
+                let Some(agent) = agent else {
+                    failed += 1;
+                    results.push(LocalDelegateResult::error_json(
+                        &entry.agent_name,
+                        &format!("agent '{}' not found in local registry", entry.agent_name),
+                    ));
+                    // Record the failure on the task board.
+                    record_board_failure(&mut task_board, entry, "agent not found");
+                    continue;
+                };
+                let dispatched = if let Some(sid) = req.swarm_id.as_deref() {
+                    self.dispatch_in_thread(
+                        sid,
+                        &entry.agent_name,
+                        &entry.task,
+                        // Dispatch provenance: the plan surface (scoped branch).
+                        crate::local_runtime::DispatchStamp::new("plan", "plan-task")
+                            .map_err(map_local_swarm_error)?,
+                    )
+                    .await
+                    .map(|(result, _turn)| result)
+                    .map_err(|error| error.to_string())
+                } else {
+                    runtime
+                        .delegate(
+                            &agent,
+                            &entry.task,
+                            // Dispatch provenance: the plan surface.
+                            crate::local_runtime::DispatchStamp::new("plan", "plan-task")
+                                .map_err(map_local_swarm_error)?,
+                        )
+                        .await
+                        .map_err(|error| error.to_string())
+                };
+                match dispatched {
+                    Ok(mut r) => {
+                        total_tokens += r.tokens_used;
+                        // Stamp the deterministic verdict when an evaluator is provided.
+                        if let Some(ev) = &entry.evaluator {
+                            r.task_success =
+                                Some(deterministic_verdict(&r.response, &ev.evaluator, &ev.spec)?);
+                        }
+                        // Record stigmergy (same as swarm_delegate_local).
+                        self.validate_produces(&entry.agent_name, &agent.produces, &r.response);
+                        local_knowledge::record_delegation(
+                            &self.local_memory,
+                            &entry.agent_name,
+                            r.latency_ms,
+                            r.task_success.as_ref().map(|t| t.pass),
+                            &r.response,
+                        )
+                        .await;
+                        attach_narrative_memory(
+                            &self.local_memory,
+                            &runtime.inference(),
+                            &entry.task,
+                            &mut r,
+                        )
+                        .await;
+                        // Record on the task board.
+                        record_board_attempt(
+                            &mut task_board,
+                            entry,
+                            &r.response,
+                            r.task_success.as_ref().map(|t| t.pass),
+                        );
+                        results.push(serde_json::to_value(&r).unwrap_or_else(
+                            |_| serde_json::json!({ "error": "failed to serialize result" }),
+                        ));
+                    }
+                    Err(e) => {
+                        failed += 1;
+                        results.push(LocalDelegateResult::error_json(
+                            &entry.agent_name,
+                            &e.to_string(),
+                        ));
+                        // Record the failure on the task board.
+                        record_board_failure(&mut task_board, entry, &e.to_string());
+                    }
+                }
+            }
+            // Persist the task board if it was loaded.
+            save_task_board(
+                self.local_swarms.dir(),
+                &task_board,
+                req.swarm_id.as_deref(),
+                "Failed to save task board — task progress not persisted",
+            );
+            let task_summary = task_board_counts_summary(&task_board);
+            Ok(serde_json::json!({
+                "results": results,
+                "total_tokens": total_tokens,
+                "failed": failed,
+                "succeeded": req.delegations.len() - failed,
+                "task_board": task_summary,
+            }))
+        })
+        .await
+    }
+
+    /// Query a swarm's task board — the persistent record of task progress
+    /// across `swarm_execute_plan_local` invocations. Returns the full task
+    /// list with status, attempt counts, fail counts, and last result
+    /// summaries. The Curator's ORIENT phase uses this to see durable task
+    /// progress ("task 3 failed twice, task 5 succeeded") without
+    /// re-deriving it from delegate_results.
+    #[tool(
+        description = "Query a local swarm's task board for persistent task progress. Returns tasks with status, attempt_count, fail_count, and last_result_summary. Used by swarm-intelligence ORIENT to see durable task progress across PDCA iterations."
+    )]
+    pub(crate) async fn swarm_task_board(
+        &self,
+        parameters: Parameters<TaskBoardRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_task_board", async {
+            let req = parameters.0;
+            let board = crate::task_board::TaskBoard::load(self.local_swarms.dir(), &req.swarm_id)
+                .map_err(map_local_swarm_error)?;
+            let counts = board.counts();
+            Ok(serde_json::json!({
+                "swarm_id": req.swarm_id,
+                "tasks": board.tasks,
+                "counts": {
+                    "total": counts.total,
+                    "pending": counts.pending,
+                    "in_progress": counts.in_progress,
+                    "complete": counts.complete,
+                    "failed": counts.failed,
+                },
+                "all_terminal": board.all_terminal(),
+                "all_complete": board.all_complete(),
+            }))
+        })
+        .await
+    }
+
+    /// Regression-test a swarm composition across a dataset of cases. Each
+    /// case is a plan (list of delegations with evaluators). The suite runs
+    /// each case via `swarm_execute_plan_local`, aggregates pass/fail, and
+    /// returns a suite-level result. A case passes when ALL its delegations
+    /// pass their evaluators. There is no improve-then-re-evaluate outer
+    /// loop — the suite is measure-and-report, not measure-improve-remeasure.
+    /// Capped at 10 cases.
+    #[tool(
+        description = "Swarm eval suite: run a dataset of test cases against a swarm composition, aggregate pass/fail. Each case is a plan with delegations + response predicates. A case passes only when every delegation has a passing predicate; missing predicates leave it pending. This does not certify task truth. No improve-then-re-evaluate loop — measure-and-report only."
+    )]
+    pub(crate) async fn swarm_eval_suite_local(
+        &self,
+        parameters: Parameters<EvalSuiteLocalRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_eval_suite_local", async {
+            let req = parameters.0;
+            if req.cases.is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "cases must be non-empty".to_string(),
+                ));
+            }
+            const MAX_SUITE_CASES: usize = 10;
+            if req.cases.len() > MAX_SUITE_CASES {
+                return Err(McpToolError::invalid_argument(format!(
+                    "suite cap is {MAX_SUITE_CASES} cases, got {}",
+                    req.cases.len()
+                )));
+            }
+            for case in &req.cases {
+                for entry in &case.delegations {
+                    if let Some(evaluator) = &entry.evaluator {
+                        ResponseEvaluator::parse(&evaluator.evaluator, &evaluator.spec)?;
+                    }
+                }
+            }
+            let runtime = self
+                .local_runtime
+                .get_or_init()
+                .await
+                .map_err(map_local_swarm_error)?;
+
+            // Load the task board when a swarm_id is provided so eval
+            // results persist across regression runs.
+            let mut task_board = load_task_board(
+                self.local_swarms.dir(),
+                req.swarm_id.as_deref(),
+                "Failed to load task board for eval suite — progress will not persist",
+            );
+
+            let mut case_results = Vec::with_capacity(req.cases.len());
+            let mut passed = 0usize;
+            let mut failed = 0usize;
+            let mut pending = 0usize;
+            let mut total_tokens = 0i64;
+
+            for case in &req.cases {
+                let mut case_pass = true;
+                let mut delegation_results = Vec::new();
+                let mut case_tokens = 0i64;
+
+                for entry in &case.delegations {
+                    let agent = self.local_registry.get(&entry.agent_name);
+                    let Some(agent) = agent else {
+                        case_pass = false;
+                        delegation_results.push(serde_json::json!({
+                            "agent_name": entry.agent_name,
+                            "ok": false,
+                            "error": "agent not found",
+                        }));
+                        continue;
+                    };
+                    match delegate_and_ingest(
+                        &self.local_memory,
+                        &runtime,
+                        &agent,
+                        &entry.task,
+                        // Dispatch provenance: the eval-suite surface (rollout
+                        // harness — outcomes feed agent stats, not C6 blame).
+                        crate::local_runtime::DispatchStamp::new("eval", "eval-rollout")
+                            .map_err(map_local_swarm_error)?,
+                    )
+                    .await
+                    {
+                        Ok(mut r) => {
+                            self.validate_produces(&entry.agent_name, &agent.produces, &r.response);
+                            case_tokens += r.tokens_used;
+                            if let Some(ev) = &entry.evaluator {
+                                let verdict =
+                                    deterministic_verdict(&r.response, &ev.evaluator, &ev.spec)?;
+                                if !verdict.pass {
+                                    case_pass = false;
+                                }
+                                r.task_success = Some(verdict);
+                            }
+                            // Stigmergy — mirrors swarm_execute_plan_local so
+                            // eval delegations build the pheromone trail; the
+                            // narrative-passage ingestion rode in
+                            // `delegate_and_ingest`. Non-fatal.
+                            local_knowledge::record_delegation(
+                                &self.local_memory,
+                                &entry.agent_name,
+                                r.latency_ms,
+                                r.task_success.as_ref().map(|t| t.pass),
+                                &r.response,
+                            )
+                            .await;
+                            // Record on the task board when a swarm_id is set.
+                            record_board_attempt(
+                                &mut task_board,
+                                entry,
+                                &r.response,
+                                r.task_success.as_ref().map(|t| t.pass),
+                            );
+                            delegation_results.push(serde_json::json!({
+                                "agent_name": entry.agent_name,
+                                "ok": true,
+                                "pass": r.task_success.as_ref().map(|t| t.pass),
+                                "response_len": r.response.len(),
+                                "tokens_used": r.tokens_used,
+                                "memory": r.memory,
+                            }));
+                        }
+                        Err(e) => {
+                            case_pass = false;
+                            // Record the failure on the task board.
+                            record_board_failure(&mut task_board, entry, &e.to_string());
+                            delegation_results.push(serde_json::json!({
+                                "agent_name": entry.agent_name,
+                                "ok": false,
+                                "error": e.to_string(),
+                            }));
+                        }
+                    }
+                }
+
+                let case_pass = if !case_pass {
+                    failed += 1;
+                    Some(false)
+                } else if !case.delegations.is_empty()
+                    && case.delegations.iter().all(|entry| entry.evaluator.is_some())
+                {
+                    passed += 1;
+                    Some(true)
+                } else {
+                    pending += 1;
+                    None
+                };
+                total_tokens += case_tokens;
+
+                case_results.push(serde_json::json!({
+                    "name": case.name,
+                    "passed": case_pass,
+                    "delegations": delegation_results,
+                    "tokens_used": case_tokens,
+                }));
+            }
+
+            // Persist the task board if it was loaded.
+            save_task_board(
+                self.local_swarms.dir(),
+                &task_board,
+                req.swarm_id.as_deref(),
+                "Failed to save task board for eval suite — progress not persisted",
+            );
+            let task_summary = task_board_counts_summary(&task_board);
+
+            let pass_rate = if req.cases.is_empty() {
+                0.0
+            } else {
+                passed as f64 / req.cases.len() as f64
+            };
+
+            Ok(serde_json::json!({
+                "cases": case_results,
+                "passed": passed,
+                "failed": failed,
+                "pending": pending,
+                "total": req.cases.len(),
+                "pass_rate": pass_rate,
+                "total_tokens": total_tokens,
+                "status": if failed > 0 { "FAILED" } else if pending > 0 { "PENDING" } else { "PASSED" },
+                "task_board": task_summary,
+            }))
+        })
+        .await
+    }
+
+    /// The rollout harness (event-substrate): run one agent card against a
+    /// task set N times each, stamp deterministic verdicts, and report
+    /// per-task pass rates with standard error. Each rollout appends a
+    /// `model_request` event and a `verdict` event to the event store —
+    /// the harness is the store's first writer.
+    ///
+    /// Rollouts run sequentially (same dispatch discipline as fanout/plan). A delegation error counts as a failed
+    /// rollout for that task — the harness measures end-to-end pass rate,
+    /// which includes crashes, not just wrong answers.
+    #[tool(
+        description = "Rollout harness: run one local agent against a task set N times each, evaluate each rollout with a deterministic evaluator (contains/not_contains/regex), and report per-task pass rates with standard error and totals. Each rollout is recorded as model_request + verdict events in the event store. Tasks capped at 10, repeats at 10, total rollouts at 50. After each run, very old rollouts are compacted (rollouts_compacted in the report)."
+    )]
+    pub(crate) async fn swarm_eval_agent_local(
+        &self,
+        parameters: Parameters<EvalAgentLocalRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(
+            self,
+            "swarm_eval_agent_local",
+            async {
+                let req = parameters.0;
+                if req.agent_name.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "agent_name must be non-empty".to_string(),
+                    ));
+                }
+                if req.tasks.is_empty() || req.tasks.len() > MAX_EVAL_TASKS {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "tasks must contain 1..={MAX_EVAL_TASKS} entries, got {}",
+                        req.tasks.len()
+                    )));
+                }
+                let repeats = req.repeats.unwrap_or(DEFAULT_EVAL_REPEATS);
+                if repeats == 0 || repeats > MAX_EVAL_REPEATS {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "repeats must be 1..={MAX_EVAL_REPEATS}, got {repeats}"
+                    )));
+                }
+                let total_rollouts = req.tasks.len().saturating_mul(repeats as usize);
+                if total_rollouts > MAX_EVAL_ROLLOUTS {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "total rollouts (tasks × repeats = {total_rollouts}) exceeds the cap of \
+                         {MAX_EVAL_ROLLOUTS} — each rollout is a real inference call with real \
+                         token cost"
+                    )));
+                }
+                // Validate every evaluator spec upfront: a bad regex must fail
+                // the whole call before any tokens are spent, not halfway
+                // through the run.
+                let mut evaluators = Vec::with_capacity(req.tasks.len());
+                for (index, task) in req.tasks.iter().enumerate() {
+                    if task.task.trim().is_empty() {
+                        return Err(McpToolError::invalid_argument(format!(
+                            "tasks[{index}].task must be non-empty"
+                        )));
+                    }
+                    evaluators.push(ResponseEvaluator::parse(&task.evaluator.evaluator, &task.evaluator.spec)?);
+                }
+                let runtime = self
+                    .local_runtime
+                    .get_or_init()
+                    .await
+                    .map_err(map_local_swarm_error)?;
+                let agent = self.local_registry.get(&req.agent_name).ok_or_else(|| {
+                    McpToolError::not_found(format!(
+                        "agent '{}' not found in local registry — load agents from \
+                         agents/local/curated/<id>/agent_card.json",
+                        req.agent_name
+                    ))
+                })?;
+                // The event store is the data plane. The harness wires the
+                // executor's capture path (phase 3) so every inference call
+                // emits a model_request event automatically, then stamps the
+                // verdict under the executor-assigned rollout id. A store
+                // failure is logged and counted (`events_dropped`), never
+                // swallowed — the report must distinguish "recorded" from
+                // "record lost". An OPEN failure is warned with the path
+                // named (the failure-signal rule: "not configured" must be
+                // distinguishable from "configured but broken") and returned
+                // as capture_status/capture_error. Evaluation may continue, but
+                // callers must not treat uncaptured scores as durable evidence.
+                let (event_store, capture_error) = match self.event_store.get_or_init() {
+                    Ok(store) => (Some(store), None),
+                    Err(error) => {
+                        tracing::warn!(
+                            target: "hkask.mcp.swarm",
+                            error = %error,
+                            "event store open failed — harness run proceeds uncaptured"
+                        );
+                        (None, Some(error.to_string()))
+                    }
+                };
+                if let Some(store) = &event_store {
+                    runtime.wire_capture(std::sync::Arc::clone(store));
+                }
+                let mut events_dropped = 0usize;
+                let harness_run_id = format!("harness-{}-{}", req.agent_name, uuid::Uuid::new_v4());
+
+                let mut task_reports = Vec::with_capacity(req.tasks.len());
+                let mut total_passes = 0usize;
+                let mut total_tokens = 0i64;
+                for (task_index, (task, evaluator)) in req.tasks.iter().zip(&evaluators).enumerate() {
+                    let mut passes = 0usize;
+                    let mut errors = 0usize;
+                    let mut latencies_ms: Vec<u64> = Vec::with_capacity(repeats as usize);
+                    for repeat_index in 0..repeats {
+                        match runtime
+                            .delegate(
+                                &agent,
+                                &task.task,
+                                // Dispatch provenance: the rollout-harness surface —
+                                // outcomes feed agent stats, not C6 blame.
+                                crate::local_runtime::DispatchStamp::new("eval", "eval-rollout")
+                                    .map_err(map_local_swarm_error)?,
+                            )
+                            .await
+                        {
+                            Ok(result) => {
+                                total_tokens += result.tokens_used;
+                                latencies_ms.push(result.latency_ms);
+                                // A repeatable response score, not independent ground truth.
+                                let passed = evaluator.evaluate(&result.response);
+                                if passed {
+                                    passes += 1;
+                                }
+                                // The verdict lands under the executor-assigned
+                                // rollout id so it groups with the
+                                // model_request events the capture path
+                                // already appended for this delegation.
+                                if let (Some(store), Some(rollout_id)) =
+                                    (&event_store, result.rollout_id.as_ref())
+                                {
+                                    let verdict = serde_json::json!({
+                                        "pass": passed,
+                                        "source": hkask_event_store::VerdictSource::DeterministicEvaluator.as_str(),
+                                        "rollout_kind": hkask_event_store::RolloutKind::Delegation.as_str(),
+                                        "evaluator": task.evaluator.evaluator,
+                                        "spec_len": task.evaluator.spec.len(),
+                                        "harness_run_id": harness_run_id,
+                                        "task_index": task_index,
+                                        "repeat_index": repeat_index,
+                                    });
+                                    if let Err(error) =
+                                        store.append(rollout_id, "verdict", &verdict)
+                                    {
+                                        events_dropped += 1;
+                                        tracing::warn!(
+                                            target: "hkask.mcp.swarm",
+                                            rollout = %rollout_id,
+                                            error = %error,
+                                            "event store append failed — verdict not recorded"
+                                        );
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                // A crashed rollout is a failed rollout: the
+                                // pass rate measures end-to-end reliability,
+                                // which includes crashes.
+                                errors += 1;
+                                tracing::warn!(
+                                    target: "hkask.mcp.swarm",
+                                    agent = %req.agent_name,
+                                    error = %e,
+                                    "rollout failed during eval harness run"
+                                );
+                            }
+                        }
+                    }
+                    total_passes += passes;
+                    task_reports.push(eval_task_report(task, repeats as usize, passes, errors, &latencies_ms));
+                }
+                let overall_pass_rate = total_passes as f64 / total_rollouts as f64;
+                // Both drop counters, surfaced: verdict-append failures from
+                // this loop, capture drops (send-side backpressure +
+                // drainer-side append failures) from the runtime. A drop is
+                // never silent.
+                let capture_drops = runtime.capture_drops();
+                // Write a harness_summary event so the zed-side regression
+                // monitor can compare pass rates across runs for the same
+                // agent. The rollout_id is the agent name — this groups all
+                // harness_summary events for one agent under a single
+                // queryable key, so `metric_observation` can find the
+                // before/after values across runs. A write failure is counted
+                // in `events_dropped` — never silent (the failure-signal rule:
+                // a missing summary means the regression monitor is blind,
+                // which must be distinguishable from "no run happened").
+                if let Some(store) = &event_store {
+                    let summary = serde_json::json!({
+                        "agent_name": req.agent_name,
+                        "harness_run_id": harness_run_id,
+                        "overall_pass_rate": overall_pass_rate,
+                        "total_rollouts": total_rollouts,
+                        "total_passes": total_passes,
+                        "task_set_digest": harness_task_set_digest(&req.tasks, repeats),
+                        "rollout_kind": hkask_event_store::RolloutKind::HarnessRun.as_str(),
+                    });
+                    if let Err(error) = store.append(&req.agent_name, "harness_summary", &summary) {
+                        events_dropped += 1;
+                        tracing::warn!(
+                            target: "hkask.mcp.swarm",
+                            agent = %req.agent_name,
+                            error = %error,
+                            "harness_summary event append failed — regression monitor blind to this run"
+                        );
+                    }
+                }
+                // Compaction caller (event-substrate item 2): after each
+                // harness run, drop very old rollouts and surface the count.
+                // A missing count would conflate "nothing old enough" with
+                // "compaction failed", so failures warn and the report retains
+                // an explicit zero.
+                //
+                // Rollout retention: default 7 days (configurable via
+                // `HKASK_SWARM_ROLLOUT_RETENTION_DAYS`).
+                let rollouts_compacted = if let Some(store) = &event_store {
+                    let rollout_retention_days = std::env::var("HKASK_SWARM_ROLLOUT_RETENTION_DAYS")
+                        .ok()
+                        .and_then(|s| s.parse::<i64>().ok())
+                        .unwrap_or(7);
+                    let rollout_cutoff = (chrono::Utc::now()
+                        - chrono::Duration::days(rollout_retention_days))
+                        .to_rfc3339();
+                    match store.compact(&rollout_cutoff) {
+                        Ok(n) => n,
+                        Err(error) => {
+                            tracing::warn!(
+                                target: "hkask.mcp.swarm",
+                                error = %error,
+                                "compact failed after harness run"
+                            );
+                            0
+                        }
+                    }
+                } else {
+                    0
+                };
+                Ok(serde_json::json!({
+                    "agent_name": req.agent_name,
+                    "harness_run_id": harness_run_id,
+                    "tasks": task_reports,
+                    "total_rollouts": total_rollouts,
+                    "total_passes": total_passes,
+                    "overall_pass_rate": overall_pass_rate,
+                    "total_tokens": total_tokens,
+                    "events_dropped": events_dropped,
+                    "capture_drops": capture_drops,
+                    "capture_status": if event_store.is_some() { "available" } else { "unavailable" },
+                    "capture_error": capture_error,
+                    "rollouts_compacted": rollouts_compacted,
+                }))
+            },
+        )
+        .await
+    }
+
+    /// Rung 2 (Typing) post-invocation: validate the agent's output against
+    /// the schema for its `produces` port type (paper's "one artifact, two
+    /// uses"). Returns `Some(ValidationResult)` when the agent declares a
+    /// `produces` port, `None` otherwise.
+    pub(crate) fn validate_produces(
+        &self,
+        agent_id: &str,
+        produces: &[String],
+        response: &str,
+    ) -> Option<crate::schema_validate::StatusValidationResult> {
+        if produces.is_empty() {
+            return None;
+        }
+        let cleaned: serde_json::Value =
+            serde_json::from_str(response).unwrap_or(serde_json::Value::Null);
+        let val = self
+            .local_registry
+            .port_registry()
+            .validate_output(produces, &cleaned);
+        if val.status != crate::schema_validate::ValidationStatus::Valid
+            && val.status != crate::schema_validate::ValidationStatus::NoSchema
+        {
+            tracing::warn!(
+                target: "hkask.swarm.port_registry",
+                agent = %agent_id,
+                produces = ?produces,
+                status = ?val.status,
+                violations = ?val.violations,
+                "Port schema validation failed — agent output does not match its declared produces schema"
+            );
+        }
+        Some(val)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::request_types::{EvalAgentLocalRequest, EvalAgentTask, PlanEvaluator};
+
+    fn task(text: &str, evaluator: &str, spec: &str) -> EvalAgentTask {
+        EvalAgentTask {
+            task: text.to_string(),
+            evaluator: PlanEvaluator {
+                evaluator: evaluator.to_string(),
+                spec: spec.to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn model_params_validation_accepts_partial_explicit_thinking_disable() {
+        let validated = validate_model_params(Some(hkask_types::AnyJsonValue(
+            serde_json::json!({"thinking_allowed": false}),
+        )))
+        .expect("partial parameters validate")
+        .expect("parameters remain present");
+        assert_eq!(validated, serde_json::json!({"thinking_allowed": false}));
+    }
+
+    #[test]
+    fn model_params_validation_rejects_wrong_shape_and_known_field_type() {
+        let wrong_shape =
+            validate_model_params(Some(hkask_types::AnyJsonValue(serde_json::json!([
+                "not", "an", "object"
+            ]))));
+        assert!(wrong_shape.is_err());
+
+        let wrong_type = validate_model_params(Some(hkask_types::AnyJsonValue(
+            serde_json::json!({"thinking_allowed": "false"}),
+        )));
+        assert!(wrong_type.is_err());
+    }
+
+    #[test]
+    fn harness_task_set_digest_identifies_comparable_runs() {
+        let a = vec![task("extract date", "regex", r"\d{4}")];
+        let same = vec![task("extract date", "regex", r"\d{4}")];
+        let changed_spec = vec![task("extract date", "regex", r"\d{2}")];
+        let digest = harness_task_set_digest(&a, 3);
+        assert_eq!(digest, harness_task_set_digest(&same, 3));
+        assert_ne!(digest, harness_task_set_digest(&changed_spec, 3));
+        assert_ne!(
+            digest,
+            harness_task_set_digest(&a, 2),
+            "repeats change the test"
+        );
+    }
+
+    /// expect: "A delegation result distinguishes a card that advertised no
+    /// tools from a card whose advertised tool went uncalled."
+    /// Pins the 2026-10-23 observability fix: `tool_calls: []` was ambiguous
+    /// between "no tools advertised" (which reads as a capability gap —
+    /// often create-time drops) and "the model made no calls"; the
+    /// ambiguity trained instrument avoidance.
+    #[tokio::test]
+    async fn delegation_result_distinguishes_no_tools_advertised_from_no_calls() {
+        let (_call_count, runtime) = discriminative_runtime();
+        let stamp = crate::local_runtime::DispatchStamp::new("test", "test").expect("test stamp");
+
+        // No declared tools: advertised_tools is empty alongside empty
+        // tool_calls — the capability-gap state is now visible as such.
+        let bare = mock_agent_card("bare", "You are a helpful assistant.");
+        let bare_result = runtime
+            .delegate(&bare, "Say hi.", stamp.clone())
+            .await
+            .expect("delegate ok");
+        assert!(
+            bare_result.advertised_tools.is_empty(),
+            "no declared tools — nothing advertised"
+        );
+        assert!(bare_result.tool_calls.is_empty());
+
+        // Declared and advertised tool, model makes no calls:
+        // advertised_tools is non-empty while tool_calls stays empty —
+        // the two states are no longer indistinguishable.
+        let mut equipped = mock_agent_card("equipped", "You are a helpful assistant.");
+        equipped.capabilities.mcp_tools = vec!["fixture/lookup".to_string()];
+        let equipped_result = runtime
+            .delegate(&equipped, "Say hi.", stamp.clone())
+            .await
+            .expect("delegate ok");
+        assert_eq!(
+            equipped_result.advertised_tools,
+            vec!["fixture/lookup".to_string()],
+            "the declared tool resolved and was advertised"
+        );
+        assert!(equipped_result.tool_calls.is_empty());
+    }
+
+    /// expect: "Create-time mcp_tools drops surface in every delegation
+    /// result, not only in the operator's log."
+    #[tokio::test]
+    async fn delegation_result_reports_create_time_dropped_mcp_tools() {
+        let (_call_count, runtime) = discriminative_runtime();
+        let stamp = crate::local_runtime::DispatchStamp::new("test", "test").expect("test stamp");
+        let mut agent = mock_agent_card("dropped", "You are a helpful assistant.");
+        agent.capabilities.dropped_mcp_tools = vec![crate::sanitize::DroppedTool {
+            tool: "host/skill".to_string(),
+            reason: "host/* tools are granted via the card's skills declaration, not mcp_tools — declare a skill to receive the host quartet".to_string(),
+        }];
+        let result = runtime
+            .delegate(&agent, "Say hi.", stamp)
+            .await
+            .expect("delegate ok");
+        assert_eq!(result.mcp_tools_dropped.len(), 1);
+        assert_eq!(result.mcp_tools_dropped[0].tool, "host/skill");
+        assert!(
+            result.mcp_tools_dropped[0]
+                .reason
+                .contains("skills declaration")
+        );
+    }
+
+    #[test]
+    fn eval_task_report_computes_pass_rate_and_std_error() {
+        let t = task("summarize", "contains", "done");
+        let report = eval_task_report(&t, 4, 2, 2, &[100, 200, 300, 500]);
+        assert_eq!(report["repeats"], 4);
+        assert_eq!(report["passes"], 2);
+        assert_eq!(report["errors"], 2);
+        assert_eq!(report["pass_rate"].as_f64().unwrap(), 0.5);
+        // sqrt(0.5 * 0.5 / 4) = 0.25
+        assert_eq!(report["pass_rate_std_error"].as_f64().unwrap(), 0.25);
+        assert_eq!(report["mean_latency_ms"], 275);
+    }
+
+    #[test]
+    fn eval_task_report_counts_errors_as_failures() {
+        // A crashed rollout is a failed rollout: 1 pass + 2 errors = 1/3.
+        let t = task("t", "contains", "x");
+        let report = eval_task_report(&t, 3, 1, 2, &[50]);
+        assert_eq!(report["repeats"], 3);
+        let rate = report["pass_rate"].as_f64().unwrap();
+        assert!((rate - 1.0 / 3.0).abs() < 1e-12);
+    }
+
+    /// The observed-seams data plane: edges written by
+    /// `record_delegation_edge` must be queryable by kind with the payload
+    /// shape intact — the read tool's aggregation is only as good as this
+    /// round trip. A payload-shape drift between writer and reader would
+    /// silently produce empty reports (the vacuity fermi's
+    /// `the_seam_comparison_can_see_a_match` guard exists to prevent).
+    #[test]
+    fn delegation_edges_round_trip_through_the_event_store() {
+        let dir = tempfile::tempdir().expect("dir");
+        let store = crate::local_runtime::LazyEventStore::lazy(
+            dir.path().join("events.db").to_string_lossy().to_string(),
+        );
+        record_delegation_edge(&store, "pipeline-1", "research", "writer", "pipeline");
+        record_delegation_edge(&store, "pipeline-1", "research", "writer", "pipeline");
+        record_delegation_edge(&store, "workflow-2", "research", "critic", "workflow");
+        let opened = store.get_or_init().expect("event store opens");
+        let events = opened
+            .query(&hkask_event_store::EventFilter {
+                kind: Some(DELEGATION_EDGE_EVENT_KIND.to_string()),
+                ..Default::default()
+            })
+            .expect("query by kind");
+        assert_eq!(events.len(), 3, "every edge is queryable by kind");
+        let first = &events[0];
+        assert_eq!(first.rollout_id, "pipeline-1");
+        assert_eq!(
+            first.payload.get("from_agent").and_then(|v| v.as_str()),
+            Some("research")
+        );
+        assert_eq!(
+            first.payload.get("to_agent").and_then(|v| v.as_str()),
+            Some("writer")
+        );
+        assert_eq!(
+            first.payload.get("via").and_then(|v| v.as_str()),
+            Some("pipeline")
+        );
+        // A non-edge event in the same store must not leak into the report.
+        opened
+            .append("other-rollout", "model_request", &serde_json::json!({}))
+            .expect("append unrelated event");
+        let only_edges = opened
+            .query(&hkask_event_store::EventFilter {
+                kind: Some(DELEGATION_EDGE_EVENT_KIND.to_string()),
+                ..Default::default()
+            })
+            .expect("query again");
+        assert_eq!(only_edges.len(), 3, "the kind filter is exact");
+    }
+
+    #[test]
+    fn eval_task_report_single_attempt_has_no_std_error() {
+        // n = 1: the standard error of one observation is undefined, not 0 —
+        // 0 would claim certainty the sample cannot support.
+        let t = task("t", "contains", "x");
+        let report = eval_task_report(&t, 1, 1, 0, &[42]);
+        assert_eq!(report["pass_rate"], 1.0);
+        assert!(report["pass_rate_std_error"].is_null());
+    }
+
+    #[test]
+    fn eval_task_report_zero_attempts_is_nan_not_zero() {
+        // Unreachable via the tool (repeats >= 1 enforced), but the pure
+        // function must not fabricate a 0.0 pass rate if ever reached.
+        let t = task("t", "contains", "x");
+        let report = eval_task_report(&t, 0, 0, 0, &[]);
+        assert!(report["pass_rate"].is_null());
+        assert!(report["mean_latency_ms"].is_null());
+    }
+
+    #[test]
+    fn run_evaluator_rejects_unknown_kind() {
+        let err = run_evaluator("resp", "jsonpath", "$.x").unwrap_err();
+        assert!(err.to_string().contains("jsonpath"));
+    }
+
+    #[test]
+    fn run_evaluator_contains_and_regex() {
+        assert!(run_evaluator("hello world", "contains", "world").unwrap());
+        assert!(!run_evaluator("hello world", "not_contains", "world").unwrap());
+        assert!(run_evaluator("a1b2", "regex", "[0-9]").unwrap());
+        // Invalid regex must error, not stamp pass:false (false fault
+        // attribution — the agent would be blamed for a bad evaluator).
+        assert!(run_evaluator("x", "regex", "(").is_err());
+    }
+
+    #[test]
+    fn eval_request_defaults_and_caps() {
+        // Deserialization-level contract: repeats is optional, tasks carry a
+        // required evaluator (an unmeasurable task is rejected at the schema,
+        // not silently counted as neither pass nor fail).
+        let raw = serde_json::json!({
+            "agent_name": "researcher",
+            "tasks": [{
+                "task": "do the thing",
+                "evaluator": { "evaluator": "contains", "spec": "ok" }
+            }]
+        });
+        let req: EvalAgentLocalRequest = serde_json::from_value(raw).unwrap();
+        assert_eq!(req.repeats, None);
+        assert_eq!(req.tasks.len(), 1);
+        assert_eq!(req.tasks[0].evaluator.evaluator, "contains");
+        // A task without an evaluator must fail to deserialize.
+        let bad = serde_json::json!({
+            "agent_name": "researcher",
+            "tasks": [{ "task": "t" }]
+        });
+        assert!(serde_json::from_value::<EvalAgentLocalRequest>(bad).is_err());
+    }
+
+    #[test]
+    fn run_evaluator_rejects_unknown_kind_mentions_all_kinds() {
+        // The error message must name all valid evaluator kinds so the
+        // operator knows what's available without reading the source.
+        let err = run_evaluator("resp", "bogus", "x").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("contains"));
+        assert!(msg.contains("not_contains"));
+        assert!(msg.contains("regex"));
+    }
+
+    // ── Discriminative power probe (event-substrate item 4) ───────────
+    //
+    // The 27/27 probe validated structural task sharing across cards, not
+    // that the task set can distinguish good from bad agents. This probe runs
+    // two agents with different system prompts through the real delegate +
+    // evaluator path (mock inference, real evaluator) and verifies the harness
+    // produces non-trivial, divergent pass rates — the harness actually
+    // measures something, not just noise.
+
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// The canned mock answer the local-tools doubles return — text from
+    /// the double, model "mock", single-token usage.
+    fn mock_result(text: String) -> hkask_types::InferenceResult {
+        hkask_types::InferenceResult {
+            text,
+            model: "mock".into(),
+            usage: hkask_types::InferenceUsage {
+                prompt_tokens: 1,
+                completion_tokens: 1,
+                total_tokens: 2,
+                reported: true,
+            },
+            finish_reason: "stop".into(),
+            tool_calls: vec![],
+            reasoning: None,
+            cost_usd: None,
+        }
+    }
+
+    /// The DiscriminativeInference runtime fixture the evaluator-harness
+    /// and no-budget tests share: a runtime over the discriminative double
+    /// and NoopDispatch, with the call counter returned for assertions.
+    fn discriminative_runtime() -> (Arc<AtomicUsize>, crate::local_runtime::LocalSwarmRuntime) {
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let inference: Arc<dyn hkask_types::InferencePort> = Arc::new(DiscriminativeInference {
+            call_count: call_count.clone(),
+        });
+        let dispatch: Arc<dyn hkask_types::ToolDispatchPort> = Arc::new(NoopDispatch);
+        let runtime = crate::local_runtime::LocalSwarmRuntime::new_for_test(
+            inference,
+            dispatch,
+            String::new(),
+        );
+        (call_count, runtime)
+    }
+
+    /// Mock inference that returns different responses based on the system
+    /// prompt embedded in the prompt text. An agent whose system prompt
+    /// contains respond correctly gets the right answer; everyone else gets
+    /// a wrong one. This models a real capability gap without a real model.
+    struct DiscriminativeInference {
+        call_count: Arc<AtomicUsize>,
+    }
+
+    crate::test_support::inference_generate! {
+        DiscriminativeInference,
+        generate(self, prompt, _parameters, _tools): {
+            self.call_count.fetch_add(1, Ordering::Relaxed);
+            let text = if prompt.contains("respond correctly") {
+                "42".to_string()
+            } else {
+                "I dont know".to_string()
+            };
+            Box::pin(async move { Ok(mock_result(text)) })
+        }
+    }
+
+    crate::test_support::allowed_dispatch! {
+        NoopDispatch,
+        "Fixture tool",
+        serde_json::json!({"type": "object"}),
+        invoke: |_server, _tool, _args, _allowlist| { Ok(serde_json::json!({})) }
+    }
+
+    fn mock_agent_card(agent_id: &str, system_prompt: &str) -> LocalAgentCard {
+        LocalAgentCard {
+            agent_id: agent_id.to_string(),
+            agent_type: "local".to_string(),
+            description: "test agent".to_string(),
+            display_name: agent_id.to_string(),
+            accepts: vec![],
+            produces: vec![],
+            dependencies: LocalAgentDependencies::default(),
+            capabilities: LocalAgentCapabilities {
+                model: "mock".to_string(),
+                system_prompt: Some(system_prompt.to_string()),
+                mcp_tools: vec![],
+                dropped_mcp_tools: Vec::new(),
+                skills: vec![],
+                output_contract: None,
+                input_contract: None,
+                temperature: None,
+                model_params: None,
+                evaluators: vec![],
+                reasoning: false,
+            },
+            tags: vec![],
+            visibility: String::new(),
+            sample_queries: vec![],
+            valence: None,
+            version: "1.0.0".to_string(),
+            workflow_template: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn harness_distinguishes_good_from_bad_agent() {
+        // Two agents with different system prompts. The mock inference
+        // returns 42 when the system prompt says respond correctly, and
+        // a wrong answer otherwise. A task asking for 6x7 with evaluator
+        // contains 42 should pass for the good agent and fail for the bad
+        // one — non-trivial, divergent pass rates confirm the harness
+        // measures something.
+        let (call_count, runtime) = discriminative_runtime();
+
+        let good_agent = mock_agent_card(
+            "good",
+            "You are a helpful assistant. Always respond correctly.",
+        );
+        let bad_agent = mock_agent_card("bad", "You are a confused assistant.");
+
+        let good_result = runtime
+            .delegate(
+                &good_agent,
+                "What is 6 times 7?",
+                crate::local_runtime::DispatchStamp::new("test", "test").expect("test stamp"),
+            )
+            .await
+            .unwrap();
+        let bad_result = runtime
+            .delegate(
+                &bad_agent,
+                "What is 6 times 7?",
+                crate::local_runtime::DispatchStamp::new("test", "test").expect("test stamp"),
+            )
+            .await
+            .unwrap();
+
+        // The good agent passes; the bad agent fails.
+        assert!(
+            run_evaluator(&good_result.response, "contains", "42").unwrap(),
+            "good agent should produce the correct answer"
+        );
+        assert!(
+            !run_evaluator(&bad_result.response, "contains", "42").unwrap(),
+            "bad agent should NOT produce the correct answer"
+        );
+
+        // Non-trivial: both agents ran real inference (not short-circuited).
+        assert!(
+            call_count.load(Ordering::Relaxed) >= 2,
+            "both agents must have called inference"
+        );
+    }
+
+    /// Local delegation has no budget at all — the one cloud pattern that
+    /// must NOT translate to local mode (operator ruling 2026-09-04).
+    #[tokio::test]
+    async fn local_delegation_has_no_budget() {
+        let (_call_count, runtime) = discriminative_runtime();
+
+        let agent = mock_agent_card(
+            "good",
+            "You are a helpful assistant. Always respond correctly.",
+        );
+        let result = runtime
+            .delegate(
+                &agent,
+                "What is 6 times 7?",
+                crate::local_runtime::DispatchStamp::new("test", "test").expect("test stamp"),
+            )
+            .await
+            .expect("local delegation needs no budget");
+        assert!(!result.response.is_empty());
+    }
+
+    struct FixedDocument;
+
+    crate::test_support::inference_generate! {
+        FixedDocument,
+        generate(self, _prompt, _parameters, _tools): {
+            Box::pin(async { Ok(mock_result(r#"{"price":42}"#.into())) })
+        }
+    }
+
+    #[tokio::test]
+    async fn delegate_does_not_return_trust_labels_but_keeps_schema_checks() {
+        let mut agent = mock_agent_card("contracted", "Return JSON.");
+        agent.capabilities.output_contract = Some(serde_json::json!({
+            "schema": {"type":"object", "required":["price"],
+                       "properties":{"price":{"type":"number"}}},
+            "grounding": {"price":{"status":"sourced"}}
+        }));
+        let runtime = crate::local_runtime::LocalSwarmRuntime::new_for_test(
+            Arc::new(FixedDocument),
+            Arc::new(NoopDispatch),
+            String::new(),
+        );
+        let result = runtime
+            .delegate(
+                &agent,
+                "price?",
+                crate::local_runtime::DispatchStamp::new("test", "test").expect("test stamp"),
+            )
+            .await
+            .expect("injected delegation runs");
+        assert_eq!(result.response, r#"{"price":42}"#);
+        assert_eq!(
+            result
+                .output_contract_check
+                .as_ref()
+                .expect("schema checked")["status"],
+            "valid"
+        );
+        for wire in [
+            serde_json::to_value(&result).expect("serialize result"),
+            result.to_result_json(true),
+        ] {
+            for field in ["grounding", "completeness", "reliance"] {
+                assert!(
+                    wire.get(field).is_none(),
+                    "unsupported label {field} must not travel"
+                );
+            }
+        }
+        assert!(
+            result.task_success.is_none(),
+            "completion is not evaluation"
+        );
+    }
+
+    /// Pin the configured model through the actual local delegation path,
+    /// including explicit-card precedence and an unchanged empty card.
+    #[tokio::test]
+    async fn delegate_inherits_swarm_model_without_stamping_card() {
+        struct ModelRecorder(std::sync::Mutex<Vec<Option<String>>>);
+
+        impl hkask_types::InferencePort for ModelRecorder {
+            fn generate(
+                &self,
+                _prompt: &str,
+                _parameters: &hkask_types::LLMParameters,
+                _tools: Option<&[hkask_types::ChatToolDefinition]>,
+            ) -> Pin<
+                Box<
+                    dyn Future<
+                            Output = Result<
+                                hkask_types::InferenceResult,
+                                hkask_types::InferenceError,
+                            >,
+                        > + Send
+                        + '_,
+                >,
+            > {
+                Box::pin(async {
+                    Ok(hkask_types::InferenceResult {
+                        text: "ok".into(),
+                        model: "mock".into(),
+                        usage: Default::default(),
+                        finish_reason: "stop".into(),
+                        tool_calls: vec![],
+                        reasoning: None,
+                        cost_usd: None,
+                    })
+                })
+            }
+
+            fn generate_with_messages(
+                &self,
+                _messages: &[hkask_types::ChatMessage],
+                _parameters: &hkask_types::LLMParameters,
+                model_override: Option<&str>,
+                _tools: Option<&[hkask_types::ChatToolDefinition]>,
+            ) -> Pin<
+                Box<
+                    dyn Future<
+                            Output = Result<
+                                hkask_types::InferenceResult,
+                                hkask_types::InferenceError,
+                            >,
+                        > + Send
+                        + '_,
+                >,
+            > {
+                self.0
+                    .lock()
+                    .expect("recorder lock")
+                    .push(model_override.map(str::to_string));
+                Box::pin(async {
+                    Ok(hkask_types::InferenceResult {
+                        text: "ok".into(),
+                        model: "mock".into(),
+                        usage: Default::default(),
+                        finish_reason: "stop".into(),
+                        tool_calls: vec![],
+                        reasoning: None,
+                        cost_usd: None,
+                    })
+                })
+            }
+        }
+
+        let inference = Arc::new(ModelRecorder(std::sync::Mutex::new(Vec::new())));
+        let runtime = crate::local_runtime::LocalSwarmRuntime::new_for_test(
+            inference.clone(),
+            Arc::new(NoopDispatch),
+            "Configured/swarm-model".to_string(),
+        );
+        let mut card = mock_agent_card("inheriting", "You answer briefly.");
+        card.capabilities.model.clear();
+        runtime
+            .delegate(
+                &card,
+                "hello",
+                crate::local_runtime::DispatchStamp::new("test", "test").expect("test stamp"),
+            )
+            .await
+            .expect("inherited model runs");
+        assert!(
+            card.capabilities.model.is_empty(),
+            "the card remains unpinned"
+        );
+        card.capabilities.model = "Explicit/card-model".to_string();
+        runtime
+            .delegate(
+                &card,
+                "hello",
+                crate::local_runtime::DispatchStamp::new("test", "test").expect("test stamp"),
+            )
+            .await
+            .expect("explicit model runs");
+        assert_eq!(
+            inference.0.lock().expect("recorder lock").as_slice(),
+            &[
+                Some("Configured/swarm-model".to_string()),
+                Some("Explicit/card-model".to_string())
+            ],
+        );
+    }
+}

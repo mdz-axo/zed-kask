@@ -1,0 +1,44 @@
+[package]
+name = "hkask-mcp-scenarios"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Scenario planning MCP server — MAIA event-tree forecasting with Fermi decomposition and Bayesian calibration"
+
+[lib]
+name = "hkask_mcp_scenarios"
+path = "src/hkask_mcp_scenarios.rs"
+
+[[bin]]
+name = "hkask-mcp-scenarios"
+path = "src/main.rs"
+
+[dependencies]
+hkask-mcp-server.workspace = true
+hkask-bridge-ontology.workspace = true
+hkask-types.workspace = true
+rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+tempfile.workspace = true
+hkask-forecast.workspace = true
+hkask-mcp-prediction-markets.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+# tool_behavior.rs drives the real tool surface end-to-end through Parameters<T>;
+# property_tests.rs is the layer-2 property suite over the pure event-tree math.
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+proptest = { workspace = true }
+
+[lints]
+workspace = true
+
+
+[build-dependencies]
+regex.workspace = true

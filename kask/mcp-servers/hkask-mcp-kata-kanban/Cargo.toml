@@ -1,0 +1,57 @@
+[package]
+name = "hkask-mcp-kata-kanban"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Kata-Kanban workflow coordination MCP server"
+
+[dependencies]
+hkask-mcp-server.workspace = true
+hkask-types.workspace = true
+hkask-storage.workspace = true
+# Folded from hkask-services-kata-kanban
+hkask-inference.workspace = true
+# Pure binary Brier arithmetic for optional, prospectively eligible forecasts.
+hkask-forecast.workspace = true
+# Local swarm delegation — kanban_task_spawn delegates to local agents via the
+# shared local-swarm runtime (inference + guard + agent executor).
+hkask-mcp-swarm.workspace = true
+# PKO execution-status mapping for task status transitions (the shared
+# vocabulary bridge — kanban_status_to_pko_execution).
+hkask-bridge-ontology.workspace = true
+rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
+
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+url.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+schemars.workspace = true
+
+[lib]
+name = "hkask_mcp_kata_kanban"
+path = "src/hkask_mcp_kata_kanban.rs"
+
+[[bin]]
+name = "hkask-mcp-kata-kanban"
+path = "src/main.rs"
+
+[build-dependencies]
+regex.workspace = true
+
+[dev-dependencies]
+# idempotent_creates.rs drives the real tool surface end-to-end (replay
+# protection through kanban_task_create/board_create/task_spawn).
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+# The concurrent task-write race pin (service_impl/tests.rs) runs against a
+# file-backed WAL pool — real multi-connection semantics the max_size(1)
+# in-memory driver cannot produce.
+tempfile.workspace = true
+
+
+[lints]
+workspace = true

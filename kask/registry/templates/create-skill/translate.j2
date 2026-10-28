@@ -1,0 +1,88 @@
+{# goal: Translate a classified source skill from another agent system into a SKILL.md body plus .j2 templates under the same artifact contract, marking concepts with no kask equivalent as unresolved. #}
+[inference]
+contract:
+  input:
+    source_skill: object
+    target_domain: string
+  output:
+    sk_body: string
+    template_bodies: array
+    translation_summary: object
+---
+
+You are a skill translator. Convert the classified source skill below into
+the kask format, following the "From a source skill" entry of the create-skill SKILL.md body -
+that body is the authoritative process.
+A kask skill is exactly two artifacts: a SKILL.md body and .j2 templates.
+Do NOT translate into manifests of any kind — the manifest format is
+deprecated in agent-facing code (operator ruling 2026-09-09).
+
+## Source Skill
+
+```json
+{{ source_skill | tojson }}
+```
+
+## Target Domain
+
+{{ target_domain }}
+
+## Translation mapping
+
+1. **Process steps → SKILL.md instruction steps.** Map the source skill's
+   process steps to numbered, tool-oriented instructions in the SKILL.md
+   body. The body carries the skill's core PDCA loop (named Check signal,
+   threshold, bound, Act re-entry); templates are leaves of that loop.
+
+2. **Tool calls → kask tools:**
+   - Deterministic computation → `lisp_eval`
+   - Data retrieval → the appropriate MCP tool
+   - Skill composition → the `skill` tool
+   - Prompt rendering → `render_template`
+   - File operations → `read_file`, `write_file`, `edit_file`
+
+3. **Reasoning steps → .j2 templates.** For each reasoning step that needs a
+   structured prompt, generate a template with a `{% raw %}{# goal: ... #}{% endraw %}` first
+   line stamped verbatim from the SKILL.md's Registry Templates row, an
+   `[inference]` contract header terminated by a lone `---`, Jinja2
+   variables matching the contract inputs, and an expected JSON output shape.
+
+4. **Unresolvable concepts → explicit markers.** Mark any source concept
+   with no kask equivalent as `[unresolved: no kask equivalent for
+   <source_ref>]`. Never silently drop a concept and never improvise a
+   substitute.
+
+5. **Frontmatter discipline.** The generated SKILL.md frontmatter carries
+   `name` and `description` only — no `visibility` field, no manifest keys,
+   no steps dispatch structure.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "sk_body": "<complete SKILL.md markdown content>",
+  "template_bodies": [
+    { "path": "<basename>.j2", "content": "<complete .j2 content>" }
+  ],
+  "translation_summary": {
+    "steps_mapped": 0,
+    "tools_mapped": 0,
+    "source_steps": 0,
+    "unresolved_concepts": ["[unresolved: ...] markers, if any"]
+  }
+}
+```
+
+## Constraints
+
+- The SKILL.md body is the primary deliverable; templates are companions.
+- Preserve the source skill's process semantics — translation, not revision.
+- Do not generate manifest.yaml, process manifests, `input_mapping`,
+  `ordinal`, `compute_ref`, or `step_N_result` references.
+- Every `[unresolved: ...]` marker must name the source concept it carries.
+- Report counts, not verdicts: `source_steps` is the number of process steps
+  in the source skill, `steps_mapped` the number carried into the body. The
+  caller reconciles `source_steps = steps_mapped + len(unresolved_concepts)`
+  with `lisp_eval`; do not assert that nothing was dropped.

@@ -1,0 +1,150 @@
+[inference]
+contract:
+  input:
+    statement: string
+    system_context: string
+  output:
+    ontological_mode: string
+    epistemic_mode: string
+    ontology_tier: string
+    ontology_anchor: string
+    constraint_force: string
+    provenance: string
+    base_confidence: number
+    spec_checked: boolean
+    reasoning: string
+---
+{# goal: Classify a statement by ontological mode (IS/OUGHT), epistemic certainty, domain ontology anchoring, constraint force, and provenance tier. #}
+
+You are a pragmatic semantics classifier. Classify a statement on three axes — ontological (IS/OUGHT), epistemic (certainty level), and domain ontology anchoring (which tier of the 3-tier ontology architecture) — and determine its constraint force and provenance. This classification determines how the statement should be treated in reasoning, conflict resolution, and system governance.
+
+## Axis 1: Ontological Mode
+
+| Mode | Description | Example |
+|------|------------|---------|
+| **IS** | Descriptive claim about how things are | "SQLCipher encrypts data at rest" |
+| **OUGHT** | Prescriptive claim about how things should be | "All PII must be encrypted at rest" |
+
+## Axis 2: Epistemic Mode
+
+| Mode | Certainty | Description | Example |
+|------|-----------|-------------|---------|
+| **Declarative** | High | Asserted as fact, verifiable | "The keystore uses AES-256-GCM" |
+| **Probabilistic** | Medium | Asserted with uncertainty qualifier | "This approach likely reduces latency" |
+| **Subjunctive** | Low | Conditional, hypothetical, counterfactual | "If we migrated to X, then Y would follow" |
+
+## Axis 3: Domain Ontology Anchoring
+
+Every statement in hKask exists within a 3-tier ontology architecture. The tier determines the confidence baseline — different ontologies carry different precision expectations.
+
+| Tier | Ontology | Scope | Confidence Baseline |
+|------|----------|-------|--------------------|
+| **core** | 5W1H (Who, What, When, Where, Why, How) | Universal — every artifact must answer at least one | Default ground — no domain precision assumed |
+| **dual_axis** | PKO (process) + DC+BIBO (state) | Cross-cutting — every MCP server depends on both axes | Standard — process/entity semantics are well-defined |
+| **domain_supplement** | GOLEM, SUMO, ML-Schema, OMC | Server-local — layered where DC+BIBO is insufficient | Variable — depends on the supplement's adoption and mapping fidelity |
+
+### Tier-Specific Confidence Modifiers
+
+Reference only — these modifiers are applied by the `PS-1` `lisp_eval` gate after Step 2 `onto_anchor` resolution, never by this template. Emit `base_confidence` unadjusted.
+
+| Domain Supplement | Confidence Modifier (applied by `PS-1`) | Rationale |
+|-----------------|--------------------|-----------|
+| **SUMO** (upper ontology) | +0.03 | Actively maintained upper ontology (Ontology Portal), broad coverage — formal categorization for unknown domains |
+| **GOLEM** (narrative) | ±0.00 | ERC-funded academic ontology, aligned with CIDOC-CRM — well-defined but domain-narrow |
+| **ML-Schema** (ML experiments) | ±0.00 | W3C Community Group — provisional bridge |
+| **OMC** (media creation) | ±0.00 | MovieLabs v2.8 standard, Hollywood consortium — domain-specific but well-adopted |
+
+### Dual-Axis Awareness
+
+Every statement has both a process identity (PKO) and a state identity (DC+BIBO). A statement anchored only to one axis is incomplete. When classifying, identify BOTH if possible:
+- **Process axis:** What procedure/step/execution/status-transition? (e.g., pko:StepExecution, pko:ChangeOfStatus)
+- **State axis:** What entity/resource/type? (e.g., bibo:Article, dcmitype:Dataset)
+
+## Constraint Force Mapping
+
+After classifying on all three axes, determine the constraint force:
+
+| Force | When It Applies |
+|-------|---------------|
+| Prohibition | OUGHT + Declarative + inviolable |
+| Guardrail | OUGHT + Declarative + consent-gated |
+| Guideline | OUGHT + Probabilistic |
+| Evidence | IS + Declarative |
+| Hypothesis | IS + Subjunctive |
+
+## Provenance Classification
+
+| Source | Description |
+|--------|------------|
+| **Specification** | From hKask architecture docs, PRINCIPLES.md, MDS.md |
+| **Design** | From design docs — architecture specs, DIVERGENCE.md, interface specs |
+| **Implementation** | From code — crates, structs, functions, tests |
+| **Runtime** | From runtime — Regulation spans, logs, metrics |
+| **Memory** | From consolidated experience — episodic/semantic memory |
+| **Inference** | Derived by reasoning from other sources |
+| **External** | From outside hKask (papers, standards, external docs) |
+| **Unknown** | Source cannot be determined |
+
+## Statement to Classify
+
+{{ statement }}
+
+{% if system_context %}
+## System Context
+
+{{ system_context }}
+{% endif %}
+
+## Examples
+
+Illustrative classification shapes only: their source locations and confidence values are not evidence of a checked repository or live tool result. Verify any such source before reusing its confidence.
+
+Statement: "The keystore encrypts all secrets at rest using AES-256-GCM."
+System Context: "hKask keystore implementation"
+{"ontological_mode":"IS","epistemic_mode":"declarative","ontology_tier":"core","ontology_anchor":"5w1h:What","constraint_force":"Evidence","provenance":"implementation","base_confidence":0.95,"spec_checked":false,"reasoning":"Descriptive claim about how the keystore works (IS). Asserted as verifiable fact (declarative). 5W1H core tier — describes What the keystore does, no domain supplement applies. Maps to Evidence since it's an IS-Declarative statement. Provenance is implementation — from the code. High base confidence because this is a concrete technical claim."}
+
+Statement: "All PII must be encrypted at rest and in transit."
+System Context: "hKask PRINCIPLES.md — P1 User Sovereignty"
+{"ontological_mode":"OUGHT","epistemic_mode":"declarative","ontology_tier":"core","ontology_anchor":"5w1h:Why","constraint_force":"Prohibition","provenance":"specification","base_confidence":0.85,"spec_checked":true,"reasoning":"Prescriptive requirement (OUGHT) stated as inviolable ('must'). 5W1H core tier — describes Why (motivation from P1). Maps to Prohibition — violating PII encryption breaks user sovereignty. Specification provenance from PRINCIPLES.md, verified current."}
+
+Statement: "The server processed 12,483 requests in the last hour."
+System Context: "a monitoring tool output"
+{"ontological_mode":"IS","epistemic_mode":"declarative","ontology_tier":"domain_supplement","ontology_anchor":"qb:Observation","constraint_force":"Evidence","provenance":"runtime","base_confidence":0.75,"spec_checked":false,"reasoning":"Descriptive measurement (IS) from tool output (declarative). RDF Data Cube domain supplement — a measured operational value is an Observation, the published statistical-data vocabulary's concept for a measured datum. Emits unadjusted base_confidence (0.75) before Step 2 onto_anchor modifier is applied via lisp_eval."}
+
+Statement: "The agent encoded the experience and is now consolidating it to semantic memory."
+System Context: "hkask-memory — episodic consolidation status"
+{"ontological_mode":"IS","epistemic_mode":"declarative","ontology_tier":"domain_supplement","ontology_anchor":"sumo:Process","constraint_force":"Evidence","provenance":"runtime","base_confidence":0.75,"spec_checked":false,"reasoning":"Descriptive observation (IS) from memory-system status (declarative). SUMO domain supplement — Process is an upper-ontology concept. Emits unadjusted base_confidence (0.75) before Step 2 onto_anchor modifier is applied via lisp_eval."}
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "ontological_mode": "IS|OUGHT",
+  "epistemic_mode": "declarative|probabilistic|subjunctive",
+  "ontology_tier": "core|dual_axis|domain_supplement",
+  "ontology_anchor": "5w1h:Who|5w1h:What|5w1h:When|5w1h:Where|5w1h:Why|5w1h:How|pko:<ConceptName>|bibo:<ConceptName>|dcterms:<ConceptName>|golem:<ConceptName>|sumo:<ConceptName>|mls:<ConceptName>|omc:<ConceptName>|unanchored",
+  "constraint_force": "Prohibition|Guardrail|Guideline|Evidence|Hypothesis",
+  "provenance": "specification|design|implementation|runtime|memory|inference|external|unknown",
+  "base_confidence": 0.0,
+  "spec_checked": false,
+  "reasoning": "Step-by-step reasoning for each classification axis, including ontology tier justification and whether the specification was checked"
+}
+```
+
+`base_confidence` ranges from 0.0 to 1.0 (unadjusted base confidence before `onto_anchor` modifiers; prevents double-counting ontology modifiers before Step 2 runs). `spec_checked` is `true` only when the named specification was actually verified as current.
+
+## Constraints
+
+- IS-statements are never Prohibitions — only OUGHT-statements can be Prohibitions.
+- Declarative OUGHT-statements map to Prohibition or Guardrail (never Hypothesis).
+- Subjunctive statements map to Hypothesis unless strong evidence upgrades them.
+- If provenance is Unknown, confidence must be ≤ 0.3.
+- Apply the Specification confidence floor only when the named specification and its current applicability have actually been checked; a path supplied as context is not verification. Otherwise mark provenance as unknown and do not apply the floor or ontology boost to compensate for missing evidence.
+- Do NOT apply ontology confidence modifiers here. Emit `base_confidence` unadjusted; the `PS-1` `lisp_eval` gate applies the domain-supplement (+0.05), SUMO (+0.03), checked-specification (+0.05), and unanchored (−0.10) modifiers after Step 2 `onto_anchor` resolution. Applying them here double-counts them.
+- Unanchored statements (no ontology tier): flag as ontological noise per P5.2 in `reasoning`; the confidence reduction itself is applied by `PS-1`, not here.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
+- Handle missing variables gracefully (leave as-is or use default if specified).
+

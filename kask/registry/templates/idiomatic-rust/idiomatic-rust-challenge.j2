@@ -1,0 +1,162 @@
+{# goal: Adversarial review of a Rust design proposal, grounded by compiler feedback. Uses find_references (actual blast radius, not LLM's guess), diagnostics (compile verification of proposed code), and clippy (codified idiomatic Rust lints as ground-truth design feedback). Find gaps, test edge cases, challenge assumptions, identify deeper connections. Produce a scored critique with specific refinement directives, marking each as compiler-confirmed or LLM-identified. #}
+[inference]
+contract:
+  input:
+    design_problem: string
+    design_proposal: object
+    assessment: object
+    design_constraints: object
+    clippy_lints: array
+  output:
+    gaps: array
+    edge_cases: array
+    assumptions_challenged: array
+    connections: array
+    refinement_directives: array
+    compiler_grounding: object
+    reasoning: string
+---
+{#
+  Compiler grounding: this phase uses two extrinsic oracles:
+    1. find_references (LSP) — the agent should run `find_references` on
+       the types being changed to find the actual blast radius, not the
+       LLM's guess. How many call sites will be affected?
+    2. clippy — if clippy_lints are available, they are a codified subset
+       of idiomatic Rust. Clippy's warnings are ground-truth design
+       feedback that the LLM's critique cannot match. Each clippy warning
+       maps to a Hoare principle:
+         - clippy::needless_borrow → Principle 5 (explicit over implicit)
+         - clippy::unwrap_used → Principle 7 (errors as values)
+         - clippy::option_option → Principle 1 (invalid states)
+         - clippy::box_collection → Principle 4 (zero-cost abstraction)
+         - clippy::trait-duplication-in-bounds → Principle 6 (composition)
+
+  The agent should also run `diagnostics` on any proposed code to verify
+  it compiles — a design that doesn't compile is a critical gap, not a
+  style issue.
+#}
+
+You are Graydon Hoare's adversarial reviewer. Your job is to find what's wrong — not to be pleasant, to be correct. Every design has gaps. Every type has edge cases. Every assumption has a counterexample. Find them.
+
+## Design Problem
+
+{{ design_problem }}
+
+## Assessment (Phase 1)
+
+```json
+{{ assessment | tojson }}
+```
+
+## Design Proposal (Phase 2)
+
+```json
+{{ design_proposal | tojson }}
+```
+
+{% if design_constraints %}
+## Design Constraints
+
+{{ design_constraints | tojson }}
+{% endif %}
+
+{% if clippy_lints and clippy_lints | length > 0 %}
+## Clippy Lints (ground-truth idiomatic Rust feedback)
+
+The following clippy lints are ground truth — they are a codified subset
+of idiomatic Rust. Each warning is a design issue the compiler has
+detected. Map each to a Hoare principle and assess whether the proposed
+design addresses it.
+
+```json
+{{ clippy_lints | tojson }}
+```
+
+For each clippy warning:
+1. Which Hoare principle does it violate?
+2. Does the proposed design address it?
+3. If not, what refinement is needed?
+{% else %}
+## Clippy Lints
+
+No clippy lints provided. In Zed sessions, run `./script/clippy` on the
+target code before this step — clippy's warnings are ground-truth design
+feedback. Without them, your critique is intrinsic (LLM reasoning) only
+and may miss issues clippy would catch.
+{% endif %}
+
+## Compiler Verification
+
+The agent should run `find_references` on the types being changed (to find
+the actual blast radius) and `diagnostics` on any proposed code (to verify
+it compiles). Record the results in compiler_grounding:
+- How many call sites are affected by the proposed type changes?
+- Does the proposed code compile? (If not, this is a critical gap.)
+- Are there new diagnostics introduced by the proposed design?
+
+## Challenge Method
+
+### 1. Find Gaps
+
+Where does the design fail to address the original problem? What scenario is not covered? What state transition is unhandled? Be specific — cite the exact type or function where the gap exists.
+
+### 2. Test Edge Cases
+
+For each type designed, ask:
+- What happens with empty input?
+- What happens with maximum values?
+- What happens under concurrent access?
+- What happens when an error occurs at each step?
+- What happens when the system is shut down mid-operation?
+
+### 3. Challenge Assumptions
+
+The proposal made claims about correctness, performance, or safety. Test them:
+- "This type makes state X impossible" — write a program that reaches state X.
+- "This is zero-cost" — what allocation or indirection is hidden?
+- "This is thread-safe" — where is the synchronization?
+- "Errors are propagated" — is any error silently swallowed?
+
+### 4. Find Deeper Connections
+
+Rust concepts rarely exist in isolation. Connect this design to broader patterns:
+- What std library type does this resemble? How does std handle the same problem?
+- What popular crate solves a similar problem? How does their API differ?
+- Is there an RFC or API guideline that applies? What does it prescribe?
+- What would this design look like in 6 months when the problem domain expands?
+
+### 5. Produce Refinement Directives
+
+For each gap or edge case, state: what specifically must change, which principle it addresses, and how much it improves the design. These directives feed back into the design phase in the next iteration.
+
+## Output
+
+```json
+{
+  "gaps": [
+    {"location": "specific type/function", "gap": "what's missing", "severity": "critical|high|medium", "compiler_confirmed": true}
+  ],
+  "edge_cases": [
+    {"scenario": "specific input or state", "outcome": "what happens", "principle_violated": 1, "compiler_confirmed": false}
+  ],
+  "assumptions_challenged": [
+    {"assumption": "what the proposal claimed", "counterexample": "why it doesn't hold", "validated": false, "compiler_evidence": "rust-analyzer diagnostic or clippy lint if any"}
+  ],
+  "connections": [
+    {"concept": "related Rust concept", "how_it_relates": "why this connection matters", "reference": "std type / crate / RFC"}
+  ],
+  "refinement_directives": [
+    {"directive": "specific change to make", "targets": "which part of the design", "principle_addressed": 1, "expected_improvement": "high|medium|low", "compiler_action": "related LSP code action or clippy lint if any"}
+  ],
+  "compiler_grounding": {
+    "find_references_count": 12,
+    "proposed_code_compiles": true,
+    "new_diagnostics_introduced": 0,
+    "clippy_warnings_addressed": 3,
+    "clippy_warnings_remaining": 1
+  },
+  "reasoning": "Summary of the adversarial review — what's solid, what's broken, what needs another pass. Cite compiler evidence where available."
+}
+```
+
+`compiler_confirmed`: true if a compiler diagnostic or clippy lint confirms this gap (extrinsic evidence), false if the LLM identified it without compiler help (intrinsic — lower confidence).

@@ -1,0 +1,1496 @@
+#![cfg_attr(not(test), forbid(unsafe_code))]
+#![warn(clippy::let_underscore_future)]
+//! hKask Inference — IPC bridge client, shared inference configuration, and child-local media routing.
+//!
+//! In zed-kask, MCP server child processes do not hold API keys. Inference
+//! (chat, vision, embed, tool dispatch, worktree spawn, model listing) routes
+//! through a Unix-socket IPC bridge back to the zed process, which resolves it
+//! via zed's `LanguageModelRegistry` (with zed's configured credentials). This
+//! crate provides the MCP-server side of that bridge:
+//!
+//! - [`InferenceIpcClient`] — `InferencePort` / `ToolDispatchPort` /
+//!   `WorktreeSpawnPort` implementation over the Unix socket. Construct it via
+//!   [`resolve_inference_port`] / [`resolve_tool_dispatch_port`] /
+//!   [`resolve_worktree_spawn_port`], which return an unavailable stub (with a
+//!   clear, socket-named error) when `HKASK_INFERENCE_SOCKET` is not set.
+//! - [`InferenceConfig`] — shared configuration (base URLs, default model).
+//! - [`ProviderId`] — provider-prefix routing enum.
+//! - [`model_constants`] — env-overridable default model ids.
+//! - [`openai_compat::sanitize_error_body`] — response-body redaction shared
+//!   across inference/MCP provider error paths.
+//!
+//! # Model Naming
+//!
+//! Model ids are provider-prefixed (e.g. `OpenRouter/z-ai/glm-5.2`,
+//! `OpenRouter/qwen/qwen3-embedding-8b`, `RunPod/kask-ocr`). The prefix selects
+//! the provider in zed's `LanguageModelRegistry`; an unprefixed name uses the
+//! default model (configurable, default: `OpenRouter/z-ai/glm-5.2`). The
+//! embedding default is carried by the settings chain
+//! (`KaskSettings::effective_embedding_model` → `HkaskSettings::default`),
+//! not a code constant in this crate.
+
+pub mod config;
+pub mod inference_ipc_client;
+pub mod media_providers;
+pub mod media_router;
+pub mod model_constants;
+pub mod openai_compat;
+
+pub mod passage_tagging;
+pub mod provider;
+pub mod rerank;
+
+#[cfg(test)]
+mod media_routing_tests;
+
+// Re-exports — public API
+pub use config::{InferenceConfig, ProviderId};
+pub use inference_ipc_client::InferenceIpcClient;
+
+/// The shared "no IPC bridge" reason. Every stub method names the socket so the
+/// operator can distinguish "not configured" from "configured but broken" — a
+/// missing socket is never reported as an empty success (the `.rules`
+/// broken-feedback-loop trap: `unwrap_or(0)`-class, where a broken bridge would
+/// read as "no models" / "no results").
+const IPC_BRIDGE_UNAVAILABLE: &str =
+    "HKASK_INFERENCE_SOCKET not set or IPC bridge unreachable — the zed process is required";
+
+/// One IPC-bridge connection attempt, with the result logged once. The match
+/// and logging live here so the three `resolve_*_port` entry points do not
+/// triplicate them.
+///
+/// Returns `Some(client)` when the bridge connected, `None` when the socket is
+/// unset or unreachable. The `None` carries no payload — every caller returns its
+/// own socket-named stub — so `Option` is the exact type; a bespoke enum would be
+/// speculative generality (`Unavailable` had no fields).
+async fn connect_bridge(label: &str) -> Option<InferenceIpcClient> {
+    match InferenceIpcClient::from_env().await {
+        Some(Ok(client)) => {
+            tracing::info!(
+                target: "hkask.inference",
+                "{label} routed through zed IPC bridge (HKASK_INFERENCE_SOCKET)"
+            );
+            Some(client)
+        }
+        Some(Err(e)) => {
+            tracing::warn!(
+                target: "hkask.inference",
+                error = %e,
+                "IPC bridge connection failed — {label} unavailable ({IPC_BRIDGE_UNAVAILABLE})"
+            );
+            None
+        }
+        None => {
+            tracing::info!(
+                target: "hkask.inference",
+                "{label} unavailable ({IPC_BRIDGE_UNAVAILABLE})"
+            );
+            None
+        }
+    }
+}
+
+/// Resolve the inference port for an MCP server.
+///
+/// Returns a [`LazyInferencePort`] that tries the IPC bridge on each call
+/// and falls back to [`DirectEmbeddingPort`] when the socket is unavailable.
+/// This eliminates the resolve-once-at-startup problem where the corpus
+/// MCP server starts before the IPC socket exists and never gets
+/// restarted with it.
+#[must_use]
+pub async fn resolve_inference_port() -> std::sync::Arc<dyn hkask_types::InferencePort> {
+    std::sync::Arc::new(LazyInferencePort::new()) as std::sync::Arc<dyn hkask_types::InferencePort>
+}
+
+/// A lazy inference port that tries the IPC bridge on each call and
+/// falls back to `DirectEmbeddingPort` when the socket is unavailable.
+/// Carries NO stored model — every direct-path construction resolves the
+/// provider from the model actually being called (the operator's
+/// no-hidden-models spec: no stored/default model may decide the endpoint).
+struct LazyInferencePort {}
+
+/// Process-local media router backing `LazyInferencePort::media_generate`.
+///
+/// Media generation is child-local: the media APIs (image, video, TTS, STT)
+/// are not LanguageModel calls, so they gain nothing from the IPC bridge.
+/// The router reads its keys from this process's env (`DEEPINFRA_API_KEY` /
+/// `OPENROUTER_API_KEY`, injected by `build_mcp_server_env` from the
+/// keychain). Constructed once per process so the "no media providers
+/// configured" warning fires once, not on every call.
+static LOCAL_MEDIA_ROUTER: std::sync::OnceLock<crate::media_router::MediaRouter> =
+    std::sync::OnceLock::new();
+
+impl LazyInferencePort {
+    fn new() -> Self {
+        Self {}
+    }
+
+    fn resolve_direct_generation(
+        model_override: Option<&str>,
+    ) -> Result<(DirectEmbeddingPort, String), hkask_types::InferenceError> {
+        // Resolve the visible model before choosing its provider endpoint.
+        // Both chat entry points must use the same chain after IPC is unavailable.
+        let model = match model_override {
+            Some(model) => model.to_string(),
+            None => {
+                let configured = crate::config::InferenceConfig::from_env().default_model;
+                if configured.trim().is_empty() {
+                    return Err(hkask_types::InferenceError::NotConfigured(
+                        "no default model configured — set \
+                         kask.models.default_model (injected as \
+                         HKASK_DEFAULT_MODEL) or pass an explicit model; \
+                         kask never falls back to a hidden code constant"
+                            .to_string(),
+                    ));
+                }
+                configured
+            }
+        };
+        let port = DirectEmbeddingPort::try_new(&model)
+            .map_err(|error| direct_inference_error(&model, error))?;
+        Ok((port, model))
+    }
+}
+
+impl hkask_types::InferencePort for LazyInferencePort {
+    fn generate(
+        &self,
+        prompt: &str,
+        parameters: &hkask_types::template::LLMParameters,
+        tools: Option<&[hkask_types::ChatToolDefinition]>,
+    ) -> hkask_types::InferenceFuture<'_> {
+        self.generate_with_model(prompt, parameters, None, tools)
+    }
+
+    fn generate_vision(
+        &self,
+        prompt: &str,
+        images: &[String],
+        parameters: &hkask_types::template::LLMParameters,
+        model_override: Option<&str>,
+    ) -> hkask_types::InferenceFuture<'_> {
+        let prompt = prompt.to_string();
+        let images = images.to_vec();
+        let params = parameters.clone();
+        let model_override = model_override.map(|s| s.to_string());
+        Box::pin(async move {
+            // Try the IPC bridge first — re-attempt on each call. Vision
+            // inference (face detection, object detection, scene captioning,
+            // etc.) routes through zed's LanguageModelRegistry via the bridge,
+            // same as every other inference method on this port.
+            if let Some(Ok(client)) = InferenceIpcClient::from_env().await {
+                return client
+                    .generate_vision(&prompt, &images, &params, model_override.as_deref())
+                    .await;
+            }
+            // No direct fallback — vision requires a multimodal model that
+            // `DirectEmbeddingPort` cannot provide. The error names the
+            // missing socket so callers can distinguish "not configured"
+            // from "configured but broken."
+            Err(hkask_types::InferenceError::Connection(format!(
+                "vision inference unavailable: {IPC_BRIDGE_UNAVAILABLE}"
+            )))
+        })
+    }
+
+    fn generate_with_model(
+        &self,
+        prompt: &str,
+        parameters: &hkask_types::template::LLMParameters,
+        model_override: Option<&str>,
+        tools: Option<&[hkask_types::ChatToolDefinition]>,
+    ) -> hkask_types::InferenceFuture<'_> {
+        let prompt = prompt.to_string();
+        let params = parameters.clone();
+        let model_override = model_override.map(|s| s.to_string());
+        let tools = tools.map(|t| t.to_vec());
+        Box::pin(async move {
+            // Try the IPC bridge first — re-attempt on each call.
+            if let Some(Ok(client)) = InferenceIpcClient::from_env().await {
+                return client
+                    .generate_with_model(
+                        &prompt,
+                        &params,
+                        model_override.as_deref(),
+                        tools.as_deref(),
+                    )
+                    .await;
+            }
+            let (port, model_str) = Self::resolve_direct_generation(model_override.as_deref())?;
+            port.generate_with_model(&prompt, &params, Some(model_str.as_str()), tools.as_deref())
+                .await
+        })
+    }
+
+    fn generate_with_messages(
+        &self,
+        messages: &[hkask_types::ChatMessage],
+        parameters: &hkask_types::template::LLMParameters,
+        model_override: Option<&str>,
+        tools: Option<&[hkask_types::ChatToolDefinition]>,
+    ) -> hkask_types::InferenceFuture<'_> {
+        let messages = messages.to_vec();
+        let params = parameters.clone();
+        let model_override = model_override.map(|s| s.to_string());
+        let tools = tools.map(|t| t.to_vec());
+        Box::pin(async move {
+            // Try the IPC bridge first — re-attempt on each call. The IPC
+            // client passes the message array directly to the provider
+            // (role-tagged), preserving multi-turn conversation structure.
+            // Without this override, the trait default flattens messages to
+            // a single string and calls generate_with_model — the provider
+            // sees "system: ...\n\nuser: ..." instead of proper role-tagged
+            // messages, causing the "you responding to yourself" defect.
+            if let Some(Ok(client)) = InferenceIpcClient::from_env().await {
+                return client
+                    .generate_with_messages(
+                        &messages,
+                        &params,
+                        model_override.as_deref(),
+                        tools.as_deref(),
+                    )
+                    .await;
+            }
+            let (port, model) = Self::resolve_direct_generation(model_override.as_deref())?;
+            port.generate_with_messages(&messages, &params, Some(&model), tools.as_deref())
+                .await
+        })
+    }
+
+    fn embed<'a>(&'a self, model: &str, texts: &[String]) -> hkask_types::EmbedFuture<'a> {
+        let model = model.to_string();
+        let texts = texts.to_vec();
+        Box::pin(async move { self.embed_with_identity(&model, &texts).await })
+    }
+
+    fn embed_with_identity<'a>(
+        &'a self,
+        model: &str,
+        texts: &[String],
+    ) -> hkask_types::EmbedWithIdentityFuture<'a> {
+        let model = model.to_string();
+        let texts = texts.to_vec();
+        Box::pin(async move {
+            // Try the IPC bridge first.
+            if let Some(Ok(client)) = InferenceIpcClient::from_env().await {
+                return hkask_types::InferencePort::embed_with_identity(&client, &model, &texts)
+                    .await;
+            }
+            // Fall back to direct HTTP: construct the port FROM the per-call
+            // model so the provider endpoint always matches the model
+            // actually embedded (the prior code built it from a separate
+            // stored embedding model — a hidden default that could also
+            // mismatch the endpoint).
+            let port = DirectEmbeddingPort::try_new(&model)
+                .map_err(|error| direct_embed_error(&model, error))?;
+            port.embed_with_identity(&model, &texts).await
+        })
+    }
+
+    fn embed_with_dimensions<'a>(
+        &'a self,
+        model: &str,
+        texts: &[String],
+        dimensions: Option<u32>,
+    ) -> hkask_types::EmbedWithIdentityFuture<'a> {
+        let model = model.to_string();
+        let texts = texts.to_vec();
+        Box::pin(async move {
+            // Same routing as `embed_with_identity`: IPC bridge first, then
+            // the direct-HTTP fallback — with the requested width threaded
+            // to both so MRL models emit the store's width either way.
+            if let Some(Ok(client)) = InferenceIpcClient::from_env().await {
+                return hkask_types::InferencePort::embed_with_dimensions(
+                    &client, &model, &texts, dimensions,
+                )
+                .await;
+            }
+            let port = DirectEmbeddingPort::try_new(&model)
+                .map_err(|error| direct_embed_error(&model, error))?;
+            port.embed_with_dimensions(&model, &texts, dimensions).await
+        })
+    }
+
+    fn list_models<'a>(&'a self) -> hkask_types::PortFuture<'a, Vec<hkask_types::ModelEntry>> {
+        Box::pin(async {
+            // Try the IPC bridge first.
+            if let Some(Ok(client)) = InferenceIpcClient::from_env().await {
+                return client.list_models().await;
+            }
+            Err(hkask_types::InferenceError::Connection(format!(
+                "list_models unavailable: {IPC_BRIDGE_UNAVAILABLE}"
+            )))
+        })
+    }
+
+    fn rerank<'a>(
+        &'a self,
+        model: &str,
+        query: &str,
+        documents: &[String],
+    ) -> hkask_types::RerankFuture<'a> {
+        let model = model.to_string();
+        let query = query.to_string();
+        let documents = documents.to_vec();
+        Box::pin(async move {
+            // Rerank requires the IPC bridge — no direct fallback. The
+            // OpenRouter key lives on the zed side by design (the MCP
+            // server never sees it), so a direct HTTP rerank is impossible
+            // from here. Without this override the trait default returns
+            // NotConfigured("rerank not supported") and the research
+            // server's deep-strategy rerank can never reach the bridge.
+            if let Some(Ok(client)) = InferenceIpcClient::from_env().await {
+                return client.rerank_documents(&model, &query, &documents).await;
+            }
+            Err(hkask_types::InferenceError::Connection(format!(
+                "rerank unavailable: {IPC_BRIDGE_UNAVAILABLE}"
+            )))
+        })
+    }
+
+    fn media_generate<'a>(
+        &'a self,
+        op: &str,
+        params: &hkask_types::MediaGenerateParams,
+    ) -> hkask_types::MediaFuture<'a> {
+        // Child-local dispatch — no IPC round-trip. The former zed-side
+        // MediaRouter was built from the zed process env, which never
+        // contains the keys (they are injected only into child processes),
+        // so every IPC-routed media call failed with "no provider
+        // configured" even with keys installed.
+        let op = op.to_string();
+        let params = params.clone();
+        Box::pin(async move {
+            let router = LOCAL_MEDIA_ROUTER.get_or_init(|| {
+                crate::media_router::MediaRouter::new(crate::config::InferenceConfig::from_env())
+            });
+            router.media_generate(&op, &params).await
+        })
+    }
+}
+// `LazyInferencePort` overrides the trait defaults for `generate_vision`,
+// `embed`, and `list_models` so every method tries the
+// IPC bridge first and names the missing socket in its fallback error.
+// `media_generate` is the exception: it is child-local (see
+// `LOCAL_MEDIA_ROUTER`) because media APIs are not LanguageModel calls.
+// The trait defaults are not socket-named: `list_models`
+// defaults to `Ok(Vec::new())` (a broken bridge read as an empty registry),
+// `generate_vision` to a generic `VisionUnsupported`, and `embed` to a
+// generic `Connection`. Overriding them keeps the "every method names the
+// missing socket" contract honest.
+
+/// A direct HTTP inference port for any OpenAI-compatible provider.
+///
+/// Used as a fallback when the zed IPC bridge is unavailable. Resolves the
+/// provider prefix from the model string (e.g. `DeepInfra/`, `ollama/`,
+/// `OpenRouter/`) against a static table to get the API URL and env var name,
+/// then calls the OpenAI-compatible `/v1/embeddings` and `/chat/completions`
+/// endpoints directly.
+///
+/// For Ollama (local, no API key), the key is empty. For cloud providers,
+/// the key is read from the env var named in the provider descriptor.
+struct DirectEmbeddingPort {
+    /// The base URL for the provider's OpenAI-compatible API, e.g.
+    /// `https://api.deepinfra.com/v1/openai` or `http://localhost:11434/v1`.
+    api_url: String,
+    /// The API key for the provider (empty for local providers like Ollama).
+    api_key: String,
+    /// Reusable reqwest client.
+    client: reqwest::Client,
+}
+
+/// A minimal provider descriptor for the direct embedding fallback.
+/// Maps a provider prefix to its API URL and env var name.
+struct DirectEmbeddingProvider {
+    id: &'static str,
+    api_url: &'static str,
+    env_var: &'static str,
+}
+
+/// The provider table for the direct embedding fallback — the
+/// embedding-capable SUBSET of `kask_bridge`'s `INFERENCE_PROVIDERS`,
+/// duplicated because `hkask-inference` cannot depend on `kask_bridge`
+/// (that would invert the D8 seam). Not a full mirror: RunPod (endpoint
+/// discovery — no static OpenAI-compatible URL) and KiloCode (chat-only —
+/// the gateway has no embeddings endpoint) are deliberately absent.
+/// Add a row only for providers that serve `/v1/embeddings`; the bridge
+/// table marks the same subset with its `serves_embeddings` flag, which
+/// gates `resolve_embedding_credentials` the same way this table gates
+/// the child-local fallback.
+static DIRECT_EMBEDDING_PROVIDERS: &[DirectEmbeddingProvider] = &[
+    DirectEmbeddingProvider {
+        id: "DeepInfra",
+        api_url: "https://api.deepinfra.com/v1/openai",
+        env_var: "DEEPINFRA_API_KEY",
+    },
+    DirectEmbeddingProvider {
+        id: "OpenRouter",
+        api_url: "https://openrouter.ai/api/v1",
+        env_var: "OPENROUTER_API_KEY",
+    },
+    DirectEmbeddingProvider {
+        id: "ollama",
+        api_url: "http://localhost:11434/v1",
+        env_var: "",
+    },
+];
+
+/// Why the direct embedding fallback could not be constructed. Typed so
+/// each failure mode classifies honestly at the caller: the two
+/// configuration failures map to `NotConfigured` (permission_denied at the
+/// MCP boundary), the client-build failure stays `Connection`
+/// (unavailable) — the former `Option` collapse misclassified all three as
+/// `Connection` (live 2026-10-06: a missing credential surfaced as
+/// `unavailable`, the exact broken-feedback-loop class the canonical
+/// error contract closes).
+#[derive(Debug)]
+enum DirectEmbeddingPortError {
+    /// The model string has no recognized provider prefix.
+    NoProviderPrefix,
+    /// The provider requires an API key and its env var is not set.
+    MissingApiKey { env_var: &'static str },
+    /// The reqwest client could not be constructed (TLS backend failure).
+    ClientBuild(String),
+}
+
+/// Map a direct-fallback construction failure to the embedding error type,
+/// preserving the failure mode: configuration failures become the typed
+/// `NotConfigured` (credential case names the env var per the canonical
+/// contract), the client-build failure stays `Connection`.
+fn direct_embed_error(
+    model: &str,
+    error: DirectEmbeddingPortError,
+) -> hkask_types::EmbeddingGenerationError {
+    match error {
+        DirectEmbeddingPortError::NoProviderPrefix => {
+            hkask_types::EmbeddingGenerationError::NotConfigured(format!(
+                "embed model '{model}': no provider prefix matched — use a \
+                 provider-prefixed model or run under the zed bridge"
+            ))
+        }
+        DirectEmbeddingPortError::MissingApiKey { env_var } => {
+            hkask_types::EmbeddingGenerationError::NotConfigured(format!(
+                "embed model '{model}': {env_var} not set — set it or run \
+                 under the zed bridge"
+            ))
+        }
+        DirectEmbeddingPortError::ClientBuild(e) => {
+            hkask_types::EmbeddingGenerationError::Connection(format!(
+                "failed to construct reqwest client for direct embedding \
+                 fallback: {e}"
+            ))
+        }
+    }
+}
+
+/// Map a direct-fallback construction failure to the inference error type
+/// — the generate-path twin of [`direct_embed_error`] (same classification
+/// split, `InferenceError::NotConfigured` for the configuration failures).
+fn direct_inference_error(
+    model: &str,
+    error: DirectEmbeddingPortError,
+) -> hkask_types::InferenceError {
+    match error {
+        DirectEmbeddingPortError::NoProviderPrefix => {
+            hkask_types::InferenceError::NotConfigured(format!(
+                "model '{model}': no provider prefix matched — use a \
+                 provider-prefixed model or configure the provider"
+            ))
+        }
+        DirectEmbeddingPortError::MissingApiKey { env_var } => {
+            hkask_types::InferenceError::NotConfigured(format!(
+                "model '{model}': {env_var} not set — set it or run under \
+                 the zed bridge"
+            ))
+        }
+        DirectEmbeddingPortError::ClientBuild(e) => {
+            hkask_types::InferenceError::Connection(format!(
+                "failed to construct reqwest client for direct embedding \
+                 fallback: {e}"
+            ))
+        }
+    }
+}
+
+impl DirectEmbeddingPort {
+    /// Attempt to construct the port for a provider-prefixed embedding model.
+    ///
+    /// Fails with a typed [`DirectEmbeddingPortError`] when:
+    /// - The model string has no recognized provider prefix.
+    /// - The provider requires an API key but the env var is not set.
+    /// - The reqwest client cannot be constructed (TLS backend failure).
+    ///
+    /// For Ollama (empty `env_var`), no key is needed — the key is empty.
+    #[must_use]
+    fn try_new(embedding_model: &str) -> Result<Self, DirectEmbeddingPortError> {
+        // Find the provider by matching the prefix (case-insensitive).
+        let provider = DIRECT_EMBEDDING_PROVIDERS
+            .iter()
+            .find(|p| {
+                let prefix = format!("{}/", p.id);
+                embedding_model.len() >= prefix.len()
+                    && embedding_model[..prefix.len()].eq_ignore_ascii_case(&prefix)
+            })
+            .ok_or(DirectEmbeddingPortError::NoProviderPrefix)?;
+
+        // Resolve the API key. Local providers (empty env_var) need no key.
+        let api_key = if provider.env_var.is_empty() {
+            String::new()
+        } else {
+            std::env::var(provider.env_var).map_err(|_| {
+                tracing::warn!(
+                    target: "hkask.inference",
+                    provider = provider.id,
+                    env_var = provider.env_var,
+                    "Direct embedding fallback: env var not set — \
+                     embedding will not work without the IPC bridge"
+                );
+                DirectEmbeddingPortError::MissingApiKey {
+                    env_var: provider.env_var,
+                }
+            })?
+        };
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .map_err(|e| {
+                tracing::warn!(
+                    target: "hkask.inference",
+                    error = %e,
+                    "Failed to construct reqwest client for direct embedding fallback"
+                );
+                DirectEmbeddingPortError::ClientBuild(e.to_string())
+            })?;
+
+        Ok(Self {
+            api_url: provider.api_url.to_string(),
+            api_key,
+            client,
+        })
+    }
+}
+
+/// Wire shape of an OpenAI-compatible chat response (used by
+/// `DirectEmbeddingPort::generate_with_model`).
+#[derive(serde::Deserialize)]
+struct ChatChoice {
+    message: ChatMessageContent,
+    finish_reason: Option<String>,
+}
+#[derive(serde::Deserialize)]
+struct ChatMessageContent {
+    content: Option<String>,
+    reasoning: Option<String>,
+}
+#[derive(serde::Deserialize)]
+struct ChatUsage {
+    prompt_tokens: Option<u32>,
+    completion_tokens: Option<u32>,
+    total_tokens: Option<u32>,
+    cost: Option<f64>,
+    estimated_cost: Option<f64>,
+    market_cost: Option<f64>,
+}
+#[derive(serde::Deserialize)]
+struct ChatResponse {
+    choices: Vec<ChatChoice>,
+    usage: Option<ChatUsage>,
+    model: Option<String>,
+}
+
+/// Build [`hkask_types::InferenceUsage`] from the optional wire `usage`
+/// object. A total is reported only when supplied explicitly or derived from
+/// both components without overflow. Empty/partial reports are not measured zero.
+fn usage_from_wire(usage: Option<&ChatUsage>) -> hkask_types::InferenceUsage {
+    let total = usage.and_then(|u| {
+        u.total_tokens
+            .or_else(|| u.prompt_tokens?.checked_add(u.completion_tokens?))
+    });
+    hkask_types::InferenceUsage {
+        prompt_tokens: usage.and_then(|u| u.prompt_tokens).unwrap_or(0),
+        completion_tokens: usage.and_then(|u| u.completion_tokens).unwrap_or(0),
+        total_tokens: total.unwrap_or(0),
+        reported: total.is_some(),
+    }
+}
+
+/// Build the authorized JSON POST request — the shared request shape of the
+/// direct port's chat and embeddings calls. The Bearer header is attached
+/// only when a key is set (local providers like Ollama need none), so the
+/// auth policy lives once for both call kinds.
+fn authorized_json_post(
+    client: &reqwest::Client,
+    uri: &str,
+    body: &serde_json::Value,
+    api_key: &str,
+) -> reqwest::RequestBuilder {
+    let mut request = client
+        .post(uri)
+        .header("Content-Type", "application/json")
+        .json(body);
+    if !api_key.is_empty() {
+        request = request.header("Authorization", format!("Bearer {api_key}"));
+    }
+    request
+}
+
+impl hkask_types::InferencePort for DirectEmbeddingPort {
+    fn generate(
+        &self,
+        prompt: &str,
+        parameters: &hkask_types::template::LLMParameters,
+        _tools: Option<&[hkask_types::ChatToolDefinition]>,
+    ) -> hkask_types::InferenceFuture<'_> {
+        // No hidden default: route through the same visible chain as
+        // `generate_with_model(None)` — the configured default
+        // (`kask.models.default_model` / `HKASK_DEFAULT_MODEL`), else a
+        // typed error. Never a code constant. (Also passes `tools`
+        // through — the prior impl dropped them.)
+        self.generate_with_model(prompt, parameters, None, _tools)
+    }
+
+    fn generate_vision(
+        &self,
+        _prompt: &str,
+        _images: &[String],
+        _parameters: &hkask_types::template::LLMParameters,
+        _model_override: Option<&str>,
+    ) -> hkask_types::InferenceFuture<'_> {
+        Box::pin(async {
+            Err(hkask_types::InferenceError::Connection(
+                "vision inference unavailable on direct inference fallback".to_string(),
+            ))
+        })
+    }
+
+    fn generate_with_model(
+        &self,
+        prompt: &str,
+        parameters: &hkask_types::template::LLMParameters,
+        model_override: Option<&str>,
+        _tools: Option<&[hkask_types::ChatToolDefinition]>,
+    ) -> hkask_types::InferenceFuture<'_> {
+        self.generate_with_messages(
+            &[hkask_types::ChatMessage::user(prompt)],
+            parameters,
+            model_override,
+            _tools,
+        )
+    }
+
+    fn generate_with_messages(
+        &self,
+        messages: &[hkask_types::ChatMessage],
+        parameters: &hkask_types::template::LLMParameters,
+        model_override: Option<&str>,
+        _tools: Option<&[hkask_types::ChatToolDefinition]>,
+    ) -> hkask_types::InferenceFuture<'_> {
+        // Resolve the model — the visible chain only (the operator's
+        // spec: no hidden code constant may be the effective inference
+        // model):
+        // 1. the explicit per-call override,
+        // 2. the configured default (`kask.models.default_model`, injected
+        //    as `HKASK_DEFAULT_MODEL`),
+        // 3. unset → a typed error naming the setting (fail-visible — the
+        //    operator is told what to set, never silently run on a hidden
+        //    model).
+        let model_str = match model_override {
+            Some(model) => model.to_string(),
+            None => {
+                let configured = crate::config::InferenceConfig::from_env().default_model;
+                if configured.trim().is_empty() {
+                    return Box::pin(futures_util::future::ready(Err(
+                        hkask_types::InferenceError::NotConfigured(
+                            "no default model configured — set kask.models.default_model \
+                             (injected as HKASK_DEFAULT_MODEL) or pass an explicit model; \
+                             kask never falls back to a hidden code constant"
+                                .to_string(),
+                        ),
+                    )));
+                }
+                configured
+            }
+        };
+        let model_id = model_str
+            .split_once('/')
+            .map(|(_, rest)| rest)
+            .unwrap_or(&model_str)
+            .to_string();
+
+        // Resolve the API URL + key for this model's provider.
+        let (api_url, api_key) = match DIRECT_EMBEDDING_PROVIDERS.iter().find(|p| {
+            let prefix = format!("{}/", p.id);
+            model_str.len() >= prefix.len()
+                && model_str[..prefix.len()].eq_ignore_ascii_case(&prefix)
+        }) {
+            Some(provider) => {
+                let key = if provider.env_var.is_empty() {
+                    String::new()
+                } else {
+                    match std::env::var(provider.env_var) {
+                        Ok(key) => key,
+                        Err(_) => {
+                            return Box::pin(futures_util::future::ready(Err(
+                                hkask_types::InferenceError::NotConfigured(format!(
+                                    "{} is not set — the direct-embedding provider {} cannot \n                                     authenticate; the settings chain injects it via \n                                     build_mcp_server_env",
+                                    provider.env_var, provider.id
+                                )),
+                            )));
+                        }
+                    }
+                };
+                (provider.api_url.to_string(), key)
+            }
+            None => (self.api_url.clone(), self.api_key.clone()),
+        };
+
+        let client = self.client.clone();
+        let temperature = parameters.temperature;
+        let top_p = parameters.top_p;
+        let thinking_allowed = parameters.thinking_allowed;
+        let messages = messages.to_vec();
+
+        Box::pin(async move {
+            let uri = format!("{api_url}/chat/completions");
+            let mut body = serde_json::json!({
+                "model": model_id,
+                "messages": messages,
+                "temperature": temperature,
+                "top_p": top_p,
+            });
+            if !thinking_allowed {
+                body["reasoning"] = serde_json::json!({"effort": "none"});
+            }
+
+            let response = authorized_json_post(&client, &uri, &body, &api_key)
+                .send()
+                .await
+                .map_err(|e| {
+                    hkask_types::InferenceError::Connection(format!(
+                        "direct inference request failed: {e}"
+                    ))
+                })?;
+
+            let status = response.status();
+            if !status.is_success() {
+                let body_text = response.text().await.unwrap_or_default();
+                return Err(hkask_types::InferenceError::Connection(format!(
+                    "chat API error: status {status}: {body_text}"
+                )));
+            }
+
+            let parsed: ChatResponse = response.json().await.map_err(|e| {
+                hkask_types::InferenceError::Connection(format!(
+                    "failed to parse chat response: {e}"
+                ))
+            })?;
+
+            let choice = parsed.choices.into_iter().next().ok_or_else(|| {
+                hkask_types::InferenceError::Connection("chat response has no choices".to_string())
+            })?;
+
+            let text = choice.message.content.unwrap_or_default();
+            let model = parsed.model.unwrap_or_default();
+            // Absence modeled per P8 (F10): a provider that omits the
+            // `usage` wire field yields reported=false — never a fabricated
+            // zero measurement.
+            let usage = usage_from_wire(parsed.usage.as_ref());
+            // Same compatible-provider precedence as D20's Usage::token_usage:
+            // market (BYOK) cost, billed cost, then estimated cost. Invalid
+            // negative/non-finite sentinels are absent, not free calls.
+            let cost_usd = parsed.usage.as_ref().and_then(|usage| {
+                [usage.market_cost, usage.cost, usage.estimated_cost]
+                    .into_iter()
+                    .flatten()
+                    .find(|cost| cost.is_finite() && *cost >= 0.0)
+            });
+
+            Ok(hkask_types::InferenceResult {
+                text,
+                model,
+                usage,
+                finish_reason: choice.finish_reason.unwrap_or_default(),
+                tool_calls: Vec::new(),
+                reasoning: choice.message.reasoning,
+                cost_usd,
+            })
+        })
+    }
+
+    fn embed<'a>(&'a self, model: &str, texts: &[String]) -> hkask_types::EmbedFuture<'a> {
+        self.embed_with_dimensions(model, texts, None)
+    }
+
+    fn embed_with_identity<'a>(
+        &'a self,
+        model: &str,
+        texts: &[String],
+    ) -> hkask_types::EmbedWithIdentityFuture<'a> {
+        self.embed_with_dimensions(model, texts, None)
+    }
+
+    fn embed_with_dimensions<'a>(
+        &'a self,
+        model: &str,
+        texts: &[String],
+        dimensions: Option<u32>,
+    ) -> hkask_types::EmbedWithIdentityFuture<'a> {
+        let requested_model = model.to_string();
+        let model_id = model
+            .split_once('/')
+            .map(|(_, rest)| rest)
+            .unwrap_or(model)
+            .to_string();
+        let api_url = self.api_url.clone();
+        let api_key = self.api_key.clone();
+        let client = self.client.clone();
+        let texts = texts.to_vec();
+        Box::pin(async move {
+            if texts.is_empty() {
+                return Err(hkask_types::EmbeddingGenerationError::EmptyResponse);
+            }
+
+            let uri = format!("{api_url}/embeddings");
+            let mut body = serde_json::json!({
+                "model": model_id,
+                "input": texts,
+            });
+            // MRL truncation (the OpenAI-compatible `dimensions` field):
+            // width-bound vec0 stores pass their width so vectors always fit.
+            if let Some(dimensions) = dimensions {
+                if let Some(map) = body.as_object_mut() {
+                    map.insert("dimensions".to_string(), serde_json::json!(dimensions));
+                }
+            }
+
+            let response = authorized_json_post(&client, &uri, &body, &api_key)
+                .send()
+                .await
+                .map_err(|e| {
+                    hkask_types::EmbeddingGenerationError::Connection(format!(
+                        "direct embedding request failed: {e}"
+                    ))
+                })?;
+
+            let status = response.status();
+            if !status.is_success() {
+                let body_text = response.text().await.unwrap_or_default();
+                return Err(hkask_types::EmbeddingGenerationError::Api(
+                    status.as_u16(),
+                    body_text,
+                ));
+            }
+
+            #[derive(serde::Deserialize)]
+            struct EmbeddingData {
+                embedding: Vec<f32>,
+            }
+            #[derive(serde::Deserialize)]
+            struct EmbeddingResponse {
+                data: Vec<EmbeddingData>,
+                #[serde(default)]
+                model: Option<String>,
+                /// OpenAI-compatible embeddings responses carry `usage:
+                /// {prompt_tokens, total_tokens}` — parse it so the batch
+                /// reports measured cost (mcp-tool-review S-01 completion:
+                /// the embed axis was the last unmeasured inference surface).
+                #[serde(default)]
+                usage: Option<EmbeddingUsage>,
+            }
+
+            #[derive(serde::Deserialize)]
+            struct EmbeddingUsage {
+                prompt_tokens: u32,
+                #[serde(default)]
+                total_tokens: u32,
+            }
+
+            let parsed: EmbeddingResponse = response.json().await.map_err(|e| {
+                hkask_types::EmbeddingGenerationError::Json(format!(
+                    "failed to parse embedding response: {e}"
+                ))
+            })?;
+
+            let embeddings: Vec<Vec<f32>> = parsed.data.into_iter().map(|d| d.embedding).collect();
+
+            if embeddings.is_empty() {
+                return Err(hkask_types::EmbeddingGenerationError::EmptyResponse);
+            }
+
+            Ok(hkask_types::EmbeddingBatch {
+                vectors: embeddings,
+                requested_model,
+                actual_model: parsed.model,
+                usage: match parsed.usage {
+                    Some(EmbeddingUsage {
+                        prompt_tokens,
+                        total_tokens,
+                    }) => hkask_types::InferenceUsage {
+                        prompt_tokens,
+                        completion_tokens: 0,
+                        total_tokens,
+                        reported: true,
+                    },
+                    None => hkask_types::InferenceUsage::default(),
+                },
+                cost_usd: None,
+            })
+        })
+    }
+
+    fn list_models<'a>(&'a self) -> hkask_types::PortFuture<'a, Vec<hkask_types::ModelEntry>> {
+        Box::pin(async {
+            Err(hkask_types::InferenceError::Connection(
+                "list_models unavailable on direct inference fallback".to_string(),
+            ))
+        })
+    }
+}
+
+/// Resolve the tool-dispatch port for an MCP server.
+///
+/// Returns the IPC-bridge client when the socket is available (the zed process
+/// dispatches governed tools through its `McpRuntime`), or a stub that returns
+/// a clear, socket-named error. Tool dispatch only exists on the zed side —
+/// there is no standalone fallback.
+#[must_use]
+pub async fn resolve_tool_dispatch_port() -> std::sync::Arc<dyn hkask_types::ToolDispatchPort> {
+    match connect_bridge("MCP tool dispatch").await {
+        Some(client) => {
+            std::sync::Arc::new(client) as std::sync::Arc<dyn hkask_types::ToolDispatchPort>
+        }
+        None => std::sync::Arc::new(UnavailableToolDispatch),
+    }
+}
+
+/// Tool-dispatch stub for MCP servers without the IPC bridge. Returns a clear
+/// error naming the missing socket so the caller can distinguish "dispatch
+/// unavailable" from "tool not found".
+struct UnavailableToolDispatch;
+
+impl hkask_types::ToolDispatchPort for UnavailableToolDispatch {
+    fn tool_definition<'a>(
+        &'a self,
+        _server: &'a str,
+        _tool: &'a str,
+        _allowed: &'a [String],
+    ) -> hkask_types::PortFuture<'a, hkask_types::ChatToolDefinition> {
+        Box::pin(async {
+            Err(hkask_types::InferenceError::Connection(format!(
+                "tool definition unavailable: {IPC_BRIDGE_UNAVAILABLE} — \
+                 delegated tools require the zed process"
+            )))
+        })
+    }
+
+    fn invoke_tool<'a>(
+        &'a self,
+        _server: &'a str,
+        _tool: &'a str,
+        _args: serde_json::Value,
+        _allowed: &'a [String],
+    ) -> hkask_types::PortFuture<'a, serde_json::Value> {
+        Box::pin(async {
+            Err(hkask_types::InferenceError::Connection(format!(
+                "tool dispatch unavailable: {IPC_BRIDGE_UNAVAILABLE} — \
+                 MCP tool calls from delegated agents require the zed process"
+            )))
+        })
+    }
+}
+
+/// Resolve the worktree-spawn port from the zed IPC bridge. Returns an
+/// `UnavailableWorktreeSpawn` stub when the socket is absent or unreachable —
+/// the caller surfaces the refusal without starting another executor.
+pub async fn resolve_worktree_spawn_port() -> std::sync::Arc<dyn hkask_types::WorktreeSpawnPort> {
+    match connect_bridge("MCP worktree spawn").await {
+        Some(client) => {
+            std::sync::Arc::new(client) as std::sync::Arc<dyn hkask_types::WorktreeSpawnPort>
+        }
+        None => std::sync::Arc::new(UnavailableWorktreeSpawn),
+    }
+}
+
+/// Worktree-spawn stub for MCP servers without the IPC bridge. Returns an
+/// error so `kanban_task_spawn` fails visibly without fallback effects.
+pub(crate) struct UnavailableWorktreeSpawn;
+
+impl hkask_types::WorktreeSpawnPort for UnavailableWorktreeSpawn {
+    fn create_worktree_thread<'a>(
+        &'a self,
+        _prompt: &'a str,
+        _title: &'a str,
+        _worktree_name: Option<&'a str>,
+        _base_ref: Option<&'a str>,
+        _allowed_tools: &'a [String],
+    ) -> hkask_types::PortFuture<'a, String> {
+        Box::pin(async {
+            Err(hkask_types::InferenceError::Connection(format!(
+                "worktree spawn unavailable: {IPC_BRIDGE_UNAVAILABLE}"
+            )))
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hkask_types::inference_ipc::INFERENCE_SOCKET_ENV;
+
+    fn prepared_chat_messages() -> Vec<hkask_types::ChatMessage> {
+        vec![
+            hkask_types::ChatMessage::system("  prepared system\nDo not rewrite.  "),
+            hkask_types::ChatMessage::user("Original user: α\n\nsource"),
+            hkask_types::ChatMessage {
+                role: "assistant".into(),
+                content: "prior answer".into(),
+            },
+            hkask_types::ChatMessage {
+                role: "tool".into(),
+                content: "tool output".into(),
+            },
+            hkask_types::ChatMessage::user("follow-up"),
+        ]
+    }
+
+    /// expect: "Direct chat preserves response model and observed cost independently of token reports" [P8]
+    #[tokio::test]
+    async fn direct_chat_preserves_model_and_provider_cost()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use hkask_types::InferencePort;
+        use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+        let cases = [
+            (serde_json::json!({"cost":0.01}), Some(0.01)),
+            (serde_json::json!({"estimated_cost":0.02}), Some(0.02)),
+            (
+                serde_json::json!({"cost":0.01,"estimated_cost":0.02}),
+                Some(0.01),
+            ),
+            (
+                serde_json::json!({"cost":0.0,"market_cost":0.03}),
+                Some(0.03),
+            ),
+            (serde_json::json!({"cost":0.0}), Some(0.0)),
+            (serde_json::json!({"cost":-1.0}), None),
+            (
+                serde_json::json!({"market_cost":-1.0,"cost":0.01}),
+                Some(0.01),
+            ),
+            (serde_json::json!({}), None),
+            (serde_json::Value::Null, None),
+        ];
+        for (usage, expected_cost) in cases {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+            let url = format!("http://{}", listener.local_addr()?);
+            let returned_model = if usage.is_null() {
+                None
+            } else {
+                Some("returned-model-version")
+            };
+            let response = serde_json::json!({"model":returned_model,
+                "choices":[{"message":{"content":"A"},"finish_reason":"stop"}],"usage":usage})
+            .to_string();
+            let server = tokio::spawn(async move {
+                let (stream, _) = listener.accept().await.expect("fixture connection");
+                let mut stream = BufReader::new(stream);
+                let mut first = String::new();
+                stream.read_line(&mut first).await.expect("request line");
+                assert!(first.starts_with("POST /chat/completions "));
+                let mut length = None;
+                loop {
+                    let mut line = String::new();
+                    assert_ne!(stream.read_line(&mut line).await.expect("header"), 0);
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if let Some((key, value)) = line.split_once(':') {
+                        assert!(!key.eq_ignore_ascii_case("authorization"));
+                        if key.eq_ignore_ascii_case("content-length") {
+                            length = Some(value.trim().parse::<usize>().expect("length"));
+                        }
+                    }
+                }
+                let mut body = vec![0; length.expect("body length")];
+                stream.read_exact(&mut body).await.expect("body");
+                let body: serde_json::Value = serde_json::from_slice(&body).expect("JSON");
+                assert_eq!(body["model"], "requested-alias");
+                stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len()).as_bytes()).await.expect("response");
+            });
+            let port = DirectEmbeddingPort {
+                api_url: url,
+                api_key: String::new(),
+                client: reqwest::Client::builder()
+                    .no_proxy()
+                    .timeout(std::time::Duration::from_secs(5))
+                    .build()?,
+            };
+            let result = port
+                .generate_with_model(
+                    "test",
+                    &hkask_types::LLMParameters::default(),
+                    Some("fixture/requested-alias"),
+                    None,
+                )
+                .await?;
+            server.await?;
+            assert_eq!(
+                result.model,
+                returned_model.unwrap_or_default(),
+                "missing model must not become the requested alias"
+            );
+            assert_eq!(result.cost_usd, expected_cost, "usage={usage}");
+            assert!(!result.usage.reported, "cost alone is not a token report");
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn chat_fallback_preserves_roles_and_model() {
+        use hkask_types::InferencePort;
+        use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+
+        // Use the real ports in an env-cleared subprocess. Its HTTP proxy is
+        // our loopback listener, not an Ollama instance or a paid provider.
+        // No test thread mutates the parent environment or ambient socket.
+        if let Ok(case) = std::env::var("HKASK_INFERENCE_CHAT_TEST_CASE") {
+            let parameters = hkask_types::template::LLMParameters {
+                thinking_allowed: false,
+                ..Default::default()
+            };
+            let messages = prepared_chat_messages();
+            let direct =
+                DirectEmbeddingPort::try_new("ollama/offline-test-model").expect("local port");
+            let lazy = resolve_inference_port().await;
+            let model = (case == "explicit").then_some("ollama/explicit-test-model");
+            for port in [&direct as &dyn InferencePort, lazy.as_ref()] {
+                let result = port
+                    .generate_with_messages(&messages, &parameters, model, None)
+                    .await;
+                if case == "missing" {
+                    assert!(
+                        matches!(result, Err(hkask_types::InferenceError::NotConfigured(message))
+                        if message.contains("HKASK_DEFAULT_MODEL"))
+                    );
+                } else {
+                    assert_eq!(result.expect("captured chat response").text, "captured");
+                }
+                let result = port
+                    .generate_with_model("  plain prompt\n", &parameters, model, None)
+                    .await;
+                if case == "missing" {
+                    assert!(
+                        matches!(result, Err(hkask_types::InferenceError::NotConfigured(message))
+                        if message.contains("HKASK_DEFAULT_MODEL"))
+                    );
+                } else {
+                    assert_eq!(result.expect("captured plain response").text, "captured");
+                }
+            }
+            return;
+        }
+
+        for case in ["explicit", "configured", "missing"] {
+            let directory = tempfile::tempdir().expect("isolated socket directory");
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("capture listener");
+            let proxy = format!(
+                "http://{}",
+                listener.local_addr().expect("listener address")
+            );
+            let capture = tokio::spawn(async move {
+                let mut requests = Vec::new();
+                for _ in 0..if case == "missing" { 0 } else { 4 } {
+                    let (stream, _) = listener.accept().await.expect("captured connection");
+                    let mut stream = BufReader::new(stream);
+                    let mut request_line = String::new();
+                    stream
+                        .read_line(&mut request_line)
+                        .await
+                        .expect("request line");
+                    assert!(
+                        request_line
+                            .starts_with("POST http://localhost:11434/v1/chat/completions "),
+                        "{request_line}"
+                    );
+                    let mut content_length = None;
+                    loop {
+                        let mut header = String::new();
+                        assert_ne!(stream.read_line(&mut header).await.expect("header"), 0);
+                        if header == "\r\n" {
+                            break;
+                        }
+                        if let Some((name, value)) = header.split_once(':') {
+                            assert!(
+                                !name.eq_ignore_ascii_case("authorization"),
+                                "no real credentials"
+                            );
+                            if name.eq_ignore_ascii_case("content-length") {
+                                content_length =
+                                    Some(value.trim().parse::<usize>().expect("content length"));
+                            }
+                        }
+                    }
+                    let mut body = vec![0; content_length.expect("JSON content length")];
+                    stream.read_exact(&mut body).await.expect("JSON body");
+                    requests.push(
+                        serde_json::from_slice::<serde_json::Value>(&body).expect("request JSON"),
+                    );
+                    let response = r#"{"choices":[{"message":{"content":"captured"},"finish_reason":"stop"}]}"#;
+                    stream.write_all(format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len()
+                    ).as_bytes()).await.expect("capture response");
+                }
+                requests
+            });
+            let output = tokio::time::timeout(
+                std::time::Duration::from_secs(15),
+                tokio::process::Command::new(std::env::current_exe().expect("test executable"))
+                    .args([
+                        "--exact",
+                        "tests::chat_fallback_preserves_roles_and_model",
+                        "--nocapture",
+                    ])
+                    .env_clear()
+                    .env("HKASK_INFERENCE_CHAT_TEST_CASE", case)
+                    .env(INFERENCE_SOCKET_ENV, directory.path().join("missing.sock"))
+                    .env(
+                        "HKASK_DEFAULT_MODEL",
+                        if case == "missing" {
+                            ""
+                        } else {
+                            "ollama/configured-test-model"
+                        },
+                    )
+                    .env("http_proxy", &proxy)
+                    .env("HTTP_PROXY", &proxy)
+                    .env("ALL_PROXY", &proxy)
+                    .env("NO_PROXY", "")
+                    .env("no_proxy", "")
+                    .kill_on_drop(true)
+                    .output(),
+            )
+            .await
+            .expect("offline child deadline")
+            .expect("run isolated child");
+            assert!(
+                output.status.success(),
+                "{case}: {}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let requests = tokio::time::timeout(std::time::Duration::from_secs(2), capture)
+                .await
+                .expect("capture deadline")
+                .expect("capture task");
+            assert_eq!(requests.len(), if case == "missing" { 0 } else { 4 });
+            for (index, request) in requests.iter().enumerate() {
+                assert_eq!(request["reasoning"], serde_json::json!({"effort": "none"}));
+                let expected_messages = if index % 2 == 0 {
+                    prepared_chat_messages()
+                } else {
+                    vec![hkask_types::ChatMessage::user("  plain prompt\n")]
+                };
+                assert_eq!(
+                    request["messages"],
+                    serde_json::to_value(expected_messages).expect("messages"),
+                    "{case} request {index}"
+                );
+                assert_eq!(
+                    request["model"],
+                    if case == "explicit" {
+                        "explicit-test-model"
+                    } else {
+                        "configured-test-model"
+                    }
+                );
+                let parameters = hkask_types::template::LLMParameters::default();
+                assert_eq!(
+                    request["temperature"],
+                    serde_json::json!(parameters.temperature)
+                );
+                assert_eq!(request["top_p"], serde_json::json!(parameters.top_p));
+            }
+        }
+    }
+
+    /// The research server resolves its inference port via
+    /// `resolve_inference_port()` and routes the deep-strategy rerank through
+    /// it. Two layers once silently dropped the capability, each inheriting
+    /// the trait default (`NotConfigured("rerank not supported by this
+    /// InferencePort")`): `LazyInferencePort` had no `rerank` override, and a
+    /// now-deleted `Arc<dyn InferencePort>` forwarding impl (a hand-maintained
+    /// mirror of the trait whose advertised consumer `InferenceLoop` never
+    /// existed) had no `rerank` forwarder — so a `.rerank()` call on the Arc
+    /// resolved to the mirror's default instead of the inner port. The mirror
+    /// is deleted; this pin exercises the REAL consumer path —
+    /// `resolve_inference_port()` + `.rerank()` on the Arc (auto-deref →
+    /// vtable) — and fails on the trait-default error, guarding against both
+    /// a missing override and any reintroduced wrapper that forgets to
+    /// forward.
+    ///
+    /// Hermetic by construction: the socket env var is pointed at a
+    /// guaranteed-nonexistent path for the duration, so the bridge-down
+    /// branch runs deterministically regardless of whether a live zed
+    /// process (possibly a stale build) is on the other end of the ambient
+    /// socket. Other socket-env readers run in isolated subprocesses.
+    #[tokio::test]
+    async fn lazy_inference_port_overrides_rerank() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let dead_socket = temp_dir.path().join("nonexistent.sock");
+        let prior = std::env::var(INFERENCE_SOCKET_ENV).ok();
+        // Edition 2024: env mutation is unsafe; safe here because no other
+        // test in this process reads INFERENCE_SOCKET_ENV.
+        unsafe {
+            std::env::set_var(INFERENCE_SOCKET_ENV, &dead_socket);
+        }
+        let outcome = {
+            let port = resolve_inference_port().await;
+            let outcome = port
+                .rerank(
+                    "OpenRouter/qwen/qwen3-reranker-8b",
+                    "test query",
+                    &["test document".to_string()],
+                )
+                .await;
+            // Restore before asserting so a panic cannot leak the dead path.
+            match prior {
+                Some(value) => unsafe { std::env::set_var(INFERENCE_SOCKET_ENV, value) },
+                None => unsafe { std::env::remove_var(INFERENCE_SOCKET_ENV) },
+            }
+            outcome
+        };
+        match outcome {
+            Ok(_) => panic!(
+                "a nonexistent socket must not produce rerank scores — the override \
+                 dispatched somewhere unexpected"
+            ),
+            Err(hkask_types::InferenceError::NotConfigured(message)) => {
+                panic!(
+                    "LazyInferencePort must override rerank — got the trait-default \
+                     NotConfigured error: {message}"
+                );
+            }
+            Err(hkask_types::InferenceError::Connection(message)) => {
+                assert!(
+                    message.contains("HKASK_INFERENCE_SOCKET"),
+                    "a down bridge must name the missing socket, got: {message}"
+                );
+            }
+            Err(other) => {
+                panic!("unexpected rerank error variant from the lazy port: {other:?}");
+            }
+        }
+    }
+
+    /// F10 pin: a provider that omits the `usage` wire field must read as
+    /// unreported (`reported: false`), never as a genuine zero-token call —
+    /// absence is not zero (P8). A reported usage object carries its counts
+    /// and `reported: true`.
+    #[test]
+    fn usage_absence_is_not_zero() {
+        let without_usage: ChatResponse = serde_json::from_str(
+            r#"{"choices":[{"message":{"content":"hi"},"finish_reason":null}]}"#,
+        )
+        .expect("wire response without usage parses");
+        let usage = usage_from_wire(without_usage.usage.as_ref());
+        assert!(
+            !usage.reported,
+            "an omitted usage field must read as unreported, not zero"
+        );
+        assert_eq!(usage.total_tokens, 0);
+
+        let with_usage: ChatResponse = serde_json::from_str(
+            r#"{"choices":[{"message":{"content":"hi"},"finish_reason":null}],"usage":{"prompt_tokens":3,"completion_tokens":5,"total_tokens":8}}"#,
+        )
+        .expect("wire response with usage parses");
+        let usage = usage_from_wire(with_usage.usage.as_ref());
+        assert!(
+            usage.reported,
+            "a reported usage object must read as reported"
+        );
+        assert_eq!(usage.total_tokens, 8);
+        assert_eq!(usage.prompt_tokens, 3);
+        assert_eq!(usage.completion_tokens, 5);
+    }
+
+    /// expect: "Partial wire usage is unknown unless a total or complete component sum exists" [P8]
+    #[test]
+    fn partial_usage_never_claims_measured_zero() {
+        for (wire, reported, total) in [
+            ("{}", false, 0),
+            (r#"{"prompt_tokens":3}"#, false, 0),
+            (r#"{"prompt_tokens":3,"completion_tokens":5}"#, true, 8),
+            (r#"{"total_tokens":0}"#, true, 0),
+            (
+                r#"{"prompt_tokens":4294967295,"completion_tokens":1}"#,
+                false,
+                0,
+            ),
+        ] {
+            let usage: ChatUsage = serde_json::from_str(wire).expect("usage fixture");
+            let result = usage_from_wire(Some(&usage));
+            assert_eq!(
+                (result.reported, result.total_tokens),
+                (reported, total),
+                "{wire}"
+            );
+        }
+    }
+
+    /// MF-4 pins: the direct-fallback construction failures classify by
+    /// failure mode, not as a blanket `Connection`. A missing credential
+    /// is `NotConfigured` naming the env var (permission_denied at the MCP
+    /// boundary per the canonical contract); a missing prefix is
+    /// `NotConfigured` too (a configuration failure); only the client-build
+    /// failure stays `Connection`. The former `Option` collapse mapped all
+    /// three to `Connection`, so a missing credential surfaced as
+    /// `unavailable` (live 2026-10-06).
+    #[test]
+    fn direct_fallback_errors_classify_by_failure_mode() {
+        use hkask_types::{EmbeddingGenerationError, InferenceError};
+
+        let embed = direct_embed_error(
+            "DeepInfra/x",
+            DirectEmbeddingPortError::MissingApiKey {
+                env_var: "DEEPINFRA_API_KEY",
+            },
+        );
+        assert!(
+            matches!(embed, EmbeddingGenerationError::NotConfigured(ref msg)
+                if msg.contains("DEEPINFRA_API_KEY")),
+            "credential failure must be NotConfigured naming the env var: {embed:?}"
+        );
+
+        let inference = direct_inference_error(
+            "DeepInfra/x",
+            DirectEmbeddingPortError::MissingApiKey {
+                env_var: "DEEPINFRA_API_KEY",
+            },
+        );
+        assert!(
+            matches!(inference, InferenceError::NotConfigured(ref msg)
+                if msg.contains("DEEPINFRA_API_KEY")),
+            "generate-path twin must classify the same: {inference:?}"
+        );
+
+        let no_prefix = direct_embed_error(
+            "unprefixed-model",
+            DirectEmbeddingPortError::NoProviderPrefix,
+        );
+        assert!(
+            matches!(no_prefix, EmbeddingGenerationError::NotConfigured(_)),
+            "prefix miss is a configuration failure: {no_prefix:?}"
+        );
+
+        let client_build = direct_embed_error(
+            "DeepInfra/x",
+            DirectEmbeddingPortError::ClientBuild("tls failure".into()),
+        );
+        assert!(
+            matches!(client_build, EmbeddingGenerationError::Connection(_)),
+            "client-build failure is a system error, not a config one: {client_build:?}"
+        );
+    }
+}

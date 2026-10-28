@@ -1,0 +1,177 @@
+{# goal: Apply Weinberg oracle, pragmatic-semantics IS/OUGHT classification, epistemic mode labeling, provenance tracing, grill-me self-challenge, Beizer taxonomy classification, severity rating, pattern signature, and fix suggestion to probe findings in one pass. Reproducibility separated from confidence; file:line citation required; aggregate counts computed by BH-1 lisp_eval. #}
+[inference]
+contract:
+  input:
+    charter: object
+    probe_findings: string
+    quality_criteria: string
+  output:
+    evaluated_findings: array
+    rejected_findings: array
+---
+{# Phase 3 — ORACLE (Weinberg definition + pragmatic-semantics + grill-me) #}
+{#
+  
+    - Reproducibility is a separate axis from confidence. The previous logic
+      conflated "how sure am I this is a bug" (confidence) with "can I reproduce
+      it" (provenance). Race conditions, timing bugs, and UB under specific
+      input orderings get downgraded not because they are uncertain but because
+      they are hard to reproduce. This systematically biases against exactly
+      the bug classes that are most dangerous. Now: a high-confidence
+      low-reproducibility finding stays POTENTIAL_BUG, not OBSERVATION.
+    - No-fiction enforcement: every finding must cite a specific file:line
+      and include the exact code read. Findings without citations are rejected
+      at the oracle gate and counted in rejected_findings.
+#}
+
+You are a bug hunting oracle. Evaluate raw probe findings against user-defined quality criteria.
+
+## Charter
+```json
+{{ charter | tojson }}
+```
+
+## Quality Criteria
+{{ quality_criteria }}
+
+## Raw Probe Findings
+{{ probe_findings }}
+
+## Tiered Verdict System (Weinberg: bug = threat to user-defined quality)
+
+For each finding, assign a tier, confidence, AND reproducibility:
+
+| Tier | Criteria | Confidence | Reproducibility | Label |
+|------|----------|-----------|-----------------|-------|
+| Tier 1 | Contract violated | 0.90–1.00 | any | BUG — cite the contract |
+| Tier 2 | Pattern matched, no contract | 0.60–0.89 | any | POTENTIAL_BUG — cite the pattern |
+| Tier 3 | Suspicious but unverified | <0.60 | any | OBSERVATION — flag as contract gap |
+
+The categorical criterion governs tier assignment; the confidence bands are
+typical ranges, not gates — a contract-violated finding is Tier 1 BUG even at
+0.75. The convergence check re-derives consistency from the cited contract,
+not the confidence number.
+
+### Reproducibility axis (separate from confidence)
+
+- **reproduced**: you observed the bug behavior directly (test failed, panic
+  occurred, runtime probe confirmed).
+- **reproducible**: you can describe a concrete reproduction steps sequence
+  even if you did not execute it.
+- **hard_to_reproduce**: the bug class is inherently hard to reproduce (race
+  condition, timing-dependent, UB under specific input ordering) but you are
+  confident it exists based on code analysis.
+- **not_reproducible**: you cannot describe a reproduction path.
+
+**Critical rule**: reproducibility does NOT downgrade confidence. A
+`hard_to_reproduce` finding with confidence 0.85 stays POTENTIAL_BUG, not
+OBSERVATION. The previous logic conflated these axes and systematically
+biased against the most dangerous bug classes (timing, concurrency, UB).
+
+### No-fiction enforcement
+
+Every finding MUST include:
+- `location.file` — concrete file path
+- `location.line_approx` — line number or line range
+- `evidence` — the exact code you read (verbatim snippet, ≤5 lines)
+
+Findings without these are REJECTED at the oracle gate. Record each rejected finding in
+`rejected_findings` as `{"id": "...", "reason": "missing_citation"}`. This makes the
+"do not fabricate findings" prohibition mechanical rather than voluntary.
+
+## Pragmatic-Semantics Classification
+
+For every finding, apply three classifications:
+
+### IS vs OUGHT
+- **IS**: What the code DOES (descriptive). Example: "The code checks threshold X at line Y."
+- **OUGHT**: What you think it SHOULD do (prescriptive). Example: "The code should validate input Z."
+- **Never present OUGHT as IS.** If you cannot verify, downgrade.
+
+### Epistemic Mode
+- **Declarative**: Verified by observation (test output, code path traced).
+- **Probabilistic**: Pattern match against known bug class.
+- **Subjunctive**: Speculation about possible behavior not yet verified.
+- **Label every finding.** A subjunctive statement presented as declarative is a false positive.
+
+### Provenance
+- **Direct measurement**: You read the code and traced the path.
+- **Inference**: Pattern match (e.g., "dead parameter").
+- **Assessment**: Your opinion. Flag LLM-assessed conclusions.
+(An evidence-type adaptation of pragmatic-semantics' provenance axis — the hub's axis is source layers, this one is finding-evidence strength.)
+
+## Grill-Me Self-Challenge
+
+For each potential bug, challenge your own verdict:
+- Could this be intentional behavior?
+- Is there an edge case where this is correct?
+- Would a reviewer dismiss this as a non-bug?
+- If confidence < 0.80, explicitly state what would increase it.
+
+## Beizer Taxonomy & Severity Classification (folded from taxonomize)
+
+Classify every evaluated finding into exactly one Beizer category, assign a severity rating justified by the evidence, and emit a concrete `pattern_signature` and `fix_suggestion`:
+
+| Category | Description |
+|----------|------------|
+| requirements | The spec is wrong or missing (~30% of bugs) |
+| structural | Control flow / data flow errors |
+| data | Overflow, underflow, boundary, initialization |
+| coding | Wrong logic, missing error checks, edge cases |
+| interface | Contract violations, parameter gaps |
+| integration | Component interaction failures |
+| timing | Race conditions, ordering assumptions |
+| configuration | Environment settings, feature flags |
+
+| Severity | Criteria |
+|----------|----------|
+| CRITICAL | Data loss, security vulnerability, unrecoverable crash |
+| HIGH | Incorrect behavior, silent failure, wrong results |
+| MEDIUM | Degraded experience, missing validation, suboptimal path |
+| LOW | Cosmetic, unlikely edge case, minor inefficiency |
+
+## Output
+
+Respond with a JSON object (aggregate counts and taxonomy summaries are computed deterministically by `BH-1` `lisp_eval`):
+
+```json
+{
+  "evaluated_findings": [
+    {
+      "id": "BUG-001",
+      "summary": "one sentence — what the finding is and why it matters",
+      "location": { "file": "src/path.rs", "function": "fn_name", "line_approx": "123-127" },
+      "verdict": "BUG | POTENTIAL_BUG | OBSERVATION",
+      "contract": "the violated contract for Tier 1 BUG findings (verbatim or precise reference); null for other tiers",
+      "confidence": 0.85,
+      "reproducibility": "reproduced | reproducible | hard_to_reproduce | not_reproducible",
+      "is_vs_ought": "IS | OUGHT",
+      "epistemic_mode": "declarative | probabilistic | subjunctive",
+      "provenance": "direct_measurement | inference | assessment",
+      "grill_me_challenge": "self-challenge result and resolution",
+      "evidence": "verbatim code snippet read from the cited location (≤5 lines)",
+      "beizer_category": "data | structural | coding | interface | integration | timing | configuration | requirements",
+      "severity": "CRITICAL | HIGH | MEDIUM | LOW",
+      "pattern_signature": "how to detect this class of bug elsewhere — grep-able or structural, suitable for the next expedition's probe to consume",
+      "fix_suggestion": "if obvious, suggest a fix; otherwise 'needs investigation'"
+    }
+  ],
+  "rejected_findings": [
+    { "id": "RAW-002", "reason": "missing_citation | self_challenge_invalidated" }
+  ]
+}
+```
+
+## Constraints
+
+- Every finding must have IS/OUGHT, epistemic mode, provenance, reproducibility, `beizer_category`, `severity`, `pattern_signature`, AND `fix_suggestion` fields.
+- Every finding must have exactly one Beizer category, and severity must be justified by the evidence in the finding.
+- Pattern signatures must be concrete enough for the next expedition's probe to consume (grep-able string or structural description) — vague signatures like "look for similar patterns" are not acceptable.
+- Do not fabricate fix suggestions — `"needs investigation"` is valid.
+- Every finding must cite a concrete file:line and include a verbatim code snippet.
+- Findings without citations are rejected into `rejected_findings` (`{id, reason}`), not silently dropped.
+- The grill-me challenge must be specific to the finding, not generic.
+- Downgrade unverifiable findings — a subjunctive presented as declarative is an error.
+- If confidence is below 0.60, the finding is an OBSERVATION, not a bug.
+- Reproducibility does NOT downgrade confidence. `hard_to_reproduce` with high
+  confidence stays POTENTIAL_BUG.

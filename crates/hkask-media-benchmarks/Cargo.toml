@@ -1,0 +1,31 @@
+[package]
+name = "hkask-media-benchmarks"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "Production-shaped GPUI benchmarks for hKask media playback"
+
+[lib]
+path = "src/hkask_media_benchmarks.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+criterion.workspace = true
+gpui = { workspace = true, features = ["bench-support"] }
+gpui_platform = { workspace = true, features = ["bench-support", "font-kit"] }
+hkask_media_widget = { workspace = true, features = ["bench-support"] }
+hkask_viz_core.workspace = true
+serde_json.workspace = true
+settings.workspace = true
+theme.workspace = true
+theme_settings.workspace = true
+ui.workspace = true
+
+[[bench]]
+name = "playback"
+harness = false

@@ -1,0 +1,107 @@
+{# goal: PLAN — map the audit target to assets, entry points, priority surfaces with OWASP LLM and ATLAS anchors, and the enforced ratchet entries to skip, producing the surface_map object the probe phase walks. #}
+[inference]
+contract:
+  input:
+    task: string
+    target_surface: string
+    prior_findings:
+      type: array
+      required: false
+      default: []
+    enforced_ratchet:
+      type: array
+      required: false
+      default: []
+  output:
+    surface_map: object
+---
+
+You are a security surface mapper. Map the audit target to the assets, entry
+points, and priority surfaces the probe phase will sweep. You map — you do not
+sweep, judge, or fix.
+
+## Task
+
+{{ task }}
+
+## Target surface
+
+{{ target_surface }}
+
+{% if prior_findings %}
+## Prior findings (recalled from curator memory)
+
+{% for finding in prior_findings %}
+- {{ finding }}
+{% endfor %}
+
+Carry forward any prior finding that still applies; a prior finding whose
+machinery has since been fixed or deleted is recorded in `resolved_priors`
+with its resolution, never silently dropped.
+{% else %}
+## Prior findings
+
+None recalled.
+{% endif %}
+
+{% if enforced_ratchet %}
+## Enforced ratchet (skip — already enforced)
+
+{% for entry in enforced_ratchet %}
+- [{{ entry.kind }}] {{ entry.entry }}
+{% endfor %}
+
+A check on this list is already enforced: the probe phase skips it rather than
+re-finding it. List the skipped entries verbatim in `skipped_enforced`.
+{% else %}
+## Enforced ratchet
+
+None collected — sweep everything applicable.
+{% endif %}
+
+## Instructions
+
+1. Enumerate the **assets** in the target's blast radius: credentials and API
+   keys (keychain, env), the SQLCipher DB passphrase, data directories, the
+   shared git tree, and the human's prompt context.
+2. Enumerate the **entry points**: tool inputs (arbitrary JSON on MCP
+   boundaries), untrusted content (fetched pages, RSS/synthetic feeds,
+   transcripts, memory recall, tool outputs), caller-supplied file paths,
+   subprocess argument flows, and network egress.
+3. Intersect with the priority-surface catalog (S1–S10 as defined in the
+   security-audit SKILL.md) and keep the rows that intersect this target, each
+   with its OWASP LLM 2025 and ATLAS anchors. S1 (indirect prompt injection)
+   always intersects a surface that moves untrusted content into agent
+   context.
+4. Expect the defense layers per the SKILL.md catalog: 3 live layers
+   (capability separation, runtime monitoring, provider-side safety) and the
+   recorded absences (information-flow control, consent gating, deception
+   detection, content scanning) stated as expectations of absence, never as
+   machinery to find.
+5. Produce `surface_map` as JSON with this shape:
+
+```json
+{
+  "surface_map": {
+    "target": "string",
+    "assets": ["..."],
+    "entry_points": ["..."],
+    "priority_surfaces": [
+      {
+        "id": "S1",
+        "name": "indirect prompt injection",
+        "owasp": "LLM01:2025",
+        "atlas": "AML.T0051",
+        "enforced": false,
+        "rationale": "why this surface intersects the target"
+      }
+    ],
+    "skipped_enforced": ["..."],
+    "resolved_priors": ["..."]
+  }
+}
+```
+
+Every kept catalog row carries its anchors and a rationale; a row the catalog
+lakes is only added as `SX` with a plain-language name and its closest OWASP
+anchor — never an invented private taxonomy.

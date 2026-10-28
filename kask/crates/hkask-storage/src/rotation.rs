@@ -1,0 +1,1526 @@
+//! SQLCipher passphrase rotation for a quiesced database.
+//!
+//! # Preservation
+//!
+//! SQLCipher's `sqlcipher_export` copies the source schema and rows into a
+//! new encrypted attachment, including FTS shadow data, triggers, indexes,
+//! rowids, and AUTOINCREMENT counters. The attachment is reopened to load
+//! exported virtual-table declarations. Before replacement, the vector index
+//! is rebuilt from canonical `embeddings` rows and the destination must pass
+//! foreign-key and integrity checks. Invalid vectors fail rather than vanish.
+//!
+//! Export/check failures leave the source file in place under its old key;
+//! rotation-owned connections close before the incomplete copy is removed.
+//!
+//! # Lifecycle precondition and recovery limits
+//!
+//! All other consumers, including in-process pools, must be closed BEFORE
+//! calling this function. They must reopen with the resulting authoritative
+//! key afterwards. Restarting only after rotation does not meet this
+//! precondition. Rotation requires an exclusive per-path maintenance lease;
+//! pools created by this storage layer retain shared leases through all clones
+//! and checked-out connections. This refuses active cooperating consumers; it
+//! does not stop admission, drain work, or close them. Coordinated settings/
+//! curator maintenance restart remains unimplemented (open).
+//! Older binaries and direct SQLite opens do not participate in these leases.
+//!
+//! Individual same-directory renames are atomic on POSIX, but the sequence
+//! `<db>` → `<db>.old`, `<db>.new` → `<db>` is not a crash-atomic transaction.
+//! Restoration is attempted if the second rename fails; a failed restoration
+//! names the backup for operator recovery. This API does not provide
+//! multi-database/keychain crash atomicity. Existing rotation artifacts cause
+//! `RecoveryRequired` before any source open or cleanup; they may be the only
+//! surviving copy and must be reconciled, never deleted by a retry.
+
+use std::path::Path;
+
+use crate::core::connection::{Database, DatabaseError, QuiescedDatabase};
+
+/// Error type for passphrase rotation.
+#[derive(Debug, thiserror::Error)]
+pub enum RotationError {
+    /// The old passphrase does not match the existing DB.
+    #[error("Old passphrase does not match the database at {path}: {source}")]
+    OldPassphraseMismatch {
+        path: String,
+        #[source]
+        source: DatabaseError,
+    },
+    /// The database does not open with the supplied passphrase (key probe).
+    #[error("Database at {path} does not open with the supplied passphrase: {source}")]
+    PassphraseMismatch {
+        path: String,
+        #[source]
+        source: DatabaseError,
+    },
+    /// The new passphrase is invalid (too short, empty, etc.).
+    #[error("Invalid new passphrase: {0}")]
+    InvalidNewPassphrase(String),
+    /// A table name offered for stripping is not a bare SQL identifier.
+    #[error("Refusing to strip table {0:?}: not a bare SQL identifier")]
+    InvalidTableName(String),
+    #[error("Could not establish database quiescence for {path}: {source}")]
+    ConsumersActive {
+        path: String,
+        #[source]
+        source: DatabaseError,
+    },
+    /// An earlier rotation left files whose authority has not been reconciled.
+    #[error(
+        "Recovery required for {path}: existing artifact {artifact} was preserved; reconcile the previous rotation before retrying"
+    )]
+    RecoveryRequired { path: String, artifact: String },
+    /// A filesystem operation failed during rotation.
+    #[error("Filesystem error during rotation of {path}: {error}")]
+    Filesystem { path: String, error: std::io::Error },
+    /// A SQL operation failed during the copy.
+    #[error("SQL error during rotation of {path}: {error}")]
+    Sql {
+        path: String,
+        #[source]
+        error: rusqlite::Error,
+    },
+}
+
+/// Re-encrypt a quiesced SQLCipher database under a new passphrase.
+///
+/// Canonicalize a database path and return it as UTF-8. Rotation and key
+/// verification both resolve the caller's path this way — the canonical
+/// form is what every downstream open and artifact check operates on, so
+/// a missing or non-UTF-8 path must fail identically in both.
+fn canonical_db_path(db_path: &str) -> Result<String, RotationError> {
+    let canonical = std::fs::canonicalize(db_path).map_err(|error| RotationError::Filesystem {
+        path: db_path.to_string(),
+        error,
+    })?;
+    canonical
+        .to_str()
+        .map(|path| path.to_string())
+        .ok_or_else(|| RotationError::Filesystem {
+            path: db_path.to_string(),
+            error: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Canonical database path is not UTF-8",
+            ),
+        })
+}
+
+/// expect: "My stored data and search results survive a passphrase change" [P1]
+/// pre: every other database consumer has closed its handles
+/// post: a verified encrypted copy replaces the source; canonical embeddings are indexed
+///
+/// # Arguments
+///
+/// - `db_path`: Path to the existing `.db` file (e.g. `curator.db`).
+/// - `old_passphrase`: The current passphrase. Must match the DB.
+/// - `new_passphrase`: The desired new passphrase. Must be >=8 chars.
+///
+/// # What happens
+///
+/// 1. Opens `<db_path>` with `old_passphrase` (verifies it).
+/// 2. Creates `<db_path>.new` encrypted with `new_passphrase`.
+/// 3. Exports the schema/data, rebuilds KNN, and validates the destination.
+/// 4. Renames: `<db_path>` → `<db_path>.old`,
+///    `<db_path>.new` → `<db_path>`, then deletes `<db_path>.old`.
+///
+/// # Failure safety
+///
+/// If export or verification fails before rename, the incomplete `.new` DB
+/// is removed and the original file remains usable under the old key.
+///
+/// If replacement fails, restoration of `.old` is attempted. A restoration
+/// failure logs the backup path that the operator must recover manually.
+///
+/// # Post-rotation
+///
+/// The caller must reopen previously closed consumers with the new passphrase
+/// after success, or the old passphrase after a pre-replacement failure.
+/// This function neither coordinates those consumers nor updates the keychain.
+pub fn rotate_passphrase(
+    db_path: &str,
+    old_passphrase: &str,
+    new_passphrase: &str,
+) -> Result<(), RotationError> {
+    if new_passphrase.is_empty() {
+        return Err(RotationError::InvalidNewPassphrase(
+            "New passphrase cannot be empty".to_string(),
+        ));
+    }
+    if new_passphrase.len() < 8 {
+        return Err(RotationError::InvalidNewPassphrase(format!(
+            "New passphrase must be at least 8 characters (got {})",
+            new_passphrase.len()
+        )));
+    }
+    ensure_no_recovery_artifacts(db_path)?;
+    // Database::open creates missing files. Rotation must never manufacture a
+    // fresh empty source when an interrupted activation removed the original.
+    let canonical = canonical_db_path(db_path)?;
+    let db_path = canonical.as_str();
+    ensure_no_recovery_artifacts(db_path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = std::fs::metadata(db_path).map_err(|error| RotationError::Filesystem {
+            path: db_path.into(),
+            error,
+        })?;
+        if metadata.nlink() != 1 {
+            return Err(RotationError::Filesystem {
+                path: db_path.into(),
+                error: std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "Rotation requires a single-link database; hard-link aliases do not share a path lease",
+                ),
+            });
+        }
+    }
+    if old_passphrase == new_passphrase {
+        // No-op — nothing to rotate. Return early so we don't touch the DB.
+        tracing::info!(
+            target: "reg.storage",
+            path = %db_path,
+            "Passphrase rotation skipped — old and new passphrases are identical"
+        );
+        return Ok(());
+    }
+
+    let new_path = format!("{db_path}.new");
+    let old_backup = format!("{db_path}.old");
+
+    // 1. Open the source DB with the old passphrase. This verifies the
+    //    passphrase and gives us a connection to read from.
+    tracing::info!(
+        target: "reg.storage",
+        path = %db_path,
+        "Starting passphrase rotation — opening source DB with old passphrase"
+    );
+    let quiesced =
+        QuiescedDatabase::acquire(db_path).map_err(|source| RotationError::ConsumersActive {
+            path: db_path.into(),
+            source,
+        })?;
+    let source_db =
+        quiesced
+            .open(old_passphrase)
+            .map_err(|e| RotationError::OldPassphraseMismatch {
+                path: db_path.to_string(),
+                source: e,
+            })?;
+    // Force pool creation — this is where passphrase verification actually
+    // happens (the probe connection in `file_pool` runs `SELECT count(*) FROM
+    // sqlite_master`).
+    let source_pool =
+        source_db
+            .sqlite_pool()
+            .map_err(|e| RotationError::OldPassphraseMismatch {
+                path: db_path.to_string(),
+                source: e,
+            })?;
+
+    // Export into an empty encrypted destination. Pre-initializing its schema
+    // would conflict with the source's virtual tables, triggers, and indexes.
+    let result = copy_all_tables(&source_pool, db_path, &new_path, new_passphrase);
+    // Close every rotation-owned connection before cleanup or replacement.
+    // Other consumers must already have been closed by the caller.
+    drop(source_pool);
+    drop(source_db);
+    if let Err(error) = result {
+        remove_artifact(&new_path);
+        remove_artifact(&format!("{new_path}-wal"));
+        remove_artifact(&format!("{new_path}-shm"));
+        return Err(error);
+    }
+
+    // 4. Atomically rename. On POSIX, same-directory renames are atomic.
+    //    a. Rename old DB → .old
+    //    b. Rename new DB → <db_path>
+    //    c. Delete .old
+    //
+    //    If step (b) fails after (a) succeeds, the DB is in a state where
+    //    <db_path> doesn't exist but <db_path>.old does. The caller can
+    //    manually rename .old back. This is the least-bad failure mode.
+    tracing::info!(
+        target: "reg.storage",
+        path = %db_path,
+        "Atomically renaming DB files"
+    );
+
+    // a. Rename old DB → .old
+    std::fs::rename(db_path, &old_backup).map_err(|e| RotationError::Filesystem {
+        path: db_path.to_string(),
+        error: e,
+    })?;
+
+    // b. Rename new DB → <db_path>
+    if let Err(e) = std::fs::rename(&new_path, db_path) {
+        // Attempt to restore the old DB. If this also fails, the operator
+        // must manually rename <db_path>.old back to <db_path> — say so
+        // loudly, or the returned error (which names only the original
+        // rename failure) leaves them unaware the restore also failed.
+        if let Err(restore_err) = std::fs::rename(&old_backup, db_path) {
+            tracing::error!(
+                target: "reg.storage",
+                path = %db_path,
+                backup = %old_backup,
+                original_error = %e,
+                restore_error = %restore_err,
+                "DB restore after failed rotation rename ALSO failed — \
+                 manually rename {old_backup} back to {db_path} before restarting"
+            );
+        }
+        remove_artifact(&new_path);
+        return Err(RotationError::Filesystem {
+            path: db_path.to_string(),
+            error: e,
+        });
+    }
+
+    // c. Delete .old
+    if Path::new(&old_backup).exists() {
+        if let Err(e) = std::fs::remove_file(&old_backup) {
+            tracing::warn!(
+                target: "reg.storage",
+                path = %db_path,
+                error = %e,
+                "Could not delete old DB backup {old_backup} — \
+                 manual cleanup recommended"
+            );
+        }
+    }
+
+    // Clean up WAL/SHM files from the old DB (they're stale now).
+    remove_artifact(&format!("{db_path}-wal"));
+    remove_artifact(&format!("{db_path}-shm"));
+
+    tracing::info!(
+        target: "reg.storage",
+        path = %db_path,
+        "Passphrase rotation complete — DB re-encrypted with new passphrase"
+    );
+    Ok(())
+}
+
+/// Export an existing database to a NEW file under a different
+/// passphrase, leaving the source untouched. This is the read-once,
+/// write-once form of [`rotate_passphrase`]'s export half: a copy followed
+/// by an in-place rotation reads and writes the bytes twice and peaks at
+/// three on-disk copies; this reads the source once and writes the
+/// destination once. The corpus pipeline's distribution stage uses it to
+/// ship a sealed run under the public bundle key without ever modifying
+/// the sealed original.
+///
+/// The source is quiesced (exclusive lease) for the duration of the export;
+/// read-only consumers (immutable-URI opens) are unaffected. The
+/// destination must not already exist — an export never overwrites.
+pub fn export_database_keyed(
+    source_path: &str,
+    source_passphrase: &str,
+    destination_path: &str,
+    destination_passphrase: &str,
+) -> Result<(), RotationError> {
+    if destination_passphrase.is_empty() {
+        return Err(RotationError::InvalidNewPassphrase(
+            "Destination passphrase cannot be empty".to_string(),
+        ));
+    }
+    if destination_passphrase.len() < 8 {
+        return Err(RotationError::InvalidNewPassphrase(format!(
+            "Destination passphrase must be at least 8 characters (got {})",
+            destination_passphrase.len()
+        )));
+    }
+    if Path::new(destination_path).exists() {
+        return Err(RotationError::Filesystem {
+            path: destination_path.to_string(),
+            error: std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "export destination already exists — an export never overwrites",
+            ),
+        });
+    }
+    let canonical =
+        std::fs::canonicalize(source_path).map_err(|error| RotationError::Filesystem {
+            path: source_path.to_string(),
+            error,
+        })?;
+    let source = canonical
+        .to_str()
+        .ok_or_else(|| RotationError::Filesystem {
+            path: source_path.to_string(),
+            error: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Canonical source path is not UTF-8",
+            ),
+        })?;
+    let quiesced = QuiescedDatabase::acquire(source).map_err(|source_error| {
+        RotationError::ConsumersActive {
+            path: source.into(),
+            source: source_error,
+        }
+    })?;
+    let source_db =
+        quiesced
+            .open(source_passphrase)
+            .map_err(|e| RotationError::OldPassphraseMismatch {
+                path: source.to_string(),
+                source: e,
+            })?;
+    let source_pool =
+        source_db
+            .sqlite_pool()
+            .map_err(|e| RotationError::OldPassphraseMismatch {
+                path: source.to_string(),
+                source: e,
+            })?;
+    let result = copy_all_tables(
+        &source_pool,
+        source,
+        destination_path,
+        destination_passphrase,
+    );
+    drop(source_pool);
+    drop(source_db);
+    if let Err(error) = result {
+        remove_artifact(destination_path);
+        remove_artifact(&format!("{destination_path}-wal"));
+        remove_artifact(&format!("{destination_path}-shm"));
+        return Err(error);
+    }
+    tracing::info!(
+        target: "reg.storage",
+        source = %source,
+        destination = %destination_path,
+        "Keyed database export complete — source untouched, destination under the new passphrase"
+    );
+    Ok(())
+}
+
+/// Drop producer-owned tables that a read-only distribution copy never
+/// reads, then reclaim their pages.
+///
+/// # Why this exists
+///
+/// The distribution stage ships one corpus index to every install. Federated
+/// recall reads exactly two tables — `embeddings` and `vec_embeddings` (plus a
+/// `sqlite_master` existence check for the latter). `hmems` is the largest
+/// producer-owned table in the zk-ref-open fine index (576 MB of 3.28 GB) and
+/// no read path in `hkask-memory`'s federated source touches it. Shipping it
+/// inflates every consumer's download for data nothing reads.
+///
+/// The authoring/staging database keeps its `hmems` rows — style composition
+/// and the corpus tools read them there. Only the shipped copy is stripped.
+///
+/// # Safety property this must preserve
+///
+/// Dropping `hmems` removes the entity_ref join key that
+/// `MemoryStore::delete_orphaned_embeddings` uses to detect orphans: on a
+/// stripped database that sweep would read every embedding as an orphan and
+/// delete the whole corpus. A stripped copy is therefore a *read-only*
+/// artifact; this function does not make it safe to open read-write, and the
+/// bundle's admission path opens it read-only (`Database::open_read_only`,
+/// which sets `query_only` and never runs schema initialization).
+///
+/// # Arguments
+///
+/// - `db_path`: the distribution copy to strip (never the authoring source).
+/// - `passphrase`: the copy's own key.
+/// - `tables`: table names to drop. Each must be a bare SQL identifier — the
+///   caller controls this list and it is validated, never interpolated raw.
+///
+/// # What happens
+///
+/// Each named table is dropped (its indexes go with it), the database is
+/// vacuumed to reclaim the freed pages, and the result must pass an integrity
+/// check. A failure leaves the caller's copy in whatever state it reached;
+/// the export path discards the whole work directory on error.
+///
+/// expect: "A shipped corpus copy carries only what its readers read" [P1]
+/// pre:  db_path is a distribution copy the caller owns; tables are bare identifiers
+/// post: Ok(()) proves the named tables are gone, the copy is integral, and pages are reclaimed
+pub fn strip_producer_tables(
+    db_path: &str,
+    passphrase: &str,
+    tables: &[&str],
+) -> Result<(), RotationError> {
+    if tables.is_empty() {
+        return Ok(());
+    }
+    for table in tables {
+        let valid = !table.is_empty()
+            && table.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            && !table.chars().next().is_some_and(|c| c.is_ascii_digit());
+        if !valid {
+            return Err(RotationError::InvalidTableName(table.to_string()));
+        }
+    }
+    let canonical = canonical_db_path(db_path)?;
+    let database = Database::open(&canonical, passphrase).map_err(|source| {
+        RotationError::PassphraseMismatch {
+            path: canonical.clone(),
+            source,
+        }
+    })?;
+    let pool = database
+        .sqlite_pool()
+        .map_err(|source| RotationError::PassphraseMismatch {
+            path: canonical.clone(),
+            source,
+        })?;
+    let connection = pool.get().map_err(|error| RotationError::Sql {
+        path: canonical.clone(),
+        error: rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
+            Some(format!("strip pool get: {error}")),
+        ),
+    })?;
+    let mut statement = String::new();
+    for table in tables {
+        statement.push_str(&format!("DROP TABLE IF EXISTS \"{table}\";\n"));
+    }
+    statement.push_str("VACUUM;\n");
+    connection
+        .execute_batch(&statement)
+        .map_err(|error| RotationError::Sql {
+            path: canonical.clone(),
+            error,
+        })?;
+    let integrity: String = connection
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+        .map_err(|error| RotationError::Sql {
+            path: canonical.clone(),
+            error,
+        })?;
+    if integrity != "ok" {
+        return Err(RotationError::Sql {
+            path: canonical,
+            error: rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CORRUPT),
+                Some(format!("stripped copy failed integrity check: {integrity}")),
+            ),
+        });
+    }
+    tracing::info!(
+        target: "reg.storage",
+        path = %db_path,
+        tables = tables.len(),
+        "Distribution copy stripped of producer-owned tables"
+    );
+    Ok(())
+}
+
+/// Verify that an existing database opens with the supplied passphrase.
+///
+/// The probe mirrors `rotate_passphrase`'s source verification: open the
+/// database and force its connection pool — the probe connection's trivial
+/// query is where a wrong passphrase actually fails. The database is never
+/// written to, and a missing file is a `Filesystem` error rather than a
+/// manufactured empty database. Used by the startup-coordinated passphrase
+/// rotation to classify databases as on-the-old-key, already-on-the-new-key,
+/// or requiring manual recovery.
+///
+/// expect: "Key changes never silently strand my data behind the wrong key" [P1]
+/// pre:  the database file exists
+/// post: Ok(()) proves the passphrase matches; Err names the path and never mutates it
+pub fn verify_database_key(db_path: &str, passphrase: &str) -> Result<(), RotationError> {
+    let canonical = canonical_db_path(db_path)?;
+    let db_path = canonical.as_str();
+    let database = Database::open(db_path, passphrase).map_err(|source| {
+        RotationError::PassphraseMismatch {
+            path: db_path.to_string(),
+            source,
+        }
+    })?;
+    // Force pool creation — this is where passphrase verification actually
+    // happens (the probe connection runs a trivial query; a wrong key fails
+    // here rather than on first use).
+    let _pool = database
+        .sqlite_pool()
+        .map_err(|source| RotationError::PassphraseMismatch {
+            path: db_path.to_string(),
+            source,
+        })?;
+    Ok(())
+}
+
+/// SQLCipher owns schema export, including contentless FTS shadow tables,
+/// indexes, triggers, rowids, and AUTOINCREMENT high-water marks. Rebuilding
+/// only the vector index from canonical rows avoids preserving an incomplete
+/// derived index. No destination is published until all checks succeed.
+fn copy_all_tables(
+    source_pool: &r2d2::Pool<crate::SqliteConnectionManager>,
+    source_path: &str,
+    new_path: &str,
+    new_passphrase: &str,
+) -> Result<(), RotationError> {
+    let connection = source_pool.get().map_err(|error| RotationError::Sql {
+        path: source_path.to_string(),
+        error: rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
+            Some(format!("source pool get: {error}")),
+        ),
+    })?;
+    // Pre-create the destination with a random header salt. The bundled
+    // SQLCipher's ATTACH-created databases get an all-zero salt (the system
+    // sqlcipher CLI randomizes it; the bundled build does not — and
+    // PRAGMA rekey preserves the existing salt, verified live 2026-10-06).
+    // A zero salt would collapse every rotated/exported database onto one
+    // shared KDF salt, defeating the salt's per-database purpose. A keyed
+    // standalone connection that writes and drops a stub table generates
+    // the random salt at creation — the same mechanism the connection
+    // pools use — so the export below ATTACHes an existing keyed empty
+    // destination instead of creating one.
+    {
+        let escaped_key = new_passphrase.replace('\'', "''");
+        let stub = rusqlite::Connection::open(new_path).map_err(|error| RotationError::Sql {
+            path: new_path.to_string(),
+            error,
+        })?;
+        stub.execute_batch(&format!(
+            "PRAGMA key = '{escaped_key}';
+             CREATE TABLE _salt_stub(x);
+             DROP TABLE _salt_stub;"
+        ))
+        .map_err(|error| RotationError::Sql {
+            path: new_path.to_string(),
+            error,
+        })?;
+    }
+    let export = || -> rusqlite::Result<()> {
+        // Export must be free to create/load mutually dependent tables. Check
+        // the complete destination afterwards rather than relying on row order.
+        connection.pragma_update(None, "foreign_keys", false)?;
+        connection.execute(
+            "ATTACH DATABASE ?1 AS rotated KEY ?2",
+            rusqlite::params![new_path, new_passphrase],
+        )?;
+        connection.query_row("SELECT sqlcipher_export('rotated')", [], |_| Ok(()))?;
+        // Export writes virtual-table declarations through sqlite_schema;
+        // reopen the attachment so SQLite loads those declarations before use.
+        connection.execute_batch("DETACH DATABASE rotated")?;
+        connection.execute(
+            "ATTACH DATABASE ?1 AS rotated KEY ?2",
+            rusqlite::params![new_path, new_passphrase],
+        )?;
+        rebuild_vector_index(&connection)?;
+        let mut foreign_keys = connection.prepare("PRAGMA rotated.foreign_key_check")?;
+        if foreign_keys.query([])?.next()?.is_some() {
+            return Err(copy_validation_error(
+                "destination foreign-key check failed",
+            ));
+        }
+        drop(foreign_keys);
+        let integrity: String =
+            connection.query_row("PRAGMA rotated.integrity_check", [], |row| row.get(0))?;
+        if integrity != "ok" {
+            return Err(copy_validation_error(&format!(
+                "destination integrity check failed: {integrity}"
+            )));
+        }
+        connection.execute_batch("DETACH DATABASE rotated")?;
+        Ok(())
+    };
+    let result = export();
+    // This pool is private to rotation, but leave its connection policy intact
+    // on both success and error. Closing the pool also detaches failed exports.
+    if let Err(error) = connection.pragma_update(None, "foreign_keys", true) {
+        tracing::warn!(target: "reg.storage", error = %error, "Could not restore rotation connection foreign-key policy");
+        if result.is_ok() {
+            return Err(RotationError::Sql {
+                path: new_path.to_string(),
+                error,
+            });
+        }
+    }
+    result.map_err(|error| RotationError::Sql {
+        path: new_path.to_string(),
+        error,
+    })
+}
+
+fn copy_validation_error(message: &str) -> rusqlite::Error {
+    rusqlite::Error::SqliteFailure(
+        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CORRUPT),
+        Some(message.to_string()),
+    )
+}
+
+fn rebuild_vector_index(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
+    let transaction = connection.unchecked_transaction()?;
+    transaction.execute("DELETE FROM rotated.vec_embeddings", [])?;
+    {
+        let mut source =
+            transaction.prepare("SELECT rowid, vector, dimensions FROM rotated.embeddings")?;
+        let mut rows = source.query([])?;
+        let mut insert = transaction
+            .prepare("INSERT INTO rotated.vec_embeddings(rowid, embedding) VALUES (?1, ?2)")?;
+        while let Some(row) = rows.next()? {
+            let rowid: i64 = row.get(0)?;
+            let vector: Vec<u8> = row.get(1)?;
+            let dimensions: i64 = row.get(2)?;
+            if dimensions <= 0
+                || dimensions.checked_mul(4) != i64::try_from(vector.len()).ok()
+                || vector.chunks_exact(4).any(|bytes| {
+                    !f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]).is_finite()
+                })
+            {
+                return Err(copy_validation_error(&format!(
+                    "invalid canonical embedding at rowid {rowid}"
+                )));
+            }
+            insert.execute(rusqlite::params![rowid, vector])?;
+        }
+    }
+    transaction.commit()
+}
+
+/// Remove a rotation artifact, ignoring "not found" (the common case —
+/// leftovers that were already cleaned) and warning on anything else. A
+/// failed cleanup must not abort the rotation, but it must not be silent
+/// either: a leftover `.new`/`.old` file or stale WAL is operator-visible
+/// state.
+fn remove_artifact(path: &str) {
+    if let Err(e) = std::fs::remove_file(path) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            tracing::warn!(
+                target: "reg.storage",
+                path = %path,
+                error = %e,
+                "failed to remove rotation artifact — manual cleanup may be needed"
+            );
+        }
+    }
+}
+
+pub(crate) fn ensure_no_recovery_artifacts(db_path: &str) -> Result<(), RotationError> {
+    for suffix in [
+        ".new",
+        ".old",
+        ".new.salt",
+        ".old.salt",
+        ".new-wal",
+        ".old-wal",
+        ".new-shm",
+        ".old-shm",
+    ] {
+        let artifact = format!("{db_path}{suffix}");
+        // symlink_metadata also detects dangling links; exists() would miss
+        // them and let export follow a destination we do not own.
+        match std::fs::symlink_metadata(&artifact) {
+            Ok(_) => {
+                return Err(RotationError::RecoveryRequired {
+                    path: db_path.into(),
+                    artifact,
+                });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(RotationError::Filesystem {
+                    path: artifact,
+                    error,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use crate::Database;
+
+    fn make_test_db(dir: &Path, name: &str, passphrase: &str) -> String {
+        let path = dir.join(name).to_string_lossy().to_string();
+        let db = Database::open(&path, passphrase).expect("open");
+        let pool = db.sqlite_pool().expect("pool");
+        let conn = pool.get().expect("conn");
+        // Insert a test row into hmems.
+        conn.execute(
+            "INSERT INTO hmems (id, entity, attribute, value, valid_from, owner_webid) \
+             VALUES ('test-1', 'test-entity', 'test-attr', 'test-value', '2026-01-01T00:00:00Z', 'webid:test')",
+            [],
+        )
+        .expect("insert");
+        // Insert a test row into embeddings.
+        let vector = vec![0.1f32; 1024];
+        let vector_bytes: Vec<u8> = vector.iter().flat_map(|f| f.to_le_bytes()).collect();
+        conn.execute(
+            "INSERT INTO embeddings (id, entity_ref, vector, dimensions, model) \
+             VALUES ('emb-1', 'test-entity', ?, 1024, 'test-model')",
+            rusqlite::params![vector_bytes],
+        )
+        .expect("insert embedding");
+        path
+    }
+
+    /// Retry a should-succeed exclusive-lease operation with a bounded wait
+    /// on the lease refusal.
+    ///
+    /// The tests drop their pools and immediately call
+    /// `rotate_passphrase`/`export_database_keyed`, encoding a synchronous-
+    /// teardown assumption. The lease outlives the last drop by a small,
+    /// nondeterministic margin on this machine: parallel-suite runs fail
+    /// roughly one in six should-succeed acquires with `ConsumersActive`
+    /// ("would block") — the failing test varies, the tempdirs never
+    /// overlap, and rotation tests alone never reproduce. Every holder the
+    /// code can name (the pool cache, the manager, each
+    /// `LeasedSqliteConnection`, the r2d2 worker tasks) drops synchronously,
+    /// so the residual holder is in the async teardown path the harness
+    /// cannot observe; the exact holder is UNCONFIRMED.
+    ///
+    /// Production does not have this race: callers must close every consumer
+    /// BEFORE rotation (the documented lease precondition) and tolerate
+    /// `ConsumersActive` as a retryable signal. The retry here mirrors that
+    /// contract for the tests' own should-succeed acquires — bounded attempts
+    /// with a short sleep, so a test still fails fast if the lease is held by
+    /// a REAL leak (the other asserts in this module hold real consumers open
+    /// and expect the refusal; they never route through this helper).
+    /// expect: "A closed-over store's exclusive maintenance succeeds within a bounded wait" [P1]
+    fn lease_after_close<T>(
+        mut attempt: impl FnMut() -> Result<T, RotationError>,
+    ) -> Result<T, RotationError> {
+        const ATTEMPTS: usize = 40;
+        let mut last = None;
+        for ordinal in 0..ATTEMPTS {
+            match attempt() {
+                Ok(value) => return Ok(value),
+                Err(error @ RotationError::ConsumersActive { .. }) => {
+                    // 25 ms x 40 ≈ 1 s ceiling — far above the observed
+                    // teardown margin, far below a real leak's hold time.
+                    eprintln!(
+                        "lease_after_close: attempt {}/{} refused ({}); retrying",
+                        ordinal + 1,
+                        ATTEMPTS,
+                        error
+                    );
+                    last = Some(error);
+                    std::thread::sleep(std::time::Duration::from_millis(25));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Err(last.expect("at least one refusal when the loop exhausts"))
+    }
+
+    /// expect: "Key changes never silently strand my data behind the wrong key" [P1]
+    #[test]
+    fn verify_database_key_accepts_the_matching_passphrase_and_rejects_a_wrong_one() {
+        let directory = tempfile::tempdir().expect("temporary database");
+        let path = make_test_db(directory.path(), "probe.db", "old-passphrase");
+        verify_database_key(&path, "old-passphrase").expect("matching key verifies");
+        let mismatch =
+            verify_database_key(&path, "wrong-passphrase").expect_err("wrong key rejected");
+        assert!(
+            mismatch
+                .to_string()
+                .contains("does not open with the supplied passphrase"),
+            "probe error names the failure class: {mismatch}"
+        );
+    }
+
+    #[test]
+    fn verify_database_key_never_manufactures_a_missing_database() {
+        let directory = tempfile::tempdir().expect("temporary database");
+        let missing = directory
+            .path()
+            .join("absent.db")
+            .to_string_lossy()
+            .into_owned();
+        let error =
+            verify_database_key(&missing, "any-passphrase").expect_err("missing file rejected");
+        assert!(matches!(error, RotationError::Filesystem { .. }));
+        assert!(!Path::new(&missing).exists());
+    }
+
+    /// expect: "Shipping a corpus under the public bundle key never touches
+    /// the sealed original, and the exported copy opens only under the new
+    /// key." [P8] The distribution stage's read-once/write-once export: the
+    /// source's bytes are unchanged (hash-equal), the destination carries
+    /// the data under the destination passphrase with a RANDOM header salt
+    /// (the shared-zero-salt regression pin — the bundled SQLCipher's
+    /// ATTACH-created databases carried an all-zero salt before the
+    /// stub-pre-creation fix), a wrong key is rejected at the pool boundary,
+    /// and an existing destination is refused.
+    #[test]
+    fn export_database_keyed_leaves_the_source_untouched_and_rekeys_the_copy() {
+        let directory = tempfile::tempdir().expect("temporary database");
+        let source = make_test_db(directory.path(), "sealed.db", "old-passphrase");
+        let before = std::fs::read(&source).expect("read source");
+        let destination = directory
+            .path()
+            .join("shipped.db")
+            .to_string_lossy()
+            .into_owned();
+
+        // `make_test_db`'s pool closed at helper scope; the lease can
+        // marginally outlive it in async teardown (see `lease_after_close`).
+        lease_after_close(|| {
+            export_database_keyed(&source, "old-passphrase", &destination, "bundle-key-1234")
+        })
+        .expect("keyed export");
+
+        assert_eq!(
+            std::fs::read(&source).expect("re-read source"),
+            before,
+            "the sealed source is byte-identical after the export"
+        );
+        let header = std::fs::read(&destination).expect("read destination");
+        assert!(
+            header.len() >= 16,
+            "the destination carries a database header"
+        );
+        assert!(
+            header[..16].iter().any(|byte| *byte != 0),
+            "the destination's salt is random, not the shared zero-salt regression"
+        );
+        let shipped = Database::open(&destination, "bundle-key-1234").expect("destination key");
+        let count: i64 = shipped
+            .sqlite_pool()
+            .expect("pool")
+            .get()
+            .expect("conn")
+            .query_row("SELECT COUNT(*) FROM embeddings", [], |row| row.get(0))
+            .expect("exported row count");
+        assert_eq!(count, 1, "the exported data survives the rekey");
+        // Key exclusivity is enforced at the pool boundary — Database::open
+        // itself is lazy and verifies nothing.
+        assert!(
+            verify_database_key(&destination, "old-passphrase").is_err(),
+            "the destination does not verify under the source key"
+        );
+        assert!(
+            verify_database_key(&destination, "bundle-key-1234").is_ok(),
+            "the destination verifies under the destination key"
+        );
+
+        let error =
+            export_database_keyed(&source, "old-passphrase", &destination, "bundle-key-1234")
+                .expect_err("an existing destination is refused");
+        assert!(matches!(error, RotationError::Filesystem { .. }));
+    }
+
+    /// expect: "A rotated database never shares a fixed salt with every
+    /// other rotated database." [P1] SQLCipher's header salt exists so a
+    /// passphrase dictionary must be recomputed per database; the bundled
+    /// attach path leaves it all-zero, collapsing every rotated/exported
+    /// database onto one shared salt. The pin: the destination's first 16
+    /// bytes are not all zero.
+    #[test]
+    fn rotate_destination_salt_is_random() {
+        let directory = tempfile::tempdir().expect("temporary database");
+        let source = make_test_db(directory.path(), "sealed.db", "old-passphrase");
+        let copy = directory
+            .path()
+            .join("copy.db")
+            .to_string_lossy()
+            .into_owned();
+        std::fs::copy(&source, &copy).expect("copy");
+        // make_test_db's pool closed at helper scope; the lease can
+        // marginally outlive it in async teardown (see `lease_after_close`).
+        lease_after_close(|| rotate_passphrase(&copy, "old-passphrase", "new-key-12345"))
+            .expect("rotate");
+        let header = std::fs::read(&copy).expect("read rotated");
+        assert!(
+            header[..16].iter().any(|byte| *byte != 0),
+            "the rotated database's salt is random, not the shared zero salt"
+        );
+    }
+
+    /// expect: "A shipped corpus copy carries only what its readers read" [P1]
+    /// pre:  a copy holding both a producer-owned table and the read tables
+    /// post: the named table is gone, the read tables survive, the copy is integral
+    #[test]
+    fn strip_removes_only_the_named_tables_and_reclaims_their_pages() {
+        let directory = tempfile::tempdir().expect("temporary database");
+        let path = make_test_db(directory.path(), "shipped.db", "bundle-key-1234");
+        {
+            let db = Database::open(&path, "bundle-key-1234").expect("open");
+            let conn = db.sqlite_pool().expect("pool").get().expect("conn");
+            conn.execute_batch(
+                "CREATE TABLE bulk(x BLOB);
+                 INSERT INTO bulk VALUES(zeroblob(4000000));",
+            )
+            .expect("bulk table");
+        }
+
+        strip_producer_tables(&path, "bundle-key-1234", &["bulk"]).expect("strip");
+
+        let db = Database::open(&path, "bundle-key-1234").expect("reopen");
+        let conn = db.sqlite_pool().expect("pool").get().expect("conn");
+        let gone: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'bulk'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("bulk check");
+        assert_eq!(gone, 0, "the named table is dropped");
+        let kept: i64 = conn
+            .query_row("SELECT COUNT(*) FROM embeddings", [], |row| row.get(0))
+            .expect("embeddings check");
+        assert_eq!(kept, 1, "the read table survives the strip");
+        let freelist: i64 = conn
+            .query_row(
+                "SELECT freelist_count FROM pragma_freelist_count",
+                [],
+                |row| row.get(0),
+            )
+            .expect("freelist check");
+        assert_eq!(freelist, 0, "the strip reclaims the freed pages");
+    }
+
+    /// expect: "A strip can never be turned into a destructive table-name injection" [P1]
+    /// pre:  a caller-supplied table name that is not a bare identifier
+    /// post: the call is refused and the database is untouched
+    #[test]
+    fn strip_refuses_a_table_name_that_is_not_a_bare_identifier() {
+        let directory = tempfile::tempdir().expect("temporary database");
+        let path = make_test_db(directory.path(), "shipped.db", "bundle-key-1234");
+        for hostile in ["embeddings; DROP TABLE hmems", "", "1starts_with_digit"] {
+            let error = strip_producer_tables(&path, "bundle-key-1234", &[hostile])
+                .expect_err("a non-identifier is refused");
+            assert!(
+                matches!(error, RotationError::InvalidTableName(_)),
+                "the refusal names the invalid table, got: {error}"
+            );
+        }
+        let db = Database::open(&path, "bundle-key-1234").expect("reopen");
+        let conn = db.sqlite_pool().expect("pool").get().expect("conn");
+        let hmems: i64 = conn
+            .query_row("SELECT COUNT(*) FROM hmems", [], |row| row.get(0))
+            .expect("hmems check");
+        assert_eq!(hmems, 1, "a refused strip leaves the database untouched");
+    }
+
+    /// expect: "An empty strip list is a no-op, not an error" [P3]
+    /// pre:  no tables named
+    /// post: Ok(()) and the database is unchanged
+    #[test]
+    fn strip_with_no_tables_is_a_no_op() {
+        let directory = tempfile::tempdir().expect("temporary database");
+        let path = make_test_db(directory.path(), "shipped.db", "bundle-key-1234");
+        strip_producer_tables(&path, "bundle-key-1234", &[]).expect("no-op strip");
+        let db = Database::open(&path, "bundle-key-1234").expect("reopen");
+        let conn = db.sqlite_pool().expect("pool").get().expect("conn");
+        let embeddings: i64 = conn
+            .query_row("SELECT COUNT(*) FROM embeddings", [], |row| row.get(0))
+            .expect("embeddings check");
+        assert_eq!(embeddings, 1, "the no-op leaves the copy intact");
+    }
+
+    /// expect: "Rotating my populated RSS database preserves feeds, search, and future updates" [P1]
+    #[test]
+    fn rotate_passphrase_preserves_rss_feed_entries_and_search() {
+        // Read the actual server DDL without introducing a storage → server dependency.
+        let source = include_str!("../../../mcp-servers/hkask-mcp-research/src/research/db.rs");
+        let schema = source
+            .split_once("pub const RESEARCH_SCHEMA_DDL: &str = \"")
+            .expect("RSS DDL declaration")
+            .1
+            .split_once("\";")
+            .expect("RSS DDL end")
+            .0;
+        let directory = tempfile::tempdir().expect("temporary database");
+        let path = directory
+            .path()
+            .join("rss.db")
+            .to_string_lossy()
+            .into_owned();
+        {
+            let database = Database::open_with_extensions(&path, "old-passphrase", schema)
+                .expect("RSS database");
+            let pool = database.sqlite_pool().expect("RSS pool");
+            let connection = pool.get().expect("RSS connection");
+            connection.execute_batch(
+                "INSERT INTO feeds(id,url,title) VALUES (7,'https://example.test/rss','Example');
+                 INSERT INTO subscriptions(feed_id,stream_id) VALUES (7,'feed/example');
+                 INSERT INTO entries(id,feed_id,entry_id,title,content) VALUES (42,7,'first','Quasar','Preserved search text');
+                 INSERT INTO entry_states(entry_id,is_read) VALUES (42,1);
+                 INSERT INTO feeds(id,url) VALUES (100,'https://example.test/deleted');
+                 DELETE FROM feeds WHERE id=100;",
+            ).expect("populated RSS schema");
+        }
+        // The setup's pool closed at scope end; the lease can marginally
+        // outlive it in async teardown (see `lease_after_close`).
+        lease_after_close(|| rotate_passphrase(&path, "old-passphrase", "new-passphrase"))
+            .expect("rotate populated RSS");
+        let database = Database::open(&path, "new-passphrase").expect("reopen");
+        let pool = database.sqlite_pool().expect("pool");
+        let connection = pool.get().expect("connection");
+        let entry: i64 = connection
+            .query_row(
+                "SELECT e.id FROM entries e JOIN entries_fts f ON e.id=f.rowid
+             JOIN feeds ON feeds.id=e.feed_id JOIN entry_states s ON s.entry_id=e.id
+             WHERE entries_fts MATCH 'Quasar' AND s.is_read=1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("preserved search and foreign keys");
+        assert_eq!(entry, 42);
+        assert!(
+            connection
+                .prepare("PRAGMA foreign_key_check")
+                .expect("foreign key check")
+                .query([])
+                .expect("check rows")
+                .next()
+                .expect("check result")
+                .is_none()
+        );
+        connection
+            .execute_batch(
+                "INSERT INTO feeds(url) VALUES ('https://example.test/next');
+             INSERT INTO entries(feed_id,entry_id,title) VALUES (7,'second','Nebula');",
+            )
+            .expect("post-rotation insert");
+        let feed: i64 = connection
+            .query_row(
+                "SELECT id FROM feeds WHERE url='https://example.test/next'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("new feed");
+        assert_eq!(feed, 101, "AUTOINCREMENT retains deleted high-water mark");
+        let count: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM entries_fts WHERE entries_fts MATCH 'Nebula'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("insert trigger");
+        assert_eq!(count, 1);
+        connection
+            .execute("DELETE FROM entries WHERE id=42", [])
+            .expect("delete trigger");
+        let count: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM entries_fts WHERE entries_fts MATCH 'Quasar'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("deleted search entry");
+        assert_eq!(count, 0);
+    }
+
+    /// expect: "Old and new memories remain searchable after passphrase rotation" [P1]
+    #[test]
+    fn rotate_passphrase_preserves_knn_recall_after_reopen_and_new_write() {
+        let directory = tempfile::tempdir().expect("temporary database");
+        let path = make_test_db(directory.path(), "recall.db", "old-passphrase");
+        let query = vec![0.1f32; 1024];
+        {
+            let database = Database::open(&path, "old-passphrase").expect("open");
+            let pool = database.sqlite_pool().expect("pool");
+            let connection = pool.get().expect("connection");
+            // Non-contiguous rowids detect accidental renumbering during copy.
+            connection
+                .execute("UPDATE embeddings SET rowid=73 WHERE id='emb-1'", [])
+                .expect("row identity");
+            connection.execute_batch("INSERT INTO vec_embeddings(rowid,embedding) SELECT rowid,vector FROM embeddings;").expect("initial index");
+        }
+        // The setup's pool closed at scope end; the lease can marginally
+        // outlive it in async teardown (see `lease_after_close`).
+        lease_after_close(|| rotate_passphrase(&path, "old-passphrase", "new-passphrase"))
+            .expect("rotate");
+        let database = Database::open(&path, "new-passphrase").expect("reopen");
+        let driver: std::sync::Arc<dyn crate::database::driver::DatabaseDriver> =
+            std::sync::Arc::new(crate::database::sqlite::SqliteDriver::new(
+                database.sqlite_pool().expect("pool"),
+            ));
+        let embeddings =
+            crate::EmbeddingStore::from_driver(driver.clone(), 1024).expect("embedding store");
+        let before = embeddings
+            .search(&query, 1, "test-model", None)
+            .expect("old nearest neighbor");
+        assert_eq!(
+            before
+                .results
+                .first()
+                .expect("old memory recalled")
+                .embedding
+                .entity_ref,
+            "test-entity"
+        );
+        let connection = driver
+            .sqlite_pool()
+            .expect("SQLite pool")
+            .get()
+            .expect("connection");
+        let rowid: i64 = connection
+            .query_row("SELECT rowid FROM embeddings WHERE id='emb-1'", [], |row| {
+                row.get(0)
+            })
+            .expect("rowid");
+        assert_eq!(rowid, 73);
+        connection.execute_batch(
+            "INSERT INTO hmems(id,entity,attribute,value,valid_from,owner_webid) VALUES ('new-memory','new-entity','test','new','2026-09-04T00:00:00Z','webid:test');",
+        ).expect("new h_mem");
+        drop(connection);
+        let mut other = vec![0.0f32; 1024];
+        other[0] = 1.0;
+        embeddings
+            .store("new-entity", &other, "test-model", None)
+            .expect("new embedding");
+        for (vector, entity) in [(&query, "test-entity"), (&other, "new-entity")] {
+            let result = embeddings
+                .search(vector, 1, "test-model", None)
+                .expect("nearest neighbor");
+            assert_eq!(
+                result
+                    .results
+                    .first()
+                    .expect("memory recalled")
+                    .embedding
+                    .entity_ref,
+                entity
+            );
+            let blob: Vec<u8> = vector
+                .iter()
+                .flat_map(|value| value.to_le_bytes())
+                .collect();
+            let connection = driver
+                .sqlite_pool()
+                .expect("pool")
+                .get()
+                .expect("connection");
+            let recalled: String = connection
+                .query_row(
+                    "SELECT h.entity FROM vec_embeddings v JOIN embeddings e ON e.rowid=v.rowid
+                 JOIN hmems h ON h.entity=e.entity_ref WHERE v.embedding MATCH ?1 AND v.k=1",
+                    [blob],
+                    |row| row.get(0),
+                )
+                .expect("h_mem recall JOIN");
+            assert_eq!(recalled, entity);
+        }
+    }
+
+    /// expect: "Invalid embedding data aborts rotation without changing my database key" [P1]
+    #[test]
+    fn malformed_embeddings_abort_rotation_before_replacement() {
+        for (dimensions, vector) in [
+            (1024, vec![0u8; 3]),
+            (1, 0.5f32.to_le_bytes().to_vec()),
+            (
+                1024,
+                vec![f32::NAN; 1024]
+                    .iter()
+                    .flat_map(|value| value.to_le_bytes())
+                    .collect(),
+            ),
+        ] {
+            let directory = tempfile::tempdir().expect("temporary database");
+            let path = make_test_db(directory.path(), "invalid.db", "old-passphrase");
+            {
+                let database = Database::open(&path, "old-passphrase").expect("open");
+                let pool = database.sqlite_pool().expect("pool");
+                pool.get()
+                    .expect("connection")
+                    .execute(
+                        "UPDATE embeddings SET dimensions=?1, vector=?2",
+                        rusqlite::params![dimensions, vector],
+                    )
+                    .expect("malformed canonical vector fixture");
+            }
+            let error =
+                lease_after_close(|| rotate_passphrase(&path, "old-passphrase", "new-passphrase"))
+                    .expect_err("invalid vector must fail");
+            assert!(matches!(error, RotationError::Sql { .. }));
+            assert_eq!(count_hmems(&path, "old-passphrase"), 1);
+            assert_eq!(count_embeddings(&path, "old-passphrase"), 1);
+            assert!(!Path::new(&format!("{path}.new")).exists());
+            assert!(!Path::new(&format!("{path}.old")).exists());
+        }
+    }
+
+    /// expect: "A foreign-key violation fails preservation checks rather than publishing a broken copy" [P1]
+    #[test]
+    fn foreign_key_validation_failure_preserves_source() {
+        let directory = tempfile::tempdir().expect("temporary database");
+        let path = make_test_db(directory.path(), "invalid-fk.db", "old-passphrase");
+        {
+            let database = Database::open(&path, "old-passphrase").expect("open");
+            let pool = database.sqlite_pool().expect("pool");
+            pool.get()
+                .expect("connection")
+                .execute_batch(
+                    "PRAGMA foreign_keys=OFF;
+                 CREATE TABLE parents(id INTEGER PRIMARY KEY);
+                 CREATE TABLE children(parent_id INTEGER REFERENCES parents(id));
+                 INSERT INTO children VALUES (1);",
+                )
+                .expect("invalid foreign-key fixture");
+        }
+        let error =
+            lease_after_close(|| rotate_passphrase(&path, "old-passphrase", "new-passphrase"))
+                .expect_err("foreign-key violation");
+        assert!(error.to_string().contains("foreign-key check failed"));
+        assert_eq!(count_hmems(&path, "old-passphrase"), 1);
+        assert!(!Path::new(&format!("{path}.new")).exists());
+        assert!(!Path::new(&format!("{path}.old")).exists());
+    }
+
+    fn count_hmems(path: &str, passphrase: &str) -> i64 {
+        let db = Database::open(path, passphrase).expect("open");
+        let pool = db.sqlite_pool().expect("pool");
+        let conn = pool.get().expect("conn");
+        conn.query_row("SELECT count(*) FROM hmems", [], |row| row.get(0))
+            .expect("count")
+    }
+
+    fn count_embeddings(path: &str, passphrase: &str) -> i64 {
+        let db = Database::open(path, passphrase).expect("open");
+        let pool = db.sqlite_pool().expect("pool");
+        let conn = pool.get().expect("conn");
+        conn.query_row("SELECT count(*) FROM embeddings", [], |row| row.get(0))
+            .expect("count")
+    }
+
+    #[test]
+    fn rotate_passphrase_copies_all_data() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = make_test_db(dir.path(), "test.db", "old-passphrase");
+
+        // Verify the DB has data.
+        assert_eq!(count_hmems(&path, "old-passphrase"), 1);
+        assert_eq!(count_embeddings(&path, "old-passphrase"), 1);
+
+        // Rotate. make_test_db's pool closed at helper scope; the lease can
+        // marginally outlive it in async teardown (see `lease_after_close`).
+        lease_after_close(|| rotate_passphrase(&path, "old-passphrase", "new-passphrase"))
+            .expect("rotate");
+
+        // The old passphrase should no longer work — `sqlite_pool()` verifies
+        // the passphrase via a probe connection.
+        let old_db = Database::open(&path, "old-passphrase").expect("open struct");
+        let old_pool_result = old_db.sqlite_pool();
+        assert!(
+            old_pool_result.is_err(),
+            "old passphrase should fail at pool creation"
+        );
+
+        // The new passphrase should work and have all data.
+        assert_eq!(count_hmems(&path, "new-passphrase"), 1);
+        assert_eq!(count_embeddings(&path, "new-passphrase"), 1);
+
+        // No leftover artifacts.
+        assert!(!Path::new(&format!("{path}.old")).exists());
+        assert!(!Path::new(&format!("{path}.new")).exists());
+        assert!(!Path::new(&format!("{path}.salt.old")).exists());
+    }
+
+    #[test]
+    fn rotate_passphrase_wrong_old_passphrase_fails_safely() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = make_test_db(dir.path(), "test.db", "correct-old");
+
+        // Try to rotate with the wrong old passphrase.
+        let result = rotate_passphrase(&path, "wrong-old", "new-passphrase");
+        assert!(result.is_err(), "rotation should fail");
+
+        // The original DB should be intact and usable with the correct passphrase.
+        assert_eq!(count_hmems(&path, "correct-old"), 1);
+
+        // No leftover artifacts.
+        assert!(!Path::new(&format!("{path}.new")).exists());
+        assert!(!Path::new(&format!("{path}.new.salt")).exists());
+    }
+
+    #[test]
+    fn rotate_passphrase_short_new_passphrase_fails() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = make_test_db(dir.path(), "test.db", "old-passphrase");
+
+        let result = rotate_passphrase(&path, "old-passphrase", "short");
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            RotationError::InvalidNewPassphrase(_)
+        ));
+
+        // Original DB intact.
+        assert_eq!(count_hmems(&path, "old-passphrase"), 1);
+    }
+
+    #[test]
+    fn rotate_passphrase_same_passphrase_is_noop() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = make_test_db(dir.path(), "test.db", "same-passphrase");
+
+        let result = rotate_passphrase(&path, "same-passphrase", "same-passphrase");
+        assert!(result.is_ok());
+
+        // DB unchanged.
+        assert_eq!(count_hmems(&path, "same-passphrase"), 1);
+    }
+
+    /// expect: "Rotation cannot replace a database retained by a pool clone or checked-out connection" [P1]
+    #[test]
+    fn rotate_passphrase_waits_for_every_pool_owner() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = make_test_db(directory.path(), "test.db", "old-passphrase");
+        let database = Database::open(&path, "old-passphrase").expect("database");
+        let pool = database.sqlite_pool().expect("pool");
+        let clone = pool.clone();
+        let connection = pool.get().expect("connection");
+        drop(database);
+        drop(pool);
+        assert!(matches!(
+            rotate_passphrase(&path, "old-passphrase", "new-passphrase"),
+            Err(RotationError::ConsumersActive { .. })
+        ));
+        drop(clone);
+        assert!(matches!(
+            rotate_passphrase(&path, "old-passphrase", "new-passphrase"),
+            Err(RotationError::ConsumersActive { .. })
+        ));
+        connection.execute("INSERT INTO hmems (id,entity,attribute,value,valid_from,owner_webid) VALUES ('last-write','entity','attr','value','2026-01-01T00:00:00Z','webid:test')", []).expect("last in-flight write");
+        drop(connection);
+        // Every named consumer is closed; the lease can marginally outlive
+        // the drops in async teardown (see `lease_after_close`).
+        lease_after_close(|| rotate_passphrase(&path, "old-passphrase", "new-passphrase"))
+            .expect("all consumers closed");
+        assert_eq!(count_hmems(&path, "new-passphrase"), 2);
+    }
+
+    #[test]
+    fn rotation_exclusive_lease_blocks_new_pool_admission() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = make_test_db(directory.path(), "test.db", "old-passphrase");
+        let lease = QuiescedDatabase::acquire(&path).expect("quiesced");
+        let consumer = Database::open(&path, "old-passphrase").expect("facade");
+        assert!(matches!(
+            consumer.sqlite_pool(),
+            Err(DatabaseError::MaintenanceLease { .. })
+        ));
+        drop(lease);
+        assert!(
+            consumer.sqlite_pool().is_ok(),
+            "consumer can retry after maintenance"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rotation_canonicalizes_symlinks_and_rejects_hard_links() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = make_test_db(directory.path(), "test.db", "old-passphrase");
+        let alias = directory.path().join("alias.db");
+        std::os::unix::fs::symlink(&path, &alias).expect("alias");
+        let database = Database::open(&path, "old-passphrase").expect("database");
+        let pool = database.sqlite_pool().expect("pool");
+        assert!(matches!(
+            rotate_passphrase(
+                alias.to_str().expect("path"),
+                "old-passphrase",
+                "new-passphrase"
+            ),
+            Err(RotationError::ConsumersActive { .. })
+        ));
+        drop(pool);
+        drop(database);
+        // Every named consumer is closed; the lease can marginally outlive
+        // the drops in async teardown (see `lease_after_close`).
+        lease_after_close(|| {
+            rotate_passphrase(
+                alias.to_str().expect("path"),
+                "old-passphrase",
+                "new-passphrase",
+            )
+        })
+        .expect("rotate canonical target");
+        assert!(
+            std::fs::symlink_metadata(&alias)
+                .expect("alias metadata")
+                .is_symlink()
+        );
+        assert_eq!(count_hmems(&path, "new-passphrase"), 1);
+        let hard_link = directory.path().join("hard.db");
+        std::fs::hard_link(&path, &hard_link).expect("hard link");
+        let error = rotate_passphrase(&path, "new-passphrase", "third-passphrase")
+            .expect_err("ambiguous path leases");
+        assert!(error.to_string().contains("hard-link aliases"));
+        assert_eq!(count_hmems(&path, "new-passphrase"), 1);
+    }
+
+    /// expect: "Retrying rotation preserves prior recovery files rather than deleting them" [P1]
+    #[test]
+    fn rotate_passphrase_preserves_prior_recovery_artifacts() {
+        for suffix in [
+            ".new",
+            ".old",
+            ".new.salt",
+            ".old.salt",
+            ".new-wal",
+            ".old-wal",
+            ".new-shm",
+            ".old-shm",
+        ] {
+            let directory = tempfile::tempdir().expect("tempdir");
+            let path = make_test_db(directory.path(), "test.db", "old-passphrase");
+            let original = std::fs::read(&path).expect("original bytes");
+            let artifact = format!("{path}{suffix}");
+            std::fs::write(&artifact, &original).expect("recovery file");
+            // Not lease_after_close: the refusal must be RecoveryRequired —
+            // an unrelated ConsumersActive would otherwise pass this assert.
+            let result = rotate_passphrase(&path, "old-passphrase", "new-passphrase");
+            assert!(
+                matches!(result, Err(RotationError::RecoveryRequired { .. })),
+                "must refuse {suffix} for the recovery reason, got {result:?}"
+            );
+            assert_eq!(
+                std::fs::read(&artifact).expect("artifact retained"),
+                original
+            );
+            assert_eq!(std::fs::read(&path).expect("source retained"), original);
+            assert!(
+                crate::open_or_repair(&path, "old-passphrase").is_err(),
+                "normal startup must wait for recovery"
+            );
+            std::fs::remove_file(&artifact)
+                .expect("remove only this test's artifact after assertions");
+            assert_eq!(count_hmems(&path, "old-passphrase"), 1);
+        }
+    }
+
+    /// expect: "A crash between renames never turns my only backup into an empty replacement database" [P1]
+    #[test]
+    fn rotate_passphrase_preserves_backup_when_source_is_missing() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = make_test_db(directory.path(), "test.db", "old-passphrase");
+        let backup = format!("{path}.old");
+        std::fs::rename(&path, &backup).expect("simulate interrupted activation");
+        let original = std::fs::read(&backup).expect("backup bytes");
+        assert!(rotate_passphrase(&path, "old-passphrase", "new-passphrase").is_err());
+        assert!(
+            crate::open_or_repair(&path, "old-passphrase").is_err(),
+            "startup must not recreate a source while its backup awaits recovery"
+        );
+        assert!(
+            !Path::new(&path).exists(),
+            "must not create a fresh empty source"
+        );
+        assert_eq!(std::fs::read(&backup).expect("backup retained"), original);
+        assert_eq!(count_hmems(&backup, "old-passphrase"), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rotate_passphrase_preserves_dangling_recovery_symlink() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = make_test_db(directory.path(), "test.db", "old-passphrase");
+        let artifact = format!("{path}.new");
+        let target = directory.path().join("missing-target");
+        std::os::unix::fs::symlink(&target, &artifact).expect("symlink");
+        assert!(rotate_passphrase(&path, "old-passphrase", "new-passphrase").is_err());
+        assert_eq!(
+            std::fs::read_link(&artifact).expect("link retained"),
+            target
+        );
+        assert!(
+            !target.exists(),
+            "must not export through an unknown symlink"
+        );
+    }
+}

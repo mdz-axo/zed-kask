@@ -1,0 +1,72 @@
+{# goal: After HT-R returns compatible_binary or compatible_scientific, map the versioned scientific artifacts, partitions, report schema and headroom attestation into proposed registry arguments for HT-RM validation. #}
+[inference]
+contract:
+  input:
+    hypothesis_spec: object
+    design_spec: object
+    feedback_partition: object
+    selection_partition: object
+    executor_report_schema: object
+    binary_resolution_mapping: object|null
+    compatibility_evidence: object
+    headroom_arm: string
+  output:
+    eval_set: object
+    design_spec: object
+    registry_mapping: object
+---
+
+The caller has already obtained HT-R=`compatible_binary` or `compatible_scientific` and passes that exact result as `headroom_arm`. Map the exact artifacts without changing their scientific content. Validate every COMMON HT-R input plus only the selected arm's inputs; the non-selected arm may be false. If `headroom_arm` is neither exact token, any COMMON input is false, or the selected arm's evidence is incomplete, refuse in prose rather than inventing declaration arguments; the caller treats that as `registry_mapping_invalid`.
+
+## Scientific artifacts
+
+- hypothesis_spec: {{ hypothesis_spec | tojson }}
+- design_spec: {{ design_spec | tojson }}
+- feedback_partition: {{ feedback_partition | tojson }}
+- selection_partition: {{ selection_partition | tojson }}
+- executor_report_schema: {{ executor_report_schema | tojson }}
+- binary_resolution_mapping: {{ binary_resolution_mapping | tojson }}
+- compatibility_evidence: {{ compatibility_evidence | tojson }}
+- headroom_arm: {{ headroom_arm | tojson }}
+
+## Eval-set object
+
+Emit one object carrying ONLY the experiment's cases, partitions and report schema — NOT the design:
+
+- `schema="experimental-design-registry-adapter-v1"`;
+- the exact feedback and selection partitions;
+- the exact executor-report schema;
+- the eval cases.
+
+## DesignSpec — a first-class, top-level `experiment_propose` argument
+
+Emit the exact DesignSpec as a SEPARATE top-level `design_spec` argument (NOT nested inside `eval_set`). It must carry a non-empty `spec_version` (the server refuses an unversioned spec). The seal fingerprints `(eval_set, fitness_fn, noise_band, rubrics, design_spec)`, so the design joins the hash from either position — no freeze coverage is lost by moving it top-level. A dual write (top-level AND nested) is refused by HT-RM.
+
+## Proposed registry mapping
+
+Map the current contract without pretending it is a general scientific registry:
+
+- `layer="scientific_hypothesis"`;
+- `headroom_arm` copied verbatim from the input into `registry_mapping`;
+- `eval_set` as above;
+- `design_spec` as the top-level argument above;
+- rubric bundle with at least one `metric` rubric and at least one `implementation` or `grounded_report` rubric;
+- stable snake_case rubric ids;
+- verification only in `contains`, `not_contains`, `regex` or `report_ref`;
+- named `fitness_fn` computed from grounded executor reports;
+- `noise_band` carrying the prespecified uncertainty/indifference region;
+- positive `budget.max_runs` copied from the DesignSpec;
+- genotype refs for the versioned HypothesisSpec, DesignSpec and executable protocol/report schema.
+
+## Headroom attestation — exactly ONE arm
+
+Supply EXACTLY ONE attestation for `experiment_seal`; supplying both or neither is a typed refusal (`SealAttestationConflict`):
+
+- BINARY arm (HT-R token `compatible_binary`): the exact baseline/control mapping and a scientifically meaningful binary pass-rate definition.
+- SCIENTIFIC arm (HT-R token `compatible_scientific`): a tagged `scientific_headroom` criterion `{design_family, criterion, evidence}` for a design family with no meaningful binary pass rate. `design_family` and `criterion` must be non-empty; `evidence` may be empty only when the criterion is self-evident from the family.
+
+Name the selected arm in `registry_mapping` using the supplied `headroom_arm` token verbatim — never infer it from the artifacts, abbreviate it to `binary` / `scientific`, or rewrite it. The caller's HT-RM gate compares the mapped token with the original HT-R token and then matches the token closed-world; a changed, abbreviated or unrecognised arm blocks the write.
+
+Do not call a registry tool. Do not set a baseline result, fitness score or scientific outcome: those require real executor reports. The caller checks this output with HT-RM before any write.
+
+Return JSON only with exactly `eval_set`, `design_spec`, `registry_mapping`.

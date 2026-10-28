@@ -1,0 +1,487 @@
+---
+title: "Ontology Bridge — API Reference"
+audience: [developers, architects, agents]
+last_updated: 2026-10-13
+version: "0.44.1"
+status: "Active"
+domain: "Cross-cutting"
+mds_categories: [domain, curation]
+---
+
+# Ontology Bridge — API Reference
+
+**Crate:** `hkask-bridge-ontology` (`kask/crates/hkask-bridge-ontology/`)
+
+The single source of truth for published ontology vocabulary, artifact-axis selection, derived concepts, exact term resolution, and a small sourced relation graph in hKask. The bridge exposes vocabulary modules plus `axis`, `derived`, `term_resolution`, and `ontology_graph` (`kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs`).
+No ontology vocabulary lives inside any MCP server; every server that does
+tagging depends on this crate (user directive 2026-08-05, recorded at
+`kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs:74-77`).
+
+## The fallback ladder (P8.3)
+
+Ontology anchoring is a scope-broadening walk, never a single pick. When a
+concept has no fit in the narrowest applicable ontology, the anchor falls
+to progressively broader scopes until one fits:
+
+1. **Domain supplement** — exact terms from pinned published sources (W3C RDF Data Cube, OMC, PKO/P-Plan/PROV, SEPIO, GOLEM/CIDOC-CRM/LRMoo, ML-Schema, RDF/RDFS, DPV, CSO). No local SDMX identifier registry participates in resolution.
+2. **Derived concept** — a recorded composition with identity and authority; operator rulings become durable here (`kask/crates/hkask-bridge-ontology/src/derived.rs`).
+3. **Upper ontology** — the full pinned SUMO distribution (tier `upper`).
+4. **General vocabulary** — the full schema.org release (tier `general_vocabulary`), after SUMO so a formal category is preferred.
+5. **State-axis published senses** — Dublin Core, BIBO and CiTO (tier `state_axis`), after the general vocabulary so artifact-typing terms do not outrank formal categories.
+6. **Interrogative ground** — `5w1h_core`, the guaranteed real but coarse term anchor.
+
+`term_resolution::resolve_term` walks domain → derived → SUMO → schema.org → state axis → core without fuzzy matching (`kask/crates/hkask-bridge-ontology/src/term_resolution.rs:110-135,186-233`). The first matching sense is primary; the rest appear in `alternatives` with source and definition when the published source supplies one. `axis::select_ontology_anchor` is the separate artifact/domain-hint selector (`kask/crates/hkask-bridge-ontology/src/axis.rs`).
+
+The invariant: **nothing is ever untagged.** SUMO and the 5W1H core exist
+precisely so the ladder always terminates on a real anchor. Skipping rungs
+to force a fit, or stopping above a rung that fits (emitting no tag), both
+violate the ladder. `select_ontology_anchor` implements the ladder in
+dispatch form (rungs named in its doc comment);
+`fallback_ladder_terminates_on_a_real_anchor` (`axis.rs` tests) pins it.
+
+## Modules
+
+Declared in `kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs`: `axis`, `data_cube`, `dc_bibo`, `derived`, `golem`, `ml_schema`, `omc`, `ontology_graph`, `pko`, `published`, `rdf`, `schema_org`, `sepio`, `sumo`, and `term_resolution`.
+
+### `published` — full vocabularies compiled from pinned sources
+
+`sources/SOURCES.lock` pins each published source (upstream URL, version, SHA-256, license); `build.rs` verifies the lock and emits the `published` index (concept ID, kind, name/labels, directly stated parents and inverse properties, source, definition when supplied, and separate publisher-stated `status` for deprecation or supersession). Coverage includes the complete pinned SUMO distribution (`tiny*` test subsets excluded), every layer of schema.org 30.1, DCMI terms/types, BIBO, CiTO, PKO, P-Plan, PROV, SEPIO, GOLEM, CIDOC-CRM, LRMoo, OMC, ML-Schema, RDF/RDFS, W3C RDF Data Cube, DPV 2.3 and CSO 3.5. The Skillware paper (arXiv:2607.18970v3, CC BY 4.0) is pinned as a sha256-verified authority, not an indexed vocabulary — `read_rdf` skips non-RDF extensions. The module constants are named consumer selections; the index is the vocabulary. `published::lookup(namespace, term)` returns matching senses by exact concept ID, local name or published label (case/separator-insensitive); `published::get` and `published::contains` look up a concept ID (`kask/crates/hkask-bridge-ontology/build.rs:26-87,142-330`; `kask/crates/hkask-bridge-ontology/src/published.rs:18-40,61-98,128-150`) .
+
+**Coverage boundaries:** Former `sdmx:` Information Model aliases are removed, not represented as published RDF identifiers. `data_cube` selects only three genuinely corresponding `qb:` concepts; a provider name alone does not establish a cube. Five unlicensed DOLCE-Lite-Plus `dlp:` constants and their corpus consumers were removed. The former FIBO rung was removed 2026-10-18 (operator ruling: the platform is a general co-researcher, not a financial-research tool) — its source tree, module, and Release-module manifest are gone with it. A missing publisher definition stays missing: e.g. the released but deprecated `schema:Code` reports `status: "superseded_by:schema:SoftwareSourceCode"` (`kask/crates/hkask-bridge-ontology/src/term_resolution.rs:62-72,339-352`), not a fabricated definition.
+
+### `ontology_graph` — bounded sourced concept traversal
+
+`graph().traverse(from_term, to_term, max_hops)` performs deterministic directed BFS. Omit `to_term` with one hop to inspect outgoing edges; supply it for a shortest supported path (up to four hops). Each edge carries `from`, `relation`, `to`, and `authority`; `no_supported_path`, `coarse_anchor`, `invalid_query`, and `budget_exhausted` are distinct states. Edges: distinctly resolved constituents of recorded derived concepts (`has_constituent`), and from the full published sources every directly stated parent (`has_parent`: SUMO subclass/instance/subrelation/subAttribute, schema.org subTypeOf/subPropertyOf/enumeration type) and inverse property (`inverse_of`), each citing its source file. No inferred or transitive edge is added; edges link vocabulary terms, **not** individual instances. A missing path is never a proof of falsity (`kask/crates/hkask-bridge-ontology/src/ontology_graph.rs`).
+
+The agent's `onto_anchor` accepts optional `relation_query` (`to`, `max_hops`); omitted queries preserve its resolution-only JSON. Petgraph's [BFS visitor and graph-trait reference](https://docs.rs/petgraph/0.8.3/petgraph/visit/) and [BFS source](https://docs.rs/petgraph/0.8.3/src/petgraph/visit/traversal.rs.html#275-309) informed the non-recursive queue and visited-set design; no dependency was added for this bounded static graph.
+
+**Reasoning contract:** the model proposes the relational question and candidate terms; the resolver selects canonical concept identities; the deterministic graph supplies only directed, typed and sourced paths. An answer can use the specific returned edges, not infer an unstated transitive relation or an instance fact from a property-schema edge. The engine orders equal-length paths consistently and distinguishes an absent supported path from a budget limit or an indistinguishable core anchor. This is a capability to obtain graph evidence, not a guarantee that a model always asks for it.
+
+**Coverage and evaluation gates:** the directly stated `has_parent` and `inverse_of` edges and recorded `has_constituent` edges are not a claim of complete ontology relation coverage. Extend it only with reviewed relation assertions and stable source snapshots, not inferred similarity/keyword edges. After deployment, test paired relational tasks across domains with identical labels but a load-bearing edge removed or changed. A supported agent claim must change or become unknown; separately count unnecessary traversals and unsupported claims.
+
+**On-demand capture:** The native `/trace <prompt>` command can capture one actual agent turn into a private JSON file in the artifacts directory's `agent-traces/` subdirectory. It records the session/run IDs, final answer or completion error, elapsed time, and each tool call's input, output/error and elapsed time; ordinary turns are not captured. The operator receives the exported path after the turn. Traces may contain sensitive arguments and results: the directory is restricted to the owner and files are created with owner-only access; a permissive directory fails closed. Exports above 8 MiB fail visibly without writing an incomplete file rather than truncating evidence. This is capture, **not** an automatic evidence grader or global feedback pipeline. The native agent test exercises `/trace` through a real `onto_anchor` invocation and verifies the exported two-hop result, and verifies that the next ordinary turn writes no trace; it does not demonstrate live editor invocation or a controlled model-level improvement evaluation. The latter still requires paired tasks and an isolated graph-edge counterfactual.
+
+### `dc_bibo` — Dublin Core + BIBO + CiTO (state axis, universal)
+
+Canonical URI constants for bibliographic metadata, resource typing, and
+citation relationships. The universal "what is this" axis.
+
+| Constant | URI |
+|----------|-----|
+| `TITLE` | `dcterms:title` |
+| `CREATOR` | `dcterms:creator` |
+| `DATE` | `dcterms:date` |
+| `IDENTIFIER` | `dcterms:identifier` |
+| `TEXT` | `dcmitype:Text` |
+| `DATASET` | `dcmitype:Dataset` |
+| `ARTICLE` | `bibo:Article` |
+| `CITES` | `cito:cites` |
+| `SUPPORTS` | `cito:supports` |
+| `REFUTES` | `cito:refutes` |
+
+Full list: `kask/crates/hkask-bridge-ontology/src/dc_bibo.rs`
+
+**Helpers:** `mime_to_dc_type(mime: &str) -> Option<DcConcept>`
+(`kask/crates/hkask-bridge-ontology/src/dc_bibo.rs:103`).
+
+### `pko` — Procedural Knowledge Ontology (process axis, universal)
+
+Canonical URI constants for procedures, steps, executions, and verification,
+from the pinned PKO v2.0.0 source (Carriero et al., <https://w3id.org/pko>).
+The universal "how did this come to be" axis. PKO reuses P-Plan, PROV-O, and Dublin Core terms;
+reused terms keep their canonical prefixes (`pplan:Step`, `prov:Agent`,
+`dcterms:references`) — never re-prefixed under `pko:`.
+
+| Constant | URI |
+|----------|-----|
+| `PROCEDURE` | `pko:Procedure` |
+| `STEP` | `pplan:Step` |
+| `MULTI_STEP` | `pplan:MultiStep` |
+| `STEP_EXECUTION` | `pko:StepExecution` |
+| `PROCEDURE_EXECUTION` | `pko:ProcedureExecution` |
+| `STEP_VERIFICATION` | `pko:StepVerification` |
+| `ACTION` | `pko:Action` |
+| `AGENT` | `prov:Agent` |
+
+> History: verification (2026-08-29, PKO v2.0.0 OWL) corrected five
+> mis-prefixed terms (`pko:Step` → `pplan:Step`, `pko:MultiStep` →
+> `pplan:MultiStep`, `pko:Agent` → `prov:Agent`, `pko:references` →
+> `dcterms:references`), removed the fabricated `pko:ProcedureTarget`,
+> and remapped `kanban_status_to_pko_execution` onto PKO's four published
+> execution-status individuals (`pko:InProgress`, `pko:Completed`,
+> `pko:Paused`, `pko:Cancelled`) — the former
+> `pko:ProcedureExecutionStatus/queued|verifying|blocked` path-suffixed
+> URIs were fabricated. Statuses with no published individual omit the
+> annotation rather than force one.
+
+Full list: `kask/crates/hkask-bridge-ontology/src/pko.rs`
+
+**Helper:** `kanban_status_to_pko_execution` (`kask/crates/hkask-bridge-ontology/src/pko.rs:170-177`).
+
+### `sumo` — Suggested Upper Merged Ontology (upper tier)
+
+Named URIs from the pinned SUMO distribution (Merge.kif plus the domain
+files, including `FinancialOntology.kif`). The named constants are a
+consumer menu over the loaded terms — `Entity`, `Object`, `Process`,
+`AutonomousAgent`, `Relation`, `Proposition`, `Text`, `Quantity`,
+`TimeMeasure`, `Corporation`, and the relations `subclass`/`part`/
+`attribute`/`causes`. Every name is checked against the loaded
+distribution by `named_concepts_are_published`.
+
+> History: the former `fibo` module was removed 2026-10-18 with the FIBO
+> rung (operator ruling — the platform is a general co-researcher, not a
+> financial-research tool). Terms that resolved to FIBO now resolve through
+> the surviving rungs: `corporation` resolves to `sumo:Corporation` at the
+> `upper` tier, and the economic-indicator concepts
+> (`ConsumerPriceIndex`, `EconomicIndicator`) resolve to their SUMO
+> FinancialOntology classes. Concepts with no published equivalent anchor
+> on the derived rung (recorded compositions with cited authority) or fall
+> to the general layers — never a private gloss.
+
+### `sepio` — SEPIO (scientific evidence and provenance domain)
+
+Named URIs for epistemic and evidential reasoning, from the pinned
+Monarch Initiative SEPIO source (namespace `http://purl.obolibrary.org/obo/SEPIO_`):
+`ASSERTION` (`SEPIO:0000001` — the state-axis type for extracted assertion
+h_mems), `ASSERTS_PROPOSITION` (`SEPIO:0000030`), `WAS_SPECIFIED_BY` (`SEPIO:0000041`),
+`HAS_DISPUTING_EVIDENCE_LINE` (`SEPIO:0000008`), `CONTRADICTS` (`SEPIO:0000101`),
+`HAS_CONFIDENCE_LEVEL` (`SEPIO:0000167`), `HAS_EVIDENCE` (`SEPIO:0000189`),
+`HAS_SUPPORTING_EVIDENCE` (`SEPIO:0000440`), `HAS_DISPUTING_EVIDENCE`
+(`SEPIO:0000441`). These are named constants, not the extent of the pinned
+SEPIO published-source index. The removed SEPIO fragment fixture no longer
+participates in validation or resolution.
+
+Full list: `kask/crates/hkask-bridge-ontology/src/sepio.rs`
+
+> History: this module replaces the former `eso` module ("Epistemic Science
+> Ontology"), which was a fabrication — no such ontology was ever published.
+> Only former ESO functions with a real SEPIO equivalent survived; the rest
+> were dropped.
+
+### `golem` — GOLEM narrative ontology (narrative domain)
+
+Canonical URIs from the official GOLEM v1.1 vocabulary (Pianzola et al.,
+GOLEM Lab 2024, <https://ontology.golemlab.eu/> — IRI
+<https://w3id.org/golem/ontology>, preferred prefix `gc:`). GOLEM extends
+CIDOC-CRM and LRMoo and reuses their terms, so the module also carries
+`crm:` and `lrmoo:` URIs: `WORK` (`lrmoo:F1_Work`), `CHARACTER`
+(`gc:G1_Character`), `HAS_CHARACTER` (`gc:GP1i_has_Character`) and
+`REFERS_TO` (`crm:P67_refers_to`). All named constants are checked against
+the pinned GOLEM/CIDOC-CRM/LRMoo index. The five `dlp:` constants were
+removed because their DOLCE-Lite-Plus source has no stated license.
+
+Full list: `kask/crates/hkask-bridge-ontology/src/golem.rs`
+
+### `ml_schema` — ML-Schema (ML training domain)
+
+Canonical concept URIs for machine-learning experiments. The module is
+`ml_schema` (snake_case; the crate re-exports it and servers alias it as
+`mlschema` — the canonical namespace parse lives at
+`kask/crates/hkask-condenser/src/types.rs:403`, and the corpus manifest
+namespace allowlist that also accepted the alias retired with the
+`company_manifest` consumer, 2026-10-18).
+
+| Constant | URI |
+|----------|-----|
+| `MODEL` | `mls:Model` |
+| `RUN` | `mls:Run` |
+| `DATA` | `mls:Data` |
+| `HYPER_PARAMETER` | `mls:HyperParameter` |
+| `HYPER_PARAMETER_SETTING` | `mls:HyperParameterSetting` |
+| `MODEL_EVALUATION` | `mls:ModelEvaluation` |
+| `EVALUATION_MEASURE` | `mls:EvaluationMeasure` |
+| `HAS_INPUT` | `mls:hasInput` |
+| `HAS_OUTPUT` | `mls:hasOutput` |
+| `IMPLEMENTS` | `mls:implements` |
+
+Full list: `kask/crates/hkask-bridge-ontology/src/ml_schema.rs:22-68`
+
+### `data_cube` — W3C RDF Data Cube (statistical RDF)
+
+The pinned full `qb:` vocabulary uses the published namespace
+`http://purl.org/linked-data/cube#` and declares PDDL 1.0 in its source.
+Its three named constants are `DATA_SET` (`qb:DataSet`),
+`DATA_STRUCTURE_DEFINITION` (`qb:DataStructureDefinition`), and
+`OBSERVATION` (`qb:Observation`). The latter denote actual cube data,
+not every FRED series or provider response. No `qb:` class is substituted
+for the former local `sdmx:Dataflow`, `sdmx:SeriesKey`, `sdmx:Category`
+or `sdmx:DataProvider` aliases: they have no matching class in this source.
+
+Full named menu: `kask/crates/hkask-bridge-ontology/src/data_cube.rs`.
+
+### `omc` — MovieLabs OMC (media production domain)
+
+Media production workflows (capture → post → distribution)
+(`kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs:21-33`).
+
+| Constant | URI |
+|----------|-----|
+| `CREATIVE_WORK` | `omc:CreativeWork` |
+| `SCENE` | `omc:Scene` |
+| `SHOT` | `omc:Shot` |
+| `SEQUENCE` | `omc:Sequence` |
+| `PARTICIPANT` | `omc:Participant` |
+| `CAPTURE` | `omc:Capture` |
+| `ASSET` | `omc:Asset` |
+| `TASK` | `omc:Task` |
+| `VERSION_INFO` | `omc:VersionInfo` |
+
+Full list: `kask/crates/hkask-bridge-ontology/src/omc.rs:34-91`
+
+### `rdf` — RDF 1.1 core vocabulary (pipeline)
+
+The RDF/RDFS published-source index covers the pinned RDF 1.1 vocabulary;
+`rdf.rs` names only the RDF term used by the corpus assertion pipeline.
+`all_terms_are_official` checks the named term against the pinned index. The
+pipeline uses exactly one term:
+`TYPE` (`rdf:type`, `kask/crates/hkask-bridge-ontology/src/rdf.rs:23`). Notably, RDF 1.1 publishes **no creator
+property** — the former `rdf:creator` literal in the corpus dimension mapping
+was fabricated; the real term is `dcterms:creator`.
+
+### `schema_org` — schema.org predicate bridge (pipeline)
+
+The curated predicate menu the corpus assertion pipeline offers for
+expository passages — a consumer selection, not the vocabulary (the full
+release resolves through `published`). `all_terms_are_official` fails the
+build unless every menu entry is a published property of the loaded release
+(`kask/crates/hkask-bridge-ontology/src/schema_org.rs`).
+
+### `sumo` — SUMO upper ontology (universal fallback)
+
+The Suggested Upper Merged Ontology — the general-purpose fallback for
+domains that don't map to a specific supplement. Provides foundational
+categories that all domain supplements specialize. Unknown domains route to
+SUMO rather than the bare 5W1H core, so they get formal categorization
+(`kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs:15-20`).
+
+| Concept | URI |
+|--------|-----|
+| `ENTITY` | `sumo:Entity` |
+| `OBJECT` | `sumo:Object` |
+| `PROCESS` | `sumo:Process` |
+| `AUTONOMOUS_AGENT` | `sumo:AutonomousAgent` |
+| `RELATION` | `sumo:Relation` |
+
+These are the concepts hKask code names directly (`kask/crates/hkask-bridge-ontology/src/sumo.rs`); the full distribution resolves through `published`, and `named_concepts_are_published` fails the build if a named concept is not in it.
+
+> **Deleted surface:** there is no `five_w_one_h` module. The 5W1H
+> interrogative survives only as the `Core` anchor tier (label
+> `"5w1h_core"`, `kask/crates/hkask-bridge-ontology/src/axis.rs:161-167`) — the
+> ground for artifacts with an empty domain hint. There is also no
+> `research_stage_to_pko` helper (removed with the research-stage mapping;
+`pko.rs` ships only `kanban_status_to_pko_execution`).
+
+### `axis` — Domain-selection logic
+
+The core of the system: maps a domain hint to its axis anchoring.
+
+**Types** (`kask/crates/hkask-bridge-ontology/src/axis.rs`):
+
+| Type | Description |
+|------|-------------|
+| `OntologyAxis` | `Pko` or `DcBibo` — which axis of the dual-axis framework (`kask/crates/hkask-bridge-ontology/src/axis.rs:32-40`) |
+| `OntologyNamespace` | `Fibo`, `Sepio`, `Golem`, `MlSchema`, `DataCube`, `Omc`, `Sumo` — which domain supplement (`kask/crates/hkask-bridge-ontology/src/axis.rs:49-68`) |
+| `OntologyAnchor` | `Core`, `DualAxis { axis, concept }`, or `DomainSupplement { namespace, concept }` — the 3-tier anchoring (`kask/crates/hkask-bridge-ontology/src/axis.rs:107-123`) |
+
+**Functions:**
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `select_ontology_anchor` | `(domain: &str) -> OntologyAnchor` (`kask/crates/hkask-bridge-ontology/src/axis.rs:207-217`) | Select the ontology anchoring for a domain. State axis always DC; process axis is the domain ontology or PKO; unknown → SUMO; empty → Core. |
+| `OntologyAnchor::density_factor` | `(&self) -> f64` (`kask/crates/hkask-bridge-ontology/src/axis.rs:132-149`) | Information density expectation. |
+| `OntologyAnchor::axis` | `(&self) -> Option<OntologyAxis>` (`kask/crates/hkask-bridge-ontology/src/axis.rs:152-159`) | Which axis this anchor belongs to. |
+| `OntologyAnchor::tier_label` | `(&self) -> &str` (`kask/crates/hkask-bridge-ontology/src/axis.rs:161-167`) | Human-readable tier label. |
+
+Keyword matching is token-aware (`kask/crates/hkask-bridge-ontology/src/axis.rs`): the hint must equal the keyword, start with it, or contain it preceded by `_` or space — so `company_profile` matches `company` but `logistics` does not match `log`.
+
+### `derived` and `term_resolution` — exact term anchoring
+
+`derived::DERIVED_CONCEPTS` stores reviewed compositions with a canonical term, identity, and authority (`kask/crates/hkask-bridge-ontology/src/derived.rs`). `term_resolution::resolve_term` returns `TermResolution { tier, term, namespace, concept, identity, authority, note, definition, status, source, alternatives }`: `identity`/`authority` are present on the derived rung, `definition` on derived resolutions and only when supplied by a published source, `status` on published deprecation/supersession, `source` on published ones, and `alternatives` lists every other sense found (`TermSense { tier, namespace, concept, definition, status, source }`).
+
+`TERM_RESOLUTION_PROTOCOL` remains `published-term-resolution-v2`. The current resolver includes W3C RDF Data Cube; v1 records do not reconcile, and v2 records whose stored tags no longer match current canonicalization are rejected for re-tagging (`kask/crates/hkask-types/src/corpus.rs:328-346`). `canonicalize_terms` preserves trimmed candidate terms, deduplicates them, and derives grouped ontology tags and concept unions through the same resolver (`kask/crates/hkask-bridge-ontology/src/term_resolution.rs:17-20`, `kask/crates/hkask-bridge-ontology/src/term_resolution.rs:186-280`). The built-in `onto_anchor` tool is the agent-facing wrapper over this authority (`crates/agent/src/tools/onto_anchor_tool.rs`).
+
+## Domain → ontology mapping
+
+Verified against `select_ontology_anchor` (`kask/crates/hkask-bridge-ontology/src/axis.rs:207-390`):
+
+| Domain hint keywords | Namespace | State axis | Process axis |
+|---------------------|-----------|------------|--------------|
+| `data_cube`, `data-cube`, `statistical_cube` | RDF Data Cube | DC | RDF Data Cube (`qb:DataSet`) |
+| `economic`, `fred`, `dbnomics`, `worldbank`, `indicator`, `timeseries` without an explicit cube shape | SUMO fallback | DC | SUMO (`sumo:Entity`) |
+| `forecast`, `scenario` | (PKO) | DC | PKO |
+| `prediction-markets` | (DC+BIBO) | DC | DC+BIBO |
+| `science`, `research`, `hypothesis`, `evidence` | SEPIO | DC | SEPIO |
+| `narrative`, `literature`, `persona`, `author`, `corpus` | GOLEM | DC | GOLEM |
+| `training`, `ml`, `adapter`, `sweep`, `lora` | ML-Schema | DC | ML-Schema |
+| `media`, `image`, `video`, `audio`, `gallery`, `face`, `speech`, `voice`, `transcribe`, `meme`, `collage`, `album`, `gif` | OMC | DC | OMC |
+| `kanban`, `board`, `task`, `spec`, `skill`, `docproc`, `curator`, `kata`, `condenser` | (PKO) | DC | PKO |
+| `file`, `web`, `registry` | (DC+BIBO) | DC | DC+BIBO |
+| (empty) | (Core) | — | — |
+| (unknown, non-empty) | SUMO | DC | SUMO |
+
+> The OMC arm (`kask/crates/hkask-bridge-ontology/src/axis.rs:299-329`) was added so the condenser's tool-name-derived
+> anchors route media tools to their domain ontology instead of SUMO;
+> deliberately generic tokens (`model`, `job`, `workflow`, `prompt`) are
+> excluded. The GOLEM arm's `replica` keyword was removed with the
+> persona/replica system (`kask/crates/hkask-bridge-ontology/src/axis.rs:272-290`).
+
+## Unified ontology tag shape
+
+MCP servers emit a single top-level `"ontology"` key in tool output JSON,
+carrying a concept URI string (e.g. `"pplan:Step"`, `"sumo:Corporation"`,
+`"omc:CreativeWork"`). Verified emitters:
+
+| Server | JSON key | Value example | Evidence |
+|---|---|---|---|
+| curator | `"ontology"` | per-template | `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:826-832` |
+| media | `"ontology"` | `"omc:CreativeWork"` | `kask/mcp-servers/hkask-mcp-media/src/media_block.rs:19-25` |
+| scenarios | `"ontology"` | per-tool | `kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs` |
+
+The framework-level tool guard emits outcome tracing only; it does not attach semantic ontology metadata. A server that returns an ontology field does so in its own result construction. The actual tracing and durable MCP outcome paths are documented in [`regulation-spans.md`](regulation-spans.md).
+
+### OMC-bounded affordances (`explain_tool_for`)
+
+The crate root of `omc` exports `explain_tool_for(omc: &str) -> &'static str`
+(`kask/crates/hkask-bridge-ontology/src/omc.rs:138-152`) — the unified dispatch
+function mapping an OMC concept to the explain tool a media widget should
+invoke:
+
+| Concept | Explain tool |
+|---|---|
+| `omc:Scene` / `omc:Asset` | `gallery_analyze` |
+| others / empty / unknown | `describe_image` (general vision fallback) |
+
+This is OMC-specific dispatch. There is no crate-level domain →
+explain-tool mapping; widget Explain affordances use provenance-based
+dispatch (server → tool), with the ontology tag carried in the compose-back
+body for agent correlation.
+
+## How to tag spans with this crate
+
+> Folded 2026-09-09 from `diataxis/hkask-bridge-ontology/how-to.md`
+> (single-file set; this doc is now the crate's only doc — the Diataxis
+> INDEX lists the crate as out-of-scope with this file as cross-reference).
+> Git history preserves the full original.
+
+**Add the dependency** in your server's `Cargo.toml`:
+
+```toml
+[dependencies]
+hkask-bridge-ontology = { path = "../../crates/hkask-bridge-ontology" }
+```
+
+The crate is `forbid(unsafe_code)` (`kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs:1`) and
+exposes only `pub` modules plus two root re-exports, `DcConcept` and
+`PkoConcept` (`:116-117`) — no feature flags, no build-time configuration.
+
+**Pick the right entry point.** Three surfaces have different contracts:
+
+1. **Vocabulary constants** — use a published URI when the concept is already known.
+2. **`term_resolution::resolve_term`** — resolve a domain term exactly through published, derived, upper, and core rungs; the agent-facing `onto_anchor` tool uses this path.
+3. **`axis::select_ontology_anchor`** — select state/process anchoring for an artifact or domain hint. It is not the term resolver.
+
+**Step 1 — universal vocabulary directly.** The state axis (Dublin Core +
+BIBO + CiTO) and process axis (PKO) are always available; reach for these
+first and only escalate to a domain supplement when they are too coarse:
+
+```rust
+use hkask_bridge_ontology::{dc_bibo, pko};
+
+let dataset = dc_bibo::DATASET;      // "dcmitype:Dataset"  (dc_bibo.rs)
+let procedure = pko::PROCEDURE;      // "pko:Procedure"     (pko.rs:44)
+let dc_type = dc_bibo::mime_to_dc_type("application/pdf"); // Some("dcmitype:Text") (dc_bibo.rs:92)
+```
+
+PKO ships one stage-mapping helper, `kanban_status_to_pko_execution`
+(`kask/crates/hkask-bridge-ontology/src/pko.rs:170-177`), which the kata-kanban server uses to
+annotate task statuses with their PKO execution status.
+
+**Step 2 — domain supplement when the universal axes are too coarse.**
+Each supplement module is a flat list of `pub const` URI strings — no
+trait, no struct, no runtime state:
+
+```rust
+use hkask_bridge_ontology::{data_cube, sepio, golem, ml_schema, sumo, omc};
+
+let corporation = sumo::CORPORATION;      // "sumo:Corporation" (upper tier)
+let dataset = data_cube::DATA_SET;       // "qb:DataSet" (only for an RDF cube)
+let ev = sepio::HAS_EVIDENCE;             // "SEPIO:0000189" (published-source-backed)
+let run = ml_schema::RUN;                 // "mls:Run" (module is ml_schema, not mlschema)
+```
+
+**Step 3 — let the crate pick the anchor from a domain hint.**
+`select_ontology_anchor` maps the hint to an `OntologyAnchor` using
+token-aware keyword matching (the hint must equal the keyword, start with
+it, or contain it preceded by `_` or space — `"company_profile"` matches
+`company` but `"logistics"` does not match `log`; `matches_kw` at
+`kask/crates/hkask-bridge-ontology/src/axis.rs:208-219`):
+
+```rust
+use hkask_bridge_ontology::axis::select_ontology_anchor;
+
+select_ontology_anchor("company_profile")  // → DomainSupplement { Fibo, "dcmitype:Dataset" }
+select_ontology_anchor("kanban_board")      // → DualAxis { Pko, "pko:Procedure" }
+select_ontology_anchor("some-unknown-domain") // → DomainSupplement { Sumo, "sumo:Entity" }
+select_ontology_anchor("")                  // → Core (5W1H ground)
+```
+
+Dispatch order is implemented in `kask/crates/hkask-bridge-ontology/src/axis.rs`: explicit RDF Data Cube → SEPIO → GOLEM → ML-Schema → OMC → PKO dual-axis → DC+BIBO dual-axis → SUMO fallback, with `Core` for an empty hint. First matching keyword set wins. **Fallback discipline:** if
+a domain mapping fails or the domain ontology can't place the concept,
+fall back to the generalists (DC + PKO) or SUMO — never force a domain
+ontology where it doesn't fit. An unknown non-empty domain returns SUMO's
+`sumo:Entity`, not an error; an empty hint returns `Core` (`kask/crates/hkask-bridge-ontology/src/axis.rs:378-390`).
+
+**Step 4 — read the anchor's tier metadata.** The condenser and other
+regulation-loop consumers read derived fields off the anchor for
+domain-aware saliency weighting — use these instead of re-deriving per
+consumer: `density_factor()` (ML-Schema/RDF Data Cube 1.1, others
+1.0, `kask/crates/hkask-bridge-ontology/src/axis.rs:132-149`), `tier_label()` (`kask/crates/hkask-bridge-ontology/src/axis.rs:161-167`).
+
+**Step 5 — re-export the shared vocabulary in your server.** Keep
+server-specific dispatch (mapping your server's tool names or provider
+field names to the shared vocabulary) in your server — that is the
+server's business, not the ontology's. Re-export so existing call sites
+keep one import path; this is the pattern the condenser uses
+(`kask/crates/hkask-condenser/src/types.rs:19-21` re-exports
+`OntologyAnchor`, `OntologyAxis`, `OntologyNamespace`, and
+`select_ontology_anchor`):
+
+```rust
+// In your server's ontology module — re-export only the verified published
+// terms the server anchors on:
+pub use hkask_bridge_ontology::sumo::CORPORATION;
+
+// Internal metric identifiers are plain hKask canonical names — NOT
+// ontology URIs (no published vocabulary carries most ratio terms;
+// verified 2026-08-29).
+```
+
+**Step 6 — dispatch the gallery explain tool from an OMC tag.** The only
+explain-dispatch function in the crate is `omc::explain_tool_for`
+(`kask/crates/hkask-bridge-ontology/src/omc.rs:138-152`) — OMC-scoped (see the OMC-bounded affordances section
+above). There is no crate-root ontology→explain-tool dispatcher for the
+other namespaces; widgets that dispatch on non-OMC ontology tags implement
+their own mapping today.
+
+**Phantom-API warnings (verified 2026-09-15):** there is no `five_w_one_h` module; the term resolver returns `5w1h_core` at its coarse final rung (`kask/crates/hkask-bridge-ontology/src/term_resolution.rs:83-95`). There is no bridge-level framework wrapper that semantically decorates every tool execution. `research_stage_to_pko` is absent. `explain_tool_for` lives in `kask/crates/hkask-bridge-ontology/src/omc.rs` and dispatches OMC media concepts only.
+
+## Dependencies
+
+The crate is pure vocabulary + selection logic — no reasoners, no graph
+databases; the build dependencies `sha2`, `oxrdf`, and `oxrdfio` verify and parse the vendored
+sources; `kask/crates/hkask-bridge-ontology/src/published_sources.rs` extracts
+vocabulary without evaluating axioms (`kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs:74-77` describes the
+orthogonality invariant).
+
+## See also
+
+- [Native ontologies — comprehensive inventory](native-ontologies.md) — every
+  vendored vocabulary with version, license, domain and live-probed example
+  resolutions (2026-10-13).
+- [Software ontology adoption — research record](../research/software-ontology-adoption.md)
+  — the survey, licensing research and ruling decision trail behind the
+  rung-1/rung-2 pins (2026-10-13).
+- [Architecture diagrams](../diagrams/architecture.md) — the ontology-bridge
+  architecture and domain-selection flow (consolidated 2026-08-28).
+- [PRINCIPLES.md P5.4/P8.1](../architecture/core/PRINCIPLES.md) — the
+  dual-axis framework principles.

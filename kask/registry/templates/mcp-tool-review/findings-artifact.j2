@@ -1,0 +1,43 @@
+{# goal: Serialize the supplied MCP review records and computed identity reconciliation directly as JSON without model reconstruction or invented verification evidence. #}
+[inference]
+contract:
+  input:
+    server: string
+    run_date: string
+    tools: object[]
+    findings: object[]
+    reconciliation: object
+    gated_pending: string[]
+    notes: string[]
+    efficiency_metric_space: object
+    anchor_registry: object
+    citation_check: object
+    ask_first: object
+  output:
+    capability: string
+    server: string
+    run_date: string
+    reconciliation: object
+    efficiency_metric_space: object
+    anchor_registry: object
+    tools: object[]
+    findings: object[]
+    gated_pending_rulings: string[]
+    citation_check: object
+    ask_first: object
+    notes: string[]
+---
+{
+  "capability": "mcp-tool-review",
+  "server": {{ server | tojson }},
+  "run_date": {{ run_date | tojson }},
+  "reconciliation": {{ reconciliation | tojson }},
+  "efficiency_metric_space": {{ efficiency_metric_space | tojson }},
+  "anchor_registry": {{ anchor_registry | tojson }},
+  "tools": {{ tools | tojson }},
+  "findings": {{ findings | tojson }},
+  "gated_pending_rulings": {{ gated_pending | tojson }},
+  "citation_check": {{ citation_check | tojson }},
+  "ask_first": {{ ask_first | tojson }},
+  "notes": {{ notes | tojson }}
+}

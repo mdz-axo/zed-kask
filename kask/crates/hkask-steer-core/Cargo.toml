@@ -1,0 +1,15 @@
+[package]
+name = "hkask-steer-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Zed-free Steer prompt surface: tool-advertisement rendering and verification over the MCP servers' build.rs-generated TOOL_NAMES. Split from hkask-steer so the prompt-truth logic builds and tests without the editor closure; hkask-steer re-exports it."
+
+[lib]
+path = "src/hkask_steer_core.rs"
+
+[dependencies]
+log.workspace = true
+
+[lints]
+workspace = true

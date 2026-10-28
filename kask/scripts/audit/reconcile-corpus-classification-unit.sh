@@ -1,0 +1,228 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -ne 3 ]]; then
+    echo "usage: $0 <queue-jsonl> <failed-unit> <estimated-cost-per-chunk-usd>" >&2
+    exit 64
+fi
+
+queue=$1
+unit=$2
+estimated_cost_per_chunk=$3
+
+for command in jq sort cmp sha256sum; do
+    if ! command -v "$command" >/dev/null 2>&1; then
+        echo "required command not found: $command" >&2
+        exit 69
+    fi
+done
+here=$(cd "$(dirname "$0")" && pwd)
+source "$here/classification-shape.sh"
+if [[ ! -f "$queue" ]]; then
+    echo "queue does not exist: $queue" >&2
+    exit 66
+fi
+if ! jq -en --arg value "$estimated_cost_per_chunk" '$value | tonumber | . >= 0' >/dev/null 2>&1; then
+    echo "estimated-cost-per-chunk-usd must be a nonnegative number" >&2
+    exit 64
+fi
+
+row=$(jq -sc --arg unit "$unit" '
+    [.[] | select(.unit == $unit)]
+    | if length == 1 then .[0] else error("unit must occur exactly once") end
+' "$queue")
+status=$(jq -r '.status' <<<"$row")
+if [[ "$status" != failed* ]]; then
+    echo "unit is not in a failed terminal state: $unit status=$status" >&2
+    exit 65
+fi
+
+rows=$(jq -r '.rows' <<<"$row")
+input=$(jq -r '.input' <<<"$row")
+output=$(jq -r '.output' <<<"$row")
+response=$(jq -r '.response' <<<"$row")
+log=$(jq -r '.log' <<<"$row")
+
+# A failed_runner tool-error death wrote response+log but never output (only
+# success produces it), so the partial-result path below cannot run and the
+# queue's pending-unit artifact gate would refuse the re-run. Discard and
+# requeue: move the stale receipts aside, reset the unit to pending, and
+# conservatively reserve the failed attempt's cost (the queue's spent sum
+# counts pending units with a reserve).
+if [[ "$status" == "failed_runner" && ! -f "$output" ]]; then
+    for path in "$response" "$log"; do
+        if [[ ! -f "$path" ]]; then
+            echo "failed_runner unit is missing its durable receipt: $path" >&2
+            exit 66
+        fi
+    done
+    if [[ -f "$input" ]]; then
+        actual_input_sha256=$(sha256sum "$input" | cut -d' ' -f1)
+        recorded_input_sha256=$(jq -r '.input_sha256 // empty' <<<"$row")
+        if [[ -n "$recorded_input_sha256" && "$actual_input_sha256" != "$recorded_input_sha256" ]]; then
+            echo "input content changed since the unit was first processed: $unit" >&2
+            exit 65
+        fi
+    fi
+    orphan_suffix="orphan-$(date -u +%Y%m%dT%H%M%S)-$$"
+    for path in "$response" "$log"; do
+        mv "$path" "${path}.${orphan_suffix}"
+    done
+    reserved_cost=$(jq -n --argjson rows "$rows" --argjson rate "$estimated_cost_per_chunk" '$rows * $rate')
+    requeued_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    queue_tmp=$(mktemp "${queue}.tmp.XXXXXX")
+    jq -c --arg unit "$unit" --arg requeued_at "$requeued_at" --arg orphan_suffix "$orphan_suffix" \
+        --argjson reserved_cost "$reserved_cost" '
+        if .unit == $unit then
+            . + {status:"pending",requeued_at:$requeued_at,reserved_cost_usd:$reserved_cost,
+                 orphaned_receipts_suffix:$orphan_suffix,
+                 error:("tool-error death discarded and requeued; stale receipts at *." + $orphan_suffix + "; reserve is conservative — the true cost of the failed attempt is unknown")}
+        else . end
+    ' "$queue" > "$queue_tmp"
+    chmod --reference="$queue" "$queue_tmp"
+    mv -f "$queue_tmp" "$queue"
+    printf 'unit=%s status=pending requeued reserved_cost_usd=%s stale_receipts=*.%s\n' \
+        "$unit" "$reserved_cost" "$orphan_suffix" >&2
+    exit 0
+fi
+
+for path in "$input" "$output" "$response" "$log"; do
+    if [[ ! -f "$path" ]]; then
+        echo "failed unit is missing durable artifact: $path" >&2
+        exit 66
+    fi
+done
+
+input_rows=$(wc -l < "$input" | tr -d ' ')
+output_rows=$(wc -l < "$output" | tr -d ' ')
+if (( input_rows != rows || output_rows != rows )); then
+    echo "failed unit row reconciliation failed: expected=$rows input=$input_rows output=$output_rows" >&2
+    exit 65
+fi
+
+# The recovery split re-reads the input: verify the recorded content hash so
+# a mutated input (unchanged row count) cannot silently re-tag different
+# content into the recovery unit.
+recorded_input_sha256=$(jq -r '.input_sha256 // empty' <<<"$row")
+if [[ -n "$recorded_input_sha256" ]]; then
+    actual_input_sha256=$(sha256sum "$input" | cut -d' ' -f1)
+    if [[ "$actual_input_sha256" != "$recorded_input_sha256" ]]; then
+        echo "input content changed since the unit was first processed: $unit" >&2
+        exit 65
+    fi
+fi
+
+input_refs=$(mktemp)
+output_refs=$(mktemp)
+failed_refs=$(mktemp)
+recovery_tmp=$(mktemp)
+queue_tmp=$(mktemp "${queue}.tmp.XXXXXX")
+cleanup() {
+    rm -f "$input_refs" "$output_refs" "$failed_refs" "$recovery_tmp" "$queue_tmp"
+}
+trap cleanup EXIT
+
+jq -r '.entity_ref' "$input" | sort > "$input_refs"
+jq -r '.entity_ref' "$output" | sort > "$output_refs"
+if ! cmp -s "$input_refs" "$output_refs"; then
+    echo "failed unit input/output identities differ" >&2
+    exit 65
+fi
+if ! classification_shape_ok "$rows" "$output"; then
+    echo "failed unit contains invalid classification states or shapes" >&2
+    exit 65
+fi
+
+classified=$(jq -s '[.[] | select(.classification.status == "classified")] | length' "$output")
+failed=$(jq -s '[.[] | select(.classification.status == "failed")] | length' "$output")
+if (( classified + failed != rows || failed == 0 )); then
+    echo "failed unit is not a reconcilable partial result: classified=$classified failed=$failed rows=$rows" >&2
+    exit 65
+fi
+
+jq -s '[.[] | select(.classification.status == "failed") | .entity_ref]' "$output" > "$failed_refs"
+jq -c --slurpfile refs "$failed_refs" '
+    select(.entity_ref as $ref | ($refs[0] | index($ref)) != null)
+' "$input" > "$recovery_tmp"
+recovery_rows=$(wc -l < "$recovery_tmp" | tr -d ' ')
+if (( recovery_rows != failed )); then
+    echo "recovery input count does not match failed identities: recovery=$recovery_rows failed=$failed" >&2
+    exit 65
+fi
+
+recovery_number=1
+while :; do
+    recovery_unit=$(printf '%s-recovery-%03d' "$unit" "$recovery_number")
+    if ! jq -e --arg unit "$recovery_unit" 'select(.unit == $unit)' "$queue" >/dev/null; then
+        break
+    fi
+    recovery_number=$((recovery_number + 1))
+done
+suffix=$(printf 'recovery-%03d' "$recovery_number")
+with_suffix() {
+    local path=$1
+    if [[ "$path" == *.* ]]; then
+        printf '%s-%s.%s\n' "${path%.*}" "$suffix" "${path##*.}"
+    else
+        printf '%s-%s\n' "$path" "$suffix"
+    fi
+}
+recovery_input=$(with_suffix "$input")
+recovery_output=$(with_suffix "$output")
+recovery_args=$(with_suffix "$(jq -r '.args' <<<"$row")")
+recovery_response=$(with_suffix "$response")
+recovery_log=$(with_suffix "$log")
+for path in "$recovery_input" "$recovery_output" "$recovery_args" "$recovery_response" "$recovery_log"; do
+    if [[ -e "$path" ]]; then
+        echo "refusing to overwrite recovery artifact: $path" >&2
+        exit 73
+    fi
+done
+mkdir -p "$(dirname "$recovery_input")"
+mv "$recovery_tmp" "$recovery_input"
+recovery_tmp=
+
+reported_cost=null
+cost_reporting_complete=false
+if summary=$(jq -cer '[.result.content[]? | select(.type == "text") | .text | fromjson | .content] | if length == 1 then .[0] else error("unexpected envelope") end' "$response" 2>/dev/null); then
+    candidate_cost=$(jq -r '.reported_cost_usd' <<<"$summary")
+    candidate_complete=$(jq -r '.cost_reporting_complete' <<<"$summary")
+    if [[ "$candidate_complete" == true ]] && jq -en --arg value "$candidate_cost" '$value | tonumber | . >= 0' >/dev/null 2>&1; then
+        reported_cost=$candidate_cost
+        cost_reporting_complete=true
+    fi
+fi
+reserved_cost=null
+if [[ "$cost_reporting_complete" != true ]]; then
+    reserved_cost=$(jq -n --argjson rows "$rows" --argjson rate "$estimated_cost_per_chunk" '$rows * $rate')
+fi
+ordinal=$(jq -s '[.[].ordinal] | max + 1' "$queue")
+reconciled_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+output_sha256=$(sha256sum "$output" | cut -d' ' -f1)
+
+recovery_row=$(jq -cn --arg unit "$recovery_unit" --arg parent_unit "$unit" \
+    --arg input "$recovery_input" --arg output "$recovery_output" \
+    --arg args "$recovery_args" --arg response "$recovery_response" --arg log "$recovery_log" \
+    --argjson ordinal "$ordinal" --argjson rows "$failed" \
+    '{unit:$unit,ordinal:$ordinal,parent_unit:$parent_unit,rows:$rows,
+      input:$input,output:$output,args:$args,response:$response,log:$log,status:"pending"}')
+
+jq -c --arg unit "$unit" --arg recovery_unit "$recovery_unit" \
+    --arg reconciled_at "$reconciled_at" --arg output_sha256 "$output_sha256" \
+    --argjson classified "$classified" --argjson failed "$failed" \
+    --argjson reported_cost "$reported_cost" --argjson cost_complete "$cost_reporting_complete" \
+    --argjson reserved_cost "$reserved_cost" --argjson recovery_row "$recovery_row" '
+    if .unit == $unit then
+      (. + {status:"reconciled_partial",reconciled_at:$reconciled_at,
+            tagged:$classified,failed:$failed,recovery_unit:$recovery_unit,
+            reported_cost_usd:$reported_cost,cost_reporting_complete:$cost_complete,
+            reserved_cost_usd:$reserved_cost,output_sha256:$output_sha256}),
+      $recovery_row
+    else . end
+' "$queue" > "$queue_tmp"
+chmod --reference="$queue" "$queue_tmp"
+mv -f "$queue_tmp" "$queue"
+queue_tmp=
+
+printf 'unit=%s status=reconciled_partial classified=%d failed=%d recovery_unit=%s reported_cost_usd=%s reserved_cost_usd=%s\n' \
+    "$unit" "$classified" "$failed" "$recovery_unit" "$reported_cost" "$reserved_cost" >&2

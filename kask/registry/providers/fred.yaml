@@ -1,0 +1,37 @@
+# Provider profile — FRED (Federal Reserve Economic Data). Structural
+# contract pinned by kask/scripts/check-provider-profiles.sh; semantic
+# reading owned by the provider-audit skill.
+id: fred
+name: FRED
+status: active
+roles:
+  - prediction-markets-reference
+keychain:
+  slot: kask://credentials/fred
+  env_var: HKASK_FRED_API_KEY
+  note: optional — the prediction-markets server falls back to curated static
+    reference levels when absent (kask/crates/kask_bridge/src/inference_providers.rs)
+consumed_capabilities:
+  - capability: live reference-level fetches for base-event families
+    source: kask/crates/kask_bridge/src/mcp_servers.rs (prediction-markets server credentials)
+deliberate_non_consumption: []
+data_terms:
+  extracted_at: "2026-10-13"
+  trains_on_customer_data: >-
+    blocked — FRED's legal pages were unreachable from this network this
+    run (fred.stlouisfed.org and /legal: connection failure, probed 2026-10-13);
+    terms of use not read. Honest evidence gap, not a clean pass.
+  retention_published: >-
+    blocked — same network failure (2026-10-13); FRED terms not read this run.
+status_surface:
+  status_page: >-
+    blocked — fred.stlouisfed.org unreachable from this network (probed
+    2026-10-13).
+  sla: blocked (same probe, 2026-10-13).
+pricing:
+  machine_readable: >-
+    known-free from the tree's integration (no API key required for the
+    FRED series endpoints, kask/mcp-servers/hkask-mcp-research), but the
+    terms page itself was not read this run — machine_readable stays
+    unverified pending a reachable probe.
+first_audit_pending: false

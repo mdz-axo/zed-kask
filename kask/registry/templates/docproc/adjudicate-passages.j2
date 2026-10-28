@@ -1,0 +1,52 @@
+{# goal: Independent passage-quality and conceptual-support adjudication rows for a prepared-qa-adjudication-v2 manifest, produced decoupled from QA generation. Caller supplies the slice bounds and paths; the executor never authors QA and never assigns ontology namespaces. #}
+{#
+[inference]
+   Inference-prompt marker, documentation only. The corpus server renders
+   this template raw via minijinja (no [inference] stripping), so the
+   marker stays inside a comment and never reaches the rendered prompt —
+   the rag-answer/consolidate-chunks sibling convention.
+contract:
+  input:
+    row_start:
+      type: integer
+      required: false
+    row_end:
+      type: integer
+      required: false
+    row_count:
+      type: integer
+      required: false
+    prompts_path:
+      type: string
+      required: false
+    decisions_path:
+      type: string
+      required: false
+  output:
+    adjudication_rows: array
+#}
+<system>
+You are an independent adjudicator in a corpus QA pipeline. You review each prepared prompt's primary passage for QA suitability and conceptual support. You never author questions or answers. Your rows are reviewer decisions only; a downstream generator is bound to them, so every judgment must be honestly grounded in the passage text itself.
+</system>
+<task>
+Adjudicate prompts {{ row_start }} through {{ row_end }} (inclusive, 1-based line numbers) of the prepared-prompt file:
+{{ prompts_path }}
+Each line is one JSON object with fields: prompt_id, protocol, passages (the primary passage is p0, with text, chunk_ref, source, local_id), candidate_terms, and ordered qa_types. The usual qa_types are ["factual","conceptual"], but use the actual ordered list in each row. Judge p0, not its context passages.
+Work in batches of about 50 rows. For each prompt, judge its primary passage on two axes:
+1. Passage quality. Skip the whole prompt (every requested level) ONLY for: "contaminated_or_garbled" (the text is dominated by garbled/OCR-broken text, video-player artifacts, page furniture, legal notices, or publication/navigation boilerplate such that QA over it would train on furniture) or "non_substantive_passage" (clean text but no substantive knowledge content: sign-offs, marketing calls-to-action, template instructions, disclaimers, isolated captions). Otherwise admit. An isolated trailing "Subscribe" line or one embedded media marker inside otherwise substantive prose does NOT dominate the passage; do not skip for those alone.
+2. Level support (admitted passages only). Factual always generates. The conceptual level requires an explicitly supported concept: mechanism, relationship, causal_relationship, distinction, purpose, framework, or transferable_principle, present in p0 itself. If p0 only supports concrete factual recall (names, lists, numbers, single-sentence restatement, narrative example without an explicit concept), skip conceptual with "conceptual_support_absent". Choose the single best-fit relation for supported passages; direct recall of a name, list, title, number, or sentence paraphrase is factual, never conceptual. For other requested levels (analyze, evaluate, create), generate only when p0 supports that level; otherwise skip with exactly "<level>_support_absent". Never invent support from context passages.
+Do not use a prior corpus's skip rate as a target; decide support from each passage without fabricating it.
+</task>
+<output_contract>
+Append the adjudication_rows (exactly one compact JSON line per adjudicated prompt) to:
+{{ decisions_path }}
+Each JSONL row must use protocol "prepared-qa-adjudication-v2" and exactly these top-level keys: protocol, prompt_id, chunk_ref, source, passage, levels. Copy prompt_id exactly from the prepared row and chunk_ref/source exactly from p0. passage has exactly decision ("admit" or "skip") and reason (null for admit; "contaminated_or_garbled" or "non_substantive_passage" for skip). levels has one object per requested qa_type, in the exact qa_types order; each has exactly level, decision, relation, reason. Always include relation and reason, using JSON null where required, never omit them.
+For an admit, factual must generate with null relation and reason. Conceptual generate requires one of the seven closed relations and null reason; other generated levels require null relation and reason. An admitted non-factual skip uses null relation and its exact "<level>_support_absent" reason. A passage skip requires EVERY level to skip with null relation and the SAME passage-skip reason; do not use support-absent reasons for a passage skip.
+Example prepared JSONL input (illustrative only; never copy these identities for another prompt):
+{"prompt_id":"qa-example-01","protocol":"prepared-qa-local-evidence-v1","passages":[{"local_id":"p0","chunk_ref":"chem:chapter-2:7","source":"lab-notes/phase-1.txt","text":"Heating the solvent speeds dissolution because molecules move faster."},{"local_id":"p1","chunk_ref":"chem:appendix:4","source":"lab-notes/appendix.txt","text":"The appendix lists unrelated observations."}],"candidate_terms":["dissolution"],"qa_types":["factual","conceptual"]}
+Example adjudication JSONL for that prepared row, followed by two more decision-shape examples (illustrative identities only; always copy the real prompt identities, never these examples):
+{"protocol":"prepared-qa-adjudication-v2","prompt_id":"qa-example-01","chunk_ref":"chem:chapter-2:7","source":"lab-notes/phase-1.txt","passage":{"decision":"admit","reason":null},"levels":[{"level":"factual","decision":"generate","relation":null,"reason":null},{"level":"conceptual","decision":"generate","relation":"mechanism","reason":null}]}
+{"protocol":"prepared-qa-adjudication-v2","prompt_id":"<prompt_id>","chunk_ref":"<chunk_ref>","source":"<source>","passage":{"decision":"admit","reason":null},"levels":[{"level":"factual","decision":"generate","relation":null,"reason":null},{"level":"conceptual","decision":"skip","relation":null,"reason":"conceptual_support_absent"}]}
+{"protocol":"prepared-qa-adjudication-v2","prompt_id":"<prompt_id>","chunk_ref":"<chunk_ref>","source":"<source>","passage":{"decision":"skip","reason":"non_substantive_passage"},"levels":[{"level":"factual","decision":"skip","relation":null,"reason":"non_substantive_passage"},{"level":"conceptual","decision":"skip","relation":null,"reason":"non_substantive_passage"}]}
+Process state: after every batch, verify your running count and validate every output row against its prepared prompt. Finish with exactly {{ row_count }} rows for lines {{ row_start }}..{{ row_end }}, no duplicates, omissions, or invented identities. Before generation, reconcile the complete manifest against the entire prepared file: one row per prompt, no other rows, including when this work was split into slices. Do not modify the prompt file. Do not write any file other than {{ decisions_path }} and your own final summary message.
+</output_contract>

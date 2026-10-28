@@ -1,0 +1,43 @@
+#![forbid(unsafe_code)]
+#![warn(clippy::let_underscore_future)]
+//! hKask Condenser — Domain logic for context condensation
+//!
+//! Pure domain crate: compression algorithms, ontology-aware saliency
+//! weighting (P5.4/P8.1), engine state management, prompt formatting, and
+//! output construction. No MCP, no HTTP, no async.
+//!
+//! ## Architecture
+//!
+//! - **`algorithms`** — Three compression algorithms:
+//!   - `rtk_style` — head/tail preservation with ontology-aware split ratios
+//!   - `word_rank` — TF-IDF bag-of-words compression with structural bonus and ontology anchoring
+//!   - `flashrank` — greedy marginal-utility selection under profile line-retention limits
+//!     The `select_ontology_anchor` function (re-exported from `hkask-bridge-ontology`
+//!     via `types`) maps tool names to the 3-tier ontology hierarchy without
+//!     wire-protocol overhead — every MCP server links against the same bridge
+//!     crates.
+//!     `domain_saliency` scores text relevance against an ontology anchor using
+//!     graph proximity — used by `WordRankAlgorithm` internally.
+//! - **`ontology_graph`** — A lightweight cross-domain concept relationship
+//!   index (SUMO, GOLEM, ML-Schema, PKO, DC+BIBO). Built once
+//!   at startup via `OnceLock`, zero dependencies, no reasoners. Used as a
+//!   saliency multiplier — lines containing concepts adjacent to the anchor
+//!   concept (e.g., "recall" when anchored to a SUMO memory process)
+//!   receive bonus scores.
+//! - **`types`** — Domain types: `OntologyAnchor` (3-tier classification),
+//!   `OntologyAxis` (Pko/DcBibo), `OntologyNamespace` (Sepio/Golem/Sumo/
+//!   MlSchema), compression profiles, health signals.
+//! - **`engine`** — `CondenserEngine` owns profile state and compression
+//!   dispatch. Exhaustively maps context categories to algorithms and derives
+//!   ontology anchors from tool names internally.
+//!
+//! This crate provides the domain primitives consumed by:
+//! - `kask_bridge` (`BridgeThreadCondenser` — the runtime tool-result
+//!   compression path wired into the agent turn loop)
+//! - `kask_bridge::BridgeThreadCondenser` (in-process thread condensation)
+
+pub(crate) mod algorithms;
+pub mod engine;
+pub(crate) mod ontology_graph;
+pub(crate) mod saliency;
+pub mod types;

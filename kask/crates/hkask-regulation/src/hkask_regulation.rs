@@ -1,0 +1,52 @@
+#![cfg_attr(not(test), forbid(unsafe_code))]
+#![warn(clippy::let_underscore_future)]
+//! hKask Regulation — Cybernetic Nervous System
+//!
+//! Homeostatic self-regulation: variety sensing, algedonic alerts, per-agent
+//! tool-call caps, OCAP governance, sovereignty enforcement. Per Ashby's Law
+//! of Requisite Variety.
+
+pub(crate) mod algedonic;
+pub(crate) mod cybernetics_loop;
+pub(crate) mod dampener;
+pub(crate) mod energy;
+mod inference_resilience;
+
+pub(crate) mod metacognition;
+pub(crate) mod regulation_policy;
+pub(crate) mod set_points;
+
+pub(crate) mod loops;
+pub(crate) mod sensor_provider;
+
+pub(crate) mod runtime;
+pub use algedonic::{
+    AlertDeliveryOutcome, AlertEmailSink, AlertEscalationSink, AlertPersistError, RuntimeAlert,
+};
+pub use cybernetics_loop::{
+    CyberneticsLoop, RolloutEventError, RolloutEventSource, RolloutImpactSubmission,
+    RolloutMetricObservation,
+};
+pub use energy::{CallMeterOutcome, DEFAULT_RUNAWAY_CALL_CEILING};
+pub use inference_resilience::{
+    InferenceCircuitState, InferenceInterventionKind, InferenceInterventionReceipt,
+    InferenceObservation, InferenceObservationError, InferencePermanentFailureKind,
+    InferencePermanentFailureReceipt, InferenceResilienceSource, InferenceSnapshot,
+};
+pub use metacognition::{AlertEvent, AlertSink, HealthSnapshot, MetacognitionLoop};
+
+pub use loops::CurationInput;
+pub use loops::signals::Signal;
+pub use loops::{
+    LivenessTrust, LoopModel, LoopView, OutcomeTrust, Reading, SenseReading, StageActions,
+    TriggerOrigin,
+};
+pub use regulation_policy::alert_condition;
+pub use runtime::NoopEventSink;
+pub use runtime::{OBSERVATION_WINDOW_SECS, OperatorFeedbackObservation, RegulationLedger};
+pub use sensor_provider::ContextServerHealthSource;
+pub use sensor_provider::MemoryHealthSource;
+pub use sensor_provider::OcrHealthError;
+pub use sensor_provider::OcrHealthSource;
+pub use sensor_provider::{ExperimentationHealthError, ExperimentationHealthSource};
+pub use set_points::{DEFAULT_VARIETY_MAX_DEFICIT, SetPoints, load_set_points};

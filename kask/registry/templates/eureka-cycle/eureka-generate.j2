@@ -1,0 +1,57 @@
+{# goal: Generate candidate hypotheses for one funded question across diverse personas, with every candidate citing at least one prior artifact from the recalled context and one recombination line over previously selected lineages. #}
+[inference]
+contract:
+  input:
+    question: string
+    prior_context: array
+    personas: array
+    aperture: string
+    n_candidates: integer
+  output:
+    candidates: array
+---
+You are the GENERATE step of one eureka cycle on the **{{ aperture }}** aperture.
+The loop is human-chaired: your output is a proposal for the PI's funding gate,
+never a decision.
+
+## Question
+
+{{ question }}
+
+## Recalled context (the mandatory citation material)
+
+{{ prior_context | tojson }}
+
+## Rules of generation
+
+1. **Cite or be dropped.** Every candidate cites at least one prior artifact
+   from the recalled context — an experiment id (with its outcome), a fossil
+   (with its rejection reason), a memory, or a prior cycle's study-report
+   finding. When the context is empty, cite the *source signals* instead and
+   mark the candidate `context: empty-lineage` so the triage brief states the
+   empty context explicitly. The citation requirement never silently drops all
+   candidates.
+2. **Diversity over comfort.** Generate {{ n_candidates }} candidates across
+   these personas: {{ personas | tojson }}. Include at least one unlikely
+   candidate and one that challenges the obvious explanation.
+3. **Recombine.** Include at least one candidate combining components of two
+   previously selected lineages, citing both.
+4. **Rank by likelihood, not ease of testing.** No early commitment to a
+   favorite.
+
+## Output shape
+
+Each candidate is an object with exactly these fields:
+
+- `hypothesis` — the falsifiable claim or answerable question, one sentence.
+- `citations` — array of prior-artifact references (ids with a phrase of what
+  they established).
+- `expected_value_sketch` — one sentence on why this candidate beats the null
+  of doing nothing.
+- `budget_ask` — the spend in the unit its lifecycle will enforce (`max_runs`
+  for experiments; estimated call caps for research runs). Never unnumbered.
+- `resolution_path_guess` — one of: research-resolvable | experiment-requiring
+  | forecasting.
+
+Return `candidates` as the array. Nothing else is a decision; everything you
+produce awaits the PI's funding gate.

@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# CI gate: every cross-surface reference in the skills ecosystem must resolve.
+#
+# Root cause this gate closes: incomplete multi-leg changes. A deletion or
+# rename lands on one side (a skill, a template, an MCP tool) while the
+# consumer-side update never does, leaving "phantom references" — prose that
+# instructs an agent to call something that no longer exists. Verified
+# instances: bug-hunt/tdd → deleted `harness-optimize`/`proptest` skills,
+# logo-builder → deleted media templates, gemba-walk → deleted
+# `validate_golden_outputs` executor. See
+# kask/docs/plans/architecture-audit-2026-08-26.md §2.1.
+#
+# What it checks (heuristic, like check-mcp-tool-tests.sh — a ratchet, not a
+# proof):
+#   1. `skill-name` backtick refs in SKILL.md bodies that look like skill
+#      names resolve against .agents/skills/ or are in the allowlist.
+#   2. Backticked `.j2`/`.yaml` paths resolve against the template registry
+#      or, for style configuration YAML, the style registry.
+#   2b. Extensionless backtick refs whose first component IS a registry
+#      directory (`render_template`'s documented extensionless form, e.g.
+#      `therapy/scan`) resolve too. A bare `a/b` backtick is prose or a git
+#      ref unless a registry dir exists for its first component — that
+#      scoping keeps false positives out while closing the blind spot the
+#      2026-10-18 independent review found (the gate passed while
+#      extensionless refs pointed at nothing).
+#
+# Exit codes:
+#   0 — all refs resolve or are allowlisted
+#   1 — at least one unresolved reference (regression)
+#
+# Usage: bash kask/scripts/check-skill-crossrefs.sh
+
+set -euo pipefail
+
+# Skills and templates live under the repo root (`.agents/skills/` is
+# repo-root-relative, not kask-relative), so resolve everything from the
+# repository root while keeping the script invocable from any directory.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$REPO_ROOT"
+
+SKILLS_DIR=".agents/skills"
+TEMPLATES_DIR="kask/registry/templates"
+
+# Deliberate non-references that pattern-match but are not skill names.
+# Extend only with a documented reason.
+ALLOW_RE=(
+  'cargo-mutants'
+)
+
+is_allowed() {
+  local ref="$1"
+  for allowed in "${ALLOW_RE[@]}"; do
+    [ "$ref" = "$allowed" ] && return 0
+  done
+  return 1
+}
+
+FAIL=0
+
+# ── Check 1: backtick refs that match installed skill names must exist ──
+# Strategy: collect every kebab-case backtick token from every SKILL.md, then
+# flag tokens that LOOK like skill names (≥3 segments, or contain a verb noun
+# pair) and do not resolve to a skill, template dir, or known non-skill term.
+#
+# A token is treated as a skill reference when a skill exists whose name is a
+# prefix/suffix overlap is too fuzzy; instead we invert: for every DELETED
+# concept we care about, nothing flags. The enforceable direction is:
+#   every `<skill>/<file>.j2` template ref resolves (check 2), and
+#   every backtick token that exactly equals a *former* skill name fails.
+# Former names are derived at run time from the curated retirement record
+# RETIRED_SKILL_NAMES (crates/agent_skills/agent_skills.rs) — the same
+# single source of truth the installed-copy sweep uses: a shipped skill's
+# retirement appends its name there in the same commit, so this list
+# cannot silently miss one (the kata-coaching gap, found 2026-09-30, was a
+# stale hand-pinned copy of this array). If the record cannot be read or
+# parses to zero names, FAIL loudly — a missing record must not silently
+# shrink the list to nothing (a vacuous pass).
+RETIRED_RECORD="${RETIRED_RECORD:-$REPO_ROOT/crates/agent_skills/agent_skills.rs}"
+[ -f "$RETIRED_RECORD" ] || {
+  echo "FAIL: retired-skill record not found at $RETIRED_RECORD — the gate cannot derive its name list."
+  exit 1
+}
+mapfile -t FORMER_SKILL_NAMES < <(
+  awk '/^const RETIRED_SKILL_NAMES/{f=1;next} f&&/^\];/{f=0} f' "$RETIRED_RECORD" \
+    | grep -oE '"[a-z0-9-]+"' | tr -d '"'
+)
+[ "${#FORMER_SKILL_NAMES[@]}" -gt 0 ] || {
+  echo "FAIL: parsed zero names from $RETIRED_RECORD — the record moved or changed shape."
+  exit 1
+}
+
+# One grep per former name over all SKILL.md files (not one fork per line ×
+# name — that took ~45s and timed out agent gates at 30s).
+for former in "${FORMER_SKILL_NAMES[@]}"; do
+  # A former name that has since been restored is no longer deleted —
+  # references to it resolve, so it must not flag. The record holds only
+  # names absent from HEAD, so a restored skill drops out of the derived
+  # list automatically; this existence check is defense-in-depth against
+  # a record that lags a restoration (eqm was deleted in 9bcfe558a0 and
+  # restored in 9ec1df0ca0).
+  [ -f "$SKILLS_DIR/$former/SKILL.md" ] && continue
+  while IFS=: read -r skill_md line_no _; do
+    echo "UNRESOLVED: $skill_md:$line_no references deleted skill \`$former\`"
+    FAIL=1
+  done < <(grep -nF "\`$former\`" "$SKILLS_DIR"/*/SKILL.md || true)
+done
+
+# ── Check 2: `<skill>/<file>.j2` / `<skill>/<file>.yaml` registry refs must
+# resolve on disk. Only refs carrying an explicit extension are checked —
+# bare `a/b` backticks are usually git refs, file paths, or prose.
+for skill_md in "$SKILLS_DIR"/*/SKILL.md; do
+  while IFS=: read -r line_no match; do
+    ref="${match//\`/}"
+    ref="${ref%.j2}"
+    ref="${ref%.yaml}"
+    if is_allowed "$ref"; then
+      continue
+    fi
+    if [ ! -f "$TEMPLATES_DIR/$ref.j2" ] && [ ! -f "$TEMPLATES_DIR/$ref.yaml" ] &&
+       [ ! -f "kask/registry/styles/$ref.yaml" ]; then
+      echo "UNRESOLVED: $skill_md:$line_no registry ref \`$ref\` has no template or style file"
+      FAIL=1
+    fi
+  done < <(grep -noE '`[a-z0-9-]+/[a-z0-9._-]+\.(j2|yaml)`' "$skill_md" || true)
+
+  # Check 2b: extensionless refs scoped to registry dirs. Only a backtick
+  # token `dir/leaf` whose `dir` exists in a registry is checked — the ref
+  # reads as a registry citation in that context, so it must resolve.
+  # Everything else (git refs, file paths, prose) stays out of scope. A token
+  # may carry its own extension (`therapy/scan.j2` and `therapy/scan` are the
+  # same citation); strip it the same way check 2 does before resolving.
+  while IFS=: read -r line_no match; do
+    ref="${match//\`/}"
+    first="${ref%%/*}"
+    is_allowed "$ref" && continue
+    # Normalize: strip a known extension so `a/b.j2` and `a/b` resolve alike.
+    base="${ref%.j2}"
+    base="${base%.yaml}"
+    if [ -d "$TEMPLATES_DIR/$first" ] || [ -d "kask/registry/styles/$first" ]; then
+      if [ ! -f "$TEMPLATES_DIR/$base.j2" ] && [ ! -f "$TEMPLATES_DIR/$base.yaml" ] &&
+         [ ! -f "kask/registry/styles/$base.yaml" ]; then
+        echo "UNRESOLVED: $skill_md:$line_no extensionless registry ref \`$ref\` has no template or style file"
+        FAIL=1
+      fi
+    fi
+  done < <(grep -noE '`[a-z0-9-]+/[a-z0-9._-]+`' "$skill_md" || true)
+done
+
+if [ "$FAIL" -ne 0 ]; then
+  echo ""
+  echo "FAIL: unresolved cross-surface references found."
+  echo "Either complete the consumer-side update (the referenced artifact was"
+  echo "deleted/renamed) or restore the artifact. See §5.0 triage protocol in"
+  echo "kask/docs/plans/architecture-audit-2026-08-26.md."
+  exit 1
+fi
+
+echo "OK: all skill↔template/deleted-skill cross-references resolve."

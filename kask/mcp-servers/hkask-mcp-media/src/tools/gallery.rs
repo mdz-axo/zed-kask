@@ -1,0 +1,1997 @@
+//! Gallery tools — organize, search, find-similar, refresh, describe, analyze, faces, timeline.
+use crate::*;
+
+const ANALYSIS_PIPELINES: [&str; 5] = ["faces", "objects", "colors", "composition", "scene"];
+// Face detection/identification is never implied by generic analysis or auto-analysis.
+const DEFAULT_ANALYSIS_PIPELINES: [&str; 4] = ["objects", "colors", "composition", "scene"];
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GalleryAnnotationCreateRequest {
+    pub gallery_asset_id: String,
+    /// One of: tag, note.
+    pub kind: String,
+    /// Manually supplied annotation text (possibly agent-mediated), not model-analysis output.
+    pub value: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GalleryAnnotationListRequest {
+    pub gallery_asset_id: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GalleryAnnotationUpdateRequest {
+    pub gallery_asset_id: String,
+    pub annotation_id: String,
+    pub value: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GalleryAnnotationDeleteRequest {
+    pub gallery_asset_id: String,
+    pub annotation_id: String,
+}
+
+fn validate_annotation_value(value: &str) -> Result<(), McpToolError> {
+    if value.trim().is_empty() || value.len() > 4096 {
+        return Err(McpToolError::invalid_argument(
+            "annotation value must be nonblank and at most 4096 UTF-8 bytes",
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum AnalysisTarget {
+    New,
+    Indices(Vec<usize>),
+}
+
+fn validate_analysis_pipelines(
+    pipelines: Option<Vec<String>>,
+) -> Result<Vec<String>, McpToolError> {
+    let pipelines =
+        pipelines.unwrap_or_else(|| DEFAULT_ANALYSIS_PIPELINES.map(String::from).to_vec());
+    if pipelines.is_empty() {
+        return Err(McpToolError::invalid_argument(
+            "pipelines must contain at least one pipeline",
+        ));
+    }
+    for pipeline in &pipelines {
+        if pipeline.trim().is_empty() {
+            return Err(McpToolError::invalid_argument(
+                "pipeline names must not be empty",
+            ));
+        }
+        if !ANALYSIS_PIPELINES.contains(&pipeline.as_str()) {
+            return Err(McpToolError::invalid_argument(format!(
+                "unknown pipeline '{pipeline}': must be one of {}",
+                ANALYSIS_PIPELINES.join(", ")
+            )));
+        }
+    }
+    Ok(pipelines)
+}
+
+fn validate_analysis_target(
+    mode: &str,
+    image_indices: Option<Vec<usize>>,
+    image_count: usize,
+    max_images: usize,
+) -> Result<AnalysisTarget, McpToolError> {
+    if max_images == 0 {
+        return Err(McpToolError::invalid_argument(
+            "max_images must be greater than zero",
+        ));
+    }
+    match mode {
+        "new" => {
+            if image_indices.is_some() {
+                return Err(McpToolError::invalid_argument(
+                    "image_indices is only valid when mode is 'selection'",
+                ));
+            }
+            Ok(AnalysisTarget::New)
+        }
+        "all" => {
+            if image_indices.is_some() {
+                return Err(McpToolError::invalid_argument(
+                    "image_indices is only valid when mode is 'selection'",
+                ));
+            }
+            Ok(AnalysisTarget::Indices(
+                (0..image_count).take(max_images).collect(),
+            ))
+        }
+        "selection" => {
+            let indices = image_indices.ok_or_else(|| {
+                McpToolError::invalid_argument("image_indices is required when mode is 'selection'")
+            })?;
+            if indices.len() > max_images {
+                return Err(McpToolError::invalid_argument(format!(
+                    "selection contains {} indices but max_images is {max_images}; increase max_images or submit a smaller selection",
+                    indices.len()
+                )));
+            }
+            if let Some(index) = indices.iter().find(|index| **index >= image_count) {
+                return Err(McpToolError::invalid_argument(format!(
+                    "image index {index} is out of range for gallery with {image_count} assets"
+                )));
+            }
+            let mut seen = std::collections::HashSet::new();
+            let deduplicated = indices
+                .into_iter()
+                .filter(|index| seen.insert(*index))
+                .collect();
+            Ok(AnalysisTarget::Indices(deduplicated))
+        }
+        other => Err(McpToolError::invalid_argument(format!(
+            "invalid mode '{other}': must be new, all, or selection"
+        ))),
+    }
+}
+
+fn analysis_status(
+    requested: usize,
+    completed: u32,
+    partial: u32,
+    errors: &[String],
+) -> &'static str {
+    if requested == 0 {
+        "nothing_to_analyze"
+    } else if errors.is_empty() && completed as usize == requested {
+        "completed"
+    } else if completed + partial == 0 {
+        "failed"
+    } else {
+        "partial"
+    }
+}
+
+fn refresh_status(scan_errors: &[String], stage_errors: &[&[String]]) -> &'static str {
+    if !scan_errors.is_empty() {
+        "degraded"
+    } else if stage_errors.iter().any(|errors| !errors.is_empty()) {
+        "partial"
+    } else {
+        "completed"
+    }
+}
+
+/// Score gallery images by Levenshtein tag similarity: for each (term, tag)
+/// pair at or above `min_similarity`, accumulate max(sim × confidence) per
+/// image, then rank descending. Shared by the collage's search-terms and
+/// similar-to-index modes — previously two inline copies of this loop (with
+/// gallery_search's detail-collecting variant a third).
+pub(crate) fn rank_images_by_tag_similarity(
+    all_tags: &[(crate::gallery::TagRecord, String)],
+    terms: &[String],
+    min_similarity: f64,
+    exclude_relative_path: Option<&str>,
+) -> Vec<(String, f64)> {
+    let mut image_scores: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+    for (tag, relative_path) in all_tags {
+        if exclude_relative_path == Some(relative_path.as_str()) {
+            continue;
+        }
+        for term in terms {
+            let sim = levenshtein_similarity(term, &tag.value);
+            if sim >= min_similarity {
+                let weighted = sim * tag.confidence;
+                let entry = image_scores.entry(relative_path.clone()).or_insert(0.0);
+                *entry = (*entry).max(weighted);
+            }
+        }
+    }
+    let mut ranked: Vec<(String, f64)> = image_scores.into_iter().collect();
+    ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    ranked
+}
+
+/// One media-block display hint per ranked path that resolves to a gallery
+/// asset — the shared display surface of the tags and semantic search
+/// cores. The caller projects its ranked tuples down to paths (the tuple
+/// shapes differ); the asset lookup and media-block shape are shared.
+fn ranked_image_display_hints<'a>(
+    assets: &[crate::gallery::ImageRecord],
+    paths: impl Iterator<Item = &'a String>,
+) -> Vec<String> {
+    paths
+        .filter_map(|path| {
+            let image = assets.iter().find(|image| image.relative_path == *path)?;
+            Some(crate::media_block::media_block_with_gallery_asset_id(
+                "image",
+                &image.absolute_path,
+                None,
+                None,
+                Some(&image.id),
+            ))
+        })
+        .collect()
+}
+
+#[tool_router(router = gallery_router, vis = "pub")]
+impl MediaServer {
+    // Supplied metadata lives in the index even in read-only gallery mode.
+    // Host invocation authorization is the boundary: `user` classifies supplied
+    // metadata, not proof of human identity/approval. Source bytes stay untouched.
+    #[tool(
+        description = "Create a manually supplied researcher tag or note on a stable gallery_asset_id. Does not modify source media. Identical model suggestions remain separate. Provenance classifies supplied metadata, not authenticated human identity; authorization is the existing host boundary."
+    )]
+    pub async fn gallery_annotation_create(
+        &self,
+        Parameters(request): Parameters<GalleryAnnotationCreateRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "gallery_annotation_create", async {
+            validate_annotation_value(&request.value)?;
+            if !matches!(request.kind.as_str(), "tag" | "note") {
+                return Err(McpToolError::invalid_argument("kind must be tag or note"));
+            }
+            self.gallery_store.get_by_id(&request.gallery_asset_id).map_err(map_gallery_store_error)?;
+            let annotation = self.gallery_store.tag_image(&request.gallery_asset_id, &request.kind, &request.value, 1.0, "user")
+                .map_err(map_gallery_store_error)?;
+            Ok(serde_json::json!({"annotation": annotation, "provenance": "researcher_supplied", "gallery_changed": true}))
+        }).await
+    }
+
+    #[tool(
+        description = "List researcher-authored tags and notes for a stable gallery_asset_id, excluding model suggestions. Missing source files do not hide retained annotations."
+    )]
+    pub async fn gallery_annotation_list(
+        &self,
+        Parameters(request): Parameters<GalleryAnnotationListRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "gallery_annotation_list", async {
+            self.gallery_store.get_by_id(&request.gallery_asset_id).map_err(map_gallery_store_error)?;
+            let annotations = self.gallery_store.get_tags(&request.gallery_asset_id).map_err(map_gallery_store_error)?
+                .into_iter().filter(|tag| tag.model_used == "user" && matches!(tag.tag_type.as_str(), "tag" | "note")).collect::<Vec<_>>();
+            Ok(serde_json::json!({"gallery_asset_id": request.gallery_asset_id, "annotations": annotations, "provenance": "researcher_supplied"}))
+        }).await
+    }
+
+    #[tool(
+        description = "Update only a researcher-authored tag or note by stable asset and annotation IDs. Preserves annotation identity and creation provenance."
+    )]
+    pub async fn gallery_annotation_update(
+        &self,
+        Parameters(request): Parameters<GalleryAnnotationUpdateRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "gallery_annotation_update", async {
+            validate_annotation_value(&request.value)?;
+            self.gallery_store.update_user_annotation(&request.gallery_asset_id, &request.annotation_id, &request.value).map_err(map_gallery_store_error)?;
+            Ok(serde_json::json!({"gallery_asset_id": request.gallery_asset_id, "annotation_id": request.annotation_id, "value": request.value, "provenance": "researcher_supplied", "gallery_changed": true}))
+        }).await
+    }
+
+    #[tool(
+        description = "Delete only the named researcher annotation, never model tags, other user annotations, or source bytes."
+    )]
+    pub async fn gallery_annotation_delete(
+        &self,
+        Parameters(request): Parameters<GalleryAnnotationDeleteRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "gallery_annotation_delete", async {
+            self.gallery_store.delete_user_annotation(&request.gallery_asset_id, &request.annotation_id).map_err(map_gallery_store_error)?;
+            Ok(serde_json::json!({"gallery_asset_id": request.gallery_asset_id, "annotation_id": request.annotation_id, "deleted": true, "gallery_changed": true}))
+        }).await
+    }
+
+    // ── Gallery tools ────────────────────────────────────────────────────────
+
+    #[tool(
+        description = "Organize a photo gallery. Point at a folder — the system creates the index, scans for images, and returns status. Use gallery_search to find photos by content."
+    )]
+    pub async fn gallery_organize(
+        &self,
+        Parameters(GalleryOrganizeRequest {
+            path,
+            mode,
+            recursive,
+            auto_analyze,
+        }): Parameters<GalleryOrganizeRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "gallery_organize", async {
+            let gallery_mode = match mode.as_str() {
+                "read-only" => GalleryMode::ReadOnly,
+                "copy-on-write" => GalleryMode::CopyOnWrite,
+                "destructive" => GalleryMode::Destructive,
+                other => {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "Invalid mode '{}': must be read-only, copy-on-write, or destructive",
+                        other
+                    )));
+                }
+            };
+
+            let raw_path = PathBuf::from(&path);
+            hkask_mcp_server::ensure_existing_dir(&raw_path, "Gallery path")?;
+            let mut state = GalleryState::new(raw_path, gallery_mode.clone());
+            state.validate().map_err(map_media_error)?;
+            let record = self
+                .gallery_store
+                .open(&state.path.to_string_lossy(), gallery_mode)
+                .map_err(map_gallery_store_error)?;
+            state.mode = record.mode.parse().map_err(map_gallery_store_error)?;
+            state.gallery_id = Some(record.id.clone());
+            let scan = state.scan(recursive, None);
+            let reconciled = self
+                .gallery_store
+                .reconcile(&record.id, &scan)
+                .map_err(map_gallery_store_error)?;
+            // Activation follows successful persistence. Failed validation/scan persistence
+            // cannot replace the previously active gallery.
+            *self
+                .gallery_state
+                .lock()
+                .map_err(|error| map_media_error(MediaError::Io(error.to_string())))? = Some(state);
+            let mut result = serde_json::json!({
+                "status": if scan.errors.is_empty() { "organized" } else { "degraded" },
+                "gallery_id": record.id, "root_path": record.root_path,
+                "mode": record.mode, "requested_mode": mode,
+                "mode_preserved": record.mode != mode,
+                "images_added": reconciled.added, "images_changed": reconciled.changed,
+                "images_restored": reconciled.restored, "images_missing": reconciled.missing,
+                "unchanged": reconciled.unchanged, "total_images": reconciled.total,
+                "scan_complete": scan.errors.is_empty(), "scan_errors": scan.errors,
+                "gallery_changed": true,
+            });
+            if auto_analyze && !reconciled.analysis_assets.is_empty() {
+                let _admission = self.admit_heavy_operation()?;
+                let pipelines = DEFAULT_ANALYSIS_PIPELINES.map(String::from);
+                let analysis = self
+                    .run_analysis_on_assets_detailed(&reconciled.analysis_assets, &pipelines)
+                    .await;
+                result["auto_analyzed"] = serde_json::json!(analysis.completed);
+                result["auto_analyzed_partial"] = serde_json::json!(analysis.partial);
+                result["analyze_errors"] = serde_json::json!(analysis.errors);
+            }
+            Ok(result)
+        })
+        .await
+    }
+
+    #[tool(description = "Get gallery status: path, mode, image count, and total size.")]
+    pub async fn gallery_status(&self) -> Result<String, McpToolError> {
+        execute_tool(self, "gallery_status", async {
+            match self.access_gallery() {
+                Ok(ga) => Ok(serde_json::json!({
+                    "gallery_id": ga.gallery_id,
+                    "image_count": ga.image_count,
+                    "total_size_bytes": ga.total_size_bytes,
+                    "mode": ga.mode,
+                    "root_path": ga.root_path.display().to_string(),
+                })),
+                Err(e) => Ok(serde_json::json!({
+                    "status": "no_gallery",
+                    "message": e.to_string(),
+                })),
+            }
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Search your gallery. Mode 'tags' (default) fuzzy-matches researcher tags/notes and model suggestions, returning per-match provenance; works without embeddings. Mode 'semantic' matches visual descriptions by caption-embedding cosine similarity (requires gallery_analyze captions); pass image_index in semantic mode for similar images."
+    )]
+    pub async fn gallery_search(
+        &self,
+        Parameters(GallerySearchRequest {
+            query,
+            mode,
+            image_index,
+            limit,
+            tag_types,
+            min_similarity,
+        }): Parameters<GallerySearchRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "gallery_search", async {
+            let mode = mode.as_deref().unwrap_or("tags");
+            if !matches!(mode, "tags" | "semantic") {
+                return Err(McpToolError::invalid_argument(format!(
+                    "mode must be 'tags' or 'semantic', got '{mode}'"
+                )));
+            }
+            if mode == "tags" && query.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "query must not be empty in tags mode",
+                ));
+            }
+            if mode == "semantic" && query.trim().is_empty() && image_index.is_none() {
+                return Err(McpToolError::invalid_argument(
+                    "semantic mode requires a query or an image_index",
+                ));
+            }
+
+            match mode {
+                "semantic" => {
+                    let _admission = self.admit_heavy_operation()?;
+                    self.gallery_search_semantic(query, image_index, limit, min_similarity)
+                        .await
+                }
+                _ => {
+                    self.gallery_search_tags(query, limit, tag_types, min_similarity)
+                        .await
+                }
+            }
+        })
+        .await
+    }
+
+    /// Tags-mode core: fuzzy match against user and model metadata (the original
+    /// gallery_search body).
+    async fn gallery_search_tags(
+        &self,
+        query: String,
+        limit: Option<usize>,
+        tag_types: Option<Vec<String>>,
+        min_similarity: Option<f64>,
+    ) -> Result<serde_json::Value, McpToolError> {
+        let ga = self.access_gallery().map_err(map_media_error)?;
+
+        let all_tags = self
+            .gallery_store
+            .get_all_tags(&ga.gallery_id)
+            .map_err(map_gallery_store_error)?;
+
+        let limit = limit.unwrap_or(10);
+        let min_sim = min_similarity.unwrap_or(0.3);
+        let type_filter: Option<Vec<String>> =
+            tag_types.map(|t| t.into_iter().map(|s| s.to_lowercase()).collect());
+
+        let mut image_scores: std::collections::HashMap<String, (f64, Vec<serde_json::Value>)> =
+            std::collections::HashMap::new();
+
+        for (tag, relative_path) in &all_tags {
+            if let Some(ref filter) = type_filter
+                && !filter.contains(&tag.tag_type.to_lowercase())
+            {
+                continue;
+            }
+
+            let sim = levenshtein_similarity(&query, &tag.value);
+            if sim < min_sim {
+                continue;
+            }
+
+            let weighted_sim = sim * tag.confidence;
+            let entry = image_scores
+                .entry(relative_path.clone())
+                .or_insert((0.0, Vec::new()));
+            entry.0 = entry.0.max(weighted_sim);
+            entry.1.push(serde_json::json!({
+                "tag_type": tag.tag_type,
+                "value": tag.value,
+                "similarity": sim,
+                "confidence": tag.confidence,
+                "annotation_id": tag.id,
+                "provenance": if tag.model_used == "user" { "researcher_supplied" } else { "model" },
+                "model_used": tag.model_used,
+            }));
+        }
+
+        let mut ranked: Vec<(String, f64, Vec<serde_json::Value>)> = image_scores
+            .into_iter()
+            .map(|(path, (score, matches))| (path, score, matches))
+            .collect();
+        ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        ranked.truncate(limit);
+
+        let assets = self
+            .gallery_store
+            .list_assets(&ga.gallery_id, 0, i64::MAX as usize)
+            .map_err(map_gallery_store_error)?;
+        let display_hints: Vec<String> =
+            ranked_image_display_hints(&assets, ranked.iter().map(|(path, _, _)| path));
+
+        let results: Vec<serde_json::Value> = ranked.into_iter().filter_map(|(path, score, matches)| {
+            let image = assets.iter().find(|image| image.relative_path == path)?;
+            Some(serde_json::json!({ "image": path, "image_id": image.id, "metadata_stale": image.metadata_stale,
+                "score": score, "matching_tags": matches }))
+        }).collect();
+
+        Ok(serde_json::json!({
+            "query": query,
+            "mode": "tags",
+            "results": results,
+            "total_matches": results.len(),
+            "display_hints": display_hints,
+        }))
+    }
+
+    /// Semantic-mode core (the former gallery_find_similar body): caption-
+    /// embedding cosine similarity against the query text or a reference
+    /// image's caption.
+    async fn gallery_search_semantic(
+        &self,
+        query: String,
+        image_index: Option<usize>,
+        limit: Option<usize>,
+        min_similarity: Option<f64>,
+    ) -> Result<serde_json::Value, McpToolError> {
+        let limit = limit.unwrap_or(5);
+        let min_similarity = min_similarity.unwrap_or(0.3) as f32;
+        let query_label = if query.trim().is_empty() {
+            format!("image_index={}", image_index.unwrap_or(0))
+        } else {
+            query.clone()
+        };
+
+        // Determine the query embedding
+        let query_embedding: Vec<f32> = if !query.trim().is_empty() {
+            self.embed_text(&query).await?
+        } else if let Some(idx) = image_index {
+            let image_id = self.resolve_image_id(idx).map_err(map_media_error)?;
+            let tags = self
+                .gallery_store
+                .get_tags(&image_id)
+                .map_err(|e| map_media_error(e.into()))?;
+            let captions: Vec<&str> = tags
+                .iter()
+                .filter(|t| t.tag_type == "caption")
+                .map(|t| t.value.as_str())
+                .collect();
+            if captions.is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "Image has no caption. Run gallery_analyze first to generate scene descriptions.",
+                ));
+            }
+            let caption_text = captions.join(" ");
+            self.embed_text(&caption_text).await?
+        } else {
+            // Unreachable: the tool's input validation requires a query or
+            // an image_index in semantic mode.
+            return Err(McpToolError::invalid_argument(
+                "semantic mode requires a query or an image_index",
+            ));
+        };
+
+        // Collect captions for all images in the gallery
+        let ga = self.access_gallery().map_err(map_media_error)?;
+
+        let all_tags = self
+            .gallery_store
+            .get_all_tags(&ga.gallery_id)
+            .map_err(|e| map_media_error(e.into()))?;
+
+        // Group captions by image path and embed them
+        let mut candidates: Vec<(String, String)> = Vec::new();
+        let mut current_path = String::new();
+        let mut current_captions: Vec<String> = Vec::new();
+        for (tag, path) in &all_tags {
+            if tag.tag_type != "caption" {
+                continue;
+            }
+            if path != &current_path {
+                if !current_captions.is_empty() {
+                    candidates.push((
+                        std::mem::take(&mut current_path),
+                        current_captions.join(" "),
+                    ));
+                    current_captions.clear();
+                }
+                current_path = path.clone();
+            }
+            current_captions.push(tag.value.clone());
+        }
+        if !current_captions.is_empty() {
+            candidates.push((current_path, current_captions.join(" ")));
+        }
+
+        if candidates.is_empty() {
+            return Ok(serde_json::json!({
+                "query": query_label,
+                "mode": "semantic",
+                "results": [],
+                "message": "No captions found. Run gallery_analyze first.",
+            }));
+        }
+
+        // Embed candidate captions individually and compute similarity.
+        // An embedding failure drops that candidate from the ranking — the
+        // dropped count is surfaced so it is never read as "no similar
+        // images".
+        let mut candidate_embeddings = Vec::new();
+        let mut failed_embeddings = 0u32;
+        for (_path, caption) in &candidates {
+            match self.embed_text(caption).await {
+                Ok(v) => candidate_embeddings.push(v),
+                Err(_) => {
+                    failed_embeddings += 1;
+                    candidate_embeddings.push(vec![]);
+                }
+            }
+        }
+
+        // Compute cosine similarity and rank
+        let mut scored: Vec<(String, f32)> = candidates
+            .iter()
+            .zip(candidate_embeddings.iter())
+            .filter_map(|((path, _), emb)| {
+                if emb.is_empty() {
+                    return None;
+                }
+                let sim = cosine_similarity(&query_embedding, emb);
+                if sim >= min_similarity {
+                    Some((path.clone(), sim))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(limit);
+
+        let assets = self
+            .gallery_store
+            .list_assets(&ga.gallery_id, 0, i64::MAX as usize)
+            .map_err(map_gallery_store_error)?;
+        let display_hints: Vec<String> =
+            ranked_image_display_hints(&assets, scored.iter().map(|(path, _)| path));
+
+        let results: Vec<serde_json::Value> = scored.into_iter().filter_map(|(path, score)| {
+            let image = assets.iter().find(|image| image.relative_path == path)?;
+            Some(serde_json::json!({"image": path, "image_id": image.id, "metadata_stale": image.metadata_stale, "similarity": score}))
+        }).collect();
+
+        Ok(serde_json::json!({
+            "query": query_label,
+            "mode": "semantic",
+            "results": results,
+            "failed_embeddings": failed_embeddings,
+            "display_hints": display_hints,
+        }))
+    }
+
+    #[tool(
+        description = "Refresh the gallery: scan for new/removed images, then update all AI metadata (objects, colors, composition, scene descriptions). Face detection is OFF by default. When include_faces=true, also scans the face reference folder (mcp/media/faces/ by default) for new reference faces, then auto-matches detected faces against the face_registry — named faces get person names instead of face_group numbers."
+    )]
+    pub async fn gallery_refresh(
+        &self,
+        Parameters(GalleryRefreshRequest {
+            recursive,
+            include_faces,
+            max_images,
+        }): Parameters<GalleryRefreshRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "gallery_refresh", async {
+            let ga = self.access_gallery().map_err(map_media_error)?;
+            let (scan, reconciled) = self
+                .rescan_gallery(&ga, recursive)
+                .map_err(map_media_error)?;
+            let gid = &ga.gallery_id;
+            let added = reconciled.added;
+            let total = reconciled.total;
+            let persisted = scan.entries.len();
+
+            let mut pipeline_names = vec!["objects", "colors", "composition", "scene"];
+            if include_faces {
+                pipeline_names.push("faces");
+            }
+            let pipelines: Vec<String> =
+                pipeline_names.into_iter().map(|s| s.to_string()).collect();
+
+            let analysis_assets: Vec<_> = reconciled
+                .analysis_assets
+                .iter()
+                .take(max_images)
+                .cloned()
+                .collect();
+            let analysis_requested = analysis_assets.len();
+            let _admission = if analysis_requested > 0 || include_faces {
+                Some(self.admit_heavy_operation()?)
+            } else {
+                None
+            };
+            let analysis = self
+                .run_analysis_on_assets_detailed(&analysis_assets, &pipelines)
+                .await;
+
+            let mut faces_matched = 0u32;
+            let mut registry_count = 0usize;
+            let mut match_errors: Vec<String> = Vec::new();
+            let mut face_scan_errors: Vec<String> = Vec::new();
+            let mut face_scan = serde_json::json!(null);
+            if include_faces {
+                // Stage 1: scan the face reference folder for new reference
+                // faces. Default folder: mcp/media/faces/. Skipped silently if
+                // the folder does not exist.
+                if let Some(folder) = crate::default_face_folder()
+                    && folder.is_dir()
+                {
+                    match self.run_face_scan_folder(&folder, false).await {
+                        Ok(result) => {
+                            face_scan = result;
+                        }
+                        Err(e) => {
+                            face_scan_errors.push(format!("face_scan_folder: {}", e));
+                        }
+                    }
+                }
+
+                // Stage 2: match detected faces against the registry.
+                let registry = match self.gallery_store.list_faces(Some("valid")) {
+                    Ok(faces) => faces,
+                    Err(e) => {
+                        match_errors.push(format!("Failed to query face registry: {}", e));
+                        Vec::new()
+                    }
+                };
+                registry_count = registry.len();
+
+                if !registry.is_empty() {
+                    let (matched, errs) = self.run_face_matching(&ga, &registry).await;
+                    faces_matched = matched;
+                    match_errors.extend(errs);
+                }
+            }
+
+            let status = refresh_status(
+                &scan.errors,
+                &[&analysis.errors, &face_scan_errors, &match_errors],
+            );
+
+            Ok(serde_json::json!({
+                "status": status,
+                "gallery_id": gid,
+                "gallery_changed": true,
+                "scan": {
+                    "images_added": added,
+                    "images_changed": reconciled.changed,
+                    "images_missing": reconciled.missing,
+                    "images_restored": reconciled.restored,
+                    "complete": scan.errors.is_empty(),
+                    "errors": scan.errors,
+                    "total_images": total,
+                    "persisted": persisted,
+                },
+                "analysis": {
+                    "status": analysis_status(
+                        analysis_requested,
+                        analysis.completed,
+                        analysis.partial,
+                        &analysis.errors,
+                    ),
+                    "images_requested": analysis_requested,
+                    "images_analyzed": analysis.durable_progress(),
+                    "images_completed": analysis.completed,
+                    "images_partial": analysis.partial,
+                    "images_pending_after_bound": reconciled.analysis_assets.len().saturating_sub(analysis_requested),
+                    "pipelines": pipelines,
+                },
+                "face_scan_folder": face_scan,
+                "face_matching": {
+                    "faces_matched": faces_matched,
+                    "registry_entries": registry_count,
+                },
+                "errors": {
+                    "analysis": analysis.errors,
+                    "face_scan": face_scan_errors,
+                    "matching": match_errors,
+                },
+            }))
+        })
+        .await
+    }
+
+    // ── Image tools ──────────────────────────────────────────────────────────
+
+    #[tool(
+        description = "Describe an image in detail. Choose a style: descriptive (full scene), artistic (poetic), technical (photographic analysis), or alt_text (accessibility)."
+    )]
+    pub async fn describe_image(
+        &self,
+        Parameters(DescribeImageRequest { image_url, style }): Parameters<DescribeImageRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "describe_image", async {
+            let _admission = self.admit_heavy_operation()?;
+            // Gallery asset paths are local files; the SSRF validator is for
+            // network URLs (see `is_local_media_path`).
+            if !crate::is_local_media_path(&image_url) {
+                validate_tool_url_with_dns(&image_url).await?;
+            }
+
+            let style_str = style.as_deref().unwrap_or("descriptive");
+            let mut vars = HashMap::new();
+            vars.insert("style", style_str);
+            let prompt = self
+                .render_prompt("caption", &vars)
+                .map_err(|e| McpToolError::internal(format!("Template render failed: {}", e)))?;
+
+            let (vision_model, _vision_label) = self.require_vision()?;
+            let params = hkask_types::template::LLMParameters::default();
+            let image_b64 = crate::gallery::vision::load_image_as_png_base64(&image_url)
+                .await
+                .map_err(crate::error::map_media_error)?;
+            let r = self
+                .vision_port
+                .generate_vision(&prompt, &[image_b64], &params, Some(vision_model.as_str()))
+                .await
+                .map_err(|e| classify_inference_error("Vision inference failed", e))?;
+
+            Ok(serde_json::json!({"description": r.text.trim(), "style": style_str}))
+        })
+        .await
+    }
+
+    // ── Analysis tools ──────────────────────────────────────────────────────
+
+    #[tool(
+        description = "Analyze gallery images with AI: objects, colors, composition, and scene descriptions by default. Faces require explicit pipelines=[\"faces\"] (alone or with other pipelines). User annotations are preserved; model suggestions remain distinct."
+    )]
+    pub async fn gallery_analyze(
+        &self,
+        Parameters(GalleryAnalyzeRequest {
+            mode,
+            image_indices,
+            pipelines,
+            max_images,
+        }): Parameters<GalleryAnalyzeRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "gallery_analyze", async {
+            let pipelines = validate_analysis_pipelines(pipelines)?;
+            let ga = self.access_gallery().map_err(map_media_error)?;
+            let target = validate_analysis_target(
+                &mode,
+                image_indices,
+                ga.image_count as usize,
+                max_images,
+            )?;
+
+            let indices = match target {
+                AnalysisTarget::Indices(indices) => indices,
+                AnalysisTarget::New => {
+                    let assets = self
+                        .gallery_store
+                        .list_assets(&ga.gallery_id, 0, i64::MAX as usize)
+                        .map_err(map_gallery_store_error)?;
+                    let mut pending = Vec::new();
+                    for (index, image) in assets.iter().enumerate() {
+                        let needs_analysis = if image.metadata_stale {
+                            true
+                        } else {
+                            self.gallery_store
+                                .get_tags(&image.id)
+                                .map_err(map_gallery_store_error)?
+                                .is_empty()
+                        };
+                        if needs_analysis {
+                            pending.push(index);
+                            if pending.len() == max_images {
+                                break;
+                            }
+                        }
+                    }
+                    pending
+                }
+            };
+
+            if indices.is_empty() {
+                return Ok(serde_json::json!({
+                    "status": "nothing_to_analyze",
+                    "message": "No images to analyze.",
+                    "pipelines_run": pipelines,
+                }));
+            }
+
+            let _admission = self.admit_heavy_operation()?;
+            let analysis = self
+                .run_analysis_on_indices_detailed(&ga, &indices, &pipelines)
+                .await;
+
+            let vision_label = self
+                .resolve_vision_model()
+                .map(|(_, label)| label)
+                .unwrap_or_else(|| "none".to_string());
+
+            let status = analysis_status(
+                indices.len(),
+                analysis.completed,
+                analysis.partial,
+                &analysis.errors,
+            );
+            Ok(serde_json::json!({
+                "status": status,
+                "images_analyzed": analysis.durable_progress(),
+                "images_completed": analysis.completed,
+                "images_partial": analysis.partial,
+                "total_images": indices.len(),
+                "pipelines_run": pipelines,
+                "model": vision_label,
+                "errors": analysis.errors,
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Name a face group from gallery_analyze. Provide either a free-text 'name' or a 'face_id' from the face registry (which auto-resolves to 'First Last'). After naming, gallery_search can find photos of that person by name."
+    )]
+    pub async fn gallery_name_face(
+        &self,
+        Parameters(GalleryNameFaceRequest {
+            face_group,
+            name,
+            face_id,
+        }): Parameters<GalleryNameFaceRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "gallery_name_face", async {
+            let resolved_name = if let Some(ref fid) = face_id {
+                self.gallery_store
+                    .get_face(fid)
+                    .map(|face| format!("{} {}", face.first_name, face.last_name))
+                    .map_err(|e| {
+                        McpToolError::not_found(format!("Face registry ID not found: {e}"))
+                    })?
+            } else {
+                match name {
+                    Some(n) if !n.trim().is_empty() => n,
+                    _ => {
+                        return Err(McpToolError::invalid_argument(
+                            "Either 'name' or 'face_id' must be provided.",
+                        ));
+                    }
+                }
+            };
+
+            let ga = self.access_gallery().map_err(map_media_error)?;
+
+            let all_tags = self
+                .gallery_store
+                .get_all_tags(&ga.gallery_id)
+                .map_err(|e| map_media_error(e.into()))?;
+
+            let mut renamed = 0u32;
+            for (tag, _path) in &all_tags {
+                if tag.tag_type != "face" {
+                    continue;
+                }
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&tag.value)
+                    && parsed["face_index"].as_u64() == Some(face_group as u64)
+                {
+                    let mut new_value = serde_json::json!({
+                        "face_index": face_group,
+                        "name": resolved_name,
+                    });
+                    if let Some(bbox) = parsed.get("bbox").cloned() {
+                        new_value["bbox"] = bbox;
+                    }
+                    self.gallery_store
+                        .replace_tag(
+                            &tag.id,
+                            &tag.image_id,
+                            "face",
+                            &new_value.to_string(),
+                            1.0,
+                            "user",
+                        )
+                        .map_err(map_gallery_store_error)?;
+                    renamed += 1;
+                }
+            }
+
+            Ok(serde_json::json!({
+                "status": "named",
+                "face_group": face_group,
+                "name": resolved_name,
+                "images_updated": renamed,
+            }))
+        })
+        .await
+    }
+
+    // ── Face registry tools ─────────────────────────────────────────────────
+
+    #[tool(
+        description = "Validate a gallery image as a face reference for facial recognition. Checks: exactly 1 face, face coverage ≥15%, frontal pose, good lighting, no occlusion, sharp focus. Returns structured pass/fail with specific reasons."
+    )]
+    pub async fn face_validate(
+        &self,
+        Parameters(FaceValidateRequest { image_index }): Parameters<FaceValidateRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "face_validate", async {
+            let _admission = self.admit_heavy_operation()?;
+            let image_url = self
+                .resolve_image_url(image_index)
+                .map_err(map_media_error)?;
+
+            let (vision_model, _vision_label) = self.require_vision()?;
+
+            let validation = vision::validate_face_reference(
+                &self.vision_port,
+                &self.template_env,
+                &image_url,
+                Some(vision_model.as_str()),
+            )
+            .await
+            .map_err(map_media_error)?;
+
+            Ok(serde_json::json!(validation))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Register a face reference with a person's name. Auto-validates the image against 6 criteria (face count, coverage, pose, lighting, occlusion, clarity). Pass --force to skip validation and register directly as valid. Stores in the face_registry table for automatic matching during gallery_refresh."
+    )]
+    pub async fn face_register(
+        &self,
+        Parameters(FaceRegisterRequest {
+            image_index,
+            first_name,
+            last_name,
+            force,
+        }): Parameters<FaceRegisterRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "face_register", async {
+            let _admission = if force {
+                None
+            } else {
+                Some(self.admit_heavy_operation()?)
+            };
+            let image_id = self
+                .resolve_image_id(image_index)
+                .map_err(map_media_error)?;
+            let image_url = self
+                .resolve_image_url(image_index)
+                .map_err(map_media_error)?;
+
+            let (record, validation) = self
+                .register_face_from_url(&image_id, &image_url, &first_name, &last_name, "", force)
+                .await?;
+
+            Ok(serde_json::json!({
+                "face_id": record.id,
+                "first_name": record.first_name,
+                "last_name": record.last_name,
+                "status": record.status,
+                "validation": validation,
+                "notes": record.notes,
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Scan a folder of reference face images (with YAML sidecars) and register each in face_registry. Default: mcp/media/faces/"
+    )]
+    pub async fn face_scan_folder(
+        &self,
+        Parameters(FaceScanFolderRequest { folder_path, force }): Parameters<FaceScanFolderRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "face_scan_folder", async {
+            let _admission = if force {
+                None
+            } else {
+                Some(self.admit_heavy_operation()?)
+            };
+            let folder = if let Some(p) = folder_path {
+                std::path::PathBuf::from(p)
+            } else {
+                crate::default_face_folder().ok_or_else(|| {
+                    McpToolError::invalid_argument(
+                        "HOME not set and no folder_path provided".to_string(),
+                    )
+                })?
+            };
+
+            hkask_mcp_server::ensure_existing_dir(&folder, "Face folder")?;
+            let folder = folder.canonicalize().map_err(|e| {
+                hkask_mcp_server::server::map_io_error(
+                    e,
+                    &format!("Cannot resolve face folder '{}'", folder.display()),
+                )
+            })?;
+
+            self.run_face_scan_folder(&folder, force).await
+        })
+        .await
+    }
+
+    #[tool(
+        description = "List all registered faces in the face registry. Optionally filter by status: 'valid' or 'rejected'."
+    )]
+    pub async fn face_list(
+        &self,
+        Parameters(FaceListRequest { status }): Parameters<FaceListRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "face_list", async {
+            let faces = self
+                .gallery_store
+                .list_faces(status.as_deref())
+                .map_err(|e| map_media_error(e.into()))?;
+
+            Ok(serde_json::json!({
+                "count": faces.len(),
+                "faces": faces,
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Remove a face from the registry by its ID (returned by face_register or face_list)."
+    )]
+    pub async fn face_remove(
+        &self,
+        Parameters(FaceRemoveRequest { face_id }): Parameters<FaceRemoveRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "face_remove", async {
+            self.gallery_store
+                .remove_face(&face_id)
+                .map_err(map_gallery_store_error)?;
+            Ok(serde_json::json!({
+                "status": "removed",
+                "face_id": face_id,
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Organize gallery images by time period using EXIF dates. Returns images grouped by year, month, or decade."
+    )]
+    pub async fn gallery_timeline(
+        &self,
+        Parameters(GalleryTimelineRequest {
+            period,
+            count,
+            per_period,
+            search_terms,
+        }): Parameters<GalleryTimelineRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "gallery_timeline", async {
+            if !matches!(period.as_str(), "year" | "month" | "decade") {
+                return Err(McpToolError::invalid_argument(format!(
+                    "Invalid period '{period}': must be year, month, or decade"
+                )));
+            }
+            let ga = self.access_gallery().map_err(map_media_error)?;
+
+            // Asset identity travels with every timeline result so inline and
+            // panel renderers resolve the same shared media player.
+            let mut dated_images: Vec<(String, String, String, String)> = Vec::new();
+            let assets = self
+                .gallery_store
+                .list_assets(&ga.gallery_id, 0, i64::MAX as usize)
+                .map_err(map_gallery_store_error)?;
+            for img in assets {
+                if let Some(ref terms) = search_terms {
+                    // A store failure must not silently drop images from the
+                    // timeline — propagate so the operator sees the DB error.
+                    let tags = self
+                        .gallery_store
+                        .get_tags(&img.id)
+                        .map_err(|e| map_media_error(e.into()))?;
+                    let matches = terms.iter().any(|term| {
+                        tags.iter()
+                            .any(|t| t.value.to_lowercase().contains(&term.to_lowercase()))
+                    });
+                    if !matches {
+                        continue;
+                    }
+                }
+
+                let exif = Self::extract_exif(&img.absolute_path);
+                let date_str = exif
+                    .get("date_taken")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+
+                let period_key = match period.as_str() {
+                    "month" => date_str.chars().take(7).collect(),
+                    "decade" => {
+                        let prefix: String = date_str.chars().take(3).collect();
+                        if prefix.chars().count() == 3 {
+                            format!("{prefix}0s")
+                        } else {
+                            "unknown".to_string()
+                        }
+                    }
+                    _ => date_str.chars().take(4).collect(),
+                };
+
+                dated_images.push((period_key, img.relative_path, img.absolute_path, img.id));
+            }
+
+            let mut periods: std::collections::BTreeMap<String, Vec<(String, String, String)>> =
+                std::collections::BTreeMap::new();
+            for (key, rel, abs, asset_id) in &dated_images {
+                periods.entry(key.clone()).or_default().push((
+                    rel.clone(),
+                    abs.clone(),
+                    asset_id.clone(),
+                ));
+            }
+
+            let mut result_periods: Vec<serde_json::Value> = Vec::new();
+            let mut display_hints: Vec<String> = Vec::new();
+            for (key, images) in periods.iter().rev().take(count) {
+                let selected: Vec<&(String, String, String)> =
+                    images.iter().take(per_period).collect();
+                result_periods.push(serde_json::json!({
+                    "period": key,
+                    "total_images": images.len(),
+                    "images": selected.iter().map(|(rel, _, _)| rel.clone()).collect::<Vec<_>>(),
+                }));
+                // One renderable ```media block per selected image so the agent
+                // can surface them inline; the D18 MediaWidget resolves the
+                // filesystem path via PathMediaStorage.
+                for (_, absolute_path, asset_id) in &selected {
+                    display_hints.push(crate::media_block::media_block_with_gallery_asset_id(
+                        "image",
+                        absolute_path,
+                        None,
+                        None,
+                        Some(asset_id),
+                    ));
+                }
+            }
+
+            Ok(serde_json::json!({
+                "period_type": period,
+                "periods": result_periods,
+                "display_hints": display_hints,
+            }))
+        })
+        .await
+    }
+
+    // Historical generation evidence remains readable.
+
+    #[tool(
+        description = "Read historical or source-derived lineage for a gallery asset, including any saved historical workflow graph. Read-only evidence inspection never replays a retired operation. Returns lineage: null if none is recorded."
+    )]
+    pub async fn gallery_lineage(
+        &self,
+        Parameters(GalleryLineageRequest { image_index }): Parameters<GalleryLineageRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "gallery_lineage", async {
+            let image_id = self
+                .resolve_image_id(image_index)
+                .map_err(map_media_error)?;
+            let lineage = self
+                .gallery_store
+                .get_generation(&image_id)
+                .map_err(|e| map_media_error(e.into()))?;
+            let historical_workflow = lineage
+                .as_ref()
+                .and_then(|record| record.workflow_id.as_deref())
+                .map(|id| self.gallery_store.get_workflow(id))
+                .transpose()
+                .map_err(map_gallery_store_error)?;
+            Ok(serde_json::json!({
+                "image_index": image_index,
+                "lineage": lineage,
+                "historical_workflow": historical_workflow,
+            }))
+        })
+        .await
+    }
+
+    /// List gallery assets in index order — the library/panel data source.
+    #[tool(
+        description = "List gallery assets in index order (0-based — index `offset + i` in the result is the image_index other gallery tools accept), paginated. Returns each asset's index, path, media type, and dimensions. Requires gallery_organize first."
+    )]
+    pub async fn gallery_list_assets(
+        &self,
+        Parameters(GalleryListAssetsRequest { offset, limit }): Parameters<
+            GalleryListAssetsRequest,
+        >,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "gallery_list_assets", async {
+            let ga = self.access_gallery().map_err(map_media_error)?;
+            let limit = limit.clamp(1, 500);
+            let assets = self
+                .gallery_store
+                .list_assets(&ga.gallery_id, offset, limit)
+                .map_err(|e| map_media_error(e.into()))?;
+            let total = self
+                .gallery_store
+                .count_assets(&ga.gallery_id)
+                .map_err(|e| map_media_error(e.into()))?;
+            let records: Vec<serde_json::Value> = assets
+                .iter()
+                .enumerate()
+                .map(|(i, image)| {
+                    serde_json::json!({
+                        "index": offset + i,
+                        "id": image.id,
+                        "missing": image.missing,
+                        "metadata_stale": image.metadata_stale,
+                        "path": image.absolute_path,
+                        "media_type": image.media_type,
+                        "width": image.width,
+                        "height": image.height,
+                        "format": image.format,
+                        "added_at": image.added_at,
+                    })
+                })
+                .collect();
+            Ok(serde_json::json!({
+                "gallery_id": ga.gallery_id,
+                "total": total,
+                "offset": offset,
+                "limit": limit,
+                "assets": records,
+            }))
+        })
+        .await
+    }
+
+    /// Get complete details for a gallery asset in a single call — the image
+    /// record (path, dimensions, format, media_type), all user/model tags,
+    /// generation lineage (if recorded), and face registry entries. This is
+    /// the inspector-panel data source.
+    #[tool(
+        description = "Get complete details for a gallery asset — record, tags, lineage, OMC creation graph, transcript-render origin, and face associations in a single call. The inspector-panel data source."
+    )]
+    pub async fn gallery_asset_detail(
+        &self,
+        Parameters(GalleryAssetDetailRequest {
+            image_index,
+            image_id,
+        }): Parameters<GalleryAssetDetailRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "gallery_asset_detail", async {
+            let ga = self.access_gallery().map_err(map_media_error)?;
+            let image = match (image_index, image_id) {
+                (Some(index), None) => {
+                    self.gallery_store
+                        .get_image(&ga.gallery_id, Some(index), None)
+                }
+                (None, Some(id)) => self.gallery_store.get_by_id(&id),
+                _ => {
+                    return Err(McpToolError::invalid_argument(
+                        "Supply exactly one of image_index or image_id",
+                    ));
+                }
+            }
+            .map_err(map_gallery_store_error)?;
+            let tags = self
+                .gallery_store
+                .get_tags(&image.id)
+                .map_err(|e| map_media_error(e.into()))?;
+            let lineage = self
+                .gallery_store
+                .get_generation(&image.id)
+                .map_err(|e| map_media_error(e.into()))?;
+            let omc_creation_graph =
+                self.gallery_store
+                    .get_omc_creation_graph(&image.id)
+                    .map_err(|e| map_media_error(e.into()))?
+                    .map(|record| {
+                        serde_json::from_str::<crate::omc::CreationGraph>(&record.graph_json)
+                            .map_err(|error| {
+                                McpToolError::internal(format!(
+                                    "stored OMC creation graph for {} is invalid: {error}",
+                                    image.id
+                                ))
+                            })
+                    })
+                    .transpose()?;
+            let transcript_render =
+                crate::transcript_store::get_render(&**self.gallery_store.driver(), &image.id)
+                    .map_err(crate::tools::educt::map_store_error)?;
+            let faces = self
+                .gallery_store
+                .get_faces_for_image(&image.id)
+                .map_err(|e| map_media_error(e.into()))?;
+            Ok(serde_json::json!({
+                "image": &image,
+                "tags": &tags,
+                "lineage": &lineage,
+                "omc_creation_graph": &omc_creation_graph,
+                "transcript_render": &transcript_render,
+                "faces": &faces,
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Delete an Asset from the gallery index. Linked transcripts are preserved and explicitly detached. By default the source file remains usable by those transcripts. delete_file=true requires destructive gallery mode and removes the source before deleting the gallery identity; a later index failure reports that the source was already deleted. Supply exactly one of image_index or image_id."
+    )]
+    pub async fn gallery_delete_image(
+        &self,
+        Parameters(GalleryDeleteImageRequest {
+            image_index,
+            image_id,
+            delete_file,
+        }): Parameters<GalleryDeleteImageRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "gallery_delete_image", async {
+            let ga = self.access_gallery().map_err(map_media_error)?;
+            // Resolution mirrors gallery_asset_detail: exactly one of the
+            // positional index (active gallery) or the stable id.
+            let image = match (image_index, image_id) {
+                (Some(index), None) => self
+                    .gallery_store
+                    .get_image(&ga.gallery_id, Some(index), None)
+                    .map_err(|e| map_gallery_store_error(e))?,
+                (None, Some(id)) => self
+                    .gallery_store
+                    .get_by_id(&id)
+                    .map_err(|e| map_gallery_store_error(e))?,
+                _ => {
+                    return Err(McpToolError::invalid_argument(
+                        "Supply exactly one of image_index or image_id",
+                    ));
+                }
+            };
+            let driver = &**self.gallery_store.driver();
+            let transcripts_detached =
+                crate::transcript_store::count_linked_transcripts(driver, &image.id)
+                    .map_err(crate::tools::educt::map_store_error)?;
+            if delete_file {
+                if ga.mode != GalleryMode::Destructive.as_str() {
+                    return Err(McpToolError::permission_denied(
+                        "Deleting an original file requires destructive gallery mode; use delete_file=false to remove only the index entry",
+                    ));
+                }
+                let path = std::path::Path::new(&image.absolute_path);
+                std::fs::remove_file(path).map_err(|error| {
+                    map_media_error(MediaError::AssetPersistence(format!(
+                        "delete source file {}: {error}",
+                        path.display()
+                    )))
+                })?;
+            }
+            self.gallery_store
+                .delete_image(&image.id)
+                .map_err(|error| {
+                    if delete_file {
+                        map_media_error(MediaError::AssetPersistence(format!(
+                            "source file was deleted, but gallery index deletion failed for {}: {error}; reconcile the index before retrying",
+                            image.id
+                        )))
+                    } else {
+                        map_media_error(error.into())
+                    }
+                })?;
+            Ok(serde_json::json!({
+                "deleted": true,
+                "image_id": image.id,
+                "file_deleted": delete_file,
+                "transcripts_detached": transcripts_detached,
+                "gallery_changed": true,
+            }))
+        })
+        .await
+    }
+
+    /// Import a video or audio file into the gallery index. Computes SHA-256
+    /// hash for deduplication and indexes the file for gallery search (the
+    /// former gallery_add_video / gallery_add_audio pair, merged).
+    #[tool(
+        description = "Import a video or audio file into the gallery whose folder contains it (not necessarily the active gallery); the file must be inside an organized gallery folder. Computes SHA-256 hash for deduplication and indexes the file for gallery search. media_type selects the kind: 'video' (with optional width/height metadata) or 'audio'."
+    )]
+    pub async fn gallery_add_media(
+        &self,
+        Parameters(GalleryAddMediaRequest {
+            path,
+            media_type,
+            width,
+            height,
+        }): Parameters<GalleryAddMediaRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "gallery_add_media", async {
+            let media_type = media_type.to_lowercase();
+            let (kind, fallback_ext) = match media_type.as_str() {
+                "video" => ("video", "mp4"),
+                "audio" => ("audio", "mp3"),
+                other => {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "media_type must be 'video' or 'audio', got '{other}'"
+                    )));
+                }
+            };
+            let file_path = std::path::Path::new(&path)
+                .canonicalize()
+                .map_err(|error| McpToolError::invalid_argument(format!("{path}: {error}")))?;
+            // The asset belongs to the gallery whose folder contains it, not
+            // whichever gallery is active.
+            let gallery = self
+                .gallery_store
+                .containing(&file_path)
+                .map_err(|e| map_media_error(e.into()))?
+                .ok_or_else(|| {
+                    McpToolError::failed_precondition(format!(
+                        "{path} is not inside any gallery folder; run gallery_organize on its folder first"
+                    ))
+                })?;
+            let bytes = std::fs::read(&file_path).map_err(|e| {
+                McpToolError::invalid_argument(format!("Failed to read {kind} file: {e}"))
+            })?;
+            let hash = {
+                use sha2::Digest;
+                let mut hasher = sha2::Sha256::new();
+                hasher.update(&bytes);
+                format!("{:x}", hasher.finalize())
+            };
+            let ext = file_path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or(fallback_ext)
+                .to_string();
+            let record = self
+                .gallery_store
+                .add_media(
+                    &gallery.id,
+                    &file_path.to_string_lossy(),
+                    &hash,
+                    width.unwrap_or(0),
+                    height.unwrap_or(0),
+                    &ext,
+                    bytes.len() as u64,
+                    kind,
+                )
+                .map_err(|e| map_media_error(e.into()))?;
+            let mut value = serde_json::to_value(&record)
+                .map_err(|e| McpToolError::internal(format!("encode {kind} record: {e}")))?;
+            // Render the imported media inline in the media widget —
+            // without a display_hint the caller has no way to view it.
+            if let Some(object) = value.as_object_mut() {
+                object.insert("gallery_changed".into(), serde_json::Value::Bool(true));
+                object.insert(
+                    "display_hint".into(),
+                    serde_json::Value::String(
+                        crate::media_block::media_block_with_gallery_asset_id(
+                            kind,
+                            &record.absolute_path,
+                            crate::omc::tool_to_omc("gallery_add_media"),
+                            Some(&crate::media_block::provenance_for_tool(
+                                "gallery_add_media",
+                                serde_json::json!({"path": path, "media_type": kind}),
+                                None,
+                            )),
+                            Some(&record.id),
+                        ),
+                    ),
+                );
+            }
+            Ok(value)
+        })
+        .await
+    }
+
+    /// Create a new album in the current gallery. Albums are metadata-only
+    /// groupings — assets stay in place on disk. An asset can be in
+    /// multiple albums.
+    #[tool(
+        description = "Create a new album in the current gallery. Albums are metadata-only groupings — assets stay in place on disk. An asset can be in multiple albums."
+    )]
+    pub async fn gallery_create_album(
+        &self,
+        Parameters(GalleryCreateAlbumRequest { name, parent_id }): Parameters<
+            GalleryCreateAlbumRequest,
+        >,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "gallery_create_album", async {
+            if name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "album name must not be empty",
+                ));
+            }
+            let ga = self.access_gallery().map_err(map_media_error)?;
+            let record = self
+                .gallery_store
+                .create_album(&ga.gallery_id, &name, parent_id.as_deref())
+                .map_err(|e| map_media_error(e.into()))?;
+            serde_json::to_value(&record)
+                .map_err(|e| McpToolError::internal(format!("encode album record: {e}")))
+        })
+        .await
+    }
+
+    /// List all albums in the current gallery.
+    #[tool(description = "List all albums in the current gallery.")]
+    pub async fn gallery_list_albums(&self) -> Result<String, McpToolError> {
+        execute_tool(self, "gallery_list_albums", async {
+            let ga = self.access_gallery().map_err(map_media_error)?;
+            let albums = self
+                .gallery_store
+                .list_albums(&ga.gallery_id)
+                .map_err(|e| map_media_error(e.into()))?;
+            serde_json::to_value(&albums)
+                .map_err(|e| McpToolError::internal(format!("encode album list: {e}")))
+        })
+        .await
+    }
+
+    /// Add a gallery asset to an album.
+    #[tool(description = "Add a gallery asset to an album. Idempotent — re-adding is a no-op.")]
+    pub async fn gallery_move_to_album(
+        &self,
+        Parameters(GalleryMoveToAlbumRequest {
+            image_index,
+            album_id,
+        }): Parameters<GalleryMoveToAlbumRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "gallery_move_to_album", async {
+            let image_id = self
+                .resolve_image_id(image_index)
+                .map_err(map_media_error)?;
+            self.gallery_store
+                .add_to_album(&album_id, &image_id)
+                .map_err(|e| map_media_error(e.into()))?;
+            Ok(serde_json::json!({
+                "added": true,
+                "album_id": album_id,
+                "image_index": image_index,
+            }))
+        })
+        .await
+    }
+
+    /// Remove a gallery asset from an album.
+    #[tool(
+        description = "Remove a gallery asset from an album. Idempotent — removing a non-member is a no-op."
+    )]
+    pub async fn gallery_remove_from_album(
+        &self,
+        Parameters(GalleryRemoveFromAlbumRequest {
+            image_index,
+            album_id,
+        }): Parameters<GalleryRemoveFromAlbumRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "gallery_remove_from_album", async {
+            let image_id = self
+                .resolve_image_id(image_index)
+                .map_err(map_media_error)?;
+            self.gallery_store
+                .remove_from_album(&album_id, &image_id)
+                .map_err(|e| map_media_error(e.into()))?;
+            Ok(serde_json::json!({
+                "removed": true,
+                "album_id": album_id,
+                "image_index": image_index,
+            }))
+        })
+        .await
+    }
+
+    /// Delete an album. Assets remain in the gallery — only the album
+    /// grouping and its memberships are removed.
+    #[tool(
+        description = "Delete an album. Assets remain in the gallery — only the album grouping and its memberships are removed."
+    )]
+    pub async fn gallery_delete_album(
+        &self,
+        Parameters(GalleryDeleteAlbumRequest { album_id }): Parameters<GalleryDeleteAlbumRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "gallery_delete_album", async {
+            self.gallery_store
+                .delete_album(&album_id)
+                .map_err(|e| map_media_error(e.into()))?;
+            Ok(serde_json::json!({
+                "deleted": true,
+                "album_id": album_id,
+            }))
+        })
+        .await
+    }
+
+    /// List all image indices in an album.
+    #[tool(description = "List all image indices in an album.")]
+    pub async fn gallery_list_album_members(
+        &self,
+        Parameters(GalleryListAlbumMembersRequest { album_id }): Parameters<
+            GalleryListAlbumMembersRequest,
+        >,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "gallery_list_album_members", async {
+            let ga = self.access_gallery().map_err(map_media_error)?;
+            let image_ids = self
+                .gallery_store
+                .list_album_members(&album_id)
+                .map_err(map_gallery_store_error)?;
+            let assets = self
+                .gallery_store
+                .list_assets(&ga.gallery_id, 0, i64::MAX as usize)
+                .map_err(map_gallery_store_error)?;
+            let image_indices: Vec<usize> = assets
+                .iter()
+                .enumerate()
+                .filter_map(|(index, image)| image_ids.contains(&image.id).then_some(index))
+                .collect();
+            let image_ids: Vec<&str> = image_indices
+                .iter()
+                .map(|index| assets[*index].id.as_str())
+                .collect();
+            Ok(serde_json::json!({
+                "album_id": album_id,
+                "image_ids": image_ids,
+                "image_indices": image_indices,
+                "count": image_indices.len(),
+            }))
+        })
+        .await
+    }
+}
+
+#[cfg(test)]
+pub(super) mod tests {
+    use super::*;
+
+    struct ResearchInference;
+    crate::test_support::media_inference_stub!(ResearchInference,
+        generate(self, _prompt): { Box::pin(async { panic!("research CRUD/search must not call inference") }) }
+    );
+
+    pub(crate) fn research_server() -> MediaServer {
+        let store =
+            GalleryStore::from_driver(SqliteDriver::in_memory_driver()).expect("gallery store");
+        MediaServer::new(
+            hkask_types::WebID::new(),
+            Arc::new(ResearchInference),
+            Arc::new(Mutex::new(None)),
+            Arc::new(store),
+            templates::create_env().expect("templates"),
+            FfmpegRunner::detect(),
+            YtDlpRunner::detect(),
+            jobs::new_job_store(),
+            None,
+        )
+    }
+
+    pub(crate) fn payload(response: &str) -> serde_json::Value {
+        let response = serde_json::from_str(response).expect("tool response JSON");
+        hkask_types::tool_response::unwrap_tool_envelope(response)
+    }
+
+    /// expect: Retired workflow graphs remain inspectable evidence, not executable operations.
+    #[tokio::test]
+    async fn historical_workflow_is_readable_through_lineage()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server = research_server();
+        let dir = tempfile::tempdir()?;
+        image::RgbImage::new(2, 2).save(dir.path().join("historical.png"))?;
+        server
+            .gallery_organize(crate::test_support::read_only_organize_request(dir.path()))
+            .await?;
+        let ga = server.access_gallery()?;
+        let image = server
+            .gallery_store
+            .list_assets(&ga.gallery_id, 0, 1)?
+            .remove(0);
+        let no_lineage = payload(
+            &server
+                .gallery_lineage(Parameters(GalleryLineageRequest { image_index: 0 }))
+                .await?,
+        );
+        assert!(no_lineage["lineage"].is_null());
+        assert!(no_lineage["historical_workflow"].is_null());
+        let graph = r#"{"steps":[{"id":"historical-step","tool":"retired-operation"}]}"#;
+        let workflow = server.gallery_store.record_workflow(graph)?;
+        server.gallery_store.record_generation(
+            &image.id,
+            "historical-operation",
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&workflow.id),
+            None,
+        )?;
+        let result = payload(
+            &server
+                .gallery_lineage(Parameters(GalleryLineageRequest { image_index: 0 }))
+                .await?,
+        );
+        assert_eq!(result["historical_workflow"]["graph_json"], graph);
+        assert_eq!(result["historical_workflow"]["id"], workflow.id);
+        assert_eq!(result["lineage"]["op"], "historical-operation");
+        Ok(())
+    }
+
+    /// expect: Researcher annotations survive actual scans and successful reanalysis,
+    /// remain searchable/readable by stable IDs, and never alter source bytes. [P1]
+    #[tokio::test]
+    async fn researcher_annotations_roundtrip_scan_analysis_search_and_owned_delete()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server = research_server();
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("specimen.png");
+        image::RgbImage::new(2, 2).save(&path)?;
+        let original = std::fs::read(&path)?;
+        server
+            .gallery_organize(crate::test_support::read_only_organize_request(dir.path()))
+            .await?;
+        let ga = server.access_gallery()?;
+        let image = server
+            .gallery_store
+            .list_assets(&ga.gallery_id, 0, 10)?
+            .remove(0);
+        let model =
+            server
+                .gallery_store
+                .tag_image(&image.id, "tag", "specimen", 0.8, "vision-model")?;
+        let create = |kind: &str, value: &str| {
+            Parameters(GalleryAnnotationCreateRequest {
+                gallery_asset_id: image.id.clone(),
+                kind: kind.into(),
+                value: value.into(),
+            })
+        };
+        let tag = payload(
+            &server
+                .gallery_annotation_create(create("tag", "specimen"))
+                .await?,
+        );
+        let note = payload(
+            &server
+                .gallery_annotation_create(create("note", "Inspect fracture"))
+                .await?,
+        );
+        let tag_id = tag["annotation"]["id"].as_str().ok_or("tag id")?;
+        let note_id = note["annotation"]["id"].as_str().ok_or("note id")?;
+        assert_ne!(tag_id, model.id);
+        let repeated = payload(
+            &server
+                .gallery_annotation_create(create("tag", "specimen"))
+                .await?,
+        );
+        assert_eq!(repeated["annotation"], tag["annotation"]);
+        server
+            .gallery_organize(crate::test_support::read_only_organize_request(dir.path()))
+            .await?;
+        assert_eq!(server.gallery_store.get_by_id(&image.id)?.id, image.id);
+        // Exercise the production persistence seam after a successful analysis;
+        // provider transport is independent from metadata ownership semantics.
+        assert!(server.gallery_store.persist_analysis_for_tag_types(
+            &image,
+            &[("tag".into(), "specimen".into(), 0.9)],
+            &["tag".into()],
+            "vision-model",
+            true
+        )?);
+        let listed = payload(
+            &server
+                .gallery_annotation_list(Parameters(GalleryAnnotationListRequest {
+                    gallery_asset_id: image.id.clone(),
+                }))
+                .await?,
+        );
+        assert_eq!(
+            listed["annotations"].as_array().ok_or("annotations")?.len(),
+            2
+        );
+        let found = payload(
+            &server
+                .gallery_search(Parameters(GallerySearchRequest {
+                    query: "specimen".into(),
+                    mode: Some("tags".into()),
+                    image_index: None,
+                    limit: Some(10),
+                    tag_types: Some(vec!["tag".into()]),
+                    min_similarity: Some(1.0),
+                }))
+                .await?,
+        );
+        assert_eq!(found["results"][0]["image_id"], image.id);
+        let matches = found["results"][0]["matching_tags"]
+            .as_array()
+            .ok_or("matching tags")?;
+        assert!(
+            matches
+                .iter()
+                .any(|matched| matched["annotation_id"] == tag_id
+                    && matched["provenance"] == "researcher_supplied")
+        );
+        assert!(
+            matches
+                .iter()
+                .any(|matched| matched["provenance"] == "model")
+        );
+        server
+            .gallery_annotation_update(Parameters(GalleryAnnotationUpdateRequest {
+                gallery_asset_id: image.id.clone(),
+                annotation_id: note_id.into(),
+                value: "Recheck fracture".into(),
+            }))
+            .await?;
+        let updated = server.gallery_store.get_tags(&image.id)?;
+        assert!(
+            updated
+                .iter()
+                .any(|tag| tag.id == note_id && tag.value == "Recheck fracture")
+        );
+        assert!(
+            server
+                .gallery_annotation_delete(Parameters(GalleryAnnotationDeleteRequest {
+                    gallery_asset_id: image.id.clone(),
+                    annotation_id: updated
+                        .iter()
+                        .find(|tag| tag.model_used == "vision-model")
+                        .ok_or("retained model suggestion")?
+                        .id
+                        .clone(),
+                }))
+                .await
+                .is_err()
+        );
+        server
+            .gallery_annotation_delete(Parameters(GalleryAnnotationDeleteRequest {
+                gallery_asset_id: image.id.clone(),
+                annotation_id: tag_id.into(),
+            }))
+            .await?;
+        let remaining = server.gallery_store.get_tags(&image.id)?;
+        assert!(remaining.iter().any(|tag| tag.id == note_id));
+        assert!(remaining.iter().any(|tag| tag.model_used == "vision-model"));
+        assert!(!remaining.iter().any(|tag| tag.id == tag_id));
+        assert_eq!(std::fs::read(&path)?, original);
+
+        assert!(
+            server
+                .gallery_annotation_list(Parameters(GalleryAnnotationListRequest {
+                    gallery_asset_id: "absent".into()
+                }))
+                .await
+                .is_err()
+        );
+        Ok(())
+    }
+
+    /// expect: No implicit analysis path requests faces; explicit consent still works. [P1]
+    #[test]
+    fn researcher_analysis_defaults_omit_faces() {
+        assert!(
+            !validate_analysis_pipelines(None)
+                .expect("defaults")
+                .iter()
+                .any(|pipeline| pipeline == "faces")
+        );
+        assert_eq!(
+            validate_analysis_pipelines(Some(vec!["faces".into()])).expect("explicit faces"),
+            vec!["faces"]
+        );
+        assert!(!DEFAULT_ANALYSIS_PIPELINES.contains(&"faces"));
+    }
+
+    /// expect: Selection validation preserves caller order, removes duplicates, and never truncates requested indices. [P1]
+    #[test]
+    fn selection_validation_is_ordered_deduplicated_and_bounded() {
+        let target = validate_analysis_target("selection", Some(vec![3, 1, 3]), 4, 3);
+        assert_eq!(target.ok(), Some(AnalysisTarget::Indices(vec![3, 1])));
+        assert!(validate_analysis_target("selection", Some(vec![1, 1, 2]), 4, 2).is_err());
+    }
+
+    /// expect: Invalid gallery analysis requests fail before any inference work can begin. [P1]
+    #[test]
+    fn analysis_request_validation_rejects_invalid_modes_bounds_and_indices() {
+        assert!(validate_analysis_target("recent", None, 3, 1).is_err());
+        assert!(validate_analysis_target("all", None, 3, 0).is_err());
+        assert!(validate_analysis_target("selection", None, 3, 3).is_err());
+        assert!(validate_analysis_target("selection", Some(vec![3]), 3, 3).is_err());
+        assert!(validate_analysis_target("new", Some(vec![0]), 3, 3).is_err());
+    }
+
+    /// expect: Pipeline selection rejects empty and unknown names instead of silently doing no work. [P1]
+    #[test]
+    fn analysis_pipeline_validation_is_strict() {
+        assert!(validate_analysis_pipelines(Some(Vec::new())).is_err());
+        assert!(validate_analysis_pipelines(Some(vec![String::new()])).is_err());
+        assert!(validate_analysis_pipelines(Some(vec!["depth".into()])).is_err());
+        assert_eq!(
+            validate_analysis_pipelines(Some(vec!["scene".into(), "objects".into()])).ok(),
+            Some(vec!["scene".into(), "objects".into()])
+        );
+    }
+
+    /// expect: Lifecycle status distinguishes complete, partial, failed, degraded, and empty work. [P1]
+    #[test]
+    fn analysis_and_refresh_statuses_reflect_progress_and_errors() {
+        let errors = vec!["failure".to_string()];
+        assert_eq!(analysis_status(0, 0, 0, &[]), "nothing_to_analyze");
+        assert_eq!(analysis_status(2, 2, 0, &[]), "completed");
+        assert_eq!(analysis_status(2, 1, 0, &errors), "partial");
+        assert_eq!(analysis_status(2, 0, 1, &errors), "partial");
+        assert_eq!(analysis_status(2, 0, 0, &errors), "failed");
+        assert_eq!(refresh_status(&errors, &[&[]]), "degraded");
+        assert_eq!(refresh_status(&[], &[&errors]), "partial");
+        assert_eq!(refresh_status(&[], &[&[]]), "completed");
+    }
+}

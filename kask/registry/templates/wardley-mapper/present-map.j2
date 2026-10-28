@@ -1,0 +1,39 @@
+{# goal: Rendering template — surfaces the quadrant chart (from classify-evolution) and strategic recommendations (from synthesize-recommendations) as a single markdown string containing a fenced ```mermaid block. This is the process's final user-facing output: without it, the diagram stays buried in an intermediate step result and never reaches the chat stream. Deterministic (no LLM call). #}
+{# Surface the Wardley Map quadrant chart + recommendations as markdown.
+   This is a pure Jinja2 template (the [inference] header carries only the render contract; no LLM call) rendered by
+   the `render_template` tool from the SKILL.md body's final step.
+
+   The fenced ```mermaid block is what acp_thread's mermaid renderer picks up —
+   parse_mermaid_info requires the info string "mermaid" on a fenced code block,
+   and is_supported_diagram_type checks that the first token is quadrantChart.
+   Without this render step, map_diagram stays buried inside the classify-evolution
+   step's JSON output and the final surfaced text has no diagram. #}
+[inference]
+contract:
+  input:
+    map_diagram:
+      type: string
+      non_blank: true
+    recommendations: array
+    rationale:
+      type: string
+      required: false
+  output:
+    markdown: string
+---
+## Wardley Map
+
+```mermaid
+{{ map_diagram }}
+```
+
+## Strategic Recommendations
+
+{% for rec in recommendations %}
+- **{{ rec.category | default("N/A") }}** — {{ rec.component | default("N/A") }}: {{ rec.recommendation | default("") }} (priority: {{ rec.priority | default("N/A") }}, confidence: {{ rec.confidence | default("N/A") }})
+  - {{ rec.rationale | default("") }}
+{% endfor %}
+
+## Assessment
+
+{{ rationale | default("No rationale provided.") }}

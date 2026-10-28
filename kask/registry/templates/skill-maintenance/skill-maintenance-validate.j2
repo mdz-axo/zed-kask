@@ -1,0 +1,84 @@
+{# goal: Validate a skill or the whole corpus against the S1-S14 and T1-T5 checks as defined in the skill-maintenance SKILL.md body — that body is the authoritative check definitions; this prompt structures the validation pass. Every check gets a verdict with file:line evidence and an actionable fix suggestion for any fail. #}
+[inference]
+contract:
+  input:
+    target: string
+    skill_name: string|null
+  output:
+    validation_results: array
+    fix_suggestions: array
+    overall: string
+---
+
+You are a skill validator. Validate the target below against the S1–S14 and
+T1–T5 checks. The skill-maintenance SKILL.md body defines each check
+authoritatively — evaluate against those definitions as they stand, not
+against remembered or inferred versions. Do NOT validate manifest structure:
+manifests are deprecated in agent-facing code (operator ruling 2026-09-09),
+and the manifest-era E-checks are abolished.
+
+## Target
+
+{{ target }}
+
+## Skill Name
+
+{{ skill_name }}
+
+## Method
+
+1. Load the check definitions from the skill-maintenance SKILL.md body:
+   S1–S14 (SKILL.md structure, removed vocabulary, PDCA loop in the body,
+   no model-typed deterministic outputs)
+   and T1–T5 (template existence, goal annotations, output fields,
+   `[inference]` placement, render reachability).
+2. Evaluate every check for the target without omissions. For S12, extract
+   each pinned `lisp_eval` form and evaluate it against the interpreter's
+   builtin surface with stub values — an `unbound symbol` error for a
+   non-stub symbol is a broken form. Use `lisp_eval` to reconcile the number
+   of recorded check verdicts with the 19 defined check IDs, then verify
+   their IDs against the actual S1–S14/T1–T5 list (counts alone miss
+   duplicates). If `lisp_eval` is unavailable, report that check as
+   unverified; never interpret a template's claimed verdict as a tool run.
+3. For each check, record: the check id, a pass/fail verdict, and evidence.
+   Every fail cites a file path and line number — never speculate.
+4. For each fail, provide an actionable fix suggestion.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "validation_results": [
+    {
+      "check": "S9",
+      "passed": false,
+      "evidence": "<file>:<line> — what was found",
+      "note": "context if needed"
+    }
+  ],
+  "fix_suggestions": [
+    { "check": "S9", "suggestion": "concrete actionable fix" }
+  ],
+  "overall": "pass | fail"
+}
+```
+
+## Constraints
+
+- Evaluate every check for every targeted skill without omissions.
+- Cite file:line for every fail; never speculate.
+- The SKILL.md body is the source of truth — where a template and the body
+  disagree, the body wins and the disagreement is a finding.
+- Removed vocabulary (`compute_ref`, manifest-dispatch `template_ref`,
+  `convergence_signal`, `input_mapping`, `on_failure`, `ordinal:`,
+  vestigial `steps` frontmatter) is a fail when found in a SKILL.md; the
+  `render_template` tool's `template_ref` parameter in call instructions is
+  the live contract, not a violation.
+- A body with phases but no Check→Act feedback path, or with no observable
+  initial/target condition, fails S13; a role guide or one-shot actuator can
+  close after a single passing Check but is not exempt from stating the
+  initial/target condition and what a failed Check does (the former DR-S13a
+  exemption markers were superseded by the operator's 2026-09-25
+  all-skills direction).

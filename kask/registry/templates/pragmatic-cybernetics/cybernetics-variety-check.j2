@@ -1,0 +1,91 @@
+{# goal: Evaluate variety balance using Ashby's Law of Requisite Variety. Identify deficits, recommend attenuation or amplification strategies. #}
+[inference]
+contract:
+  input:
+    loop_analysis: object
+    system_context: string
+  output:
+    system_variety: integer
+    regulator_variety: integer
+    observed_states: integer
+    deficit_analysis: string
+    attenuation_recommendations: array
+    amplification_recommendations: array
+---
+
+You are a variety engineer. Evaluate whether a regulator (controller, agent, subsystem) has sufficient variety to match the disturbances it must regulate. Apply Ashby's Law of Requisite Variety: the regulator must have at least as much variety as the disturbances it faces.
+
+## Ashby's Law of Requisite Variety
+
+> Only variety can destroy variety. — W. Ross Ashby
+
+If the system's disturbance variety exceeds the regulator's response variety, the regulator cannot maintain homeostasis. The deficit must be closed by **amplifying** regulator variety or **attenuating** system variety.
+
+## hKask Regulation Variety Mechanisms
+
+| Mechanism | Type | What It Does |
+|-----------|------|-------------|
+| `reg.tool.*` spans | Attenuation | Tool governance filters — reduce actionable tool space |
+| `hkask.template.*` spans | Amplification | Prompt templates amplify consistent regulator behavior |
+| `reg.agent_pod.*` spans | Amplification | Pod delegation — specialist pods add variety (ensemble deferred 2026-06-14) |
+| `reg.inference.*` spans | Attenuation | Call caps and GovernedTool constrain inference variety |
+| Algedonic alerts | Amplification | Deficit = expected distinct states − observed distinct states per window (`VarietyTracker::deficit`); Warning when deficit > threshold/2, Critical (escalated) when deficit > threshold (`RuntimeAlert::new`, `hkask-regulation/src/algedonic.rs`). Default expected variety: 3 distinct tools per 60 s window on an MCP-server domain. Idle-window carve-out: an idle window (zero observed states) returns deficit 0 — that is no signal, not variety health; report the idle window, never a satisfied balance. |
+| Override cooldown | Attenuation | `Dampener::override_cooldown` (120s) prevents override oscillation |
+| Persona filter | Attenuation | Strips persona-violating output variety |
+
+## Loop Analysis Result
+
+```json
+{{ loop_analysis | tojson }}
+```
+
+{% if system_context %}
+## System Context
+
+{{ system_context }}
+{% endif %}
+
+From the loop analysis above, extract the system disturbances (what the system produces that must be regulated) and the regulator responses (what the regulator can produce to counter disturbances). Enumerate and compare them.
+
+## Analysis Framework
+
+1. **Enumerate** the distinct disturbance classes the system can produce.
+2. **Enumerate** the distinct response classes the regulator can produce.
+3. **Compare**: Is regulator variety ≥ system variety? Report both as counts of distinct classes you enumerated in steps 1–2, and the deficit as their difference in those same units. Do not state a deficit you did not count, and do not report satisfaction from an idle window — zero observed classes is no evidence of balance, not a satisfied one (`VarietyTracker::deficit` returns 0 for an idle window).
+4. **Recommend**: For each deficit, propose either attenuation (reduce system variety) or amplification (increase regulator variety).
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "system_variety": 5,
+  "regulator_variety": 3,
+  "observed_states": 5,
+  "deficit_analysis": "Description of variety balance, which disturbance classes lack corresponding regulator responses, and the magnitude of the deficit",
+  "attenuation_recommendations": [
+    {
+      "mechanism": "Name of the attenuation strategy",
+      "target": "Which disturbance class it attenuates",
+      "implementation": "How to implement in hKask (reference Regulation spans, crates, or mechanisms)"
+    }
+  ],
+  "amplification_recommendations": [
+    {
+      "mechanism": "Name of the amplification strategy",
+      "target": "Which regulator capability it amplifies",
+      "implementation": "How to implement in hKask (reference Regulation spans, crates, or mechanisms)"
+    }
+  ]
+}
+```
+
+The invoking step computes `deficit = (- system_variety regulator_variety)` and `ashby_status` (`satisfied|deficit|critical|idle_no_signal`) deterministically in `lisp_eval` (`PC-1`).
+
+## Constraints
+
+- Every recommendation must reference a concrete hKask mechanism (Regulation span, crate, data structure, or configuration parameter).
+- Do not propose external monitoring tools — hKask is headless; Regulation provides observability.
+- If `PC-1` returns `critical`, include an explicit escalation directive.
+

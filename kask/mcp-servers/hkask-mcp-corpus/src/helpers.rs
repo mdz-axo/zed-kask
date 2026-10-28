@@ -1,0 +1,670 @@
+//! Shared utilities used across corpus tool modules.
+
+use crate::{HkaskSettings, json};
+use hkask_mcp_server::server::McpToolError;
+use serde::de::DeserializeOwned;
+
+/// Classify a `MemoryStoreError` from a memory-DB operation into the
+/// appropriate `McpToolError` kind.
+pub(crate) use hkask_mcp_server::server::map_memory_store_error;
+
+// ── Corpus DB passphrase ───────────────────────────────────────────────────
+
+/// Default passphrase for the corpus memory DB.
+///
+/// Resolves `HKASK_DB_PASSPHRASE` via a 2-tier chain:
+/// 1. `ctx.credentials` (governed launch injection via `build_mcp_server_env`)
+///    — captured at server construction into [`CORPUS_DB_PASSPHRASE`] by
+///    [`set_corpus_db_passphrase`].
+/// 2. `resolve_credential("HKASK_DB_PASSPHRASE")` (env var → `hkask-keystore`
+///    keychain `kask://credentials/hkask_db_passphrase`).
+///
+/// Returns an empty string when the credential is unset in all tiers.
+/// `Database::open` rejects empty passphrases with a clear error
+/// ("Passphrase cannot be empty"), so tools that use this default will fail
+/// with an actionable message rather than silently encrypting the DB with a
+/// publicly-known hardcoded passphrase. Production must set
+/// `HKASK_DB_PASSPHRASE` (keychain-provisioned, delivered via the registry
+/// `credentials` allowlist under governed launch).
+///
+/// The `OnceLock` is acceptable here because there is exactly one corpus
+/// server per process (MCP servers run as child processes). Tests seed it
+/// with the canonical test value via `seed_test_passphrase` — the same
+/// seam a governed launch uses — so handler-level tests resolve the
+/// passphrase the way production does.
+static CORPUS_DB_PASSPHRASE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+
+/// Initialize the process-wide corpus DB passphrase from `ctx.credentials`.
+///
+/// Called once from the `run_server` closure after resolving the passphrase
+/// via `hkask_mcp_server::resolve_db_passphrase`. Pass `None` when resolution
+/// failed (tools will then fall back to env/keychain per call). Idempotent —
+/// the first call wins; subsequent calls are no-ops (the `OnceLock` is set
+/// once at construction and never changed).
+pub(crate) fn set_corpus_db_passphrase(passphrase: Option<String>) {
+    if CORPUS_DB_PASSPHRASE.set(passphrase).is_err() {
+        tracing::warn!(
+            target: "hkask.mcp.corpus",
+            "set_corpus_db_passphrase: hook already set — second wiring attempt \
+             dropped. The previously-wired passphrase remains active."
+        );
+    }
+}
+
+/// Resolve the corpus DB passphrase: construction-time `ctx.credentials`
+/// capture first, then env → keychain per call. Fail-closed — a failed
+/// resolution (or an empty one) is `permission_denied` naming the env var
+/// (the `.rules` missing-credential pattern); this function never returns
+/// an empty string. An empty passphrase must NOT be passed to a DB open
+/// call — it would silently create an unencrypted DB (`open_memory_store`
+/// enforces the same rule at the open boundary for internal callers).
+pub(crate) fn resolve_corpus_passphrase() -> Result<String, McpToolError> {
+    if let Some(resolved) = CORPUS_DB_PASSPHRASE
+        .get()
+        .and_then(Option::as_deref)
+        .filter(|passphrase| !passphrase.is_empty())
+    {
+        return Ok(resolved.to_owned());
+    }
+    match hkask_mcp_server::resolve_credential("HKASK_DB_PASSPHRASE") {
+        Ok(passphrase) if !passphrase.is_empty() => Ok(passphrase),
+        Ok(_) => Err(passphrase_unavailable()),
+        Err(error) => {
+            tracing::warn!(
+                target: "hkask.mcp.corpus",
+                %error,
+                "HKASK_DB_PASSPHRASE resolution failed — corpus DB access is permission_denied"
+            );
+            Err(passphrase_unavailable())
+        }
+    }
+}
+
+/// The fail-closed credential error for corpus DB access. Names the env var
+/// so the operator can distinguish "not configured" from "configured but
+/// broken"; kask never falls back to opening a SQLCipher DB with an empty
+/// key.
+fn passphrase_unavailable() -> McpToolError {
+    McpToolError::permission_denied(
+        "HKASK_DB_PASSPHRASE not configured — set it via the keychain \
+         (kask://credentials/hkask_db_passphrase) or environment variable; \
+         kask never opens a SQLCipher DB with an empty key",
+    )
+}
+
+/// Classify a `TriageError` from the PDF triage pipeline into the appropriate
+/// `McpToolError` kind: an invalid page spec is caller input
+/// (`invalid_argument`); `pdftotext`/`pdfimages` failures include spawn
+/// failures (binary missing — operator-fixable, `unavailable`); a page-count
+/// mismatch between the two tools is an internal inconsistency (`internal`).
+/// A `db_path` naming a database that does not exist is the caller's
+/// error — refuse it before any SQLCipher open, which creates-if-missing
+/// (a typo'd path otherwise leaves a stray empty DB and surfaces as a
+/// misleading "No embeddings found", or as a silent zero-purged no-op
+/// for `corpus_purge_qa`; mcp-tool-review CO-02, live 2026-10-04).
+/// Read-oriented corpus tools (centroid, compose, rewrite, dedup,
+/// consolidate, query's durable db_path search, purge, build_prompts
+/// context) never create a database. `not_found` per the canonical
+/// classification (operator ruling 2026-10-05): a caller-named resource
+/// that does not exist — the former `invalid_argument` followed the
+/// inventory precedent before the contract unified the class.
+pub(crate) fn ensure_db_exists(db_path: &str) -> Result<(), McpToolError> {
+    hkask_mcp_server::ensure_existing_file(db_path, "embedding database")
+}
+
+/// Record one inference call's measured usage into the executing
+/// tool's result envelope (S-01 token half). One line per generate*
+/// call site in this server; embed/rerank return raw vectors/scores and
+/// surface no usage at the port — those paths stay unrecorded by API
+/// shape, not by omission.
+pub(crate) fn record_usage(result: &hkask_types::ports::InferenceResult) {
+    hkask_mcp_server::server::record_tool_usage(result.usage.clone(), result.cost_usd);
+}
+
+pub(crate) fn map_triage_error(error: crate::ocr::triage::TriageError) -> McpToolError {
+    use crate::ocr::triage::TriageError;
+    let message = format!("triage failed: {error}");
+    match error {
+        TriageError::InvalidPageSpec(_) => McpToolError::invalid_argument(message),
+        TriageError::PdftotextFailed(_) | TriageError::PdfimagesFailed(_) => {
+            McpToolError::unavailable(message)
+        }
+        TriageError::PageCountMismatch { .. } => McpToolError::internal(message),
+    }
+}
+
+/// Keep credential, transport, input and provider failures distinct at the tool boundary.
+pub(crate) fn map_inference_error(error: hkask_types::InferenceError) -> McpToolError {
+    use hkask_types::InferenceError;
+    let message = error.to_string();
+    match error {
+        InferenceError::Model(_) => McpToolError::invalid_argument(message),
+        InferenceError::NotConfigured(_) | InferenceError::Auth(_) => {
+            McpToolError::permission_denied(message)
+        }
+        InferenceError::Connection(_)
+        | InferenceError::Overloaded(_)
+        | InferenceError::CircuitOpen(_)
+        | InferenceError::Timeout(_) => McpToolError::unavailable(message),
+        InferenceError::Generation(_)
+        | InferenceError::Json(_)
+        | InferenceError::VisionUnsupported(_) => McpToolError::internal(message),
+    }
+}
+
+pub(crate) fn map_embedding_error(error: hkask_types::EmbeddingGenerationError) -> McpToolError {
+    use hkask_types::EmbeddingGenerationError;
+    let message = error.to_string();
+    match error {
+        EmbeddingGenerationError::NotConfigured(_)
+        | EmbeddingGenerationError::Api(401 | 403, _) => McpToolError::permission_denied(message),
+        EmbeddingGenerationError::Connection(_)
+        | EmbeddingGenerationError::Api(408 | 429 | 500..=599, _) => {
+            McpToolError::unavailable(message)
+        }
+        EmbeddingGenerationError::InvalidRequest(_)
+        | EmbeddingGenerationError::DimensionMismatch { .. }
+        | EmbeddingGenerationError::Api(400..=499, _) => McpToolError::invalid_argument(message),
+        EmbeddingGenerationError::Json(_)
+        | EmbeddingGenerationError::EmptyResponse
+        | EmbeddingGenerationError::Api(_, _) => McpToolError::internal(message),
+    }
+}
+
+/// Contained, size-capped read of a caller-supplied text file as UTF-8.
+///
+/// Single enforcement point for caller-supplied `*_jsonl` tool-argument paths
+/// (CWE-22/200/400): the path is resolved through
+/// `crate::path_safety::contain_for_read` and read with the shared
+/// `MAX_READ_BYTES` cap (via `read_capped`), so an escaping path
+/// (`/etc/passwd`, `../../escape`) or an oversized file is rejected with
+/// `invalid_argument` before any bytes reach a tool. `label` is the
+/// parameter-name context used in error messages.
+pub(crate) fn read_text_capped(path: &str, label: &str) -> Result<String, McpToolError> {
+    let bytes = crate::path_safety::read_capped(path, crate::path_safety::MAX_READ_BYTES)?;
+    String::from_utf8(bytes).map_err(|e| {
+        McpToolError::invalid_argument(format!("{label} '{path}' is not valid UTF-8: {e}"))
+    })
+}
+
+/// Open a `MemoryStore` at the caller-supplied `db_path` with the corpus
+/// embedding dimension. Single enforcement point for the `MemoryStore::open`
+/// + `map_database_error` pattern duplicated across `corpus_dedup_chunks`,
+/// `corpus_ingest_qa`, `corpus_purge_qa`, `embed_batch_from_jsonl`, and the
+/// consolidation/prompt-builder/assertions services. Fail-closed before any
+/// SQLCipher open: an empty passphrase is `permission_denied` (it would
+/// silently create an unencrypted DB), never an open attempt. A passphrase
+/// mismatch surfaces as `permission_denied`; a corrupted DB is
+/// `invalid_argument`; SQLite/SQLCipher failures are `internal`.
+pub(crate) fn open_memory_store(
+    db_path: &str,
+    passphrase: &str,
+) -> Result<hkask_memory::MemoryStore, McpToolError> {
+    if passphrase.is_empty() {
+        return Err(passphrase_unavailable());
+    }
+    let dim = crate::embedding_dim();
+    hkask_memory::MemoryStore::open(db_path, passphrase, dim)
+        .map_err(|e| hkask_mcp_server::server::map_database_error(e, "Cannot open memory DB"))
+}
+
+pub(crate) fn open_existing_memory_store(
+    db_path: &str,
+    passphrase: &str,
+) -> Result<hkask_memory::MemoryStore, McpToolError> {
+    if passphrase.is_empty() {
+        return Err(passphrase_unavailable());
+    }
+    let dim = crate::embedding_dim();
+    hkask_memory::MemoryStore::open_existing(db_path, passphrase, dim)
+        .map_err(|e| hkask_mcp_server::server::map_database_error(e, "Cannot open memory DB"))
+}
+
+/// Write `content` to a caller-supplied `output` path under containment.
+/// Single enforcement point for the corpus output writes of
+/// `corpus_dedup_chunks`, `corpus_ingest_qa`,
+/// `corpus_tag_chunks`, `ConsolidationService::consolidate`, and
+/// `PromptBuilderService::build_prompts`. Delegates to the shared
+/// `hkask_mcp_server::server::write_contained` primitive: containment plus
+/// the `O_NOFOLLOW` final-component open, so a symlink planted between
+/// check and open is refused (repair-plan F4), never silently followed.
+/// An escaping path is rejected with `invalid_argument` before any write
+/// reaches disk.
+pub(crate) fn write_contained(output: &str, content: &str) -> Result<(), McpToolError> {
+    // The shared primitive re-runs containment and opens the final component
+    // with O_NOFOLLOW — a symlink planted between check and open is refused
+    // (repair-plan F4), never silently followed.
+    hkask_mcp_server::server::write_contained(output, content.as_bytes())?;
+    Ok(())
+}
+
+/// Parse one JSONL line into `T` with the shared strict-reader error
+/// mapping (`{label} line {n} is not valid JSON`, 1-based, counting all
+/// lines including empty ones). Shared by [`read_jsonl_stream`] and
+/// [`read_jsonl`]; the lenient reader keeps its own drop-counting tail.
+/// The line source (buffered Result lines vs in-memory `&str` lines) and
+/// the trim/skip-empty gate stay per-reader.
+fn parse_jsonl_line<T: DeserializeOwned>(
+    line: &str,
+    label: &str,
+    line_no: usize,
+) -> Result<T, McpToolError> {
+    serde_json::from_str(line).map_err(|e| {
+        McpToolError::invalid_argument(format!("{label} line {line_no} is not valid JSON: {e}"))
+    })
+}
+
+/// Stream a JSONL file line-by-line, parsing each non-empty line into `T`.
+///
+/// Unlike [`read_jsonl`], this does NOT read the entire file into memory —
+/// it opens the file with `BufReader` and reads line-by-line, making it
+/// suitable for files that exceed `MAX_READ_BYTES` (e.g. 71.8 MB
+/// `chunks.jsonl`). Path containment is still enforced via
+/// `contain_for_read`, but the `MAX_READ_BYTES` cap is NOT applied — the
+/// file can be arbitrarily large. The caller is responsible for batching
+/// the returned iterator if memory is a concern.
+///
+/// Lines are trimmed and empty lines are skipped. Parse errors are
+/// propagated with the 1-based file line number.
+pub(crate) fn read_jsonl_stream<T: DeserializeOwned>(
+    path: &str,
+    label: &str,
+) -> Result<Vec<T>, McpToolError> {
+    let resolved = crate::path_safety::contain_for_read(path)?;
+    let file = std::fs::File::open(&resolved).map_err(|e| {
+        McpToolError::invalid_argument(format!("{label} '{path}' cannot be opened: {e}"))
+    })?;
+    let reader = std::io::BufReader::new(file);
+    let mut out = Vec::new();
+    for (i, line_result) in std::io::BufRead::lines(reader).enumerate() {
+        let line = line_result.map_err(|e| {
+            McpToolError::invalid_argument(format!(
+                "{label} '{path}' line {} read error: {e}",
+                i + 1
+            ))
+        })?;
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        out.push(parse_jsonl_line(line, label, i + 1)?);
+    }
+    Ok(out)
+}
+
+/// Read a JSONL file and parse each non-empty line into `T`.
+///
+/// Path containment and the `MAX_READ_BYTES` size cap are enforced here (via
+/// [`read_text_capped`]) — callers pass raw MCP tool-argument paths and this
+/// helper is the enforcement point. Cannot-read failures (escape, unresolvable
+/// path, oversized file) classify as `invalid_argument` (caller-supplied path).
+///
+/// Lines are split on newlines, trimmed, and empty lines are skipped. Parse errors
+/// are propagated with the 1-based file line number (counting all lines,
+/// including empty ones, to match the original per-site error messages).
+/// `label` is the parameter-name context used in error messages (e.g.
+/// `"chunks_jsonl"`, `"prompts_jsonl"`, `"tagged_jsonl"`).
+pub(crate) fn read_jsonl<T: DeserializeOwned>(
+    path: &str,
+    label: &str,
+) -> Result<Vec<T>, McpToolError> {
+    let content = read_text_capped(path, label)?;
+    let mut out = Vec::new();
+    for (i, line) in content.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        out.push(parse_jsonl_line(line, label, i + 1)?);
+    }
+    Ok(out)
+}
+
+/// Read a JSONL file, dropping malformed lines and returning the count dropped.
+///
+/// Path containment and the `MAX_READ_BYTES` size cap are enforced here (via
+/// [`read_text_capped`]), same as [`read_jsonl`].
+///
+/// Like [`read_jsonl`] but lenient: lines that fail to parse are silently
+/// dropped (no error propagated), and the number of dropped lines is returned
+/// so callers can warn or report. Empty lines are not counted as dropped.
+pub(crate) fn read_jsonl_lenient<T: DeserializeOwned>(
+    path: &str,
+    label: &str,
+) -> Result<(Vec<T>, usize), McpToolError> {
+    let content = read_text_capped(path, label)?;
+    let mut out = Vec::new();
+    let mut dropped = 0usize;
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        match serde_json::from_str::<T>(line) {
+            Ok(v) => out.push(v),
+            Err(_) => dropped += 1,
+        }
+    }
+    Ok((out, dropped))
+}
+
+/// Cosine similarity between two vectors. Consolidated from ocr/semantic.rs (C4).
+/// Returns 0.0 if either vector is empty or dimensions mismatch.
+pub(crate) fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    if a.is_empty() || b.is_empty() || a.len() != b.len() {
+        return 0.0;
+    }
+    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm_a == 0.0 || norm_b == 0.0 {
+        return 0.0;
+    }
+    (dot / (norm_a * norm_b)).clamp(0.0, 1.0)
+}
+
+/// Approximate token-to-word conversion: 1 word ≈ 1.33 tokens.
+/// Returns 0.0 for identical, 1.0 for orthogonal, 2.0 for opposite or degenerate.
+#[must_use]
+pub(crate) fn cosine_distance(a: &[f32], b: &[f32]) -> f64 {
+    if a.len() != b.len() || a.is_empty() {
+        return 2.0;
+    }
+    let dot: f64 = a
+        .iter()
+        .zip(b.iter())
+        .map(|(x, y)| (*x as f64) * (*y as f64))
+        .sum();
+    let norm_a: f64 = a.iter().map(|x| (*x as f64).powi(2)).sum::<f64>().sqrt();
+    let norm_b: f64 = b.iter().map(|x| (*x as f64).powi(2)).sum::<f64>().sqrt();
+    if norm_a == 0.0 || norm_b == 0.0 {
+        return 2.0;
+    }
+    let similarity = dot / (norm_a * norm_b);
+    let distance = 1.0 - similarity;
+    distance.clamp(0.0, 2.0)
+}
+
+/// Rough English-text heuristic: floor(tokens / 1.33) whitespace-delimited words.
+/// Not a BPE count or a model context limit; Unicode, code and long words can
+/// consume many more tokens. No tokenizer dependency is introduced.
+pub(crate) fn tokens_to_words(tokens: usize) -> usize {
+    ((tokens as f64) / 1.33) as usize
+}
+
+pub(crate) struct ChunkWordBounds {
+    pub max_tokens: usize,
+    pub overlap_tokens: usize,
+    pub max_words: usize,
+    pub min_words: usize,
+    pub overlap_words: usize,
+}
+
+impl Default for ChunkWordBounds {
+    fn default() -> Self {
+        // The documented corpus default is repeated context, never a size floor.
+        Self::from_tokens(HkaskSettings::load().chunk_max_tokens(), 64)
+    }
+}
+
+impl ChunkWordBounds {
+    fn from_tokens(max_tokens: usize, overlap_tokens: usize) -> Self {
+        let max_words = tokens_to_words(max_tokens);
+        Self {
+            max_tokens,
+            overlap_tokens,
+            max_words,
+            min_words: (max_words / 4).max(1),
+            overlap_words: tokens_to_words(overlap_tokens),
+        }
+    }
+}
+
+/// expect: "Invalid chunk budgets fail before any input is read or output written."
+/// [P4] Motivating: reject non-progress settings rather than hang or silently ignore them.
+/// pre: optional token targets; omitted max resolves the existing setting
+/// post: max_words > overlap_words and max_words > 0; positive overlap repeats words
+/// post: omitted overlap resolves Default; zero means no repetition through the same engine
+pub(crate) fn chunk_word_bounds(
+    max_tokens: Option<usize>,
+    overlap_tokens: Option<usize>,
+) -> Result<ChunkWordBounds, McpToolError> {
+    let defaults = ChunkWordBounds::default();
+    let bounds = ChunkWordBounds::from_tokens(
+        max_tokens.unwrap_or(defaults.max_tokens),
+        overlap_tokens.unwrap_or(defaults.overlap_tokens),
+    );
+    if bounds.max_words == 0 {
+        return Err(McpToolError::invalid_argument(
+            "max_tokens must be at least 2 (the approximate budget must contain a word)",
+        ));
+    }
+    if bounds.overlap_tokens >= bounds.max_tokens
+        || bounds.overlap_words >= bounds.max_words
+        || (bounds.overlap_tokens > 0 && bounds.overlap_words == 0)
+    {
+        return Err(McpToolError::invalid_argument(
+            "overlap_tokens must be 0 or yield at least one word, and be smaller than max_tokens in both tokens and effective words",
+        ));
+    }
+    Ok(bounds)
+}
+
+/// Serialize (entity_ref, text) pair slice into json.
+pub(crate) fn serialize_passages(passages: &[(String, String)]) -> Vec<serde_json::Value> {
+    passages
+        .iter()
+        .map(|(entity_ref, passage_text)| json!({"entity_ref": entity_ref, "text": passage_text}))
+        .collect()
+}
+
+/// Chunk cleaned structural text with the shared word-window engine.
+/// `DocStructure::text()` preserves heading markers, so office documents and
+/// plain text use the same boundary detection, cleaning and overlap contract.
+pub(crate) fn chunk_structure(
+    text: &str,
+    entity_ref_prefix: &str,
+    min_words: usize,
+    max_words: usize,
+    boundary: &str,
+    overlap_words: usize,
+) -> Result<Vec<(String, String)>, McpToolError> {
+    hkask_memory::text_chunking::chunk_text_with_overlap(
+        text,
+        entity_ref_prefix,
+        min_words,
+        max_words,
+        boundary,
+        overlap_words,
+    )
+    .map_err(|error| McpToolError::invalid_argument(error.to_string()))
+}
+
+// ── Test seam ─────────────────────────────────────────────────────────────
+
+/// Canonical test passphrase. Handler-level tests cannot carry a passphrase
+/// in their requests (the field is resolved server-side only), so they seed
+/// the process-wide capture with this value via `seed_test_passphrase`.
+/// Direct store constructions (`open_memory_store`, service request fields)
+/// reference the same constant so both resolution paths agree on one DB key.
+#[cfg(test)]
+pub(crate) const TEST_PASSPHRASE: &str = "corpus-test-passphrase";
+
+#[cfg(test)]
+static TEST_PASSPHRASE_SEED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+/// Seed the process-wide corpus passphrase capture for tests — the same
+/// `set_corpus_db_passphrase` seam a governed launch uses. Idempotent per
+/// process: only the first call actually sets (the guard prevents the
+/// already-set warning under parallel test execution); every later call is
+/// a no-op.
+#[cfg(test)]
+pub(crate) fn seed_test_passphrase() {
+    if TEST_PASSPHRASE_SEED.set(()).is_ok() {
+        set_corpus_db_passphrase(Some(TEST_PASSPHRASE.to_string()));
+    }
+}
+
+/// A panic-stub inference port for handler-level fixtures that must never
+/// reach a model — the shared `NoInference` contract. Each file's message
+/// rides its construction site (`NoInference("chunk fixtures must not
+/// invoke inference")`), so a leaked call's diagnostic still names the
+/// fixture surface that leaked it.
+#[cfg(test)]
+pub(crate) struct NoInference(pub &'static str);
+
+#[cfg(test)]
+impl hkask_types::InferencePort for NoInference {
+    fn generate(
+        &self,
+        _: &str,
+        _: &hkask_types::template::LLMParameters,
+        _: Option<&[hkask_types::ChatToolDefinition]>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                > + Send
+                + '_,
+        >,
+    > {
+        panic!("{}", self.0)
+    }
+}
+
+/// Build a `CorpusServer` over `port` for handler-level tests — the shared
+/// construction choreography of the no-inference fixtures: seed the test
+/// passphrase, wrap the port in the LLM OCR executor, construct the server.
+/// The panic-stub port itself is shared (`NoInference`); each file's panic
+/// message rides its construction site.
+#[cfg(test)]
+pub(crate) fn corpus_test_server(
+    port: std::sync::Arc<dyn hkask_types::InferencePort>,
+) -> crate::CorpusServer {
+    seed_test_passphrase();
+    let ocr = std::sync::Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(
+        std::sync::Arc::clone(&port),
+    ));
+    crate::CorpusServer::new(
+        hkask_types::WebID::new(),
+        None,
+        port,
+        Default::default(),
+        ocr,
+    )
+}
+
+/// Point `HKASK_TEMPLATE_ROOT` at the repository's shipped template registry
+/// for this test process. `render_docproc_template` refuses to fall back to
+/// the working directory or the build checkout — its contract is "repository
+/// tests must set it explicitly" — so tests exercising the OCR executor and
+/// docproc rendering paths seed the root themselves. Idempotent per process
+/// (the guard makes the one-shot write single); a pre-existing value from the
+/// environment is respected, never overridden.
+#[cfg(test)]
+pub(crate) fn seed_registry_template_root() {
+    static TEMPLATE_ROOT_SEEDED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    if TEMPLATE_ROOT_SEEDED.set(()).is_ok()
+        && std::env::var_os("HKASK_TEMPLATE_ROOT")
+            .filter(|root| !root.is_empty())
+            .is_none()
+    {
+        let registry = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../registry");
+        // SAFETY: test-only single write of a constant value, guarded by the
+        // OnceLock above — the same accepted pattern as the media server's
+        // artifacts-dir test fixtures. Under nextest each test runs in its
+        // own process; under plain `cargo test` the guard makes this exactly
+        // one write for the whole process.
+        unsafe { std::env::set_var("HKASK_TEMPLATE_ROOT", registry) };
+    }
+}
+
+/// A non-blank page image for vision-path tests: white ground with a
+/// text-sized ink block. Uniform images (a 1x1 `TINY_PNG`, an all-black
+/// `new_rgb8`) are BLANK under `ocr::blank` — the executor's blank gate
+/// short-circuits them before the vision call, so tests exercising the
+/// vision path must send inked pages.
+#[cfg(test)]
+pub(crate) fn inked_page() -> image::DynamicImage {
+    let mut buffer = image::RgbImage::from_pixel(64, 64, image::Rgb([255, 255, 255]));
+    for y in 20..40 {
+        for x in 10..50 {
+            buffer.put_pixel(x, y, image::Rgb([30, 30, 30]));
+        }
+    }
+    image::DynamicImage::ImageRgb8(buffer)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// F1 pin: an empty passphrase is refused with `permission_denied`
+    /// BEFORE any SQLCipher open — no DB file may be created when the
+    /// credential is unavailable.
+    #[test]
+    fn open_memory_store_refuses_empty_passphrase_before_any_db_open() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let db_path = directory.path().join("never-created.db");
+        let error = match open_memory_store(db_path.to_str().expect("utf-8 path"), "") {
+            Ok(_) => panic!("empty passphrase must be refused"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error.kind,
+            hkask_types::McpErrorKind::PermissionDenied,
+            "{error:?}"
+        );
+        assert!(
+            error.message.contains("HKASK_DB_PASSPHRASE"),
+            "the refusal must name the credential: {error:?}"
+        );
+        assert!(
+            !db_path.exists(),
+            "no DB file may be created when the credential is refused"
+        );
+    }
+
+    /// F1 pin: the resolver is fail-closed — it either returns a non-empty
+    /// passphrase or an error naming the credential, never an empty string
+    /// a caller could pass on to a DB open.
+    /// CO-02 pin (mcp-tool-review): a db_path naming a nonexistent
+    /// database is refused before any SQLCipher open — no stray DB file is
+    /// created behind a typo (the storage layer opens create-if-missing;
+    /// live 2026-10-04: corpus_centroid on a fresh path created a 128KB
+    /// empty DB and errored "No embeddings found").
+    #[test]
+    fn ensure_db_exists_refuses_before_any_db_creation() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let db_path = directory
+            .path()
+            .join("never-created.db")
+            .to_str()
+            .expect("utf-8 path")
+            .to_string();
+        let error = match ensure_db_exists(&db_path) {
+            Ok(()) => panic!("nonexistent db must be refused"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error.kind,
+            hkask_types::McpErrorKind::NotFound,
+            "a caller-named missing DB is not_found per the canonical classification: {error:?}"
+        );
+        assert!(
+            error.message.contains("embedding database does not exist"),
+            "the refusal names the condition: {error:?}"
+        );
+        assert!(
+            !std::path::Path::new(&db_path).exists(),
+            "no DB file may be created by the refusal path"
+        );
+    }
+
+    #[test]
+    fn seeded_resolution_never_returns_an_empty_passphrase() {
+        seed_test_passphrase();
+        let resolved = resolve_corpus_passphrase().expect("seeded passphrase must resolve");
+        assert!(!resolved.is_empty());
+    }
+}

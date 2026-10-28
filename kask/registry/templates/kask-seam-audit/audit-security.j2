@@ -1,0 +1,92 @@
+{# goal: Self-contained security track over the 10 priority surfaces of the Kask↔Zed seam. #}
+[inference]
+contract:
+  input:
+    task: string
+    seam_scope: string
+    prior_verdicts: array
+  output:
+    findings: array
+    defense_layer_coverage: object
+---
+You are running the security track over the Kask↔Zed seam. Task: {{ task }}.
+
+The security track is self-contained — it carries its own priority surfaces
+and OWASP LLM Top-10 / MITRE ATLAS v5.1 / NIST SSDF SP 800-218A framing. It
+does not delegate to a separate security skill.
+
+## Scope (strict)
+Audit ONLY the path or directory named by `{{ seam_scope }}` and any other
+explicitly named files in this batch's live D-seam row. Do not treat every
+other D-seam as in scope. If you find an issue in an upstream non-D-seam
+file, report it with `deferred: true` and `deferred_reason: "upstream non-D-seam"`.
+
+## Priority surfaces (OWASP LLM Top-10 2025, MITRE ATLAS v5.1, NIST SSDF SP 800-218A)
+1. MCP runtime gate — `McpRuntime::invoke`: per-tick call ceiling / runaway-loop breaker, fail-closed. Verify no per-call authorization gate remains (it was removed: it compared a value with itself).
+2. Credential/config scoping per MCP server — each `BuiltinMcpServer` uses `Some(&[])` minimum (not `None`); allowlist content aligns with what the server reads.
+3. `AnyJsonValue` vs `serde_json::Value` in MCP tool input structs (schemars renders `Value` as bare `true`).
+4. `unwrap_or(0)` on regulation-loop sense inputs.
+5. Inference IPC dispatch — delegated-tool allowlist enforced before dispatch; per-tick call ceiling for unbudgeted agents.
+6. Retired skill marketplace (D1/D30) — check for unexpected reintroduction of an install path; absence of marketplace signing is not a defect when no marketplace exists.
+7. Retired taint-propagation check (D3) — verify no live path claims a removed `input_mapping`/`context.insert` enforcement gate; assess active IPC authorization at item 5 instead.
+8. MCP tool error classification — per-variant, not blanket `McpToolError::internal`.
+9. D28 artifact storage path safety — `THREADS_DB_PATH_OVERRIDE` / `GLOBAL_SKILLS_DIR_OVERRIDE` hooks canonicalize and reject paths resolving inside Zed's app/data/config dirs; `resolve_under_data_dir` enforces the single rooted tree. Verify no MCP server DB path escapes `{kask_data_dir}/mcp/{server_id}/`.
+10. Inference-provider credential consolidation (D29 successor) — one key, one location: a provider's API key lives at its `api_url` keychain slot (`https://openrouter.ai/api/v1`, `https://api.deepinfra.com/v1/openai`, `https://api.runpod.io`, `https://api.kilo.ai/api/gateway`), the same slot zed's `ApiKeyState` reads; every consumer (`credential_urls_for_mcp` via `credential_url_for_key`, `resolve_embedding_credentials`, the IPC batch/rerank paths, the settings UI) resolves that one slot. Verify no consumer reads a `kask://credentials/{openrouter,deepinfra,runpod,kilocode}` slot (the 2026-08-31 split-brain: a stale legacy copy fed MCP servers a dead key — DeepInfra 401). `resolve_ocr_model` uses `eq_ignore_ascii_case` to match `RunPod/...` against lowercase `runpod/...`.
+
+## Convention prior heads-up
+{% for pv in prior_verdicts %}
+- {{ pv.prior }}: {{ pv.verdict }} ({{ pv.evidence }})
+{% endfor %}
+A **phantom** prior means the claimed artifact is absent; report a stale `.rules`
+reference only if that prior actually came from `.rules`. Retired controls without
+live claims are not findings. Do not hunt for a phantom enforcement point. Mark
+priority surfaces outside this batch's actual reach `not_applicable` rather than
+claiming they passed a full-fleet security audit.
+
+## Output (JSON only)
+
+```json
+{
+  "findings": [
+    {
+      "id": "KS-NN",
+      "surface": "code|supply-chain|runtime|mcp|llm-io|config",
+      "severity": "critical|high|medium|low|info",
+      "title": "short",
+      "file_line": "path:line",
+      "evidence": "actual code snippet or pattern found",
+      "standard": "OWASP-LLM-2025:LLM0x | ATLAS:AML.Txxxx | CWE-xxxx | RR-NNNN",
+      "constraint_force": "blocking|directing|enabling",
+      "remediation": "proposed fix (push into kask/ behind a D-seam; if upstream, deferred)",
+      "deferred": false
+    }
+  ],
+  "defense_layer_coverage": {
+    "layers": [
+      { "id": 1, "name": "McpRuntime invoke gate", "status": "...", "enforcement_point": "path:line", "notes": "..." },
+      { "id": 2, "name": "Per-agent mcp_tools allowlist", "status": "...", "enforcement_point": "..." },
+      { "id": 3, "name": "Credential scoping per MCP server", "status": "...", "enforcement_point": "..." },
+      { "id": 4, "name": "Schema validation (AnyJsonValue)", "status": "...", "enforcement_point": "..." },
+      { "id": 5, "name": "Retired marketplace residue", "status": "not_applicable|unexpected_reintroduction", "enforcement_point": "...", "notes": "Do not assert an absent signing gate is a vulnerability when installation is retired" },
+      { "id": 6, "name": "Retired taint-gate residue", "status": "not_applicable|unexpected_reintroduction", "enforcement_point": "...", "notes": "Do not claim a removed taint check enforces IPC authority" },
+      { "id": 7, "name": "Error classification (per-variant)", "status": "...", "enforcement_point": "..." }
+    ],
+    "verdict": "Pass|Conditional|Fail"
+  }
+}
+```
+
+Every finding MUST have `file_line` (a real `path:line`) OR `deferred: true`
+with a `deferred_reason`. Gate B rejects any finding missing both. `severity`
+MUST be exactly one of: critical, high, medium, low, info. Never fabricate.
+
+## Gate B repair
+
+If `gate_defects` is present in context (Gate B found structural defects —
+bad severity, missing citation), re-run this template with
+`gate_defects` in context and re-emit the corrected `findings` and
+`defense_layer_coverage`. Never fabricate a `file_line`; if you cannot cite a
+real line, mark the finding `deferred: true` with a `deferred_reason`. If the
+surface genuinely has no findings, emit `findings: []` and state the examined
+boundary in `defense_layer_coverage`; Gate B accepts the empty list. Never
+fabricate a line-zero citation to make a track non-empty.

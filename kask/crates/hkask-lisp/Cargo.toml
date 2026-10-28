@@ -1,0 +1,30 @@
+[package]
+name = "hkask-lisp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Sandboxed Lisp interpreter for deterministic manifest compute steps — no I/O, no filesystem, no network, bounded recursion"
+
+[lib]
+path = "src/hkask_lisp.rs"
+
+[dependencies]
+serde_json = { workspace = true }
+thiserror.workspace = true
+stacksafe.workspace = true
+
+[dev-dependencies]
+proptest = { workspace = true }
+criterion = { workspace = true }
+smol = { workspace = true }
+
+[[bin]]
+name = "check-skill-lisp-forms"
+path = "src/bin/check_skill_lisp_forms.rs"
+
+[[bench]]
+name = "engine_bench"
+harness = false
+
+[lints]
+workspace = true

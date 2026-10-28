@@ -1,0 +1,128 @@
+{# goal: Compare fixed-oracle before-and-after observations and issue a non-compensable verdict on signal preservation, graph compression, and measured execution speed. #}
+[inference]
+contract:
+  input:
+    baseline: object
+    candidate: object
+    lean_result: object
+    before_observations: object
+    after_observations: object
+    targets: object
+    mode: string
+    receipt: object
+  output:
+    preservation: object
+    measurement_context: object
+    metrics: object
+    falsification_log: array
+    verdict: string
+    next_step: string
+---
+
+Evaluate one verification-compression experiment in {{ mode }} mode. Hold expectation
+contracts, oracle inputs, toolchain, environment, and harmful cases fixed.
+Use a trusted externally pinned receipt, not a model-generated verification flag.
+
+Baseline and candidate:
+```json
+{{ baseline | tojson }}
+{{ candidate | tojson }}
+```
+Lean result:
+```json
+{{ lean_result | tojson }}
+```
+Before and after observations:
+```json
+{{ before_observations | tojson }}
+{{ after_observations | tojson }}
+```
+Targets and independently pinned receipt:
+```json
+{{ targets | tojson }}
+{{ receipt | tojson }}
+```
+
+Any lost expectation, falsifier, oracle kind, failure class, provenance tier,
+failed harmful case, failed allowed-change control, changed oracle/contract/toolchain/
+environment/cache context, unbound source change, or uncompiled Lean obligation
+forces REVERT regardless of acceleration. In analyze mode source hashes must
+match; in execute mode a source change is allowed only when the receipt binds
+both snapshots and their exact authorized candidate diff. Record
+raw before/after identifiers in `measurement_context`; do not insert a model-
+asserted `measurement_context_equal` verdict. `hashes_verified` starts false
+and becomes true only after the receipt and raw hashes pass a deterministic
+terminal check with an externally trusted digest pin. In execute mode, independently
+operator-approved diff SHA-256 must match the snapshot-derived diff; neither a
+candidate-provided diff nor a self-generated digest is approval. Reject zero or negative
+values in EACH measured sample, regardless of positive aggregate. The source,
+contract, oracle, graph, proof, log, and before/after timing JSON paths/hashes
+must all be in the receipt; validate filesystem files, not just submitted
+paths. Use only the checker's returned `source_changed` value and timing
+arrays for admission and speedup. Keep cold and warm timing
+separate; mark unselected states
+`not_run` with empty samples and zero timing, never speedup. Report workflow
+and production code graph counts separately. If the production graph was not
+measured, set code before/after counts to zero and code_graph_status to
+`not_run`; stale nonzero code counts block acceptance, and code compression
+remains null even when stale counts are supplied. Do not call a workflow-only
+reduction code compression. Derive
+speedup directly from the timing sample arrays, not model-supplied means.
+Corroborated means the candidate survived; never call it proven effective.
+
+Return JSON only:
+```json
+{
+  "preservation": {
+    "missing_expectations":0,
+    "lost_falsifiers":0,
+    "lost_oracle_kinds":0,
+    "lost_failure_classes":0,
+    "downgraded_provenance":0,
+    "failed_harmful_cases":0,
+    "allowed_change_control_failures":0,
+    "lean_proof_passed":false
+  },
+  "measurement_context": {
+    "timing_scope":"cold|warm|both",
+    "toolchain_before":"",
+    "toolchain_after":"",
+    "environment_before":"",
+    "environment_after":"",
+    "source_hash_before":"",
+    "source_hash_after":"",
+    "source_changed":false,
+    "oracle_hash_before":"",
+    "oracle_hash_after":"",
+    "contract_hash_before":"",
+    "contract_hash_after":"",
+    "hashes_verified":false,
+    "receipt_path":"",
+    "receipt_pinned_sha256":"",
+    "approved_diff_sha256_or_dash":"",
+    "candidate_diff_path":"",
+    "timing_before_path":"",
+    "timing_after_path":"",
+    "evidence_paths":[]
+  },
+  "metrics": {
+    "nodes_before":0,
+    "edges_before":0,
+    "nodes_after":0,
+    "edges_after":0,
+    "code_graph_status":"measured|not_run",
+    "code_nodes_before":0,
+    "code_edges_before":0,
+    "code_nodes_after":0,
+    "code_edges_after":0,
+    "cold":{"status":"measured|not_run","time_before_ms":0,"time_after_ms":0,"timing_samples_before_ms":[],"timing_samples_after_ms":[]},
+    "warm":{"status":"measured|not_run","time_before_ms":0,"time_after_ms":0,"timing_samples_before_ms":[],"timing_samples_after_ms":[]}
+  },
+  "falsification_log": [
+    {"hypothesis":"", "prediction":"", "observation":"", "disposition":"eliminated|corroborated|irreducible"}
+  ],
+  "verdict":"compressed_preserved|essential_no_safe_reduction|blocked|reverted",
+  "verdict_note":"retained_targets_missed is NOT emitted here — it is the ACT-phase override (SKILL.md step 12): preservation passed but targets missed, retained only with operator approval; the template emits reverted and the agent re-labels post-approval",
+  "next_step":""
+}
+```

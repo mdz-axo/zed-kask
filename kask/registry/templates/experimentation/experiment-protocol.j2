@@ -1,0 +1,55 @@
+{# goal: Render the five-step experimentation experiment protocol for one artifact layer, assembling the experiment_propose declaration and the per-step tool routing. #}
+[inference]
+contract:
+  input:
+    layer: string
+    genotype_refs: array
+    hypothesis: string|null
+  output:
+    declare_args: object
+    protocol: object
+    guardrails: array
+---
+{# The experiment protocol (repair plan §P8.3) — the single record path for
+   artifact-variant experiments. The experimentation server (hkask-mcp-experimentation)
+   is the record of record; there are no parallel record paths (§P8.7-Q5). #}
+
+You are preparing one experimentation experiment on the **{{ layer }}** layer.
+
+## Genotype under experiment
+
+{{ genotype_refs | tojson }}
+
+{% if layer == 'skill' %}
+The skill genotype is COMPOSITE (§P8.7-Q2): the SKILL.md process text and its companion `.j2` templates evolve together as one variant — a variant that changes templates without the process text (or vice versa) is not a valid skill variant. Pin suites re-run in the same change as any skill variant.
+{% elif layer == 'agent_card' %}
+An agent-card variant is the full card configuration (system_prompt, model_params, evaluators). Fitness comes from `swarm_eval_agent_local` on a fixed task set with declared evaluators; the 10% cost band (the GEPA precedent) treats smaller token gaps as ties.
+{% elif layer == 'prompt_template' %}
+A prompt/template variant is the rendered artifact content. Fitness comes from a runnable eval set with disjoint feedback/selection splits; dominance uses the GEPA forms over (pass_rate, total_tokens) pairs.
+{% elif layer == 'tool_schema' %}
+A tool-schema variant is the MCP tool's input schema. Fitness comes from skill-use reports over a window (issue counts, resolution outcomes); the curator directive ledger records the change.
+{% elif layer == 'regulation_scalar' %}
+A regulation-scalar variant is a threshold or energy-budget value. Fitness comes from calibration readings and Brier records over a window.
+{% elif layer == 'scientific_hypothesis' %}
+A scientific-hypothesis variant is the operationalized hypothesis plus its measurement plan (D2, the general lab notebook): the genotype is small, legible, and versioned; fitness comes from recorded observations — harness reports, FRED/DBnomics series reads, prediction-market resolutions — never self-graded scores. The falsifiability admission gate and the headroom pre-check are the filters; artifact-layer experiments are the special case (`self-improvement` owns those — delegate).
+{% else %}
+UNKNOWN LAYER: `layer` must be one of skill, agent_card, prompt_template, tool_schema, regulation_scalar, scientific_hypothesis. Return declare_args with a layer_error field naming the six valid layers and do not propose an experiment.
+{% endif %}
+
+## The five steps (every experiment)
+
+Full scientific inquiry cycles (frame → falsify → design → preregister → execute → findings audit → human review) are composed by the **hypothesis-testing** skill; `experimental-design` must produce the complete DesignSpec before this declaration template is used. This template renders the layer-specific registry mechanics for a compatible experiment or standalone artifact experiment; it never designs a scientific study.
+
+1. **Declare** — `experiment_propose`: hypothesis, layer, genotype_refs, eval_set, fitness_fn, noise_band, rubrics (the typed eval contract, P1: a non-empty bundle with at least one `metric` rubric and at least one `implementation` or `grounded_report` rubric; each rubric carries a stable snake_case id, a concrete measurable description, and a typed verification — `contains` / `not_contains` / `regex` / `report_ref`, the same vocabulary as `swarm_evaluate_local`'s evaluators), prediction `{claim, confidence in [0,1]}`, budget (must carry `max_runs` — a positive integer the server enforces at `fitness_record`, §P8.9 step 2), `linked_goal_id` (optional verification-goal link; create separately with actual source and criteria, omit routine forecast, and never auto-close at experiment selection or count it as another independent event), experiment_key (a stable key converges retried calls onto the existing record), and — for a scientific design — the optional typed `design_spec` (a JSON object carrying a non-empty `spec_version`; the server refuses an unversioned spec). `design_spec` is a TOP-LEVEL argument, never nested inside `eval_set`; the seal fingerprints `(eval_set, fitness_fn, noise_band, rubrics, design_spec)`, so the design joins the hash from either position. The pre-registered prediction is the tiny controller: it is scored against the measured outcome, never edited after measurement begins.
+2. **Vary** — `variant_register` for every predeclared variant before measurement: genotype_config (the full variant content or its descriptor), role (`baseline` | `challenger` | `ablation`, default challenger — exactly one baseline per experiment; an ablation names its parent_variant_id, the component it ablates), parent_variant_id for lineage, variant_key. Registration is not measurement; pre-seal fitness remains baseline-only.
+3. **Test** — baseline first (P2): record the already-registered baseline's fitness, then `experiment_seal` — the headroom pre-check made mechanical: the seal freezes the eval contract (eval_set, rubrics, fitness_fn, noise_band, design_spec) under a SHA-256 fingerprint and attests the baseline's scientific headroom. Supply EXACTLY ONE attestation: `baseline_pass_rate` (a meaningful binary pass rate — a saturated 1.0 is a typed no-headroom refusal) OR `scientific_headroom` `{design_family, criterion, evidence}` for a design family with no meaningful binary pass rate. Supplying both or neither is a typed refusal (`SealAttestationConflict`). For an artifact experiment, a no-headroom refusal voids through `selection_record` with a literal no-headroom reject reason. For a scientific design, information-inadequate headroom resolves through human review as typed `scientific_outcome="design_void"`, with the reason preserved rather than scored as a rejected hypothesis. Redesign the eval set and re-declare (§5 Q6). Pre-seal, only the baseline records fitness; post-seal, every `fitness_record` cites `seal_id`. Runs are RECORDED report references only — never simulated; `run_count` states the number of rollouts those reports cover (the server sums run counts against the declared `budget.max_runs` and refuses past the ceiling, §P8.9 step 2); scores are the per-objective aggregates computed from those runs. Before selection, `final_evaluation_record` (P3) re-scores the leading variant on a DISJOINT selection set — run refs the server enforces as unseen for the experiment (overlaps are a typed refusal naming them); the run count joins the declared budget — selection-grade evidence for the algedonic review.
+4. **Select** — deterministic pre-selection only within the declared noise band; the final selection is the algedonic review (§P8.7-Q4). Deterministic-fitness experiments auto-run within the declared budget (§P8.7-Q1); human-judged-fitness experiments route through the operator before running.
+5. **Retain** — `selection_record` when the verdict is known: verdict `selected` with the winning variant, or `rejected` with at least one reason; algedonic_reference the review record. For a scientific design, supply the typed `scientific_outcome` ALONE — one of `rejected` | `corroborated` | `evidence_of_practical_equivalence` | `inconclusive` | `measurement_void` | `design_void`. The tool synthesizes the resolution token from whichever single field you supply (`server.rs`), so supplying the outcome alone satisfies the store's verdict==outcome check; supplying both `verdict` and `scientific_outcome` is a typed refusal. Only `rejected` and `corroborated` enter Brier calibration; the other four are excluded ON THE TYPED FIELD — never by a literal string marker. A `rejected` outcome still requires non-empty `reject_reasons`. Both outcomes persist as fossils — a rejected variant's reasons are retained so it is never blindly re-mutated. Re-testing a mechanism is a fresh declaration, never a re-dispatch past the declared ceiling. Selected variants land in git through the proposal → delegation → verification path: the session proposes, never commits. Consult `lineage_read` before re-mutating.
+
+## Output
+
+Return JSON only:
+
+- declare_args: the prepared `experiment_propose` arguments object — layer and genotype_refs filled from this render, hypothesis from the input or drafted, and eval_set, fitness_fn, noise_band, rubrics (per the typed eval contract in step 1), prediction and budget prepared per the layer requirements above
+- protocol: an object with `vary`, `test`, `select` and `retain` keys — one string each, the layer-specific instruction for that step
+- guardrails: an array of strings — grounded fitness only (never LLM-only); recorded runs only; algedonic selection, nothing auto-adopts; proposes-never-commits; and the composite-genotype rule when the layer is skill

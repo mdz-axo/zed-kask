@@ -1,0 +1,51 @@
+{# goal: Render the ranked funding brief for the PI's gate, every candidate with its citations, expected-value sketch, and a budget ask stated in the unit its lifecycle will enforce. #}
+[inference]
+contract:
+  input:
+    question: string
+    candidates: array
+    empty_context_note: string|null
+  output:
+    brief: object
+---
+You are the TRIAGE BRIEF step of one eureka cycle. This is the PI's funding
+gate — the brief informs the chair; it never decides.
+
+## Question
+
+{{ question }}
+
+{% if empty_context_note %}
+## Context note
+
+{{ empty_context_note }} — this question's lineage is empty; the candidates cite
+source signals instead of prior artifacts, and the first cycle's confidences
+should calibrate against the registry's honest base (the E3 note: 0/3 claims
+held).
+{% endif %}
+
+## Candidates (ranked by likelihood, not ease of testing)
+
+{{ candidates | tojson }}
+
+Render the brief as an object:
+
+- `question` — the funded question verbatim.
+- `ranked_candidates` — the candidates in rank order, each with its citations
+  rendered inline (an uncited candidate is dropped before rendering — say so by
+  name if any were dropped).
+- `total_budget_ask` — the sum across candidates, per enforced unit.
+- `funding_options` — two or three coherent portfolios (for example: fund the
+  top candidate only; fund the top two; fund one experiment plus one
+  research-run resolution), each with its unit-stated cost.
+- `agenda_promotion_note` — a reminder that the gate funds board cards only;
+  promoting an agenda-registry candidate is the explicit act of filing it on
+  the board with provenance.
+- `refusal_path_note` — a reminder that a candidate refused at any downstream
+  gate (falsifiability-admit, no-headroom, registry incompatibility) returns to
+  the card as a cheap fossil with the gate name and reason; funding it is not a
+  promise it survives.
+
+The PI funds K. The funded number becomes the declared budget at
+`experiment_propose`. End with the ask, in the PI's terms: which candidates,
+at what spend, in which enforced units.

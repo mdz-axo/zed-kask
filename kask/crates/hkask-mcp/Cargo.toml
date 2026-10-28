@@ -1,0 +1,50 @@
+[package]
+name = "hkask-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "MCP runtime and governance for hKask"
+
+[lib]
+path = "src/hkask_mcp.rs"
+
+[dependencies]
+hkask-types.workspace = true
+hkask-tool-port.workspace = true
+hkask-regulation.workspace = true
+rmcp = { workspace = true, features = ["server", "macros", "transport-io", "client", "transport-child-process"] }
+tokio-util.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+hkask-types.workspace = true
+hkask-tool-port.workspace = true
+futures.workspace = true
+libc.workspace = true
+tempfile.workspace = true
+
+# The fixture binary is gated to `test-fixture` so a normal build does not
+# produce it. The connection-healing paths in `McpRuntime` (reap-on-death,
+# liveness-on-read, reconnect-on-demand, health supervisor) can only be
+# falsified by a transport that genuinely dies, so the reconnect integration
+# test needs a controllable MCP server binary (the fixture) and the
+# `is_connected` accessor (feature-gated to `test-fixture`).
+[[bin]]
+name = "mcp-test-fixture"
+path = "src/bin/mcp_test_fixture.rs"
+required-features = ["test-fixture"]
+
+[[test]]
+name = "reconnect_integration"
+path = "tests/reconnect_integration.rs"
+required-features = ["test-fixture"]
+
+[features]
+test-fixture = []
+

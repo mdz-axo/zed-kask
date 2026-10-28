@@ -1,0 +1,48 @@
+# Provider profile — SerpAPI. Structural contract pinned by
+# kask/scripts/check-provider-profiles.sh; semantic reading owned by the
+# provider-audit skill.
+id: serpapi
+name: SerpAPI
+status: active
+roles:
+  - research-provider
+  - companies-data
+  - media-discovery
+keychain:
+  slot: kask://credentials/serpapi
+  env_var: HKASK_SERPAPI_API_KEY
+  note: the canonical spelling — the server previously read the
+    non-canonical HKASK_SERPAPI_KEY, which no allowlist or registry carried,
+    so the key never arrived; normalized on the kask/.env spelling
+    (kask/crates/kask_bridge/src/mcp_servers.rs comment)
+consumed_capabilities:
+  - capability: Google-index search (news, freshness)
+    source: kask/mcp-servers/hkask-mcp-research/src/research/providers/serapi.rs
+  - capability: companies corpus-mode transcript search
+    source: kask/crates/kask_bridge/src/mcp_servers.rs (companies server credentials)
+  - capability: YouTube discovery metadata
+    source: kask/crates/kask_bridge/src/mcp_servers.rs (media server credentials)
+deliberate_non_consumption: []
+data_terms:
+  # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
+  extracted_at: "2026-10-13"
+  trains_on_customer_data: >-
+    no training clause — SERP data service; the legal page read
+    (serpapi.com/legal, extracted 2026-10-13) governs scraping-derived search
+    results, not model training.
+  retention_published: >-
+    yes — "SECTION 10 - DATA RETENTION AND DELETION: Search data is
+    retained for 31 days" (serpapi.com/legal, extracted 2026-10-13); personal
+    information is governed by the privacy policy referenced there.
+status_surface:
+  status_page: >-
+    https://status.serpapi.com live (HTTP 200, probed 2026-10-13).
+  sla: >-
+    yes — "SECTION 21 - SLA GUARANTEES: We provide a 99.95% SLA guarantee
+    with all plans", with service credits up to 100% of the monthly plan
+    price (serpapi.com/legal, extracted 2026-10-13).
+pricing:
+  machine_readable: >-
+    pricing published (serpapi.com/pricing, HTTP 200, probed 2026-10-13); no
+    machine-readable pricing source found this run.
+first_audit_pending: false

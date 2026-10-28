@@ -1,0 +1,99 @@
+[package]
+name = "kask_bridge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The bidirectional seam between hKask port traits and zed-kask facilities (D8)"
+
+
+[lib]
+path = "src/kask_bridge.rs"
+
+[dependencies]
+# hKask side — port traits only (never concrete zed crates)
+hkask-types.workspace = true
+hkask-tool-port.workspace = true
+hkask-bridge-ontology.workspace = true
+
+hkask-memory.workspace = true
+hkask-storage.workspace = true
+hkask-mcp-experimentation.workspace = true
+hkask-mcp-kata-kanban = { path = "../../mcp-servers/hkask-mcp-kata-kanban" }
+hkask-event-store.workspace = true
+r2d2.workspace = true
+
+hkask-inference.workspace = true
+hkask-keystore.workspace = true
+hkask-regulation.workspace = true
+hkask-email.workspace = true
+hkask-condenser.workspace = true
+hkask_tool_invoker.workspace = true
+
+# zed-kask side — the facilities the bridge adapts over
+language_model.workspace = true
+language_model_core.workspace = true
+http_client.workspace = true
+gpui.workspace = true
+gpui_tokio.workspace = true
+agent.workspace = true
+settings.workspace = true
+zed_credentials_provider.workspace = true
+settings_content.workspace = true
+credentials_provider.workspace = true
+collections.workspace = true
+schemars = { workspace = true, features = ["derive"] }
+edit_prediction.workspace = true
+
+# Shared
+uuid.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+futures.workspace = true
+futures-util.workspace = true
+
+serde = { workspace = true }
+serde_json.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+tracing.workspace = true
+sha2.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
+
+[dev-dependencies]
+# Local file URI fixtures; production path parsing belongs to the canonical service.
+url.workspace = true
+agent = { workspace = true, features = ["test-support"] }
+# Feature-propagation-only dev-dep: the `agent`/`acp_thread`/`workspace`
+# `test-support` requests above forward `remote/test-support` on (via
+# `project`), exposing `RemoteConnectionOptions::Mock` — while
+# `remote_connection`'s Mock match arm is gated on its OWN `test-support`.
+# Both must be in sync whenever `remote/test-support` is on (the
+# swarm_panel precedent), so the pairing rides this dev closure too.
+remote_connection = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }
+agent-client-protocol.workspace = true
+acp_thread = { workspace = true, features = ["test-support"] }
+tokio = { workspace = true, features = ["test-util"] }
+hkask-mcp-curator = { path = "../../mcp-servers/hkask-mcp-curator" }
+hkask-mcp-swarm.workspace = true
+hkask-mcp-server.workspace = true
+rmcp = { workspace = true, features = ["server", "macros"] }
+http_client = { workspace = true, features = ["test-support"] }
+proptest.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
+language_model = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true
+
+[package.metadata.cargo-machete]
+# Feature-propagation-only dev-dep (see the comment at the dev-dependencies
+# entry): never `use`d in source — it exists to pair remote_connection's
+# test-support with the remote/test-support the rest of this dev closure
+# turns on (the D80 trap).
+ignored = ["remote_connection"]
+

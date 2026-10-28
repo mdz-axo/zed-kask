@@ -1,0 +1,57 @@
+# Provider profile — OpenRouter. Structural contract pinned by
+# kask/scripts/check-provider-profiles.sh; semantic reading (data terms,
+# status, pricing) owned by the provider-audit skill.
+id: openrouter
+name: OpenRouter
+status: active
+roles:
+  - chat-inference
+  - embedding-provider
+  - media-provider
+  - edit-prediction
+keychain:
+  slot: https://openrouter.ai/api/v1
+  env_var: OPENROUTER_API_KEY
+consumed_capabilities:
+  - capability: chat completions (OpenAI-compatible)
+    source: crates/language_models/src/provider/open_router.rs
+  - capability: embeddings (/embeddings)
+    source: kask/crates/kask_bridge/src/inference_providers.rs
+    note: default embedding model OpenRouter/qwen/qwen3-embedding-8b (kask/crates/hkask-inference/src/model_constants.rs)
+  - capability: media ops — generate_image, transcribe, chat_audio, chat_json, generate_video, image_to_video
+    source: kask/crates/hkask-inference/src/media_providers.rs
+  - capability: STT — openai/whisper-large-v3-turbo
+    source: kask/crates/hkask-inference/src/model_constants.rs
+  - capability: vision — openai/gpt-4o-mini
+    source: kask/crates/hkask-inference/src/model_constants.rs
+  - capability: edit predictions — z-ai/glm-5.2
+    source: DIVERGENCE.md D24
+deliberate_non_consumption: []
+data_terms:
+  # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
+  extracted_at: "2026-10-13"
+  trains_on_customer_data: >-
+    no (OpenRouter itself) — privacy policy (openrouter.ai/privacy, last
+    updated 2026-08-31, extracted 2026-10-13): "OpenRouter does not use your
+    Inputs or Outputs for model training." Upstream Model Providers may
+    train (labeled where disclosed; Data Policy-Based Routing available
+    on paid tiers).
+  retention_published: >-
+    yes — privacy policy §7 Personal Data Retention (extracted 2026-10-13):
+    retained as long as reasonably necessary for business/legal
+    obligations; image/audio/video inputs not persisted beyond routing
+    except for abuse detection, security, billing, or legal compliance;
+    Files API files retained until deletion.
+status_surface:
+  status_page: >-
+    https://status.openrouter.ai (Datadog) live — all six services
+    Operational, 100% uptime over the 90-day window ending 2026-10-13.
+  sla: >-
+    contractual SLAs are Enterprise-plan only (pricing page, extracted
+    2026-10-13); none on the Standard tier we consume.
+pricing:
+  machine_readable: >-
+    yes — https://openrouter.ai/api/v1/models returns per-model pricing
+    objects (verified by live call 2026-10-13); platform fee 5.5% Standard /
+    8% Business (pricing page, extracted 2026-10-13).
+first_audit_pending: false

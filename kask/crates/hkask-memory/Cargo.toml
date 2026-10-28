@@ -1,0 +1,29 @@
+[package]
+name = "hkask-memory"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Semantic and episodic memory pipelines for hKask"
+
+
+[lib]
+path = "src/hkask_memory.rs"
+
+[dependencies]
+hkask-types.workspace = true
+hkask-storage.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+blake3.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
+

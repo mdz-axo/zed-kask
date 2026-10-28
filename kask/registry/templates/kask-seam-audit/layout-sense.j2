@@ -1,0 +1,116 @@
+{# goal: Measure the rendering container's available width and each child element's minimum width, count interactive elements against the Hick's Law action budget (≤5 primary), check sibling consistency, and record primary-action and spacing-grid observations. The derived quantities (sum_min_widths, overflow_delta, text_column_residual, fitts_violations) and the 5 hard gates are computed by the KSA-1 lisp_eval form in gates.md — never by the model. Grounded in Fitts's Law, Hick's Law, Nielsen consistency, and the CSS flexbox overflow invariant. #}
+[inference]
+contract:
+  input:
+    target:
+      type: object
+      description: The card or panel renderer being reviewed (file path, function
+        name, element tree).
+    container_width:
+      type: string
+      default: dock
+      description: 'Container context: "dock" (~300-400px), "center" (~600px+),
+        or a specific pixel width.'
+    codebase_context:
+      type: object
+      required: false
+      description: Sibling card/panel components with their action counts and
+        layout patterns.
+  output:
+    container_available_width:
+      type: integer
+      description: Available content-box width in pixels (after padding/border).
+    child_min_widths:
+      type: array
+      description: Per-child minimum widths — each entry {element, min_width_px,
+        kind} with kind fixed (flex_shrink_0 / non-shrinking), text_column (the
+        flex_1 text column), or flex (other flex_1 children).
+    total_gap_width:
+      type: integer
+      description: Sum of all gap widths between children in the row (count × gap
+        size).
+    fitts_min_target:
+      type: integer
+      description: Minimum target width per Fitts's Law (32px mouse floor, 44px
+        touch) — which floor applies to this renderer.
+    action_count:
+      type: integer
+      description: Total primary interactive elements in the container.
+    action_budget:
+      type: integer
+      description: Maximum primary actions allowed (5, per Hick's Law).
+    sibling_patterns:
+      type: array
+      description: Sibling card patterns found in the codebase (action count,
+        layout approach).
+    consistency_violation:
+      type: boolean
+      description: True if the target's action count/layout diverges from sibling
+        patterns without justification.
+    primary_action_visible:
+      type: boolean
+      description: True if exactly one visually-dominant primary action is present
+        (or an explicit "no primary" justification is declared).
+    on_grid_spacing:
+      type: boolean
+      description: True if all gaps and paddings align to the 4px/8px grid (2px half-steps
+        allowed).
+---
+{# Phase: SENSE — measure container, children, action count, and layout observations #}
+
+You are a layout measurement and orientation engine. Your job is to measure the container and every child element, count primary interactive actions against the Hick's Law budget, compare sibling patterns, and record primary-action and grid-alignment observations. The deterministic 5-gate `lisp_eval` check (`KSA-1` in `gates.md`) derives `sum_min_widths`, `overflow_delta`, `text_column_residual`, and `fitts_violations` from these measurements and evaluates the gates — this template never computes them. No element is added to a card without first measuring whether it fits.
+
+## Target
+
+{{ target | tojson }}
+
+## Container Context
+
+- **Container width**: {{ container_width | default("dock") }}
+  {% if container_width == "dock" %}— Dock panel: assume 300-400px available (the narrowest common case). Use 300px as the adversarial floor (the agent panel's minimum dock width, `MIN_PANEL_WIDTH` at crates/agent_ui/src/agent_panel.rs:108).{% endif %}
+  {% if container_width == "center" %}— Center pane: assume 600px+ available.{% endif %}
+
+## Codebase Context (sibling patterns)
+
+{% if codebase_context %}
+{{ codebase_context | tojson }}
+{% else %}
+No sibling context provided. The agent should grep the crate for existing card/panel components and compare action counts and layout patterns. If no siblings exist, this is a new pattern — note it.
+{% endif %}
+
+## Measurement Steps
+
+For each child element in the target's element tree, estimate its minimum width and record its kind:
+
+1. **Buttons**: `XSmall` label buttons are ~40-60px each (label + padding). `Small` buttons are ~50-70px. `IconButton` is ~28-32px. Buttons are `fixed` (they do not shrink).
+2. **Labels**: A `Label` with `truncate()` has a min-width of ~0 (it shrinks). Without `truncate()`, its min-width is the text content width. A flex_1 text column is `text_column`; other flex_1 children are `flex`.
+3. **Flex children**: `flex_1` children have min-width 0 (they shrink). `flex_shrink_0` children have min-width = their content width (`fixed`).
+4. **Padding/border**: subtract `p_3` (12px each side = 24px) and `border_1` (1px each side = 2px) from the container's outer width.
+5. **Gaps**: count every `gap_*` between children in the row; `total_gap_width` = count × gap size.
+
+## Fitts's Law Floor
+
+Per Fitts (1954), target acquisition time is a log function of distance and target width. Below ~32px (mouse) or ~44px (touch), targets become slow and error-prone. Record `fitts_min_target` (32 mouse / 44 touch — which floor applies to this renderer); `KSA-1` flags every `fixed` child whose min-width falls below it (flex children shrink, so the floor does not apply to their minimum).
+
+## Action Count, Hierarchy, and Grid Observations
+
+1. **Action count (`action_count`) and budget (`action_budget`)**: count every primary interactive element the user can click — buttons, icon buttons, toggle buttons, menu triggers. Secondary actions behind a `PopoverMenu` do NOT count toward the primary budget (`action_budget` = 5 per Hick's Law).
+2. **Sibling consistency (`sibling_patterns`, `consistency_violation`)** (Nielsen "Consistency and standards"): if sibling cards in the same crate use a `PopoverMenu` for secondary actions, this card must too.
+3. **Primary action hierarchy (`primary_action_visible`)**: true iff there is exactly one visually-dominant primary action (`ButtonStyle::Filled`, or the first/largest button) or an explicit "no primary" declaration with justification; false if zero primary buttons (all `Subtle`) or multiple competing primary buttons.
+4. **On-grid spacing (`on_grid_spacing`)**: true iff all gaps and paddings are on the 4px/8px grid (`gap_0` = 0, `gap_0p5` = 2, `gap_1` = 4, `gap_1p5` = 6, `gap_2` = 8, `gap_3` = 12, `p_2` = 8, `p_3` = 12). Off-grid values (3px, 5px, 7px) set `on_grid_spacing: false`.
+
+## Output
+
+Produce a JSON object with:
+- `container_available_width`: the content-box width after padding/border
+- `child_min_widths`: array of {element, min_width_px, kind} for each child (kind: fixed | text_column | flex)
+- `total_gap_width`: sum of gap widths between children in the row
+- `fitts_min_target`: 32 (mouse) or 44 (touch)
+- `action_count`: total primary interactive elements
+- `action_budget`: 5
+- `sibling_patterns`: array of {component, action_count, layout_approach}
+- `consistency_violation`: boolean
+- `primary_action_visible`: boolean
+- `on_grid_spacing`: boolean
+
+Be precise. Estimate widths conservatively (round up). If you cannot estimate a width, say so — do not fabricate a measurement.

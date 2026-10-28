@@ -1,0 +1,74 @@
+{# goal: Map the divergence surface and verify convention priors (live vs phantom) before auditing. #}
+[inference]
+contract:
+  input:
+    task: string
+    divergence_doc: string
+    seam_scope: string
+    prior_rules: array
+  output:
+    divergence_surface: array
+    prior_verdicts: array
+    slices: array
+---
+You are the orchestrator of a Kask↔Zed seam security + architecture + UI
+audit. Task: {{ task }}.
+
+## Step 1 — Map the seam and verify convention priors
+
+Read `{{ divergence_doc }}` and extract the **divergence surface**: the list of
+D-seam files from the numbered seam table, excluding every seam listed under
+"Retired seams" (read both from the document; never assume a range). Everything under `{{ seam_scope }}` is additive (ours);
+everything else tracks upstream Zed and is touched only via the named D-seams.
+
+### Convention prior liveness check
+
+For each prior in `prior_rules`, grep `crates/` (and `kask/`) for the named
+artifact. A prior whose artifact is ABSENT is a **phantom** — the `.rules`
+entry is itself a finding (stale `.rules`, per the "Convention priors drawn
+from .rules must be verified against the codebase" trap). This is read-only:
+you report verdicts, you do not edit `.rules`.
+
+{% for prior in prior_rules %}
+- prior: {{ prior.prior }} | artifact: {{ prior.artifact }} | expected: {{ prior.expected }}
+{% endfor %}
+
+For each, emit:
+```json
+{ "prior": "<name>", "artifact": "<symbol/path>", "verdict": "live" | "phantom", "evidence": "<grep result or absence>" }
+```
+`verdict` MUST be exactly `"live"` or `"phantom"` (Gate A's pinned `lisp_eval` form in `kask-seam-audit/gates.md`
+enforces these two classes exclusively — any other string is a defect).
+
+### Slices
+
+Derive the audit slices. The seam decomposes into three tracks (the skill runs
+them sequentially; the parallel orchestration is an agent choice):
+- slice `security` — self-contained security track over the 10 priority surfaces
+- slice `architecture` — refactor-architecture dead-surface + deepening
+- slice `ui` — measured-layout GPUI audit (layout loop)
+
+## Output (JSON only)
+
+```json
+{
+  "divergence_surface": [ "<D-seam file path>", ... ],
+  "prior_verdicts": [ { "prior": "...", "artifact": "...", "verdict": "live|phantom", "evidence": "..." } ],
+  "slices": [ { "id": "security" }, { "id": "architecture" }, { "id": "ui" } ]
+}
+```
+
+Do not fabricate. If you cannot open `{{ divergence_doc }}`, emit
+`divergence_surface: []` and a single prior_verdict with `verdict: "phantom"`
+and `evidence: "could not read divergence doc".
+
+## Gate A repair
+
+If `gate_defects` is present in context (Gate A found structural defects),
+re-run this template with `gate_defects` in context and emit the corrected
+`divergence_surface`, `prior_verdicts`, and `slices`. Defect codes:
+- `no_prior_verdicts_field` — the `prior_verdicts` field was missing; re-emit it.
+- `invalid_prior_verdict` — a verdict was not exactly "live" or "phantom"; fix it.
+- `no_slices_field` / `no_slices` — slices missing or empty; re-derive the three tracks.
+Do not fabricate evidence; a phantom prior is reported as phantom, not repaired
+to live — the phantom is itself a finding (KS-03 class).

@@ -1,0 +1,247 @@
+[inference]
+contract:
+  input:
+    prompt:
+      type: string
+      description: The input prompt to enhance
+    effort:
+      type: string
+      enum:
+      - low
+      - medium
+      - high
+      default: medium
+      description: Effort tier controlling which phases run and convergence thresholds
+    output_format:
+      type: string
+      enum:
+      - inline
+      - file
+      - both
+      default: inline
+      description: inline = return in code block (default); file = write to disk; both = inline + file
+    output_path:
+      type: string
+      required: false
+      description: Optional explicit file path for file/both output. If omitted, a default is derived.
+    context:
+      type: object
+      required: false
+      description: Optional context — target model, intended consumer (skill .j2, agent system prompt, chat, infra template), existing eval set if any
+    task:
+      type: string
+      description: The user's task description (injected per .rules skill-cascade-context rule)
+    unfold_mode:
+      type: string
+      enum:
+      - auto
+      - rewrite_only
+      - inquiry
+      - task_graph
+      default: auto
+      required: false
+      description: Whether to only rewrite or unfold into an inquiry or dependency-ordered task graph
+  output:
+    prompt_type:
+      type: string
+      enum:
+      - coding
+      - reasoning
+      - creative
+      - classification
+      - extraction
+      - agent-task
+      - meta
+    effort_tier:
+      type: string
+      enum:
+      - low
+      - medium
+      - high
+    output_format_resolved:
+      type: string
+      enum:
+      - inline
+      - file
+      - both
+    output_path_resolved:
+      type: string
+    semantic_classification:
+      type: object
+      description: pragmatic-semantics classification of the prompt's primary claims (IS/OUGHT, epistemic mode, constraint force, provenance)
+    proxy_eval_set:
+      type: array
+      description: 3-5 synthesized representative inputs for medium/high tiers; empty at low tier
+    checkability_map:
+      type: array
+      description: Claim or obligation, proposed check kind, and whether a runnable oracle is known; empty when none applies
+    routing:
+      type: object
+      description: 'Which phases to run given type + effort (phase: bool map)'
+    risks:
+      type: array
+      description: Type-specific risks surfaced for Phase 2 attention
+    unfold_mode_resolved:
+      type: string
+      enum:
+      - rewrite_only
+      - inquiry
+      - task_graph
+      - clarify_first
+      description: Resolved unfolding mode from metacognition + hypothesis-framer triage
+    intake_confidence:
+      type: [number, 'null']
+      description: Null for routine work; optional probability only under a separately admitted prospective forecast
+    anchor_terms:
+      type: array
+      description: 2-4 domain/methodology terms to resolve via onto_anchor and zk-ref-open (empty if rewrite_only or clarify_first)
+    finer_pico_framing:
+      type: object
+      description: Hypothesis-framer FINER admissibility, explicit/implied objectives, counterfactual falsifier, and clarifying_questions
+---
+{# Phase 1: Classify prompt type, select effort tier, synthesize proxy eval set #}
+{# goal: Classify the input prompt against the 7-type taxonomy (coding, reasoning, creative, classification, extraction, agent-task, meta) using pragmatic-semantics IS/OUGHT + epistemic-mode axes. Select the effort tier (low/medium/high) and validate the output_format (inline/file/both, default inline). Synthesize a minimal proxy eval set (3-5 representative inputs) for medium/high tiers so downstream phases have a signal to optimize against. Produces the routing decision that drives step 2. #}
+{#
+  Group: G (Prompt Enhancement — typed routing)
+  This is the unique value-add of prompt-enhance: a typed taxonomy that
+  selects different rewrite moves based on prompt type. Anchored to the
+  4-aspect taxonomy of Liu et al. (FCS 2026) and the Hierarchical Prompting
+  Taxonomy's cognitive-level axis.
+
+  Reference model:
+    Liu, Y.-Y., Zheng, Z., Zhang, F. et al. "A comprehensive taxonomy of
+    prompt engineering techniques for large language models." Frontiers of
+    Computer Science 20, 2003601 (2026). DOI: 10.1007/s11704-025-50058-z.
+    Published 28 October 2025.
+
+    The 4 aspects are: (1) profile and instruction, (2) knowledge,
+    (3) reasoning and planning, (4) reliability. The 7-type taxonomy used
+    here maps coding/reasoning → (3), creative/classification → (1),
+    extraction → (2), agent-task/meta → (4).
+#}
+
+You are the classification router for the prompt-enhance skill. Your job: classify the input prompt against the 7-type taxonomy, validate the effort tier and output format, and synthesize a minimal proxy eval set so downstream phases have a signal to optimize against.
+
+## The 7-Type Taxonomy
+
+| Type | Taxonomy anchor | Signal |
+|------|-----------------|--------|
+| `coding` | reasoning & planning | Asks for code, refactor, fix, or implementation. Acceptance criteria are testable. |
+| `reasoning` | reasoning & planning | Asks for analysis, diagnosis, comparison, or multi-step inference. Output is reasoning, not code. |
+| `creative` | profile & instruction | Asks for prose, narrative, persona-driven content, or generative text. |
+| `classification` | profile & instruction | Asks to assign inputs to a fixed label space. |
+| `extraction` | knowledge | Asks to pull structured fields from unstructured input. |
+| `agent-task` | reliability | Asks an agent to use tools, iterate, or act in an environment. Bounded loops and termination matter. |
+| `meta` | reliability | A prompt that generates, refines, or evaluates other prompts. Self-reference safety is the key risk. |
+
+## Step 1 — Semantic Classification (pragmatic-semantics delegate)
+
+Classify the prompt's primary claims on three axes:
+- **Ontological**: Is the prompt describing model behavior (IS) or prescribing desired behavior (OUGHT)? Most prompts are predominantly OUGHT.
+- **Epistemic**: Are the prompt's assumptions about the model declarative (grounded in docs/observation), probabilistic (heuristic), or subjunctive (speculative)?
+- **Provenance**: For every hardcoded value, persona claim, or behavioral assumption — is it Specification (grounded), Implementation (observed), or Inference (vibe)?
+
+Flag any Inference-tier claim with confidence ≤ 0.3 as fragile — these are Phase 2 audit targets.
+
+## Step 2 — Type Classification & Unfold Triage (hypothesis-framer + metacognition)
+
+Pick exactly one type from the 7-type table. If the prompt is genuinely mixed, pick the dominant type and note the secondary in `risks`. Use these discriminators:
+- Code present or requested → `coding`
+- Multi-step inference requested, no code → `reasoning`
+- Persona/narrative/generative prose → `creative`
+- Fixed label space, inputs → labels → `classification`
+- Unstructured input → structured fields → `extraction`
+- Tool use, iteration, environment → `agent-task`
+- Prompt about prompts → `meta`
+
+Next, apply **hypothesis-framer (FINER + PICO/counterfactual)** and **metacognition (unfold triage + intake confidence)**:
+1. Evaluate whether the user's intent is feasible, testable, and specific enough to act on (`finer_pico_framing`). Extract explicit and implied objectives and a minimal counterfactual falsifier. If critical functional intent is missing or untestable, set `unfold_mode_resolved = "clarify_first"` and populate `clarifying_questions` rather than inventing scope.
+2. Otherwise, resolve `unfold_mode` (default `auto`) into `unfold_mode_resolved`:
+   - `rewrite_only`: trivial, single-step, or purely stylistic prompts where multi-task unfolding would over-engineer.
+   - `inquiry`: research, diagnosis, or `reasoning` prompts that benefit from competing falsifiable hypotheses and discriminating probes.
+   - `task_graph`: multi-step `coding`, `agent-task`, or `meta` prompts that benefit from a dependency-ordered task DAG anchored in reference models.
+3. Return `intake_confidence: null` for routine work. A decision-relevant optional probability requires a separate complete prospective declaration, frozen resolver and matched cohort; this render never creates a forecast.
+4. When `unfold_mode_resolved` is `inquiry` or `task_graph`, extract 2–4 domain or methodology terms in `anchor_terms` for Step 1.5 (`onto_anchor` + `zk-ref-open`). Leave `anchor_terms` empty (`[]`) when `rewrite_only` or `clarify_first`.
+
+## Step 3 — Checkability routing
+
+For each consequential claim or requested outcome, decide whether it is a finite computation or structural invariant (a supported `lisp_eval` expression may check it), a general property with formalized assumptions (Lean 4 may prove it), empirical behavior (run a test or observe the system), or interpretation/drafting (requires judgment against evidence). Use `none` when no executable check is known. Do not assign Lean or Lisp merely because a prompt mentions them. A candidate check is not an executed check; state assumptions and input provenance. Return a `checkability_map` (possibly empty) for the rewrite stage.
+
+## Step 4 — Effort Tier Validation
+
+Validate `effort` (default `medium`). The skill runs classify → rewrite → (verify at medium/high) → deterministic output. Medium runs one primary critique; high runs up to three verification attempts, with exact-next-level escalation and current-level re-probe admission computed by the invoking skill's PE-State gate. Medium and high both start at round 1. Failed/in-flight attempts, re-probes and correction rechecks share the same attempt log and budget; no recovery call is free. There is no evolution phase in this single-pass skill.
+
+Do not silently downgrade `high` to `medium` to save inference cost — surface the cost estimate in `risks` and let the orchestrator decide.
+
+## Step 5 — Output Format Resolution
+
+Resolve `output_format` (default `inline`):
+- `inline`: return the enhanced prompt in a fenced code block (default behavior, easy to copy-paste into a new thread)
+- `file`: request a separate file-write action after rendering; rendering alone never writes to `output_path`
+- `both`: inline + file
+
+If `file` or `both` and no `output_path` given, derive one: `~/Documents/zk-data/skills/prompt-enhance/{date}-{run}/enhanced-<type>.md`.
+
+## Step 6 — Proxy Eval Set Synthesis (medium/high only)
+
+Synthesize 3-5 representative inputs that the enhanced prompt should handle well. These are *proxy* inputs — they stand in for the real input distribution the user has in mind. Generate them by:
+1. Identifying the input shape the prompt expects (a question, a code snippet, a document, etc.)
+2. Generating 3-5 instances that span: a typical case, an edge case, an adversarial case, and (if relevant) a missing-input case.
+3. For each, state what a good response would look like in one sentence.
+
+At `low` tier, return an empty `proxy_eval_set` — the rewrite runs without proxy examples.
+
+## Step 7 — Routing
+
+Produce the `routing` object: rewrite always runs, verify runs at medium/high, output render always runs. Rendering a template supplies instructions; the agent must produce the stage's JSON before passing it to the next stage.
+
+## Context
+```json
+{
+  "prompt": {{ prompt | tojson }},
+  "effort": {{ effort | tojson }},
+  "output_format": {{ output_format | tojson }},
+  "unfold_mode": {{ unfold_mode | default("auto") | tojson }},
+  "output_path": {{ output_path | tojson }},
+  "context": {{ context | tojson }},
+  "task": {{ task | tojson }}
+}
+```
+
+## Output
+
+Return JSON only:
+```json
+{
+  "prompt_type": "coding|reasoning|creative|classification|extraction|agent-task|meta",
+  "effort_tier": "low|medium|high",
+  "output_format_resolved": "inline|file|both",
+  "output_path_resolved": "resolved path or empty string",
+  "unfold_mode_resolved": "rewrite_only|inquiry|task_graph|clarify_first",
+  "intake_confidence": null,
+  "anchor_terms": ["term1", "term2"],
+  "finer_pico_framing": {
+    "admissible": true,
+    "explicit_objectives": ["objective 1"],
+    "implied_objectives": ["objective 2"],
+    "counterfactual_falsifier": "what observation would falsify or break the goal",
+    "clarifying_questions": []
+  },
+  "semantic_classification": {
+    "ontological_mode": "IS|OUGHT|mixed",
+    "epistemic_mode": "declarative|probabilistic|subjunctive|mixed",
+    "primary_provenance": "Specification|Implementation|Inference|mixed",
+    "fragile_claims": [
+      {"claim": "the hardcoded value or assumption", "provenance": "Inference", "confidence": 0.2, "why_fragile": "reason"}
+    ]
+  },
+  "proxy_eval_set": [
+    {"input": "representative input", "expected_good_response": "one sentence", "case_type": "typical|edge|adversarial|missing"}
+  ],
+  "checkability_map": [
+    {"obligation": "claim to check", "kind": "finite|formal|empirical|judgment|none", "candidate_oracle": "supported tool, test, or none", "assumptions": "inputs and limitations"}
+  ],
+  "routing": {"rewrite": true, "verify": true, "output_render": true},
+  "risks": ["type-specific risk for Phase 2 attention"]
+}
+```

@@ -1,0 +1,38 @@
+//! KanbanService — core kanban board and task coordination.
+//!
+//! Implements kanban board and task coordination operations.
+//! Every operation carries ownership tracking (P12) and enforces agent consent
+//! on assignment (P1). State transitions are column-ordered.
+//!
+//! Persistence: boards and tasks stored as RDF h_mems via HMemStore (MDS §2).
+//!
+//! ## Module Structure
+//!
+//! - `service` — `KanbanService` struct and all coordination methods
+//! - `types` — `KanbanError`, the task-read fault and report types
+//! - `comments` — Task-level comment threads and deliverables
+//! - `goals` — Canonical goal records and their lifecycle
+//! - `kata` — Durable kata state and the kata prompt summaries
+//! - `spawn` — Agent spawn from task specs
+
+// Imports needed by child submodules via `use super::*`
+#[allow(unused_imports)]
+use crate::kanban::{
+    Comment, KanbanPhase, KataExperimentRecord, Priority, SpawnSpec, Task, TaskFilter,
+    TaskKataState, TaskSpec, TaskStatus, Verification, VerificationCriterion,
+};
+use hkask_types::WebID;
+use hkask_types::id::TaskId;
+
+pub(crate) mod comments;
+pub(crate) mod goals;
+pub(crate) mod kata;
+mod service;
+pub(crate) mod spawn;
+mod types;
+
+#[cfg(test)]
+mod tests;
+
+pub use service::KanbanService;
+pub use types::KanbanError;

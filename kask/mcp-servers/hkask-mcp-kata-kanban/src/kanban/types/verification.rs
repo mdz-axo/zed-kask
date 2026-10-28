@@ -1,0 +1,62 @@
+use super::*;
+
+// ── Verification Criterion ─────────────────────────────────────────────────
+
+/// VerificationCriterion — an acceptance criterion for task completion.
+///
+/// Holds a natural-language specification of what "done" means for this task,
+/// plus an optional LLM evaluation prompt for automated verification.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VerificationCriterion {
+    /// Human-readable acceptance spec.
+    pub description: String,
+    /// Optional prompt for LLM-mediated evaluation.
+    pub llm_prompt: Option<String>,
+}
+
+impl VerificationCriterion {
+    /// expect: "System types preserve semantic identity and are provenance-aware"
+    /// pre:  description is non-empty
+    /// post: returns a VerificationCriterion with no LLM prompt
+    pub fn new(description: String) -> Self {
+        Self {
+            description,
+            llm_prompt: None,
+        }
+    }
+}
+
+// ── Verification Result ────────────────────────────────────────────────────
+
+/// Verification — result of task verification.
+///
+/// Produced by `task_verify`: a human-in-the-loop confirmation — the user's
+/// evidence text is the pass signal (criteria guide work but do not gate
+/// completion; there is no LLM-mediated evaluation path in task_verify).
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Verification {
+    /// Whether the task passed verification.
+    pub passed: bool,
+    /// Human-readable reasoning for the verdict.
+    pub reasoning: String,
+    /// The WebID of the verifier (LLM agent or human).
+    pub verifier: WebID,
+    /// When the verification occurred.
+    pub verified_at: DateTime<Utc>,
+}
+
+impl Verification {
+    /// expect: "System types preserve semantic identity and are provenance-aware"
+    /// pre:  verifier is a valid WebID
+    /// post: returns Verification with verified_at=now
+    pub fn new(passed: bool, reasoning: String, verifier: WebID) -> Self {
+        Self {
+            passed,
+            reasoning,
+            verifier,
+            verified_at: Utc::now(),
+        }
+    }
+}

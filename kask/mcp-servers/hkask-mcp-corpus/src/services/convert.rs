@@ -1,0 +1,2026 @@
+//! Convert service — document conversion + directory chunking orchestration.
+//!
+//! Extracted from `CorpusServer::corpus_convert` (single-file OCR orchestration,
+//! ~450 lines) and `CorpusServer::chunk_directory` (directory-scanning chunking)
+//! in `tools/document.rs`. The shared OCR helpers (`has_ocr`, `resolve_ocr_model`,
+//! `persist_pipeline_outcome`) and `index_passages` — previously methods on
+//! `CorpusServer` — also live here so the service is self-contained and the OCR
+//! logic is not duplicated between the service and the server. The page
+//! pipeline (`ocr_via_pipeline`) is the ONLY OCR mechanism — the former
+//! raw-bytes single-shot (`do_ocr`) was removed: it sent whole file bytes to
+//! one vision call, returned empty-as-success for book-sized inputs, and
+//! wrote multi-MB base64 IPC lines.
+//!
+//! Follows the `AssertionsService` / `ConsolidationService` pattern: a service struct
+//! holding the shared inference router (plus OCR pipeline + index state), async
+//! methods returning `Result<Value, McpToolError>`, `#[must_use]` on the public
+//! methods, and thin `#[tool]` wrappers in `tools/document.rs` that construct the
+//! service and delegate.
+//!
+//! The directory-conversion dispatcher (`convert_directory`) stays on
+//! `CorpusServer` because it recurses through the `corpus_convert` tool wrapper to
+//! preserve per-file Regulation spans; it does not call the OCR helpers directly.
+
+use std::sync::Arc;
+
+use hkask_mcp_server::server::{McpToolError, map_io_error};
+use hkask_types::InferencePort;
+use serde_json::{Value, json};
+
+use crate::backend::markdown_pages_to_structure;
+use crate::convert::{decode_html_entities, detect_format, strip_html_comments};
+use crate::ocr::PipelineOutcome;
+use crate::ocr::decimation;
+use crate::ocr::llm_ocr::LlmOcrExecutor;
+use crate::ocr::pipeline::{self, OcrError, OcrExecutor};
+use crate::ocr::triage::parse_target_pages;
+use crate::path_safety::{contain_for_read, contain_for_write};
+use crate::text::{source_component, strip_gutenberg_headers};
+use crate::{
+    OCR_FALLBACK_WORD_THRESHOLD, chunk_structure, chunk_word_bounds, default_embedding_model,
+    max_concurrency, sanitize_links,
+};
+use hkask_memory::text_chunking::{
+    filter_boilerplate_pages_with_report, has_corrupted_font_encoding,
+};
+
+/// A passage-indexing failure, structured by kind. `index_passages`
+/// returns this so callers can surface *why* nothing was indexed — a dead
+/// embedding provider is operator-actionable, a poisoned index mutex means
+/// a prior panic corrupted in-memory state.
+#[derive(Debug, thiserror::Error)]
+pub enum PassageIndexError {
+    #[error("embedding failed: {source}")]
+    Embed {
+        #[source]
+        source: hkask_types::EmbeddingGenerationError,
+    },
+    #[error("passage publication failed: {0}")]
+    Publication(McpToolError),
+    #[error("{0}")]
+    NotConfigured(String),
+}
+
+/// Borrowed OCR + index state drawn from a `CorpusServer`.
+///
+/// `ConvertService` holds the cheaply-clonable state (inference router, OCR
+/// model, pipeline executor) by value and the passage-index owner by
+/// reference. The service is short-lived: it is constructed inside a single
+/// `#[tool]` call and dropped when the call returns.
+pub(crate) struct ConvertService<'a> {
+    inference_router: Arc<dyn InferencePort>,
+    ocr_model: Option<String>,
+    llm_ocr: Arc<LlmOcrExecutor>,
+    index: &'a crate::index::PassageIndex,
+}
+
+/// Successful page-pipeline OCR outcome: assembled text plus the
+/// verification-report fields tool results surface.
+#[derive(Debug)]
+pub(crate) struct PipelineOcrOutcome {
+    pub(crate) text: String,
+    pub(crate) pages: usize,
+    pub(crate) verification_passed: bool,
+    pub(crate) page_count_match: bool,
+    pub(crate) empty_pages: Vec<usize>,
+    /// Pages pre-detected as blank (`ocr::blank`): no vision call was
+    /// made because the image carried no recoverable ink. A fact about
+    /// the source, not a conversion failure.
+    pub(crate) blank_pages: Vec<usize>,
+    /// Pages whose output failed a deterministic quality gate (CJK
+    /// hallucination, repetition loop, symbol soup). The text is retained;
+    /// the page indices are surfaced so garbage can never merge silently.
+    pub(crate) quality_failed_pages: Vec<usize>,
+    pub(crate) error_count: usize,
+    pub(crate) page_reports: Vec<serde_json::Value>,
+    pub(crate) errors: Vec<crate::ocr::PipelineError>,
+    /// Whether the LLM OCR circuit breaker was open when the outcome was
+    /// assembled — LLM attempts paused, so pages failed without an attempt.
+    pub(crate) llm_breaker_open: bool,
+}
+
+/// Per-failed-page quality evidence: the gate names plus the measured
+/// ratios behind the verdict. A bare page index says *that* a page failed;
+/// this says *why* and *how badly* — the operator-facing half of the
+/// quality-gate contract (`quality_failed_pages` is the compact form).
+fn quality_failure_detail(results: &[crate::ocr::OcrResult]) -> Vec<serde_json::Value> {
+    results
+        .iter()
+        .filter(|r| !r.quality.failed_gates.is_empty())
+        .map(|r| {
+            serde_json::json!({
+                "page": r.page_index,
+                "gates": r.quality.failed_gates,
+                "cjk_ratio": r.quality.cjk_ratio,
+                "repetition_ratio": r.quality.repetition_ratio,
+                "garble_ratio": r.quality.garble_ratio,
+            })
+        })
+        .collect()
+}
+
+fn page_reports(results: &[crate::ocr::OcrResult]) -> Vec<serde_json::Value> {
+    results
+        .iter()
+        .map(|page| {
+            serde_json::json!({
+                "page_index": page.page_index,
+                "blank": page.blank,
+                "metadata": page.metadata,
+                "figure_annotations": page.figure_annotations,
+                "figure_annotations_provenance": "model_inference",
+                "figure_artifacts_created": false,
+            })
+        })
+        .collect()
+}
+
+fn join_page_text<'a>(pages: impl IntoIterator<Item = &'a str>) -> String {
+    pages.into_iter().collect::<Vec<_>>().join("\u{000C}")
+}
+
+/// Render the PDF's pages for the whole-document OCR pipeline — the target
+/// subset when a target set is given, else the entire document. The shared
+/// decimation prelude of both whole-doc OCR paths (`force_ocr`, and the
+/// text-extraction fallback): each path keeps its own model resolution and
+/// decimation-failure semantics, which interleave with this differently.
+async fn render_whole_doc_pages(
+    resolved: &std::path::Path,
+    target_set: Option<&std::collections::HashSet<usize>>,
+) -> Result<Vec<image::DynamicImage>, crate::ocr::PipelineError> {
+    if let Some(ts) = target_set {
+        // 0-based page indices for decimation, derived from the 1-based set.
+        let mut indices: Vec<usize> = ts.iter().map(|p| p - 1).collect();
+        indices.sort();
+        decimation::pdf_to_images_for_pages(resolved, crate::ocr::OCR_IMAGE_LONG_EDGE, &indices)
+            .await
+    } else {
+        decimation::pdf_to_images(resolved, crate::ocr::OCR_IMAGE_LONG_EDGE).await
+    }
+}
+
+/// The block-count and structure fields every OCR-pipeline result carries:
+/// the total block count across pages, and the structure serialized when
+/// requested, else null. Three composers share these fields (the two
+/// whole-doc paths and selective OCR); each keeps its own result JSON and
+/// field order.
+fn structure_fields(
+    structure: &hkask_types::document::DocStructure,
+    include_structure: bool,
+) -> (usize, serde_json::Value) {
+    let block_count = structure
+        .pages
+        .iter()
+        .map(|p| p.blocks.len())
+        .sum::<usize>();
+    let structure_value = if include_structure {
+        serde_json::to_value(structure).unwrap_or(serde_json::Value::Null)
+    } else {
+        serde_json::Value::Null
+    };
+    (block_count, structure_value)
+}
+
+/// Assemble pipeline results into an outcome, erroring when the assembled
+/// text is empty — zero text after a pipeline run is a failure (every page
+/// empty or errored), never a silent success.
+fn assemble_pipeline_outcome(
+    outcome: PipelineOutcome,
+    llm_breaker_open: bool,
+) -> Result<PipelineOcrOutcome, McpToolError> {
+    let text = join_page_text(outcome.results.iter().map(|result| result.text.as_str()));
+    if text.trim().is_empty() {
+        return Err(McpToolError::unavailable(format!(
+            "OCR produced no text: pages={}, blank_pages={:?}, empty_pages={:?}, errors={}",
+            outcome.results.len(),
+            outcome.report.blank_pages,
+            outcome.report.empty_pages,
+            outcome.errors.len()
+        )));
+    }
+    Ok(PipelineOcrOutcome {
+        text,
+        pages: outcome.results.len(),
+        verification_passed: outcome.report.passed,
+        page_count_match: outcome.report.page_count_match,
+        empty_pages: outcome.report.empty_pages,
+        blank_pages: outcome.report.blank_pages,
+        quality_failed_pages: outcome.report.quality_failed_pages,
+        error_count: outcome.errors.len(),
+        page_reports: page_reports(&outcome.results),
+        errors: outcome.errors,
+        llm_breaker_open,
+    })
+}
+
+impl<'a> ConvertService<'a> {
+    pub fn new(
+        inference_router: Arc<dyn InferencePort>,
+        ocr_model: Option<String>,
+        llm_ocr: Arc<LlmOcrExecutor>,
+        index: &'a crate::index::PassageIndex,
+    ) -> Self {
+        Self {
+            inference_router,
+            ocr_model,
+            llm_ocr,
+            index,
+        }
+    }
+
+    /// Construct a service borrowing a `CorpusServer`'s OCR + index state.
+    ///
+    /// Cheap: two `Arc::clone`s, one `Option<String>` clone, and a shared
+    /// `&PassageIndex` borrow. Tied to the server's borrow lifetime so the
+    /// service cannot outlive the server it was built from.
+    pub fn from_corpus(server: &'a crate::CorpusServer) -> Self {
+        Self::new(
+            Arc::clone(&server.inference_router),
+            server.ocr_model.clone(),
+            Arc::clone(&server.llm_ocr),
+            &server.index,
+        )
+    }
+
+    /// Check whether OCR capability is available.
+    pub fn has_ocr(&self) -> bool {
+        self.ocr_model.is_some()
+    }
+
+    /// Resolve OCR model: explicit override > configured `ocr_model`.
+    ///
+    /// Verifies the model is a vision-capable model via the inference port's
+    /// model registry. When the inference port returns empty model lists
+    /// (the MediaRouter fallback when `HKASK_INFERENCE_SOCKET` is not set),
+    /// this returns an error rather than silently passing the model through —
+    /// a silent pass-through would let the OCR vision call fail later with a
+    /// cryptic "media_generate not supported" error from the MediaRouter.
+    pub async fn resolve_ocr_model(
+        &self,
+        override_model: Option<&str>,
+    ) -> Result<String, OcrError> {
+        let model = if let Some(m) = override_model
+            && !m.is_empty()
+        {
+            m.to_string()
+        } else {
+            self.ocr_model.clone().ok_or(OcrError::NoModel)?
+        };
+
+        let vision_models = self
+            .inference_router
+            .list_vision_models()
+            .await
+            .map_err(|e| {
+                OcrError::InferenceFailed(format!(
+                    "list_vision_models failed — inference port unavailable: {e}"
+                ))
+            })?;
+
+        // Empty vision list means the inference port can't enumerate models —
+        // the IPC bridge is not configured (MediaRouter fallback). Fail early
+        // with a diagnostic error instead of letting the vision call fail later.
+        if vision_models.is_empty() {
+            return Err(OcrError::InferenceFailed(
+                "No vision models available — the inference IPC bridge is not configured \
+                 (HKASK_INFERENCE_SOCKET not set). The corpus MCP server must be launched \
+                 by zed so it can route OCR through zed's LanguageModelRegistry. \
+                 If the server was started before the inference socket was available, \
+                 restart it via sync_kask_mcp_servers."
+                    .to_string(),
+            ));
+        }
+
+        let is_vision = vision_models.iter().any(|m| {
+            m.model.eq_ignore_ascii_case(&model) || m.prefixed_name.eq_ignore_ascii_case(&model)
+        });
+
+        if !is_vision {
+            let all_models = self.inference_router.list_models().await.map_err(|e| {
+                OcrError::InferenceFailed(format!(
+                    "list_models failed — inference port unavailable: {e}"
+                ))
+            })?;
+            let exists = all_models.iter().any(|m| {
+                m.model.eq_ignore_ascii_case(&model) || m.prefixed_name.eq_ignore_ascii_case(&model)
+            });
+            if exists {
+                return Err(OcrError::NotVisionModel {
+                    model: model.clone(),
+                });
+            }
+
+            // Model not found in any list — the inference port may be a
+            // MediaRouter with an empty registry, or the model name is wrong.
+            // Either way, fail with a diagnostic rather than silently passing.
+            return Err(OcrError::InferenceFailed(format!(
+                "OCR model '{model}' not found in the inference registry. \
+                 Available vision models: {}. \
+                 If the list is empty, the inference IPC bridge is not configured \
+                 (HKASK_INFERENCE_SOCKET not set).",
+                vision_models
+                    .iter()
+                    .map(|m| m.prefixed_name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+
+        // OCR-class guardrail: the OCR path is built for dedicated OCR
+        // models (cheaper, faster, and better at text extraction than
+        // general vision LLMs, which can hallucinate on hard scans). The
+        // registry has no OCR-class field, so the name heuristic is the
+        // available signal — warn (do not block) when a general vision
+        // model is resolved here, so the choice is visible, never silent.
+        if !model.to_ascii_lowercase().contains("ocr") {
+            tracing::warn!(
+                target: "reg.pipeline.ocr.model_class",
+                model = %model,
+                "OCR path resolved a general vision model — dedicated OCR models \
+                 (e.g. runpod/kask-ocr) are cheaper, faster, and produce fewer \
+                 hallucinations; this is an explicit override, not the designed default"
+            );
+        }
+
+        Ok(model)
+    }
+
+    /// The server's page-pipeline OCR executor as the trait object the
+    /// pipeline functions consume.
+    pub(crate) fn pipeline_executor(&self) -> std::sync::Arc<dyn OcrExecutor> {
+        std::sync::Arc::clone(&self.llm_ocr) as std::sync::Arc<dyn OcrExecutor>
+    }
+
+    /// Run the page pipeline with the service's standard parameters — the
+    /// server's executor, thresholds, resolved model, and the concurrency
+    /// bounds (adaptive remote gate inside the executor, static local page
+    /// bound in the pipeline) — and persist the outcome for Regulation
+    /// observability. Every OCR path in `convert` shares this seam; the
+    /// former copy-pasted `run_pipeline` call sites differed only in what
+    /// they built from the outcome.
+    async fn run_standard_pipeline(
+        &self,
+        page_images: Vec<image::DynamicImage>,
+        model: &str,
+    ) -> PipelineOutcome {
+        let expected = page_images.len();
+        let outcome = pipeline::run_pipeline(
+            page_images,
+            expected,
+            self.pipeline_executor(),
+            model,
+            Some(max_concurrency()),
+        )
+        .await;
+        self.persist_pipeline_outcome(&outcome).await;
+        outcome
+    }
+
+    /// Run the OCR pipeline over the rendered whole-document pages and reduce
+    /// it to the pieces every whole-doc result composes from: the rendered
+    /// page count, the pipeline outcome (for [`Self::with_pipeline_outcome`]),
+    /// the joined page text, its word count, and the block-count/structure
+    /// result fields ([`structure_fields`]). The caller keeps its model
+    /// resolution — the two whole-doc paths resolve at different points with
+    /// different failure semantics.
+    async fn whole_doc_pipeline_pieces(
+        &self,
+        page_images: Vec<image::DynamicImage>,
+        model: &str,
+        include_structure: bool,
+    ) -> (
+        usize,
+        PipelineOutcome,
+        String,
+        usize,
+        usize,
+        serde_json::Value,
+    ) {
+        let expected = page_images.len();
+        let outcome = self.run_standard_pipeline(page_images, model).await;
+        let text = join_page_text(outcome.results.iter().map(|result| result.text.as_str()));
+        let word_count = text.split_whitespace().count();
+        let structure = markdown_pages_to_structure(
+            outcome
+                .results
+                .iter()
+                .map(|r| (r.page_index + 1, r.text.clone())),
+            "pdf",
+        );
+        let (block_count, structure_value) = structure_fields(&structure, include_structure);
+        (
+            expected,
+            outcome,
+            text,
+            word_count,
+            block_count,
+            structure_value,
+        )
+    }
+
+    /// Fold the common pipeline-outcome fields — the verification report,
+    /// backend split, breaker state, adaptive concurrency level, and error
+    /// count — into a site-specific OCR result JSON. One place to change the
+    /// outcome contract (adding `llm_concurrency` to four copy-pasted blocks
+    /// was the dedup's motivating chore).
+    fn with_pipeline_outcome(
+        &self,
+        mut result: serde_json::Value,
+        outcome: &PipelineOutcome,
+    ) -> serde_json::Value {
+        // Structure is deliberately NOT folded here: it is site-specific
+        // (three of the four OCR paths carry it) and doubles the response
+        // with the full text — each site gates it on `include_structure`.
+
+        let common = serde_json::json!({
+            "ocr_protocol": crate::ocr::response::OCR_PROTOCOL,
+            "page_reports": page_reports(&outcome.results),
+            "errors": outcome.errors,
+            "verification_passed": outcome.report.passed,
+            "page_count_match": outcome.report.page_count_match,
+            "empty_pages": outcome.report.empty_pages,
+            "blank_pages": &outcome.report.blank_pages,
+            "quality_failed_pages": &outcome.report.quality_failed_pages,
+            "quality_failures": quality_failure_detail(&outcome.results),
+            "llm_breaker_open": self.llm_ocr.breaker_open(),
+            "llm_concurrency": self.llm_ocr.adaptive_concurrency(),
+            "error_count": outcome.errors.len(),
+        });
+        if let (Some(result_map), Some(common_map)) = (result.as_object_mut(), common.as_object()) {
+            for (key, value) in common_map {
+                result_map.insert(key.clone(), value.clone());
+            }
+        }
+        result
+    }
+
+    /// OCR a file through the page pipeline — the same execution path as
+    /// `convert(force_ocr)`. PDFs are rendered as bounded color page images; image
+    /// files become a single page. Returns the assembled text plus the
+    /// pipeline's verification report.
+    ///
+    /// This is the ONLY OCR mechanism: the former raw-bytes single-shot
+    /// (`do_ocr`) was removed — it sent whole file bytes as one vision call,
+    /// returned empty text as a success for book-sized inputs, and wrote
+    /// multi-MB base64 IPC lines that could break the inference bridge.
+    /// The executor is a parameter (the seam `run_pipeline` itself uses) so
+    /// tests can inject a mock executor.
+    pub async fn ocr_via_pipeline(
+        &self,
+        resolved: &std::path::Path,
+        format: &str,
+        file_bytes: &[u8],
+        model: &str,
+        executor: std::sync::Arc<dyn OcrExecutor>,
+    ) -> Result<PipelineOcrOutcome, McpToolError> {
+        let page_images = if format == "pdf" {
+            decimation::pdf_to_images(resolved, crate::ocr::OCR_IMAGE_LONG_EDGE)
+                .await
+                .map_err(|e| McpToolError::unavailable(format!("PDF page rendering failed: {e}")))?
+        } else {
+            let image = image::load_from_memory(file_bytes).map_err(|e| {
+                McpToolError::invalid_argument(format!(
+                    "file is neither a PDF nor a decodable image: {e}"
+                ))
+            })?;
+            vec![image]
+        };
+        let expected = page_images.len();
+        if expected == 0 {
+            return Err(McpToolError::unavailable(format!(
+                "'{}' rendered zero pages for OCR",
+                resolved.display()
+            )));
+        }
+        let outcome = pipeline::run_pipeline(
+            page_images,
+            expected,
+            executor,
+            model,
+            Some(max_concurrency()),
+        )
+        .await;
+        self.persist_pipeline_outcome(&outcome).await;
+        let llm_breaker_open = self.llm_ocr.breaker_open();
+        assemble_pipeline_outcome(outcome, llm_breaker_open)
+    }
+
+    /// Persist pipeline outcome for Regulation observability.
+    pub async fn persist_pipeline_outcome(&self, outcome: &PipelineOutcome) {
+        let data = serde_json::json!({
+            "total_pages": outcome.results.len(),
+            "error_count": outcome.errors.len(),
+            "verification_passed": outcome.report.passed,
+            "page_count_match": outcome.report.page_count_match,
+            "empty_pages": outcome.report.empty_pages,
+            "blank_pages": outcome.report.blank_pages,
+            "quality_failed_pages": outcome.report.quality_failed_pages,
+        });
+        tracing::debug!(
+            target: "hkask.mcp.docproc.reg",
+            detail = ?data,
+            "Pipeline outcome recorded (no daemon — in-process only)",
+        );
+    }
+
+    /// Index passages into the in-memory vector store for later query.
+    ///
+    /// Embeds each passage text and stores it with metadata.
+    ///
+    /// Returns `Ok(count)` on success (including 0 for empty input).
+    /// Returns [`PassageIndexError`] when indexing fails entirely — the
+    /// caller must surface this so the operator can distinguish "document
+    /// was empty" from "embedding provider is down."
+    pub async fn index_passages(
+        &self,
+        passages: &[(String, String)],
+        source_label: &str,
+    ) -> Result<usize, PassageIndexError> {
+        let texts: Vec<String> = passages.iter().map(|(_, t)| t.clone()).collect();
+        if texts.is_empty() {
+            return Ok(0);
+        }
+
+        let model_name = std::env::var("HKASK_EMBEDDING_MODEL")
+            .ok()
+            .filter(|m| !m.trim().is_empty())
+            .or_else(|| default_embedding_model())
+            .ok_or_else(|| {
+                // Fail-visible (operator spec): never a hidden constant.
+                PassageIndexError::NotConfigured(
+                    "no embedding model configured — set \\
+                     kask.models.embedding_model (injected as \\
+                     HKASK_EMBEDDING_MODEL); kask never falls back to a \\
+                     hidden code constant"
+                        .to_string(),
+                )
+            })?;
+
+        let publication = self
+            .index
+            .begin_ephemeral(
+                source_label,
+                passages
+                    .iter()
+                    .map(|(reference, _)| reference.clone())
+                    .collect(),
+            )
+            .map_err(PassageIndexError::Publication)?;
+        let batch = match self
+            .inference_router
+            .embed_with_dimensions(&model_name, &texts, Some(crate::embedding_dim() as u32))
+            .await
+        {
+            Ok(batch) => batch,
+            Err(e) => {
+                tracing::warn!(
+                    target: "hkask.mcp.docproc.index",
+                    error = %e,
+                    passage_count = passages.len(),
+                    "Failed to embed passages for indexing — \
+                     none of these passages will be findable by semantic search"
+                );
+                return Err(PassageIndexError::Embed { source: e });
+            }
+        };
+        // Same convention `corpus_embed` stores durably: the provider-confirmed
+        // actual model when echoed, else the requested model — so index rows
+        // and DB rows agree and the retrieve model gate sees one identity.
+        let durable_model = batch
+            .actual_model
+            .clone()
+            .unwrap_or_else(|| model_name.to_string());
+
+        crate::index::validate_vectors(&batch.vectors, passages.len())
+            .map_err(PassageIndexError::Publication)?;
+        self.index
+            .publish_ephemeral(&publication, passages, batch.vectors, &durable_model)
+            .map_err(PassageIndexError::Publication)
+    }
+
+    /// Convert a single document file to text, with OCR fallback.
+    ///
+    /// Detect format, parse `target_pages` (PDF only), and route through native
+    /// text extraction or the page OCR pipeline. PDFs are consumed by path;
+    /// only image decoding and text-format parsing need an in-memory byte read.
+    /// The tool wrapper persists the result when `output` is requested.
+    #[must_use = "result must be used"]
+    pub async fn convert(
+        &self,
+        path: String,
+        force_ocr: bool,
+        target_pages: Option<String>,
+        include_structure: bool,
+        pdf_text_order: crate::tools::document::PdfTextOrder,
+    ) -> Result<Value, McpToolError> {
+        // Contain the caller-supplied path before any read or subprocess spawn:
+        // validate_path rejects `..`/control chars but NOT absolute paths, so
+        // `/etc/passwd` would pass and be read. contain_for_read canonicalizes
+        // and rejects anything escaping the project root (CWE-22/CWE-200).
+        let resolved = contain_for_read(&path)?;
+
+        let (format, _, _) = detect_format(&path);
+
+        // Parse target_pages (PDF only) into a 1-based page set. Parsed once
+        // here so both the force_ocr and text-extraction paths can use it.
+        let target_set: Option<std::collections::HashSet<usize>> = if format == "pdf" {
+            target_pages
+                .as_deref()
+                .filter(|s| !s.trim().is_empty())
+                .map(
+                    |s| -> Result<std::collections::HashSet<usize>, McpToolError> {
+                        Ok(parse_target_pages(s)
+                            .map_err(|e| McpToolError::invalid_argument(e.to_string()))?
+                            .into_iter()
+                            .collect())
+                    },
+                )
+                .transpose()?
+        } else {
+            None
+        };
+
+        let metadata = std::fs::metadata(&resolved)
+            .map_err(|e| map_io_error(e, &format!("Failed to inspect file '{path}'")))?;
+        if !metadata.is_file() {
+            return Err(McpToolError::invalid_argument(format!(
+                "'{path}' is not a file"
+            )));
+        }
+        if metadata.len() == 0 {
+            return Err(McpToolError::invalid_argument(format!(
+                "File '{}' is empty",
+                path
+            )));
+        }
+
+        // When force_ocr is set, skip text extraction entirely.
+        if force_ocr {
+            let image = if format == "pdf" {
+                None
+            } else {
+                let bytes = crate::path_safety::read_capped(
+                    &resolved.to_string_lossy(),
+                    crate::path_safety::MAX_READ_BYTES,
+                )?;
+                image::load_from_memory(&bytes).ok()
+            };
+            if let Some(image) = image {
+                let model = match self.resolve_ocr_model(None).await {
+                    Ok(m) => m,
+                    Err(guidance) => {
+                        return Err(McpToolError::failed_precondition(guidance.to_string()));
+                    }
+                };
+
+                let page_images = vec![image];
+                let outcome = self.run_standard_pipeline(page_images, &model).await;
+                let text =
+                    join_page_text(outcome.results.iter().map(|result| result.text.as_str()));
+                let word_count = text.split_whitespace().count();
+                let result = serde_json::json!({
+                    "format": format, "path": path, "method": "ocr_pipeline",
+                    "model": model, "text": text, "word_count": word_count,
+                });
+                return Ok(self.with_pipeline_outcome(result, &outcome));
+            }
+
+            // Not an image — render PDF pages for the vision pipeline
+            if format == "pdf" {
+                let imgs_res = render_whole_doc_pages(&resolved, target_set.as_ref()).await;
+                match imgs_res {
+                    Ok(page_images) => {
+                        let model = match self.resolve_ocr_model(None).await {
+                            Ok(m) => m,
+                            Err(guidance) => {
+                                return Err(McpToolError::failed_precondition(
+                                    guidance.to_string(),
+                                ));
+                            }
+                        };
+                        let (expected, outcome, text, word_count, block_count, structure_value) =
+                            self.whole_doc_pipeline_pieces(page_images, &model, include_structure)
+                                .await;
+                        let result = serde_json::json!({
+                            "format": format, "path": path, "method": "ocr_pipeline",
+                            "model": model, "text": text, "word_count": word_count,
+                            "pages": expected,
+                            "block_count": block_count,
+                            "structure": structure_value,
+                        });
+                        return Ok(self.with_pipeline_outcome(result, &outcome));
+                    }
+                    Err(e) => {
+                        // The page pipeline is the only OCR mechanism — the
+                        // former raw-bytes fallback was removed. A decimation
+                        // failure is a typed error, never a silent fallthrough
+                        // to a second (broken) OCR path.
+                        return Err(McpToolError::unavailable(format!(
+                            "PDF page rendering failed: {e}"
+                        )));
+                    }
+                }
+            }
+
+            // Not an image and not a PDF — no pipeline path exists. The
+            // former raw-bytes fallback was removed; fail typed instead of
+            // sending office-format bytes to a vision model.
+            return Err(McpToolError::invalid_argument(format!(
+                "force_ocr supports images and PDFs; format '{format}' has no OCR pipeline path — use the text-extraction path (call without force_ocr)"
+            )));
+        }
+
+        // ── Text extraction path ──
+        // GAP-10/C6: Try fast text extraction first for PDFs before the expensive
+        // typed OCR pipeline. For text-native PDFs (searchable, well-formed),
+        // this returns in ~50ms instead of ~45s for a 300-page document.
+        // Only fall back to the pipeline when text extraction is insufficient.
+        //
+        // `pdf_extract_result` caches the first extraction to avoid calling
+        // extract_text() twice on the slow path (B1 audit fix).
+        let mut pdf_extract_result: Option<ExtractOutcome> = None;
+        if format == "pdf" {
+            let mut quick_result = extract_text_with_order(&path, pdf_text_order).await?;
+            if let Some(ref ts) = target_set {
+                quick_result = filter_outcome_to_pages(quick_result, ts);
+            }
+            let quick_result = quick_result;
+            if let ExtractOutcome::Success {
+                ref text,
+                word_count,
+                ..
+            } = quick_result
+                && word_count >= OCR_FALLBACK_WORD_THRESHOLD
+                && !has_corrupted_font_encoding(text)
+            {
+                let result = serde_json::json!({
+                    "format": format, "path": path,
+                    "method": "text_extraction", "text": text, "word_count": word_count,
+                });
+                return Ok(result);
+            }
+
+            // Quality-based OCR fallback: pdftotext succeeded by word count,
+            // but the text has control characters from broken font encoding
+            // (PDFs with custom ToUnicode CMaps that map character codes to
+            // wrong glyphs). Log and fall through to OCR instead of accepting garbage.
+            if let ExtractOutcome::Success {
+                ref text,
+                word_count,
+                ..
+            } = quick_result
+                && word_count >= OCR_FALLBACK_WORD_THRESHOLD
+                && has_corrupted_font_encoding(text)
+            {
+                tracing::warn!(
+                    target: "hkask.docproc",
+                    path = %path,
+                    word_count,
+                    "pdftotext output has corrupted font encoding — falling through to OCR",
+                );
+                // Fall through to the OCR paths below by NOT returning early.
+            }
+
+            // Per-page triage found a mix of text-native + OCR-needing pages.
+            // Selective OCR (Tier 1): decimate only the flagged pages, run the
+            // pipeline on those, and interleave with native text in page
+            // order. Avoids re-OCRing text-native pages.
+            if let ExtractOutcome::PartialOcr {
+                ref page_texts,
+                ref ocr_pages,
+                ref verdicts,
+                ..
+            } = quick_result
+                && !ocr_pages.is_empty()
+                && self.has_ocr()
+                && let Ok(model) = self.resolve_ocr_model(None).await
+            {
+                match decimation::pdf_to_images_for_pages(
+                    std::path::Path::new(&path),
+                    crate::ocr::OCR_IMAGE_LONG_EDGE,
+                    ocr_pages,
+                )
+                .await
+                {
+                    Ok(page_images) if !page_images.is_empty() => {
+                        let outcome = self.run_standard_pipeline(page_images, &model).await;
+                        let mut per_page: Vec<String> = page_texts.clone();
+                        for (k, result) in outcome.results.iter().enumerate() {
+                            if let Some(&page_idx) = ocr_pages.get(k)
+                                && page_idx < per_page.len()
+                            {
+                                per_page[page_idx] = result.text.clone();
+                            }
+                        }
+                        let text = join_page_text(per_page.iter().map(String::as_str));
+                        let word_count = text.split_whitespace().count();
+                        let structure = markdown_pages_to_structure(
+                            per_page.iter().enumerate().map(|(i, t)| (i + 1, t.clone())),
+                            "pdf",
+                        );
+                        let (block_count, structure_value) =
+                            structure_fields(&structure, include_structure);
+                        let triage_summary: Vec<serde_json::Value> = verdicts
+                            .iter()
+                            .filter(|v| v.needs_ocr)
+                            .map(|v| serde_json::json!({
+                                "page": v.page_number,
+                                "reasons": v.reasons.iter().map(|r| r.as_str()).collect::<Vec<_>>(),
+                            }))
+                            .collect();
+                        let result = serde_json::json!({
+                            "format": format, "path": path, "method": "selective_ocr",
+                            "model": model, "text": text, "word_count": word_count,
+                            "pages": page_texts.len(),
+                            "ocr_pages": ocr_pages.len(),
+                            "block_count": block_count,
+                            "structure": structure_value,
+                            "triage": triage_summary,
+                        });
+                        return Ok(self.with_pipeline_outcome(result, &outcome));
+                    }
+                    Ok(_) => {
+                        tracing::warn!(
+                            target: "hkask.docproc",
+                            "selective OCR rendered no pages — falling back to whole-doc path"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "hkask.docproc",
+                            error = %e,
+                            "selective decimation failed — falling back to whole-doc pipeline"
+                        );
+                    }
+                }
+            }
+
+            // Insufficient text — try the typed OCR page pipeline
+            if self.has_ocr()
+                && let Ok(model) = self.resolve_ocr_model(None).await
+            {
+                let imgs_res = render_whole_doc_pages(&resolved, target_set.as_ref()).await;
+                match imgs_res {
+                    Ok(page_images) => {
+                        let (expected, outcome, text, word_count, block_count, structure_value) =
+                            self.whole_doc_pipeline_pieces(page_images, &model, include_structure)
+                                .await;
+                        let result = serde_json::json!({
+                            "format": format, "path": path, "method": "ocr_pipeline",
+                            "model": model, "text": text, "word_count": word_count,
+                            "block_count": block_count,
+                            "structure": structure_value,
+                            "pages": expected,
+                        });
+                        return Ok(self.with_pipeline_outcome(result, &outcome));
+                    }
+                    Err(e) => {
+                        // The page pipeline is the only OCR mechanism — the
+                        // former raw-bytes fallback was removed. A decimation
+                        // failure is a typed error, never a silent fallthrough
+                        // to a second (broken) OCR path.
+                        return Err(McpToolError::unavailable(format!(
+                            "PDF page rendering failed: {e} — text extraction was insufficient and no text could be recovered"
+                        )));
+                    }
+                }
+            }
+
+            // Pipeline unavailable (no OCR model configured) — reuse the
+            // cached extraction result; the NeedsOcr arm below surfaces the
+            // gap instead of silently dropping it.
+            pdf_extract_result = Some(quick_result);
+        }
+
+        let extract_result = if let Some(cached) = pdf_extract_result {
+            cached
+        } else {
+            extract_text_with_order(&path, pdf_text_order).await?
+        };
+
+        match extract_result {
+            ExtractOutcome::Success {
+                text,
+                word_count,
+                structure,
+            } => {
+                let mut result = serde_json::json!({
+                    "format": format,
+                    "path": path,
+                    "method": "text_extraction",
+                    "text": text,
+                    "word_count": word_count,
+                });
+                if let Some(doc_structure) = structure {
+                    result["structure"] =
+                        serde_json::to_value(&doc_structure).unwrap_or(serde_json::Value::Null);
+                    result["block_count"] = serde_json::json!(
+                        doc_structure
+                            .pages
+                            .iter()
+                            .map(|p| p.blocks.len())
+                            .sum::<usize>()
+                    );
+                }
+                Ok(result)
+            }
+            ExtractOutcome::NeedsOcr {
+                partial_text,
+                word_count,
+            } => {
+                // The page pipeline (above) is the only OCR mechanism — the
+                // raw-bytes single-shot fallback was removed. Reaching here
+                // means the pipeline did not run: no OCR model is configured
+                // (decimation failures return as typed errors above). Surface
+                // the gap — partial text with `ocr_available: false`, or a
+                // typed error when there is no text at all. Never a silent
+                // drop.
+                if word_count > 0 {
+                    Ok(serde_json::json!({
+                        "format": format,
+                        "path": path,
+                        "method": "text_extraction_ocr_unavailable",
+                        "text": partial_text,
+                        "word_count": word_count,
+                        "ocr_available": false,
+                    }))
+                } else {
+                    Err(McpToolError::failed_precondition(
+                        "PDF text extraction returned no text and the OCR page pipeline did not run — \
+                         no text could be recovered. Configure the OCR model (HKASK_OCR_MODEL) \
+                         or check the OCR-model resolution error in the log."
+                            .to_string(),
+                    ))
+                }
+            }
+            ExtractOutcome::PartialOcr {
+                page_texts,
+                word_count,
+                ocr_pages,
+                verdicts: _,
+            } => {
+                // Selective OCR was unavailable or decimation failed; OCR
+                // is also unavailable here. Return the native text of the
+                // text-native pages only, explicitly flagging that the OCR
+                // pages were skipped (no silent loss — the caller sees the
+                // gap).
+                let native_text = join_page_text(page_texts.iter().map(String::as_str));
+                Ok(serde_json::json!({
+                    "format": format,
+                    "path": path,
+                    "method": "text_extraction_partial",
+                    "text": native_text,
+                    "word_count": word_count,
+                    "pages": page_texts.len(),
+                    "ocr_pages_skipped": ocr_pages.len(),
+                    "ocr_available": false,
+                }))
+            }
+        }
+    }
+
+    /// Chunk every `.txt` file in a directory into a single JSONL output.
+    ///
+    /// Mirrors the former `chunk_directory` helper: validate + contain paths,
+    /// scan for `.txt` sources, chunk each with the configured token bounds,
+    /// optionally index passages, and atomically publish the JSONL via a
+    /// temporary-file rename. Returns a summary JSON (`input_dir`, `output`,
+    /// `total_documents`, `total_chunks`, `indexed`).
+    #[must_use = "result must be used"]
+    pub async fn chunk_directory(
+        &self,
+        input_dir: &str,
+        output: Option<&str>,
+        entity_ref_prefix: &str,
+        max_tokens: Option<usize>,
+        overlap_tokens: Option<usize>,
+        strip_gutenberg: Option<bool>,
+        index: bool,
+    ) -> Result<Value, McpToolError> {
+        let bounds = chunk_word_bounds(max_tokens, overlap_tokens)?;
+        hkask_mcp_server::validate_identifier("entity_ref_prefix", entity_ref_prefix, 256)
+            .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
+        hkask_mcp_server::validate_path("input_dir", input_dir, 4096)
+            .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
+        let input_dir = contain_for_read(input_dir)?;
+        let output = output.ok_or_else(|| {
+            McpToolError::invalid_argument("'output' is required with 'input_dir'")
+        })?;
+        hkask_mcp_server::validate_path("output", output, 4096)
+            .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
+        let output_path = contain_for_write(output)?;
+
+        let entries = std::fs::read_dir(&input_dir)
+            .map_err(|e| map_io_error(e, &format!("Failed to read '{}'", input_dir.display())))?;
+        let mut sources = Vec::new();
+        for entry in entries {
+            let source = entry
+                .map_err(|e| map_io_error(e, "Failed to enumerate chunk source"))?
+                .path();
+            if !source.extension().is_some_and(|ext| ext == "txt") {
+                continue;
+            }
+            let source_path = source
+                .to_str()
+                .ok_or_else(|| McpToolError::invalid_argument("Invalid UTF-8 source path"))?;
+            // A contained directory can contain escaping or broken symlinks.
+            // Resolve each txt child before inspecting/reading it; never silently skip errors.
+            let resolved = contain_for_read(source_path)?;
+            let metadata = std::fs::metadata(&resolved).map_err(|e| {
+                map_io_error(e, &format!("Failed to inspect '{}'", source.display()))
+            })?;
+            if metadata.is_file() {
+                sources.push((source, resolved));
+            }
+        }
+        sources.sort();
+        if sources.is_empty() {
+            return Err(McpToolError::invalid_argument(format!(
+                "Directory '{}' contains no .txt files",
+                input_dir.display()
+            )));
+        }
+
+        if let Some(parent) = output_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                map_io_error(e, &format!("Failed to create '{}'", parent.display()))
+            })?;
+        }
+        // RAII removes partial output on any error; an existing output is not
+        // replaced until every source was read and serialized successfully.
+        let parent = output_path
+            .parent()
+            .ok_or_else(|| McpToolError::invalid_argument("Output must have a parent directory"))?;
+        let temp_file = tempfile::NamedTempFile::new_in(parent)
+            .map_err(|e| map_io_error(e, "Failed to create chunk output temporary file"))?;
+        let mut writer = std::io::BufWriter::new(temp_file);
+        let mut total_chunks = 0usize;
+        let mut indexed = 0usize;
+        let mut origin_stamped = 0usize;
+        // A source that yields zero passages is data loss presented as
+        // progress — the v2 corpus run lost 13 of 133 sources this way with
+        // no error. Surfaced in the result (never silently dropped) so the
+        // caller's coverage gate can halt on it.
+        let mut zero_chunk_files: Vec<String> = Vec::new();
+        let mut boilerplate_exclusion_reports = Vec::with_capacity(sources.len());
+
+        for (source, resolved) in &sources {
+            let file_name = source
+                .file_name()
+                .and_then(std::ffi::OsStr::to_str)
+                .ok_or_else(|| McpToolError::invalid_argument("Invalid source filename"))?;
+            // Origin provenance (task c1d65229): the source's sidecar (written
+            // by corpus_cache/corpus_cache_work when the caller declares an
+            // originating search provider) stamps every chunk row below.
+            let origin_provider = read_origin_sidecar(source);
+            let source_prefix = format!("{}:{}", entity_ref_prefix, source_component(file_name));
+
+            // Read the .txt file directly — no recursive MCP tool call.
+            // chunk_directory operates on already-extracted plain text;
+            // format detection and OCR are handled by corpus_convert. Preserve
+            // this extracted-book path's uncapped read policy (not the generic
+            // 32 MiB document read cap). UTF-8/read failures remain errors.
+            let source_text = std::fs::read_to_string(resolved)
+                .map_err(|e| map_io_error(e, &format!("Failed to read '{}'", source.display())))?;
+            // Captured before `source_text` is moved into `processed` — the
+            // zero-chunk warn below reports the pre-processing size.
+            let source_word_count = source_text.split_whitespace().count();
+
+            // Apply Gutenberg stripping if requested
+            let processed = if strip_gutenberg.unwrap_or(false) {
+                strip_gutenberg_headers(&source_text)
+            } else {
+                source_text
+            };
+            let processed = sanitize_links(&processed);
+            let processed = decode_html_entities(&processed);
+            let processed = strip_html_comments(&processed);
+            let filter_result = filter_boilerplate_pages_with_report(&processed);
+            let exclusions = filter_result
+                .exclusions
+                .iter()
+                .map(|exclusion| {
+                    json!({
+                        "reason": exclusion.reason,
+                        "boundary_unit": exclusion.boundary_unit,
+                        "start": exclusion.start,
+                        "end": exclusion.end,
+                        "removed_words": exclusion.removed_words,
+                    })
+                })
+                .collect::<Vec<_>>();
+            boilerplate_exclusion_reports.push(json!({
+                "source": file_name,
+                "input_words": filter_result.input_words,
+                "retained_words": filter_result.retained_words,
+                "removed_words": filter_result.input_words.saturating_sub(filter_result.retained_words),
+                "exclusions": exclusions,
+            }));
+            let processed = filter_result.text;
+
+            let passages = chunk_structure(
+                &processed,
+                &source_prefix,
+                bounds.min_words,
+                bounds.max_words,
+                ".!? ",
+                bounds.overlap_words,
+            )?;
+
+            if passages.is_empty() {
+                zero_chunk_files.push(file_name.to_string());
+                tracing::warn!(
+                    target: "reg.pipeline.chunk",
+                    file = %file_name,
+                    source_words = source_word_count,
+                    "source produced zero chunks after processing — surfacing, not skipping"
+                );
+            }
+
+            // Index if requested
+            if index {
+                let source_label = file_name.to_string();
+                indexed += self
+                    .index_passages(&passages, &source_label)
+                    .await
+                    .map_err(|e| McpToolError::unavailable(e.to_string()))?;
+            }
+
+            use std::io::Write as _;
+            for (entity_ref, passage_text) in &passages {
+                let mut row = json!({
+                    "entity_ref": entity_ref,
+                    "source": file_name,
+                    "text": passage_text,
+                    "word_count": passage_text.split_whitespace().count(),
+                });
+                // Provenance stamp (task c1d65229): the originating search
+                // provider rides onto every chunk row so the
+                // tag→prompt→ingest→assemble chain can exclude Brave-derived
+                // content (Brave API ToS clause xiii bans training AI models
+                // on Search Results).
+                if let Some(provider) = &origin_provider {
+                    row[hkask_types::corpus::ORIGIN_PROVIDER_FIELD] = json!(provider);
+                    origin_stamped += 1;
+                }
+                serde_json::to_writer(&mut writer, &row).map_err(|e| {
+                    McpToolError::internal(format!("Failed to serialize chunk: {e}"))
+                })?;
+                writer
+                    .write_all(b"\n")
+                    .map_err(|e| map_io_error(e, "Failed to write chunks"))?;
+                total_chunks += 1;
+            }
+        }
+
+        use std::io::Write as _;
+        writer
+            .flush()
+            .map_err(|e| map_io_error(e, "Failed to flush chunks"))?;
+        let temp_file = writer
+            .into_inner()
+            .map_err(|e| map_io_error(e.into_error(), "Failed to finish chunks"))?;
+        temp_file.persist(&output_path).map_err(|e| {
+            map_io_error(
+                e.error,
+                &format!("Failed to publish '{}'", output_path.display()),
+            )
+        })?;
+
+        Ok(json!({
+            "input_dir": input_dir.display().to_string(),
+            "output": output_path.display().to_string(),
+            "total_documents": sources.len(),
+            "total_chunks": total_chunks,
+            "max_tokens": bounds.max_tokens,
+            "overlap_tokens": bounds.overlap_tokens,
+            "overlap_words": bounds.overlap_words,
+            "budget_basis": "floor(tokens / 1.33) whitespace words; not a model-token limit",
+            "source_id_encoding": "utf8-hex",
+            "zero_chunk_files": zero_chunk_files,
+            "boilerplate_exclusion_reports": boilerplate_exclusion_reports,
+            "origin_stamped": origin_stamped,
+            "indexed": indexed,
+        }))
+    }
+}
+
+// ── Tool helpers ───────────────────────────────────────────────────────────
+
+/// Read a chunk source's `{stem}.origin.json` provenance sidecar (written by
+/// `corpus_cache`/`corpus_cache_work` when the caller declares an originating
+/// search provider). A missing sidecar reads as `None` — provenance
+/// unrecorded, never guessed. A malformed sidecar warns and reads as `None`:
+/// the Brave clause-xiii exclusion downstream acts on declared provenance,
+/// and an undeclared provider is not Brave.
+pub(crate) fn read_origin_sidecar(source: &std::path::Path) -> Option<String> {
+    let sidecar = source.with_extension("origin.json");
+    let text = std::fs::read_to_string(&sidecar).ok()?;
+    let value: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::warn!(
+                target: "reg.pipeline.chunk",
+                sidecar = %sidecar.display(),
+                %error,
+                "origin sidecar is malformed — provenance reads as unrecorded"
+            );
+            return None;
+        }
+    };
+    let provider = value
+        .get(hkask_types::corpus::ORIGIN_PROVIDER_FIELD)?
+        .as_str()
+        .map(str::trim)
+        .filter(|provider| !provider.is_empty())?;
+    Some(provider.to_string())
+}
+
+/// Shared text extraction from a file path.
+///
+/// Extracts plain text from contained files. PDF tools consume the canonical
+/// path, not a redundant in-memory copy of the PDF. Other formats retain the
+/// raw-input read cap. PDF triage returns OCR requirements for the caller.
+///
+/// Used by both `corpus_convert` and `corpus_chunk` to eliminate ~160
+/// lines of duplicated extraction logic (P5: surgical deduplication).
+pub(crate) async fn extract_text(path: &str) -> Result<ExtractOutcome, McpToolError> {
+    extract_text_with_order(path, crate::tools::document::PdfTextOrder::Layout).await
+}
+
+/// The text-family outcome: word count over the decoded text, no structure
+/// — the shared tail of the plain/markdown/html extraction arms.
+fn text_outcome(text: String) -> ExtractOutcome {
+    let word_count = text.split_whitespace().count();
+    ExtractOutcome::Success {
+        text,
+        word_count,
+        structure: None,
+    }
+}
+
+pub(crate) async fn extract_text_with_order(
+    path: &str,
+    pdf_text_order: crate::tools::document::PdfTextOrder,
+) -> Result<ExtractOutcome, McpToolError> {
+    let (format, supported, note) = crate::convert::detect_format(path);
+
+    if !supported {
+        return Err(McpToolError::invalid_argument(format!(
+            "Format '{}' is not supported for text extraction. Supported formats: pdf, markdown, html, plain. {}",
+            format,
+            note.unwrap_or("")
+        )));
+    }
+
+    let resolved = contain_for_read(path)?;
+    let metadata = std::fs::metadata(&resolved)
+        .map_err(|e| map_io_error(e, &format!("Failed to inspect file '{path}'")))?;
+    if !metadata.is_file() || metadata.len() == 0 {
+        return Err(McpToolError::invalid_argument(format!(
+            "File '{path}' must be a nonempty regular file"
+        )));
+    }
+    // PDF extraction is path-based: the container's bytes are not text input.
+    // Keep the existing cap for every format actually decoded in memory.
+    let file_bytes = if format == "pdf" {
+        Vec::new()
+    } else {
+        crate::path_safety::read_capped(
+            &resolved.to_string_lossy(),
+            crate::path_safety::MAX_READ_BYTES,
+        )?
+    };
+
+    let extract_result = match format {
+        "pdf" => {
+            // Layout retains spatial arrangement; raw follows the PDF's text-object
+            // order, which can read a two-column document one column at a time.
+            // Neither order is universally correct, so the caller selects it per PDF.
+            let output = tokio::process::Command::new("pdftotext")
+                .arg(pdf_text_order.pdftotext_arg())
+                .arg(&resolved)
+                .arg("-")
+                .output()
+                .await;
+            match output {
+                Ok(output) if output.status.success() => {
+                    let raw = String::from_utf8_lossy(&output.stdout).into_owned();
+                    // Per-page triage: split on form-feed, classify each page.
+                    // This fixes the silent-loss bug where a mixed PDF with
+                    // ≥100 whole-doc words returned Success and dropped any
+                    // per-page scanned/image-only regions. On any triage error,
+                    // fall back to the legacy whole-doc word-count check.
+                    let per_page = crate::ocr::split_pdftotext_pages(&raw);
+                    let triage_cfg = crate::ocr::TriageConfig::from_env();
+                    match crate::ocr::triage::triage_pages(&resolved, &per_page, &triage_cfg).await
+                    {
+                        Ok(verdicts) => {
+                            let ocr_pages = crate::ocr::triage::ocr_page_indices(&verdicts);
+                            tracing::info!(
+                                target: "reg.pipeline.triage",
+                                path = path,
+                                pages = verdicts.len(),
+                                ocr_pages = ocr_pages.len(),
+                                "per-page triage complete"
+                            );
+                            if ocr_pages.is_empty() {
+                                // All pages text-native — fast path, no OCR.
+                                let text = per_page.join("\n\x0c");
+                                let word_count = text.split_whitespace().count();
+                                ExtractOutcome::Success {
+                                    text,
+                                    word_count,
+                                    structure: None,
+                                }
+                            } else {
+                                // Mixed or scanned: keep per-page native text
+                                // (OCR pages emptied) so the caller can
+                                // interleave OCR results in page order.
+                                let page_texts: Vec<String> = per_page
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, t)| {
+                                        if ocr_pages.contains(&i) {
+                                            String::new()
+                                        } else {
+                                            t.clone()
+                                        }
+                                    })
+                                    .collect();
+                                let native_wc = page_texts
+                                    .iter()
+                                    .map(|t| t.split_whitespace().count())
+                                    .sum();
+                                ExtractOutcome::PartialOcr {
+                                    page_texts,
+                                    word_count: native_wc,
+                                    ocr_pages,
+                                    verdicts,
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                target: "reg.pipeline.triage",
+                                path = path,
+                                error = %e,
+                                "triage failed — falling back to whole-doc word-count check"
+                            );
+                            let word_count = raw.split_whitespace().count();
+                            if word_count < OCR_FALLBACK_WORD_THRESHOLD {
+                                ExtractOutcome::NeedsOcr {
+                                    partial_text: raw,
+                                    word_count,
+                                }
+                            } else {
+                                ExtractOutcome::Success {
+                                    text: raw,
+                                    word_count,
+                                    structure: None,
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(output) => {
+                    tracing::warn!(
+                        target: "reg.pipeline.pdf_extract",
+                        path = path,
+                        stderr = %String::from_utf8_lossy(&output.stderr),
+                        "pdftotext failed — routing document to OCR"
+                    );
+                    ExtractOutcome::NeedsOcr {
+                        partial_text: String::new(),
+                        word_count: 0,
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        target: "reg.pipeline.pdf_extract",
+                        path = path,
+                        error = %error,
+                        "pdftotext unavailable — routing document to OCR"
+                    );
+                    ExtractOutcome::NeedsOcr {
+                        partial_text: String::new(),
+                        word_count: 0,
+                    }
+                }
+            }
+        }
+        "plain" => text_outcome(crate::convert::decode_text_bytes(&file_bytes).0),
+        "markdown" => text_outcome(crate::convert::strip_frontmatter(
+            &crate::convert::decode_text_bytes(&file_bytes).0,
+        )),
+        "html" | "htm" => text_outcome(crate::convert::strip_html(
+            &crate::convert::decode_text_bytes(&file_bytes).0,
+        )),
+        // Office format backends (S2: backend/pipeline separation)
+        "docx" | "pptx" | "xlsx" => {
+            let structure = parse_with_backend(format, path)?;
+            let word_count = structure.word_count();
+            let text = structure.text();
+            if word_count == 0 {
+                return Err(McpToolError::invalid_argument(format!(
+                    "Backend '{}' extracted 0 words from '{}'",
+                    format, path
+                )));
+            }
+            ExtractOutcome::Success {
+                text,
+                word_count,
+                structure: Some(structure),
+            }
+        }
+        _ => {
+            return Err(McpToolError::invalid_argument(format!(
+                "Format '{}' was reported as supported by detect_format but has no extraction backend",
+                format
+            )));
+        }
+    };
+
+    Ok(extract_result)
+}
+
+/// Filter a PDF `ExtractOutcome` to a target page set (1-based).
+///
+/// `Success`: split on form-feed, keep only target pages, rejoin.
+/// `PartialOcr`: filter `page_texts`, `ocr_pages`, and `verdicts` to target
+/// pages. `NeedsOcr`: returned unchanged (no per-page structure; the caller's
+/// decimation path handles page selection separately).
+pub(crate) fn filter_outcome_to_pages(
+    outcome: ExtractOutcome,
+    target: &std::collections::HashSet<usize>,
+) -> ExtractOutcome {
+    if target.is_empty() {
+        return outcome;
+    }
+    match outcome {
+        ExtractOutcome::Success {
+            text, structure, ..
+        } => {
+            let kept: Vec<String> = crate::ocr::split_pdftotext_pages(&text)
+                .into_iter()
+                .enumerate()
+                .filter(|(i, _)| target.contains(&(i + 1)))
+                .map(|(_, p)| p)
+                .collect();
+            let joined = kept.join("\n\u{000c}");
+            ExtractOutcome::Success {
+                word_count: joined.split_whitespace().count(),
+                text: joined,
+                structure,
+            }
+        }
+        ExtractOutcome::PartialOcr {
+            page_texts,
+            ocr_pages,
+            verdicts,
+            ..
+        } => {
+            let selected_source_indices: Vec<usize> = page_texts
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| target.contains(&(index + 1)))
+                .map(|(index, _)| index)
+                .collect();
+            let filtered_texts: Vec<String> = selected_source_indices
+                .iter()
+                .map(|index| page_texts[*index].clone())
+                .collect();
+            let filtered_ocr: Vec<usize> = ocr_pages
+                .into_iter()
+                .filter_map(|source_index| {
+                    selected_source_indices
+                        .iter()
+                        .position(|selected| *selected == source_index)
+                })
+                .collect();
+            let filtered_verdicts: Vec<crate::ocr::TriageVerdict> = verdicts
+                .into_iter()
+                .filter(|v| target.contains(&v.page_number))
+                .collect();
+            let wc = filtered_texts
+                .iter()
+                .map(|t| t.split_whitespace().count())
+                .sum();
+            ExtractOutcome::PartialOcr {
+                page_texts: filtered_texts,
+                word_count: wc,
+                ocr_pages: filtered_ocr,
+                verdicts: filtered_verdicts,
+            }
+        }
+        other => other,
+    }
+}
+
+/// Dispatch to the appropriate `DocumentBackend` based on format name.
+///
+/// Returns the parsed `DocStructure`. Used by `extract_text` for office
+/// formats (docx, pptx, xlsx) — the structure is flattened to text for the
+/// `ExtractOutcome::Success` path, but future structure-aware tools can
+/// call the backends directly.
+fn parse_with_backend(
+    format: &str,
+    path: &str,
+) -> Result<hkask_types::document::DocStructure, McpToolError> {
+    use crate::backend::{DocumentBackend, DocxBackend, PptxBackend, XlsxBackend};
+    let structure = match format {
+        "docx" => DocxBackend.parse(path),
+        "pptx" => PptxBackend.parse(path),
+        "xlsx" => XlsxBackend.parse(path),
+        other => {
+            return Err(McpToolError::invalid_argument(format!(
+                "unsupported document format: {other}"
+            )));
+        }
+    }
+    .map_err(|error| match error {
+        crate::backend::BackendError::Read { path, source } => {
+            hkask_mcp_server::server::map_io_error(
+                source,
+                &format!("Backend '{format}' failed to read '{path}'"),
+            )
+        }
+        parse_error @ crate::backend::BackendError::Parse { .. } => {
+            McpToolError::invalid_argument(parse_error.to_string())
+        }
+    })?;
+    Ok(structure)
+}
+
+// ── Extract outcome enum ───────────────────────────────────────────────────
+
+pub(crate) enum ExtractOutcome {
+    Success {
+        text: String,
+        word_count: usize,
+        /// Structural representation when a backend produced one.
+        /// `None` for plain-text/markdown/HTML extraction (no structure).
+        structure: Option<hkask_types::document::DocStructure>,
+    },
+    NeedsOcr {
+        partial_text: String,
+        word_count: usize,
+    },
+    /// Per-page triage found a mix of text-native and OCR-needing pages.
+    ///
+    /// `native_text` is the text of the text-native pages only (OCR-needing
+    /// pages are omitted, to be filled in by the caller's selective OCR pass).
+    /// `ocr_pages` are 0-based page indices that must go through the OCR
+    /// pipeline. `verdicts` is the full per-page triage for reporting/Regulation.
+    ///
+    /// This outcome replaces the former silent-loss path where a mixed PDF
+    /// with ≥100 whole-doc words returned `Success` and dropped per-page
+    /// scanned regions entirely.
+    PartialOcr {
+        page_texts: Vec<String>,
+        word_count: usize,
+        ocr_pages: Vec<usize>,
+        verdicts: Vec<crate::ocr::TriageVerdict>,
+    },
+}
+
+#[cfg(test)]
+mod ocr_guards {
+    use super::*;
+    use crate::ocr::OcrResult;
+    use crate::ocr::document::VerificationReport;
+    use crate::ocr::llm_ocr::LlmOcrExecutor;
+    use hkask_types::template::LLMParameters;
+    use hkask_types::{ChatToolDefinition, InferenceError, InferenceResult, InferenceUsage};
+    use std::future::Future;
+    use std::pin::Pin;
+
+    /// Canonical 1x1 transparent PNG — decodes via `image::load_from_memory`.
+    const TINY_PNG: &[u8] = &[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
+        0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    ];
+
+    /// expect: OCR/native page assembly preserves page boundaries for boilerplate filtering.
+    #[test]
+    fn joined_page_text_uses_form_feeds() {
+        assert_eq!(
+            join_page_text(["first", "second", "third"]),
+            "first\u{000C}second\u{000C}third"
+        );
+    }
+
+    /// expect: Selected source-page indices are remapped into the window-local text buffer.
+    #[test]
+    fn target_page_filter_remaps_ocr_indices() {
+        let outcome = ExtractOutcome::PartialOcr {
+            page_texts: vec!["p1".into(), "p2".into(), "p3".into(), "p4".into()],
+            word_count: 4,
+            ocr_pages: vec![2, 3],
+            verdicts: Vec::new(),
+        };
+        let filtered = filter_outcome_to_pages(outcome, &std::collections::HashSet::from([3, 4]));
+        let ExtractOutcome::PartialOcr {
+            page_texts,
+            ocr_pages,
+            ..
+        } = filtered
+        else {
+            panic!("expected partial OCR");
+        };
+        assert_eq!(page_texts, ["p3", "p4"]);
+        assert_eq!(ocr_pages, [0, 1]);
+    }
+
+    /// The `generate` refusal shared by the test vision ports: every mock here
+    /// exercises `generate_vision`; `generate` answers with the unsupported
+    /// error. An owning `'static` future coerces to the borrowed arm at each
+    /// call site.
+    fn stub_vision_port_generate()
+    -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send>> {
+        Box::pin(async {
+            Err(InferenceError::VisionUnsupported(
+                "mock port has no text generate".to_string(),
+            ))
+        })
+    }
+
+    /// Emit the shared stub `generate` arm inside a test vision port's
+    /// `impl InferencePort` block — the arm every mock here repeats. Each
+    /// port's `generate_vision` stays hand-written (its text source is the
+    /// mock's own variation).
+    macro_rules! vision_port_generate_arm {
+        () => {
+            fn generate(
+                &self,
+                _prompt: &str,
+                _parameters: &LLMParameters,
+                _tools: Option<&[ChatToolDefinition]>,
+            ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
+            {
+                stub_vision_port_generate()
+            }
+        };
+    }
+
+    /// The canned vision result the test ports return — model "mock", zero
+    /// usage, clean stop — parameterized on the text (each mock's own source:
+    /// a configured cell, or the current value of a shared cell).
+    fn mock_vision_result(text: String) -> InferenceResult {
+        InferenceResult {
+            text,
+            model: "mock".to_string(),
+            usage: InferenceUsage {
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0,
+                reported: false,
+            },
+            finish_reason: "stop".to_string(),
+            tool_calls: vec![],
+            reasoning: None,
+            cost_usd: None,
+        }
+    }
+
+    /// Mock port whose `generate_vision` returns a configurable text — the
+    /// fixture for the raw-bytes OCR guard.
+    struct VisionMockPort {
+        vision_text: String,
+    }
+
+    impl InferencePort for VisionMockPort {
+        vision_port_generate_arm!();
+
+        fn generate_vision(
+            &self,
+            _prompt: &str,
+            _images: &[String],
+            _parameters: &LLMParameters,
+            _model_override: Option<&str>,
+        ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
+        {
+            Box::pin(async { Ok(mock_vision_result(self.vision_text.clone())) })
+        }
+    }
+
+    /// Mock port whose `generate_vision` returns the current value of a
+    /// shared cell — lets one executor observe success-then-failure
+    /// transitions for the adaptive-limiter wiring test.
+    struct MutableVisionPort {
+        vision_text: std::sync::Mutex<String>,
+    }
+
+    impl InferencePort for MutableVisionPort {
+        vision_port_generate_arm!();
+
+        fn generate_vision(
+            &self,
+            _prompt: &str,
+            _images: &[String],
+            _parameters: &LLMParameters,
+            _model_override: Option<&str>,
+        ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
+        {
+            let text = self
+                .vision_text
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
+            Box::pin(async move { Ok(mock_vision_result(text)) })
+        }
+    }
+
+    /// Mock page executor returning a fixed text per page.
+    struct FixedTextExecutor {
+        text: String,
+    }
+
+    #[async_trait::async_trait]
+    impl OcrExecutor for FixedTextExecutor {
+        async fn execute(
+            &self,
+            page_index: usize,
+            _model: &str,
+            _image: &image::DynamicImage,
+        ) -> Result<OcrResult, OcrError> {
+            Ok(OcrResult::new(page_index, "mock-model", self.text.clone()))
+        }
+    }
+
+    /// A ConvertService wired with mock ports — the internal pipeline
+    /// executor is never invoked by `ocr_via_pipeline` (the executor comes
+    /// from the parameter); it only needs to exist for construction.
+    fn test_service(port: Arc<dyn InferencePort>) -> ConvertService<'static> {
+        let index: &'static crate::index::PassageIndex = Box::leak(Box::default());
+        let llm_executor = Arc::new(LlmOcrExecutor::new(Arc::clone(&port)));
+        ConvertService::new(port, None, llm_executor, index)
+    }
+
+    fn outcome_with_text(text: &str) -> PipelineOutcome {
+        PipelineOutcome {
+            results: vec![OcrResult::new(0, "mock-model", text.to_string())],
+            report: VerificationReport {
+                page_count_match: true,
+                empty_pages: if text.trim().is_empty() {
+                    vec![0]
+                } else {
+                    vec![]
+                },
+                blank_pages: vec![],
+                quality_failed_pages: vec![],
+                error_count: 0,
+                passed: !text.trim().is_empty(),
+            },
+            errors: vec![],
+        }
+    }
+
+    #[test]
+    fn assemble_pipeline_outcome_errors_on_zero_text() {
+        let error = assemble_pipeline_outcome(outcome_with_text("   "), false)
+            .expect_err("zero-text pipeline output must be an error");
+        assert!(
+            error.to_string().contains("OCR produced no text"),
+            "expected the zero-text diagnostic, got: {error}"
+        );
+    }
+
+    #[test]
+    fn assemble_pipeline_outcome_passes_nonempty_text() {
+        let outcome = assemble_pipeline_outcome(outcome_with_text("real page text"), false)
+            .expect("non-empty assembled text passes");
+        assert_eq!(outcome.text, "real page text");
+        assert_eq!(outcome.pages, 1);
+        assert!(outcome.verification_passed);
+        assert!(outcome.quality_failed_pages.is_empty());
+        assert!(!outcome.llm_breaker_open);
+    }
+
+    #[test]
+    fn assemble_pipeline_outcome_surfaces_quality_failures() {
+        // A run whose page output failed a deterministic quality gate must
+        // surface the failure: quality_failed_pages populated and the
+        // verdict FAILED — garbage text is never a passing run, and there is
+        // no fallback backend to substitute for it.
+        let mut outcome = outcome_with_text(
+            "another carrier in Elizabeth Street insisted that he had made the shoes "
+                .repeat(30)
+                .as_str(),
+        );
+        outcome.results[0].quality = crate::ocr::quality::assess(&outcome.results[0].text);
+        outcome.report.quality_failed_pages = vec![0];
+        outcome.report.passed = false;
+
+        let assembled = assemble_pipeline_outcome(outcome, false)
+            .expect("quality-failed-but-nonempty output assembles");
+        assert_eq!(assembled.quality_failed_pages, vec![0]);
+        assert!(
+            !assembled.verification_passed,
+            "a quality-gate failure must fail the verdict"
+        );
+    }
+
+    #[tokio::test]
+    async fn vision_ocr_bytes_empty_output_is_a_typed_error() {
+        crate::helpers::seed_registry_template_root();
+        let port = VisionMockPort {
+            vision_text: String::new(),
+        };
+        let error =
+            crate::ocr::llm_ocr::vision_ocr_bytes(&port, b"non-empty input bytes", "mock-model")
+                .await
+                .expect_err("empty vision output must be an error, not a silent success");
+        assert!(
+            matches!(error, OcrError::EmptyOcrOutput { .. }),
+            "expected EmptyOcrOutput, got: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn vision_ocr_bytes_nonempty_output_passes_through() {
+        crate::helpers::seed_registry_template_root();
+        let port = VisionMockPort {
+            vision_text: "real text".to_string(),
+        };
+        let text = crate::ocr::llm_ocr::vision_ocr_bytes(&port, b"input", "mock-model")
+            .await
+            .expect("non-empty vision output passes the guard");
+        assert_eq!(text, "real text");
+    }
+
+    /// The pipeline executor must uphold the empty-output contract enforced
+    /// by `vision_ocr_bytes` (the single OCR vision primitive): an HTTP 200
+    /// with empty content arrives as a typed `EmptyOcrOutput` failure, and
+    /// consecutive empty outputs open the circuit breaker so a
+    /// dead-but-responsive endpoint is quarantined instead of resetting the
+    /// breaker as a success.
+    #[tokio::test]
+    async fn llm_executor_empty_output_is_a_typed_error_and_trips_the_breaker() {
+        crate::helpers::seed_registry_template_root();
+        let port: Arc<dyn InferencePort> = Arc::new(VisionMockPort {
+            vision_text: String::new(),
+        });
+        let executor = LlmOcrExecutor::new(Arc::clone(&port));
+        let image = crate::helpers::inked_page();
+
+        let error = executor
+            .execute(0, "mock-model", &image)
+            .await
+            .expect_err("empty vision output must be a typed error from the executor");
+        assert!(
+            matches!(error, OcrError::EmptyOcrOutput { .. }),
+            "expected EmptyOcrOutput, got: {error}"
+        );
+
+        // Five consecutive empty outputs open the breaker — and the open
+        // breaker PAUSES the adaptive limiter: the next page waits out the
+        // cooldown instead of failing fast. No fallback backend exists and
+        // no page is lost to the quarantine — the limiter pause IS the
+        // verdict's actuation.
+        for _ in 0..4 {
+            let result = executor.execute(0, "mock-model", &image).await;
+            assert!(result.is_err(), "empty output must stay an error");
+        }
+        assert!(
+            executor.breaker_open(),
+            "circuit breaker must open after 5 consecutive empty outputs"
+        );
+        let blocked = tokio::time::timeout(
+            std::time::Duration::from_millis(300),
+            executor.execute(0, "mock-model", &image),
+        )
+        .await;
+        assert!(
+            blocked.is_err(),
+            "execute must block on the breaker pause, not fail the page fast"
+        );
+    }
+
+    /// The wired recorder must publish silent failures to the cross-process
+    /// health file — the write side of the contract `BridgeOcrHealthSource`
+    /// (zed main process) reads. Without this, the cybernetics loop reports
+    /// `signal_count=0` during an OCR silent-failure storm.
+    #[tokio::test]
+    async fn llm_executor_with_recorder_publishes_silent_failures_to_the_health_file() {
+        crate::helpers::seed_registry_template_root();
+        let health_path = std::env::temp_dir().join(format!(
+            "ocr-guards-health-{}-{}.json",
+            std::process::id(),
+            line!()
+        ));
+        let port: Arc<dyn InferencePort> = Arc::new(VisionMockPort {
+            vision_text: String::new(),
+        });
+        let recorder = Arc::new(crate::ocr::llm_ocr::OcrHealthRecorder::new(
+            health_path.clone(),
+        ));
+        let executor = LlmOcrExecutor::new(Arc::clone(&port)).with_health_recorder(recorder);
+        let image = crate::helpers::inked_page();
+
+        let result = executor.execute(0, "mock-model", &image).await;
+        assert!(result.is_err(), "empty output must be an error");
+
+        let contents = std::fs::read_to_string(&health_path)
+            .expect("the recorder must publish the health file on a silent failure");
+        let snapshot: hkask_types::ocr_health::OcrHealthSnapshot =
+            serde_json::from_str(&contents).expect("health file must parse");
+        assert_eq!(snapshot.silent_failure_timestamps.len(), 1);
+    }
+
+    /// The executor's vision calls must be gated by the adaptive limiter:
+    /// successes grow the allowance, an empty-output failure backs it off.
+    /// Pins the ramp-up spec — remote LLM work never launches at the ceiling
+    /// (the 2026-09-03 RunPod incident: 96 concurrent page requests at a
+    /// 32-worker endpoint).
+    #[tokio::test]
+    async fn llm_executor_reports_outcomes_to_the_adaptive_limiter() {
+        crate::helpers::seed_registry_template_root();
+        let image = crate::helpers::inked_page();
+        let port = Arc::new(MutableVisionPort {
+            vision_text: std::sync::Mutex::new("---\nprimary_language: en\nis_rotation_valid: true\nrotation_correction: 0\nis_table: false\nis_diagram: false\n---\nextracted page text".to_string()),
+        });
+        let executor = LlmOcrExecutor::new(Arc::clone(&port) as Arc<dyn InferencePort>);
+        assert_eq!(
+            executor.adaptive_concurrency(),
+            2,
+            "the ramp starts at the floor"
+        );
+
+        // Two successes grow the allowance additively: 2 → 3 → 4.
+        executor
+            .execute(0, "mock-model", &image)
+            .await
+            .expect("valid page response must succeed");
+        executor
+            .execute(1, "mock-model", &image)
+            .await
+            .expect("valid page response must succeed");
+        assert_eq!(
+            executor.adaptive_concurrency(),
+            4,
+            "successes must grow the allowance"
+        );
+
+        // An empty-output failure backs off multiplicatively: 4 → 2.
+        *port.vision_text.lock().unwrap_or_else(|e| e.into_inner()) = String::new();
+        let result = executor.execute(2, "mock-model", &image).await;
+        assert!(result.is_err(), "empty output must stay an error");
+        assert_eq!(
+            executor.adaptive_concurrency(),
+            2,
+            "failure must halve the allowance"
+        );
+    }
+
+    #[tokio::test]
+    async fn ocr_via_pipeline_rejects_undecodable_formats() {
+        let service = test_service(Arc::new(VisionMockPort {
+            vision_text: String::new(),
+        }));
+        let executor: Arc<dyn OcrExecutor> = Arc::new(FixedTextExecutor {
+            text: "unused".to_string(),
+        });
+        let error = service
+            .ocr_via_pipeline(
+                std::path::Path::new("/tmp/not-an-image.txt"),
+                "txt",
+                b"plain text is not OCR input",
+                "mock-model",
+                executor,
+            )
+            .await
+            .expect_err("undecodable input must be rejected, not sent to a vision model");
+        assert!(
+            error
+                .to_string()
+                .contains("neither a PDF nor a decodable image"),
+            "expected the format diagnostic, got: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn ocr_via_pipeline_routes_images_through_the_pipeline() {
+        let service = test_service(Arc::new(VisionMockPort {
+            vision_text: String::new(),
+        }));
+        let executor: Arc<dyn OcrExecutor> = Arc::new(FixedTextExecutor {
+            text: "page text".to_string(),
+        });
+        let outcome = service
+            .ocr_via_pipeline(
+                std::path::Path::new("/tmp/tiny.png"),
+                "image",
+                TINY_PNG,
+                "mock-model",
+                executor,
+            )
+            .await
+            .expect("image input goes through the page pipeline");
+        assert_eq!(outcome.text, "page text");
+        assert_eq!(outcome.pages, 1);
+    }
+}

@@ -1,0 +1,65 @@
+{# goal: Synthesize falsifiability, architecture, and essentialist evidence into one reduction candidate whose removed signals map completely to retained oracles. #}
+[inference]
+contract:
+  input:
+    inventory: object
+    falsification_result: object
+    architecture_result: object
+    essentialist_result: object
+    mode: string
+  output:
+    candidate: object
+    signal_mapping: array
+    decisions: array
+    blockers: array
+---
+
+Produce one verification reduction candidate from the supplied evidence.
+
+Inventory:
+```json
+{{ inventory | tojson }}
+```
+Falsification:
+```json
+{{ falsification_result | tojson }}
+```
+Architecture:
+```json
+{{ architecture_result | tojson }}
+```
+Essentialist gates:
+```json
+{{ essentialist_result | tojson }}
+```
+Mode: {{ mode }}
+
+Classify each artifact RETAIN, REMOVE, MERGE, or DEFER. A removed artifact must
+have every signal key mapped to a retained artifact and must have survived a
+discriminating harmful-change test. Missing mappings are blockers. Select one
+candidate domain only; do not trade signal loss for speed. Copy complete signal
+rows from the observed graph into the candidate graph, retaining artifact IDs.
+Do not invent signal rows or replace five fields with a string or ordinal.
+
+Return JSON only:
+```json
+{
+  "candidate": {
+    "id":"",
+    "domain":"",
+    "removed_artifacts":[],
+    "retained_artifacts":[],
+    "merged_artifacts":[],
+    "predicted_graph_delta":{"nodes":0,"edges":0},
+    "predicted_time_delta_ms":0,
+    "verification_graph":{"signal_keys":[{"artifact_id":"", "expectation_id":"", "falsifier_id":"", "oracle_kind":"", "failure_class":"", "provenance_tier":""}]}
+  },
+  "signal_mapping": [
+    {"removed_artifact":"", "signal_key":{"expectation_id":"", "falsifier_id":"", "oracle_kind":"", "failure_class":"", "provenance_tier":""}, "retained_artifact":"", "empirical_falsifier":"", "status":"covered|missing"}
+  ],
+  "decisions": [
+    {"artifact":"", "decision":"RETAIN|REMOVE|MERGE|DEFER", "constraint_force":"Prohibition|Guardrail|Guideline|Evidence|Hypothesis", "basis":""}
+  ],
+  "blockers": []
+}
+```

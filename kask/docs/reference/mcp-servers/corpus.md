@@ -1,0 +1,555 @@
+---
+title: "Corpus MCP Server — Reference"
+audience: [developers, operators]
+last_updated: 2026-10-19
+version: "0.43.0"
+status: "Active"
+domain: "MCP Servers"
+mds_categories: [domain, composition, trust, lifecycle]
+---
+
+# Corpus Server (`hkask-mcp-corpus`)
+
+The editor-managed MCP server processes documents into retrievable passages,
+classified chunks, evidence-carrying QA and style centroids. There is one current
+schema contract and **25 registered tools**, pinned by
+`tool_surface_is_exactly_25_registered_tools` at
+`kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:321-326` (the
+`corpus_prepare_training_dataset` tool was removed 2026-10-17 with the training
+capability).
+Parameter additions do not add tools.
+
+The [crate README](../../../mcp-servers/hkask-mcp-corpus/README.md) owns the detailed
+runtime contract; the [build skill](../../../../.agents/skills/build-corpus-pipeline/SKILL.md)
+owns execution and semantic acceptance gates. Paths in implementation citations
+below are relative to the repository root. This reference does not assert that
+operator data has been rebuilt, ingested or used for training.
+
+## Tool catalog
+
+| Group | Tool | Purpose |
+|---|---|---|
+| Gather (2) | `corpus_discover` | Discover an author's works and prepare a corpus manifest |
+| | `corpus_cache_work` | Cache extracted work text by slug for reuse |
+| Process (12) | `corpus_convert` | Extract document/directory text; quality-gated directory resume and explicit OCR staging |
+| | `corpus_ocr` | Process PDF/image pages with the configured image-capable OCR model and verification report |
+| | `corpus_is_complex` | Cheap PDF triage; optional compact summary |
+| | `corpus_chunk` | Shared bounded word windows with real overlap; directory single-tier or file/text multi-tier |
+| | `corpus_build_chunk_representations` | Build source-faithful reference, current, fine-child, parent, and child-parent calibration artifacts |
+| | `corpus_embedding_inventory` | Reconcile exact shard refs against an existing DB and provider-confirmed actual model without embedding or DB creation |
+| | `corpus_export_bundle` | Export one sealed calibration run as a shippable corpus bundle: seal checks, public-bundle-key rekey, hash-pinned 1 GiB parts, and the git-pinned `bundle.json` federated admission consumes |
+| | `corpus_tag_chunks` | Identity-correlated ontology classification with explicit terminal outcomes |
+| | `corpus_embed` | Persist all selected embeddings, original passage text and source metadata |
+| | `corpus_extract_assertions` | Extract assertions from chunk text; optional tags guide predicates |
+| | `corpus_dedup_chunks` | Source-local similarity clustering; retain highest-salience representatives |
+| | `corpus_consolidate_chunks` | Synthesize source-local clusters, re-embed text, preserve derivation; synthesized tags are unverified; merged rows carry the license-conservative origin (any Brave member ⇒ brave) |
+| QA output (4) | `corpus_build_prompts` | Classified primary rows plus complete-source DB context → prepared QA records |
+| | `corpus_generate_qa_batch` | Execute prepared messages unchanged with owned output and reconciled outcomes |
+| | `corpus_ground_generated_qa` | Deterministic zero-inference `corpus-qa-grounding-v1` bundle: byte-span claim records over canonical chunks plus server-recomputed ontology resolutions; records facts only, authorizes nothing |
+| | `corpus_ingest_qa` | Re-executed grounding-gated admission: `corpus-qa-grounding-v1` manifest plus canonical source chunks, every citation claim strength-2 with at least one present required while a synthesized answer is admitted as model-mediated, then exact dedup with evidence retention and explicit storage status |
+| Compose (3) | `corpus_compose` | Retrieve exemplars, generate prose, optionally measure centroid distance |
+| | `corpus_rewrite` | Rewrite using a quality dimension and that dimension's centroid |
+| | `corpus_centroid` | Average eligible existing embeddings selected by prefix or explicit refs |
+| Manage (4) | `corpus_cache` | Cache text in `corpus-mcp/cache/` under the visible artifacts directory |
+| | `corpus_query` | Retrieve passages; optional answer generation using available source text |
+| | `corpus_clear_index` | Clear warm passages and cancel pending publications; no DB deletion |
+| | `corpus_purge_qa` | Explicitly purge a verified DB/entity prefix and invalidate overlapping warm data |
+
+## Template deployment
+
+The host seeds templates at startup and injects `HKASK_TEMPLATE_ROOT`. The server
+requires that root; cwd and compile-time checkout lookup are not fallbacks. OCR
+fails before vision inference if `ocr-extract.j2` cannot be loaded/rendered; it
+has no inline substitute. Rebuild/restart the host to seed changed templates,
+then ensure the corpus process is fresh because it caches templates. For repository
+tests, set `HKASK_TEMPLATE_ROOT="$PWD/kask/registry"` explicitly. Source-faithfulness
+still requires checking OCR output; a prompt constraint is not a quality verdict.
+
+The OCR page contract uses color images with a 1288-pixel longest edge and puts
+the task alongside the image in a user message. The response decoder separates
+required YAML metadata and declared figure annotations from transcribed text.
+`page_reports` preserves annotations as model inference, not source quotations or
+created files; `errors` preserves page failure reasons. Unsupported image links,
+malformed metadata and rotation requests fail visibly. Old staged reports lacking
+the current `ocr_protocol` do not resume; no plain-text compatibility route exists.
+
+## Pipeline parameters
+
+Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:994-1097`,
+`kask/mcp-servers/hkask-mcp-corpus/src/tools/tagging/ops.rs:578-594`, `kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus.rs:560-698`,
+`kask/mcp-servers/hkask-mcp-corpus/src/tools/compose_tools.rs` (`ComposeRequest`, `RewriteRequest`, `CentroidRequest`), `kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs:541-590`, and
+`kask/mcp-servers/hkask-mcp-corpus/src/tools/gather.rs:46-81`.
+
+| Tool | Inputs and defaults |
+|---|---|
+| `corpus_convert` | `path`; optional `output`, `target_pages`; `force_ocr=false`, `include_structure=false`, `pdf_text_order=layout`. For a single PDF with verified column-order problems, `pdf_text_order=raw` follows the PDF's text-object order; directory, non-PDF and forced-OCR conversions reject `raw`. Reports include the text order only when native extraction contributed text. |
+| `corpus_is_complex` | PDF `path`; optional `target_pages`, `summary=false` |
+| `corpus_ocr` | `path`, optional `model` over the configured OCR model |
+| `corpus_chunk` | `text` or `path`, or `input_dir` with `output`; required `entity_ref_prefix`; optional `max_tokens`, `overlap_tokens`, `strip_gutenberg`, `multi_tier`, tier bounds, `target_pages`; `index=true`. Directory mode reports per-source bounded leading title/publisher/praise pages, contents/index/bibliography/reference sections, newsletter calls to action, distribution watermarks, isolated caption-only pages and inferred-image exclusions in `boilerplate_exclusion_reports`. Directory mode also reads `{stem}.origin.json` provenance sidecars (written by the cache tools' `origin_provider`) and stamps `origin_provider` on that source's chunk rows, surfacing `origin_stamped` in the summary; unstamped files carry no provenance. |
+| `corpus_build_chunk_representations` | Immutable accepted source identities, output directory, namespace and complete current/fine/parent policies. Applies the canonical furniture filter once before every policy and seals source exclusion reports in a schema-v2 manifest; reconstruction targets the retained view. |
+| `corpus_tag_chunks` | `chunks_jsonl`, `output`; `concurrency` from shared ceiling, `tag_batch_size=10`, `dry_run=false` |
+| `corpus_embed` | `chunks_jsonl`, optional `tagged_jsonl`, `db_path`, `passphrase`, optional embedding `model`, `batch_size`; durable rows retain provider-confirmed actual model identity when available; every batch requests `dimensions = HKASK_EMBEDDING_DIM` (default 1024) so MRL models (default `OpenRouter/qwen/qwen3-embedding-8b`) emit the store's width, and re-embedding replaces prior vectors per `entity_ref` (idempotent) |
+| `corpus_embedding_inventory` | `chunks_jsonl`, existing `db_path`, `passphrase`, required provider-confirmed `expected_model`; returns exact missing/mismatched/retry refs without writes |
+| `corpus_export_bundle` | `run_dir` (sealed run: `run-identity.json`, `representations/manifest.json`, `<index_name>.db`), `output_dir` (no existing `bundle.json`), `source_id`, `display_name`, `index_name`, `bundle_key` (public, ≥8 chars). Verifies the run's seal, rekeys a copy to the bundle key, measures content pins, splits into parts, writes `bundle.json`; the sealed run is never modified |
+| `corpus_build_prompts` | `tagged_jsonl`, `output`; `prefix` defaults `corpus:researcher:`, `context_k=0`, `qa_pairs_per_chunk=2`, `type_distribution="1,1,1,1,1"` (exactly 5 comma-separated nonnegative weights — factual, conceptual, analyze, evaluate, create — with at least one nonzero; anything else is rejected, never partially parsed), `max_pairs=0`; optional `db_path`/`passphrase` are required only for positive context_k. Brave-derived chunks (stamped `origin_provider: "brave"`) are excluded from QA generation with the exclusion surfaced; an all-Brave corpus fails closed naming Brave API ToS clause xiii (training AI models on Search Results) |
+
+| `corpus_generate_qa_batch` | `prompts_jsonl`, `quality_adjudications_jsonl`, `output`, `concurrency`, optional QA `model` |
+| `corpus_ground_generated_qa` | `generated_jsonl`, `source_chunks_jsonl` (tagged chunks classified under `published-term-resolution-v2`), `output_dir` — must not already exist |
+| `corpus_ingest_qa` | `generated_jsonl`, `grounding_manifest` (path to the bundle's `manifest.json`), `source_chunks_jsonl`, `output`, `db_path`, `dataset`, `owner`, `dry_run=false`; pass dataset/owner explicitly. The DB passphrase resolves server-side. Brave-derived candidates are dropped after the structural filter (surfaced as `brave_excluded`, never silent); retained rows and stored research-QA h_mems carry their chunk's `origin_provider` when recorded |
+| `corpus_centroid` | `author`, `db_path`, `passphrase`; optional contained `refs_file`, quality `dimension` |
+| `corpus_compose` | `prompt`, `author`, `db_path`, `passphrase`, optional `config_path`, `no_validate=false` |
+| `corpus_rewrite` | `content`, `author`, `db_path`, `passphrase`, `dimension=composite`, optional `config_path` |
+| `corpus_cache` | `content`, `label`; optional `origin_provider` — the originating search provider for search-derived content (e.g. "brave"), agent-declared at cache time and recorded in a `{stem}.origin.json` sidecar next to the cached file (a sidecar write failure fails the cache — fail-closed). Unrecorded means no provenance, not Brave |
+| `corpus_cache_work` | `slug`, `content`, `cache_dir`; optional `origin_provider` — same sidecar contract as `corpus_cache` (`{slug}.origin.json`) |
+
+### Retrieval-calibration execution
+
+Run `kask/scripts/audit/calibrate-chunk-retrieval.sh <run-spec-json> <output-dir>`
+for a fresh comparison and add `--resume` only for that output's unchanged run
+specification. Before representation or paid embedding work, a fresh run stable-copies
+the runner, query builder, host wrapper, evaluator, receipt inspector and corpus
+binary into `<output-dir>/runtime`, verifies a hashed manifest, and re-executes from
+those run-owned paths (`kask/scripts/audit/calibrate-chunk-retrieval.sh:74-131,189-208`).
+The schema-v2 preseal identity binds every capsule component and its manifest; the
+runner rechecks them before shards and evaluation
+(`kask/scripts/audit/calibrate-chunk-retrieval.sh:383-409,514-527,571-581,818-828`).
+Shared repository edits or `target/debug` rebuilds therefore cannot alter an active
+run. Resume verifies and enters the existing capsule rather than rebuilding it
+(`kask/scripts/audit/calibrate-chunk-retrieval.sh:137-144`).
+
+Inspect progress without editing a ledger:
+
+```bash
+kask/scripts/audit/inspect-chunk-calibration-run.sh <output-dir>
+```
+
+The inspector verifies preseal/checkpoint hash sidecars, binds checkpoint filenames
+and contents to the sealed shard plan, and derives lifecycle state, planned/completed
+rows and shards, attempts, actual model, pending retry refs and the next unit
+(`kask/scripts/audit/inspect-chunk-calibration-run.sh:44-186`). It reports
+`preparing`, `embedding`, `evaluating` or `complete`; premature or malformed final
+artifacts fail closed rather than manufacturing completion.
+
+After a `hmems` schema migration, a sealed run's databases change bytes and the
+seal (`run-identity.json` `indexes` digests + the `run_id` self-digest) no longer
+matches — every federated admission of a registered source then fails the
+digest check. Re-bind the seal without re-running the calibration:
+
+```bash
+kask/scripts/audit/reseal-calibration-run.sh <run-dir> [<manifest.json> <source-id>]
+```
+
+The resealer performs the storage layer's own migration (PRAGMA probe, then
+`ALTER TABLE hmems ADD COLUMN provenance TEXT NOT NULL DEFAULT 'model_inference'`
+— idempotent), checkpoints the WAL to the sealed state, re-computes every index
+digest, and re-derives `run_id` through the producer's `jq -cS` pipeline
+(`hkask-memory/src/federated_recall.rs` `sealed_run_id`). The original identity
+is preserved as `run-identity.pre-reseal-<date>.json`; a broken `run_id`
+self-digest aborts before anything moves (the repair never launders a tampered
+seal). With a manifest and source id it ends by running the real admission path
+(`hkask-memory examples/verify_federated_source` — run-identity shape, `run_id`
+self-digest, byte digest, current schema, embedding identity, one probe search)
+over the re-sealed artifacts. The SQLCipher key is read from a running
+hkask-mcp-corpus/curator process environment and never printed. Executed live
+2026-10-10 over both registered sources (`capabilities-researcher`, 121,992
+passages; `zk-ref-open`, 278,670 passages) after the R5 `provenance` column —
+both admitted and probe-searched clean.
+
+For a source-balanced QA pilot, run
+`kask/scripts/audit/select-position-diverse-chunks.sh <tagged-jsonl> <new-output-jsonl> <chunks-per-source>`
+before `corpus_build_prompts`. The selector requires current-protocol classified
+rows, preserves complete records and canonical identities, chooses deterministic
+interior quantiles by source, refuses to overwrite output, and reports source
+coverage plus the selected `:0` count. It is a pilot scheduler, not a substitute
+for source-furniture filtering or retrieval calibration.
+
+### Calibration-run repair record (2026-10-10/11; release realigned 2026-10-12)
+
+The 2026-10-10 reseal above left one loose end this section closes. The
+zk-ref-open release bundle still named the pre-R5 run, and the installer's
+corpus stage (`install_corpus_bundle`,
+`kask/scripts/build/install-common.sh`) is the registration authority: it
+re-registers the release bundle into the curator manifest whenever the
+manifest's registered `run_id` mismatches the bundle's. A 2026-10-11 13:19
+install run clobbered a manual manifest repoint this way — same bundle in,
+same registration out. The durable fix was to republish the release from the
+repaired run (then run `3f7533d6…`, 278,670 passages; all four parts
+re-downloaded from the release and hash-verified against the committed
+manifest, 4/4 OK). The up-to-date gate now converges — registered `run_id`
+== release `run_id` == committed manifest `run_id` — so install runs skip
+the corpus stage instead of clobbering the registration. Commits:
+`d81d70bc2c` (R5 provenance tier), `50bcd6ebaf` (dispatch stamps + the
+reseal tooling), `9b658c05f1` (the registry bundle repoint), `de18993c6d`
+(admission scoped to read-table schemas).
+
+The release was repointed once more on 2026-10-12 (`f0443737d5`): the run
+spec had lagged the representations manifest by five sources (424 vs 429 —
+the 2026-10-07 rebuild additions were never realigned), the live serving DB
+was missing those sources' current-tier rows (107 refs), and the seal was
+re-derived after the parity sweep (run `b1583a10…` → `fcca9215…`,
+self-verified). The committed `kask/registry/zk-ref-open/bundle.json`
+therefore names run `fcca9215…` with 282,947 expected passages — the
+current release identity. The repair-era run ids above are the historical
+record of that repair, not the live manifest.
+
+The repair goal (`9c946da3`) recorded intake prediction 0.8, resolved
+achieved — Brier 0.04. Its turn-end memory ingestion never ran (a severed
+turn): the kanban DB holds the full create/judge/score chain, but zero
+curator-memory h_mems exist under `curator:goal:9c946da3…`, so the normal
+acknowledge path has no receipt. This section plus the commits are the
+goal's durable record; the curator-memory batch record
+`kanban:goal-retention`/`batch_prune_2026-10-11_corpus-repair` cites this
+location (the operator-approved batch-record path; precedent
+`batch_prune_2026-10-07_spreadsheet`).
+
+### Shared h_mems storage contract and the shipped-bundle projection
+
+The `hmems`/`embeddings`/`vec0` storage schema in `hkask-storage` has three
+live consumers with different table requirements, so no schema change can be
+made "for one of them" without naming the others:
+
+| Consumer | File | Requires `hmems` | Why |
+|---|---|---|---|
+| Curator memory (read-write) | `~/.local/share/zed-kask/agents/curator/curator.db` (path resolution: `HKASK_CURATOR_DB` else `agents/curator/curator.db`, `kask_bridge/src/memory/curator_stores.rs:21`) | yes | `MemoryStore` deletion paths depend on it; ingestion writes it |
+| Corpus memory (read-write) | `~/.local/share/zed-kask/mcp/corpus/corpus-memory.db` | yes | QA/passage storage writes it (`corpus_ingest_qa`); the style-centroid path reads salience/method-signal rows (`compose.rs` `query_deduped`) |
+| Shipped bundle (read-only) | the `zk-ref-open.db` parts named by `kask/registry/zk-ref-open/bundle.json` | no | the federated read path reads exactly `embeddings` + `vec_embeddings` (`federated_recall.rs` — `hmems` is producer-owned and never read there) |
+
+The 2026-10-18 stripped export (commit `31d19d877b`, run
+`f22e5893…`, 269,821 passages, 2.3 GiB shipped vs the 3.4 GiB unstripped
+authoring fine.db) lands the projection this table names:
+`corpus_export_bundle` strips the producer-owned tables the read-only
+distribution path never reads (`DISTRIBUTION_EXCLUDED_TABLES`,
+`hkask-mcp-corpus/src/tools/calibration.rs`), then reclaims their pages. This
+is a deliberate consumer-scoped divergence, not a schema change: the
+authoring sealed run keeps every row — a stripped copy is read-only by
+construction, and opening one read-write would read every embedding as an
+orphan (`MemoryStore::delete_orphaned_embeddings` joins on `hmems`). Any
+future storage-format change (a column, an index, a vec0 layout) must state
+its disposition for all three consumers before it lands.
+
+Interior orphan `vec0` rows (a vector whose metadata row was deleted through
+a path that did not also delete the vector — therapy SQL passes, interrupted
+re-embeds) are invisible to retrieval (KNN inner-joins them out) and cost
+space only. The distribution path is always clean (`rebuild_vector_index`
+rebuilds vec0 from canonical rows at export). The authoring databases are
+the only unswept copies; sweep them with the maintenance binary:
+
+```bash
+HKASK_DB_PASSPHRASE=… cargo run -p hkask-storage --bin purge-orphaned-vectors -- <db> [<db> …]
+```
+
+The binary opens each database through the production pool so vec0 shadow
+tables stay consistent (a raw `DELETE FROM vec_embeddings` from the
+`sqlcipher` CLI would corrupt the index), checkpoints, sweeps, and full-
+vacuums. A database open read-write elsewhere reports `ConsumersActive`
+rather than interleaving writes (the exclusive maintenance lease). Executed
+live 2026-10-19 over the zk-ref-open authoring DB (the
+`.pre-orphan-sweep-2026-10-19` copy is the pre-sweep snapshot).
+
+### Document size and containment
+
+Normal PDF conversion passes the contained canonical path to Poppler and uses
+page-based OCR only where needed; it does not read the PDF container under the
+32 MiB text/JSONL cap. Large PDFs therefore do not require a forced-OCR workaround.
+Raw text and JSONL reads remain capped. This is not a Poppler memory or output-size
+limit; extraction quality and complete page/source coverage still require review.
+
+Directory OCR staging retains the complete conversion result in a `.report.json`
+companion next to each staged text. Resume verifies the stored source path, exact
+text and presence of a boolean verification verdict, then returns its report.
+Missing/mismatched reports block that source without silently paying for OCR again.
+`document_reports` omits bulky text/structure; `verification_failed` counts failed
+OCR verdicts separately from `failed` conversion/I/O operations. Neither `staged`
+Neither `staged` nor `skipped_staged` admits a document to the accepted extraction directory.
+
+### Long-call timeouts and receipt recovery
+
+MCP client calls carry a 300-second reply window. Selective-OCR conversions
+and large embed batches routinely exceed it, so a client-side "did not reply
+within 300s" outcome is an UNKNOWN, not a failure: the server-side call
+continues and completes (observed 2026-09-29: a 405s conversion and a 348s
+embed both completed server-side after the client disconnect). Never re-fire
+on that outcome — reconcile the durable receipts first (`.report.json`
+companions for conversions; response summaries and per-shard checkpoint or
+index state for embeds) and resume only what the receipts show unresolved.
+Operator-driven waves use
+`kask/scripts/audit/call-corpus-tool-via-host.sh`, which invokes the corpus
+binary directly with its own per-call response window
+(`HKASK_CALIBRATION_RESPONSE_TIMEOUT_SECS`; 630s default for inference tools,
+120s otherwise). Conversion waves run through
+`kask/scripts/audit/run-corpus-conversion-queue.sh` over a manifest built by
+`kask/scripts/audit/build-corpus-conversion-queue.sh`: one unit per source
+with the source content hash recorded, resume by receipt, a strand guard so
+an unguarded exit inside a unit's running window can never strand it, and
+`--requeue` for tool-error deaths (which never wrote output).
+
+### Database lease locks
+
+Every SQLCipher database the corpus server opens is accompanied by a
+zero-byte `<db>.maintenance-lock` file, created on first open and
+deliberately never unlinked: mutual exclusion is carried by the OS flock on
+that stable inode (which must survive renames — rotation acquires the lease
+exclusively), not by the file's existence
+(`kask/crates/hkask-storage/src/core/connection.rs`). A lock file beside a
+database in active use is therefore normal at any age — its mtime is its
+creation time — and unlinking or sweeping lock files breaks the lease
+protocol (`kask/crates/hkask-storage/README.md`). A lock without an
+adjacent database file is the only orphan signal.
+
+### Chunk bounds and source identity
+
+`max_tokens` defaults through `HKASK_CHUNK_MAX_TOKENS` / shared settings (code
+default 256). **Overlap defaults to 64 approximate tokens = 48 words**; explicit
+`overlap_tokens=0` means no repetition. Both bounds use `floor(tokens / 1.33)`
+whitespace words, not tokenizer counts. Invalid/nonprogressing bounds fail before
+reading/writing. Every positive-overlap window repeats the previous suffix and
+adds new words; zero uses the same structural/sentence engine. Short final
+fragments are valid (`kask/mcp-servers/hkask-mcp-corpus/src/helpers.rs`, `tokens_to_words` and `chunk_word_bounds`;
+`kask/crates/hkask-memory/src/text_chunking.rs:123–197`).
+
+Directory mode enumerates immediate `.txt` children, containment-checks each,
+and publishes single-tier JSONL with `entity_ref`, original `source`, `text`,
+`word_count`. Source components are reversible fixed-width UTF-8 hex, avoiding
+punctuation collisions. `zero_chunk_files` surfaces coverage loss. Directory
+multi-tier is rejected; per-file/text tiers default 2048/512/128 and share the
+same engine (`kask/mcp-servers/hkask-mcp-corpus/src/services/convert.rs:935–1113`;
+`kask/mcp-servers/hkask-mcp-corpus/src/text.rs:7-16` and `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:300-346`).
+
+### Classification and prompt context
+
+`TaggedChunk.classification` is required. Classified JSON carries the clean-break
+protocol stamp: `{"status":"classified","ontology_protocol":"published-term-resolution-v2"}`.
+Other outcomes are `{"status":"failed","reason":"..."}` and
+`{"status":"unverified"}`. Missing status/protocol and pre-canonical records cannot
+be promoted. Tag responses correlate short batch-local `correlation_id` values;
+canonical entity refs never enter model authority. The classifier emits compact
+tuples of short ID, exceptional `who/when/where/why` dimensions, and 3–5 raw
+`candidate_terms`. The server adds `what/how`, document type, Analyst expertise
+and Dublin Core subjects; `hkask-bridge-ontology` derives `ontology_tags` and
+`concepts`. Downstream readers reject wrong protocols or any
+candidate/anchor mismatch. Count actual classified rows and reconcile
+`tagged + failed = total_chunks`; fallback annotations and numeric method signals
+do not qualify.
+
+The prompt builder rejects nonclassified, stale, noncanonical or duplicate refs
+and invalid metadata. Default `context_k=0` is primary-only and performs no DB or
+knowledge-graph read. With positive context, `db_path` and `passphrase` are
+required; complete-source embeddings and provenance select same-source neighbors.
+Canonical passage identities are stored with local `p0`, `p1`, etc. but withheld
+from rendered model messages.
+
+`max_pairs=0` means all `chunks × qa_pairs_per_chunk`; positive values cap requested
+pairs. One compact prepared request per chunk carries the selected level rotation.
+A complete `prepared-qa-adjudication-v2` manifest is required: it binds passage and
+ordered per-level mandates to every prompt identity — there is no unadjudicated
+generation path. Reviewed passage skips write
+terminal rows before inference. Reviewed admits send the mandates to the generator,
+and its plan gets one exact-error correction
+before a second mismatch fails the prompt. Planning and
+writer calls run when at least one level is mandated or planned for generation. Summary separates
+`prompts_written` from `pairs_requested` and reports
+primary-only or complete-source context scope. Preserve every source and remeasure totals under real overlap;
+do not force the prior 27,518/55,036 counts. The build skill specifies a single
+canonical rebuild from retained sources and verified obsolete-artifact deletion,
+without backups or a second Brooks corpus. Those are operator data operations,
+not automatic behavior of a docs update.
+
+## Canonical QA records
+
+`PreparedQaPrompt` requires exactly `prompt_id`, protocol
+`prepared-qa-local-evidence-v1`, ordered `passages`, `candidate_terms`, and
+`qa_types`. Passage records carry sequential local ID plus server-owned canonical
+identity and text. IDs are unique in the file and provider-safe. Unknown fields
+and old rendered-message records fail. Builder IDs are `qa-<UUIDv5>` derived from
+source, chunk ref, ordered level set and ordinal zero, stable across partitions.
+The whole input is validated before inference/output creation.
+
+Generation uses typed adjudication, disposition, and writer contracts. A v2
+adjudication row has exactly `protocol`, `prompt_id`, `chunk_ref`, `source`, `passage`,
+and `levels`. `passage` is `admit` with null reason or `skip` with one canonical
+prompt-wide reason. `levels` exactly follows `qa_types`; a passage skip repeats the
+same skip reason at every level, while an admitted passage mandates factual generation
+and either generation or exact support-absent skips for later levels. Conceptual
+generation names one closed relation. V1, unknown fields/values, duplicate identities,
+wrong order/count/reason/relation, and incomplete coverage are rejected.
+
+The generator plan schema is one ordered object per requested level:
+
+```json
+["clean",[{"level":"factual","disposition":"generate","relation":null,"reason":null,"evidence_ids":["e0"]},{"level":"conceptual","disposition":"skip","relation":null,"reason":"conceptual_support_absent","evidence_ids":[]}]]
+```
+
+A conceptual generated level instead names one closed relation kind. The writer
+receives only planned generated levels and fixed evidence, then returns:
+
+```json
+[{"level":"factual","question":"What is the delay?","answer":"72 hours"}]
+```
+
+The server rejects unknown/repeated evidence, wrong order, wrong skip reasons,
+conceptual generation without a relation, mandate mismatches, or any writer deviation
+from the plan. A reviewed-plan mismatch receives one generator correction containing
+the exact deterministic error; a second mismatch fails the prompt. The writer's output
+completes directly as an unverified candidate — no model reviews, corrects, or
+accepts anything during generation. The server then restores canonical
+`QaEvidence {chunk_ref, source, quote}`. The planner and writer are model-mediated;
+semantic answer entailment remains a separate Stage 8 audit.
+
+Generated rows carry primary identity, prompt ID, QA type, candidate terms,
+canonical evidence, `generator_model` with
+`grounding_status=pending_external_verification` (skips:
+`not_applicable_skip`), `prepared-qa-grounding-candidate-v1` generation provenance,
+and optional `prepared-qa-adjudication-v2` provenance. Batch tokens and cost include
+every returned quality/planning/writing/correction response and are not repeated on pair
+rows. Failed prompts carry primary identity and `error`, never a candidate response.
+
+### Batch ownership, retries and accounting
+
+The dedicated non-thinking QA model is explicit `model`, otherwise
+`kask.models.qa_generation_model` → `HKASK_QA_GENERATION_MODEL`. The setting
+defaults empty; missing/malformed/unresolved settings fail visibly. No chat,
+classifier, `HKASK_QA_MODEL`, training-base fallback, or provider-batch side path.
+
+Input/output aliases, including symlink/hard-link aliases, are rejected before
+truncation. One process-wide canonical output lease spans service instances.
+Workers retain ownership until destroyed, including after an abort request; it is
+not a cross-process lock. Synchronous AIMD retries only typed
+Connection/Overloaded/Timeout errors, at most **3 total attempts** (2s/4s backoff).
+Permanent/configuration errors do not retry. A returned planning or writing payload
+that fails its typed schema receives exactly one metered correction attempt; a
+second rejection fails the prompt without partial rows
+(`kask/mcp-servers/hkask-mcp-corpus/src/services/qa_batch.rs`; `kask/mcp-servers/hkask-mcp-corpus/src/batch.rs`).
+
+Successful summaries expose `prompts_total`, `prompts_succeeded`, `prompts_failed`,
+`qa_rows_written`, provider-response `tokens_used`, `completion_tokens_used`,
+`completion_token_reporting_complete`, `finish_reason_counts`,
+`finish_reason_reporting_complete`, `provider_responses`, `reported_cost_usd`,
+`cost_reporting_complete`, `output`, and `degraded`, with total =
+succeeded + failed. Null/incomplete cost or completion telemetry is unknown, never
+zero. Rejected-response rows retain provider `completion_tokens` and
+`finish_reason`; transport failures without a provider response record nulls. A
+prompt can emit multiple pairs; error rows are not QA rows. Missing/duplicate
+known provider IDs and joins fail identified prompts; unknown IDs and IPC failures
+are tool errors. Writes/flushes propagate errors; partial output and cancellation
+are explicit. Remaining local workers are aborted, without promising remote job
+cancellation. There is no automatic resume, atomic replacement or fsync guarantee.
+Wait for owners/workers to stop before inspection and an explicit overwrite rerun.
+
+## Ingestion and audit
+
+Flat QA and generated envelopes use the same evidence schema. Ingestion fails closed
+on partial input (malformed, generator-error, or structurally incomplete rows) and
+then runs the re-executed `corpus-qa-grounding-v1` gate before dedup, output, and
+DB access. `corpus_ground_generated_qa` produces the required hash-bound bundle
+(`manifest.json` + `grounding-rows.jsonl`) deterministically with zero inference:
+each row carries `row_key` (prompt_id + qa_type + physical line), the candidate
+raw-line SHA-256, source identity, preserved candidate terms, server-recomputed
+`TermResolution`s through the published ladder, and per-claim records — every
+evidence quote checked byte-exactly against its uniquely identified canonical
+chunk, the answer checked byte-exact inside the row's own source-grounded
+evidence or recorded honestly as `model_inference`, and the instruction premise
+recorded `not_applicable` with its unperformed check. No verified/authorized/
+confidence fields exist in the bundle. The gate re-hashes the bundle, checks row
+bijection, requires `source_chunks_jsonl` chunks classified under
+`published-term-resolution-v2` with reconciling terms, recomputes the ontology
+resolutions, re-derives every claim, requires each artifact row to equal its
+re-execution, and admits a row when every citation claim is strength 2 and at
+least one exists. A synthesized answer that is not byte-exact is admitted as
+`model_inference` and persisted as model-mediated — never relabelled verified.
+Self-
+reported strengths, spans, or resolutions cannot open the gate. With the gate
+satisfied, ingest structurally requires nonblank instruction/output/QA type/
+source/chunk ref and complete evidence entries; it keeps concise answers and first
+valid case-insensitive exact instructions. It neither deduplicates against the DB
+nor performs semantic review — Stage 8 and operator acceptance remain external.
+`prompt_id`, `provenance`, citations, metadata, the grounding identity object
+(protocol, manifest SHA-256, `row_key`, and the re-executed `answer_provenance`),
+and candidate terms resolved through the
+shared published-ontology resolver survive into retained JSONL and QA h_mems,
+as does the source chunk's `origin_provider` when recorded;
+this tool creates no embeddings
+(`kask/mcp-servers/hkask-mcp-corpus/src/services/qa_grounding.rs`;
+`kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus/qa_parsing.rs`;
+`kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus.rs`).
+
+- `total_nonblank_rows = generator_errors + malformed + parsed`.
+- `parsed = filter_drops + duplicates + retained`; `filtered = duplicates + retained`;
+  `deduped = retained`.
+- `brave_excluded` partitions `filter_drops`: candidates whose source chunk is
+  Brave-derived are dropped after the structural filter, before dedup (Brave API
+  ToS clause xiii), surfaced in the result — never silent.
+- Non-dry `retained = stored + failed`; `stored_h_mems = stored`.
+- `status` is `dry_run` (no DB open/output writes), `complete`, or
+  `partial_failure` with per-entity `storage_errors`. The output includes all
+  retained rows even if storage fails; file writing and inserts are not atomic.
+
+Before re-ingestion, inspect and explicitly purge the verified legacy
+`training:qa:{dataset}:` prefix. That prefix and the `training_qa_pair` attribute
+are durable storage identities retained for existing corpora; no training executor
+consumes them. Indices restart per call; partitioned ingestion is not whole-dataset
+replacement. Never broaden a purge or leave stale datasets.
+
+The read-only `kask/scripts/audit-qa-quality.sh` checks each citation's exact
+substring and unique source/chunk identity, reconciles physical rows and reports
+six-gram repetition, QA-label distribution and source coverage. It accepts historical
+staged protocols (v3–v8, whose distinct-verifier requirements apply only to those
+artifacts) and the current `prepared-qa-grounding-candidate-v1` protocol (nonblank
+`generator_model`, `grounding_status` matching the row kind, reviewed rows carrying
+`prepared-qa-adjudication-v2`); it never requires a verification model for
+candidates. Ordinary prose
+still needs claim extraction, entailment and narrative review; those unperformed
+checks propagate null, not success. Only the explicit structured-citation-only
+control has no narrative fields. Exit 0/1/2/64 means narrow checks complete / high
+citation findings / missing checks or data / usage error, never launch approval.
+See the skill for canonical `grounding-verify`, semantic review and size gates.
+
+The QA export is the pipeline's terminal artifact: an evidence-carrying,
+auditable corpus. Model training is out of scope for the co-researcher
+mandate (the training server was removed 2026-10-17), so there is no
+downstream submission step — a successful QA export is a research corpus,
+not staged training data.
+
+## Style and retrieval
+
+Centroid defaults select `style:{author}:` and store `style:{author}:centroid`.
+`refs_file` selects existing refs without copying embeddings; duplicates count
+once and missing/empty eligible sets fail. Quality `dimension` selects
+`style:{author}:{dimension}:centroid`, independently of embedding vector size.
+Recomputation replaces the destination. Shared
+`hkask_types::corpus::is_corpus_passage_ref` excludes empty, `:rule:` and all
+suffix-`:centroid` refs for both centroid selection and passage retrieval; the
+shared helper preserves exclusion behavior (`kask/crates/hkask-types/src/corpus.rs:13`;
+`kask/crates/hkask-memory/src/memory_store.rs:523–566`).
+
+Cognition YAML puts `centroid_entity_ref` inside `embedding`. Rewrite always
+selects the requested dimension (default `composite`) even with `config_path`.
+`centroid_missing=true` returns null distance/pass, not validation success.
+Compose `no_validate=true` explicitly skips; other lookup errors propagate.
+Optional `embedding.retrieval.declared_method.signal` thresholds all must match;
+missing method signals exclude passages and increment `method_signals_missing`.
+
+Style operations return `McpToolError` directly. Missing/rejected provider credentials
+map to `permission_denied`; transport, timeout, capacity and transient embedding API
+failures map to `unavailable`; invalid model/request parameters map to
+`invalid_argument`; malformed or unexpected provider results map to `internal`.
+Strict template errors and centroid lookup failures remain visible as `unavailable`,
+while an absent centroid retains the distinct `centroid_missing` result. Operation
+context and underlying failure detail remain in the message
+(`kask/mcp-servers/hkask-mcp-corpus/src/helpers.rs`, `map_inference_error` and
+`map_embedding_error`; `src/compose.rs` and `src/template.rs`).
+
+`corpus_query(db_path=...)` queries the named durable database through disk
+KNN only when the in-memory index is **empty**; a nonempty index (same-process
+published passages) ignores `db_path`, so no clear is needed to switch durable
+databases — each query opens its target read-only. Nothing is cached into
+memory: no corpus-sized RAM accrues behind queries. Durable identity is
+canonical DB path plus entity ref. Original stored text grounds answers;
+ephemeral passages do not survive restart. `include_text=false` hides returned
+text only. Missing usable text surfaces `text_available=false`,
+`missing_passage_text`/note and, if no answer context remains, `answer_error`.
+
+Clear/purge invalidate pending overlapping publications; errors and cancellation
+are visible. Prefix deletion is literal/case-sensitive. Publication/replacement
+and purge are not cross-operation transactions or coordination with external DB
+writers. See the [retrieval contract](../../../mcp-servers/hkask-mcp-corpus/README.md#passage-retrieval-contract)
+for the complete failure and scope guarantees.

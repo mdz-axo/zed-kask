@@ -1,0 +1,197 @@
+{# goal: Generate a focused bug-hunt charter using Hendrickson format and Bach's HTSM, with Good Regulator crate modeling and prior-expedition feedback consumption. #}
+[inference]
+contract:
+  input:
+    target: object
+    quality_criteria: string
+    prior_expedition: object|null
+    mutation_report: object
+    precomputed_analysis: object|null
+    crate_model: object|null
+  output:
+    charter_statement: string
+    target_area: string
+    strategy: string
+    expected_category: string
+    beizer_focus: array
+    crate_model: object
+    probe_instructions: array
+    prior_feedback_consumed: string
+---
+{# Phase 1 — CHARTER (Hendrickson + Bach HTSM + Good Regulator + feedback loop) #}
+{#
+  
+    - Good Regulator compliance: build a lightweight crate_model BEFORE selecting
+      Beizer categories. A regulator that does not model the system it regulates
+      cannot regulate it well (Conant-Ashby).
+    - Feedback loop closure: when prior_expedition is present, consume its
+      lessons_learned, pattern_signatures, and next_charter_focus to amplify
+      this charter. A first-pass expedition has no prior context.
+#}
+
+You are a bug hunting strategist. Generate a focused testing charter for exploring a target crate.
+
+## Target
+{{ target | tojson }}
+
+## Quality Criteria (P1 boundary — user defines what matters)
+{{ quality_criteria }}
+
+{% if prior_expedition and prior_expedition | length > 0 %}
+## Prior Expedition Feedback (loop closure)
+This is iteration N+1. The previous expedition produced the following signals;
+consume them to amplify this charter rather than starting from scratch.
+
+```json
+{{ prior_expedition | tojson }}
+```
+
+- **lessons_learned**: distill into 1-3 concrete adjustments to probe strategy.
+- **pattern_signatures**: extend the probe pattern list with derived signatures.
+- **next_charter_focus**: if present, this is the prior report's directed
+  focus for the next iteration. Make it the primary target_area unless it is
+  already exhausted.
+{% else %}
+## Prior Expedition Feedback
+No prior expedition — this is a first pass. Build the charter from scratch.
+{% endif %}
+
+{% if precomputed_analysis %}
+## Pre-Computed Quality Analysis (from prior analysis)
+
+A deterministic quality analysis has already been run.
+Use these findings to inform your Beizer category selection and probe planning.
+
+```json
+{{ precomputed_analysis | tojson }}
+```
+
+- If the analysis reports **complexity hotspots**, prioritize `structural` and
+  `control flow` Beizer categories for those functions.
+- If the analysis reports **dead code**, flag it as a finding candidate
+  (dead code is a quality threat — it may mask unreachable bug paths).
+{% endif %}
+
+{% if mutation_report and mutation_report | length > 0 %}
+## Mutation Report (operator-supplied)
+
+The mutation testing output from the trace filesystem shows surviving mutants —
+functions where the test suite is blind. Each surviving mutant is a concrete
+location where bug-hunt should focus exploratory probing. Mutation testing
+finds syntactic blind spots (the suite doesn't notice `+` → `-`); bug-hunt
+finds semantic blind spots (the suite doesn't test the error path, the race
+condition). Together they cover both axes.
+
+```json
+{{ mutation_report | tojson }}
+```
+
+Prioritize `target_area` toward functions with surviving mutants. Adjust
+`beizer_focus` to match the mutation types (e.g., boundary condition mutants →
+`data` category, control flow mutants → `structural` category).
+{% endif %}
+
+## Step 1 — Crate Model (Good Regulator compliance)
+
+Before selecting Beizer categories, ground the model of the target crate. A
+regulator must be a model of the system it regulates (Conant-Ashby).
+Jumping straight to taxonomy selection without modeling the crate is a Good
+Regulator violation.
+
+The agent reads the crate BEFORE this render (`Cargo.toml`, `lib.rs` /
+`main.rs`, module structure) and supplies `crate_model`. Refine and use it.
+If `crate_model` is absent, derive what you can from the target,
+`precomputed_analysis`, and `prior_expedition` — and state the sparsity in
+`crate_model.architecture` so downstream phases know the model is thin.
+
+The model describes:
+- **architecture**: 1-2 sentences on the crate's shape (library / binary / both,
+  module layout, primary types).
+- **data_flow**: where data enters, where it is transformed, where it exits.
+  Name the critical paths.
+- **critical_paths**: functions or modules where correctness is most at risk
+  given the quality criteria.
+- **dependency_surface**: notable dependencies (async runtime, FFI, serialization,
+  crypto, etc.) that introduce bug classes.
+- **observed_characteristics**: async usage, unsafe usage, trait objects,
+  concurrency primitives, FFI, macros, proc-macros. These feed the probe's
+  dynamic pattern expansion (Ashby's Law).
+
+## Step 2 — Charter Format (Hendrickson)
+
+Generate: "Explore [target] using [strategy] to discover [quality threat]."
+
+## Step 3 — Strategy Selection (Bach HTSM)
+
+Pick the most promising strategy from Bach's Heuristic Test Strategy Model:
+- **Project Environment:** available tools, constraints, dependencies
+- **Product Elements:** public interfaces, data boundaries, state machines
+- **Quality Criteria:** which of the user's criteria is most at risk?
+
+Justify the strategy against the crate model — not against generic categories.
+
+## Step 4 — Beizer Taxonomy — Target the Most Likely Categories GIVEN THE CRATE MODEL
+
+| Category | What to look for | Typical prevalence |
+|----------|-----------------|-------------------|
+| requirements | spec is wrong or missing | ~30% |
+| structural | control flow / data flow errors | common |
+| data | overflow, underflow, boundary, initialization | common |
+| coding | wrong logic, missing error checks, edge cases | common |
+| interface | contract violations, parameter gaps | common |
+| integration | component interaction failures | situational |
+| timing | race conditions, ordering assumptions | situational |
+| configuration | env settings, feature flags | situational |
+
+Pick 2-3 most likely categories given the crate model and quality criteria —
+NOT generic prevalence. If the crate model shows heavy async usage, `timing`
+overrides `requirements` regardless of generic prevalence.
+
+{% if prior_expedition and prior_expedition.next_charter_focus %}
+## Prior-Directed Focus
+The prior expedition's report directed this iteration to focus on:
+  {{ prior_expedition.next_charter_focus }}
+
+Make this the primary target_area and adjust beizer_focus accordingly, unless
+the prior iteration already exhausted it (state so explicitly if so).
+{% endif %}
+
+## Output
+
+Respond with a JSON object:
+
+```json
+{
+  "charter_statement": "Explore [target] using [strategy] to discover [quality threat]",
+  "target_area": "specific module/function/interface to focus on",
+  "strategy": "selected HTSM strategy with justification grounded in the crate model",
+  "expected_category": "primary Beizer category to target",
+  "beizer_focus": ["category1", "category2", "category3"],
+  "crate_model": {
+    "architecture": "...",
+    "data_flow": "...",
+    "critical_paths": ["..."],
+    "dependency_surface": ["..."],
+    "observed_characteristics": ["async", "unsafe", "trait_objects", "concurrency", "ffi", "macros", "proc_macros"]
+  },
+  "probe_instructions": [
+    "specific file/pattern to examine",
+    "specific command to run",
+    "specific boundary to test"
+  ],
+  "prior_feedback_consumed": "brief note on how prior_expedition (if any) shaped this charter"
+}
+```
+
+## Constraints
+
+- Be specific — name actual files, functions, or modules in the target.
+- Probe instructions must be actionable with available MCP tools.
+- The crate_model must be derived from actually reading the crate — do not
+  fabricate characteristics. If you could not read the crate, state so in
+  `crate_model.architecture` and proceed with generic categories.
+- Beizer category selection must be justified against the crate model, not
+  against generic prevalence tables.
+- When prior_expedition is present, the charter MUST consume it — silent
+  ignoring of prior feedback is a feedback-loop violation.
+- OUTPUT MODE: Emit ONLY the structured JSON output defined above. Do NOT call any MCP tools. Do NOT emit tool calls. Do NOT emit conversational text. If you need to reason, use the thinking channel — your entire text output must be the JSON object and nothing else.

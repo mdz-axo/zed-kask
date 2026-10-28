@@ -1,0 +1,46 @@
+# Provider profile — Ollama (local). Structural contract pinned by
+# kask/scripts/check-provider-profiles.sh; semantic reading owned by the
+# provider-audit skill.
+id: ollama
+name: Ollama
+status: active
+roles:
+  - chat-inference
+  - embedding-provider
+keychain:
+  slot: none
+  env_var: ""
+  note: local service (default port 11434), OpenAI-compatible at /v1, requires
+    no API key — an empty env_var signals "no key needed"
+    (kask/crates/kask_bridge/src/inference_providers.rs)
+consumed_capabilities:
+  - capability: local chat completions
+    source: crates/language_models/src/provider/ollama.rs
+  - capability: local embeddings (/v1/embeddings)
+    source: kask/crates/kask_bridge/src/inference_providers.rs
+deliberate_non_consumption: []
+data_terms:
+  # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
+  extracted_at: "2026-10-13"
+  trains_on_customer_data: >-
+    no — Terms of Service (ollama.com/terms, extracted 2026-10-13): "We don't
+    train on your data" and "We do not use your inputs or outputs to
+    train AI models"; privacy policy: cloud-hosted prompts are
+    "processed transiently to provide the service and never train on
+    it" and are "not stored beyond the time required to fulfill the
+    request".
+  retention_published: >-
+    yes — privacy policy §6 Data Retention (ollama.com/privacy,
+    extracted 2026-10-13): information retained "for as long as your account is
+    active or as needed to provide the Service".
+status_surface:
+  status_page: >-
+    n/a — local-first software (MIT-licensed, github.com/ollama/ollama
+    LICENSE read 2026-10-13); no cloud status surface probed for the local
+    runtime.
+  sla: n/a (local software; terms read 2026-10-13).
+pricing:
+  machine_readable: >-
+    partial — the terms (read 2026-10-13) reference paid subscription features;
+    a public cloud pricing page was not read this run — evidence gap.
+first_audit_pending: false

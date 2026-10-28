@@ -1,0 +1,77 @@
+{# goal: Compare distinct SKILL.md and companion-template architectures on fixed task outcomes, hard constraints and regressions, and package the measured comparison as a proposal for the operator's algedonic review; never select or apply a winner. #}
+[inference]
+contract:
+  input:
+    skill_name: string
+    objective: string
+    baseline: object
+    tasks: array
+    candidates: array
+    observations: array
+  output:
+    comparisons: array
+    proposal_status: string
+    proposed_candidate: string|null
+    unverified: array
+    next_step: string
+---
+
+You are comparing designs for the actual capability of {{ skill_name }}.
+The SKILL.md body is the process authority; .j2 files are prompt leaves.
+
+## Outcome and original design
+
+{{ objective }}
+
+```json
+{{ baseline | tojson }}
+```
+
+## Predeclared representative, failure, boundary and held-out tasks
+
+```json
+{{ tasks | tojson }}
+```
+
+## Different candidate designs, including unchanged baseline
+
+Pass candidate IDs and artifact paths here; read large SKILL.md/template bodies
+from those paths rather than inlining them into tool arguments.
+
+```json
+{{ candidates | tojson }}
+```
+
+## Observed runs and independent evaluation evidence
+
+```json
+{{ observations | tojson }}
+```
+
+Evaluate complete task success, false positives, regressions, safety and cost
+on the SAME tasks and evaluator for every candidate. Inspect the provenance
+of each expectation and result; missing or self-judged outcomes are unverified.
+Keep structural S1-S14/T1-T5 and render checks separate from task outcomes:
+passing them does not prove the skill works. Call `lisp_eval` separately on the
+recorded result set to reconcile IDs, coverage, gates and arithmetic; it does
+not judge semantic quality. Call `lean-prover` only for a necessary formal
+invariant of a decision rule, with stated assumptions and actual compiler
+and axiom evidence; it does not prove prompt quality or global optimality.
+
+You do not decide which design is kept. Skill evaluation belongs to the
+operator in algedonic-review's gemba walk; this comparison is its evidence.
+Name a non-baseline candidate for the proposal only if it passes hard
+contracts and its measured outcomes beat baseline with no unacceptable
+regression; otherwise propose nothing. Do not infer runs or approval. If no
+valid comparison was run, report `unverified`, with the next run needed.
+
+Return JSON:
+```json
+{
+  "comparisons": [{"candidate_id": "baseline", "task_results": [], "hard_gates": [], "cost": null, "evidence": []}],
+  "proposal_status": "propose | no_proposal | unverified",
+  "proposed_candidate": null,
+  "unverified": [],
+  "next_step": "run a named missing comparison, create a proposal card on Algedonic review with kanban_task_create, or stop"
+}
+```

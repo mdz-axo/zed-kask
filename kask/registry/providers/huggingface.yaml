@@ -1,0 +1,58 @@
+# Provider profile — HuggingFace. RETIRED 2026-10-17: archived in place per
+# the provider-audit retirement pass (Step 9). Both consumers were the
+# training MCP server (artifact publish path and open-weight base-model
+# hosting), removed because model training is outside the co-researcher
+# mandate. The HF_TOKEN Data Services row and child injection were removed;
+# any pre-existing dormant keychain entry remains operator-owned and unread.
+# The dated readings below are preserved as the audit record, not as a
+# live contract.
+# Structural contract pinned by kask/scripts/check-provider-profiles.sh.
+id: huggingface
+name: HuggingFace
+status: retired
+retired:
+  date: "2026-10-17"
+  reason: >-
+    both consumers (training artifact publish path, open-weight base-model
+    hosting) removed with the training MCP server — model training is out of
+    scope for the co-researcher mandate.
+  purged:
+    - Data Services row HF_TOKEN and every in-tree read/injection path
+      (kask/crates/kask_bridge/src/inference_providers.rs)
+    - training server credentials/config_env HF_TOKEN, HKASK_HF_*
+      (kask/crates/kask_bridge/src/mcp_servers.rs)
+  retained_user_data:
+    - Any pre-existing kask://credentials/hf_token keychain entry is dormant
+      and left operator-owned; no code exposes, restores, reads, or injects it.
+roles:
+  - training-artifacts   # retired role — no in-tree consumer
+  - model-weights-host   # retired role — no in-tree consumer
+keychain:
+  slot: none
+  env_var: ""
+  note: the kask://credentials/hf_token slot has no reader or settings row;
+    any old entry is dormant operator-owned data, not a live capability.
+consumed_capabilities: []  # retired — no in-tree consumer remains
+deliberate_non_consumption: []
+data_terms:
+  # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
+  extracted_at: "2026-10-13"
+  trains_on_customer_data: >-
+    no training clause in the privacy policy read (huggingface.co/privacy,
+    extracted 2026-10-13); private repositories are access-controlled (404 to
+    non-owners, per the Hub docs read via search 2026-10-13). An explicit
+    train-on-private-content statement was not located in the pages read
+    this run — evidence gap on the explicit stance.
+  retention_published: >-
+    yes — privacy policy section "B. Data retention": "We retain your
+    Information for as long as necessary to deliver the Services, to
+    comply with any applicable legal requirements..." (extracted 2026-10-13).
+status_surface:
+  status_page: >-
+    https://status.huggingface.co live (HTTP 200, probed 2026-10-13).
+  sla: none found (probed 2026-10-13).
+pricing:
+  machine_readable: >-
+    pricing published (huggingface.co/pricing, HTTP 200, probed 2026-10-13); no
+    machine-readable pricing source found this run.
+first_audit_pending: false

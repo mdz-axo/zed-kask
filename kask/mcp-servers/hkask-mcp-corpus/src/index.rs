@@ -1,0 +1,684 @@
+//! One owner for passage identity, durable publication, and invalidation.
+//! Store operations are synchronous and serialized with cache mutations. Inference
+//! runs outside the lock; scoped publication permits let clear/purge cancel old work.
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
+
+use hkask_mcp_server::server::{McpToolError, map_io_error};
+use hkask_memory::MemoryStore;
+use serde_json::{Value, json};
+
+use crate::helpers::{map_memory_store_error, open_existing_memory_store, open_memory_store};
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Origin {
+    Database(PathBuf),
+    Ephemeral(String),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct IndexedPassage {
+    pub text: Option<String>,
+    pub metadata: Value,
+    pub embedding: Vec<f32>,
+    /// The embedding model that produced this row's vector — the model gate
+    /// in `retrieve` compares it against the query's model identity so a
+    /// model change degrades loudly instead of ranking cross-model cosine
+    /// distances. Durable rows record the provider-confirmed actual form
+    /// when the provider echoes one (matching what `corpus_embed` stores).
+    pub model: String,
+}
+
+pub(crate) enum PublicationScope {
+    Entities(Vec<String>),
+    Prefixes(Vec<String>),
+}
+
+impl PublicationScope {
+    fn overlaps(&self, prefix: &str) -> bool {
+        match self {
+            Self::Entities(references) => references
+                .iter()
+                .any(|reference| reference.starts_with(prefix)),
+            Self::Prefixes(prefixes) => prefixes
+                .iter()
+                .any(|watched| watched.starts_with(prefix) || prefix.starts_with(watched)),
+        }
+    }
+}
+
+pub(crate) struct Publication {
+    origin: Origin,
+    scope: PublicationScope,
+    cancelled: AtomicBool,
+}
+
+impl Publication {
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Relaxed)
+    }
+}
+
+pub(crate) struct DurableWrite {
+    store: MemoryStore,
+    writer: hkask_types::WebID,
+    publication: Arc<Publication>,
+}
+
+impl DurableWrite {
+    pub fn is_cancelled(&self) -> bool {
+        self.publication.is_cancelled()
+    }
+
+    pub fn ensure_active(&self) -> Result<(), McpToolError> {
+        PassageIndex::check_publication(&self.publication)
+    }
+}
+
+#[derive(Default)]
+struct IndexState {
+    passages: BTreeMap<(Origin, String), IndexedPassage>,
+    active: Vec<Weak<Publication>>,
+}
+
+#[derive(Default)]
+pub(crate) struct PassageIndex {
+    state: Mutex<IndexState>,
+}
+
+fn database_origin(path: &str) -> Result<Origin, McpToolError> {
+    std::fs::canonicalize(path)
+        .map(Origin::Database)
+        .map_err(|error| map_io_error(error, "Cannot canonicalize corpus database"))
+}
+
+impl PassageIndex {
+    fn lock(&self) -> Result<MutexGuard<'_, IndexState>, McpToolError> {
+        self.state
+            .lock()
+            .map_err(|_| McpToolError::internal("Passage index mutex poisoned"))
+    }
+
+    fn begin(state: &mut IndexState, origin: Origin, scope: PublicationScope) -> Arc<Publication> {
+        let publication = Arc::new(Publication {
+            origin,
+            scope,
+            cancelled: AtomicBool::new(false),
+        });
+        state.active.retain(|entry| entry.strong_count() > 0);
+        state.active.push(Arc::downgrade(&publication));
+        publication
+    }
+
+    pub fn begin_durable(
+        &self,
+        path: &str,
+        passphrase: &str,
+        scope: PublicationScope,
+        writer: hkask_types::WebID,
+    ) -> Result<DurableWrite, McpToolError> {
+        let mut state = self.lock()?;
+        let store = open_memory_store(path, passphrase)?;
+        let publication = Self::begin(&mut state, database_origin(path)?, scope);
+        Ok(DurableWrite {
+            store,
+            writer,
+            publication,
+        })
+    }
+
+    pub fn begin_ephemeral(
+        &self,
+        source: &str,
+        references: Vec<String>,
+    ) -> Result<Arc<Publication>, McpToolError> {
+        let mut state = self.lock()?;
+        Ok(Self::begin(
+            &mut state,
+            Origin::Ephemeral(source.into()),
+            PublicationScope::Entities(references),
+        ))
+    }
+
+    /// expect: Completed writes are searchable once, with their original passage text.
+    /// [P8] Motivating: durable and warm retrieval agree.
+    /// pre: permit acquired before inference; post: store and cache are published together,
+    /// or an explicit error is returned (replacement can be partially applied on DB error).
+    pub fn publish_durable(
+        &self,
+        write: &DurableWrite,
+        entity_ref: &str,
+        text: &str,
+        embedding: &[f32],
+        model: &str,
+    ) -> Result<(), McpToolError> {
+        if text.is_empty() {
+            return Err(McpToolError::invalid_argument(
+                "Corpus passage text must be nonempty so its precomputed vector matches the canonical passage",
+            ));
+        }
+        let mut state = self.lock()?;
+        Self::check_publication(&write.publication)?;
+        let key = (write.publication.origin.clone(), entity_ref.to_string());
+        // Evict before replacement so a metadata failure cannot serve a stale cache entry.
+        // The passage row and its vector publish atomically through the shared write.
+        state.passages.remove(&key);
+        let existing = write
+            .store
+            .query_deduped_untouched(entity_ref)
+            .map_err(|error| {
+                map_memory_store_error(error, "Cannot read passage metadata for replacement")
+            })?;
+        let signals = serde_json::to_value(hkask_memory::salience::compute_method_signals(text))
+            .map_err(|error| {
+                McpToolError::internal(format!("Cannot serialize method signals: {error}"))
+            })?;
+        for (attribute, value) in [("text", json!(text)), ("method_signals", signals)] {
+            if attribute == "text" {
+                let semantic_write = if let Some(record) =
+                    existing.iter().find(|record| record.attribute == attribute)
+                {
+                    write.store.prepare_semantic_revision(
+                        &record.id,
+                        value,
+                        hkask_types::Confidence::full(),
+                    )
+                } else {
+                    let mut ontology = hkask_types::HMemOntology::state(
+                        hkask_bridge_ontology::dc_bibo::DOCUMENT,
+                        Vec::new(),
+                        entity_ref,
+                    );
+                    ontology.pko_procedure = Some("PassageIndex::publish_durable".to_string());
+                    ontology.pko_step = Some(entity_ref.to_string());
+                    write.store.prepare_semantic_write(
+                        hkask_storage::HMem::new(entity_ref, attribute, value, write.writer)
+                            .with_ontology(ontology),
+                    )
+                }
+                .map_err(|error| map_memory_store_error(error, "Cannot prepare corpus passage"))?;
+                semantic_write.publish(embedding, model).map_err(|error| {
+                    map_memory_store_error(error, "Cannot publish corpus passage and embedding")
+                })?;
+            } else if let Some(record) =
+                existing.iter().find(|record| record.attribute == attribute)
+            {
+                write
+                    .store
+                    .update_confidence(&record.id, value, hkask_types::Confidence::new(1.0))
+                    .map_err(|error| {
+                        map_memory_store_error(error, "Cannot replace passage metadata")
+                    })?;
+            } else {
+                let mut ontology = hkask_types::HMemOntology::state(
+                    hkask_bridge_ontology::dc_bibo::DOCUMENT,
+                    Vec::new(),
+                    entity_ref,
+                );
+                ontology.pko_procedure = Some("PassageIndex::publish_durable".to_string());
+                ontology.pko_step = Some(entity_ref.to_string());
+                write
+                    .store
+                    .store(
+                        hkask_storage::HMem::new(entity_ref, attribute, value, write.writer)
+                            .with_ontology(ontology),
+                    )
+                    .map_err(|error| {
+                        map_memory_store_error(error, "Cannot store passage metadata")
+                    })?;
+            }
+        }
+
+        state.passages.insert(
+            key,
+            IndexedPassage {
+                text: Some(text.into()),
+                metadata: json!({"entity_ref":entity_ref}),
+                embedding: embedding.to_vec(),
+                model: model.to_string(),
+            },
+        );
+        Ok(())
+    }
+
+    pub fn publish_ephemeral(
+        &self,
+        publication: &Publication,
+        passages: &[(String, String)],
+        vectors: Vec<Vec<f32>>,
+        model: &str,
+    ) -> Result<usize, McpToolError> {
+        let mut state = self.lock()?;
+        Self::check_publication(publication)?;
+        let Origin::Ephemeral(source) = &publication.origin else {
+            return Err(McpToolError::invalid_argument(
+                "Ephemeral publication requires an ephemeral origin",
+            ));
+        };
+        for (position, ((entity_ref, text), embedding)) in passages.iter().zip(vectors).enumerate()
+        {
+            state.passages.insert(
+                (publication.origin.clone(), entity_ref.clone()),
+                IndexedPassage {
+                    text: Some(text.clone()),
+                    metadata: json!({"entity_ref":entity_ref,"source":source,"position":position}),
+                    embedding,
+                    model: model.to_string(),
+                },
+            );
+        }
+        Ok(passages.len())
+    }
+
+    fn check_publication(publication: &Publication) -> Result<(), McpToolError> {
+        if publication.is_cancelled() {
+            return Err(McpToolError::failed_precondition(
+                "Passage publication cancelled by corpus_clear_index or an overlapping corpus_purge_qa; rerun the operation to publish new data",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn retrieve(
+        &self,
+        query: &[f32],
+        k: usize,
+        min_score: f32,
+        query_model: &str,
+        query_actual_model: Option<&str>,
+    ) -> Result<Retrieval, McpToolError> {
+        let state = self.lock()?;
+        let total_indexed = state.passages.len();
+        let dimension_mismatch = state
+            .passages
+            .values()
+            .filter(|passage| passage.embedding.len() != query.len())
+            .count();
+        if total_indexed > 0 && dimension_mismatch == total_indexed {
+            let stored = state
+                .passages
+                .values()
+                .next()
+                .map_or(0, |passage| passage.embedding.len());
+            return Err(McpToolError::unavailable(format!(
+                "Query embedding has dimension {} but all {total_indexed} stored embeddings have \
+                 dimension {stored}; no stored passage can match. The configured embedding model \
+                 or HKASK_EMBEDDING_DIM changed — re-embed the corpus or clear the index.",
+                query.len()
+            )));
+        }
+        // Model gate, mirroring the dimension gate: same-width vectors from
+        // different embedding models produce meaningless cosine distances.
+        // Dimension-compatible rows whose recorded model matches neither the
+        // query's requested model nor its provider-confirmed actual model
+        // are skipped and counted — a model change degrades loudly, never
+        // silently poisons rankings.
+        let model_mismatch = state
+            .passages
+            .values()
+            .filter(|passage| {
+                passage.embedding.len() == query.len()
+                    && passage.model != query_model
+                    && !query_actual_model.is_some_and(|actual| actual == passage.model)
+            })
+            .count();
+        if total_indexed > 0 && model_mismatch == total_indexed {
+            return Err(McpToolError::unavailable(format!(
+                "Query model '{query_model}' matches none of the {model_mismatch} stored \
+                 embeddings (all recorded under a different embedding model); no stored \
+                 passage can match. The configured embedding model changed — re-embed the \
+                 corpus or clear the index."
+            )));
+        }
+        Ok(Retrieval {
+            total_indexed,
+            missing_text: state
+                .passages
+                .values()
+                .filter(|passage| passage.text.is_none())
+                .count(),
+            dimension_mismatch,
+            model_mismatch,
+            matches: search_passages(
+                state
+                    .passages
+                    .values()
+                    .filter(|passage| passage.embedding.len() == query.len())
+                    .filter(|passage| {
+                        passage.model == query_model
+                            || query_actual_model.is_some_and(|actual| actual == passage.model)
+                    }),
+                query,
+                k,
+                min_score,
+            ),
+        })
+    }
+
+    pub fn clear(&self) -> Result<usize, McpToolError> {
+        let mut state = self.lock()?;
+        for publication in state.active.iter().filter_map(Weak::upgrade) {
+            publication.cancelled.store(true, Ordering::Relaxed);
+        }
+        let count = state.passages.len();
+        state.passages.clear();
+        Ok(count)
+    }
+
+    /// expect: Purging one DB/prefix stops its warm results without losing other corpora.
+    /// [P8] Motivating: provenance-aware invalidation.
+    /// pre: DB opens; post: matching cache and pending publications are invalidated
+    /// even when subsequent durable deletion fails; failures never claim zero counts.
+    pub fn purge(&self, path: &str, passphrase: &str, prefix: &str) -> Result<Value, McpToolError> {
+        let mut state = self.lock()?;
+        let store = open_existing_memory_store(path, passphrase)?;
+        let origin = database_origin(path)?;
+        state.passages.retain(|(entry_origin, entity_ref), _| {
+            entry_origin != &origin || !entity_ref.starts_with(prefix)
+        });
+        for publication in state.active.iter().filter_map(Weak::upgrade) {
+            if publication.origin == origin && publication.scope.overlaps(prefix) {
+                publication.cancelled.store(true, Ordering::Relaxed);
+            }
+        }
+        let before = store.embedding_count().map_err(|error| {
+            map_memory_store_error(
+                error,
+                "Embedding count before purge failed; cache invalidated",
+            )
+        })?;
+        let references = store.embeddings_by_prefix(prefix).map_err(|error| {
+            map_memory_store_error(error, "Embedding query for purge failed; cache invalidated")
+        })?;
+        let mut purged = 0;
+        // Unlike MemoryStore::purge_by_prefix, the per-entity API propagates
+        // deletion errors. Exact starts_with also excludes SQL LIKE wildcards.
+        for (entity_ref, _) in references {
+            if entity_ref.starts_with(prefix) {
+                purged += store
+                    .delete_embeddings_by_entity(&entity_ref)
+                    .map_err(|error| {
+                        map_memory_store_error(
+                            error,
+                            "Embedding purge partially applied; cache invalidated",
+                        )
+                    })?;
+            }
+        }
+        // Bulk literal-prefix deletion has no recall-query cap or SQL wildcard
+        // expansion, so unrelated newer rows cannot hide matching older rows.
+        let purged_h_mems = store
+            .delete_h_mems_by_entity_prefix(prefix)
+            .map_err(|error| {
+                map_memory_store_error(
+                    error,
+                    "h_mem purge failed; embeddings already purged and cache invalidated",
+                )
+            })?;
+        let after = store.embedding_count().map_err(|error| {
+            map_memory_store_error(
+                error,
+                "Embedding count after purge failed; cache invalidated",
+            )
+        })?;
+        Ok(
+            json!({"prefix":prefix,"embeddings_before":before,"embeddings_purged":purged,"embeddings_after":after,"h_mems_purged":purged_h_mems,"h_mem_errors":0}),
+        )
+    }
+}
+
+pub(crate) fn validate_vectors(vectors: &[Vec<f32>], expected: usize) -> Result<(), McpToolError> {
+    if vectors.len() != expected
+        || vectors.iter().any(|vector| {
+            vector.len() != crate::embedding_dim() || vector.iter().any(|value| !value.is_finite())
+        })
+    {
+        return Err(McpToolError::unavailable(format!(
+            "Embedding response must contain {expected} finite vectors of dimension {}; got {} vectors",
+            crate::embedding_dim(),
+            vectors.len()
+        )));
+    }
+    Ok(())
+}
+
+/// Only selected matches are cloned; large corpus vectors stay under the owner.
+#[derive(Debug)]
+pub(crate) struct RetrievedPassage {
+    pub score: f32,
+    pub passage: IndexedPassage,
+}
+
+#[derive(Debug)]
+pub(crate) struct Retrieval {
+    pub total_indexed: usize,
+    pub missing_text: usize,
+    /// Stored embeddings whose vector length differs from the query's — they
+    /// cannot be scored and are excluded from `matches`.
+    pub dimension_mismatch: usize,
+    /// Dimension-compatible stored embeddings whose recorded model matches
+    /// neither the query's requested nor its provider-confirmed actual
+    /// model — excluded from `matches` and counted, so an embedding-model
+    /// change reads as loud degradation, never as silent cross-model
+    /// ranking or as an empty index.
+    pub model_mismatch: usize,
+    pub matches: Vec<RetrievedPassage>,
+}
+
+pub(crate) fn search_passages<'a>(
+    passages: impl Iterator<Item = &'a IndexedPassage>,
+    query: &[f32],
+    k: usize,
+    min_score: f32,
+) -> Vec<RetrievedPassage> {
+    let mut scored: Vec<_> = passages
+        .map(|passage| (crate::cosine_similarity(query, &passage.embedding), passage))
+        .filter(|(score, _)| min_score <= 0.0 || *score >= min_score)
+        .collect();
+    scored.sort_by(|left, right| right.0.total_cmp(&left.0));
+    scored.truncate(k);
+    scored
+        .into_iter()
+        .map(|(score, passage)| RetrievedPassage {
+            score,
+            passage: passage.clone(),
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Insert one indexed passage row — the shared insertion spine of the
+    /// index fixtures: the (Ephemeral("test"), chunk:{position}) key with
+    /// the passage text, entity_ref metadata, and the caller's embedding
+    /// and model. The lock scope and the row iteration stay per-test.
+    fn seed_row(state: &mut IndexState, position: usize, embedding: Vec<f32>, model: &str) {
+        let entity_ref = format!("chunk:{position}");
+        state.passages.insert(
+            (Origin::Ephemeral("test".into()), entity_ref.clone()),
+            IndexedPassage {
+                text: Some("passage".into()),
+                metadata: json!({"entity_ref": entity_ref}),
+                embedding,
+                model: model.to_string(),
+            },
+        );
+    }
+
+    fn index_with(embeddings: &[&[f32]]) -> PassageIndex {
+        let index = PassageIndex::default();
+        {
+            let mut state = index.lock().expect("index lock");
+            for (position, embedding) in embeddings.iter().enumerate() {
+                seed_row(&mut state, position, embedding.to_vec(), "test-model");
+            }
+        }
+        index
+    }
+
+    #[test]
+    fn durable_revision_keeps_passage_and_embedding_in_agreement() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("corpus.db");
+        let path = path.to_str().expect("UTF-8 fixture path");
+        let index = PassageIndex::default();
+        let entity = "corpus:test:passage";
+        let write = index.begin_durable(
+            path,
+            "semantic-fixture-key",
+            PublicationScope::Entities(vec![entity.into()]),
+            hkask_types::WebID::new(),
+        )?;
+        let vector = vec![1.0; crate::embedding_dim()];
+        let error = index
+            .publish_durable(&write, entity, "", &vector, "test-model")
+            .expect_err("empty precomputed passage cannot be normalized after embedding");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+        assert!(write.store.query_deduped_untouched(entity)?.is_empty());
+        index.publish_durable(&write, entity, "original passage", &vector, "test-model")?;
+        index.publish_durable(&write, entity, "revised passage", &vector, "test-model")?;
+        let rows = write.store.query_deduped_untouched(entity)?;
+        let row = rows
+            .iter()
+            .find(|row| row.attribute == "text")
+            .expect("passage row");
+        assert_eq!(rows.len(), 2, "one passage plus its raw method metadata");
+        assert_eq!(
+            hkask_memory::semantic_passage_for_h_mem(row).as_deref(),
+            Some("revised passage")
+        );
+        assert!(
+            write
+                .store
+                .has_embedding_for_passage(entity, "revised passage")?
+        );
+        assert!(
+            !write
+                .store
+                .has_embedding_for_passage(entity, "original passage")?
+        );
+        assert_eq!(write.store.embedding_count()?, 1);
+        let warm = index.retrieve(&vector, 5, 0.0, "test-model", None)?;
+        assert_eq!(
+            warm.matches[0].passage.text.as_deref(),
+            Some("revised passage")
+        );
+        assert!(
+            index
+                .publish_durable(&write, entity, "failed revision", &[], "test-model")
+                .is_err()
+        );
+        assert!(
+            write.store.get_by_id(&row.id)?.is_some(),
+            "invalid vector cannot replace the passage row"
+        );
+        let cold =
+            MemoryStore::open_existing(path, "semantic-fixture-key", crate::embedding_dim())?;
+        let hits = cold.search_similar(&vector, 5, "test-model", None)?;
+        assert_eq!(hits.results.len(), 1);
+        assert_eq!(
+            hits.results[0].embedding.passage_text.as_deref(),
+            Some("revised passage")
+        );
+        Ok(())
+    }
+
+    /// BH-008: a query whose dimension matches no stored embedding must fail
+    /// visibly, never return score-0.0 matches that read as irrelevant content.
+    #[test]
+    fn query_dimension_mismatch_is_surfaced() {
+        let index = index_with(&[&[0.1, 0.2, 0.3], &[0.4, 0.5, 0.6]]);
+
+        let error = index
+            .retrieve(&[1.0, 0.0], 5, 0.0, "test-model", None)
+            .expect_err("a dimension mismatch must be surfaced");
+        let message = error.to_string();
+        assert!(
+            message.contains("dimension 2"),
+            "must name the query dimension: {message}"
+        );
+        assert!(
+            message.contains("dimension 3"),
+            "must name the stored dimension: {message}"
+        );
+    }
+
+    /// A partial mismatch returns only the dimension-compatible matches and
+    /// reports how many stored embeddings were skipped.
+    #[test]
+    fn partial_dimension_mismatch_is_reported() {
+        let index = index_with(&[&[0.1, 0.2, 0.3], &[1.0, 0.0]]);
+
+        let retrieval = index
+            .retrieve(&[1.0, 0.0], 5, 0.0, "test-model", None)
+            .expect("a matching-dimension passage exists");
+        assert_eq!(retrieval.dimension_mismatch, 1);
+        assert_eq!(
+            retrieval.matches.len(),
+            1,
+            "only the matching-dimension passage is scored"
+        );
+    }
+
+    /// The model gate: same-width rows from a different embedding model are
+    /// skipped and counted, never silently ranked — the 0.6B→8B migration
+    /// class where both models emit the same vector width. A row stored
+    /// under the provider-confirmed actual form matches a query carrying
+    /// that actual identity (the requested/actual echo divergence).
+    #[test]
+    fn partial_model_mismatch_is_reported() {
+        let index = PassageIndex::default();
+        {
+            let mut state = index.lock().expect("index lock");
+            for (position, model) in [
+                (0, "OpenRouter/qwen/qwen3-embedding-8b"),
+                (1, "qwen3-embedding:0.6b"),
+                (2, "Qwen/Qwen3-Embedding-8B"),
+            ] {
+                seed_row(&mut state, position, vec![1.0, 0.0], model);
+            }
+        }
+
+        let retrieval = index
+            .retrieve(
+                &[1.0, 0.0],
+                5,
+                0.0,
+                "OpenRouter/qwen/qwen3-embedding-8b",
+                Some("Qwen/Qwen3-Embedding-8B"),
+            )
+            .expect("matching-model passages exist");
+        assert_eq!(retrieval.model_mismatch, 1, "the legacy row is counted");
+        assert_eq!(
+            retrieval.matches.len(),
+            2,
+            "requested-form and actual-form rows both match; the legacy row is skipped"
+        );
+    }
+
+    /// All dimension-compatible rows from another model must fail visibly,
+    /// never return score-0.0 matches that read as irrelevant content.
+    #[test]
+    fn total_model_mismatch_is_surfaced() {
+        let index = PassageIndex::default();
+        {
+            let mut state = index.lock().expect("index lock");
+            for position in 0..2 {
+                seed_row(&mut state, position, vec![1.0, 0.0], "qwen3-embedding:0.6b");
+            }
+        }
+
+        let error = index
+            .retrieve(&[1.0, 0.0], 5, 0.0, "test-model", None)
+            .expect_err("a total model mismatch must be surfaced");
+        let message = error.to_string();
+        assert!(
+            message.contains("different embedding model"),
+            "must name the model-change cause: {message}"
+        );
+    }
+}

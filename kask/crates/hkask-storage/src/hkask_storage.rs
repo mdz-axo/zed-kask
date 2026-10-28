@@ -1,0 +1,42 @@
+#![deny(unsafe_code)]
+#![warn(clippy::let_underscore_future)]
+//! hKask Storage — SQLite + SQLCipher storage backend
+//!
+//! Consolidated from hkask-storage + hkask-database + hkask-storage-core.
+//! Database driver abstraction and storage core foundation are now modules
+//! within this crate. Domain-specific storage modules follow.
+
+pub(crate) mod core;
+pub mod database;
+mod maintenance_inventory;
+pub mod rotation;
+pub use maintenance_inventory::{
+    ConfirmedInventory, DATABASE_CATALOG_ENV, DATABASE_CATALOG_RELATIVE_PATH, DatabaseInventory,
+    InventoryEntry, InventoryError, configure_database_catalog, database_catalog_path,
+    read_database_catalog,
+};
+
+pub use core::DatabaseDriverTrait;
+pub use core::connection::{
+    Database, DatabaseError, LeasedSqliteConnection, SqliteConnectionManager,
+};
+pub use core::{embedding_dim, open_database, open_existing, open_or_repair, sanitize_path};
+pub use database::{DatabaseDriver, SqliteDriver, WAL_PRAGMA_BATCH, init_wal_pragmas};
+pub use hkask_types::time::now_rfc3339;
+pub use rotation::{
+    RotationError, export_database_keyed, rotate_passphrase, strip_producer_tables,
+    verify_database_key,
+};
+
+pub(crate) mod embeddings;
+
+pub(crate) mod hmem;
+pub(crate) mod regulation_store;
+
+pub use embeddings::{
+    EmbeddingError, EmbeddingStore, PassageRow, SearchOutcome, SimilarityResult, StoredEmbedding,
+};
+
+pub use hkask_types::HMemId;
+pub use hmem::{HMem, HMemError, HMemStore, Provenance, TxnReads};
+pub use regulation_store::RegulationArchive;

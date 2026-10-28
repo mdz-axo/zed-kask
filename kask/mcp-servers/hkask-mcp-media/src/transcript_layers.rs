@@ -1,0 +1,1184 @@
+//! Educt transcript layers — typed, provenance-carrying annotation records
+//! over the immutable `words` array.
+//!
+//! Every layer anchors to word indices, never timestamps (the
+//! transcript-as-timeline model), and
+//! carries `LayerProvenance` (model, prompt template, created_at) — Magna
+//! Carta: system types are provenance-aware. Validation is deterministic
+//! and total: a layer that fails is rejected with the named failing
+//! invariant and is never partially applied.
+//!
+//! Layer semantics (what each kind asserts over `words`):
+//! - `SpeakerLayer`: who spoke which word range — spans must tile disjointly.
+//! - `ParagraphLayer`: discourse structure — word indices to break after.
+//! - `CorrectionLayer`: proposed text replacements over word ranges —
+//!   edits must be disjoint; `words` stays immutable, corrected text is a
+//!   derived view.
+//! - `HighlightLayer`: labeled selections (Reduct's highlights) — overlap
+//!   allowed, they are independent annotations, not a partition.
+//! - `EdlLayer`: an edit-decision list — validation delegates to the
+//!   selection algebra (Keep ops disjoint; Cut ops union).
+
+use crate::transcript::TimedWord;
+use crate::transcript_select::{Edl, SelectionError};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+/// Provenance envelope carried by every layer — which model, which prompt
+/// template, when. Layers are additive and versioned; provenance is how
+/// a stored layer stays auditable and replayable.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct LayerProvenance {
+    /// The model that produced the layer (e.g. an inference-catalog label).
+    pub model: String,
+    /// The prompt template that produced it (template name or inline hash).
+    pub prompt_template: String,
+    /// RFC 3339 creation timestamp.
+    pub created_at: String,
+}
+
+/// One speaker span: `speaker` said the words `[start_word, end_word]`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SpeakerSpan {
+    pub start_word: usize,
+    pub end_word: usize,
+    pub speaker: String,
+    /// Confidence in the attribution, 0.0–1.0.
+    pub confidence: f64,
+}
+
+/// Speaker attribution over a transcript (diarization-lite when produced by
+/// a text-cue pass; exact when produced by an audio-capable model — the
+/// provenance records which).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SpeakerLayer {
+    pub provenance: LayerProvenance,
+    pub spans: Vec<SpeakerSpan>,
+}
+
+/// Paragraph breaks: word indices after which a break occurs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ParagraphLayer {
+    pub provenance: LayerProvenance,
+    pub breaks_after: Vec<usize>,
+}
+
+/// One proposed correction: replace the text of words
+/// `[start_word, end_word]` with `replacement`. Timings are never touched.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct CorrectionEdit {
+    pub start_word: usize,
+    pub end_word: usize,
+    pub replacement: String,
+    pub reason: String,
+}
+
+/// Transcript corrections — proposals over word ranges; applying them
+/// produces a derived `full_text` view while `words` stays immutable.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct CorrectionLayer {
+    pub provenance: LayerProvenance,
+    pub edits: Vec<CorrectionEdit>,
+}
+
+/// One highlight: a labeled selection of words `[start_word, end_word]`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct HighlightEntry {
+    pub start_word: usize,
+    pub end_word: usize,
+    pub label: String,
+    pub note: String,
+}
+
+/// Highlights with labels (Reduct's highlights + labels).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct HighlightLayer {
+    pub provenance: LayerProvenance,
+    pub highlights: Vec<HighlightEntry>,
+}
+
+/// An edit-decision list over the transcript — the Reel. Ops reuse the
+/// shared selection types; validation delegates to the selection algebra.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct EdlLayer {
+    pub provenance: LayerProvenance,
+    pub ops: Vec<crate::transcript_select::EdlEntry>,
+}
+
+/// A recorded decision to project a correction layer with re-anchored
+/// timings: the working transcript interpolates each cardinality-changing
+/// edit's replacement tokens across its source range's span (equal
+/// slices), restoring timed consumers after insert/delete corrections.
+/// The layer names the correction it re-anchors; a newer correction
+/// supersedes it (the decision is per-correction). The projection is pure
+/// — recomputable from the source bundle and the correction at any time —
+/// so the layer records only the decision and its provenance.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct RealignmentLayer {
+    pub provenance: LayerProvenance,
+    /// The correction layer this realignment re-anchors.
+    pub correction_layer_id: String,
+}
+
+/// A transcript layer of any kind — the storage and tool-surface unit.
+/// Internally tagged by `kind` so one JSON value round-trips through the
+/// store and the `educt_store_layer` tool input.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TranscriptLayer {
+    Speaker(SpeakerLayer),
+    Paragraph(ParagraphLayer),
+    Correction(CorrectionLayer),
+    Highlight(HighlightLayer),
+    Edl(EdlLayer),
+    Realignment(RealignmentLayer),
+}
+
+/// Named layer-validation failures — every variant names the broken
+/// invariant (reject-with-named-reason; a failing layer is never partially
+/// applied or stored).
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum LayerValidationError {
+    /// The transcript carries no word-level timings — layers cannot anchor.
+    /// A named degradation, never an empty success.
+    #[error("transcript has no word-level timings; layers cannot anchor")]
+    NoWordTimings,
+    #[error("word index {index} out of bounds (words_count == {len})")]
+    WordIndexOutOfBounds { index: usize, len: usize },
+    #[error("reversed word range: start {start_word} > end {end_word}")]
+    ReversedRange { start_word: usize, end_word: usize },
+    /// Speaker spans and correction edits must be disjoint; overlapping
+    /// ranges are ambiguous.
+    #[error("overlapping ranges at word {word}: ranges must be disjoint for this layer kind")]
+    OverlappingRanges { word: usize },
+    #[error("empty speaker label at word {start_word}")]
+    EmptySpeakerLabel { start_word: usize },
+    #[error("speaker confidence {confidence} out of range [0.0, 1.0]")]
+    ConfidenceOutOfRange { confidence: f64 },
+    #[error("EDL validation failed: {0}")]
+    EdlSelection(SelectionError),
+}
+
+impl TranscriptLayer {
+    /// The storage kind tag (`speaker` | `paragraph` | `correction` |
+    /// `highlight` | `edl` | `realignment`).
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Speaker(_) => "speaker",
+            Self::Paragraph(_) => "paragraph",
+            Self::Correction(_) => "correction",
+            Self::Highlight(_) => "highlight",
+            Self::Edl(_) => "edl",
+            Self::Realignment(_) => "realignment",
+        }
+    }
+
+    /// The provenance envelope of the inner layer.
+    pub fn provenance(&self) -> &LayerProvenance {
+        match self {
+            Self::Speaker(layer) => &layer.provenance,
+            Self::Paragraph(layer) => &layer.provenance,
+            Self::Correction(layer) => &layer.provenance,
+            Self::Highlight(layer) => &layer.provenance,
+            Self::Edl(layer) => &layer.provenance,
+            Self::Realignment(layer) => &layer.provenance,
+        }
+    }
+
+    /// Deterministic validation against the transcript's word count.
+    ///
+    /// Reject-with-named-invariant; nothing is partially applied. An empty
+    /// transcript (`words_count == 0`) rejects every layer — no layer pass
+    /// silently succeeds on a transcript that cannot anchor.
+    pub fn validate(&self, words_count: usize) -> Result<(), LayerValidationError> {
+        if words_count == 0 {
+            return Err(LayerValidationError::NoWordTimings);
+        }
+        match self {
+            Self::Speaker(layer) => {
+                for span in &layer.spans {
+                    check_range(span.start_word, span.end_word, words_count)?;
+                    if span.speaker.trim().is_empty() {
+                        return Err(LayerValidationError::EmptySpeakerLabel {
+                            start_word: span.start_word,
+                        });
+                    }
+                    if !(0.0..=1.0).contains(&span.confidence) {
+                        return Err(LayerValidationError::ConfidenceOutOfRange {
+                            confidence: span.confidence,
+                        });
+                    }
+                }
+                check_disjoint(
+                    &layer
+                        .spans
+                        .iter()
+                        .map(|span| (span.start_word, span.end_word))
+                        .collect::<Vec<_>>(),
+                )?;
+            }
+            Self::Paragraph(layer) => {
+                // A break must reference an existing word; duplicates are
+                // tolerated (set semantics — a repeated break is a no-op,
+                // not an ambiguity).
+                for index in &layer.breaks_after {
+                    if *index >= words_count {
+                        return Err(LayerValidationError::WordIndexOutOfBounds {
+                            index: *index,
+                            len: words_count,
+                        });
+                    }
+                }
+            }
+            Self::Correction(layer) => {
+                for edit in &layer.edits {
+                    check_range(edit.start_word, edit.end_word, words_count)?;
+                }
+                check_disjoint(
+                    &layer
+                        .edits
+                        .iter()
+                        .map(|edit| (edit.start_word, edit.end_word))
+                        .collect::<Vec<_>>(),
+                )?;
+            }
+            Self::Highlight(layer) => {
+                // Overlap allowed: highlights are independent annotations,
+                // not a partition of the transcript.
+                for highlight in &layer.highlights {
+                    check_range(highlight.start_word, highlight.end_word, words_count)?;
+                }
+            }
+            Self::Edl(layer) => {
+                // Delegate to the selection algebra: bounds, non-reversed,
+                // Keep ops disjoint (Cut ops may overlap — union).
+                let edl = Edl {
+                    ops: layer.ops.clone(),
+                };
+                if let Err(error) = crate::transcript_select::edl_to_keep_ranges(words_count, &edl)
+                {
+                    return Err(LayerValidationError::EdlSelection(error));
+                }
+            }
+            Self::Realignment(_) => {
+                // The realignment decision anchors no word ranges itself —
+                // it names a correction layer, whose own ranges were
+                // validated at its store time. Only the timing precondition
+                // applies: a realignment cannot anchor on an untimed
+                // transcript any more than the correction it re-anchors.
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Range preconditions shared by every anchored layer kind.
+fn check_range(
+    start_word: usize,
+    end_word: usize,
+    words_count: usize,
+) -> Result<(), LayerValidationError> {
+    if start_word > end_word {
+        return Err(LayerValidationError::ReversedRange {
+            start_word,
+            end_word,
+        });
+    }
+    if end_word >= words_count {
+        return Err(LayerValidationError::WordIndexOutOfBounds {
+            index: end_word,
+            len: words_count,
+        });
+    }
+    Ok(())
+}
+
+/// Disjointness over (start, end) pairs — sorted-copy check so caller order
+/// is preserved (the output of validation never reorders anything).
+fn check_disjoint(ranges: &[(usize, usize)]) -> Result<(), LayerValidationError> {
+    let mut sorted: Vec<(usize, usize)> = ranges.to_vec();
+    sorted.sort();
+    for pair in sorted.windows(2) {
+        if pair[1].0 <= pair[0].1 {
+            return Err(LayerValidationError::OverlappingRanges { word: pair[1].0 });
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum CorrectionAlignmentError {
+    #[error(
+        "correction range {start_word}..={end_word} is outside the {words_count}-word transcript"
+    )]
+    InvalidRange {
+        start_word: usize,
+        end_word: usize,
+        words_count: usize,
+    },
+    #[error(
+        "correction for words {start_word}..={end_word} replaces {expected} timed words with {actual} tokens"
+    )]
+    TokenCountMismatch {
+        start_word: usize,
+        end_word: usize,
+        expected: usize,
+        actual: usize,
+    },
+}
+
+/// Project correction text onto cloned timed words without mutating the stored
+/// transcript. A replacement is timing-aligned only when each original timed
+/// word receives exactly one replacement token.
+pub fn aligned_corrected_words(
+    words: &[TimedWord],
+    edits: &[CorrectionEdit],
+) -> Result<Vec<TimedWord>, CorrectionAlignmentError> {
+    let mut projected = words.to_vec();
+    for edit in edits {
+        let Some(range) = projected.get_mut(edit.start_word..=edit.end_word) else {
+            return Err(CorrectionAlignmentError::InvalidRange {
+                start_word: edit.start_word,
+                end_word: edit.end_word,
+                words_count: words.len(),
+            });
+        };
+        let replacement_tokens = edit.replacement.split_whitespace().collect::<Vec<_>>();
+        if replacement_tokens.len() != range.len() {
+            return Err(CorrectionAlignmentError::TokenCountMismatch {
+                start_word: edit.start_word,
+                end_word: edit.end_word,
+                expected: range.len(),
+                actual: replacement_tokens.len(),
+            });
+        }
+        for (word, replacement) in range.iter_mut().zip(replacement_tokens) {
+            word.word = replacement.to_string();
+        }
+    }
+    Ok(projected)
+}
+
+/// Project correction text onto cloned timed words WITHOUT mutating the
+/// stored transcript and WITHOUT requiring one-for-one cardinality — the
+/// re-anchoring path (MF-2). For each edit replacing the source range
+/// `[start_word, end_word]` (span `words[start].start_ms` …
+/// `words[end].end_ms`) with `M` tokens:
+///
+/// - `M == N` (the range's word count): one-for-one, identical to
+///   [`aligned_corrected_words`] (source confidences retained).
+/// - `M != N`: the `M` replacement tokens slice the source span equally —
+///   token `k` gets `[start + k·span/M, start + (k+1)·span/M]` (floor ms).
+///   Monotone, non-overlapping, confined to the source span. `M == 0`
+///   (a pure deletion) contributes no tokens. Interpolated tokens carry
+///   no STT confidence (`None` — never a fabricated measurement).
+///
+/// Source words outside edited ranges are cloned untouched — source
+/// timings never move (the `transcript_linked_media` identity). The only
+/// failure is an out-of-bounds range (defensive: store-validated layers
+/// cannot produce it); cardinality never fails here by design.
+pub fn reanchored_corrected_words(
+    words: &[TimedWord],
+    edits: &[CorrectionEdit],
+) -> Result<Vec<TimedWord>, CorrectionAlignmentError> {
+    Ok(reanchored_projection(words, edits)?
+        .into_iter()
+        .map(|(word, _source_index)| word)
+        .collect())
+}
+
+/// The working-view word index → immutable source word index map, built
+/// from the same projection walk as [`reanchored_corrected_words`].
+/// Untouched and one-for-one tokens map to their own source word; an
+/// equal-slice replacement token attributes to the source word at its
+/// slice of the range (`start_word + k·N/M`, capped at `end_word`) — the
+/// index analogue of the timing interpolation.
+///
+/// Selections made over the working view (the highlight pass today; the
+/// pane's hand-highlight path is the named D5 v2 consumer, not yet wired)
+/// translate through this map before anchoring to source
+/// indices. Without it, a cardinality-changing correction makes every
+/// working-space selection overshoot the source space (observed live
+/// 2026-10-25: a highlight pass proposed word 568 against a 558-word
+/// source and the store rejected the whole layer).
+pub fn reanchored_index_map(
+    words: &[TimedWord],
+    edits: &[CorrectionEdit],
+) -> Result<Vec<usize>, CorrectionAlignmentError> {
+    Ok(reanchored_projection(words, edits)?
+        .into_iter()
+        .map(|(_word, source_index)| source_index)
+        .collect())
+}
+
+/// The shared re-anchoring walk: the projected words paired with the
+/// source word index each token originates from. One walk serves both
+/// public projections so the index map can never drift from the words.
+fn reanchored_projection(
+    words: &[TimedWord],
+    edits: &[CorrectionEdit],
+) -> Result<Vec<(TimedWord, usize)>, CorrectionAlignmentError> {
+    let mut projected: Vec<(TimedWord, usize)> = Vec::with_capacity(words.len());
+    let mut source_index = 0usize;
+    let mut sorted: Vec<&CorrectionEdit> = edits.iter().collect();
+    sorted.sort_by_key(|edit| edit.start_word);
+    for edit in sorted {
+        if edit.start_word > edit.end_word || edit.end_word >= words.len() {
+            return Err(CorrectionAlignmentError::InvalidRange {
+                start_word: edit.start_word,
+                end_word: edit.end_word,
+                words_count: words.len(),
+            });
+        }
+        if edit.start_word < source_index {
+            // Overlapping edit — unreachable through the validated store
+            // path; skip rather than double-apply (same safety net as
+            // [`corrected_text_view`]).
+            continue;
+        }
+        // Clone the untouched words before the edited range.
+        for index in source_index..edit.start_word {
+            projected.push((words[index].clone(), index));
+        }
+        let range = &words[edit.start_word..=edit.end_word];
+        let replacement_tokens = edit.replacement.split_whitespace().collect::<Vec<_>>();
+        if replacement_tokens.len() == range.len() {
+            // One-for-one: identical to the aligned projection.
+            for (offset, (word, replacement)) in range.iter().zip(replacement_tokens).enumerate() {
+                let mut word = word.clone();
+                word.word = replacement.to_string();
+                projected.push((word, edit.start_word + offset));
+            }
+        } else {
+            // Equal-slice interpolation across the source range's span;
+            // the index attribution slices the word range the same way.
+            let span_start = range[0].start_ms;
+            let span_end = range[range.len() - 1].end_ms;
+            let span = span_end.saturating_sub(span_start);
+            let count = replacement_tokens.len() as u64;
+            let range_len = range.len() as u64;
+            for (token_index, token) in replacement_tokens.iter().enumerate() {
+                let token_index = token_index as u64;
+                let attribution =
+                    edit.start_word + (token_index * range_len / count).min(range_len - 1) as usize;
+                projected.push((
+                    TimedWord {
+                        word: token.to_string(),
+                        start_ms: span_start + token_index * span / count,
+                        end_ms: span_start + (token_index + 1) * span / count,
+                        confidence: None,
+                    },
+                    attribution,
+                ));
+            }
+        }
+        source_index = edit.end_word + 1;
+    }
+    for index in source_index..words.len() {
+        projected.push((words[index].clone(), index));
+    }
+    Ok(projected)
+}
+
+/// The derived corrected-text view: apply a correction layer's edits to
+/// the rendered transcript text. `words` stays immutable — this is a pure
+/// projection, recomputable from the layer at any time (applying a
+/// correction never rewrites the ground truth it corrects).
+///
+/// Edits are expected disjoint (the store validates before persisting);
+/// an overlapping edit is skipped defensively rather than duplicating
+/// text — the validation gate is the enforcement, this is the safety net.
+pub fn corrected_text_view(words: &[TimedWord], edits: &[CorrectionEdit]) -> String {
+    let mut sorted: Vec<&CorrectionEdit> = edits.iter().collect();
+    sorted.sort_by_key(|edit| edit.start_word);
+    let mut view = String::new();
+    let mut index = 0;
+    let mut pending = sorted.iter();
+    let mut next_edit = pending.next();
+    while index < words.len() {
+        match next_edit {
+            Some(edit) if edit.start_word == index => {
+                if !view.is_empty() {
+                    view.push(' ');
+                }
+                view.push_str(&edit.replacement);
+                index = edit.end_word.saturating_add(1);
+                next_edit = pending.next();
+            }
+            Some(edit) if edit.start_word < index => {
+                // Overlapping edit — unreachable through the validated
+                // store path; skip rather than duplicate.
+                next_edit = pending.next();
+            }
+            _ => {
+                if !view.is_empty() {
+                    view.push(' ');
+                }
+                view.push_str(&words[index].word);
+                index += 1;
+            }
+        }
+    }
+    view
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{overlapping_keeps_edl, timed_words};
+    use crate::transcript_select::{EdlEntry, EdlOp, WordRange};
+
+    fn timed_word_vec(count: usize) -> Vec<TimedWord> {
+        (0..count)
+            .map(|index| TimedWord {
+                word: format!("w{index}"),
+                start_ms: index as u64 * 1000,
+                end_ms: index as u64 * 1000 + 900,
+                confidence: None,
+            })
+            .collect()
+    }
+
+    /// The index map is the identity when no edits exist.
+    #[test]
+    fn reanchored_index_map_is_identity_without_edits() {
+        let words = timed_word_vec(4);
+        let map = reanchored_index_map(&words, &[]).expect("identity map");
+        assert_eq!(map, vec![0, 1, 2, 3]);
+    }
+
+    /// A one-for-one edit keeps every working token on its own source word.
+    #[test]
+    fn reanchored_index_map_is_identity_for_one_for_one_edits() {
+        let words = timed_word_vec(4);
+        let edits = vec![CorrectionEdit {
+            start_word: 1,
+            end_word: 1,
+            replacement: "with".into(),
+            reason: "misheard".into(),
+        }];
+        let map = reanchored_index_map(&words, &edits).expect("1:1 map");
+        assert_eq!(map, vec![0, 1, 2, 3]);
+    }
+
+    /// Expansion tokens all attribute to the source word they replaced —
+    /// the observed live failure class (word 568 against a 558-word
+    /// source) becomes a mapped, in-range selection instead.
+    #[test]
+    fn reanchored_index_map_attributes_expansion_tokens_to_their_source_word() {
+        let words = timed_word_vec(3);
+        let edits = vec![CorrectionEdit {
+            start_word: 1,
+            end_word: 1,
+            replacement: "one two three".into(),
+            reason: "garbled".into(),
+        }];
+        let map = reanchored_index_map(&words, &edits).expect("expansion map");
+        assert_eq!(map, vec![0, 1, 1, 1, 2]);
+    }
+
+    /// A multi-word range sliced by more tokens spreads attribution across
+    /// the range — the index analogue of the equal-slice timing.
+    #[test]
+    fn reanchored_index_map_slices_multi_word_expansions_across_the_range() {
+        let words = timed_word_vec(4);
+        let edits = vec![CorrectionEdit {
+            start_word: 1,
+            end_word: 2,
+            replacement: "a b c d".into(),
+            reason: "garbled".into(),
+        }];
+        let map = reanchored_index_map(&words, &edits).expect("spread map");
+        assert_eq!(map, vec![0, 1, 1, 2, 2, 3]);
+    }
+
+    /// A contraction attributes its single token to the range's start.
+    #[test]
+    fn reanchored_index_map_maps_contraction_to_the_range_start() {
+        let words = timed_word_vec(5);
+        let edits = vec![CorrectionEdit {
+            start_word: 1,
+            end_word: 3,
+            replacement: "single".into(),
+            reason: "garbled".into(),
+        }];
+        let map = reanchored_index_map(&words, &edits).expect("contraction map");
+        assert_eq!(map, vec![0, 1, 4]);
+    }
+
+    fn provenance() -> LayerProvenance {
+        LayerProvenance {
+            model: "test-model".to_string(),
+            prompt_template: "test-template".to_string(),
+            created_at: "2026-08-30T00:00:00Z".to_string(),
+        }
+    }
+
+    fn speaker_span(start: usize, end: usize) -> SpeakerSpan {
+        SpeakerSpan {
+            start_word: start,
+            end_word: end,
+            speaker: "speaker-1".to_string(),
+            confidence: 0.9,
+        }
+    }
+
+    // ── SpeakerLayer ──────────────────────────────────────────────────────
+
+    #[test]
+    fn speaker_layer_validates_disjoint_spans() {
+        let layer = TranscriptLayer::Speaker(SpeakerLayer {
+            provenance: provenance(),
+            spans: vec![speaker_span(0, 2), speaker_span(3, 4)],
+        });
+        assert_eq!(layer.validate(5), Ok(()));
+    }
+
+    #[test]
+    fn speaker_layer_rejects_overlapping_spans() {
+        let layer = TranscriptLayer::Speaker(SpeakerLayer {
+            provenance: provenance(),
+            spans: vec![speaker_span(0, 3), speaker_span(2, 4)],
+        });
+        assert_eq!(
+            layer.validate(5),
+            Err(LayerValidationError::OverlappingRanges { word: 2 })
+        );
+    }
+
+    #[test]
+    fn speaker_layer_rejects_empty_label() {
+        let layer = TranscriptLayer::Speaker(SpeakerLayer {
+            provenance: provenance(),
+            spans: vec![SpeakerSpan {
+                start_word: 0,
+                end_word: 1,
+                speaker: "   ".to_string(),
+                confidence: 0.9,
+            }],
+        });
+        assert_eq!(
+            layer.validate(5),
+            Err(LayerValidationError::EmptySpeakerLabel { start_word: 0 })
+        );
+    }
+
+    #[test]
+    fn speaker_layer_rejects_out_of_range_confidence() {
+        let layer = TranscriptLayer::Speaker(SpeakerLayer {
+            provenance: provenance(),
+            spans: vec![SpeakerSpan {
+                start_word: 0,
+                end_word: 1,
+                speaker: "speaker-1".to_string(),
+                confidence: 1.5,
+            }],
+        });
+        assert_eq!(
+            layer.validate(5),
+            Err(LayerValidationError::ConfidenceOutOfRange { confidence: 1.5 })
+        );
+    }
+
+    // ── ParagraphLayer ────────────────────────────────────────────────────
+
+    #[test]
+    fn paragraph_layer_validates_in_bounds_breaks() {
+        let layer = TranscriptLayer::Paragraph(ParagraphLayer {
+            provenance: provenance(),
+            breaks_after: vec![2, 4],
+        });
+        assert_eq!(layer.validate(5), Ok(()));
+    }
+
+    #[test]
+    fn paragraph_layer_rejects_break_past_the_last_word() {
+        let layer = TranscriptLayer::Paragraph(ParagraphLayer {
+            provenance: provenance(),
+            breaks_after: vec![5],
+        });
+        assert_eq!(
+            layer.validate(5),
+            Err(LayerValidationError::WordIndexOutOfBounds { index: 5, len: 5 })
+        );
+    }
+
+    // ── CorrectionLayer ────────────────────────────────────────────────────
+
+    #[test]
+    fn correction_layer_validates_disjoint_edits() {
+        let layer = TranscriptLayer::Correction(CorrectionLayer {
+            provenance: provenance(),
+            edits: vec![
+                CorrectionEdit {
+                    start_word: 0,
+                    end_word: 0,
+                    replacement: "Hello".to_string(),
+                    reason: "misheard".to_string(),
+                },
+                CorrectionEdit {
+                    start_word: 2,
+                    end_word: 3,
+                    replacement: "world".to_string(),
+                    reason: "misheard".to_string(),
+                },
+            ],
+        });
+        assert_eq!(layer.validate(5), Ok(()));
+    }
+
+    #[test]
+    fn correction_layer_rejects_overlapping_edits() {
+        let layer = TranscriptLayer::Correction(CorrectionLayer {
+            provenance: provenance(),
+            edits: vec![
+                CorrectionEdit {
+                    start_word: 0,
+                    end_word: 2,
+                    replacement: "a".to_string(),
+                    reason: "r".to_string(),
+                },
+                CorrectionEdit {
+                    start_word: 2,
+                    end_word: 3,
+                    replacement: "b".to_string(),
+                    reason: "r".to_string(),
+                },
+            ],
+        });
+        assert_eq!(
+            layer.validate(5),
+            Err(LayerValidationError::OverlappingRanges { word: 2 })
+        );
+    }
+
+    // ── HighlightLayer ─────────────────────────────────────────────────────
+
+    #[test]
+    fn highlight_layer_allows_overlap() {
+        // Highlights are independent annotations — overlap is not ambiguity.
+        let layer = TranscriptLayer::Highlight(HighlightLayer {
+            provenance: provenance(),
+            highlights: vec![
+                HighlightEntry {
+                    start_word: 0,
+                    end_word: 3,
+                    label: "theme-a".to_string(),
+                    note: String::new(),
+                },
+                HighlightEntry {
+                    start_word: 2,
+                    end_word: 4,
+                    label: "theme-b".to_string(),
+                    note: String::new(),
+                },
+            ],
+        });
+        assert_eq!(layer.validate(5), Ok(()));
+    }
+
+    #[test]
+    fn highlight_layer_rejects_out_of_bounds() {
+        let layer = TranscriptLayer::Highlight(HighlightLayer {
+            provenance: provenance(),
+            highlights: vec![HighlightEntry {
+                start_word: 0,
+                end_word: 5,
+                label: "theme".to_string(),
+                note: String::new(),
+            }],
+        });
+        assert_eq!(
+            layer.validate(5),
+            Err(LayerValidationError::WordIndexOutOfBounds { index: 5, len: 5 })
+        );
+    }
+
+    // ── EdlLayer ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn edl_layer_delegates_to_the_selection_algebra() {
+        let layer = TranscriptLayer::Edl(EdlLayer {
+            provenance: provenance(),
+            ops: vec![
+                EdlEntry {
+                    range: WordRange::new(0, 1),
+                    op: EdlOp::Keep,
+                },
+                EdlEntry {
+                    range: WordRange::new(3, 4),
+                    op: EdlOp::Keep,
+                },
+            ],
+        });
+        assert_eq!(layer.validate(5), Ok(()));
+    }
+
+    #[test]
+    fn edl_layer_rejects_overlapping_keeps_via_the_algebra() {
+        let layer = overlapping_keeps_edl(provenance());
+        assert_eq!(
+            layer.validate(5),
+            Err(LayerValidationError::EdlSelection(
+                SelectionError::OverlappingKeepOps { word: 2 }
+            ))
+        );
+    }
+
+    // ── Shared invariants ──────────────────────────────────────────────────
+
+    #[test]
+    fn every_layer_kind_rejects_empty_transcripts() {
+        let layers = vec![
+            TranscriptLayer::Speaker(SpeakerLayer {
+                provenance: provenance(),
+                spans: vec![],
+            }),
+            TranscriptLayer::Paragraph(ParagraphLayer {
+                provenance: provenance(),
+                breaks_after: vec![],
+            }),
+            TranscriptLayer::Correction(CorrectionLayer {
+                provenance: provenance(),
+                edits: vec![],
+            }),
+            TranscriptLayer::Highlight(HighlightLayer {
+                provenance: provenance(),
+                highlights: vec![],
+            }),
+            TranscriptLayer::Edl(EdlLayer {
+                provenance: provenance(),
+                ops: vec![],
+            }),
+        ];
+        for layer in layers {
+            assert_eq!(
+                layer.validate(0),
+                Err(LayerValidationError::NoWordTimings),
+                "kind {} must reject empty transcripts",
+                layer.kind()
+            );
+        }
+    }
+
+    #[test]
+    fn tagged_json_round_trips_every_kind() {
+        let layers = vec![
+            TranscriptLayer::Speaker(SpeakerLayer {
+                provenance: provenance(),
+                spans: vec![speaker_span(0, 1)],
+            }),
+            TranscriptLayer::Paragraph(ParagraphLayer {
+                provenance: provenance(),
+                breaks_after: vec![1],
+            }),
+            TranscriptLayer::Correction(CorrectionLayer {
+                provenance: provenance(),
+                edits: vec![CorrectionEdit {
+                    start_word: 0,
+                    end_word: 0,
+                    replacement: "x".to_string(),
+                    reason: "r".to_string(),
+                }],
+            }),
+            TranscriptLayer::Highlight(HighlightLayer {
+                provenance: provenance(),
+                highlights: vec![HighlightEntry {
+                    start_word: 0,
+                    end_word: 1,
+                    label: "l".to_string(),
+                    note: "n".to_string(),
+                }],
+            }),
+            TranscriptLayer::Edl(EdlLayer {
+                provenance: provenance(),
+                ops: vec![EdlEntry {
+                    range: WordRange::new(0, 1),
+                    op: EdlOp::Cut,
+                }],
+            }),
+        ];
+        for layer in layers {
+            let json = serde_json::to_value(&layer).expect("layer serializes");
+            assert_eq!(json["kind"], serde_json::json!(layer.kind()));
+            let back: TranscriptLayer = serde_json::from_value(json).expect("layer deserializes");
+            assert_eq!(back, layer);
+        }
+    }
+
+    #[test]
+    fn edl_op_serializes_snake_case() {
+        let json = serde_json::to_value(EdlOp::Keep).expect("serializes");
+        assert_eq!(json, serde_json::json!("keep"));
+    }
+
+    // ── corrected_text_view ──────────────────────────────────────────
+
+    fn edit(start: usize, end: usize, replacement: &str) -> CorrectionEdit {
+        CorrectionEdit {
+            start_word: start,
+            end_word: end,
+            replacement: replacement.to_string(),
+            reason: "misheard".to_string(),
+        }
+    }
+
+    #[test]
+    fn corrected_view_applies_edits_as_a_derived_projection() {
+        let words = timed_words(&["alpa", "beta", "gama"]);
+        let edits = vec![edit(0, 0, "alpha"), edit(2, 2, "gamma")];
+        assert_eq!(corrected_text_view(&words, &edits), "alpha beta gamma");
+    }
+
+    #[test]
+    fn corrected_view_without_edits_returns_the_rendered_text() {
+        let words = timed_words(&["alpa", "beta", "gama"]);
+        assert_eq!(corrected_text_view(&words, &[]), "alpa beta gama");
+    }
+
+    /// dcterms:identifier: `transcript_layers::aligned_corrected_words`
+    /// expect: Corrected working words keep the original timing of the exact word they replace.
+    /// [P1] Motivating: Transcript corrections become navigable without rewriting timing evidence.
+    #[test]
+    fn aligned_correction_projects_text_onto_immutable_word_timings() {
+        let words = timed_words(&["alpa", "beta", "gama"]);
+        let edits = vec![edit(0, 0, "alpha"), edit(2, 2, "gamma")];
+
+        let projected = aligned_corrected_words(&words, &edits).expect("aligned projection");
+
+        assert_eq!(words[0].word, "alpa", "original evidence changed");
+        assert_eq!(projected[0].word, "alpha");
+        assert_eq!(projected[0].start_ms, words[0].start_ms);
+        assert_eq!(projected[0].end_ms, words[0].end_ms);
+        assert_eq!(projected[1].word, "beta");
+        assert_eq!(projected[2].word, "gamma");
+        assert_eq!(projected[2].start_ms, words[2].start_ms);
+        assert_eq!(projected[2].end_ms, words[2].end_ms);
+    }
+
+    /// dcterms:identifier: `transcript_layers::aligned_corrected_words`
+    /// expect: A correction that changes timed-word cardinality is visibly unaligned, never assigned invented timestamps.
+    /// [P1] Motivating: Search and export must not claim timing precision the correction does not possess.
+    #[test]
+    fn cardinality_changing_correction_is_explicitly_unaligned() {
+        let words = timed_words(&["the", "cinder", "ela", "curve"]);
+        let edits = vec![edit(1, 2, "Cinderella")];
+
+        let error = aligned_corrected_words(&words, &edits).expect_err("must be unaligned");
+
+        assert_eq!(
+            error,
+            CorrectionAlignmentError::TokenCountMismatch {
+                start_word: 1,
+                end_word: 2,
+                expected: 2,
+                actual: 1,
+            }
+        );
+    }
+
+    /// dcterms:identifier: `transcript_layers::reanchored_corrected_words`
+    /// expect: The re-anchoring projection restores a timed working
+    /// transcript after a cardinality-changing correction — replacement
+    /// tokens slice the edited range's source span equally, never leave
+    /// it, and the words outside edited ranges keep their exact source
+    /// timings.
+    /// [P1] Motivating: timed consumers (locate, highlight, SRT) must work
+    /// again after an insert/delete correction, without moving any source
+    /// timing (MF-2).
+    #[test]
+    fn reanchored_insertion_slices_the_source_span_equally() {
+        let words = timed_words(&["the", "cinder", "ela", "curve"]);
+        // Replaces word 2 (span 2000..2500) with two tokens.
+        let edits = vec![edit(2, 2, "Cinder ella")];
+
+        let projected = reanchored_corrected_words(&words, &edits).expect("re-anchoring succeeds");
+
+        assert_eq!(
+            projected
+                .iter()
+                .map(|word| word.word.as_str())
+                .collect::<Vec<_>>(),
+            ["the", "cinder", "Cinder", "ella", "curve"],
+            "insertion grows the word list"
+        );
+        // Equal slices of the 500ms source span: [2000, 2500] → [2000, 2500].
+        assert_eq!(projected[2].start_ms, 2000);
+        assert_eq!(projected[2].end_ms, 2250);
+        assert_eq!(projected[3].start_ms, 2250);
+        assert_eq!(projected[3].end_ms, 2500);
+        // Interpolated tokens carry no STT confidence — never fabricated.
+        assert_eq!(projected[2].confidence, None);
+        assert_eq!(projected[3].confidence, None);
+        // Untouched words keep their exact source timings.
+        assert_eq!(projected[0].start_ms, words[0].start_ms);
+        assert_eq!(projected[0].end_ms, words[0].end_ms);
+        assert_eq!(projected[4].start_ms, words[3].start_ms);
+        assert_eq!(projected[4].end_ms, words[3].end_ms);
+    }
+
+    /// dcterms:identifier: `transcript_layers::reanchored_corrected_words`
+    /// expect: A deletion correction (empty replacement) drops its range
+    /// from the projection; a many-to-few rewrite slices the span across
+    /// the surviving tokens.
+    #[test]
+    fn reanchored_deletion_and_many_to_few_slice_the_span() {
+        let words = timed_words(&["um", "uh", "so", "right"]);
+
+        // Pure deletion: words 0-1 vanish.
+        let deleted = reanchored_corrected_words(&words, &[edit(0, 1, "")]).expect("deletion");
+        assert_eq!(
+            deleted
+                .iter()
+                .map(|word| word.word.as_str())
+                .collect::<Vec<_>>(),
+            ["so", "right"]
+        );
+        assert_eq!(deleted[0].start_ms, words[2].start_ms);
+
+        // Many-to-few: three words (span 0..2500) become one token spanning
+        // the whole source range.
+        let rewritten =
+            reanchored_corrected_words(&words, &[edit(0, 2, "Hello")]).expect("rewrite");
+        assert_eq!(
+            rewritten
+                .iter()
+                .map(|word| word.word.as_str())
+                .collect::<Vec<_>>(),
+            ["Hello", "right"]
+        );
+        assert_eq!(rewritten[0].start_ms, 0);
+        assert_eq!(rewritten[0].end_ms, 2500);
+    }
+
+    /// dcterms:identifier: `transcript_layers::reanchored_corrected_words`
+    /// expect: A one-for-one edit inside a re-anchored projection keeps the
+    /// aligned path's exact semantics — source confidence retained, timing
+    /// untouched — so re-anchoring never degrades an already-aligned edit.
+    #[test]
+    fn reanchored_one_for_one_edit_keeps_aligned_semantics() {
+        let words = vec![TimedWord {
+            word: "alpa".to_string(),
+            start_ms: 100,
+            end_ms: 600,
+            confidence: Some(hkask_types::Confidence::new(0.9)),
+        }];
+        let projected =
+            reanchored_corrected_words(&words, &[edit(0, 0, "alpha")]).expect("one-for-one");
+        assert_eq!(projected[0].word, "alpha");
+        assert_eq!(
+            projected[0].confidence,
+            Some(hkask_types::Confidence::new(0.9))
+        );
+        assert_eq!(projected[0].start_ms, 100);
+        assert_eq!(projected[0].end_ms, 600);
+    }
+
+    /// dcterms:identifier: `transcript_layers::reanchored_corrected_words`
+    /// expect: A zero-duration source span is degenerate but deterministic
+    /// — every replacement token gets the same instant, never an error,
+    /// never a negative or reversed range.
+    #[test]
+    fn reanchored_zero_duration_span_is_degenerate_but_deterministic() {
+        let words = vec![TimedWord {
+            word: "ela".to_string(),
+            start_ms: 2000,
+            end_ms: 2000,
+            confidence: None,
+        }];
+        let projected = reanchored_corrected_words(&words, &[edit(0, 0, "Cinder ella")])
+            .expect("zero-duration re-anchors");
+        assert_eq!(projected.len(), 2);
+        assert_eq!((projected[0].start_ms, projected[0].end_ms), (2000, 2000));
+        assert_eq!((projected[1].start_ms, projected[1].end_ms), (2000, 2000));
+    }
+
+    /// dcterms:identifier: `transcript_layers::reanchored_corrected_words`
+    /// expect: The interpolation contract holds across an exhaustive sweep
+    /// — every token valid (start ≤ end), monotone, non-overlapping, and
+    /// confined to the source range's span, with the span's endpoints exact
+    /// (first token starts at the range start, last ends at the range end)
+    /// — for every span and replacement-token count in the sweep.
+    /// [P1] Motivating: the equal-slice interpolation is the timed consumers'
+    /// restoration path (MF-2); the unit tests pin concrete cases, this
+    /// sweep is the contract's second oracle (the identities asserted are
+    /// the Phase-4 spec candidates, independent of the slicing formula).
+    #[test]
+    fn reanchored_interpolation_contract_holds_across_a_sweep() {
+        for span in (0..=500usize).step_by(7) {
+            for token_count in 1..=12usize {
+                let range_start = 1000u64;
+                let range_end = range_start + span as u64;
+                let words = vec![
+                    TimedWord {
+                        word: "src".to_string(),
+                        start_ms: range_start,
+                        end_ms: range_end,
+                        confidence: None,
+                    },
+                    TimedWord {
+                        word: "after".to_string(),
+                        start_ms: 9000,
+                        end_ms: 9500,
+                        confidence: None,
+                    },
+                ];
+                let replacement = (0..token_count)
+                    .map(|index| format!("t{index}"))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let projected = reanchored_corrected_words(&words, &[edit(0, 0, &replacement)])
+                    .expect("sweep re-anchors");
+                assert_eq!(
+                    projected.len(),
+                    token_count + 1,
+                    "span={span} tokens={token_count}"
+                );
+                let tokens = &projected[..token_count];
+                assert_eq!(
+                    tokens[0].start_ms, range_start,
+                    "first token starts at the range start: span={span} tokens={token_count}"
+                );
+                assert_eq!(
+                    tokens[token_count - 1].end_ms,
+                    range_end,
+                    "last token ends at the range end: span={span} tokens={token_count}"
+                );
+                for (index, token) in tokens.iter().enumerate() {
+                    assert!(
+                        token.start_ms <= token.end_ms,
+                        "valid token: span={span} tokens={token_count} at {index}"
+                    );
+                    assert!(
+                        token.start_ms >= range_start && token.end_ms <= range_end,
+                        "confined to the source span: span={span} tokens={token_count} at {index}"
+                    );
+                    if index > 0 {
+                        let prev = &tokens[index - 1];
+                        assert!(
+                            prev.start_ms <= token.start_ms && prev.end_ms <= token.start_ms,
+                            "monotone and non-overlapping: span={span} tokens={token_count} at {index}"
+                        );
+                    }
+                }
+                let tail = &projected[token_count];
+                assert_eq!(tail.word, "after");
+                assert_eq!((tail.start_ms, tail.end_ms), (9000, 9500));
+            }
+        }
+    }
+
+    #[test]
+    fn corrected_view_handles_whole_transcript_replacement() {
+        let words = timed_words(&["um", "uh", "so"]);
+        let edits = vec![edit(0, 2, "[filler removed]")];
+        assert_eq!(corrected_text_view(&words, &edits), "[filler removed]");
+    }
+
+    #[test]
+    fn corrected_view_handles_multi_word_replacement_ranges() {
+        let words = timed_words(&["the", "cinder", "ela", "curve"]);
+        let edits = vec![edit(1, 2, "Cinderella")];
+        assert_eq!(corrected_text_view(&words, &edits), "the Cinderella curve");
+    }
+}

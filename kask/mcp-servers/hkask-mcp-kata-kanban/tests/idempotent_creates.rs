@@ -1,0 +1,1486 @@
+//! Replay protection end-to-end, through the real tool surface.
+//!
+//! `src/idempotency.rs` unit-tests the store. These tests exercise the thing that
+//! actually matters: calling `kanban_task_create` twice with the same
+//! `idempotency_key` must leave **one** task on the board, not two.
+//!
+//! # Why this layer needs its own tests
+//!
+//! The store can be perfectly correct while the wiring is wrong — a tool that
+//! forgets to thread its key, or reserves without recording, would pass every
+//! store test and still duplicate work in production. These tests go through
+//! `kanban_*` tool calls and then *count rows*, so they fail if either the store
+//! or its wiring regresses.
+//!
+//! # What a replayed call looks like
+//!
+//! The original response, plus `replayed: true`. Callers can therefore tell "your
+//! retry was absorbed" from "this just ran", which the panel uses to avoid
+//! reporting a spurious second create.
+
+#![cfg(test)]
+
+use hkask_mcp_kata_kanban::types::*;
+use hkask_mcp_kata_kanban::{KanbanServer, KanbanService};
+use hkask_mcp_server::server::McpToolError;
+use hkask_mcp_swarm::LocalAgentRegistry;
+use hkask_storage::HMemStore;
+use hkask_storage::database::sqlite::SqliteDriver;
+use hkask_types::{InferenceError, McpErrorKind, WebID, WorktreeSpawnPort};
+use rmcp::handler::server::wrapper::Parameters;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+
+use hkask_mcp_kata_kanban::test_support::{UnavailableWorktreeSpawn, parse};
+
+/// Build a server whose task- and goal-replay stores share `driver`, with
+/// caller identity `webid` — the construction the shared-driver tests
+/// hand-rolled before this helper existed.
+fn make_server_over_driver(
+    driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver>,
+    webid: WebID,
+) -> KanbanServer {
+    let idempotency = Arc::new(
+        hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(Arc::clone(&driver))
+            .expect("idempotency schema"),
+    );
+    KanbanServer::new(
+        webid,
+        KanbanService::new(HMemStore::from_driver(driver).expect("hmem store")),
+        Arc::new(LocalAgentRegistry::new("/nonexistent")),
+        Arc::new(UnavailableWorktreeSpawn),
+        Arc::clone(&idempotency),
+        idempotency,
+    )
+}
+
+/// Build a server whose replay-protection store shares the kanban driver, as
+/// production does. Returns the server plus the shared driver so a test can
+/// simulate a second process over the same database.
+fn make_server_with_shared_driver() -> (
+    KanbanServer,
+    Arc<dyn hkask_storage::database::driver::DatabaseDriver>,
+) {
+    let driver = SqliteDriver::in_memory_driver();
+    let server = make_server_over_driver(Arc::clone(&driver), WebID::new());
+    (server, driver)
+}
+
+fn make_server() -> KanbanServer {
+    make_server_with_shared_driver().0
+}
+
+async fn create_board(server: &KanbanServer, name: &str, key: Option<&str>) -> serde_json::Value {
+    let out = server
+        .kanban_board_create(Parameters(BoardCreateRequest {
+            name: name.to_string(),
+            columns: None,
+            idempotency_key: key.map(str::to_string),
+            done_requires_verification: None,
+        }))
+        .await
+        .expect("tool ok");
+    parse(&out)
+}
+
+async fn create_task(
+    server: &KanbanServer,
+    board_id: &str,
+    title: &str,
+    key: Option<&str>,
+) -> Result<serde_json::Value, McpToolError> {
+    let out = server
+        .kanban_task_create(Parameters(TaskCreateRequest {
+            board_id: board_id.to_string(),
+            title: title.to_string(),
+            description: None,
+            criteria: None,
+            advances: Vec::new(),
+            idempotency_key: key.map(str::to_string),
+        }))
+        .await?;
+    Ok(parse(&out))
+}
+
+/// How many tasks the board actually holds. The row count is the oracle: a
+/// response-shape assertion alone would not catch a duplicate write.
+async fn task_count(server: &KanbanServer, board_id: &str) -> usize {
+    let out = server
+        .kanban_task_list(Parameters(TaskListRequest {
+            board_id: board_id.to_string(),
+            status: None,
+        }))
+        .await
+        .expect("tool ok");
+    parse(&out)
+        .get("tasks")
+        .and_then(|t| t.as_array())
+        .map(Vec::len)
+        .unwrap_or_else(|| panic!("task_list did not return a tasks array: {out}"))
+}
+
+async fn board_count(server: &KanbanServer) -> usize {
+    let out = server
+        .kanban_board_list(Parameters(BoardListRequest {}))
+        .await
+        .expect("tool ok");
+    parse(&out)
+        .get("boards")
+        .and_then(|b| b.as_array())
+        .map(Vec::len)
+        .unwrap_or_else(|| panic!("board_list did not return a boards array: {out}"))
+}
+
+// ── The headline guarantee ──────────────────────────────────────────────────
+
+/// Two `kanban_task_create` calls with the same key create ONE task.
+///
+/// This is the regression for the duplicate-create hazard: an interrupted call
+/// has an unknown outcome, so the client must be able to retry it. Before replay
+/// protection, that retry produced a second task.
+/// A throwaway per-agent stats store for tests — these tests exercise
+/// idempotent creates, not delegation, so the store is never written.
+
+#[tokio::test]
+async fn replayed_task_create_yields_one_task() {
+    let server = make_server();
+    let board = create_board(&server, "Board", None).await;
+    let board_id = board["board_id"].as_str().expect("board_id").to_string();
+
+    let first = create_task(&server, &board_id, "Write tests", Some("gesture-1"))
+        .await
+        .expect("tool ok");
+    let first_id = first["task_id"].as_str().expect("task_id").to_string();
+
+    // The retry an interrupted call would issue: same key, same args.
+    let replay = create_task(&server, &board_id, "Write tests", Some("gesture-1"))
+        .await
+        .expect("tool ok");
+
+    assert_eq!(
+        replay["task_id"].as_str(),
+        Some(first_id.as_str()),
+        "a replay must return the ORIGINAL task id, not mint a new one"
+    );
+    assert_eq!(
+        replay["replayed"].as_bool(),
+        Some(true),
+        "a replayed response must be marked so the caller can tell it was absorbed"
+    );
+    assert_eq!(
+        task_count(&server, &board_id).await,
+        1,
+        "the board must hold exactly one task - two would be the duplicate-create bug"
+    );
+}
+
+/// Same guarantee for boards.
+#[tokio::test]
+async fn replayed_board_create_yields_one_board() {
+    let server = make_server();
+    let first = create_board(&server, "Only one", Some("board-gesture")).await;
+    let replay = create_board(&server, "Only one", Some("board-gesture")).await;
+
+    assert_eq!(
+        replay["board_id"].as_str(),
+        first["board_id"].as_str(),
+        "a replay must return the original board id"
+    );
+    assert_eq!(
+        board_count(&server).await,
+        1,
+        "exactly one board must exist after a replayed create"
+    );
+}
+
+/// expect: "Import creates one coherent board whose tasks occupy the parsed columns, even after replay."
+/// [P3] Motivating: Generative Space — imported work is immediately usable in its intended workflow.
+/// [P2] Constraining: Transparent Imperfection — replay cannot duplicate a partially published board.
+/// pre: mermaid defines Backlog, In Progress, and Done columns and the same key is submitted twice
+/// post: one board exists; both responses name it; tasks retain their parsed statuses
+#[tokio::test]
+async fn imported_custom_columns_use_configured_statuses_and_replay_one_board() {
+    let server = make_server();
+    let markdown = "kanban\n%% kanban column status: backlog\n  section Backlog\n    Planned work\n%% kanban column status: in_progress\n  section In Progress\n    Active work\n%% kanban column status: done\n  section Done\n    Finished work\n";
+
+    let first_output = server
+        .kanban_board_import(Parameters(BoardImportRequest {
+            markdown: markdown.to_string(),
+            board_name: Some("Imported flow".to_string()),
+            idempotency_key: Some("import-gesture".to_string()),
+        }))
+        .await
+        .expect("first import succeeds");
+    let first = parse(&first_output);
+    let board_id = first["board_id"]
+        .as_str()
+        .expect("import response carries board_id")
+        .to_string();
+
+    let replay_output = server
+        .kanban_board_import(Parameters(BoardImportRequest {
+            markdown: markdown.to_string(),
+            board_name: Some("Imported flow".to_string()),
+            idempotency_key: Some("import-gesture".to_string()),
+        }))
+        .await
+        .expect("replayed import succeeds");
+    let replay = parse(&replay_output);
+    assert_eq!(replay["board_id"].as_str(), Some(board_id.as_str()));
+    assert_eq!(replay["replayed"].as_bool(), Some(true));
+    assert_eq!(board_count(&server).await, 1);
+
+    let list_output = server
+        .kanban_task_list(Parameters(TaskListRequest {
+            board_id,
+            status: None,
+        }))
+        .await
+        .expect("imported task list succeeds");
+    let listed = parse(&list_output);
+    let tasks = listed["tasks"]
+        .as_array()
+        .expect("task list response carries tasks");
+    let status_for = |title: &str| {
+        tasks
+            .iter()
+            .find(|task| task["title"].as_str() == Some(title))
+            .and_then(|task| task["status"].as_str())
+    };
+    assert_eq!(status_for("Planned work"), Some("backlog"));
+    assert_eq!(status_for("Active work"), Some("in_progress"));
+    assert_eq!(status_for("Finished work"), Some("done"));
+}
+
+/// expect: "A failed import publishes no board, so retrying its key creates exactly one complete board."
+/// [P3] Motivating: Generative Space — retry recovers the requested workflow without duplication.
+/// [P2] Constraining: Transparent Imperfection — a late storage failure leaves no partial effect.
+/// pre: insertion of the imported task index is forced to fail on the first call
+/// post: first call leaves zero boards; same-key retry after recovery leaves one board and one task
+#[tokio::test]
+async fn failed_import_rolls_back_before_same_key_retry() {
+    let (server, driver) = make_server_with_shared_driver();
+    let markdown =
+        "kanban\n%% kanban column status: backlog\n  section Backlog\n    Planned work\n";
+    driver
+        .execute_batch(
+            "CREATE TRIGGER reject_import_index BEFORE INSERT ON hmems
+             WHEN NEW.entity LIKE 'kanban:board_tasks:%'
+             BEGIN SELECT RAISE(FAIL, 'forced import index failure'); END;",
+        )
+        .expect("install failure trigger");
+
+    let first = server
+        .kanban_board_import(Parameters(BoardImportRequest {
+            markdown: markdown.to_string(),
+            board_name: Some("Retry import".to_string()),
+            idempotency_key: Some("failed-import-gesture".to_string()),
+        }))
+        .await;
+    assert!(first.is_err());
+    assert_eq!(board_count(&server).await, 0);
+    let raw_store = HMemStore::from_driver(driver.clone()).expect("raw h_mem store");
+    assert!(
+        raw_store
+            .query_by_entity("kanban:board")
+            .expect("board rows")
+            .is_empty()
+    );
+    assert!(
+        raw_store
+            .query_by_entity("kanban:task")
+            .expect("task rows")
+            .is_empty()
+    );
+    assert!(
+        raw_store
+            .query_by_entity_prefix("kanban:board_tasks:", 100)
+            .expect("index rows")
+            .is_empty()
+    );
+
+    driver
+        .execute_batch("DROP TRIGGER reject_import_index;")
+        .expect("remove failure trigger");
+    server
+        .kanban_board_import(Parameters(BoardImportRequest {
+            markdown: markdown.to_string(),
+            board_name: Some("Retry import".to_string()),
+            idempotency_key: Some("failed-import-gesture".to_string()),
+        }))
+        .await
+        .expect("same-key retry succeeds after rollback");
+    assert_eq!(board_count(&server).await, 1);
+    let boards_output = server
+        .kanban_board_list(Parameters(BoardListRequest {}))
+        .await
+        .expect("board list succeeds");
+    let boards = parse(&boards_output);
+    let board_id = boards
+        .get("boards")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|rows| rows.first())
+        .and_then(|board| board.get("board_id"))
+        .and_then(serde_json::Value::as_str)
+        .expect("retried board has an id");
+    assert_eq!(task_count(&server, board_id).await, 1);
+    assert_eq!(
+        raw_store
+            .query_by_entity("kanban:board")
+            .expect("board rows")
+            .len(),
+        1
+    );
+    assert_eq!(
+        raw_store
+            .query_by_entity("kanban:task")
+            .expect("task rows")
+            .len(),
+        1
+    );
+    assert_eq!(
+        raw_store
+            .query_by_entity_prefix("kanban:board_tasks:", 100)
+            .expect("index rows")
+            .len(),
+        1
+    );
+}
+
+/// Hammering the same key never produces a second row.
+#[tokio::test]
+async fn repeated_replays_never_duplicate() {
+    let server = make_server();
+    let board = create_board(&server, "Board", None).await;
+    let board_id = board["board_id"].as_str().expect("board_id").to_string();
+
+    for _ in 0..5 {
+        create_task(&server, &board_id, "Same gesture", Some("k"))
+            .await
+            .expect("tool ok");
+    }
+    assert_eq!(
+        task_count(&server, &board_id).await,
+        1,
+        "five replays of one gesture must still yield one task"
+    );
+}
+
+// ── Keys must not over-suppress ─────────────────────────────────────────────
+
+/// Distinct keys are distinct work.
+///
+/// The inverse failure of the duplicate bug: an over-eager store that collapsed
+/// different gestures would silently drop real work the operator asked for.
+#[tokio::test]
+async fn different_keys_create_different_tasks() {
+    let server = make_server();
+    let board = create_board(&server, "Board", None).await;
+    let board_id = board["board_id"].as_str().expect("board_id").to_string();
+
+    let a = create_task(&server, &board_id, "First", Some("k-a"))
+        .await
+        .expect("tool ok");
+    let b = create_task(&server, &board_id, "Second", Some("k-b"))
+        .await
+        .expect("tool ok");
+
+    assert_ne!(
+        a["task_id"].as_str(),
+        b["task_id"].as_str(),
+        "distinct keys are distinct gestures and must both create"
+    );
+    assert_eq!(task_count(&server, &board_id).await, 2);
+}
+
+#[tokio::test]
+async fn changed_request_with_same_key_is_rejected_without_effect() {
+    let server = make_server();
+    let board = create_board(&server, "Board", None).await;
+    let board_id = board["board_id"].as_str().expect("board_id");
+    create_task(&server, board_id, "Original", Some("same-key"))
+        .await
+        .expect("first create");
+    let error = create_task(&server, board_id, "Changed", Some("same-key"))
+        .await
+        .expect_err("changed payload cannot replay an old result");
+    assert_eq!(error.kind, McpErrorKind::InvalidArgument);
+    assert_eq!(task_count(&server, board_id).await, 1);
+}
+
+#[tokio::test]
+async fn other_webid_cannot_replay_a_key_on_shared_driver() {
+    let (owner, driver) = make_server_with_shared_driver();
+    let first = create_board(&owner, "Owner board", Some("shared-key")).await;
+    let other = make_server_over_driver(driver, WebID::new());
+    let error = other
+        .kanban_board_create(Parameters(BoardCreateRequest {
+            name: "Owner board".to_string(),
+            columns: None,
+            idempotency_key: Some("shared-key".to_string()),
+            done_requires_verification: None,
+        }))
+        .await
+        .expect_err("another caller must not see the saved response");
+    assert_eq!(error.kind, McpErrorKind::PermissionDenied);
+    assert_eq!(board_count(&other).await, 0);
+    assert_eq!(board_count(&owner).await, 1);
+    assert!(first["board_id"].is_string());
+}
+
+#[tokio::test]
+async fn changed_import_after_board_deletion_cannot_replay_old_result() {
+    let server = make_server();
+    let markdown =
+        "kanban\n%% kanban column status: backlog\n  section Backlog\n    Original task\n";
+    let first = parse(
+        &server
+            .kanban_board_import(Parameters(BoardImportRequest {
+                markdown: markdown.to_string(),
+                board_name: None,
+                idempotency_key: Some("import-key".to_string()),
+            }))
+            .await
+            .expect("first import"),
+    );
+    let board_id = first["board_id"].as_str().expect("board id");
+    server
+        .kanban_board_delete(Parameters(BoardDeleteRequest {
+            board_id: board_id.to_string(),
+        }))
+        .await
+        .expect("delete board");
+    let error = server
+        .kanban_board_import(Parameters(BoardImportRequest {
+            markdown: markdown.replace("Original task", "Different task"),
+            board_name: None,
+            idempotency_key: Some("import-key".to_string()),
+        }))
+        .await
+        .expect_err("changed import must not return a deleted board");
+    assert_eq!(error.kind, McpErrorKind::InvalidArgument);
+    assert_eq!(board_count(&server).await, 0);
+}
+
+#[tokio::test]
+async fn legacy_unbound_key_is_unknown_and_cannot_be_reused() {
+    let driver = SqliteDriver::in_memory_driver();
+    driver
+        .execute_batch(
+            "CREATE TABLE idempotency_keys (tool TEXT NOT NULL, key TEXT NOT NULL, \
+         response TEXT, created_at TEXT NOT NULL, PRIMARY KEY (tool, key)); \
+         INSERT INTO idempotency_keys VALUES \
+         ('kanban_board_create', 'legacy', '{\"board_id\":\"old\"}', '2020-01-01');",
+        )
+        .expect("old schema with unbound key");
+    let server = make_server_over_driver(driver, WebID::new());
+    for name in ["Original", "Changed"] {
+        let error = server
+            .kanban_board_create(Parameters(BoardCreateRequest {
+                name: name.to_string(),
+                columns: None,
+                idempotency_key: Some("legacy".to_string()),
+                done_requires_verification: None,
+            }))
+            .await
+            .expect_err("unbound legacy key must never replay or rerun");
+        assert_eq!(error.kind, McpErrorKind::Unavailable);
+        assert!(error.message.contains("unknown prior identity"));
+    }
+    assert_eq!(board_count(&server).await, 0);
+}
+
+#[test]
+fn request_digest_is_canonical_sha256_not_raw_payload() {
+    use hkask_mcp_kata_kanban::idempotency::request_sha256;
+    assert_eq!(
+        request_sha256(&serde_json::json!({})).expect("digest"),
+        "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    );
+    let a = serde_json::json!({ "name": "sensitive", "columns": [1, 2] });
+    let b = serde_json::json!({ "columns": [1, 2], "name": "sensitive" });
+    assert_eq!(
+        request_sha256(&a).expect("digest"),
+        request_sha256(&b).expect("digest")
+    );
+    assert!(!request_sha256(&a).expect("digest").contains("sensitive"));
+}
+
+#[test]
+fn request_digest_matches_nested_unicode_canonical_json() {
+    use hkask_mcp_kata_kanban::idempotency::request_sha256;
+    let canonical = r#"{"a":{"é":"雪","😀":[{"a":"café","z":"水"},"🚀"]},"z":"naïve"}"#;
+    let reordered = r#"{"z":"naïve","a":{"😀":[{"z":"水","a":"café"},"🚀"],"é":"雪"}}"#;
+    let reversed = r#"{"a":{"é":"雪","😀":["🚀",{"a":"café","z":"水"}]},"z":"naïve"}"#;
+    // Independent oracle: printf %s of each canonical UTF-8 literal | sha256sum.
+    let expected = "ca140eebb0f7f40afa83458bea26bf5f748dd8a539097c87cd25f52fabbbcbdc";
+    for input in [canonical, reordered] {
+        let request: serde_json::Value = serde_json::from_str(input).expect("valid Unicode JSON");
+        assert_eq!(request_sha256(&request).expect("digest"), expected);
+    }
+    let request: serde_json::Value = serde_json::from_str(reversed).expect("valid reversed JSON");
+    let reversed_digest = request_sha256(&request).expect("digest");
+    assert_eq!(
+        reversed_digest,
+        "085879e1681c6c0356a52e83d1a79fa199d0d477492ae07b52339da3c52fc8b1"
+    );
+    assert_ne!(
+        reversed_digest, expected,
+        "array order must remain significant"
+    );
+}
+
+#[test]
+fn request_digest_matches_sha256_padding_and_block_boundaries() {
+    use hkask_mcp_kata_kanban::idempotency::request_sha256;
+    // sha256sum oracle: double quote, n-2 ASCII a bytes, double quote; no newline.
+    for (byte_length, expected) in [
+        (
+            55,
+            "2ae89a8121a3f9d2709899b414da4c60234316951093ce35f41ce954a09533f4",
+        ),
+        (
+            56,
+            "9b68496ab8c784a9ed22d25a7e3aada1736d7097061bb3149f3d66f1e22ceeef",
+        ),
+        (
+            63,
+            "813662a26c997431c1990ca2424fad200f23983afe7b5543e2daf2748da424a2",
+        ),
+        (
+            64,
+            "1cd1b6277a35426076612315059afa72e6903b84575ebdd1507d73697be9dbd3",
+        ),
+        (
+            65,
+            "e7d55ca10614618e5755859f93ac280712a04f76466e7bc65e4f488f1153ec70",
+        ),
+        (
+            119,
+            "9b40e0ad78bc52a3b16ada42ba7bb8f00e1ba071356abbcc1a159715b57f7ff8",
+        ),
+        (
+            120,
+            "decf5e51fc0969aa2a06512dde0d3521a7ecd297ea81212ca626a65d2d4a1716",
+        ),
+        (
+            127,
+            "8af8654acacbc631d4761b34fc3a906e44d57e74694e51932487c1b385c34eb3",
+        ),
+        (
+            128,
+            "00cdc781d3e84e6c2894efdf9b8bee5cf598bc9e14523bc0b172ae0b983f85cd",
+        ),
+        (
+            129,
+            "361badde49b367483c6172fbef26a09598f3814fe1509cac8231f9fa97d1c30a",
+        ),
+        (
+            1025,
+            "fc3474f967ea27589330a5d542c6f2d0bc35796cb7279ddf7f0d5ab09a1cb348",
+        ),
+    ] {
+        let request = serde_json::Value::String("a".repeat(byte_length - 2));
+        let payload = serde_json::to_vec(&request).expect("serialized JSON string");
+        assert_eq!(
+            payload.len(),
+            byte_length,
+            "serialized bytes include both quotes"
+        );
+        assert_eq!(
+            request_sha256(&request).expect("digest"),
+            expected,
+            "SHA-256 mismatch for {byte_length} serialized bytes"
+        );
+    }
+}
+
+#[tokio::test]
+async fn task_list_exposes_description_for_edit_prefill() {
+    let server = make_server();
+    let board = create_board(&server, "Board", None).await;
+    let board_id = board["board_id"].as_str().expect("board id");
+    let created = server
+        .kanban_task_create(Parameters(TaskCreateRequest {
+            board_id: board_id.to_string(),
+            title: "Editable".to_string(),
+            description: Some("Keep this text".to_string()),
+            criteria: None,
+            advances: Vec::new(),
+            idempotency_key: None,
+        }))
+        .await
+        .expect("create task");
+    let list = parse(
+        &server
+            .kanban_task_list(Parameters(TaskListRequest {
+                board_id: board_id.to_string(),
+                status: None,
+            }))
+            .await
+            .expect("list tasks"),
+    );
+    assert_eq!(list["tasks"][0]["task_id"], parse(&created)["task_id"]);
+    assert_eq!(list["tasks"][0]["description"], "Keep this text");
+}
+
+/// Omitting the key keeps the old behavior: every call is new work.
+///
+/// Protection is opt-in, so existing callers (and the agent, which does not send
+/// keys) are unaffected.
+#[tokio::test]
+async fn omitted_key_preserves_unprotected_behavior() {
+    let server = make_server();
+    let board = create_board(&server, "Board", None).await;
+    let board_id = board["board_id"].as_str().expect("board_id").to_string();
+
+    create_task(&server, &board_id, "One", None)
+        .await
+        .expect("tool ok");
+    create_task(&server, &board_id, "One", None)
+        .await
+        .expect("tool ok");
+
+    assert_eq!(
+        task_count(&server, &board_id).await,
+        2,
+        "without a key there is no replay protection - two calls are two tasks"
+    );
+}
+
+/// A key used for one tool must not suppress a different tool.
+#[tokio::test]
+async fn keys_do_not_collide_across_tools() {
+    let server = make_server();
+    let board = create_board(&server, "Board", Some("shared-key")).await;
+    let board_id = board["board_id"].as_str().expect("board_id").to_string();
+
+    let task = create_task(&server, &board_id, "Task", Some("shared-key"))
+        .await
+        .expect("tool ok");
+    assert!(
+        task.get("task_id").is_some(),
+        "the same key on a different tool must still do its work, got: {task}"
+    );
+    assert_eq!(task_count(&server, &board_id).await, 1);
+}
+
+// ── Failure and degradation paths ───────────────────────────────────────────
+
+/// A failed call releases its key, so a corrected retry succeeds.
+///
+/// Without the release, a rejected call would poison its key: the retry would be
+/// told "outcome unknown" for work that demonstrably never happened.
+#[tokio::test]
+async fn failed_call_releases_the_key_for_a_clean_retry() {
+    let server = make_server();
+    // A bad board id fails validation before any write.
+    let failed = create_task(&server, "not-a-board-id", "Task", Some("retry-me"))
+        .await
+        .expect_err("a malformed board id must fail before any write");
+    assert!(
+        matches!(failed.kind, McpErrorKind::InvalidArgument),
+        "expected a structured invalid-argument error for a malformed board id, got: {:?}",
+        failed
+    );
+
+    // Same key, now with a valid board: must run, not report "outcome unknown".
+    let board = create_board(&server, "Board", None).await;
+    let board_id = board["board_id"].as_str().expect("board_id").to_string();
+    let retried = create_task(&server, &board_id, "Task", Some("retry-me"))
+        .await
+        .expect("tool ok");
+
+    assert!(
+        retried.get("task_id").is_some(),
+        "a key from a cleanly-failed call must be reusable, got: {retried}"
+    );
+    assert_eq!(task_count(&server, &board_id).await, 1);
+}
+
+/// An empty key is rejected rather than silently treated as "no protection".
+///
+/// Silently ignoring it would give the caller the opposite of what it asked for.
+#[tokio::test]
+async fn empty_key_is_rejected() {
+    let server = make_server();
+    let board = create_board(&server, "Board", None).await;
+    let board_id = board["board_id"].as_str().expect("board_id").to_string();
+
+    let error = create_task(&server, &board_id, "Task", Some("   "))
+        .await
+        .expect_err("a whitespace-only key must be refused, not silently ignored");
+    assert!(
+        matches!(error.kind, McpErrorKind::InvalidArgument),
+        "a whitespace-only key must be refused as invalid_argument, got: {:?}",
+        error
+    );
+    assert_eq!(
+        task_count(&server, &board_id).await,
+        0,
+        "a refused call must not have created anything"
+    );
+}
+
+/// A replay from a *second server instance* with the same WebID and database is absorbed.
+///
+/// This is the real deployment shape: the governed `McpRuntime` instance and the
+/// per-project `ContextServerStore` instance both open the same kanban DB. An
+/// in-memory-only store would pass every single-process test and still duplicate
+/// here.
+#[tokio::test]
+async fn replay_is_absorbed_across_processes() {
+    let (process_a, shared_driver) = make_server_with_shared_driver();
+    let board = create_board(&process_a, "Board", None).await;
+    let board_id = board["board_id"].as_str().expect("board_id").to_string();
+
+    let first = create_task(&process_a, &board_id, "Cross-process", Some("shared"))
+        .await
+        .expect("tool ok");
+    let first_id = first["task_id"].as_str().expect("task_id").to_string();
+
+    // A second server over the same database — the two-instance production shape.
+    let store = HMemStore::from_driver(shared_driver.clone()).expect("hmem store");
+    let process_b = KanbanServer::new(
+        process_a.webid,
+        KanbanService::new(store),
+        Arc::new(LocalAgentRegistry::new("/nonexistent")),
+        Arc::new(UnavailableWorktreeSpawn),
+        Arc::new(
+            hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(shared_driver)
+                .expect("idempotency schema"),
+        ),
+        Arc::new(
+            hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(
+                SqliteDriver::in_memory_driver(),
+            )
+            .expect("idempotency schema"),
+        ),
+    );
+
+    let replay = create_task(&process_b, &board_id, "Cross-process", Some("shared"))
+        .await
+        .expect("tool ok");
+    assert_eq!(
+        replay["task_id"].as_str(),
+        Some(first_id.as_str()),
+        "a replay in another process must return the first process's task id"
+    );
+    assert_eq!(
+        task_count(&process_a, &board_id).await,
+        1,
+        "cross-process replay must not duplicate the task"
+    );
+}
+
+/// When protection is only process-local, the response says so.
+///
+/// Per the repo's advertised-invariant rule: a guarantee that is weaker than it
+/// looks must be labelled, not assumed. The in-memory store cannot dedupe across
+/// a restart, so a caller relying on that must be able to tell.
+#[tokio::test]
+async fn non_durable_protection_is_labelled_in_the_response() {
+    let store = HMemStore::from_driver(SqliteDriver::in_memory_driver()).expect("hmem store");
+    // The in-memory (non-durable) replay-protection backend.
+    let server = KanbanServer::new(
+        WebID::new(),
+        KanbanService::new(store),
+        Arc::new(LocalAgentRegistry::new("/nonexistent")),
+        Arc::new(UnavailableWorktreeSpawn),
+        Arc::new(
+            hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(
+                SqliteDriver::in_memory_driver(),
+            )
+            .expect("idempotency schema"),
+        ),
+        Arc::new(
+            hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(
+                SqliteDriver::in_memory_driver(),
+            )
+            .expect("idempotency schema"),
+        ),
+    );
+
+    let board = create_board(&server, "Board", Some("labelled")).await;
+    assert_eq!(
+        board["idempotency_durable"].as_bool(),
+        Some(false),
+        "a process-local guarantee must be labelled so an operator is not told a call \
+         was replay-protected across restarts when it was not, got: {board}"
+    );
+
+    // The guarantee still holds within the process.
+    let replay = create_board(&server, "Board", Some("labelled")).await;
+    assert_eq!(replay["board_id"].as_str(), board["board_id"].as_str());
+    assert_eq!(board_count(&server).await, 1);
+}
+
+/// A durable store does NOT add the label, so its absence is meaningful.
+/// Built over a driver that explicitly claims durability — the simulated
+/// file-backed-DB shape (the pool is in-memory; the claim is explicit
+/// because the driver cannot detect its own pool's stance).
+#[tokio::test]
+async fn durable_protection_carries_no_degradation_label() {
+    let pool = SqliteDriver::in_memory_pool().expect("pool");
+    let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
+        Arc::new(SqliteDriver::new(pool).with_durability(true));
+    let server = make_server_over_driver(driver, WebID::new());
+    let board = create_board(&server, "Board", Some("durable")).await;
+    assert!(
+        board.get("idempotency_durable").is_none(),
+        "a durable store must not emit the degradation marker, or the marker would \
+         carry no information, got: {board}"
+    );
+}
+
+async fn listed_goal_ids(server: &KanbanServer) -> Vec<String> {
+    let out = server
+        .kanban_goal_list(Parameters(GoalListRequest {}))
+        .await
+        .expect("tool ok");
+    let listed = parse(&out);
+    listed
+        .as_array()
+        .expect("goals array")
+        .iter()
+        .filter_map(|g| g["id"].as_str().map(str::to_string))
+        .collect()
+}
+
+// ── Goal replay protection: durable, shared with the kanban DB ───────────
+
+async fn create_goal(
+    server: &KanbanServer,
+    goal_text: &str,
+    key: Option<&str>,
+) -> serde_json::Value {
+    let out = server
+        .kanban_goal_create(Parameters(GoalCreateRequest {
+            goal_text: goal_text.to_string(),
+            criteria: vec![GoalCriterionInput {
+                description: "observable criterion".to_string(),
+            }],
+            source: hkask_mcp_kata_kanban::GoalSource {
+                interaction_id: "turn-1".into(),
+                session_id: "session-1".into(),
+                source: "explicit-spec".into(),
+            },
+            forecast: None,
+            supersedes: None,
+            task_id: None,
+            idempotency_key: key.map(str::to_string),
+        }))
+        .await
+        .expect("tool ok");
+    parse(&out)
+}
+
+/// Replay protection across two handles to the same store. True file-backed
+/// reopen and canonical delivery are covered in goal_lifecycle.rs.
+#[tokio::test]
+async fn goal_replay_across_handles_preserves_the_live_goal() {
+    let webid = WebID::new();
+    let driver = SqliteDriver::in_memory_driver();
+    let make_process = || make_server_over_driver(driver.clone(), webid);
+    let process_a = make_process();
+    let first = create_goal(&process_a, "Goal", Some("goal-key")).await;
+    let first_id = first["id"].as_str().expect("goal_id").to_string();
+
+    // A second server over the same durable kanban DB — the restart shape.
+    // Both the idempotency store and the goal store are intact.
+    let process_b = make_process();
+
+    let second = create_goal(&process_b, "Goal", Some("goal-key")).await;
+    let second_id = second["id"].as_str().expect("goal_id").to_string();
+    assert_eq!(
+        second_id, first_id,
+        "a re-create after restart must replay the persisted goal, not mint a duplicate"
+    );
+
+    // The replayed goal is live on the new process: listable (same owner).
+    let ids = listed_goal_ids(&process_b).await;
+    assert!(
+        ids.contains(&first_id),
+        "the persisted goal must survive the restart in the store, got: {ids:?}"
+    );
+
+    let full = process_b
+        .kanban_goal_get(Parameters(GoalGetRequest {
+            goal_id: first_id.clone(),
+        }))
+        .await
+        .expect("full goal");
+    let full = parse(&full);
+    assert_eq!(full["criteria"][0]["description"], "observable criterion");
+    assert_eq!(full["id"], first_id);
+}
+
+#[test]
+fn in_memory_drivers_report_not_durable() {
+    let store = hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(
+        SqliteDriver::in_memory_driver(),
+    )
+    .expect("store init");
+    assert!(
+        !store.is_durable(),
+        "an in-memory sqlite driver must not claim cross-restart replay protection"
+    );
+}
+
+/// Within one process, a keyed goal create is replay-protected — the goal
+/// replay store (sharing the kanban driver) absorbs the retry and returns
+/// the original goal. The in-memory test driver honestly reports
+/// process-local durability, so the response carries
+/// `idempotency_durable: false`.
+#[tokio::test]
+async fn goal_replay_is_absorbed_within_the_process() {
+    let server = make_server();
+    let first = create_goal(&server, "Goal", Some("goal-key")).await;
+    assert_eq!(
+        first["idempotency_durable"].as_bool(),
+        Some(false),
+        "a process-local (in-memory driver) store must label its replay protection as non-durable, got: {first}"
+    );
+
+    let replay = create_goal(&server, "Goal", Some("goal-key")).await;
+    assert_eq!(
+        replay["id"].as_str(),
+        first["id"].as_str(),
+        "an in-process retry must return the original goal"
+    );
+    assert_eq!(
+        replay["replayed"].as_bool(),
+        Some(true),
+        "an in-process retry must be marked as a replay, got: {replay}"
+    );
+}
+
+// ── Wire contract ──────────────────────────────────────────────────────────
+
+/// The field name the panel sends must be the field name the server reads.
+///
+/// The panel injects `idempotency_key` into a raw `serde_json` object
+/// (`kanban_panel::attach_idempotency_key`) rather than building a typed request,
+/// so nothing at compile time ties the two sides together. A rename on either
+/// side would silently disable replay protection: `#[serde(default)]` makes the
+/// server accept the request and quietly treat every retry as new work.
+///
+/// This drives the real deserialization path to pin the contract.
+#[test]
+fn wire_field_name_matches_what_clients_send() {
+    // Exactly the shape `attach_idempotency_key` produces.
+    let from_panel = serde_json::json!({
+        "board_id": "b-1",
+        "title": "Write tests",
+        "idempotency_key": "gesture-123",
+    });
+    let parsed: TaskCreateRequest =
+        serde_json::from_value(from_panel).expect("the panel's payload must deserialize");
+    assert_eq!(
+        parsed.idempotency_key.as_deref(),
+        Some("gesture-123"),
+        "the server must read the same field name the panel writes; a rename on \
+         either side silently disables replay protection"
+    );
+
+    let board: BoardCreateRequest =
+        serde_json::from_value(serde_json::json!({ "name": "B", "idempotency_key": "k" }))
+            .expect("board payload deserializes");
+    assert_eq!(board.idempotency_key.as_deref(), Some("k"));
+
+    let spawn: TaskSpawnRequest = serde_json::from_value(serde_json::json!({
+        "task_id": "t-1",
+        "delegation_level": "standard",
+        "idempotency_key": "k",
+    }))
+    .expect("spawn payload deserializes");
+    assert_eq!(spawn.idempotency_key.as_deref(), Some("k"));
+}
+
+// ── Spawn on an unfunded ledger ─────────────────────────────────────────────
+
+/// `kanban_task_spawn` is not blocked by an unfunded ledger.
+///
+/// A kanban board does not need funding, and neither do local swarm agents: they
+/// run on the operator's own substrate, so there is nothing for the server to
+/// withhold. Before the local funding gate was removed, this call returned
+/// `permission_denied: "insufficient local credits: have 0, need 10 — fund via
+/// swarm_fund_local"` and never reached the work at all.
+///
+/// The spawn still fails here — no inference port is wired in a test binary — but
+/// it must fail *past* the funding check. The assertion is therefore about which
+/// failure occurs, which is the only honest thing to assert without a live model.
+#[tokio::test]
+async fn spawn_is_not_blocked_by_an_unfunded_ledger() {
+    let server = make_server();
+    let board = create_board(&server, "Board", None).await;
+    let board_id = board["board_id"].as_str().expect("board_id").to_string();
+    let task = create_task(&server, &board_id, "Spawn me", None)
+        .await
+        .expect("tool ok");
+    let task_id = task["task_id"].as_str().expect("task_id").to_string();
+
+    let error = server
+        .kanban_task_spawn(Parameters(TaskSpawnRequest {
+            task_id,
+            idempotency_key: Some("spawn-gesture".to_string()),
+            delegation_level: "standard".to_string(),
+            delegated_skills: vec![],
+            memory_scope: None,
+            swarm_id: None,
+        }))
+        .await
+        .expect_err("spawn fails without a wired inference port");
+
+    assert!(error.message.contains("No fallback was started"), "{error}");
+
+    let retry = server
+        .kanban_task_spawn(Parameters(TaskSpawnRequest {
+            task_id: task["task_id"].as_str().expect("task id").into(),
+            idempotency_key: Some("spawn-gesture".into()),
+            delegation_level: "standard".into(),
+            delegated_skills: vec![],
+            memory_scope: None,
+            swarm_id: None,
+        }))
+        .await
+        .expect_err("unknown spawn outcome must not repeat");
+    assert!(retry.message.contains("outcome is unknown"), "{retry}");
+    assert!(
+        error.message.contains("reconcile before retrying"),
+        "{error}"
+    );
+
+    assert!(
+        !error.message.contains("insufficient local credits"),
+        "an unfunded ledger must NOT block a local spawn - the kanban board and local \
+         agents run on the operator's own substrate, so there is nothing to fund. \
+         Got: {}",
+        error.message
+    );
+    assert!(
+        !error.message.contains("swarm_fund_local"),
+        "the spawn path must not tell the operator to fund a ledger that is not a \
+         gate. Got: {}",
+        error.message
+    );
+}
+
+// ── kanban_task_move PKO execution-status annotation ────────────────────────
+
+/// A status transition must carry the execution-axis annotation: the new
+/// status mapped to its PKO execution-status individual via the shared
+/// vocabulary bridge (`hkask_bridge_ontology::pko::kanban_status_to_pko_execution`),
+/// not a local re-implementation. Only statuses PKO v2.0.0 publishes
+/// individuals for are mapped (InProgress, Completed, Paused); the
+/// pre-execution and review statuses omit the field rather than force a
+/// nonexistent individual.
+#[tokio::test]
+async fn task_move_carries_pko_execution_status_for_every_standard_transition() {
+    let server = make_server();
+    let board = create_board(&server, "pko-board", None).await;
+    let board_id = board["board_id"].as_str().expect("board id").to_string();
+    let task = create_task(&server, &board_id, "pko task", None)
+        .await
+        .expect("task ok");
+    let task_id = task["task_id"].as_str().expect("task id").to_string();
+
+    // The state machine requires backlog → ready → in_progress → review → done.
+    // `ready` has no published PKO individual — the field is omitted.
+    let out = server
+        .kanban_task_move(Parameters(TaskMoveRequest {
+            task_id: task_id.clone(),
+            target_status: "ready".to_string(),
+        }))
+        .await
+        .expect("move ok");
+    let parsed = parse(&out);
+    assert!(
+        parsed["pko_execution_status"].is_null(),
+        "moving to ready must omit the PKO execution status (no published individual), got: {parsed}"
+    );
+    // Statuses PKO v2.0.0 publishes individuals for carry the annotation.
+    let out = server
+        .kanban_task_move(Parameters(TaskMoveRequest {
+            task_id: task_id.clone(),
+            target_status: "in_progress".to_string(),
+        }))
+        .await
+        .expect("move ok");
+    let parsed = parse(&out);
+    assert_eq!(
+        parsed["pko_execution_status"].as_str(),
+        Some("pko:InProgress"),
+        "moving to in_progress must carry the PKO execution status, got: {parsed}"
+    );
+    // Statuses PKO publishes no individual for (review) omit the field —
+    // never a forced nonexistent status.
+    let out = server
+        .kanban_task_move(Parameters(TaskMoveRequest {
+            task_id: task_id.clone(),
+            target_status: "review".to_string(),
+        }))
+        .await
+        .expect("move ok");
+    let parsed = parse(&out);
+    assert!(
+        parsed["pko_execution_status"].is_null(),
+        "moving to review must omit the PKO execution status (no published individual), got: {parsed}"
+    );
+    let out = server
+        .kanban_task_move(Parameters(TaskMoveRequest {
+            task_id: task_id.clone(),
+            target_status: "done".to_string(),
+        }))
+        .await
+        .expect("move ok");
+    let parsed = parse(&out);
+    assert_eq!(
+        parsed["pko_execution_status"].as_str(),
+        Some("pko:Completed"),
+        "moving to done must carry the PKO execution status, got: {parsed}"
+    );
+}
+
+// ── Replay protection across the spawn's post-effect failure ──────────
+
+/// Counting worktree-spawn stub: SUCCEEDS and counts, so a duplicate spawn
+/// is observable as a count above one (the plan's "counting successful
+/// spawn port").
+struct CountingWorktreeSpawn {
+    spawns: std::sync::atomic::AtomicUsize,
+}
+
+impl WorktreeSpawnPort for CountingWorktreeSpawn {
+    fn create_worktree_thread<'a>(
+        &'a self,
+        _prompt: &'a str,
+        _title: &'a str,
+        _worktree_name: Option<&'a str>,
+        _base_ref: Option<&'a str>,
+        _allowed_tools: &'a [String],
+    ) -> Pin<Box<dyn Future<Output = Result<String, InferenceError>> + Send + 'a>> {
+        self.spawns
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async { Ok("worktree wt-1 ready (test stub)".to_string()) })
+    }
+}
+
+/// A spawn-test server whose worktree port SUCCEEDS and counts, plus the
+/// shared driver (for reopen tests) and the port (for spawn counting).
+fn make_spawn_server() -> (
+    KanbanServer,
+    Arc<dyn hkask_storage::database::driver::DatabaseDriver>,
+    Arc<CountingWorktreeSpawn>,
+) {
+    let driver = SqliteDriver::in_memory_driver();
+    let idempotency_driver = driver.clone();
+    let store = HMemStore::from_driver(driver.clone()).expect("hmem store init");
+    let service = KanbanService::new(store);
+    let idempotency =
+        hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(idempotency_driver)
+            .expect("idempotency schema");
+    let port = Arc::new(CountingWorktreeSpawn {
+        spawns: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let server = KanbanServer::new(
+        WebID::new(),
+        service,
+        Arc::new(LocalAgentRegistry::new("/nonexistent")),
+        Arc::clone(&port) as Arc<dyn WorktreeSpawnPort>,
+        Arc::new(idempotency),
+        Arc::new(
+            hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(
+                SqliteDriver::in_memory_driver(),
+            )
+            .expect("idempotency schema"),
+        ),
+    );
+    (server, driver, port)
+}
+
+async fn spawn_task(
+    server: &KanbanServer,
+    task_id: &str,
+    key: Option<&str>,
+) -> Result<serde_json::Value, McpToolError> {
+    let out = server
+        .kanban_task_spawn(Parameters(TaskSpawnRequest {
+            task_id: task_id.to_string(),
+            idempotency_key: key.map(str::to_string),
+            delegation_level: "standard".to_string(),
+            delegated_skills: vec![],
+            memory_scope: None,
+            swarm_id: None,
+        }))
+        .await?;
+    Ok(parse(&out))
+}
+
+async fn board_and_task(server: &KanbanServer) -> String {
+    let board = create_board(server, "Board", None).await;
+    let board_id = board["board_id"].as_str().expect("board_id").to_string();
+    let task = create_task(server, &board_id, "Spawn me", None)
+        .await
+        .expect("tool ok");
+    task["task_id"].as_str().expect("task_id").to_string()
+}
+
+/// A post-spawn bookkeeping failure (the result note's task comment)
+/// must not fail the call — failing it releases the replay-protection claim
+/// and a same-key retry spawns a SECOND agent. The spawn succeeds, the
+/// partial outcome is recorded and surfaced, and the retry REPLAYS it.
+#[tokio::test]
+async fn post_spawn_comment_failure_keeps_replay_protection() {
+    let (server, _driver, port) = make_spawn_server();
+    let task_id = board_and_task(&server).await;
+
+    // One-shot fault: the NEXT task_comment (the post-spawn result note —
+    // the pre-spawn config comment writes directly, not via task_comment)
+    // fails after the agent thread already exists.
+    server.service.fail_next_comments(1);
+
+    let first = spawn_task(&server, &task_id, Some("spawn-gesture"))
+        .await
+        .expect("the spawn itself succeeded — the comment failure is folded into the response");
+    assert!(
+        first["message"]
+            .as_str()
+            .expect("message")
+            .contains("pending")
+    );
+    assert!(
+        first.get("result_note_error").is_some(),
+        "the partial outcome must be surfaced in the response: {first}"
+    );
+    assert_eq!(port.spawns.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+    // Same-key retry: REPLAYS the recorded partial result — no second agent.
+    let retry = spawn_task(&server, &task_id, Some("spawn-gesture"))
+        .await
+        .expect("the retry replays the recorded partial result");
+    assert_eq!(
+        retry["replayed"].as_bool(),
+        Some(true),
+        "the retry must be a replay, not a re-run: {retry}"
+    );
+    assert!(
+        retry.get("result_note_error").is_some(),
+        "the replayed partial result keeps its partial marker: {retry}"
+    );
+    assert_eq!(
+        port.spawns.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "a same-key retry after a post-spawn bookkeeping failure must not \
+         spawn a second agent"
+    );
+}
+
+/// Two CONCURRENT same-key spawns admit at most one agent — the
+/// reserve INSERT is atomic, so exactly one call runs the work; the other
+/// replays the recorded response or is refused pending (claim preserved).
+#[tokio::test]
+async fn concurrent_same_key_spawns_admit_one_agent() {
+    let (server, _driver, port) = make_spawn_server();
+    let task_id = board_and_task(&server).await;
+
+    let (first, second) = tokio::join!(
+        spawn_task(&server, &task_id, Some("race")),
+        spawn_task(&server, &task_id, Some("race")),
+    );
+    assert_eq!(
+        port.spawns.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "concurrent same-key spawns must admit exactly one agent"
+    );
+    match (&first, &second) {
+        (Ok(a), Ok(b)) => {
+            assert!(
+                a["replayed"].as_bool() == Some(true) || b["replayed"].as_bool() == Some(true),
+                "when both concurrent calls succeed, one must be the replay: {a} / {b}"
+            );
+        }
+        (Ok(_), Err(error)) | (Err(error), Ok(_)) => {
+            assert!(
+                error.message.contains("did not complete"),
+                "the loser of the race must be refused with the pending-claim \
+                 verdict, not re-run: {error:?}"
+            );
+        }
+        (Err(a), Err(b)) => panic!("both concurrent spawns failed: {a:?}; {b:?}"),
+    }
+}
+
+/// A claim reserved but never recorded (a previous attempt died
+/// mid-work — external acceptance before response recording) survives a
+/// server restart on the shared database and REFUSES the retry: the spawn
+/// is not re-run, so no duplicate agent.
+#[tokio::test]
+async fn pending_claim_survives_reopen_and_refuses_the_spawn() {
+    let (server, driver, port) = make_spawn_server();
+    let task_id = board_and_task(&server).await;
+    assert_eq!(port.spawns.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+    // Simulate the crashed attempt: the key was reserved, the response was
+    // never recorded (the server died between the phases).
+    let crashed_store =
+        hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(driver.clone())
+            .expect("idempotency schema");
+    let request = serde_json::json!({
+        "task_id": task_id, "delegation_level": "standard",
+        "delegated_skills": [], "memory_scope": null, "swarm_id": null,
+    });
+    let digest =
+        hkask_mcp_kata_kanban::idempotency::request_sha256(&request).expect("request digest");
+    assert_eq!(
+        crashed_store
+            .reserve(
+                "kanban_task_spawn",
+                "crashed",
+                &server.webid.to_string(),
+                &digest
+            )
+            .expect("reserve"),
+        hkask_mcp_kata_kanban::idempotency::Reservation::Fresh
+    );
+    drop(crashed_store);
+
+    // A second server over the same database — the restart.
+    let restarted = KanbanServer::new(
+        server.webid,
+        KanbanService::new(HMemStore::from_driver(driver.clone()).expect("hmem store")),
+        Arc::new(LocalAgentRegistry::new("/nonexistent")),
+        Arc::new(CountingWorktreeSpawn {
+            spawns: std::sync::atomic::AtomicUsize::new(0),
+        }) as Arc<dyn WorktreeSpawnPort>,
+        Arc::new(
+            hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(driver)
+                .expect("idempotency schema"),
+        ),
+        Arc::new(
+            hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(
+                SqliteDriver::in_memory_driver(),
+            )
+            .expect("idempotency schema"),
+        ),
+    );
+
+    let error = spawn_task(&restarted, &task_id, Some("crashed"))
+        .await
+        .expect_err("a pending claim refuses the retry");
+    assert!(
+        error.message.contains("did not complete"),
+        "the refusal must name the unknown outcome: {error:?}"
+    );
+    assert_eq!(
+        port.spawns.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "the spawn must not re-run under a pending claim"
+    );
+}
+
+/// Control: a PRE-effect failure (validation) releases the claim, so
+/// the same key can be retried successfully once the input is corrected.
+#[tokio::test]
+async fn pre_effect_failure_releases_the_claim_for_a_clean_retry() {
+    let (server, _driver, port) = make_spawn_server();
+    let task_id = board_and_task(&server).await;
+
+    // Pre-effect failure: an unparseable task id never reaches the spawn.
+    let _error = spawn_task(&server, "not-a-task-id", Some("clean-retry"))
+        .await
+        .expect_err("an invalid task id fails");
+    assert_eq!(port.spawns.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+    // The same key now runs cleanly on the real task — fresh, not refused.
+    let retried = spawn_task(&server, &task_id, Some("clean-retry"))
+        .await
+        .expect("the corrected retry runs");
+    assert!(
+        retried.get("replayed").is_none(),
+        "the retry must have run fresh, not replayed: {retried}"
+    );
+    assert_eq!(port.spawns.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn goal_listing_surfaces_invalid_current_records_as_tool_errors() {
+    let (server, driver) = make_server_with_shared_driver();
+    create_goal(&server, "Current goal", None).await;
+    let store = HMemStore::from_driver(driver).expect("store");
+    store
+        .insert(&hkask_storage::HMem::new(
+            "kanban:goal",
+            "malformed-current",
+            serde_json::json!({"schema_version":3}),
+            server.webid,
+        ))
+        .expect("invalid current fixture");
+    let error = server
+        .kanban_goal_list(Parameters(GoalListRequest {}))
+        .await
+        .expect_err("invalid current record fails the tool call");
+    assert!(error.to_string().contains("goal decode"));
+}
+
+#[tokio::test]
+async fn goal_listing_returns_current_goals_or_errors_without_cross_owner_disclosure() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("goals.db");
+    let pool = SqliteDriver::file_pool_with_schema(path.to_str().expect("path")).expect("pool");
+    let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
+        Arc::new(SqliteDriver::new(pool));
+    let owner = WebID::new();
+    let foreign_owner = WebID::new();
+    let server = make_server_over_driver(driver.clone(), owner);
+    let foreign = make_server_over_driver(driver.clone(), foreign_owner);
+    let supported = create_goal(&server, "Supported", None).await;
+    let foreign_supported = create_goal(&foreign, "Foreign supported", None).await;
+    let ordinary = parse(
+        &server
+            .kanban_goal_list(Parameters(GoalListRequest {}))
+            .await
+            .expect("ordinary listing"),
+    );
+    assert_eq!(ordinary.as_array().expect("goals array").len(), 1);
+    assert_eq!(ordinary[0]["id"], supported["id"]);
+    let store = HMemStore::from_driver(driver.clone()).expect("store");
+    let unsupported_id = hkask_types::GoalID::new().to_string();
+    let raw = serde_json::json!({"schema_version":2,"id":unsupported_id});
+    let row = hkask_storage::HMem::new("kanban:goal", &unsupported_id, raw, owner);
+    store.insert(&row).expect("unsupported fixture");
+    let error = server
+        .kanban_goal_list(Parameters(GoalListRequest {}))
+        .await
+        .expect_err("unsupported schema fails the listing");
+    assert!(error.to_string().contains("expected version 3"));
+    let isolated = parse(
+        &foreign
+            .kanban_goal_list(Parameters(GoalListRequest {}))
+            .await
+            .expect("foreign listing"),
+    );
+    assert_eq!(isolated.as_array().expect("isolated goals").len(), 1);
+    assert_eq!(isolated[0]["id"], foreign_supported["id"]);
+    assert!(
+        server
+            .kanban_goal_get(Parameters(GoalGetRequest {
+                goal_id: unsupported_id.clone()
+            }))
+            .await
+            .expect_err("direct unsupported read still rejects")
+            .to_string()
+            .contains("expected version 3")
+    );
+    let denied = foreign
+        .kanban_goal_get(Parameters(GoalGetRequest {
+            goal_id: unsupported_id,
+        }))
+        .await
+        .expect_err("foreign direct read is unauthorized");
+    assert!(
+        !denied.to_string().contains("schema"),
+        "foreign caller cannot inspect the unsupported schema"
+    );
+}

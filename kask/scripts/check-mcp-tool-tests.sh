@@ -1,0 +1,187 @@
+#!/usr/bin/env bash
+# CI gate: every MCP server must have tool-behavior contract tests that invoke
+# tools through their public `Parameters<T>` seam.
+#
+# Rationale: the hkask-mcp-filesystem review found three shipped logic bugs
+# (slice-index panics on bad input, canonicalize-on-non-existent, silent
+# no-ops) that had ZERO `unwrap()` calls and were invisible to a panic-grep and
+# to helper-seam-only tests. Only tool-behavior contract tests (calling tools
+# via `Parameters<T>`) catch this class. See:
+#   docs/reference/mcp-servers/README.md  (Testing standard)
+#
+# The ratchet COMPLETED 2026-08-26 (471943ad0e): every mcp-servers/hkask-*
+# server now carries tool-behavior contract tests, the allowlist is empty,
+# and the standard is fully enforced — an untested server now fails instead
+# of being allowlisted. The ratchet machinery below (allowlist + quota +
+# staleness warnings) stays for any future ramp-up.
+#
+# Limitation: the gate keys on the literal `Parameters(` token, a heuristic —
+# a helper that happens to use `Parameters(` would satisfy the gate without a
+# real tool-behavior test (false positive). It is a ratchet, not a proof; rely
+# on review for genuine tool-behavior coverage. Tighten only if it false-passes
+# in practice.
+#
+# Exit codes:
+#   0 — all servers either have tool-behavior tests or are allowlisted
+#   1 — a server lacks tool-behavior tests AND is not allowlisted (regression)
+#
+# Usage: bash kask/scripts/check-mcp-tool-tests.sh (from any directory)
+#        HKASK_MCP_TOOL_TEST_STRICT=1  # treat allowlisted gaps as warnings only
+#                                     # (still exit 0) — use during ramp-up
+
+set -euo pipefail
+
+# The default SCAN_DIRS glob is relative to the kask root. Without this cd the
+# glob matched nothing when the gate was invoked from the repo root, the loop
+# body never ran, and the gate exited 0 while checking nothing — a vacuous pass.
+# The self-test already documented this cd as the gate's contract.
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.."
+
+# Allowlist entries: `name|added-date|reason` (empty today — the ratchet
+# completed 2026-08-26). The date is a real field (not a comment) so the
+# staleness check below can parse it; entries older than STALE_DAYS emit a
+# non-failing warning, making a stalled ramp-up visible in CI output.
+STALE_DAYS=${STALE_DAYS:-90}
+ALLOWLIST_MAX=9
+
+# Servers that are EXEMPT by design (not agent-facing tool surfaces requiring
+# contract tests). Add only with a documented reason.
+EXEMPT=()
+
+# Extract the date field (field 2) from a `name|date|reason` entry.
+entry_date() {
+  local entry="$1"
+  printf '%s' "$entry" | awk -F'|' '{print $2}'
+}
+
+# Days between a YYYY-MM-DD date and today (UTC). Uses date(1); GNU date on
+# ubuntu-24.04 runners. Returns 0 on any parse failure (fail-open for age —
+# staleness is a warning, not a failure, so a parse glitch must not break CI).
+days_since() {
+  local then="$1"
+  local then_epoch now_epoch
+  then_epoch=$(date -u -d "$then" +%s 2>/dev/null) || { echo 0; return; }
+  now_epoch=$(date -u +%s 2>/dev/null) || { echo 0; return; }
+  echo $(( (now_epoch - then_epoch) / 86400 ))
+}
+
+violations=0
+ratchet_gaps=0
+
+# Overridable via env vars so the self-test can point at a temp tree with an
+# empty allowlist; the defaults preserve the production behavior exactly.
+# SCAN_DIRS is a glob expanded unquoted in the for loop. ALLOWLIST is a
+# newline-separated list of `name|date|reason` entries (empty = no allowlist).
+SCAN_DIRS="${SCAN_DIRS:-mcp-servers/hkask-mcp-*/}"
+if [ -n "${ALLOWLIST+x}" ]; then
+  # Convert newline-separated input into the array the gate uses. mapfile
+  # preserves entries containing spaces (the reason fields do); word-splitting
+  # on `($(...))` would shatter them.
+  mapfile -t ALLOWLIST_ARR < <(printf '%s\n' "$ALLOWLIST" | grep -v '^$' || true)
+else
+  ALLOWLIST_ARR=()
+fi
+
+is_listed() {
+  local name="$1"
+  local item entry_name
+  for item in "${ALLOWLIST_ARR[@]}"; do
+    entry_name="${item%%|*}"
+    [ "$entry_name" = "$name" ] && return 0
+  done
+  for item in "${EXEMPT[@]}"; do
+    entry_name="${item%%|*}"
+    [ "$entry_name" = "$name" ] && return 0
+  done
+  return 1
+}
+
+for server_dir in $SCAN_DIRS; do
+  [ -d "$server_dir" ] || continue
+  name="$(basename "$server_dir")"
+  tests_dir="${server_dir}tests"
+
+  has_tool_tests=0
+  if [ -d "$tests_dir" ]; then
+    # A tool-behavior test calls a tool method through Parameters<T>.
+    if grep -rIlE "Parameters\(" "$tests_dir" --include='*.rs' >/dev/null 2>&1; then
+      has_tool_tests=1
+    fi
+  fi
+  # Servers whose struct is pub(crate) (e.g. swarm) cannot be constructed
+  # from an external tests/ file — their contract tests live in inline
+  # #[cfg(test)] modules in src/. Accept a Parameters( call inside a
+  # #[cfg(test)]-gated src file as satisfying the seam requirement.
+  if [ "$has_tool_tests" -eq 0 ]; then
+    if grep -rIlE '#\[cfg\(test\)\]' "${server_dir}src" --include='*.rs' >/dev/null 2>&1; then
+      for src_file in $(grep -rIlE '#\[cfg\(test\)\]' "${server_dir}src" --include='*.rs' 2>/dev/null); do
+        # Extract the tail of the file from the first #[cfg(test)] onward.
+        if awk 'f && /Parameters\(/ { found=1 } /#\[cfg\(test\)\]/ { f=1 } END { exit !found }' "$src_file"; then
+          has_tool_tests=1
+          break
+        fi
+      done
+    fi
+  fi
+
+  if [ "$has_tool_tests" -eq 1 ]; then
+    continue
+  fi
+
+  # No tool-behavior tests found.
+  if is_listed "$name"; then
+    ratchet_gaps=$((ratchet_gaps + 1))
+    echo "ratchet: $name lacks tool-behavior tests (allowlisted — ${#ALLOWLIST_ARR[@]} remaining)"
+  else
+    violations=$((violations + 1))
+    echo "::error::MCP server '$name' has no tool-behavior contract tests (no 'Parameters(' in ${tests_dir}). Add tests via the public tool seam, or add to ALLOWLIST with a reason. See docs/reference/mcp-servers/README.md §Testing standard."
+  fi
+done
+
+echo "summary: $violations violation(s), $ratchet_gaps allowlisted gap(s), ${#ALLOWLIST_ARR[@]} in ratchet allowlist (cap: $ALLOWLIST_MAX)"
+
+# Stale-entry visibility (follow-up issue #3, option 1): warn — do not fail —
+# for allowlisted entries older than STALE_DAYS. This makes a stalled ratchet
+# visible in CI output without forcing a deadline that may not be resourced.
+# A gate that can't fail is a gate that doesn't enforce, but a ratchet that
+# can't be seen to stall is a ratchet that won't be acted on.
+stale_warnings=0
+for entry in "${ALLOWLIST_ARR[@]}"; do
+  name="${entry%%|*}"
+  added=$(entry_date "$entry")
+  if [ -z "$added" ]; then
+    echo "::warning::$name has no added-date field — add one so staleness is trackable."
+    stale_warnings=$((stale_warnings + 1))
+    continue
+  fi
+  age=$(days_since "$added")
+  if [ "$age" -gt "$STALE_DAYS" ]; then
+    echo "::warning::$name has been allowlisted for ${age} days (added $added, stale threshold $STALE_DAYS). Consider adding a tool-behavior test or documenting why the deferral persists."
+    stale_warnings=$((stale_warnings + 1))
+  fi
+done
+if [ "$stale_warnings" -gt 0 ]; then
+  echo "staleness: $stale_warnings entr(y/ies) above the $STALE_DAYS-day visibility threshold (warnings, not failures)"
+fi
+
+# Ratchet quota: fail if the allowlist grew beyond the high-water mark.
+# Adding a server requires removing one — or explicitly bumping ALLOWLIST_MAX
+# with a documented reason. This converts the one-way clutch (no backsliding)
+# into a true ratchet (forced forward progress).
+if [ "${#ALLOWLIST_ARR[@]}" -gt "$ALLOWLIST_MAX" ]; then
+  echo "::error::MCP tool-test allowlist grew to ${#ALLOWLIST_ARR[@]} (cap: $ALLOWLIST_MAX). "
+  echo "  Add a tool-behavior test to an existing allowlisted server and remove it,"
+  echo "  or bump ALLOWLIST_MAX in scripts/check-mcp-tool-tests.sh with a justification."
+  exit 1
+fi
+
+if [ "${HKASK_MCP_TOOL_TEST_STRICT:-0}" = "1" ]; then
+  # Ramp-up mode: allowlisted gaps are warnings only.
+  if [ "$violations" -gt 0 ]; then
+    exit 1
+  fi
+  exit 0
+fi
+
+# Default: allowlisted gaps are tolerated (ratchet), violations fail.
+[ "$violations" -eq 0 ]

@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- zed-kask app icon: "zk" monogram in silver on burnt orange,
+     with light line patterns radiating from the letters and reflecting
+     around the frame. Style echoes the Zed logo (concentric L-shaped
+     frame, geometric letterform) but uses zk as the central mark. -->
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Burnt orange background gradient (subtle, top-left lighter) -->
+    <radialGradient id="bg" cx="38%" cy="32%" r="85%">
+      <stop offset="0%"  stop-color="#D2691E"/>
+      <stop offset="55%" stop-color="#B25A1A"/>
+      <stop offset="100%" stop-color="#8B3E0F"/>
+    </radialGradient>
+
+    <!-- Silver gradient for letters + lines -->
+    <linearGradient id="silver" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#F5F7FA"/>
+      <stop offset="45%"  stop-color="#C8CED6"/>
+      <stop offset="100%" stop-color="#8A93A0"/>
+    </linearGradient>
+
+    <!-- Clip to the rounded square so radiating lines stay inside -->
+    <clipPath id="frameClip">
+      <rect x="0" y="0" width="512" height="512" rx="96" ry="96"/>
+    </clipPath>
+  </defs>
+
+  <!-- Burnt orange rounded-square background -->
+  <rect x="0" y="0" width="512" height="512" rx="96" ry="96" fill="url(#bg)"/>
+
+  <g clip-path="url(#frameClip)">
+    <!-- Radiating line pattern: thin silver rays from center outward,
+         alternating long/short to create a reflective halo. -->
+    <g stroke="url(#silver)" stroke-linecap="round" opacity="0.55">
+      <line x1="256" y1="256" x2="256" y2="56"   stroke-width="2.5"/>
+      <line x1="256" y1="256" x2="311" y2="68"   stroke-width="1.5" stroke-opacity="0.45"/>
+      <line x1="256" y1="256" x2="364" y2="92"   stroke-width="2.5"/>
+      <line x1="256" y1="256" x2="407" y2="125"  stroke-width="1.5" stroke-opacity="0.45"/>
+      <line x1="256" y1="256" x2="444" y2="168"  stroke-width="2.5"/>
+      <line x1="256" y1="256" x2="468" y2="221"  stroke-width="1.5" stroke-opacity="0.45"/>
+      <line x1="256" y1="256" x2="476" y2="256"  stroke-width="2.5"/>
+      <line x1="256" y1="256" x2="468" y2="291"  stroke-width="1.5" stroke-opacity="0.45"/>
+      <line x1="256" y1="256" x2="444" y2="344"  stroke-width="2.5"/>
+      <line x1="256" y1="256" x2="407" y2="387"  stroke-width="1.5" stroke-opacity="0.45"/>
+      <line x1="256" y1="256" x2="364" y2="420"  stroke-width="2.5"/>
+      <line x1="256" y1="256" x2="311" y2="444"  stroke-width="1.5" stroke-opacity="0.45"/>
+      <line x1="256" y1="256" x2="256" y2="456"  stroke-width="2.5"/>
+      <line x1="256" y1="256" x2="201" y2="444"  stroke-width="1.5" stroke-opacity="0.45"/>
+      <line x1="256" y1="256" x2="148" y2="420"  stroke-width="2.5"/>
+      <line x1="256" y1="256" x2="105" y2="387"  stroke-width="1.5" stroke-opacity="0.45"/>
+      <line x1="256" y1="256" x2="68"  y2="344"  stroke-width="2.5"/>
+      <line x1="256" y1="256" x2="44"  y2="291"  stroke-width="1.5" stroke-opacity="0.45"/>
+      <line x1="256" y1="256" x2="36"  y2="256"  stroke-width="2.5"/>
+      <line x1="256" y1="256" x2="44"  y2="221"  stroke-width="1.5" stroke-opacity="0.45"/>
+      <line x1="256" y1="256" x2="68"  y2="168"  stroke-width="2.5"/>
+      <line x1="256" y1="256" x2="105" y2="125"  stroke-width="1.5" stroke-opacity="0.45"/>
+      <line x1="256" y1="256" x2="148" y2="92"   stroke-width="2.5"/>
+      <line x1="256" y1="256" x2="201" y2="68"   stroke-width="1.5" stroke-opacity="0.45"/>
+    </g>
+
+    <!-- Reflective concentric arcs (echo of the Zed L-frame, mirrored on all sides) -->
+    <g fill="none" stroke="url(#silver)" stroke-linecap="round">
+      <!-- Outer arc ring -->
+      <path d="M 96 256 A 160 160 0 0 1 256 96"  stroke-width="3"   stroke-opacity="0.85"/>
+      <path d="M 416 256 A 160 160 0 0 1 256 416" stroke-width="3"   stroke-opacity="0.85"/>
+      <path d="M 96 256 A 160 160 0 0 0 256 416"  stroke-width="1.5" stroke-opacity="0.45"/>
+      <path d="M 416 256 A 160 160 0 0 0 256 96"  stroke-width="1.5" stroke-opacity="0.45"/>
+
+      <!-- Inner arc ring -->
+      <path d="M 136 256 A 120 120 0 0 1 256 136"  stroke-width="2" stroke-opacity="0.7"/>
+      <path d="M 376 256 A 120 120 0 0 1 256 376"  stroke-width="2" stroke-opacity="0.7"/>
+      <path d="M 136 256 A 120 120 0 0 0 256 376"  stroke-width="1" stroke-opacity="0.4"/>
+      <path d="M 376 256 A 120 120 0 0 0 256 136"  stroke-width="1" stroke-opacity="0.4"/>
+    </g>
+  </g>
+
+  <!-- "zk" monogram, silver, geometric (Zed-style stroke weight) -->
+  <g fill="none" stroke="url(#silver)" stroke-width="14" stroke-linejoin="miter" stroke-linecap="square">
+    <!-- Z -->
+    <path d="M 172 206 L 248 206 L 172 306 L 248 306"/>
+    <!-- K: vertical stem + two diagonals meeting at the mid-right spine -->
+    <path d="M 268 206 L 268 306"/>
+    <path d="M 268 256 L 318 206"/>
+    <path d="M 268 256 L 318 306"/>
+  </g>
+
+  <!-- Subtle silver highlight on the top edge of the letters for a metallic feel -->
+  <g fill="none" stroke="#FFFFFF" stroke-width="2" stroke-opacity="0.5" stroke-linecap="round">
+    <line x1="174" y1="200" x2="246" y2="200"/>
+    <line x1="270" y1="200" x2="270" y2="210"/>
+  </g>
+</svg>

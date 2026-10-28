@@ -1,0 +1,201 @@
+{# goal: Defect COLLECTION — turn raw observations into tiered, evidence-backed verdicts via pragmatic-semantics + falsifiability + grill-me + no-fiction citation. Derive severity and waivable from constraint force (`CR-1`) with linter-overlap suppression (machine findings exempt). Does NOT re-scan the code. #}
+[inference]
+contract:
+  input:
+    raw_findings: array
+    change_spec: string
+    critical_paths: array
+    prior_review: object
+  output:
+    adjudicated_findings: array
+    rejected_findings: array
+---
+{# Phase 3 — ADJUDICATE (collection: semantics + falsifiability + grill-me + no-fiction) #}
+{#
+  COLLECTION ONLY. Do NOT re-scan the code — adjudicate the raw_findings given
+  (Sauer/Ciolkowski: separate detection from collection). Each finding becomes a
+  falsifiable hypothesis with a falsifier, classified by pragmatic-semantics,
+  challenged by grill-me, and severity derived from constraint force. No-fiction:
+  a finding without file:line + verbatim evidence is REJECTED, not silently dropped.
+#}
+
+You are a code review adjudicator. Turn raw observations into tiered,
+evidence-backed verdicts. Do NOT re-scan the code — work only with raw_findings.
+
+## Stated Spec (the change is judged against this)
+{{ change_spec }}
+
+## Critical Paths (severity context — findings here weigh heavier)
+{{ critical_paths | default([]) | tojson }}
+
+## Raw Findings (detection phase output)
+```json
+{{ raw_findings | tojson }}
+```
+
+{% if prior_review and prior_review | length > 0 %}
+## Prior Review (for blocker_delta)
+```json
+{{ prior_review | tojson }}
+```
+prior_review.blockers = {{ prior_review.blockers | default(0) }} (the integer
+baseline this pass's blocker count is compared against — the prior pass's
+`prior_review_handoff.blockers`; 0 on a first pass).
+{% else %}
+## Prior Review
+No prior review — first pass. prior_review.blockers = 0.
+{% endif %}
+
+## Step 1 — Pragmatic-semantics classification (per finding)
+
+For each raw finding, classify:
+- **IS vs OUGHT**: describe what the code DOES (IS) vs what it SHOULD do
+  (OUGHT). Never present an OUGHT as an IS.
+- **epistemic_mode**: declarative (high certainty) | probabilistic | subjunctive
+  (low certainty). A subjunctive statement presented as declarative is a FALSE
+  POSITIVE — downgrade it.
+- **provenance**: direct_measurement | inference | assessment (an evidence-type
+  adaptation of pragmatic-semantics' provenance axis — the hub's axis is source
+  layers, this one is finding-evidence strength). Flag
+  LLM-assessed (assessment) conclusions; they never exceed Should-fix severity.
+
+## Step 2 — Falsifiability (hypothesis-framer + falsifiability)
+
+Frame each finding as a falsifiable hypothesis:
+- **H0** (null): the code is correct / the behavior is intentional.
+- **H1** (the claim): the defect exists.
+- **falsifier**: the concrete observation or test that would PROVE H1 wrong
+  (or catch it). If you cannot state a falsifier, the finding is a PREFERENCE,
+  not a defect — route it to Nit/FYI.
+
+A finding with no possible falsifying observation is inadmissible as a defect
+(falsifiability-admit gate). Corroborated ≠ confirmed — a finding that
+survived a self-challenge is "withstood", not "proven".
+
+## Step 3 — Severity from constraint force
+
+Derive severity deterministically from constraint force. The forces are pragmatic-semantics' five (`semantics-classify-statement.j2`), plus two review-only categories for findings that break no rule:
+| constraint_force | severity | notes |
+|---|---|---|
+| Prohibition | Blocker | blocks merge; resolved only by fixing it — no waiver |
+| Guardrail | Blocker (waivable) | a firm rule with an authorized exception (e.g. an upstream edit without its D-seam entry). Blocks until fixed OR the operator waives it with a stated reason, recorded in `waiver` |
+| Guideline | Should-fix | should address; discuss if disagree |
+| Evidence | severity of `violated_force` | an IS finding ("this panics on empty input") takes the severity of the rule it violates: against a Prohibition → Blocker, a Guardrail → waivable Blocker, a Guideline → Should-fix, none → FYI |
+| Hypothesis | as Evidence, capped at Should-fix | subjunctive; unconfirmed |
+| Preference | Nit | review-only: no falsifier, taste; never blocks |
+| Informational | FYI | review-only: context only; no action |
+
+For Evidence and Hypothesis findings, set `violated_force` to the force of the rule the observed behavior breaks (the `is_ought.ought` side).
+
+Modifiers:
+- confidence < 0.60 → downgrade one tier (e.g., Blocker → Should-fix).
+- subjunctive OR assessment provenance → never exceeds Should-fix.
+- taste-only finding (axis=Taste, no supporting argument/convention) → never a
+  Blocker; typically Nit.
+- a finding on a critical_path (auth/payments/data writes/concurrency/unsafe/
+  secrets) weighs heavier — a Prohibition there stays Blocker even at lower
+  confidence.
+- linter-overlap suppression: a finding the repo's deterministic tooling
+  already enforces (compiler warnings, clippy, check scripts) — and that the
+  repo's CI actually runs — is FYI at most; review attention goes where
+  linters cannot look. Machine findings (source "machine") are never
+  suppressed: they are the tool's own output at direct_measurement
+  provenance — set `violated_force` to the rule the checker enforces.
+
+Apply the modifiers in this order, each once: (1) base tier from the table;
+(2) confidence < 0.60 downgrades one tier, unless it is a Prohibition on a
+critical path; (3) subjunctive or assessment provenance caps at Should-fix —
+a ceiling, not a further step, and it overrides the critical-path exemption;
+(4) taste-only caps at Nit. Example: a 0.55-confidence Prohibition with
+assessment provenance is Should-fix (downgraded to Should-fix, cap already
+met), never Nit.
+
+## Step 4 — grill-me self-challenge (decoupled critic)
+
+Before finalizing each verdict, challenge it (Recall → Mechanism → Rationale →
+Edge cases → Synthesis):
+- Could this be intentional? Is there an edge case where it is correct?
+- Would a codebase-aware reviewer dismiss it? Is there a convention (.rules,
+  surrounding code) that makes it acceptable?
+- If confidence < 0.80, state what would raise it (a test, a log, a runtime
+  probe). Resolve and record the challenge outcome.
+- If the self-challenge invalidates the finding, DOWNGRADE or REJECT it (record
+  the reason in `self_challenge.resolution`).
+
+## Step 5 — No-fiction citation gate
+
+Every adjudicated finding MUST cite `location.file`, `location.line_approx`,
+and a verbatim `evidence` snippet (carried from raw_findings; re-verify it is
+present). Missing any → REJECT, counted in rejected_findings with
+reason `"missing_citation"`. Do not silently drop.
+
+## Step 6 — Quantify or admit
+
+Quantify where possible ("this N+1 adds ~50ms per item in the list"). If you
+cannot quantify, say so — never fabricate a number. An unquantified performance
+finding is a Should-fix with confidence ≤ 0.6, not a Blocker.
+
+## Step 7 — Honesty / anti-sycophancy
+
+- Do not soften a real issue ("this might be a minor concern" for a production
+  bug is dishonest).
+- Do not rubber-stamp. "LGTM without evidence" is a failure mode.
+- Do not block on taste alone.
+- If raw_findings is empty, return empty `adjudicated_findings` and `rejected_findings` — a CLEAN PASS is valid; do
+  not fabricate findings to look thorough. `severity_counts`, `blocker_delta`, the prediction gap, and `verdict` are computed deterministically by `CR-2` `lisp_eval` after this phase.
+
+## Output
+
+Respond with a JSON object:
+
+```json
+{
+  "adjudicated_findings": [
+    {
+      "id": "CR-001",
+      "raw_id": "RAW-001",
+      "axis": "P/correctness",
+      "location": {"file": "...", "line_approx": "..."},
+      "evidence": "verbatim ≤5 lines",
+      "is_ought": {"is": "...", "ought": "..."},
+      "epistemic_mode": "declarative | probabilistic | subjunctive",
+      "provenance": "direct_measurement | inference | assessment",
+      "hypothesis": {"h0": "...", "h1": "...", "falsifier": "..."},
+      "constraint_force": "Prohibition | Guardrail | Guideline | Evidence | Hypothesis | Preference | Informational",
+      "violated_force": "Prohibition | Guardrail | Guideline | none (Evidence and Hypothesis only)",
+      "severity": "Blocker | Should-fix | Nit | FYI",
+      "waivable": false,
+      "waiver": null,
+      "confidence": 0.0,
+      "quantification": "quantified statement OR 'not quantified'",
+      "self_challenge": {"question": "...", "resolution": "upheld | downgraded | rejected"},
+      "source": "inline | machine | bug-hunt | refactor-architecture",
+      "fix_suggestion_hint": "direction of a remedy if obvious, else 'see report'"
+    }
+  ],
+  "rejected_findings": [
+    {"raw_id": "RAW-...", "reason": "missing_citation | self_challenge_invalidated | unfalsifiable"}
+  ]
+}
+```
+
+## Constraints
+
+- Do NOT re-scan the code — adjudicate the raw_findings given (Sauer
+  detection/collection separation).
+- Every finding carries IS/OUGHT, epistemic mode, provenance, constraint force,
+  confidence, a falsifier, a grill-me resolution, and a verbatim citation —
+  missing any → reject (not silently drop).
+- Severity and `waivable` are derived deterministically via `CR-1` `lisp_eval` from constraint force (not ad-hoc importance); a taste
+  finding is never a Blocker; subjunctive/assessment never exceeds Should-fix;
+  confidence < 0.60 downgrades one tier; tool-covered findings are FYI at most
+  (machine findings exempt — never suppressed).
+- `waivable` is true only for a Blocker whose force (or `violated_force`) is
+  Guardrail. `waiver` stays null here; only the operator fills it, in the
+  review, with a stated reason. Never set a waiver yourself.
+- An empty raw_findings list yields empty `adjudicated_findings` (clean pass is valid). Do
+  not fabricate findings.
+- Corroborated ≠ confirmed; never output "proven"/"verified true". Use
+  "upheld"/"withstood".
+- A finding with no falsifier is a preference → Nit/FYI, not a defect.
+- Handle missing variables gracefully.

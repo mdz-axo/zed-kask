@@ -1,0 +1,304 @@
+//! Signal types — metrics, afferent signals, deviations, and deviation direction.
+//!
+//! These types have no Regulation-internal dependencies — only LoopId, serde, and chrono.
+
+use super::core::LoopId;
+
+/// Metric names for afferent signals from loop sensing.
+///
+/// Each variant identifies the kind of measurement a signal carries,
+/// replacing magic strings with an exhaustive, type-safe enum
+/// (Fowler H7: Replace Type Code with Strategy).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SignalMetric {
+    /// Raw variety deficit count (Cybernetics Loop 6)
+    VarietyDeficit,
+    // StorageUsage removed 2026-09-08 with the budget teardown (operator
+    // ruling 2026-09-04): it was h_mem_count / storage_budget — a budget-framed
+    // duplicate of TripleCount (h_mem_count vs an absolute set-point), and the
+    // budget constant backed deprecated count-based enforcement.
+    /// Memory life S in days (Memory Loop 2).
+    /// Wozniak-Gorzelanczyk (1995) forgetting curve: R(t) = exp(-t/S).
+    /// Default 180 days. Configurable via HKASK_MEMORY_LIFE_DAYS.
+    MemoryLife,
+    /// h_mem count (Memory Loop 2)
+    TripleCount,
+    /// Low-confidence h_mem count (Memory Loop 2)
+    LowConfidenceCount,
+
+    /// Circuit breaker state 0.0/1.0 (Inference Loop 1)
+    CircuitBreakerState,
+
+    /// Model availability 0.0/1.0 (Inference Loop 1)
+    InferenceModelAvailable,
+    /// Context server health fraction 0.0/1.0 (Cybernetics Loop 6).
+    /// 1.0 = all registered context servers are Running; 0.0 = all are
+    /// stuck in Starting, Error, or AuthRequired. The set-point is 1.0.
+    /// Without this metric the loop reports `signal_count=0` while every
+    /// MCP server is hung on `initialize` — the blind-feedback-loop trap.
+    ContextServerHealth,
+    /// OCR silent-failure count in the recent window (Cybernetics Loop 6).
+    /// Empty LLM OCR output on a page — the dead-but-responsive-endpoint
+    /// signature (HTTP 200 with empty content). Sensed from the corpus
+    /// server's cross-process health file. Set-point 0.0; any positive
+    /// count is a deviation. Without this metric the loop reports
+    /// `signal_count=0` during an OCR silent-failure storm because the
+    /// warns live in the corpus subprocess's tracing, not the loop's
+    /// ledger/DB state — the same blind-feedback-loop trap.
+    OcrSilentFailures,
+    /// Actionable algedonic alert count — Warning or Critical entries in
+    /// the in-memory log (Cybernetics Loop 6). Info diagnostics don't count.
+    AlgedonicEvents,
+    /// Algedonic log approaching cap (Cybernetics Loop 6).
+    /// 1.0 when the in-memory alert log is ≥ 80% of its cap, 0.0 otherwise.
+    /// The operator (or the `algedonic-review` skill) should review and clear
+    /// reviewed entries before they are evicted unread.
+    AlgedonicLogApproachingCap,
+    /// Pending escalation count (Curation Loop 5)
+    PendingEscalations,
+    /// Consolidation candidate count (Memory consolidation bridge)
+    ConsolidationCandidates,
+    /// Stale goal count (Curation Loop 5)
+    GoalStaleCount,
+    /// Expired goal count (Curation Loop 5)
+    GoalExpiredCount,
+    /// Metacognition critical alert count (Curation Loop 5)
+    MetacognitionCriticalAlerts,
+    /// Stuck experimentation-registry experiment count (Cybernetics Loop 6; §P8.9 step 1).
+    /// Running experiments unresolved past the stale set point (D-3:
+    /// 7 days) or with their whole declared budget recorded but no verdict.
+    /// Sensed from the experimentation registry's health snapshot via the bridge
+    /// source. Set-point 0.0; any positive count is a deviation — without
+    /// this metric the loop reports `signal_count=0` while experiments sit
+    /// unresolved forever (the blind-feedback-loop trap).
+    ExperimentationStuckExperiments,
+
+    // MetacognitionVarietyDeficit removed 2026-08-30 — a pure duplicate of
+    // VarietyDeficit (same ledger `overall_deficit`, same Escalate→Curation
+    // rule); wiring it would have double-escalated the same number.
+    // ActionIneffective / RegulatoryPlateau / ActionDecisionBlocked removed
+    // with it — superseded by direct plateau/blocked escalations persisted to
+    // the review queue and sensed as PendingEscalations.
+    /// Tool reliability: success probability has dropped below threshold.
+    /// 0.0 = 0% success rate, 1.0 = 100% success rate.
+    /// Set-point: reliability_threshold (default 0.80).
+    ToolReliability,
+    /// Native-first rate: the fraction of completed substantive agent turns
+    /// that used zero kask instruments — no context-server (MCP) tool call
+    /// and none of the host default instruments (`lisp_eval`,
+    /// `render_template`, `skill`). Higher is worse: the turn did real work
+    /// from native generation alone, the drift class the
+    /// affordance-injection intervention targets. Set-point:
+    /// native_first_rate_threshold (default 0.50). Without this metric the
+    /// loop senses tool FAILURES but never instrument ABSENCE — the
+    /// unsensed leg of the drift feedback loop.
+    NativeFirstRate,
+    /// Fraction of successful evaluations in an externally observed rollout.
+    /// This metric is supplied by `RolloutEventSource`, not a periodic sensor.
+    PassRate,
+    /// Historical test-coverage records. No periodic producer: unbound trace
+    /// files are not evidence about the current artifact.
+    TestCoverage,
+    /// Historical mutation-score records; no periodic producer. Retained for
+    /// decoding persisted signals, not as a current quality measurement.
+    MutationScore,
+}
+
+impl std::fmt::Display for SignalMetric {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = serde_json::to_value(self)
+            .ok()
+            .and_then(|v| v.as_str().map(String::from))
+            .unwrap_or_else(|| format!("{:?}", self));
+        write!(f, "{}", s)
+    }
+}
+
+impl SignalMetric {
+    /// Returns the snake_case string representation for comparison.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SignalMetric::VarietyDeficit => "variety_deficit",
+            SignalMetric::MemoryLife => "memory_life",
+            SignalMetric::TripleCount => "triple_count",
+            SignalMetric::LowConfidenceCount => "low_confidence_count",
+
+            SignalMetric::CircuitBreakerState => "circuit_breaker_state",
+
+            SignalMetric::InferenceModelAvailable => "inference_model_available",
+            SignalMetric::ContextServerHealth => "context_server_health",
+            SignalMetric::OcrSilentFailures => "ocr_silent_failures",
+            SignalMetric::AlgedonicEvents => "algedonic_events",
+            SignalMetric::AlgedonicLogApproachingCap => "algedonic_log_approaching_cap",
+            SignalMetric::PendingEscalations => "pending_escalations",
+            SignalMetric::ConsolidationCandidates => "consolidation_candidates",
+            SignalMetric::GoalStaleCount => "goal_stale_count",
+            SignalMetric::GoalExpiredCount => "goal_expired_count",
+            SignalMetric::MetacognitionCriticalAlerts => "metacognition_critical_alerts",
+            SignalMetric::ExperimentationStuckExperiments => "experimentation_stuck_experiments",
+            SignalMetric::ToolReliability => "tool_reliability",
+            SignalMetric::NativeFirstRate => "native_first_rate",
+            SignalMetric::PassRate => "pass_rate",
+            SignalMetric::TestCoverage => "test_coverage",
+            SignalMetric::MutationScore => "mutation_score",
+        }
+    }
+
+    /// Parse a metric from its snake_case name (the inverse of `as_str`).
+    /// `None` for unknown names — callers decide the fallback, never a
+    /// silent default that would mislabel the report.
+    pub fn from_str_name(name: &str) -> Option<Self> {
+        [
+            SignalMetric::VarietyDeficit,
+            SignalMetric::MemoryLife,
+            SignalMetric::TripleCount,
+            SignalMetric::LowConfidenceCount,
+            SignalMetric::CircuitBreakerState,
+            SignalMetric::InferenceModelAvailable,
+            SignalMetric::ContextServerHealth,
+            SignalMetric::OcrSilentFailures,
+            SignalMetric::AlgedonicEvents,
+            SignalMetric::AlgedonicLogApproachingCap,
+            SignalMetric::PendingEscalations,
+            SignalMetric::ConsolidationCandidates,
+            SignalMetric::GoalStaleCount,
+            SignalMetric::GoalExpiredCount,
+            SignalMetric::MetacognitionCriticalAlerts,
+            SignalMetric::ExperimentationStuckExperiments,
+            SignalMetric::ToolReliability,
+            SignalMetric::NativeFirstRate,
+            SignalMetric::PassRate,
+            SignalMetric::TestCoverage,
+            SignalMetric::MutationScore,
+        ]
+        .into_iter()
+        .find(|metric| metric.as_str() == name)
+    }
+
+    /// Whether an increase in this metric is an improvement — the impact
+    /// direction `verify_impact` compares its before/after delta against.
+    /// `None` for metrics with no verified impact path; `verify_impact`
+    /// falls back to treating any nonzero delta as a change.
+    ///
+    /// This is the per-metric direction table, colocated with the metric
+    /// it describes.
+    pub fn impact_direction(&self) -> Option<bool> {
+        match self {
+            SignalMetric::ContextServerHealth
+            | SignalMetric::ToolReliability
+            | SignalMetric::PassRate => Some(true),
+            SignalMetric::VarietyDeficit
+            | SignalMetric::OcrSilentFailures
+            | SignalMetric::ExperimentationStuckExperiments
+            | SignalMetric::NativeFirstRate => Some(false),
+            _ => None,
+        }
+    }
+}
+
+/// Afferent signal from a loop's sensing phase.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Signal {
+    pub source: LoopId,
+    pub metric: SignalMetric,
+    pub value: f64,
+    pub set_point: f64,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+}
+
+impl Signal {
+    /// Evidence must describe the current observation window, not an old sample
+    /// or a future timestamp. Missing data is represented by no Signal.
+    pub fn is_fresh_at(&self, now: chrono::DateTime<chrono::Utc>) -> bool {
+        self.value.is_finite()
+            && self.set_point.is_finite()
+            && self.timestamp <= now
+            && self.timestamp
+                >= now - chrono::Duration::seconds(crate::OBSERVATION_WINDOW_SECS as i64)
+    }
+
+    pub fn is_recovery_trigger(&self) -> bool {
+        Deviation::from_signal(self).is_some()
+    }
+
+    /// Whether a fresh observation crosses this original trigger's threshold
+    /// back toward health. Neither missing nor non-finite data proves recovery.
+    pub fn recovered_by(&self, current: &Signal) -> bool {
+        self.is_recovery_trigger()
+            && self.metric == current.metric
+            && current.timestamp >= self.timestamp
+            && current.value.is_finite()
+            && self.set_point.is_finite()
+            && if self.value < self.set_point {
+                current.value >= self.set_point
+            } else if self.value > self.set_point {
+                current.value <= self.set_point
+            } else {
+                false
+            }
+    }
+
+    pub fn new(source: LoopId, metric: SignalMetric, value: f64, set_point: f64) -> Self {
+        Self {
+            source,
+            metric,
+            value,
+            set_point,
+            timestamp: chrono::Utc::now(),
+        }
+    }
+}
+
+/// Deviation detected when comparing a signal against its set-point.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Deviation {
+    pub signal: Signal,
+    pub magnitude: f64,
+    pub direction: DeviationDirection,
+}
+
+impl Deviation {
+    pub fn from_signal(signal: &Signal) -> Option<Self> {
+        if !signal.value.is_finite() || !signal.set_point.is_finite() {
+            return None;
+        }
+        let diff = signal.value - signal.set_point;
+        let healthy = match signal.metric {
+            SignalMetric::ContextServerHealth
+            | SignalMetric::ToolReliability
+            | SignalMetric::TestCoverage
+            | SignalMetric::MutationScore
+            | SignalMetric::InferenceModelAvailable
+            | SignalMetric::MemoryLife => diff >= 0.0,
+            SignalMetric::VarietyDeficit
+            | SignalMetric::OcrSilentFailures
+            | SignalMetric::TripleCount
+            | SignalMetric::LowConfidenceCount
+            | SignalMetric::ConsolidationCandidates => diff <= 0.0,
+            _ => false,
+        };
+        if healthy || diff.abs() < f64::EPSILON {
+            return None;
+        }
+        Some(Self {
+            signal: signal.clone(),
+            magnitude: diff.abs(),
+            direction: if diff > 0.0 {
+                DeviationDirection::AboveSetPoint
+            } else {
+                DeviationDirection::BelowSetPoint
+            },
+        })
+    }
+}
+
+/// Direction of a deviation relative to the set-point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum DeviationDirection {
+    AboveSetPoint,
+    BelowSetPoint,
+}
+
+#[cfg(test)]
+mod tests;

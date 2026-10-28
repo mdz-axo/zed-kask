@@ -1,0 +1,1113 @@
+//! Document processing tools — convert, OCR, chunk.
+//!
+//! The heavy orchestration that previously lived here — `corpus_convert`'s
+//! ~450-line OCR branching and the `chunk_directory` directory scanner — has
+//! moved to `services::convert::ConvertService`. The `#[tool]` methods below
+//! are now thin I/O framing: deserialize params, construct a `ConvertService`
+//! borrowing `self`, delegate, and return. The shared OCR helpers
+//! (`resolve_ocr_model`, `has_ocr`, `persist_pipeline_outcome`,
+//! `ocr_via_pipeline`) and `index_passages` also live on `ConvertService`, so
+//! `corpus_ocr` and the file-case `corpus_chunk` path delegate to the service
+//! for those calls too. The page pipeline is the only OCR mechanism — the
+//! former raw-bytes single-shot (`do_ocr`) was removed.
+//!
+//! `convert_directory` stays here (on `CorpusServer`) because it recurses
+//! through the `corpus_convert` tool wrapper to preserve per-file Regulation
+//! spans; it does not call the OCR helpers directly.
+use crate::services::convert::{
+    ConvertService, ExtractOutcome, extract_text, filter_outcome_to_pages,
+};
+use crate::{
+    CorpusServer, McpToolError, Parameters, chunk_structure, chunk_word_bounds, convert,
+    execute_tool, json, sanitize_links, serialize_passages, tokens_to_words, tool, tool_router,
+};
+use hkask_mcp_server::server::map_io_error;
+use schemars::JsonSchema;
+use serde::Deserialize;
+use sha2::{Digest, Sha256};
+use std::io::Write;
+
+/// Parse a target-pages spec ("1-5,10") into the page-number set — shared by
+/// `corpus_is_complex` and `corpus_chunk`'s file path arm.
+fn parse_target_page_set(spec: &str) -> Result<std::collections::HashSet<usize>, McpToolError> {
+    Ok(crate::ocr::triage::parse_target_pages(spec)
+        .map_err(|e| McpToolError::invalid_argument(e.to_string()))?
+        .into_iter()
+        .collect())
+}
+
+/// Run the whole-document OCR pipeline for `file_path`, returning the OCR
+/// text — or `fallback` when the model is unavailable or the pipeline fails,
+/// with the failure warned under `warn_label`, never silent. Read failures
+/// propagate. Shared by `corpus_chunk`'s `NeedsOcr` and `PartialOcr` arms;
+/// the `ocr_pages` emptiness guard stays at the `PartialOcr` call site.
+async fn ocr_fallback_text(
+    service: &ConvertService<'_>,
+    file_path: &str,
+    fallback: String,
+    warn_label: &str,
+) -> Result<String, McpToolError> {
+    let Ok(model) = service.resolve_ocr_model(None).await else {
+        return Ok(fallback);
+    };
+    let resolved = crate::path_safety::contain_for_read(file_path)?;
+    let file_bytes = std::fs::read(&resolved)
+        .map_err(|e| map_io_error(e, &format!("Failed to read '{}'", file_path)))?;
+    let (file_format, _, _) = convert::detect_format(file_path);
+    match service
+        .ocr_via_pipeline(
+            &resolved,
+            file_format,
+            &file_bytes,
+            &model,
+            service.pipeline_executor(),
+        )
+        .await
+    {
+        Ok(outcome) => Ok(outcome.text),
+        Err(error) => {
+            tracing::warn!(
+                target: "hkask.docproc",
+                error = %error,
+                "chunk OCR pipeline failed — using {warn_label}"
+            );
+            Ok(fallback)
+        }
+    }
+}
+
+#[tool_router(router = document_router, vis = "pub")]
+impl CorpusServer {
+    #[tool(
+        description = "Extract text from a document or directory. For a single PDF, pdf_text_order=raw follows the PDF text-object order (use after verifying column reading order); layout is the default. Detects format and automatically falls back to page-image OCR for scanned PDF pages. Emits dc_type — the grounded Dublin Core type of the source (from its MIME mapping) — so every ingested artifact carries a state identity. File conversion with an output path writes the full text there and returns summary metadata without duplicating the text in the tool response. Directory conversion requires an output directory, persists one .txt file per supported source, and resumes non-empty outputs. OCR-sourced outputs land in a sibling staging directory ({output}-ocr-staging) — model output never enters the extraction set until an explicit, quality-gated merge. Existing outputs are resumed only when they pass the word-count floor AND the deterministic quality gates (CJK hallucination, repetition loop, symbol soup) — quality-failed outputs are re-extracted on the next run."
+    )]
+    pub async fn corpus_convert(
+        &self,
+        Parameters(ConvertRequest {
+            path,
+            output,
+            force_ocr,
+            target_pages,
+            include_structure,
+            pdf_text_order,
+        }): Parameters<ConvertRequest>,
+    ) -> Result<String, McpToolError> {
+        if matches!(pdf_text_order, PdfTextOrder::Raw) {
+            if force_ocr {
+                return Err(McpToolError::invalid_argument(
+                    "pdf_text_order=raw cannot be combined with force_ocr: OCR does not use PDF text order",
+                ));
+            }
+            if std::path::Path::new(&path).is_dir()
+                || crate::convert::detect_format(&path).0 != "pdf"
+            {
+                return Err(McpToolError::invalid_argument(
+                    "pdf_text_order=raw requires a single PDF; convert other sources with the default layout order",
+                ));
+            }
+        }
+        if std::path::Path::new(&path).is_dir() {
+            return self
+                .convert_directory(&path, output.as_deref(), force_ocr)
+                .await;
+        }
+
+        execute_tool(
+            self,
+            "corpus_convert",
+            async {
+                let requested_path = path.clone();
+                let requested_pages = target_pages.clone();
+                let result = ConvertService::from_corpus(self)
+                    .convert(
+                        path,
+                        force_ocr,
+                        target_pages,
+                        include_structure.unwrap_or(false),
+                        pdf_text_order,
+                    )
+                    .await?;
+                let text = result
+                    .get("text")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|text| !text.trim().is_empty())
+                    .map(str::to_owned)
+                    .ok_or_else(|| McpToolError::failed_precondition(format!("Conversion produced no usable text; report: {result}")))?;
+                // Honor the `output` parameter on the file path: the
+                // extracted text lands at the caller's destination instead
+                // of the parameter being silently dropped (the directory
+                // path persists per-file outputs; the file path ignored
+                // `output` entirely — observed when a full-book OCR result
+                // returned inline with no file written).
+                if let Some(output_path) = output.as_deref() {
+                    hkask_mcp_server::validate_path("output", output_path, 4096)
+                        .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
+                    let destination = crate::path_safety::contain_for_write(output_path)?;
+                    if let Some(parent) = destination.parent() {
+                        std::fs::create_dir_all(parent).map_err(|e| {
+                            map_io_error(
+                                e,
+                                &format!("Failed to create '{}'", parent.display()),
+                            )
+                        })?;
+                    }
+                    // O_NOFOLLOW open: a symlink at the destination is
+                    // refused, not followed (F4).
+                    hkask_mcp_server::server::write_contained(
+                        &destination.to_string_lossy(),
+                        text.as_bytes(),
+                    )?;
+                }
+                // Ground the artifact's state identity at ingest: the DC type
+                // from the source file's extension (canonical MIME mapping),
+                // never an LLM-invented one. Unmapped extensions surface a
+                // note — the absence of the type is visible, not silent.
+                let mut result = result;
+                if crate::convert::detect_format(&requested_path).0 == "pdf"
+                    && matches!(
+                        result.get("method").and_then(serde_json::Value::as_str),
+                        Some("text_extraction" | "selective_ocr")
+                    )
+                {
+                    result["pdf_text_order"] = serde_json::json!(pdf_text_order);
+                }
+                match crate::convert::dc_type_for_path(&result["path"].as_str().unwrap_or("")) {
+                    Some(dc_type) => {
+                        result["dc_type"] = serde_json::json!(dc_type);
+                    }
+                    None => {
+                        result["dc_type_note"] = serde_json::json!(
+                            "source extension has no Dublin Core type mapping — state identity not grounded at ingest"
+                        );
+                    }
+                }
+                if let Some(output_path) = output.as_deref() {
+                    let mut hasher = Sha256::new();
+                    hasher.update(text.as_bytes());
+                    let text_sha256 = format!("{:x}", hasher.finalize());
+                    result["output"] = serde_json::json!(output_path);
+                    result["requested_path"] = serde_json::json!(requested_path);
+                    result["requested_pages"] = serde_json::json!(requested_pages);
+                    result["text_sha256"] = serde_json::json!(text_sha256);
+                    result["text_bytes"] = serde_json::json!(text.len());
+                    if let Some(object) = result.as_object_mut() {
+                        object.remove("text");
+                        object.remove("structure");
+                    }
+
+                    let report_path = format!("{output_path}.report.json");
+                    let report_destination =
+                        crate::path_safety::contain_for_write(&report_path)?;
+                    let parent = report_destination.parent().ok_or_else(|| {
+                        McpToolError::invalid_argument("Conversion report must have a parent")
+                    })?;
+                    let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|e| {
+                        map_io_error(e, "Failed to create conversion report temporary file")
+                    })?;
+                    serde_json::to_writer(&mut temporary, &result).map_err(|e| {
+                        McpToolError::internal(format!("Cannot serialize conversion report: {e}"))
+                    })?;
+                    temporary.flush().map_err(|e| {
+                        map_io_error(e, "Failed to flush conversion report")
+                    })?;
+                    temporary.persist(&report_destination).map_err(|e| {
+                        map_io_error(e.error, "Failed to publish conversion report")
+                    })?;
+                    result["report"] = serde_json::json!(report_path);
+                }
+                Ok(result)
+            },
+        )
+        .await
+    }
+
+    #[tool(
+        description = "OCR a PDF or image through the page pipeline (per-page OCR via the configured dedicated OCR model, with a verification report). PDFs are decimated to page images; a zero-text result is an error, never a silent success. The model is the request's explicit model parameter, else the configured OCR model (HKASK_OCR_MODEL env var or the kask.models.ocr_model setting); there is no built-in default — unset fails with visible guidance. The resolved model must accept image input (the call goes through the vision transport)."
+    )]
+    pub async fn corpus_ocr(
+        &self,
+        Parameters(OcrRequest { path, model }): Parameters<OcrRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "corpus_ocr", async {
+            let resolved = crate::path_safety::contain_for_read(&path)?;
+            let (format, _, _) = convert::detect_format(&path);
+
+            let service = ConvertService::from_corpus(self);
+            let model = match service.resolve_ocr_model(model.as_deref()).await {
+                Ok(m) => m,
+                Err(guidance) => {
+                    return Err(McpToolError::failed_precondition(guidance.to_string()));
+                }
+            };
+
+            let file_bytes = if format == "pdf" {
+                Vec::new()
+            } else {
+                crate::path_safety::read_capped(
+                    &resolved.to_string_lossy(),
+                    crate::path_safety::MAX_READ_BYTES,
+                )?
+            };
+
+            // PDFs and images go through the page pipeline (decimate to page
+            // images, OCR per page, verification report) — the same execution
+            // path as `corpus_convert` with force_ocr. The raw-bytes
+            // single-shot path sends the whole file as one vision call, which
+            // returned empty text as a success for book-sized PDFs and wrote
+            // multi-MB base64 IPC lines that broke the inference bridge.
+            // `ocr_via_pipeline` errors on zero text, so an empty result can
+            // never surface as a silent success.
+            let outcome = service
+                .ocr_via_pipeline(
+                    &resolved,
+                    format,
+                    &file_bytes,
+                    &model,
+                    service.pipeline_executor(),
+                )
+                .await?;
+
+            let result = serde_json::json!({
+                "path": path,
+                "model": model,
+                "method": "ocr_pipeline",
+                "text": outcome.text,
+                "word_count": outcome.text.split_whitespace().count(),
+                "pages": outcome.pages,
+                "ocr_protocol": crate::ocr::response::OCR_PROTOCOL,
+                "page_reports": outcome.page_reports,
+                "errors": outcome.errors,
+                "verification_passed": outcome.verification_passed,
+                "page_count_match": outcome.page_count_match,
+                "empty_pages": outcome.empty_pages,
+                "blank_pages": outcome.blank_pages,
+                "quality_failed_pages": outcome.quality_failed_pages,
+                "llm_breaker_open": outcome.llm_breaker_open,
+                "error_count": outcome.error_count,
+            });
+            Ok(result)
+        })
+        .await
+    }
+
+    /// Cheaply check whether a PDF needs OCR or heavier parsing, *before*
+    /// committing to a full parse. Runs a text-layer pass (`pdftotext`) plus an
+    /// image inventory (`pdfimages`) -- no page rendering -- and classifies each
+    /// page as text-native or needing OCR, with typed reasons.
+    ///
+    /// The docproc-native analogue of LiteParse's `lit is-complex`. Use it to
+    /// route, reject, or estimate cost before calling `corpus_convert`.
+    /// Emits `reg.pipeline.triage` spans. PDF only.
+    #[tool(
+        description = "Check whether a PDF needs OCR before a full parse. Returns per-page triage verdicts with typed reasons (scanned, no-text, sparse-text, embedded-images). PDF only. No page rendering -- cheap text-layer + image-inventory pass."
+    )]
+    pub async fn corpus_is_complex(
+        &self,
+        Parameters(IsComplexRequest {
+            path,
+            target_pages,
+            summary,
+        }): Parameters<IsComplexRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "corpus_is_complex", async {
+            let resolved = crate::path_safety::contain_for_read(&path)?;
+            let (format, _, _) = convert::detect_format(&path);
+            if format != "pdf" {
+                return Err(McpToolError::invalid_argument(
+                    "corpus_is_complex supports PDF only",
+                ));
+            }
+            let cfg = crate::ocr::TriageConfig::from_env();
+            let mut verdicts = crate::ocr::triage::triage_pdf(&resolved, &cfg)
+                .await
+                .map_err(crate::helpers::map_triage_error)?;
+
+            if let Some(spec) = target_pages.as_deref().filter(|s| !s.trim().is_empty()) {
+                let target = parse_target_page_set(spec)?;
+                verdicts.retain(|v| target.contains(&v.page_number));
+            }
+
+            let needs_ocr = verdicts.iter().any(|v| v.needs_ocr);
+            let ocr_page_count = verdicts.iter().filter(|v| v.needs_ocr).count();
+            let pages: Vec<serde_json::Value> = verdicts
+                .iter()
+                .map(|v| {
+                    serde_json::json!({
+                        "page": v.page_number,
+                        "word_count": v.word_count,
+                        "needs_ocr": v.needs_ocr,
+                        "reasons": v.reasons.iter().map(|r| r.as_str()).collect::<Vec<_>>(),
+                    })
+                })
+                .collect();
+            tracing::info!(
+                target: "reg.pipeline.triage",
+                path = path,
+                pages = verdicts.len(),
+                ocr_pages = ocr_page_count,
+                needs_ocr,
+                "is-complex triage complete"
+            );
+            let result = if summary.unwrap_or(false) {
+                // Aggregate view: the routing decision reads needs_ocr +
+                // ocr_pages; the reason histogram and a few flagged-page
+                // examples carry the diagnostics without the per-page
+                // array's bulk.
+                let mut reason_counts: std::collections::BTreeMap<&str, usize> =
+                    std::collections::BTreeMap::new();
+                for verdict in &verdicts {
+                    for reason in &verdict.reasons {
+                        *reason_counts.entry(reason.as_str()).or_insert(0) += 1;
+                    }
+                }
+                let flagged_examples: Vec<serde_json::Value> = verdicts
+                    .iter()
+                    .filter(|v| v.needs_ocr)
+                    .take(10)
+                    .map(|v| {
+                        serde_json::json!({
+                            "page": v.page_number,
+                            "word_count": v.word_count,
+                            "reasons": v.reasons.iter().map(|r| r.as_str()).collect::<Vec<_>>(),
+                        })
+                    })
+                    .collect();
+                serde_json::json!({
+                    "path": path,
+                    "summary": true,
+                    "page_count": verdicts.len(),
+                    "ocr_pages": ocr_page_count,
+                    "needs_ocr": needs_ocr,
+                    "reason_counts": reason_counts,
+                    "flagged_examples": flagged_examples,
+                })
+            } else {
+                serde_json::json!({
+                    "path": path,
+                    "pages": pages,
+                    "page_count": verdicts.len(),
+                    "ocr_pages": ocr_page_count,
+                    "needs_ocr": needs_ocr,
+                })
+            };
+            Ok(result)
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Chunk text using approximate token targets converted to whitespace-word budgets (not tokenizer counts). overlap_tokens repeats source context, using the schema default when omitted; zero disables repetition. All modes use the same bounded structural/sentence window engine. Accepts text, document path, or directory of extracted TXT files; supports single-tier or per-file multi-tier output."
+    )]
+    pub async fn corpus_chunk(
+        &self,
+        Parameters(ChunkRequest {
+            text,
+            path,
+            input_dir,
+            output,
+            entity_ref_prefix,
+            max_tokens,
+            overlap_tokens,
+            strip_gutenberg,
+            multi_tier,
+            coarse_max_tokens,
+            medium_max_tokens,
+            fine_max_tokens,
+            index,
+            target_pages,
+        }): Parameters<ChunkRequest>,
+    ) -> Result<String, McpToolError> {
+        // Validate every supplied budget before branching, extraction, indexing or writes.
+        let bounds = chunk_word_bounds(
+            max_tokens,
+            if multi_tier.unwrap_or(false) && max_tokens.is_none() {
+                None
+            } else {
+                overlap_tokens
+            },
+        )?;
+        for tokens in [coarse_max_tokens, medium_max_tokens, fine_max_tokens]
+            .into_iter()
+            .flatten()
+        {
+            if tokens_to_words(tokens) == 0 {
+                return Err(McpToolError::invalid_argument(
+                    "tier max_tokens must be at least 2 (one effective word)",
+                ));
+            }
+        }
+        let tier_bounds = if multi_tier.unwrap_or(false) {
+            Some([
+                chunk_word_bounds(Some(coarse_max_tokens.unwrap_or(2048)), overlap_tokens)?,
+                chunk_word_bounds(Some(medium_max_tokens.unwrap_or(512)), overlap_tokens)?,
+                chunk_word_bounds(Some(fine_max_tokens.unwrap_or(128)), overlap_tokens)?,
+            ])
+        } else {
+            None
+        };
+        hkask_mcp_server::validate_identifier("entity_ref_prefix", &entity_ref_prefix, 256)
+            .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
+        if let Some(input_dir) = input_dir {
+            return execute_tool(self, "corpus_chunk", async {
+                // Loud rejection, not silent ignoring: directory mode writes a
+                // single-tier JSONL (the tag/QA substrate). Honoring a
+                // multi_tier request here would need per-tier rows the
+                // downstream stages were never shaped for; silently
+                // dropping it would let an agent believe the output is
+                // multi-tier. Multi-tier retrieval indexing is the per-file
+                // path's job (path/text mode with index=true).
+                if multi_tier.unwrap_or(false) {
+                    return Err(McpToolError::invalid_argument(
+                        "multi_tier is not supported in directory mode — directory mode writes \
+                         a single-tier chunks JSONL (the tag/QA substrate). Call per-file \
+                         (path mode) for multi-tier retrieval indexing, or set multi_tier=false.",
+                    ));
+                }
+                ConvertService::from_corpus(self)
+                    .chunk_directory(
+                        &input_dir,
+                        output.as_deref(),
+                        &entity_ref_prefix,
+                        max_tokens,
+                        overlap_tokens,
+                        strip_gutenberg,
+                        index,
+                    )
+                    .await
+            })
+            .await;
+        }
+
+        execute_tool(self, "corpus_chunk", async {
+            // Exactly one of text or path must be provided
+            let has_text = text.as_ref().is_some_and(|t| !t.is_empty());
+            let has_path = path.as_ref().is_some_and(|p| !p.is_empty());
+            if has_text == has_path {
+                return Err(McpToolError::invalid_argument(
+                    "Exactly one of 'text' or 'path' must be provided",
+                ));
+            }
+
+            if entity_ref_prefix.is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "entity_ref_prefix must not be empty",
+                ));
+            }
+            hkask_mcp_server::validate_identifier("entity_ref_prefix", &entity_ref_prefix, 256)
+                .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
+
+            let service = ConvertService::from_corpus(self);
+
+            // Resolve the source text
+            let source_text: String;
+            let source_label: String;
+
+
+            if let Some(ref raw_text) = text
+                && !raw_text.is_empty()
+            {
+                source_text = raw_text.clone();
+                source_label = entity_ref_prefix.clone();
+            } else if let Some(ref file_path) = path
+                && !file_path.is_empty()
+            {
+                // Use shared extract_text for format detection + text extraction
+                let mut extract_outcome = extract_text(file_path).await?;
+                if let Some(spec) = target_pages.as_deref().filter(|s| !s.trim().is_empty()) {
+                    let target = parse_target_page_set(spec)?;
+                    extract_outcome = filter_outcome_to_pages(extract_outcome, &target);
+                }
+                match extract_outcome {
+                    ExtractOutcome::Success {
+                        text: extracted,
+                        structure: Some(doc_structure),
+                        ..
+                    } => {
+                        // Preserve rendered heading markers for shared structural splitting.
+                        let structure_text = doc_structure.text();
+                        source_text = if structure_text.split_whitespace().count()
+                            >= extracted.split_whitespace().count()
+                        {
+                            structure_text
+                        } else {
+                            extracted
+                        };
+
+                    }
+                    ExtractOutcome::Success {
+                        text: extracted, ..
+                    } => {
+                        source_text = extracted;
+                    }
+                    ExtractOutcome::NeedsOcr { partial_text, .. } => {
+                        // The page pipeline is the only OCR mechanism (the
+                        // raw-bytes single-shot fallback was removed). Use
+                        // the partial native text when the pipeline is
+                        // unavailable or fails — the degradation is warned,
+                        // never silent.
+                        source_text = ocr_fallback_text(
+                            &service,
+                            file_path,
+                            partial_text.clone(),
+                            "partial native text",
+                        )
+                        .await?;
+                    }
+                    ExtractOutcome::PartialOcr {
+                        page_texts,
+                        ocr_pages,
+                        ..
+                    } => {
+                        // Mixed PDF: some pages text-native, some need OCR.
+                        // Chunk's selective-OCR optimization is deferred; for
+                        // now, fall back to whole-doc OCR (like NeedsOcr) so no
+                        // page is silently lost. The joined native text is the
+                        // fallback when the pipeline is unavailable or fails.
+                        let partial = page_texts.join("\n\x0c");
+                        source_text = if ocr_pages.is_empty() {
+                            partial
+                        } else {
+                            ocr_fallback_text(&service, file_path, partial, "joined native text")
+                                .await?
+                        };
+                    }
+                }
+                source_label = file_path.clone();
+            } else {
+                return Err(McpToolError::invalid_argument("No text or path provided"));
+            }
+
+            // Apply Gutenberg stripping if requested
+            let processed = if strip_gutenberg.unwrap_or(false) {
+                crate::text::strip_gutenberg_headers(&source_text)
+            } else {
+                source_text
+            };
+            let processed = sanitize_links(&processed);
+            let processed = crate::convert::decode_html_entities(&processed);
+            let processed = crate::convert::strip_html_comments(&processed);
+
+            let boundary = ".!? ";
+            let source_ref = if has_path {
+                format!("{entity_ref_prefix}:{}", crate::text::source_component(&source_label))
+            } else {
+                entity_ref_prefix.clone()
+            };
+
+            if let Some([coarse_bounds, medium_bounds, fine_bounds]) = tier_bounds {
+                let chunk_tier = |tier: &str, bounds: &crate::helpers::ChunkWordBounds| {
+                    chunk_structure(
+                        &processed,
+                        &format!("{source_ref}:{tier}"),
+                        bounds.min_words,
+                        bounds.max_words,
+                        boundary,
+                        bounds.overlap_words,
+                    )
+                };
+
+                let coarse = chunk_tier("coarse", &coarse_bounds)?;
+                let medium = chunk_tier("medium", &medium_bounds)?;
+                let fine = chunk_tier("fine", &fine_bounds)?;
+
+                let result = json!({
+                    "source": source_label,
+                    "multi_tier": true,
+                    "overlap_tokens": coarse_bounds.overlap_tokens,
+                    "overlap_words": coarse_bounds.overlap_words,
+                    "budget_basis": "floor(tokens / 1.33) whitespace words; not a model-token limit",
+                    "coarse_max_tokens": coarse_max_tokens.unwrap_or(2048),
+                    "medium_max_tokens": medium_max_tokens.unwrap_or(512),
+                    "fine_max_tokens": fine_max_tokens.unwrap_or(128),
+                    "coarse": serialize_passages(&coarse),
+                    "medium": serialize_passages(&medium),
+                    "fine": serialize_passages(&fine),
+                });
+
+                // Auto-index if requested
+                let (indexed, index_error) = if index {
+                    let all: Vec<_> = coarse.into_iter().chain(medium).chain(fine).collect();
+                    match service.index_passages(&all, &source_label).await {
+                        Ok(n) => (n, None),
+                        Err(e) => (0, Some(e.to_string())),
+                    }
+                } else {
+                    (0, None)
+                };
+
+                let mut result = result;
+                result["indexed"] = json!(indexed);
+                if let Some(ref err) = index_error {
+                    result["index_error"] = json!(err);
+                }
+                Ok(result)
+            } else {
+                // Single-tier
+                let max_words = bounds.max_words;
+                let min_words = bounds.min_words;
+
+                let passages = chunk_structure(
+                    &processed, &source_ref, min_words, max_words, boundary, bounds.overlap_words,
+                )?;
+
+                let total_passages = passages.len();
+                let serialized = serialize_passages(&passages);
+
+                // Auto-index if requested
+                let (indexed, index_error) = if index {
+                    match service.index_passages(&passages, &source_label).await {
+                        Ok(n) => (n, None),
+                        Err(e) => (0, Some(e.to_string())),
+                    }
+                } else {
+                    (0, None)
+                };
+
+                let result = json!({
+                    "source": source_label,
+                    "multi_tier": false,
+                    "total_passages": total_passages,
+                    "passages": serialized,
+                    "max_tokens": bounds.max_tokens,
+                    "overlap_tokens": bounds.overlap_tokens,
+                    "overlap_words": bounds.overlap_words,
+                    "budget_basis": "floor(tokens / 1.33) whitespace words; not a model-token limit",
+                    "max_words": max_words,
+                    "min_words": min_words,
+                    "sentence_boundary": boundary,
+                    "stripped_gutenberg": strip_gutenberg.unwrap_or(false),
+                    "indexed": indexed,
+                    "index_error": index_error,
+                });
+                Ok(result)
+            }
+        })
+        .await
+    }
+}
+
+impl CorpusServer {
+    /// expect: "The corpus pipeline uses hKask MCP servers, not external scripts."
+    /// [P7] Motivating: Composable Systems — one MCP call executes the manifest's directory conversion step.
+    /// pre: `path` names a readable directory and `output` names its destination directory
+    /// post: each supported source has a non-empty `.txt` output or an entry in `failures`
+    /// inv: accepted outputs resume only above the 50-word floor and quality gates; staged OCR also retains its verification report
+    /// [P3] Constraining: Generative Space — batch progress and failures remain visible in the tool result.
+    async fn convert_directory(
+        &self,
+        path: &str,
+        output: Option<&str>,
+        force_ocr: bool,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "corpus_convert", async {
+            hkask_mcp_server::validate_path("path", path, 4096)
+                .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
+            let path = crate::path_safety::contain_for_read(path)?;
+            let output = output.ok_or_else(|| {
+                McpToolError::invalid_argument(
+                    "'output' directory is required when 'path' is a directory",
+                )
+            })?;
+            hkask_mcp_server::validate_path("output", output, 4096)
+                .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
+            let output = crate::path_safety::contain_for_write(output)?;
+
+            let output_dir = output.as_path();
+            std::fs::create_dir_all(output_dir).map_err(|e| {
+                map_io_error(
+                    e,
+                    &format!("Failed to create output directory '{}'", output_dir.display()),
+                )
+            })?;
+
+            let mut sources = std::fs::read_dir(&path)
+                .map_err(|e| {
+                    map_io_error(e, &format!("Failed to read directory '{}'", path.display()))
+                })?
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .filter(|entry| entry.is_file() && is_supported_document(entry))
+                .collect::<Vec<_>>();
+            sources.sort();
+
+            if sources.is_empty() {
+                return Err(McpToolError::invalid_argument(format!(
+                    "Directory '{}' contains no supported documents",
+                    path.display()
+                )));
+            }
+
+            let mut extracted = 0usize;
+            let mut staged = 0usize;
+            let mut skipped = 0usize;
+            let mut skipped_staged = 0usize;
+            let mut healed = 0usize;
+            let mut failures = Vec::new();
+            let mut document_reports = Vec::new();
+
+            // Stage OCR output separately: partial or unverified model output
+            // must not enter the extraction set before a quality-gated merge.
+            // Deterministic native-text conversions write directly.
+            let staging_dir = output_dir
+                .parent()
+                .map(|p| p.join(format!("{}-ocr-staging", output.file_name().unwrap_or_default().to_string_lossy())));
+
+            for source in &sources {
+                let Some(file_name) = source.file_name() else {
+                    continue;
+                };
+                let file_name = file_name.to_string_lossy();
+                let output_path = output_dir.join(format!("{file_name}.txt"));
+                // Skip only outputs that would PASS the Stage-1 word-count
+                // floor AND the deterministic quality gates. The old `len > 50`
+                // byte check treated a 72-byte zero-word garbage extraction as
+                // a valid existing output, and the word-floor-only check
+                // honored degenerate OCR (CJK hallucination and repetition
+                // loops pass word floors — observed 2026-09-10). A re-run now
+                // heals quality-failed outputs instead of honoring them. A
+                // read failure falls through to re-extraction (the safe
+                // direction).
+                if let Ok(existing) = std::fs::read_to_string(&output_path) {
+                    if existing.split_whitespace().count() >= 50
+                        && crate::ocr::quality::passes_gates(&existing)
+                    {
+                        skipped += 1;
+                        continue;
+                    }
+                    if existing.split_whitespace().count() >= 50 {
+                        healed += 1;
+                    }
+                }
+
+                // Staged OCR is never admitted or silently rerun. Its retained
+                // report is evidence for review, not a whole-file quality proxy.
+                // Invalid staged text/report pairs require explicit regeneration.
+                if let Some(ref staging) = staging_dir {
+                    let staged_path = staging.join(format!("{file_name}.txt"));
+                    let staged_text = match std::fs::read_to_string(&staged_path) {
+                        Ok(text) => Some(text),
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                        Err(e) => {
+                            failures.push(json!({"path":source,"error":format!("Cannot read staged OCR for verification: {e}")}));
+                            continue;
+                        }
+                    };
+                    if let Some(existing) = staged_text {
+                        // Whole-file quality cannot recover a failed page-level
+                        // verdict. Retain the original result and bind it to the
+                        // staged text before treating this as a resumable OCR run.
+                        let report_path = staging.join(format!("{file_name}.report.json"));
+                        let report = crate::helpers::read_text_capped(
+                            &report_path.to_string_lossy(), "OCR verification report",
+                        ).and_then(|text| serde_json::from_str::<serde_json::Value>(&text)
+                            .map_err(|e| McpToolError::invalid_argument(format!("Invalid OCR verification report: {e}"))));
+                        match report {
+                            Ok(mut report) if report.get("text").and_then(serde_json::Value::as_str) == Some(existing.as_str())
+                                && report.get("path").and_then(serde_json::Value::as_str) == source.to_str()
+                                && report.get("verification_passed").and_then(serde_json::Value::as_bool).is_some()
+                                && report.get("ocr_protocol").and_then(serde_json::Value::as_str) == Some(crate::ocr::response::OCR_PROTOCOL)
+                                && existing.split_whitespace().count() >= 50
+                                && crate::ocr::quality::passes_gates(&existing) => {
+                                    if let Some(map) = report.as_object_mut() {
+                                        map.remove("text");
+                                        map.remove("structure");
+                                    }
+                                    document_reports.push(report);
+                                    skipped_staged += 1;
+                                }
+                            other => failures.push(json!({
+                                "path": source,
+                                "error": format!("Staged OCR verification report missing, invalid, or mismatched; no re-extraction or admission performed: {}",
+                                    other.err().map(|e| e.to_string()).unwrap_or_else(|| report_path.display().to_string())),
+                            })),
+                        }
+                        continue;
+                    }
+                }
+
+                let response = match Box::pin(self.corpus_convert(Parameters(ConvertRequest {
+                    path: source.to_string_lossy().into_owned(),
+                    output: None,
+                    force_ocr,
+                    target_pages: None,
+                    include_structure: None,
+                    pdf_text_order: PdfTextOrder::Layout,
+                })))
+                .await
+                {
+                    Ok(response) => response,
+                    Err(e) => {
+                        failures.push(json!({
+                            "path": source,
+                            "error": e.to_json_string(),
+                        }));
+                        continue;
+                    }
+                };
+
+                let content = hkask_types::tool_response::parse_tool_response(&response);
+                let text = content
+                    .as_ref()
+                    .and_then(|value| value.get("text"))
+                    .and_then(serde_json::Value::as_str);
+                let method = content
+                    .as_ref()
+                    .and_then(|value| value.get("method"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+
+                match text {
+                    Some(text) if !text.trim().is_empty() => {
+                        // OCR-sourced text → staging; deterministic text
+                        // extraction → the output directory directly.
+                        let is_ocr_sourced =
+                            method == "ocr_pipeline" || method == "selective_ocr";
+                        let destination = if is_ocr_sourced {
+                            match staging_dir {
+                                Some(ref staging) => {
+                                    if let Err(e) = std::fs::create_dir_all(staging) {
+                                        failures.push(json!({
+                                            "path": source,
+                                            "error": format!("Failed to create staging dir '{}': {}", staging.display(), e),
+                                        }));
+                                        continue;
+                                    }
+                                    staging.join(format!("{file_name}.txt"))
+                                }
+                                None => {
+                                    failures.push(json!({
+                                        "path": source,
+                                        "error": "no parent directory for the OCR staging dir",
+                                    }));
+                                    continue;
+                                }
+                            }
+                        } else {
+                            output_path
+                        };
+                        let destination = crate::path_safety::contain_for_write(&destination.to_string_lossy())?;
+                        // O_NOFOLLOW open: a symlink at the destination is
+                        // refused, not followed (F4).
+                        if let Err(e) = hkask_mcp_server::server::write_contained(
+                            &destination.to_string_lossy(),
+                            text.as_bytes(),
+                        ) {
+                            failures.push(json!({
+                                "path": source,
+                                "error": format!("Failed to write '{}': {}", destination.display(), e),
+                            }));
+                        } else if is_ocr_sourced {
+                            let report_path = destination.with_file_name(format!("{file_name}.report.json"));
+                            let report_path = crate::path_safety::contain_for_write(&report_path.to_string_lossy())?;
+                            let result = content.as_ref().ok_or_else(|| McpToolError::internal("Missing parsed conversion result"))?;
+                            let serialized = serde_json::to_vec(result)
+                                .map_err(|e| McpToolError::internal(format!("Cannot serialize OCR verification report: {e}")))?;
+                            if let Err(e) = hkask_mcp_server::server::write_contained(
+                                &report_path.to_string_lossy(),
+                                &serialized,
+                            ) {
+                                failures.push(json!({"path":source,"error":format!("Cannot persist OCR verification report '{}': {e}", report_path.display())}));
+                                continue;
+                            }
+                            let mut report = result.clone();
+                            if let Some(map) = report.as_object_mut() {
+                                map.remove("text");
+                                map.remove("structure");
+                            }
+                            document_reports.push(report);
+                            staged += 1;
+                        } else {
+                            extracted += 1;
+                        }
+                    }
+                    _ => failures.push(json!({
+                        "path": source,
+                        "error": content
+                            .unwrap_or_else(|| json!({"response": response})),
+                    })),
+                }
+            }
+
+            Ok(json!({
+                "path": path,
+                "output": output,
+                "staging_dir": staging_dir.as_ref().map(|p| p.display().to_string()),
+                "source_documents": sources.len(),
+                "total_documents": extracted + skipped + staged + skipped_staged,
+                "extracted": extracted,
+                "staged": staged,
+                "skipped": skipped,
+                "skipped_staged": skipped_staged,
+                "healed": healed,
+                "verification_failed": document_reports.iter().filter(|r| r.get("verification_passed").and_then(serde_json::Value::as_bool) == Some(false)).count(),
+                "document_reports": document_reports,
+                "failed": failures.len(),
+                "failures": failures,
+            }))
+        })
+        .await
+    }
+}
+
+fn is_supported_document(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "pdf"
+                    | "html"
+                    | "htm"
+                    | "md"
+                    | "txt"
+                    | "docx"
+                    | "pptx"
+                    | "xlsx"
+                    | "xls"
+                    | "csv"
+                    | "ttl"
+                    | "owl"
+                    | "rdf"
+                    | "kif"
+                    | "json"
+            )
+        })
+}
+
+// ── Request structs ────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, serde::Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PdfTextOrder {
+    #[default]
+    Layout,
+    Raw,
+}
+
+impl PdfTextOrder {
+    pub(crate) fn pdftotext_arg(self) -> &'static str {
+        match self {
+            Self::Layout => "-layout",
+            Self::Raw => "-raw",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ConvertRequest {
+    /// Path to a document file or a directory of documents to convert.
+    pub path: String,
+    /// Output directory for batch conversion. Required when `path` is a directory.
+    #[serde(default)]
+    pub output: Option<String>,
+    /// If true, skip text extraction and go directly to OCR.
+    #[serde(default)]
+    pub force_ocr: bool,
+    /// Target pages to parse (1-based), e.g. `"1-5,10,15-20"`. PDF only.
+    /// When set, pages outside the set are skipped in extraction, triage, and
+    /// OCR. Mirrors LiteParse's `--target-pages`. `None` = all pages.
+    #[serde(default)]
+    pub target_pages: Option<String>,
+    /// If true, include the `structure` field (per-page blocks) in the
+    /// result. Default false: the structure duplicates the full text in
+    /// the response (~2x response size for a book; observed on a 412-page
+    /// OCR result) and no pipeline stage consumes it from the response —
+    /// `corpus_chunk` derives its own structure via `extract_text`.
+    #[serde(default)]
+    pub include_structure: Option<bool>,
+    /// PDF text reading order: `layout` keeps columns side by side; `raw` follows
+    /// text-object order and can keep a two-column article's prose sequential.
+    #[serde(default)]
+    pub pdf_text_order: PdfTextOrder,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct OcrRequest {
+    /// Path to the document file to OCR.
+    pub path: String,
+    /// Vision model to use for OCR (must be available in the inference catalog).
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct IsComplexRequest {
+    /// Path to the PDF file to triage.
+    pub path: String,
+    /// Optional target pages (1-based), e.g. "1-5,10,15-20". None = all pages.
+    #[serde(default)]
+    pub target_pages: Option<String>,
+    /// When true, return aggregates only (counts, reason histogram, up to
+    /// 10 flagged-page examples) instead of the full per-page array. The
+    /// routing decision reads `needs_ocr` + `ocr_pages`; a 412-page book's
+    /// full array is a ~100KB response the decision never reads.
+    #[serde(default)]
+    pub summary: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ChunkRequest {
+    /// Raw text to chunk. Mutually exclusive with `path` and `input_dir`.
+    #[serde(default)]
+    pub text: Option<String>,
+    /// Path to a document file to extract text from and chunk.
+    #[serde(default)]
+    pub path: Option<String>,
+    /// Directory of extracted text files to chunk as one corpus.
+    #[serde(default)]
+    pub input_dir: Option<String>,
+    /// JSONL output path for directory mode. Required with `input_dir`.
+    #[serde(default)]
+    pub output: Option<String>,
+    /// Prefix for entity references in chunk output.
+    pub entity_ref_prefix: String,
+    /// Approximate token target (single-tier). floor(tokens / 1.33) words, not a
+    /// tokenizer limit. Must be >= 2 and exceed overlap. Default from HkaskSettings.
+    /// Structural/sentence boundaries are preferred within the word budget.
+    #[serde(default)]
+    pub max_tokens: Option<usize>,
+    /// Repeated context in all modes: floor(tokens / 1.33) words.
+    /// Omitted uses the schema default. Zero disables repetition; positive values
+    /// must yield a word and be smaller than every active chunk budget.
+    #[serde(default)]
+    #[schemars(default = "chunk_overlap_default")]
+    pub overlap_tokens: Option<usize>,
+    /// Strip Project Gutenberg headers from text before chunking.
+    #[serde(default)]
+    pub strip_gutenberg: Option<bool>,
+    /// If true, produce coarse/medium/fine multi-tier output instead of single-tier.
+    #[serde(default)]
+    pub multi_tier: Option<bool>,
+    /// Max tokens for coarse tier (multi-tier mode, default 2048).
+    #[serde(default)]
+    pub coarse_max_tokens: Option<usize>,
+    /// Max tokens for medium tier (multi-tier mode, default 512).
+    #[serde(default)]
+    pub medium_max_tokens: Option<usize>,
+    /// Max tokens for fine tier (multi-tier mode, default 128).
+    #[serde(default)]
+    pub fine_max_tokens: Option<usize>,
+    /// If true, automatically index passages for later query via corpus_query (default true).
+    #[serde(default = "default_true")]
+    pub index: bool,
+    /// Target pages to parse (1-based) when `path` is a PDF, e.g. "1-5,10,15-20".
+    /// Pages outside the set are skipped before chunking. Mirrors `corpus_convert`.
+    #[serde(default)]
+    pub target_pages: Option<String>,
+}
+
+fn chunk_overlap_default() -> Option<usize> {
+    Some(crate::helpers::ChunkWordBounds::default().overlap_tokens)
+}
+
+pub(crate) fn default_true() -> bool {
+    true
+}
+
+#[cfg(test)]
+#[path = "chunk_tests.rs"]
+mod chunk_tests;
+
+#[cfg(test)]
+#[path = "document_tests.rs"]
+mod document_tests;

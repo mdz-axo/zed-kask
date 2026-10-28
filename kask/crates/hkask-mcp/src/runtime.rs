@@ -1,0 +1,2788 @@
+//! MCP runtime for hKask
+//!
+//! Manages MCP server connections, tool discovery, and lifecycle.
+//! Servers are spawned as child processes via `start_server_with_env()`, which
+//! performs the MCP handshake, discovers tools dynamically, and stores
+//! live `Peer<RoleClient>` connections. `shutdown_all()` terminates
+//! all managed processes.
+//!
+//! ## Connection healing
+//!
+//! A child process can die without anyone asking it to (crash, OOM, a parent
+//! restart that races an in-flight call). Four mechanisms keep the runtime from
+//! serving a dead connection forever:
+//!
+//! 1. **Reap on death** — the keeper task that owns each `RunningService` removes
+//!    the connection from `connections` when the service loop exits on its own,
+//!    so a corpse is never left behind for `get_peer` to hand out.
+//! 2. **Liveness on read** — `get_peer` filters out a peer whose transport has
+//!    already closed, covering the window before the keeper task is scheduled.
+//! 3. **Reconnect on demand** — `start_server_with_env` records each server's
+//!    launch spec, so `call_tool_inner` can re-spawn a dead server once (subject
+//!    to the reconnect cooldown]) and retry the call rather than failing until the
+//!    next settings change.
+//! 4. **Health supervisor** — a per-server background task that periodically
+//!    checks transport liveness, proactively removes dead connections, and
+//!    **attempts a restart** using the recorded launch spec. Unlike the
+//!    on-demand path, the supervisor heals even when no tool call is in
+//!    flight — without it, a server that crashes while idle stays dead
+//!    forever. After `max_consecutive_health_failures` consecutive failures
+//!    the circuit breaker stops auto-healing that server with an
+//!    operator-actionable error — an unsupervised respawn loop is the
+//!    crash-loop defect (2026-08-29). Any explicit start (settings-change
+//!    restart, operator action, on-demand reconnect from a tool call)
+//!    spawns a fresh supervisor and re-enables healing.
+//!
+//! Without these, `start_server_with_env`'s presence-based idempotency check
+//! (`connections.contains_key`) would short-circuit every recovery attempt and
+//! the only route back to a working connection was an operator settings change.
+
+use hkask_tool_port::ToolInfo;
+use hkask_types::process_global::ProcessGlobal;
+use rmcp::model::CallToolRequestParams;
+use rmcp::service::{Peer, RoleClient, ServiceExt};
+
+use serde_json::Value;
+use std::collections::HashMap;
+use std::process::Stdio;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
+use thiserror::Error;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command;
+use tokio::sync::{Mutex, RwLock};
+use tokio_util::context::TokioContext;
+use tokio_util::sync::CancellationToken;
+use tracing::{info, warn};
+
+/// Minimum interval between reconnect attempts for the same server.
+///
+/// Bounds the damage from a crash-looping binary: without it, a server that
+/// dies during its handshake would be re-spawned once per tool call, turning a
+/// broken binary into a process-spawn storm.
+///
+/// Override: `HKASK_MCP_RECONNECT_COOLDOWN_SECS` env var.
+const DEFAULT_RECONNECT_COOLDOWN: Duration = Duration::from_secs(5);
+
+/// Maximum number of retry attempts when a server fails to start (spawn or
+/// handshake). After exhausting these, the failure is reported to the caller
+/// and the next tool call will retry via the on-demand reconnect path.
+///
+/// Override: `HKASK_MCP_STARTUP_MAX_RETRIES` env var.
+const DEFAULT_STARTUP_MAX_RETRIES: u32 = 3;
+
+/// Initial backoff for startup retries. Doubles each attempt up to
+/// `DEFAULT_STARTUP_MAX_BACKOFF`.
+///
+/// Override: `HKASK_MCP_STARTUP_INITIAL_BACKOFF_MS` env var.
+const DEFAULT_STARTUP_INITIAL_BACKOFF: Duration = Duration::from_millis(500);
+
+/// Cap on the startup retry backoff.
+///
+/// Override: `HKASK_MCP_STARTUP_MAX_BACKOFF_SECS` env var.
+const DEFAULT_STARTUP_MAX_BACKOFF: Duration = Duration::from_secs(10);
+
+/// Deadline for a spawned server's handshake and tool discovery. Deliberately
+/// independent of `DEFAULT_HEALTH_CHECK_INTERVAL` (the two mechanisms are
+/// unrelated — F6 removed the latent coupling where tuning the health
+/// interval silently re-timed startup handshakes); the 60s value is the
+/// D3-intended startup allowance.
+///
+/// Override: `HKASK_MCP_STARTUP_TIMEOUT_SECS` env var.
+const DEFAULT_STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Deadline for one already-dispatched tool call.
+/// `rmcp`'s default request options carry no timeout, so a connected server
+/// that never replies could block `dispatch` (and therefore `Thread::cancel`,
+/// which awaits the in-flight tool task) indefinitely. Independent of
+/// `DEFAULT_STARTUP_TIMEOUT` — this bounds a call already past handshake, not
+/// the handshake itself. Firing this deadline is reported as
+/// [`DispatchError::Interrupted`] (the request may already have been applied
+/// server-side; a timeout proves no non-delivery), never as a proven failure
+/// or an invitation to retry.
+///
+/// Override: `HKASK_MCP_CALL_TIMEOUT_SECS` env var.
+const DEFAULT_CALL_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Interval between proactive health checks. The supervisor checks each
+/// server's transport liveness and, if closed, removes the dead connection
+/// and attempts a restart. The restart is the proactive self-healing path —
+/// the on-demand reconnect (`call_tool_inner → try_reconnect`) only fires on
+/// a tool call, so without a supervisor-driven restart a server that crashes
+/// while no tool call is in flight stays dead indefinitely.
+///
+/// Override: `HKASK_MCP_HEALTH_CHECK_INTERVAL_SECS` env var.
+const DEFAULT_HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Maximum consecutive health-check failures before the supervisor's circuit
+/// breaker stops auto-healing the server. The stop is not a permanent outage:
+/// any explicit start (settings-change restart, operator action, or
+/// `call_tool_inner`'s on-demand reconnect) spawns a fresh supervisor whose
+/// first healthy check resets the counter. The threshold bounds the
+/// crash-loop defect — a dying binary respawned forever with no
+/// operator-visible stop condition (observed live 2026-08-29).
+///
+/// Override: `HKASK_MCP_MAX_HEALTH_FAILURES` env var.
+const DEFAULT_MAX_CONSECUTIVE_HEALTH_FAILURES: u32 = 3;
+
+/// Process-global handle to the tokio runtime that owns MCP server child
+/// processes, wired by the embedder at startup (`main.rs` passes
+/// `gpui_tokio::Tokio::handle`).
+///
+/// `start_server_with_env` drives tokio primitives that require a reactor
+/// context (a thread-local): the child-process spawn registers the stdio
+/// pipes with the IO driver, the retry backoff is `tokio::time::sleep`, and
+/// the keeper/supervisor/stderr tasks are `tokio::spawn`ed. Deliberate
+/// callers run on the tokio runtime (the health supervisor's startup worker,
+/// the `Tokio::spawn` launch and settings-restart paths), but the on-demand
+/// reconnect (`call_tool_inner → try_reconnect`) is polled by whoever awaits
+/// `ToolPort::invoke` — and a caller on a reactor-less executor (the GPUI
+/// foreground or background thread pool) panics with "there is no reactor
+/// running", crashing the whole editor. Observed live 2026-08-31: a
+/// scenarios-server transport loss took zed-kask down on thread 'main'.
+/// Reconnect startup runs on a runtime worker. Dispatch instead uses
+/// `TokioContext` so timers are constructed/polled in this context without
+/// spawning a detached request or blocking the caller's executor.
+///
+/// Re-settable (`ProcessGlobal`), matching the other process-global hooks
+/// (`set_memory_port`, `set_tool_invoker`).
+static SPAWN_RUNTIME: ProcessGlobal<tokio::runtime::Handle> = ProcessGlobal::new();
+
+/// Wire the tokio runtime that off-runtime reconnects spawn onto.
+/// See [`SPAWN_RUNTIME`]. Re-settable; a second call replaces the first.
+pub fn set_spawn_runtime(handle: tokio::runtime::Handle) {
+    SPAWN_RUNTIME.set(Some(handle));
+}
+
+/// The configured spawn runtime, if wired. `None` in embedders that never
+/// called [`set_spawn_runtime`] (tests construct the runtime inside
+/// `#[tokio::test]`, so the ambient context suffices there).
+fn configured_spawn_runtime() -> Option<tokio::runtime::Handle> {
+    SPAWN_RUNTIME.get()
+}
+
+/// Resolve a duration from an env var (seconds), falling back to `default`.
+/// Logs a warning on parse failure per `.rules` (numeric env vars that fail
+/// to parse must `log::warn!` naming the malformed value).
+fn resolve_duration_env_secs(var: &str, default: Duration) -> Duration {
+    match std::env::var(var) {
+        Ok(val) => match val.parse::<u64>() {
+            Ok(secs) => Duration::from_secs(secs),
+            Err(_) => {
+                tracing::warn!(
+                    target: "hkask.mcp",
+                    env_var = %var,
+                    value = %val,
+                    "Failed to parse as u64 seconds — using default"
+                );
+                default
+            }
+        },
+        Err(_) => default,
+    }
+}
+
+/// Resolve a duration from an env var (milliseconds), falling back to `default`.
+fn resolve_duration_env_millis(var: &str, default: Duration) -> Duration {
+    match std::env::var(var) {
+        Ok(val) => match val.parse::<u64>() {
+            Ok(millis) => Duration::from_millis(millis),
+            Err(_) => {
+                tracing::warn!(
+                    target: "hkask.mcp",
+                    env_var = %var,
+                    value = %val,
+                    "Failed to parse as u64 milliseconds — using default"
+                );
+                default
+            }
+        },
+        Err(_) => default,
+    }
+}
+
+/// Resolve a u32 from an env var, falling back to `default`.
+fn resolve_u32_env(var: &str, default: u32) -> u32 {
+    match std::env::var(var) {
+        Ok(val) => match val.parse::<u32>() {
+            Ok(n) => n,
+            Err(_) => {
+                tracing::warn!(
+                    target: "hkask.mcp",
+                    env_var = %var,
+                    value = %val,
+                    "Failed to parse as u32 — using default"
+                );
+                default
+            }
+        },
+        Err(_) => default,
+    }
+}
+
+/// Resolved MCP runtime tuning parameters. Read once at first server launch
+/// and cached for the process lifetime.
+#[derive(Clone, Debug)]
+struct McpRuntimeConfig {
+    reconnect_cooldown: Duration,
+    startup_max_retries: u32,
+    startup_timeout: Duration,
+    startup_initial_backoff: Duration,
+    startup_max_backoff: Duration,
+    health_check_interval: Duration,
+    max_consecutive_health_failures: u32,
+    call_timeout: Duration,
+}
+
+impl Default for McpRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            reconnect_cooldown: resolve_duration_env_secs(
+                "HKASK_MCP_RECONNECT_COOLDOWN_SECS",
+                DEFAULT_RECONNECT_COOLDOWN,
+            ),
+            startup_timeout: resolve_duration_env_secs(
+                "HKASK_MCP_STARTUP_TIMEOUT_SECS",
+                DEFAULT_STARTUP_TIMEOUT,
+            ),
+            startup_max_retries: resolve_u32_env(
+                "HKASK_MCP_STARTUP_MAX_RETRIES",
+                DEFAULT_STARTUP_MAX_RETRIES,
+            ),
+            startup_initial_backoff: resolve_duration_env_millis(
+                "HKASK_MCP_STARTUP_INITIAL_BACKOFF_MS",
+                DEFAULT_STARTUP_INITIAL_BACKOFF,
+            ),
+            startup_max_backoff: resolve_duration_env_secs(
+                "HKASK_MCP_STARTUP_MAX_BACKOFF_SECS",
+                DEFAULT_STARTUP_MAX_BACKOFF,
+            ),
+            health_check_interval: resolve_duration_env_secs(
+                "HKASK_MCP_HEALTH_CHECK_INTERVAL_SECS",
+                DEFAULT_HEALTH_CHECK_INTERVAL,
+            ),
+            max_consecutive_health_failures: resolve_u32_env(
+                "HKASK_MCP_MAX_HEALTH_FAILURES",
+                DEFAULT_MAX_CONSECUTIVE_HEALTH_FAILURES,
+            ),
+            call_timeout: resolve_duration_env_secs(
+                "HKASK_MCP_CALL_TIMEOUT_SECS",
+                DEFAULT_CALL_TIMEOUT,
+            ),
+        }
+    }
+}
+
+/// A simple flat-cost energy estimator.
+///
+/// All tool invocations cost the same flat amount. This is the default
+/// MCP tool definition
+#[derive(Debug, Clone)]
+pub struct McpTool {
+    /// Tool name
+    pub name: String,
+    /// Tool description
+    pub description: String,
+    /// Input schema (JSON Schema)
+    pub input_schema: Value,
+    /// MCP server that provides this tool
+    pub server_id: String,
+}
+
+/// Discovered server metadata retained for lookup and connection recovery.
+#[derive(Debug, Clone)]
+struct McpServer {
+    id: String,
+    tools: Vec<McpTool>,
+}
+
+/// Non-secret process plumbing forwarded to every MCP child process after
+/// `env_clear()`.
+///
+/// The child's environment is otherwise built solely from its own filtered
+/// per-server allowlist, so nothing here may be a credential. Each entry is
+/// justified:
+///
+/// - `PATH`, `HOME` — subprocess resolution and data-dir derivation. Several
+///   servers derive paths from `HOME`.
+/// - `XDG_DATA_HOME`, `XDG_RUNTIME_DIR` — read by kask crates for data/socket
+///   paths on Linux.
+/// - `TMPDIR` — temp-file placement.
+/// - `RUST_LOG`, `RUST_BACKTRACE` — diagnostics. `hkask-mcp-server`'s transport
+///   builds an `EnvFilter` from the environment, so without `RUST_LOG` a child
+///   silently loses operator-configured log levels.
+/// - `LANG`, `LC_ALL`, `TZ` — locale and timezone correctness for date parsing
+///   and formatting.
+/// - `SSL_CERT_FILE`, `SSL_CERT_DIR` — TLS trust roots for servers making
+///   outbound HTTPS calls; omitting these breaks certificate verification on
+///   distributions that rely on them.
+///
+/// Deliberately absent: every `*_API_KEY`, `HKASK_SMTP_PASSWORD`,
+/// `HKASK_DB_PASSPHRASE`, and every other secret. A server that needs one of
+/// those must declare it in its credential allowlist
+/// (`kask_bridge::mcp_servers`), which is the point of the boundary.
+pub(crate) const PASSTHROUGH_ENV_VARS: &[&str] = &[
+    "PATH",
+    "HOME",
+    "XDG_DATA_HOME",
+    "XDG_RUNTIME_DIR",
+    "TMPDIR",
+    "RUST_LOG",
+    "RUST_BACKTRACE",
+    "LANG",
+    "LC_ALL",
+    "TZ",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    // D-Bus session bus address — required by the `keyring` crate's Secret
+    // Service backend on Linux. Without it, `Keychain::retrieve_by_key`
+    // blocks indefinitely in child processes after `env_clear()`. The governed
+    // MCP runtime injects credentials as env vars (checked first by
+    // `resolve_credential`). The DB passphrase keychain fallback path needs
+    // D-Bus to avoid a hang when the env var is absent.
+    "DBUS_SESSION_BUS_ADDRESS",
+    // X11 display — required by some keychain backends (e.g. kwallet) on Linux.
+    "DISPLAY",
+];
+
+/// Error type for MCP server startup.
+#[derive(Debug, Error)]
+#[allow(clippy::enum_variant_names)]
+pub enum ServerStartError {
+    #[error("Failed to spawn MCP server process: {0}")]
+    SpawnFailed(String),
+    #[error("Failed to connect to MCP server (handshake): {0}")]
+    ConnectFailed(String),
+    #[error("Failed to discover tools from server: {0}")]
+    DiscoveryFailed(String),
+    #[error("MCP server '{0}' startup cancelled by stop or replacement")]
+    Cancelled(String),
+    #[error("MCP server '{server_id}' timed out during {phase}")]
+    TimedOut {
+        server_id: String,
+        phase: &'static str,
+    },
+}
+
+/// Resolve the binary path for an MCP server.
+///
+/// 1. Check `HKASK_MCP_{SERVER_ID_UPPER}_BIN` environment variable.
+///    Example: `HKASK_MCP_FILESYSTEM_BIN` for server_id="filesystem".
+/// 2. Fall back to the provided command name (PATH-based resolution).
+fn resolve_mcp_binary(server_id: &str, command: &str) -> String {
+    let env_var = format!("HKASK_MCP_{}_BIN", server_id.to_uppercase());
+    if let Ok(explicit_path) = std::env::var(&env_var)
+        && !explicit_path.is_empty()
+    {
+        tracing::info!(
+            target: "hkask.mcp",
+            server_id = %server_id,
+            env_var = %env_var,
+            binary = %explicit_path,
+            "MCP binary resolved via env var"
+        );
+        return explicit_path;
+    }
+    command.to_string()
+}
+
+/// MCP runtime manager
+///
+/// Also serves as the Regulation governance boundary for tool invocations.
+/// The `invoke` method emits a Regulation span, calls the tool, and emits
+/// the outcome span. This collapses the former `GovernedTool` wrapper —
+/// one tool, one path.
+#[derive(Clone)]
+struct ToolGovernance {
+    cybernetics: Arc<RwLock<hkask_regulation::CyberneticsLoop>>,
+    event_sink: Arc<std::sync::RwLock<Arc<dyn hkask_types::RegulationSink>>>,
+}
+
+/// How to (re-)spawn a server, recorded at launch so a dead connection can be
+/// rebuilt without the composition root re-supplying the binary and env.
+#[derive(Clone, Debug)]
+struct LaunchSpec {
+    command: String,
+    env: hkask_types::ServerEnv,
+    generation: u64,
+    cancel: CancellationToken,
+}
+
+impl LaunchSpec {
+    fn new(command: String, env: hkask_types::ServerEnv) -> Self {
+        Self {
+            command,
+            env,
+            generation: CONNECTION_GENERATION.fetch_add(1, Ordering::Relaxed),
+            cancel: CancellationToken::new(),
+        }
+    }
+}
+
+/// Monotonic generation counter for connection identity.
+///
+/// A keeper task must only reap the connection *it* installed. Without a
+/// generation stamp, a keeper whose service loop exits just after a reconnect
+/// replaced its entry would remove the healthy replacement — turning recovery
+/// into a self-inflicted outage. The counter is process-global; only equality
+/// matters.
+static CONNECTION_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// A live connection plus the generation that installed it.
+#[derive(Clone)]
+struct Connection {
+    peer: Peer<RoleClient>,
+    generation: u64,
+}
+
+/// Owns process termination independently of rmcp's detached transport cleanup.
+struct ManagedChild {
+    server_id: String,
+    cancel: CancellationToken,
+    task: tokio::task::JoinHandle<()>,
+}
+
+/// The supervisor's view of a server's connection state.
+#[derive(Debug)]
+enum ConnectionState {
+    /// Connection exists and transport is open.
+    Healthy,
+    /// Connection exists but transport has closed (keeper hasn't reaped yet).
+    TransportClosed,
+    /// No connection in the map (keeper reaped, or supervisor removed it).
+    Missing,
+}
+
+/// Per-server runtime state — one entry replaces the six former per-server
+/// maps (`servers`, `connections`, `cancellation_tokens`, `launch_specs`,
+/// `last_reconnect`, `health_failures`), so per-server coherence is
+/// structural (one lock, one entry) instead of cross-map protocol.
+#[derive(Default)]
+struct ServerEntry {
+    /// Discovered metadata; retained across connection loss, absent until discovery.
+    metadata: Option<McpServer>,
+    /// Live connection + its generation; `None` when not connected.
+    connection: Option<Connection>,
+    /// Supervisor/keeper token; retained across connection loss — a dead
+    /// connection's supervisor must stay cancellable until replacement/stop.
+    supervisor_cancel: Option<CancellationToken>,
+    /// How to (re-)spawn; `None` = deliberately stopped (never resurrected).
+    spec: Option<LaunchSpec>,
+    /// Cooldown stamp for the on-demand reconnect path.
+    last_reconnect: Option<Instant>,
+    /// Consecutive health-check failures (circuit-breaker input).
+    health_failures: u32,
+}
+
+#[derive(Clone)]
+pub struct McpRuntime {
+    /// Serializes desired-state changes and publication, never handshake/discovery.
+    /// The value latches terminal session shutdown, rejecting queued starts.
+    lifecycle: Arc<Mutex<bool>>,
+    /// Per-server state — one map, one lock (see [`ServerEntry`]).
+    entries: Arc<RwLock<HashMap<String, ServerEntry>>>,
+    /// Child processes keyed by spawn id — a restart keeps old children
+    /// until reaped, so the key is the spawn, not the server.
+    children: Arc<Mutex<HashMap<u64, ManagedChild>>>,
+    /// Change signal for tool registration and connection liveness (server
+    /// registered / connected / disconnected / stopped / shutdown-all). Consumers subscribe via
+    /// [`McpRuntime::tool_surface_changes`] and refresh event-driven instead
+    /// of polling — registration is an event, and events are forwarded, not
+    /// sampled.
+    tool_surface_tx: Arc<tokio::sync::watch::Sender<()>>,
+    /// Resolved tuning parameters (env-overridable defaults).
+    config: McpRuntimeConfig,
+    governance: Option<ToolGovernance>,
+}
+
+impl McpRuntime {
+    /// Create a new MCP runtime with no governance configured.
+    /// Tool invocations will bypass Regulation — use `with_governance`
+    /// to wire the cybernetic membrane.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            lifecycle: Arc::new(Mutex::new(false)),
+            entries: Arc::new(RwLock::new(HashMap::new())),
+            children: Arc::new(Mutex::new(HashMap::new())),
+            tool_surface_tx: Arc::new(tokio::sync::watch::Sender::new(())),
+            config: McpRuntimeConfig::default(),
+            governance: None,
+        }
+    }
+
+    /// Wire the cybernetic governance membrane (call-cap metering + Regulation spans).
+    /// All subsequent `invoke` calls charge one call against the agent's per-tick
+    /// cap and emit Regulation spans. There is deliberately **no** per-call OCAP
+    /// capability check: the prior gate compared a `resource_id` built
+    /// from the same tool name passed to `invoke`, so it was a value against
+    /// itself. Authority is enforced upstream — at the inference IPC
+    /// `tool_allowlist`, the swarm card `mcp_tools` allowlist, and per-server env
+    /// allowlists — not re-checked here. Must be called before the first invocation.
+    #[must_use]
+    pub fn with_governance(
+        mut self,
+        cybernetics: Arc<RwLock<hkask_regulation::CyberneticsLoop>>,
+        event_sink: Arc<dyn hkask_types::RegulationSink>,
+    ) -> Self {
+        self.governance = Some(ToolGovernance {
+            cybernetics,
+            event_sink: Arc::new(std::sync::RwLock::new(event_sink)),
+        });
+        self
+    }
+
+    /// Replace the governance event sink after construction.
+    ///
+    /// Used by the composition root to upgrade from `NoopEventSink` to a
+    /// durable `RegulationArchive` once the curator DB passphrase resolves
+    /// (deferred task). No-op when governance is not configured.
+    pub fn set_event_sink(&self, sink: Arc<dyn hkask_types::RegulationSink>) {
+        if let Some(governance) = &self.governance
+            && let Ok(mut guard) = governance.event_sink.write()
+        {
+            *guard = sink;
+        }
+    }
+
+    /// Server IDs that have a live (non-closed) connection.
+    ///
+    /// Used by the fleet health poller (`crates/zed/src/reliability.rs`) to
+    /// count McpRuntime-managed servers alongside ContextServerStore-managed
+    /// servers. A server is "running" if it has a connection whose transport
+    /// is not closed.
+    #[must_use = "result must be used"]
+    pub async fn running_server_ids(&self) -> Vec<String> {
+        let entries = self.entries.read().await;
+        entries
+            .iter()
+            .filter(|(_, entry)| {
+                entry
+                    .connection
+                    .as_ref()
+                    .is_some_and(|conn| !conn.peer.is_transport_closed())
+            })
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
+    /// Non-blocking counterpart for the GPUI settings render path. A busy
+    /// runtime lock yields unknown, never a fabricated Running status.
+    #[must_use = "an unavailable snapshot must remain unknown"]
+    pub fn try_running_server_ids(&self) -> Option<Vec<String>> {
+        let entries = match self.entries.try_read() {
+            Ok(entries) => entries,
+            Err(_) => return None,
+        };
+        Some(
+            entries
+                .iter()
+                .filter(|(_, entry)| {
+                    entry
+                        .connection
+                        .as_ref()
+                        .is_some_and(|conn| !conn.peer.is_transport_closed())
+                })
+                .map(|(id, _)| id.clone())
+                .collect(),
+        )
+    }
+
+    /// The registered tool surface: `(server_id, tools)` for every server
+    /// that completed launch and tool discovery. Read-only snapshot for tool
+    /// listing — the agent-path `KaskToolSource` reads this so kask tools can
+    /// surface in the agent's tool list without the per-project
+    /// `ContextServerStore` (single-spawn-authority invariant I1).
+    pub async fn registered_servers(&self) -> Vec<(String, Vec<McpTool>)> {
+        self.entries
+            .read()
+            .await
+            .values()
+            .filter_map(|entry| {
+                entry
+                    .metadata
+                    .as_ref()
+                    .map(|server| (server.id.clone(), server.tools.clone()))
+            })
+            .collect()
+    }
+
+    /// A receiver that fires on tool discovery/removal or connection liveness
+    /// changes (including an unexpected disconnect). Executor-agnostic —
+    /// `tokio::sync::watch` registers no timers, so it is awaitable from any
+    /// executor (the GPUI traps in `.rules` concern the timer wheel, not
+    /// this family).
+    #[must_use]
+    pub fn tool_surface_changes(&self) -> tokio::sync::watch::Receiver<()> {
+        self.tool_surface_tx.subscribe()
+    }
+
+    /// Start an MCP server process and connect via rmcp stdio transport with
+    /// extra environment variables for the child process.
+    ///
+    /// Idempotent per *live* connection: an already-connected server whose
+    /// transport is still open is a no-op. A server whose transport has closed is
+    /// reconnected — the check is liveness-based, not presence-based, because a
+    /// presence-based check would short-circuit every recovery attempt against
+    /// exactly the stale entry that needs replacing.
+    #[must_use = "result must be used"]
+    pub async fn start_server_with_env(
+        &self,
+        server_id: &str,
+        command: &str,
+        env: hkask_types::ServerEnv,
+    ) -> Result<(), ServerStartError> {
+        let spec = {
+            let shutdown = self.lifecycle.lock().await;
+            if *shutdown {
+                return Err(ServerStartError::Cancelled(server_id.to_string()));
+            }
+            if self.get_peer(server_id).await.is_some() {
+                return Ok(());
+            }
+            let spec = LaunchSpec::new(command.to_string(), env);
+            let mut entries = self.entries.write().await;
+            let entry = entries.entry(server_id.to_string()).or_default();
+            if let Some(previous) = entry.spec.replace(spec.clone()) {
+                previous.cancel.cancel();
+            }
+            spec
+        };
+        self.start_recorded(server_id, &spec).await
+    }
+
+    async fn start_recorded(
+        &self,
+        server_id: &str,
+        spec: &LaunchSpec,
+    ) -> Result<(), ServerStartError> {
+        tokio::select! {
+            biased;
+            _ = spec.cancel.cancelled() => Err(ServerStartError::Cancelled(server_id.to_string())),
+            result = self.start_connection(server_id, spec) => result,
+        }
+    }
+
+    async fn start_connection(
+        &self,
+        server_id: &str,
+        spec: &LaunchSpec,
+    ) -> Result<(), ServerStartError> {
+        let command = &spec.command;
+        let env = &spec.env;
+        // Resolve the binary path: check HKASK_MCP_{ID}_BIN first, then fall back
+        // to PATH-based resolution. The env var allows pointing at a specific build
+        //
+        // P12 authenticated-host-mandate: the binary path is not a secret — it's a
+        // deployment-time configuration, not an ambient authority.
+        let binary = resolve_mcp_binary(server_id, command);
+
+        // Spawn + handshake with retry. A server that fails its handshake (binary
+        // missing, DB locked, socket misconfiguration) is retried with exponential
+        // backoff up to `config.startup_max_retries`. Each attempt pipes stderr and
+        // forwards lines to the tracing substrate tagged with the server_id, so
+        // operator logs attribute child diagnostics correctly.
+        let mut last_error: Option<ServerStartError> = None;
+        let mut backoff = self.config.startup_initial_backoff;
+        let mut attempt: u32 = 0;
+        let running = loop {
+            let mut cmd = Command::new(&binary);
+            // Fallback if the runtime itself shuts down during rmcp's graceful
+            // close: dropping the child must still terminate the process.
+            cmd.kill_on_drop(true);
+            // `Command` inherits the parent env by default, and the parent
+            // process may have API keys in its environment (set via shell
+            // env vars) and sets HKASK_SMTP_PASSWORD. Inheriting meant every
+            // MCP child received every secret regardless of its per-server
+            // allowlist — a server allowlisted `Some(&[])` still got the SMTP
+            // password and all the API keys, silently nullifying the
+            // credential scoping that `filter_credentials_for_server` exists
+            // to provide.
+            //
+            // `env` is the caller's already-filtered per-server set (a
+            // `ServerEnv` composed by `build_mcp_server_env`), so after the
+            // clear the child sees exactly that, plus the non-secret process plumbing
+            // enumerated in `PASSTHROUGH_ENV_VARS` (a child with no PATH or HOME cannot
+            // resolve subprocesses or its own data directory).
+            cmd.env_clear();
+            for key in PASSTHROUGH_ENV_VARS {
+                if let Some(value) = std::env::var_os(key) {
+                    cmd.env(key, value);
+                }
+            }
+            for (key, value) in env.iter() {
+                cmd.env(key, value);
+            }
+
+            // Publish process ownership under the same lock as stop/shutdown,
+            // before any handshake can stall. rmcp owns pipes, never the child.
+            let lifecycle = self.lifecycle.lock().await;
+            if spec.cancel.is_cancelled() {
+                return Err(ServerStartError::Cancelled(server_id.to_string()));
+            }
+            cmd.stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            let mut child = match cmd.spawn() {
+                Ok(child) => child,
+                Err(e) => {
+                    last_error = Some(ServerStartError::SpawnFailed(e.to_string()));
+                    warn!(
+                        target: "hkask.mcp",
+                        server_id = %server_id,
+                        attempt = attempt + 1,
+                        max = self.config.startup_max_retries,
+                        error = %e,
+                        "MCP server spawn failed — will retry"
+                    );
+                    drop(lifecycle);
+                    if attempt + 1 >= self.config.startup_max_retries {
+                        break None;
+                    }
+                    tokio::time::sleep(backoff).await;
+                    backoff = std::cmp::min(backoff * 2, self.config.startup_max_backoff);
+                    attempt += 1;
+                    continue;
+                }
+            };
+            let stdout = child.stdout.take().ok_or_else(|| {
+                ServerStartError::SpawnFailed("child stdout was not piped".into())
+            })?;
+            let stdin = child
+                .stdin
+                .take()
+                .ok_or_else(|| ServerStartError::SpawnFailed("child stdin was not piped".into()))?;
+            let stderr_handle = child.stderr.take();
+            let transport = (stdout, stdin);
+            let child_cancel = CancellationToken::new();
+            let child_guard = child_cancel.clone().drop_guard();
+            let child_id = CONNECTION_GENERATION.fetch_add(1, Ordering::Relaxed);
+            let task = {
+                let cancel = child_cancel.clone();
+                let server_id = server_id.to_string();
+                tokio::spawn(async move {
+                    let result = tokio::select! {
+                        biased;
+                        _ = cancel.cancelled() => child.kill().await,
+                        result = child.wait() => result.map(|_| ()),
+                    };
+                    if let Err(error) = result {
+                        warn!(target: "hkask.mcp", %server_id, %error, "MCP child termination/reap failed");
+                    }
+                })
+            };
+            let mut children = self.children.lock().await;
+            children.retain(|_, child| !child.task.is_finished());
+            children.insert(
+                child_id,
+                ManagedChild {
+                    server_id: server_id.to_string(),
+                    cancel: child_cancel,
+                    task,
+                },
+            );
+            drop(children);
+            drop(lifecycle);
+
+            // Forward child stderr to tracing, tagged with the server_id so
+            // operator logs attribute diagnostics correctly. Each line is logged
+            // at INFO (most MCP servers emit structured `tracing` output on
+            // stderr, which is informational, not an error).
+            if let Some(stderr) = stderr_handle {
+                let stderr_server_id = server_id.to_string();
+                tokio::spawn(async move {
+                    let mut reader = BufReader::new(stderr).lines();
+                    loop {
+                        match reader.next_line().await {
+                            Ok(Some(line)) => {
+                                info!(
+                                    target: "hkask.mcp.child",
+                                    server_id = %stderr_server_id,
+                                    "{}",
+                                    line
+                                );
+                            }
+                            Ok(None) => break, // EOF — child closed stderr
+                            Err(e) => {
+                                warn!(
+                                    target: "hkask.mcp.child",
+                                    server_id = %stderr_server_id,
+                                    error = %e,
+                                    "stderr reader error"
+                                );
+                                break;
+                            }
+                        }
+                    }
+                });
+            }
+
+            let handshake =
+                tokio::time::timeout(self.config.startup_timeout, ().into_dyn().serve(transport))
+                    .await
+                    .map_err(|_| ServerStartError::TimedOut {
+                        server_id: server_id.to_string(),
+                        phase: "handshake",
+                    })?;
+            match handshake {
+                Ok(running) => break Some((running, child_guard)),
+                Err(e) => {
+                    last_error = Some(ServerStartError::ConnectFailed(format!(
+                        "Handshake with '{}' failed: {}",
+                        server_id, e
+                    )));
+                    warn!(
+                        target: "hkask.mcp",
+                        server_id = %server_id,
+                        attempt = attempt + 1,
+                        max = self.config.startup_max_retries,
+                        error = %e,
+                        "MCP server handshake failed — will retry"
+                    );
+                    if attempt + 1 >= self.config.startup_max_retries {
+                        break None;
+                    }
+                    tokio::time::sleep(backoff).await;
+                    backoff = std::cmp::min(backoff * 2, self.config.startup_max_backoff);
+                    attempt += 1;
+                }
+            }
+        };
+
+        let Some((running, child_guard)) = running else {
+            let error = last_error.unwrap_or_else(|| {
+                ServerStartError::SpawnFailed("exhausted retries without a captured error".into())
+            });
+            return Err(error);
+        };
+
+        let peer = running.peer().clone();
+        let cancel = CancellationToken::new();
+        // On discovery error, cancellation, or a losing publication race, this
+        // guard cancels the keeper; ownership transfers only after publication.
+        let startup_guard = cancel.clone().drop_guard();
+        let generation = CONNECTION_GENERATION.fetch_add(1, Ordering::Relaxed);
+
+        // Keep the RunningService alive in a background task.
+        // When `cancel` fires, the child guard requests kill-and-reap from
+        // our process owner; shutdown awaits that owner before returning.
+        //
+        // When the service loop exits on its *own* (the child died, the transport
+        // closed), reap the connection so `get_peer` stops handing out a corpse.
+        // The generation stamp ensures a late-exiting keeper cannot remove a
+        // healthy replacement installed by a reconnect.
+        let bg_cancel = cancel.clone();
+        let reap_entries = self.entries.clone();
+        let reap_surface_tx = self.tool_surface_tx.clone();
+
+        let reap_id = server_id.to_string();
+        let reap_lifecycle = self.lifecycle.clone();
+        tokio::spawn(async move {
+            let _child_guard = child_guard;
+            let reaped = tokio::select! {
+                quit = running.waiting() => {
+                    match quit {
+                        Ok(reason) => tracing::warn!(
+                            target: "hkask.mcp",
+                            server_id = %reap_id,
+                            reason = ?reason,
+                            "MCP server connection ended - reaping so the next call reconnects"
+                        ),
+                        Err(e) => tracing::warn!(
+                            target: "hkask.mcp",
+                            server_id = %reap_id,
+                            error = %e,
+                            "MCP server keeper task failed - reaping so the next call reconnects"
+                        ),
+                    }
+                    true
+                }
+                _ = bg_cancel.cancelled() => {
+                    // Deliberate stop (`stop_server` / `shutdown_all`), which
+                    // already removed the entry. Nothing to reap.
+                    false
+                }
+            };
+            if !reaped {
+                return;
+            }
+            let _lifecycle = reap_lifecycle.lock().await;
+            let mut entries = reap_entries.write().await;
+            if let Some(entry) = entries.get_mut(&reap_id)
+                && entry
+                    .connection
+                    .as_ref()
+                    .is_some_and(|current| current.generation == generation)
+            {
+                entry.connection = None;
+                reap_surface_tx.send_replace(());
+                // `supervisor_cancel` is retained: the still-running supervisor
+                // must stay owned and cancellable until replacement or stop.
+            }
+        });
+
+        // Discover tools from the live server
+        let tools = tokio::time::timeout(self.config.startup_timeout, peer.list_all_tools())
+            .await
+            .map_err(|_| ServerStartError::TimedOut {
+                server_id: server_id.to_string(),
+                phase: "tool discovery",
+            })?
+            .map_err(|e| {
+                ServerStartError::DiscoveryFailed(format!(
+                    "list_all_tools from '{}' failed: {}",
+                    server_id, e
+                ))
+            })?;
+
+        // Stop/replacement and publication share this lock. A reconnect carries
+        // the original spec; it cannot manufacture a fresh desired generation.
+        // One `entries` write publishes connection, supervisor token, and
+        // discovered-tool metadata atomically.
+        let _lifecycle = self.lifecycle.lock().await;
+        {
+            let mut entries = self.entries.write().await;
+            let Some(entry) = entries.get_mut(server_id) else {
+                return Err(ServerStartError::Cancelled(server_id.to_string()));
+            };
+            if !entry.spec.as_ref().is_some_and(|current| {
+                current.generation == spec.generation && !current.cancel.is_cancelled()
+            }) {
+                return Err(ServerStartError::Cancelled(server_id.to_string()));
+            }
+            if entry
+                .connection
+                .as_ref()
+                .is_some_and(|existing| !existing.peer.is_transport_closed())
+            {
+                info!(
+                    target: "hkask.mcp",
+                    server_id = %server_id,
+                    "Concurrent start_server_with_env race — discarding duplicate connection"
+                );
+                // Cancel the keeper task for the loser connection. The keeper's
+                // `bg_cancel.cancelled()` arm fires, it exits without reaping
+                // (returns `false`), and the `RunningService` is dropped, killing
+                // the child process via rmcp's DropGuard.
+                cancel.cancel();
+                return Ok(());
+            }
+            entry.connection = Some(Connection { peer, generation });
+
+            // Cancel the previous supervisor + keeper before recording the
+            // new token: a replacement start would otherwise orphan the old
+            // supervisor (it holds its own token clone and never exits). The
+            // old keeper's reap arm does NOT fire on cancellation, so it
+            // cannot remove the new connection just installed — the
+            // generation stamp is the second guard.
+            if let Some(previous) = entry.supervisor_cancel.replace(cancel.clone()) {
+                previous.cancel();
+            }
+
+            // Publish the discovered tools with the connection — one entry,
+            // one event.
+            let server = McpServer {
+                id: server_id.to_string(),
+                tools: tools
+                    .into_iter()
+                    .map(|t| McpTool {
+                        name: t.name.to_string(),
+                        description: t.description.map(|d| d.to_string()).unwrap_or_default(),
+                        input_schema: Value::Object((*t.input_schema).clone()),
+                        server_id: server_id.to_string(),
+                    })
+                    .collect(),
+            };
+
+            info!(
+                target: "hkask.mcp",
+                server_id = %server_id,
+                tools = server.tools.len(),
+                "MCP server started and tools discovered"
+            );
+            entry.metadata = Some(server);
+            // `send_replace` wakes subscribers without running them inline,
+            // so publication is safe under the entries write guard.
+            self.tool_surface_tx.send_replace(());
+        }
+
+        // Spawn a health supervisor for this server. See `spawn_health_supervisor`
+        // for the full design — the supervisor is the proactive self-healing
+        // path that restarts crashed servers even when no tool call is in flight.
+        self.spawn_health_supervisor(server_id, cancel);
+        startup_guard.disarm();
+
+        Ok(())
+    }
+
+    /// Spawn a health supervisor for a server.
+    ///
+    /// The supervisor closes two gaps the keeper task and the on-demand
+    /// reconnect path leave open:
+    ///
+    /// 1. A server whose transport has closed but whose keeper task hasn't
+    ///    been scheduled yet to reap it. The supervisor removes the dead
+    ///    connection so the next call doesn't dispatch onto a corpse.
+    /// 2. A server that has crashed and no tool call is in flight. Without a
+    ///    supervisor-driven restart, the only healing path is
+    ///    `call_tool_inner → try_reconnect`, which fires on a tool call. If
+    ///    no call comes (the panel sees the server as unavailable and stops
+    ///    calling), the server stays dead forever — a transient crash
+    ///    becomes a permanent outage.
+    ///
+    /// The supervisor detects transport-closed and missing connections. It
+    /// does NOT detect hung processes (child alive but unresponsive with an
+    /// open transport) — that would require a ping-based health check, which
+    /// is a future enhancement.
+    ///
+    /// Restarts retain the recorded desired generation and run on the runtime's
+    /// blocking pool. Stop cancels that generation even during startup.
+    ///
+    /// After `config.max_consecutive_health_failures` consecutive failures
+    /// the circuit breaker stops auto-healing the server with an
+    /// operator-actionable error. The failure counter increments on every
+    /// check where the connection is dead or missing, and only resets
+    /// when a genuinely healthy connection is seen — so a server that keeps
+    /// dying accumulates failures across check intervals.
+    fn spawn_health_supervisor(&self, server_id: &str, cancel: CancellationToken) {
+        let supervisor_cancel = cancel;
+        let supervisor_entries = self.entries.clone();
+        let supervisor_surface_tx = self.tool_surface_tx.clone();
+        let supervisor_runtime = self.clone();
+        let supervisor_id = server_id.to_string();
+        let normal_interval = self.config.health_check_interval;
+        let max_health_failures = self.config.max_consecutive_health_failures;
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(normal_interval);
+            interval.tick().await; // skip the immediate first tick
+            loop {
+                tokio::select! {
+                    _ = supervisor_cancel.cancelled() => return,
+                    _ = interval.tick() => {}
+                }
+
+                // Classify the connection state. The failure counter only
+                // resets on Healthy — Missing and TransportClosed both count
+                // as failures, so a server that dies and stays dead
+                // accumulates failures across intervals.
+                let connection_state = {
+                    let entries = supervisor_entries.read().await;
+                    match entries
+                        .get(&supervisor_id)
+                        .and_then(|entry| entry.connection.as_ref())
+                    {
+                        Some(conn) if !conn.peer.is_transport_closed() => ConnectionState::Healthy,
+                        Some(_) => ConnectionState::TransportClosed,
+                        None => ConnectionState::Missing,
+                    }
+                };
+
+                match connection_state {
+                    ConnectionState::Healthy => {
+                        let mut entries = supervisor_entries.write().await;
+                        if let Some(entry) = entries.get_mut(&supervisor_id)
+                            && entry.health_failures > 0
+                        {
+                            entry.health_failures = 0;
+                        }
+                        continue;
+                    }
+                    ConnectionState::TransportClosed => {
+                        // Transport is closed but the keeper hasn't reaped yet.
+                        // Remove the dead connection so `get_peer` returns `None`
+                        // and the restart below (or `call_tool_inner`) can
+                        // install a fresh one.
+                        warn!(
+                            target: "hkask.mcp",
+                            server_id = %supervisor_id,
+                            "MCP server transport closed — supervisor removing dead connection"
+                        );
+                        {
+                            let _lifecycle = supervisor_runtime.lifecycle.lock().await;
+                            let mut entries = supervisor_entries.write().await;
+                            if let Some(entry) = entries.get_mut(&supervisor_id)
+                                && entry
+                                    .connection
+                                    .as_ref()
+                                    .is_some_and(|connection| connection.peer.is_transport_closed())
+                            {
+                                entry.connection = None;
+                                supervisor_surface_tx.send_replace(());
+                            }
+                        }
+                    }
+                    ConnectionState::Missing => {
+                        // Connection was reaped (by the keeper or a prior
+                        // supervisor cycle). Fall through to the restart attempt
+                        // below — the supervisor heals proactively rather than
+                        // waiting for a tool call.
+                    }
+                }
+
+                // Increment the failure counter for both TransportClosed and
+                // Missing states. A healthy connection resets it (above).
+                // `saturating_add` avoids overflow panics in debug mode after
+                // very long outage periods (the counter is never reset while
+                // the server stays dead).
+                // Attempt a restart using the recorded launch spec. This is the
+                // proactive self-healing path — without it, a server that
+                // crashes while no tool call is in flight stays dead forever.
+                // `start_server_with_env` is idempotent per live connection, so
+                // a concurrent `try_reconnect` from `call_tool_inner` is safe:
+                // whichever wins installs the connection, the other no-ops.
+                // The failure increment and the spec read share one write
+                // lock — the restart decision comes from one coherent entry.
+                let (failures, spec) = {
+                    let mut entries = supervisor_entries.write().await;
+                    let entry = entries.entry(supervisor_id.clone()).or_default();
+                    entry.health_failures = entry.health_failures.saturating_add(1);
+                    (entry.health_failures, entry.spec.clone())
+                };
+                let Some(spec) = spec else {
+                    // No launch spec means the server was deliberately stopped
+                    // (`stop_server` clears the spec). Do not resurrect it.
+                    warn!(
+                        target: "hkask.mcp",
+                        server_id = %supervisor_id,
+                        consecutive_failures = failures,
+                        "MCP server unhealthy but no launch spec recorded — deliberately stopped, not restarting"
+                    );
+                    continue;
+                };
+
+                // The retained launch generation is also checked at publication.
+                if supervisor_cancel.is_cancelled() {
+                    info!(
+                        target: "hkask.mcp",
+                        server_id = %supervisor_id,
+                        "Supervisor cancelled before restart — not resurrecting"
+                    );
+                    return;
+                }
+
+                if failures >= max_health_failures {
+                    // The circuit breaker: stop auto-healing this server. The
+                    // prior behavior — degrade the check interval but keep
+                    // restarting forever — is the live crash-loop defect
+                    // (2026-08-29: a keyless instance respawned a new pid
+                    // every interval indefinitely, with no operator-visible
+                    // stop condition). Giving up is NOT a permanent outage:
+                    // any explicit start (settings-change restart, operator
+                    // action, or `call_tool_inner`'s on-demand reconnect)
+                    // spawns a fresh supervisor whose first healthy check
+                    // resets the counter. What stops is the unsupervised
+                    // respawn loop.
+                    tracing::error!(
+                        target: "hkask.mcp",
+                        server_id = %supervisor_id,
+                        consecutive_failures = failures,
+                        "MCP server health supervisor giving up — auto-healing disabled \
+                         after repeated restart failures (operator action required: check \
+                         the server binary and configuration; a settings change or tool \
+                         call re-enables healing)"
+                    );
+                    return;
+                }
+
+                warn!(
+                    target: "hkask.mcp",
+                    server_id = %supervisor_id,
+                    consecutive_failures = failures,
+                    connection_state = ?connection_state,
+                    "MCP server unhealthy — supervisor attempting restart"
+                );
+                let restart_outcome = supervisor_runtime
+                    .restart_on_runtime(&supervisor_id, spec)
+                    .await;
+                match restart_outcome {
+                    Ok(()) => {
+                        info!(
+                            target: "hkask.mcp",
+                            server_id = %supervisor_id,
+                            "MCP server restarted by health supervisor"
+                        );
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            target: "hkask.mcp",
+                            server_id = %supervisor_id,
+                            %error,
+                            consecutive_failures = failures,
+                            "MCP server supervisor restart failed — will retry on next check"
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    /// Get a live Peer connection for a server (if connected).
+    ///
+    /// A peer whose transport has already closed is treated as absent. The keeper
+    /// task reaps dead entries, but it is scheduled asynchronously — this check
+    /// closes the window where a caller would otherwise dispatch onto a corpse and
+    /// get `Transport closed` back.
+    pub(crate) async fn get_peer(&self, server_id: &str) -> Option<Peer<RoleClient>> {
+        let connection = self
+            .entries
+            .read()
+            .await
+            .get(server_id)
+            .and_then(|entry| entry.connection.clone())?;
+        if connection.peer.is_transport_closed() {
+            return None;
+        }
+        Some(connection.peer)
+    }
+
+    /// Whether a server currently has a live connection.
+    ///
+    /// Liveness-based, matching `get_peer`: a peer whose transport has closed
+    /// reports `false` even before the keeper task reaps it.
+    ///
+    /// **Feature-gated to `test-fixture` deliberately.** Reap-on-death is only
+    /// observable by reading connection state directly — every production path
+    /// (`invoke`) *heals* on a missing peer, so it cannot distinguish "reaped"
+    /// from "never reaped but reconnected". `tests/reconnect_integration.rs`
+    /// uses that distinction to pin the reap independently.
+    ///
+    /// Not exposed unconditionally because nothing in production consumes it, and
+    /// an always-present "for health checks" accessor with no health surface is
+    /// the dead-advertised-invariant pattern this crate already deleted once
+    /// (`list_servers`/`connection_count`/`connections`). Wire a real health
+    /// consumer before promoting this to unconditional `pub`.
+    #[cfg(feature = "test-fixture")]
+    pub async fn is_connected(&self, server_id: &str) -> bool {
+        self.get_peer(server_id).await.is_some()
+    }
+
+    /// Test seam: the health supervisor's consecutive-failure count for a
+    /// server. When it reaches `max_consecutive_health_failures`, auto-healing
+    /// is disabled for that server — the crash-loop protection (invariant I5
+    /// of the MCP server lifecycle review, 2026-08-29). Read-only, so it
+    /// cannot perturb the supervisor.
+    #[doc(hidden)]
+    pub async fn health_failure_count(&self, server_id: &str) -> u32 {
+        self.entries
+            .read()
+            .await
+            .get(server_id)
+            .map(|entry| entry.health_failures)
+            .unwrap_or(0)
+    }
+
+    /// Re-spawn a server whose connection died, subject to the reconnect cooldown
+    /// (`config.reconnect_cooldown`).
+    ///
+    /// Returns `true` when a live connection exists afterwards. Requires a launch
+    /// spec recorded by a prior `start_server_with_env`; an unknown or stopped
+    /// server cannot be reconnected.
+    async fn try_reconnect(&self, server_id: &str) -> bool {
+        // Spec lookup, cooldown check, and stamp under one write lock so
+        // concurrent callers cannot both pass the gate and spawn duplicate
+        // processes — and so the spec and its cooldown stamp are read from
+        // one coherent entry.
+        let spec = {
+            let mut entries = self.entries.write().await;
+            let Some(entry) = entries.get_mut(server_id) else {
+                return false;
+            };
+            let Some(spec) = entry.spec.clone() else {
+                return false;
+            };
+            if let Some(previous) = entry.last_reconnect
+                && previous.elapsed() < self.config.reconnect_cooldown
+            {
+                tracing::debug!(
+                    target: "hkask.mcp",
+                    server_id = %server_id,
+                    "Reconnect suppressed by cooldown"
+                );
+                return false;
+            }
+            entry.last_reconnect = Some(Instant::now());
+            spec
+        };
+
+        info!(
+            target: "hkask.mcp",
+            server_id = %server_id,
+            "Reconnecting to MCP server after transport loss"
+        );
+        let start_result = self.restart_on_runtime(server_id, spec).await;
+        match start_result {
+            Ok(()) => {
+                info!(
+                    target: "hkask.mcp",
+                    server_id = %server_id,
+                    "MCP server reconnected"
+                );
+                true
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "hkask.mcp",
+                    server_id = %server_id,
+                    error = %e,
+                    "MCP server reconnect failed"
+                );
+                false
+            }
+        }
+    }
+
+    async fn restart_on_runtime(
+        &self,
+        server_id: &str,
+        spec: LaunchSpec,
+    ) -> Result<(), ServerStartError> {
+        let handle = tokio::runtime::Handle::try_current()
+            .ok()
+            .or_else(configured_spawn_runtime)
+            .ok_or_else(|| {
+                ServerStartError::ConnectFailed(format!(
+                    "'{server_id}': no spawn runtime wired; call set_spawn_runtime at startup"
+                ))
+            })?;
+        let runtime = self.clone();
+        let server_id = server_id.to_string();
+        let worker_handle = handle.clone();
+        // Construct and poll the potentially non-Send startup future on a
+        // runtime worker, never by parking the caller's executor thread.
+        handle
+            .spawn_blocking(move || {
+                worker_handle.block_on(runtime.start_recorded(&server_id, &spec))
+            })
+            .await
+            .map_err(|error| {
+                ServerStartError::ConnectFailed(format!("startup worker failed: {error}"))
+            })?
+    }
+
+    /// expect: "My MCP children stop with the session, including pending starts." [P1]
+    /// post: all owned children have completed kill-and-reap; reconnect state is
+    /// cleared and future starts are rejected. Repeated shutdown is harmless.
+    /// inv: process publication and shutdown share the lifecycle lock. [P4]
+    pub async fn shutdown_all(&self) {
+        let mut shutdown = self.lifecycle.lock().await;
+        *shutdown = true;
+        // Cancel desired-generation tokens first, then drop every entry —
+        // connections go with the entries, before the supervisor tokens
+        // fire, so a racing keeper finds nothing of its own generation to
+        // reap.
+        let mut supervisor_tokens = Vec::new();
+        {
+            let mut entries = self.entries.write().await;
+            for entry in entries.values_mut() {
+                if let Some(spec) = entry.spec.take() {
+                    spec.cancel.cancel();
+                }
+                if let Some(token) = entry.supervisor_cancel.take() {
+                    supervisor_tokens.push(token);
+                }
+            }
+            entries.clear();
+        }
+        for token in supervisor_tokens {
+            token.cancel();
+        }
+        self.stop_children(None).await;
+        self.tool_surface_tx.send_replace(());
+    }
+
+    // Callers hold `lifecycle`: a child cannot be published behind the drain.
+    async fn stop_children(&self, server_id: Option<&str>) {
+        let children: Vec<_> = self
+            .children
+            .lock()
+            .await
+            .extract_if(|_, child| server_id.is_none_or(|server_id| child.server_id == server_id))
+            .map(|(_, child)| child)
+            .collect();
+        for child in &children {
+            child.cancel.cancel();
+        }
+        for child in children {
+            if let Err(error) = child.task.await {
+                warn!(target: "hkask.mcp", server_id = %child.server_id, %error, "MCP process owner failed during shutdown");
+            }
+        }
+    }
+
+    /// Stop a single managed server process and drop its registration.
+    ///
+    /// Used by the settings-change restart path: governed `McpRuntime`
+    /// instances are started once at login, so a settings change that alters
+    /// a server's env (e.g. `kask.swarm.mode` → `HKASK_SWARM_MODE`) requires
+    /// stopping the old process and re-running `start_server_with_env` with
+    /// the new env (`start_server_with_env` alone is idempotent per
+    /// connection and would no-op on an already-connected server).
+    ///
+    /// Idempotent: stopping an unknown or already-stopped server is a no-op.
+    ///
+    /// Drops the server's launch spec so the reconnect path does not resurrect a
+    /// server that was deliberately stopped. The restart path re-records the spec
+    /// when it calls `start_server_with_env` again.
+    pub async fn stop_server(&self, server_id: &str) {
+        let _lifecycle = self.lifecycle.lock().await;
+        // Remove the whole entry first — the connection goes with it, before
+        // any token cancellation fires, so the keeper task's cancellation
+        // arm (which does not reap) and this removal cannot race over the
+        // same entry.
+        let removed = self.entries.write().await.remove(server_id);
+        let Some(entry) = removed else {
+            return;
+        };
+        if let Some(spec) = entry.spec {
+            spec.cancel.cancel();
+        }
+        if let Some(cancel) = entry.supervisor_cancel {
+            cancel.cancel();
+        }
+        self.stop_children(Some(server_id)).await;
+        // Drop discovered metadata so tools stop resolving; notify only if
+        // metadata had been published.
+        if let Some(server) = entry.metadata {
+            info!(
+                target: "hkask.mcp",
+                server_id = %server_id,
+                tools = server.tools.len(),
+                "MCP server stopped"
+            );
+            self.tool_surface_tx.send_replace(());
+        }
+    }
+
+    /// Get a registered tool's metadata under a specific server.
+    ///
+    /// Server-scoped, mirroring `invoke`'s identity: the lookup answers "does
+    /// THIS server expose this tool," so two servers may register same-named
+    /// tools without shadowing each other. (The bare-name tool index this
+    /// replaced was last-writer-wins at registration, and `stop_server` could
+    /// delete a surviving server's entry by removing the shared name.)
+    #[must_use]
+    pub async fn get_tool_info(&self, server: &str, tool_name: &str) -> Option<ToolInfo> {
+        let entries = self.entries.read().await;
+        let server = entries.get(server)?.metadata.as_ref()?;
+        server
+            .tools
+            .iter()
+            .find(|t| t.name == tool_name)
+            .map(|t| ToolInfo {
+                name: t.name.clone(),
+                description: t.description.clone(),
+                input_schema: t.input_schema.clone(),
+            })
+    }
+}
+
+impl Default for McpRuntime {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ── ToolPort implementation ──────────────────────────────────────────────
+//
+// McpRuntime implements ToolPort directly. When governance is configured (via
+// `with_governance`), `invoke` meters the call against the agent's runaway-loop
+// ceiling, dispatches, and emits the outcome span. When governance is not
+// configured it dispatches directly. One tool, one path — no wrapper layers.
+//
+// There is deliberately NO per-call capability check here. The prior gate
+// compared a `DelegationToken`'s declared `(resource, resource_id, action)`
+// against the invoked tool, but all three production mint sites built
+// `resource_id` from the same tool name they passed to `invoke` — the
+// comparison was a value against itself and could not deny. Authority lives at
+// the boundaries that hold a list the caller cannot choose: the per-request
+// `tool_allowlist` on the inference IPC dispatch, each swarm card's `mcp_tools`
+// allowlist, and the per-server MCP env/credential allowlists.
+
+impl hkask_tool_port::ToolPort for McpRuntime {
+    fn invoke<'a>(
+        &'a self,
+        server: &'a str,
+        tool: &'a str,
+        args: Value,
+        agent: hkask_types::WebID,
+    ) -> hkask_tool_port::ToolFuture<'a, Result<Value, hkask_tool_port::ToolPortError>> {
+        Box::pin(async move {
+            // Metering + span emit. Skipped when governance is not configured
+            // (tests, lightweight embedders).
+            if let Some(governance) = &self.governance {
+                let cyber = &governance.cybernetics;
+                // Clone the current sink out of the lock — the composition
+                // root can swap it post-construction (deferred DB upgrade).
+                let sink = governance
+                    .event_sink
+                    .read()
+                    .map(|guard| guard.clone())
+                    .unwrap_or_else(|_| std::sync::Arc::new(hkask_regulation::NoopEventSink));
+
+                // Runaway-loop breaker. The ceiling exists to stop an agent that
+                // has entered a non-terminating tool loop and to meter usage for
+                // later optimization — it is not a permission check, so an agent
+                // the composition root never registered is auto-registered at the
+                // default ceiling rather than denied. Denying would fail the call
+                // for a wiring omission (which is exactly what happened: the
+                // `kask-panel` and skill execution personas were never
+                // seeded, so every IPC and cascade tool call died here).
+                let cyber_lock = cyber.read().await;
+                match cyber_lock.charge_call_metered(&agent).await {
+                    hkask_regulation::CallMeterOutcome::Charged => {}
+                    hkask_regulation::CallMeterOutcome::AutoRegistered => {
+                        tracing::info!(
+                            target: "reg.mcp.cap",
+                            agent = ?agent,
+                            tool = %tool,
+                            ceiling = hkask_regulation::DEFAULT_RUNAWAY_CALL_CEILING,
+                            "no call ceiling registered for agent - auto-registered at the default runaway ceiling"
+                        );
+                    }
+                    hkask_regulation::CallMeterOutcome::CeilingReached { ceiling } => {
+                        // The only pre-dispatch refusal. A loop that has burned
+                        // its whole per-tick ceiling is almost certainly not
+                        // making progress; the cap resets next regulation tick.
+                        tracing::warn!(
+                            target: "reg.mcp.cap",
+                            agent = ?agent,
+                            tool = %tool,
+                            ceiling,
+                            "runaway-loop breaker tripped - agent exhausted its per-tick call ceiling"
+                        );
+                        return Err(hkask_tool_port::ToolPortError::EnergyBudgetExceeded(
+                            format!(
+                                "runaway-loop breaker: {agent:?} reached its per-tick ceiling of \
+                                 {ceiling} calls (tool {tool}); resets next regulation tick"
+                            ),
+                        ));
+                    }
+                }
+                drop(cyber_lock);
+
+                // Call the tool.
+                let result = self.call_tool_inner(server, tool, args).await;
+
+                // Regulation: emit the call-settled span (best-effort,
+                // non-blocking) — EXCEPT the regulation loop's own board-sensing
+                // polls, which are 98% of this span's volume with no reader (the
+                // reliability/variety sensors feed from the in-process ledger
+                // below, never the journal). The loop's non-sensing
+                // interventions (card creates/comments/moves — the escalation
+                // audit trail) and every real-agent call still journal.
+                if !hkask_types::event::is_regulation_board_sensing_call(&agent, tool) {
+                    let status = if result.is_ok() { "success" } else { "failure" };
+                    use hkask_types::event::{CyclePhase, RegulationRecord, Span, SpanKind};
+                    let record = RegulationRecord::new(
+                        agent,
+                        Span::from_kind(SpanKind::ToolCompleted),
+                        CyclePhase::Act,
+                        serde_json::json!({ "server": server, "tool": tool, "calls": 1, "status": status }),
+                        0,
+                    );
+                    if let Err(e) = sink.persist(&record) {
+                        tracing::warn!(target: "reg.mcp", error = %e, "Failed to persist reg.mcp call-settled span");
+                    }
+                }
+
+                // Record the outcome in the RegulationLedger so the
+                // `ToolReliabilitySensor` can sense the aggregate success
+                // rate. The domain is the MCP server name (not the tool name)
+                // so reliability is tracked per-server — a single broken
+                // server surfaces as one degraded domain, not scattered across
+                // individual tools. The `record_outcome` call is best-effort:
+                // if the ledger is unavailable the outcome is simply not
+                // recorded, and the sensor stays silent (not 1.0 — the
+                // `.rules` `unwrap_or(0)` trap on sense inputs).
+                let error_kind = result.as_ref().err().map(|e| {
+                    // Extract the typed kind from the `[kind] `
+                    // marker (dispatch formats failed-tool details this way
+                    // from the server's `structured_content`) so the ledger's
+                    // per-kind breakdown classifies config gaps (unavailable /
+                    // permission_denied) instead of recording the full
+                    // message text as a "kind".
+                    hkask_types::tool_response::error_kind_from_display(&e.to_string())
+                });
+                let cyber_lock = cyber.read().await;
+                cyber_lock
+                    .record_outcome(server, result.is_ok(), error_kind.as_deref())
+                    .await;
+                // Variety feed: the tool name is the observed state — distinct
+                // tools exercised per server per window is the behavioral
+                // repertoire the VarietySensor regulates (Ashby). Beside
+                // record_outcome so reliability and variety share one domain
+                // registry. Fed on failure too: an agent hammering one failing
+                // tool is maximal rut, exactly what the sensor must see.
+                cyber_lock.record_variety(server, tool).await;
+                drop(cyber_lock);
+
+                result
+            } else {
+                // No governance configured: dispatch unmetered. Metering is an
+                // accounting and loop-breaking concern, not an authorization
+                // one, so its absence is not a reason to refuse the call — the
+                // prior fail-closed refusal here made `McpRuntime::new()`
+                // unusable for any embedder that did not also wire regulation.
+                // Production wires `with_governance` (see main.rs).
+                self.call_tool_inner(server, tool, args).await
+            }
+        })
+    }
+
+    fn get_tool_info<'a>(
+        &'a self,
+        server: &'a str,
+        tool: &'a str,
+    ) -> hkask_tool_port::ToolFuture<'a, Option<hkask_tool_port::ToolInfo>> {
+        Box::pin(async move { McpRuntime::get_tool_info(self, server, tool).await })
+    }
+}
+
+impl McpRuntime {
+    /// Inner tool call: live-connection check, JSON-RPC dispatch, result parsing.
+    ///
+    /// Reconnects before sending when no live peer exists, or retries once after
+    /// proven non-delivery. A transport failure after handoff is interrupted,
+    /// never replayed: the remote effect may already have occurred.
+    async fn call_tool_inner(
+        &self,
+        server: &str,
+        tool: &str,
+        args: Value,
+    ) -> Result<Value, hkask_tool_port::ToolPortError> {
+        // `args` is owned and unused after this point — move the map out instead
+        // of cloning (non-object args collapse to an empty map, matching the prior
+        // `as_object().cloned().unwrap_or_default()`).
+        let arguments = match args {
+            Value::Object(map) => map,
+            _ => serde_json::Map::new(),
+        };
+
+        if self.get_peer(server).await.is_none() {
+            // No live peer. Reconnect before deciding this is a failure — the
+            // connection may have died since the last call.
+            if !self.try_reconnect(server).await {
+                return Err(self.unavailable_error(server, tool).await);
+            }
+        }
+
+        // Retry only a dispatch that never reached a live peer. Once a request
+        // has been handed to one, a transport loss is `Interrupted` — see
+        // `DispatchError::Interrupted` for why that must not be retried here.
+        match self.dispatch(server, tool, arguments.clone()).await {
+            Err(DispatchError::NotDelivered(detail)) => {
+                tracing::warn!(
+                    target: "hkask.mcp",
+                    server_id = %server,
+                    tool = %tool,
+                    detail = %detail,
+                    "Tool dispatch found no live transport - reconnecting and retrying once"
+                );
+                if !self.try_reconnect(server).await {
+                    return Err(hkask_tool_port::ToolPortError::Unavailable(format!(
+                        "Server '{server}' transport closed and could not be reconnected: {detail}"
+                    )));
+                }
+                self.dispatch(server, tool, arguments)
+                    .await
+                    .map_err(DispatchError::into_port_error)
+            }
+            other => other.map_err(DispatchError::into_port_error),
+        }
+    }
+
+    /// One dispatch attempt against the currently-registered peer.
+    ///
+    /// Classifies the failure by whether the request could have been *delivered*,
+    /// which is what determines retry safety:
+    ///
+    /// - [`DispatchError::NotDelivered`] — there was no live peer to send to, so
+    ///   the tool provably did not run.
+    /// - [`DispatchError::Interrupted`] — a live peer accepted the call and the
+    ///   connection then failed. `rmcp` reports both a failed send and a dropped
+    ///   response channel as `ServiceError::TransportClosed`, so this cannot be
+    ///   narrowed to non-delivery; the effect may have been applied.
+    /// - [`DispatchError::Failed`] — the tool ran and failed.
+    async fn dispatch(
+        &self,
+        server: &str,
+        tool: &str,
+        arguments: serde_json::Map<String, Value>,
+    ) -> Result<Value, DispatchError> {
+        let Some(peer) = self.get_peer(server).await else {
+            return Err(DispatchError::NotDelivered(format!(
+                "server '{server}' has no live connection"
+            )));
+        };
+        if peer.is_transport_closed() {
+            return Err(DispatchError::NotDelivered(format!(
+                "server '{server}' transport closed before the request was sent"
+            )));
+        }
+
+        let params = CallToolRequestParams::new(tool.to_string()).with_arguments(arguments);
+        let handle = tokio::runtime::Handle::try_current()
+            .ok()
+            .or_else(configured_spawn_runtime)
+            .ok_or_else(|| DispatchError::Failed {
+                detail: "MCP dispatch requires a live Tokio runtime".into(),
+                kind: None,
+            })?;
+        // Tokio's supported cross-executor adapter enters only for each poll.
+        // Construct the timer inside it; holding an EnterGuard across await is
+        // not safe. Caller drop destroys this request future and deadline: no
+        // detached worker keeps waiting. Remote effects remain unknown.
+        let call = TokioContext::new(
+            async { tokio::time::timeout(self.config.call_timeout, peer.call_tool(params)).await },
+            handle,
+        );
+        let result = match call.await {
+            Err(_) => {
+                return Err(DispatchError::Interrupted(format!(
+                    "server '{server}' did not reply to '{tool}' within {:?}{}",
+                    self.config.call_timeout,
+                    interrupted_effect_note(server, tool),
+                )));
+            }
+            Ok(Ok(result)) => result,
+            // The peer was live when we handed off, so we cannot distinguish
+            // "the send was rejected" from "the server died after receiving it."
+            // Report the outcome as unknown rather than assuming either.
+            Ok(Err(
+                error @ (rmcp::service::ServiceError::TransportClosed
+                | rmcp::service::ServiceError::TransportSend(_)),
+            )) => {
+                return Err(DispatchError::Interrupted(format!(
+                    "{error}{}",
+                    interrupted_effect_note(server, tool)
+                )));
+            }
+            Ok(Err(e)) => {
+                return Err(DispatchError::Failed {
+                    detail: e.to_string(),
+                    kind: None,
+                });
+            }
+        };
+        let text = extract_text_content(&result);
+        if result.is_error.unwrap_or(false) {
+            // kask servers set `is_error` natively (rmcp's Result handling +
+            // `McpToolError: IntoCallToolResult`) with the typed kind in
+            // `structured_content`. The kind is extracted ONCE here and
+            // carried structurally (SP-03); the detail keeps the
+            // `[kind] message` Display convention so the ledger's per-kind
+            // breakdown (which parses the display marker) is unchanged.
+            let envelope = result
+                .structured_content
+                .as_ref()
+                .and_then(hkask_types::tool_response::parse_tool_error_value);
+            let kind = envelope.as_ref().and_then(|envelope| envelope.kind);
+            let detail = kind.map(|kind| format!("[{kind}] {text}")).unwrap_or(text);
+            return Err(DispatchError::Failed { detail, kind });
+        }
+        Ok(parse_call_result(&result))
+    }
+
+    /// The error for a server with no live connection and no working reconnect,
+    /// distinguishing an unknown tool from an unavailable server.
+    async fn unavailable_error(&self, server: &str, tool: &str) -> hkask_tool_port::ToolPortError {
+        // Server-scoped existence check, mirroring dispatch identity: the
+        // same tool name registered on another server must not flip this
+        // classification between NotFound and Unavailable.
+        let entries = self.entries.read().await;
+        let entry = entries.get(server);
+        let tool_registered = entry
+            .and_then(|e| e.metadata.as_ref())
+            .is_some_and(|s| s.tools.iter().any(|t| t.name == tool));
+        if !tool_registered {
+            return hkask_tool_port::ToolPortError::NotFound(hkask_types::NotFound {
+                entity_type: "tool".to_string(),
+                id: format!("Tool '{tool}' is not registered on server '{server}'"),
+            });
+        }
+        hkask_tool_port::ToolPortError::Unavailable(format!(
+            "Server '{server}' is not connected and could not be restarted — check that the \
+             hkask-mcp-{server} binary runs (set HKASK_MCP_{}_BIN to override the path)",
+            server.to_uppercase()
+        ))
+    }
+}
+
+/// Outcome of a single dispatch attempt, split by whether the request could
+/// have been delivered — which is what determines retry safety.
+enum DispatchError {
+    /// No live peer accepted the request, so the tool provably did not run.
+    /// Reconnecting and retrying is safe.
+    NotDelivered(String),
+    /// A live peer accepted the request and the connection then failed. The
+    /// effect may or may not have been applied, so this must not be retried
+    /// automatically.
+    Interrupted(String),
+    /// The call reached the server and failed there. A retry would only
+    /// repeat it. `kind` is the tool's typed classification when the
+    /// failure is the tool's own error (extracted once from
+    /// `structured_content` at dispatch).
+    Failed {
+        detail: String,
+        kind: Option<hkask_types::McpErrorKind>,
+    },
+}
+
+/// The standard suffix for `Interrupted` reports (repair-plan §8 #8, operator
+/// ruling 2026-09-29): a live peer accepted the call, so its effects may
+/// have been applied — name that consequence and the inspection step instead
+/// of leaving the operator to infer it from "effect unknown." One canonical
+/// phrasing shared by both construction sites (timeout and transport loss).
+fn interrupted_effect_note(server: &str, tool: &str) -> String {
+    format!(
+        " — the call was accepted, so '{tool}' on server '{server}' may have \
+         applied its effects (remote jobs or filesystem writes may have started); \
+         inspect the server's state before re-invoking"
+    )
+}
+
+impl DispatchError {
+    fn into_port_error(self) -> hkask_tool_port::ToolPortError {
+        match self {
+            DispatchError::NotDelivered(detail) => {
+                hkask_tool_port::ToolPortError::Unavailable(format!("not delivered: {detail}"))
+            }
+            DispatchError::Interrupted(detail) => {
+                hkask_tool_port::ToolPortError::Interrupted(detail)
+            }
+            DispatchError::Failed { detail, kind } => {
+                hkask_tool_port::ToolPortError::InvocationFailed { detail, kind }
+            }
+        }
+    }
+}
+
+/// Extract concatenated text from a CallToolResult's content items.
+fn extract_text_content(result: &rmcp::model::CallToolResult) -> String {
+    result
+        .content
+        .iter()
+        .filter_map(|c| match c {
+            rmcp::model::ContentBlock::Text(t) => Some(t.text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Parse a CallToolResult into a JSON Value.
+///
+/// For a single text content item, tries to parse as JSON first
+/// (structured tool responses often return JSON strings).
+/// Falls back to a plain JSON string if parsing fails.
+/// For multiple items, wraps them in a JSON array.
+fn parse_call_result(result: &rmcp::model::CallToolResult) -> Value {
+    if result.content.is_empty() {
+        return Value::Null;
+    }
+
+    if result.content.len() == 1
+        && let rmcp::model::ContentBlock::Text(text_content) = &result.content[0]
+    {
+        if let Ok(v) = serde_json::from_str::<Value>(&text_content.text) {
+            return v;
+        }
+        return Value::String(text_content.text.clone());
+    }
+
+    let items: Vec<Value> = result
+        .content
+        .iter()
+        .map(|c| match c {
+            rmcp::model::ContentBlock::Text(t) => serde_json::from_str::<Value>(&t.text)
+                .unwrap_or_else(|_| Value::String(t.text.clone())),
+            rmcp::model::ContentBlock::Image(i) => serde_json::json!({
+                "type": "image",
+                "data": i.data,
+                "mimeType": i.mime_type,
+            }),
+            _ => Value::Null,
+        })
+        .collect();
+    Value::Array(items)
+}
+
+/// The spawned-child environment boundary.
+///
+/// These tests assert on a REAL child process's environment rather than on
+/// `filter_credentials_for_server`. That distinction is the whole point: the
+/// three pre-existing "blast radius" tests in `kask_bridge::mcp_servers` all
+/// exercised the filter function in isolation and passed for months while every
+/// child inherited every secret, because nothing checked the actual boundary.
+///
+/// `start_server_with_env` needs a live MCP handshake, so these tests exercise
+/// the same clear + passthrough + extra_env construction against
+/// `/usr/bin/env`, which prints the environment it was given.
+///
+/// The simulated parent environment is passed in explicitly rather than written
+/// with `std::env::set_var`: this crate is `#![forbid(unsafe_code)]` with no test
+/// exemption, and mutating process env is `unsafe` in this edition. Passing it in
+/// is also a better test — it cannot race another test in the same binary.
+#[cfg(all(test, unix))]
+mod env_isolation_tests {
+    use super::PASSTHROUGH_ENV_VARS;
+
+    /// Mirror of the environment construction in `start_server_with_env`, with
+    /// the parent environment injected instead of read from the process. Kept
+    /// adjacent to the real code so a divergence shows up as a failing test.
+    // `tokio::process::Command` rather than `std::process::Command`: clippy.toml
+    // bans the std spawn methods because they block the calling thread for an
+    // unbounded time. The production path uses rmcp's TokioChildProcess for the
+    // same reason.
+    async fn child_env(parent: &[(&str, &str)], extra_env: &[(&str, &str)]) -> String {
+        let mut cmd = tokio::process::Command::new("/usr/bin/env");
+        cmd.env_clear();
+        for key in PASSTHROUGH_ENV_VARS {
+            if let Some((_, value)) = parent.iter().find(|(k, _)| k == key) {
+                cmd.env(key, value);
+            }
+        }
+        for (key, value) in extra_env {
+            cmd.env(key, value);
+        }
+        let output = cmd
+            .output()
+            .await
+            .expect("/usr/bin/env should be spawnable on unix");
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+
+    /// A parent environment shaped like the real one: shell env vars
+    /// have set the provider keys and login has set the SMTP password.
+    fn parent_with_secrets() -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("PATH", "/usr/bin:/bin"),
+            ("HOME", "/home/tester"),
+            ("RUST_LOG", "hkask=debug"),
+            ("OPENROUTER_API_KEY", "parent-openrouter-secret"),
+            ("HKASK_FRED_API_KEY", "parent-fred-secret"),
+            ("HKASK_SMTP_PASSWORD", "parent-smtp-secret"),
+            ("HKASK_DB_PASSPHRASE", "parent-db-secret"),
+        ]
+    }
+
+    /// The regression: a secret present in the PARENT environment but absent
+    /// from the server's allowlist must NOT reach the child.
+    #[tokio::test]
+    async fn spawned_child_env_excludes_non_allowlisted_secrets() {
+        let parent = parent_with_secrets();
+        // A server allowlisted `Some(&[])` / `Some(&[])` — e.g. `portfolio`.
+        let env = child_env(&parent, &[]).await;
+
+        for (key, value) in &parent {
+            let looks_secret =
+                key.contains("API_KEY") || key.contains("PASSWORD") || key.contains("PASSPHRASE");
+            if looks_secret {
+                assert!(
+                    !env.contains(value),
+                    "child inherited parent secret {key} despite an empty \
+                     allowlist. Child env was:\n{env}"
+                );
+            }
+        }
+    }
+
+    /// The complement: a credential the server IS allowlisted for must arrive.
+    /// Without this, "no secrets leak" could be satisfied by leaking nothing at
+    /// all, which would break every server that needs a real credential.
+    #[tokio::test]
+    async fn spawned_child_env_includes_allowlisted_credentials() {
+        let env = child_env(
+            &parent_with_secrets(),
+            &[("HKASK_DB_PASSPHRASE", "filtered-in-passphrase")],
+        )
+        .await;
+        assert!(
+            env.contains("filtered-in-passphrase"),
+            "an allowlisted credential must reach the child. Child env was:\n{env}"
+        );
+    }
+
+    /// Clearing the environment must not strip the non-secret plumbing a child
+    /// needs to function (subprocess resolution, data dirs, TLS roots, logging).
+    #[tokio::test]
+    async fn spawned_child_env_retains_non_secret_plumbing() {
+        let env = child_env(&parent_with_secrets(), &[]).await;
+        assert!(
+            env.contains("hkask=debug"),
+            "RUST_LOG must pass through so operator log levels survive; \
+             hkask-mcp-server builds its EnvFilter from the environment. Got:\n{env}"
+        );
+        assert!(
+            env.lines().any(|line| line.starts_with("PATH=")),
+            "PATH must pass through for subprocess resolution. Got:\n{env}"
+        );
+        assert!(
+            env.lines().any(|line| line.starts_with("HOME=")),
+            "HOME must pass through — several servers derive data paths from it. Got:\n{env}"
+        );
+    }
+
+    /// No entry in the passthrough list may be a credential. This is the guard
+    /// against someone "fixing" a missing-credential bug by widening the
+    /// passthrough list instead of the server's allowlist.
+    #[test]
+    fn passthrough_list_contains_no_credentials() {
+        for key in PASSTHROUGH_ENV_VARS {
+            let upper = key.to_uppercase();
+            assert!(
+                !(upper.contains("KEY")
+                    || upper.contains("TOKEN")
+                    || upper.contains("SECRET")
+                    || upper.contains("PASSWORD")
+                    || upper.contains("PASSPHRASE")),
+                "{key} looks like a credential and must not be in \
+                 PASSTHROUGH_ENV_VARS — add it to the server's credential \
+                 allowlist in kask_bridge::mcp_servers instead"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod reconnect_path_tests {
+    use super::*;
+
+    /// Reconnect cannot invent a launch specification for an unknown server.
+    #[tokio::test]
+    async fn unknown_server_cannot_be_reconnected() {
+        let runtime = McpRuntime::new();
+        assert!(!runtime.try_reconnect("unknown").await);
+        assert!(runtime.entries.read().await.is_empty());
+    }
+
+    /// `stop_server` clears the launch spec, so a deliberate stop is not
+    /// resurrected by a later `try_reconnect`.
+    ///
+    /// We cannot call `start_server_with_env` here (it needs a real binary
+    /// and handshake), so we record the launch spec directly — mirroring the
+    /// one line `start_server_with_env` writes before spawning. This pins
+    /// the *clearing* behavior, which is the part `stop_server` owns.
+    #[tokio::test]
+    async fn stop_server_clears_the_reconnect_path() {
+        let runtime = McpRuntime::new();
+        // Record a launch spec and cooldown stamp directly, as
+        // `start_server_with_env` and a first reconnect would.
+        runtime.entries.write().await.insert(
+            "fixture".to_string(),
+            ServerEntry {
+                spec: Some(LaunchSpec::new(
+                    "mcp-test-fixture".to_string(),
+                    hkask_types::ServerEnv::default(),
+                )),
+                last_reconnect: Some(Instant::now()),
+                ..Default::default()
+            },
+        );
+
+        runtime.stop_server("fixture").await;
+
+        // stop_server removes the whole entry: the launch spec and the
+        // cooldown stamp go with it, so the reconnect path cannot resurrect
+        // a deliberately-stopped server.
+        assert!(
+            runtime.entries.read().await.get("fixture").is_none(),
+            "stop_server must remove the server's entry so the reconnect path \
+             does not resurrect a deliberately-stopped server"
+        );
+    }
+
+    /// `shutdown_all` clears every launch spec and last_reconnect stamp, so a
+    /// deliberate full shutdown is not resurrected.
+    #[tokio::test]
+    async fn shutdown_all_clears_every_reconnect_path() {
+        let runtime = McpRuntime::new();
+        let mut entries = runtime.entries.write().await;
+        for id in ["a", "b"] {
+            entries.insert(
+                id.to_string(),
+                ServerEntry {
+                    spec: Some(LaunchSpec::new(
+                        id.to_string(),
+                        hkask_types::ServerEnv::default(),
+                    )),
+                    last_reconnect: Some(Instant::now()),
+                    ..Default::default()
+                },
+            );
+        }
+        drop(entries);
+
+        runtime.shutdown_all().await;
+
+        // shutdown_all clears every entry: launch specs and cooldown stamps
+        // go with them, so a deliberate full shutdown is not resurrected.
+        assert!(
+            runtime.entries.read().await.is_empty(),
+            "shutdown_all must clear every server entry"
+        );
+    }
+
+    /// `try_reconnect` is rate-limited by the reconnect cooldown: a second
+    /// call within `config.reconnect_cooldown` of the first reports `false`
+    /// without attempting a spawn.
+    ///
+    /// We assert on the `last_reconnect` stamp being present (the first call
+    /// recorded it) and on `try_reconnect` returning `false` for the second
+    /// call. The second call returns `false` either way (no launch spec →
+    /// false; cooldown → false), so we additionally assert the stamp was
+    /// *not* overwritten — proving the cooldown gate fired rather than the
+    /// no-spec gate.
+    #[tokio::test]
+    async fn reconnect_is_rate_limited_by_the_cooldown() {
+        let runtime = McpRuntime::new();
+        // Record a launch spec so the first call reaches the cooldown gate
+        // rather than the no-spec early return.
+        runtime.entries.write().await.insert(
+            "fixture".to_string(),
+            ServerEntry {
+                spec: Some(LaunchSpec::new(
+                    "mcp-test-fixture".to_string(),
+                    hkask_types::ServerEnv::default(),
+                )),
+                ..Default::default()
+            },
+        );
+
+        // First call: reaches the cooldown gate, stamps `last_reconnect`,
+        // then calls `start_server_with_env` which fails (no such binary
+        // resolves a handshake). It returns `false` (reconnect failed), but
+        // the stamp is now present.
+        let first = runtime.try_reconnect("fixture").await;
+        assert!(
+            !first,
+            "reconnect against a non-spawning binary reports false"
+        );
+        let first_stamp = runtime
+            .entries
+            .read()
+            .await
+            .get("fixture")
+            .and_then(|entry| entry.last_reconnect)
+            .expect("first try_reconnect must stamp last_reconnect");
+
+        // Second call immediately after: the cooldown gate fires, the stamp
+        // is NOT overwritten, and `try_reconnect` returns `false` without
+        // attempting a spawn.
+        let second = runtime.try_reconnect("fixture").await;
+        assert!(
+            !second,
+            "a second try_reconnect within the cooldown must report false"
+        );
+        let second_stamp = runtime
+            .entries
+            .read()
+            .await
+            .get("fixture")
+            .and_then(|entry| entry.last_reconnect)
+            .expect(
+                "last_reconnect stamp must still be present after the \
+                     cooldown-suppressed second call",
+            );
+        assert_eq!(
+            first_stamp, second_stamp,
+            "the cooldown gate must not overwrite the last_reconnect stamp \
+             — if it did, the cooldown would never fire"
+        );
+    }
+
+    /// A failed `start_server_with_env` still records a launch spec, so a
+    /// later reconnect attempt has something to rebuild from.
+    ///
+    /// `start_server_with_env` records the spec *before* spawning (see the
+    /// comment in that function: "Record the launch spec before spawning so a
+    /// later reconnect can rebuild this server even if this attempt fails
+    /// partway through"). We cannot exercise the full path without a real
+    /// binary, so we pin the recording directly — the invariant the comment
+    /// claims is that the spec is present even when the spawn fails.
+    #[tokio::test]
+    async fn failed_start_still_records_a_launch_spec_for_later_reconnect() {
+        let runtime = McpRuntime::new();
+        // Mirror the pre-spawn recording `start_server_with_env` performs.
+        // The real call would fail at the handshake step (no such binary),
+        // but the spec is already recorded by that point.
+        let fixture_env = hkask_types::ServerEnv::from_canonical(HashMap::from([(
+            "FIXTURE_MARKER".to_string(),
+            "first".to_string(),
+        )]));
+        runtime.entries.write().await.insert(
+            "fixture".to_string(),
+            ServerEntry {
+                spec: Some(LaunchSpec::new(
+                    "mcp-test-fixture".to_string(),
+                    fixture_env.clone(),
+                )),
+                ..Default::default()
+            },
+        );
+
+        // The spec is present and carries the env a reconnect would need.
+        let spec = runtime
+            .entries
+            .read()
+            .await
+            .get("fixture")
+            .and_then(|entry| entry.spec.clone())
+            .expect("launch spec must be recorded even if the spawn fails");
+        assert_eq!(spec.command, "mcp-test-fixture");
+        assert_eq!(
+            spec.env.get("FIXTURE_MARKER"),
+            Some("first"),
+            "the recorded env must be the one a reconnect would reuse"
+        );
+    }
+}
+
+// ── Tool identity tests ─────────────────────────────────────────────────
+//
+// These pin the server-scoped tool lookup: tool names are unique within a
+// server, never across servers. The bare-name tool index this replaced was
+// last-writer-wins at registration and deletable by the wrong `stop_server`,
+// so a same-named tool on another server could be shadowed or silently
+// dropped. These tests fail against that index and pass against the
+// server-scoped lookup.
+#[cfg(test)]
+mod tool_identity_tests {
+    use super::*;
+
+    fn tool_on(server: &str, name: &str) -> McpTool {
+        McpTool {
+            name: name.to_string(),
+            description: format!("{server}/{name}"),
+            input_schema: Value::Null,
+            server_id: server.to_string(),
+        }
+    }
+
+    /// Seed retained metadata for alpha and beta's same-named lookup tools.
+    async fn seed_lookup_metadata(runtime: &McpRuntime) {
+        for server in ["alpha", "beta"] {
+            runtime
+                .entries
+                .write()
+                .await
+                .entry(server.to_string())
+                .or_default()
+                .metadata = Some(McpServer {
+                id: server.to_string(),
+                tools: vec![tool_on(server, "lookup")],
+            });
+        }
+    }
+
+    /// Two servers exposing the same tool name must each resolve their own
+    /// metadata — same-named tools must not shadow each other.
+    #[tokio::test]
+    async fn same_named_tools_on_two_servers_keep_their_own_schemas() {
+        let runtime = McpRuntime::new();
+        seed_lookup_metadata(&runtime).await;
+
+        let alpha = runtime
+            .get_tool_info("alpha", "lookup")
+            .await
+            .expect("alpha's lookup must resolve after beta registers the same name");
+        let beta = runtime
+            .get_tool_info("beta", "lookup")
+            .await
+            .expect("beta's lookup must resolve");
+        assert_eq!(alpha.description, "alpha/lookup");
+        assert_eq!(beta.description, "beta/lookup");
+    }
+
+    /// Stopping one server must not drop another server's same-named tool.
+    /// The bare-name index this replaced failed exactly here: `stop_server`
+    /// removed the shared name, deleting the surviving server's entry.
+    #[tokio::test]
+    async fn stopping_one_server_leaves_the_others_same_named_tool_lookup() {
+        let runtime = McpRuntime::new();
+        seed_lookup_metadata(&runtime).await;
+
+        runtime.stop_server("alpha").await;
+
+        assert!(
+            runtime.get_tool_info("alpha", "lookup").await.is_none(),
+            "the stopped server's tool must stop resolving"
+        );
+        let beta = runtime
+            .get_tool_info("beta", "lookup")
+            .await
+            .expect("the surviving server's same-named tool must still resolve");
+        assert_eq!(beta.description, "beta/lookup");
+    }
+
+    /// The lookup is scoped to the named server: a tool name registered only
+    /// on alpha must not resolve under beta or an unregistered server.
+    #[tokio::test]
+    async fn get_tool_info_scopes_to_the_named_server() {
+        let runtime = McpRuntime::new();
+        {
+            let mut entries = runtime.entries.write().await;
+            for (server, tools) in [
+                ("alpha", vec![tool_on("alpha", "only_on_alpha")]),
+                ("beta", vec![]),
+            ] {
+                entries.entry(server.to_string()).or_default().metadata = Some(McpServer {
+                    id: server.to_string(),
+                    tools,
+                });
+            }
+        }
+
+        assert!(
+            runtime
+                .get_tool_info("beta", "only_on_alpha")
+                .await
+                .is_none(),
+            "a tool registered on alpha must not resolve under beta"
+        );
+        assert!(
+            runtime
+                .get_tool_info("no-such-server", "only_on_alpha")
+                .await
+                .is_none(),
+            "an unregistered server must not resolve anything"
+        );
+        assert!(
+            runtime
+                .get_tool_info("alpha", "only_on_alpha")
+                .await
+                .is_some()
+        );
+    }
+}
+
+// ── Metering + retry-classification tests ───────────────────────────────────
+//
+// These pin the public `ToolPort::invoke` metering behavior and the
+// `ToolPortError` retry-classification invariants. They use a real
+// `CyberneticsLoop` with a `NoopEventSink` so the metering path is exercised
+// end-to-end (auto-register, ceiling, charged) without a DB.
+//
+// They do NOT exercise a live MCP server — the dispatch path is exercised by
+// feature-gated `tests/reconnect_integration.rs`. They assert on the
+// metering decisions and the error classification, which are the parts `invoke`
+// owns before dispatch.
+#[cfg(test)]
+mod metering_tests {
+    use super::*;
+    use hkask_regulation::{CyberneticsLoop, NoopEventSink, RegulationLedger};
+    use hkask_tool_port::{ToolPort, ToolPortError};
+    use hkask_types::WebID;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    /// Build a runtime with governance wired (a real CyberneticsLoop with a
+    /// NoopEventSink), so `invoke` exercises the metering path.
+    fn governed_runtime() -> McpRuntime {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
+        let cyber = Arc::new(RwLock::new(CyberneticsLoop::new(ledger)));
+        McpRuntime::new().with_governance(cyber, Arc::new(NoopEventSink))
+    }
+
+    /// Seed tool metadata without a transport so dispatch is unavailable;
+    /// these tests vary metering, not child-process discovery.
+    async fn seed_ping_metadata(runtime: &McpRuntime) {
+        runtime
+            .entries
+            .write()
+            .await
+            .entry("fixture".to_string())
+            .or_default()
+            .metadata = Some(McpServer {
+            id: "fixture".to_string(),
+            tools: vec![McpTool {
+                name: "ping".to_string(),
+                description: String::new(),
+                input_schema: Value::Null,
+                server_id: "fixture".to_string(),
+            }],
+        });
+    }
+
+    /// An agent the composition root never registered is auto-registered at
+    /// the default runaway ceiling, NOT denied. The call still proceeds to
+    /// dispatch (which then fails because no server is connected — but the
+    /// failure is `Unavailable`, not a metering refusal).
+    ///
+    /// This pins the removal of the per-call capability gate: a missing
+    /// registration is a wiring omission, not an authorization decision.
+    #[tokio::test]
+    async fn unregistered_agent_is_auto_registered_not_denied() {
+        let runtime = governed_runtime();
+        // Known tool metadata without a transport reaches Unavailable rather
+        // than NotFound; only the metering decision varies in this test.
+        seed_ping_metadata(&runtime).await;
+        let agent = WebID::new();
+
+        // The agent has no registered cap. invoke must NOT return
+        // EnergyBudgetExceeded — it must auto-register and proceed to
+        // dispatch, which then reports Unavailable (no server connected).
+        let result = runtime.invoke("fixture", "ping", Value::Null, agent).await;
+        match result {
+            Err(ToolPortError::Unavailable(_)) => {
+                // Correct: auto-registered, proceeded to dispatch, dispatch
+                // found no live connection.
+            }
+            Err(ToolPortError::EnergyBudgetExceeded(msg)) => {
+                panic!(
+                    "unregistered agent must be auto-registered, not denied \
+                     with EnergyBudgetExceeded. Got: {msg}"
+                );
+            }
+            other => panic!(
+                "unregistered agent must proceed to dispatch and report \
+                 Unavailable. Got: {other:?}"
+            ),
+        }
+    }
+
+    /// Every governed tool invocation feeds the variety tracker with the
+    /// tool name as the observed state — the dispatch twin of the outcome
+    /// recording above. Distinct tools per server per window is the
+    /// behavioral repertoire the VarietySensor regulates. A failed call
+    /// still counts (the tool was exercised — an agent hammering one
+    /// failing tool is maximal rut, exactly what the sensor must see).
+    #[tokio::test]
+    async fn governed_invoke_feeds_variety_per_tool() {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
+        let cyber = Arc::new(RwLock::new(CyberneticsLoop::new(ledger.clone())));
+        let runtime = McpRuntime::new().with_governance(cyber, Arc::new(NoopEventSink));
+        seed_ping_metadata(&runtime).await;
+        let agent = WebID::new();
+
+        // Dispatch fails (no live connection) but the feed fires after the
+        // call regardless of result — same contract as record_outcome.
+        let _ = runtime.invoke("fixture", "ping", Value::Null, agent).await;
+        let _ = runtime.invoke("fixture", "ping", Value::Null, agent).await;
+
+        let ledger_guard = ledger.read().await;
+        assert_eq!(
+            ledger_guard.variety_for_domain("fixture").await,
+            1,
+            "repeats of one tool count once — variety is distinct tools, not call volume"
+        );
+    }
+
+    /// A `RegulationSink` that records every persisted record's
+    /// (span path, tool) — the oracle for which governed calls journal a
+    /// `reg.tool.completed` record.
+    struct RecordingSink(std::sync::Mutex<Vec<(String, String)>>);
+
+    impl hkask_types::RegulationSink for RecordingSink {
+        fn persist(
+            &self,
+            event: &hkask_types::RegulationRecord,
+        ) -> Result<(), hkask_types::InfrastructureError> {
+            let tool = event
+                .observation
+                .get("tool")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            self.0
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push((event.span.path.clone(), tool));
+            Ok(())
+        }
+    }
+
+    impl RecordingSink {
+        /// The tools that journaled a `reg.tool.completed` record, in order.
+        fn completed_tools(&self) -> Vec<String> {
+            self.0
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .iter()
+                .filter(|(path, _)| path == "reg.tool.completed")
+                .map(|(_, tool)| tool.clone())
+                .collect()
+        }
+    }
+
+    /// The regulation loop's own board-sensing polls (the 10s
+    /// awaiting-review-count reads under the swarm-panel persona) do not
+    /// journal `reg.tool.completed` records — measured 2026-10-02, those
+    /// two tools are 89,631 of the persona's 91,355 records (98%), pure
+    /// write-only audit volume. The call itself is untouched: it still
+    /// executes, still charges the call meter, and still feeds the
+    /// in-process reliability/variety ledger (asserted below — the sensors
+    /// read that ledger, never the journal). The loop's non-sensing
+    /// interventions (the escalation-card audit trail) and every real-agent
+    /// call keep their journal records.
+    #[tokio::test]
+    async fn regulation_board_sensing_polls_skip_the_journal_siblings_do_not() {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
+        let cyber = Arc::new(RwLock::new(CyberneticsLoop::new(ledger.clone())));
+        let sink = Arc::new(RecordingSink(std::sync::Mutex::new(Vec::new())));
+        let runtime = McpRuntime::new().with_governance(cyber, sink.clone());
+        let kanban_tool = |name: &str| McpTool {
+            name: name.to_string(),
+            description: String::new(),
+            input_schema: Value::Null,
+            server_id: "kata-kanban".to_string(),
+        };
+        runtime
+            .entries
+            .write()
+            .await
+            .entry("kata-kanban".to_string())
+            .or_default()
+            .metadata = Some(McpServer {
+            id: "kata-kanban".to_string(),
+            tools: vec![
+                kanban_tool("kanban_board_list"),
+                kanban_tool("kanban_task_list"),
+                kanban_tool("kanban_task_create"),
+            ],
+        });
+
+        let panel = WebID::for_agent_name(hkask_types::event::SWARM_PANEL_PERSONA);
+        // The loop's sensing polls. Dispatch reports Unavailable (no live
+        // connection) — irrelevant to the journal decision, which fires
+        // after every settled call regardless of result.
+        let _ = runtime
+            .invoke("kata-kanban", "kanban_board_list", Value::Null, panel)
+            .await;
+        let _ = runtime
+            .invoke("kata-kanban", "kanban_task_list", Value::Null, panel)
+            .await;
+        assert!(
+            sink.completed_tools().is_empty(),
+            "the loop's sensing polls must not journal reg.tool.completed records"
+        );
+
+        // The skip is journal-only: the sensing call still fed the
+        // in-process variety ledger the sensors actually read.
+        let ledger_guard = ledger.read().await;
+        assert!(
+            ledger_guard.variety_for_domain("kata-kanban").await >= 1,
+            "the skipped sensing call still feeds the in-process ledger"
+        );
+        drop(ledger_guard);
+
+        // The loop's non-sensing interventions keep their journal records.
+        let _ = runtime
+            .invoke("kata-kanban", "kanban_task_create", Value::Null, panel)
+            .await;
+        assert_eq!(
+            sink.completed_tools(),
+            vec!["kanban_task_create".to_string()],
+            "the loop's interventions (the escalation audit trail) still journal"
+        );
+
+        // A real agent's call to the same sensing tool still journals.
+        let _ = runtime
+            .invoke(
+                "kata-kanban",
+                "kanban_board_list",
+                Value::Null,
+                WebID::new(),
+            )
+            .await;
+        assert_eq!(
+            sink.completed_tools(),
+            vec![
+                "kanban_task_create".to_string(),
+                "kanban_board_list".to_string()
+            ],
+            "real-agent calls keep their journal records, including to sensing tools"
+        );
+    }
+
+    /// An agent that has exhausted its per-tick ceiling is refused with
+    /// `EnergyBudgetExceeded` — the runaway-loop breaker. This is the ONE
+    /// pre-dispatch refusal.
+    #[tokio::test]
+    async fn exhausted_ceiling_trips_the_runaway_breaker() {
+        let runtime = governed_runtime();
+        // Register a server+tool so the first call reaches `Unavailable`
+        // (not `NotFound`) — the cap exhaustion, not the tool lookup, is
+        // what's under test.
+        seed_ping_metadata(&runtime).await;
+        let agent = WebID::new();
+        // Register a ceiling of 1 — the first call charges it, the second
+        // trips the breaker.
+        let cyber = runtime
+            .governance
+            .as_ref()
+            .expect("governance must be wired")
+            .cybernetics
+            .clone();
+        cyber.read().await.register_call_cap(agent, 1).await;
+
+        // First call: charges the cap, proceeds to dispatch, reports
+        // Unavailable (no server connected). The cap is now exhausted.
+        let first = runtime.invoke("fixture", "ping", Value::Null, agent).await;
+        assert!(
+            matches!(first, Err(ToolPortError::Unavailable(_))),
+            "first call against an exhausted-but-not-yet cap must proceed \
+             to dispatch and report Unavailable. Got: {first:?}"
+        );
+
+        // Second call: cap exhausted, refused before dispatch.
+        let second = runtime.invoke("fixture", "ping", Value::Null, agent).await;
+        match second {
+            Err(ToolPortError::EnergyBudgetExceeded(_)) => {
+                // Correct: the runaway-loop breaker tripped.
+            }
+            other => panic!(
+                "an agent that exhausted its ceiling must be refused with \
+                 EnergyBudgetExceeded. Got: {other:?}"
+            ),
+        }
+    }
+
+    /// A runtime with no governance configured dispatches unmetered. The call
+    /// proceeds to dispatch (and reports Unavailable) without any cap check.
+    ///
+    /// This pins the "no governance = unmetered” behavior: metering is an
+    /// accounting concern, not an authorization one, so its absence is not a
+    /// reason to refuse.
+    #[tokio::test]
+    async fn no_governance_dispatches_unmetered() {
+        let runtime = McpRuntime::new(); // no with_governance
+        assert!(runtime.governance.is_none());
+        // Register a server+tool so the call reaches `Unavailable` (not
+        // `NotFound`) — the absence of metering, not the tool lookup, is
+        // what's under test.
+        seed_ping_metadata(&runtime).await;
+
+        let agent = WebID::new();
+        let result = runtime.invoke("fixture", "ping", Value::Null, agent).await;
+        // No cap refusal — proceeds to dispatch, reports Unavailable.
+        assert!(
+            matches!(result, Err(ToolPortError::Unavailable(_))),
+            "no-governance runtime must dispatch unmetered and report \
+             Unavailable (no server connected). Got: {result:?}"
+        );
+    }
+
+    /// `ToolPortError::Unavailable` is retryable: the request provably never
+    /// reached the tool, so re-issuing is safe.
+    #[test]
+    fn only_unavailable_is_retryable() {
+        let unavailable = ToolPortError::Unavailable("no live connection".to_string());
+        assert!(
+            unavailable.is_retryable(),
+            "Unavailable must be retryable — the request provably never \
+             reached the tool"
+        );
+    }
+
+    /// `ToolPortError::Interrupted` is NEVER retryable: a live peer accepted
+    /// the request and the connection then failed, so the effect may or may
+    /// not have been applied. Auto-retrying would duplicate side effects.
+    #[test]
+    fn interrupted_is_never_auto_retried() {
+        let interrupted = ToolPortError::Interrupted("connection lost mid-call".to_string());
+        assert!(
+            !interrupted.is_retryable(),
+            "Interrupted must NOT be retryable — the outcome is unknown, \
+             so a retry could apply an effect twice"
+        );
+    }
+
+    /// `Unavailable` and `Interrupted` are distinguishable: a caller can
+    /// tell "provably never delivered" from "outcome unknown" and decide
+    /// whether to retry. This pins the distinction rmcp forces
+    /// (`ServiceError::TransportClosed` covers both a failed send and a
+    /// dropped response channel, so the classification is the only signal).
+    #[test]
+    fn interrupted_and_unavailable_are_distinguishable() {
+        let unavailable = ToolPortError::Unavailable("no live peer".to_string());
+        let interrupted =
+            ToolPortError::Interrupted("peer accepted then transport closed".to_string());
+        assert_ne!(
+            unavailable.is_retryable(),
+            interrupted.is_retryable(),
+            "Unavailable (retryable) and Interrupted (not retryable) must be \
+             distinguishable via is_retryable()"
+        );
+    }
+
+    /// An unknown tool reports `NotFound`, not `Unavailable`. This is the
+    /// distinction `unavailable_error` enforces: a missing tool is a
+    /// caller error (wrong name), not a transient connection state, and
+    /// presenting it as Unavailable would invite a useless retry.
+    #[tokio::test]
+    async fn unknown_tool_is_not_found_not_unavailable() {
+        let runtime = McpRuntime::new();
+        // No tools registered — every tool name is unknown.
+        let agent = WebID::new();
+        let result = runtime
+            .invoke("any-server", "nonexistent_tool", Value::Null, agent)
+            .await;
+        match result {
+            Err(ToolPortError::NotFound(nf)) => {
+                assert!(
+                    nf.id.contains("nonexistent_tool"),
+                    "NotFound must name the missing tool. Got: {nf:?}"
+                );
+            }
+            Err(ToolPortError::Unavailable(msg)) => {
+                panic!(
+                    "an unknown tool must report NotFound, not Unavailable \
+                     (a useless retry would be invited). Got Unavailable: {msg}"
+                );
+            }
+            other => panic!("an unknown tool must report NotFound. Got: {other:?}"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::*;
+
+    /// F6 pin: the startup handshake/discovery deadline has its own dedicated
+    /// 60s constant (the D3-intended value) — `McpRuntimeConfig::default()`
+    /// carries that constant, NOT `DEFAULT_HEALTH_CHECK_INTERVAL`. Before F6
+    /// the default borrowed the health-check interval, so any future tuning
+    /// of the interval would have silently re-timed startup handshakes
+    /// (latent cross-wiring between unrelated mechanisms).
+    #[test]
+    fn startup_timeout_default_is_the_dedicated_sixty_second_constant() {
+        assert_eq!(
+            DEFAULT_STARTUP_TIMEOUT,
+            Duration::from_secs(60),
+            "startup deadline is its own mechanism; its constant must stay 60s"
+        );
+        assert_eq!(
+            McpRuntimeConfig::default().startup_timeout,
+            DEFAULT_STARTUP_TIMEOUT,
+            "the config default must carry DEFAULT_STARTUP_TIMEOUT, not a borrowed interval"
+        );
+        // The per-call execution deadline is
+        // its own mechanism, independent of the startup handshake deadline:
+        // a call that already passed handshake must not inherit (or silently
+        // share) the startup timeout's tuning.
+        assert_eq!(
+            DEFAULT_CALL_TIMEOUT,
+            Duration::from_secs(300),
+            "the per-call execution deadline must stay a dedicated constant"
+        );
+        assert_eq!(
+            McpRuntimeConfig::default().call_timeout,
+            DEFAULT_CALL_TIMEOUT,
+            "the config default must carry DEFAULT_CALL_TIMEOUT"
+        );
+        assert_ne!(
+            McpRuntimeConfig::default().call_timeout,
+            McpRuntimeConfig::default().startup_timeout,
+            "the call deadline and the startup deadline must remain independently tunable"
+        );
+        // The two mechanisms remain independently overridable and documented;
+        // the health interval keeps its own default, unchanged by this seam.
+        assert_eq!(
+            McpRuntimeConfig::default().health_check_interval,
+            DEFAULT_HEALTH_CHECK_INTERVAL
+        );
+    }
+}

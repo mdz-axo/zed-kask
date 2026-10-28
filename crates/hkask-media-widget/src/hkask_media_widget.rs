@@ -1,0 +1,104 @@
+#![forbid(unsafe_code)]
+//! GPUI media widget for viewing images, video, and audio from the hkask
+//! media storage (gallery, generated assets, ffmpeg outputs).
+//!
+//! All code lives on the kask side. The upstream bridge is a single
+//! `media_block_renderer` callback wired at the D18 seam
+//! (`crates/agent_ui/src/conversation_view.rs::render_agent_markdown`).
+//!
+//! ## Architecture
+//!
+//! ```text
+//!  ```media { "kind": "video", "src": "/path/to/clip.mp4" } ```
+//!                          │
+//!                          ▼
+//!          D18 seam: MarkdownElement.media_block_renderer
+//!                          │
+//!                          ▼
+//!              hkask_viz_core::block_renderer() → create_media_widget
+//!                          │
+//!                          ▼
+//!                    MediaWidget view
+//!                   ┌───────┴───────┐
+//!              Image/Svg        Audio        Video
+//!              │  gpui::img()   │  rodio     │  ffmpeg → RGBA → RenderImage
+//!              │                │  transport │  transport controls
+//! ```
+#![warn(clippy::let_underscore_future)]
+
+mod audio_player;
+mod media_ref;
+mod media_widget;
+mod simple_slider;
+mod streaming;
+mod transport;
+mod video_decoder;
+
+pub use media_ref::{
+    MediaBlockBody, MediaKind, MediaRef, MediaStorage, ResolvedMedia, approve_gallery_media_path,
+    is_truncated_json,
+};
+pub use media_widget::MediaWidget;
+#[cfg(feature = "bench-support")]
+pub use media_widget::PlaybackBenchmarkSnapshot;
+#[cfg(feature = "bench-support")]
+pub use video_decoder::PlaybackState;
+
+use gpui::{App, AppContext, Entity, Window};
+
+/// Create a `MediaWidget` entity from a block body, without wrapping it in an
+/// element. `hkask_viz_core::block_renderer` reuses the entity through its
+/// dedicated bounded Asset registry; renderer lookups drive the widget's
+/// visibility heartbeat, and active offscreen work self-suspends.
+///
+/// Returns `None` if the body is not a valid media block (non-JSON, missing
+/// `src`, unknown kind). The caller falls through to the next renderer or the
+/// default code-block renderer.
+pub fn create_media_widget(
+    body: &str,
+    _window: &mut Window,
+    cx: &mut App,
+) -> Option<Entity<MediaWidget>> {
+    if !body.trim_start().starts_with('{') {
+        return None;
+    }
+    match MediaBlockBody::parse(body) {
+        Ok(block_body) => {
+            let media_ref = block_body.to_media_ref().map_err(|error| {
+                log::warn!(
+                    "hkask-media-widget: failed to resolve media ref from block: {error}. Body: {}",
+                    preview_body(body)
+                );
+                error
+            }).ok()?;
+            Some(cx.new(|cx| {
+                let mut widget = MediaWidget::new_with_block(media_ref, block_body, cx);
+                widget.load(cx);
+                widget
+            }))
+        }
+        Err(error) => {
+            // A truncated body is mid-stream (re-parsed on every delta) — the
+            // completed body parses on a later render. Only a complete body
+            // with a real syntax error is a defect worth surfacing.
+            if !is_truncated_json(&error) {
+                log::warn!(
+                    "hkask-media-widget: failed to parse media block: {error}. Body: {}",
+                    preview_body(body)
+                );
+            }
+            None
+        }
+    }
+}
+
+/// Log-friendly preview of a block body — full bodies flood the log (the
+/// streaming parse path used to log the whole body per delta).
+fn preview_body(body: &str) -> String {
+    const MAX_CHARS: usize = 120;
+    let mut preview: String = body.chars().take(MAX_CHARS).collect();
+    if preview.chars().count() == MAX_CHARS {
+        preview.push('…');
+    }
+    preview
+}

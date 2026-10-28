@@ -1,0 +1,520 @@
+use super::inference_types::InferenceStreamChunk;
+use super::inference_types::{ChatMessage, ChatToolDefinition, InferenceError, InferenceResult};
+use super::{EmbeddingBatch, EmbeddingGenerationError};
+use crate::template::LLMParameters;
+use futures_util::Stream;
+use serde::{Deserialize, Serialize};
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+
+/// Future returned by [`InferencePort::embed`].
+///
+/// Extracted as a named alias so the trait signature stays under clippy's
+/// `type_complexity` threshold; the boxed-async-future shape is inherent to
+/// the object-safe `InferencePort` trait (we avoid `async_trait` deliberately —
+/// see the trait-level comment).
+pub type EmbedFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<EmbeddingBatch, EmbeddingGenerationError>> + Send + 'a>>;
+
+/// Future returned by [`InferencePort::embed_with_identity`].
+pub type EmbedWithIdentityFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<EmbeddingBatch, EmbeddingGenerationError>> + Send + 'a>>;
+
+/// Future returned by [`InferencePort::media_generate`].
+///
+/// Same rationale as `EmbedFuture` — keeps the trait signature under
+/// clippy's `type_complexity` threshold.
+pub type MediaFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<serde_json::Value, InferenceError>> + Send + 'a>>;
+
+/// Future returned by [`InferencePort::rerank`]. Same rationale as
+/// `EmbedFuture` — keeps the trait signature under clippy's
+/// `type_complexity` threshold.
+pub type RerankFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<crate::ports::RerankBatch, InferenceError>> + Send + 'a>>;
+
+/// Future returned by the generate family — [`InferencePort::generate`],
+/// [`InferencePort::generate_with_model`],
+/// [`InferencePort::generate_with_messages`] and
+/// [`InferencePort::generate_vision`]. Same rationale as `EmbedFuture` —
+/// keeps the trait signature under clippy's `type_complexity` threshold.
+pub type InferenceFuture<'a> = PortFuture<'a, InferenceResult>;
+
+/// A pinned, `Send` port future resolving to `Result<T, InferenceError>` —
+/// the return shape of the typed long-tail port methods
+/// ([`InferencePort::generate_n`], [`ToolDispatchPort::tool_definition`],
+/// [`ToolDispatchPort::invoke_tool`],
+/// [`WorktreeSpawnPort::create_worktree_thread`]). The generate family
+/// resolves to [`InferenceResult`] via [`InferenceFuture`]; other outputs
+/// parameterize `T` directly.
+pub type PortFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, InferenceError>> + Send + 'a>>;
+
+/// Parameters for [`InferencePort::media_generate`].
+///
+/// Carries the media-generation fields (image/video/speech/transcription)
+/// that the IPC bridge forwards to the MediaRouter. Grouped into a struct
+/// so the trait method signature doesn't grow 12+ optional parameters.
+///
+/// The `op` string (e.g. "generate_image", "transcribe") is passed as the
+/// first argument to `media_generate`, not as a field here — it selects the
+/// backend method. The remaining fields are op-specific; the server-side
+/// dispatch reads only the fields relevant to each op.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MediaGenerateParams {
+    /// Text prompt for image/video generation.
+    pub prompt: Option<String>,
+    /// Image URL for image-to-image, image-to-video, upscale, etc.
+    pub image_url: Option<String>,
+    /// Audio URL for transcription.
+    pub audio_url: Option<String>,
+    /// Text for speech synthesis.
+    pub text: Option<String>,
+    /// Voice name for speech synthesis.
+    pub voice: Option<String>,
+    /// Image size for image generation.
+    pub size: Option<String>,
+    /// Number of images to generate.
+    pub count: Option<u32>,
+    /// Strength for image-to-image.
+    pub strength: Option<f32>,
+    /// Scale factor for upscaling.
+    pub scale: Option<u32>,
+    /// Duration for video generation.
+    pub duration: Option<f32>,
+    /// Language hint for transcription.
+    pub language: Option<String>,
+    /// Mask image (base64 data URI or URL) for region-selective editing (inpainting).
+    /// White regions are edited; black regions are preserved. None for whole-image transform.
+    pub mask: Option<String>,
+    /// JSON Schema (as a JSON string) for `chat_json`'s strict structured
+    /// outputs — the provider embeds it as `response_format: json_schema`.
+    pub schema: Option<String>,
+    /// Model override. When set, the provider uses this model id instead of
+    /// the env/default resolution (`model_constants::resolve`). Makes the
+    /// model browser (`model_list` / `model_info`) actionable: a listed id can
+    /// be passed through to the generation call.
+    pub model: Option<String>,
+}
+
+/// LLM invocation boundary. Uses ``Pin<Box<dyn Future>>`` (not `async_trait`) for object-safety.
+/// A model available from an inference provider.
+///
+/// Returned by `InferencePort::list_models`; lives in `hkask-types` so the
+/// `InferencePort` trait can return it without depending on `hkask-inference`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelEntry {
+    /// Full model name with provider prefix (e.g., "OpenRouter/z-ai/glm-5.2")
+    pub prefixed_name: String,
+    /// Raw model name without prefix
+    pub model: String,
+    /// Whether the model supports vision/multimodal input.
+    pub supports_vision: bool,
+}
+
+/// MCP-server-side tool dispatch boundary.
+///
+/// Lets a child MCP server process (e.g. `hkask-mcp-swarm`'s local delegate
+/// loop) invoke governed MCP tools that live in the zed process's
+/// `McpRuntime`. The zed side mints the OCAP panel token — the child never
+/// sees or holds token material. `InferenceIpcClient` implements this over
+/// the `InferenceMethod::ToolInvoke` IPC method; backends without a bridge
+///
+/// Two implementors: the IPC client (real dispatch) and the fallback stub
+/// (clear error) — the swarm delegate loop reads it, so it is not
+/// speculative generality.
+pub trait ToolDispatchPort: Send + Sync {
+    /// Discover one declared tool's actual schema through the same governed
+    /// boundary as invocation. Missing, unauthorized, or unconfigured tool
+    /// metadata is an error, not an empty parameter schema.
+    fn tool_definition<'a>(
+        &'a self,
+        server: &'a str,
+        tool: &'a str,
+        allowed: &'a [String],
+    ) -> PortFuture<'a, ChatToolDefinition>;
+
+    /// Invoke a tool on a governed MCP server via the zed process.
+    ///
+    /// `allowed` is the caller's declared `server/tool` allowlist (the
+    /// delegated agent's `mcp_tools`). The zed-side dispatch refuses any
+    /// tool outside it before minting the panel token — the allowlist is
+    /// enforced at the dispatch boundary, not only inside the child.
+    ///
+    /// pre:  `server` is a registered MCP server id; `tool` exists on it;
+    ///       `server/tool` is in `allowed`
+    /// post: returns the tool's JSON output, or an error (tool not found,
+    ///       not in allowlist, capability denied, dispatch unavailable)
+    fn invoke_tool<'a>(
+        &'a self,
+        server: &'a str,
+        tool: &'a str,
+        args: serde_json::Value,
+        allowed: &'a [String],
+    ) -> PortFuture<'a, serde_json::Value>;
+}
+
+impl ToolDispatchPort for Arc<dyn ToolDispatchPort> {
+    fn tool_definition<'a>(
+        &'a self,
+        server: &'a str,
+        tool: &'a str,
+        allowed: &'a [String],
+    ) -> PortFuture<'a, ChatToolDefinition> {
+        self.as_ref().tool_definition(server, tool, allowed)
+    }
+
+    fn invoke_tool<'a>(
+        &'a self,
+        server: &'a str,
+        tool: &'a str,
+        args: serde_json::Value,
+        allowed: &'a [String],
+    ) -> PortFuture<'a, serde_json::Value> {
+        self.as_ref().invoke_tool(server, tool, args, allowed)
+    }
+}
+
+/// Port for spawning worktree-backed agent threads via the zed IPC bridge.
+/// Used by `kanban_task_spawn` to isolate spawned agents in a separate git
+/// worktree. Errors do not authorize fallback execution: delivery may already
+/// have occurred, or the parent may have refused delegation.
+pub trait WorktreeSpawnPort: Send + Sync {
+    /// Create a worktree-backed agent thread. Returns a confirmation message
+    /// on success, or an error when the worktree spawner is not configured.
+    fn create_worktree_thread<'a>(
+        &'a self,
+        prompt: &'a str,
+        title: &'a str,
+        worktree_name: Option<&'a str>,
+        base_ref: Option<&'a str>,
+        allowed_tools: &'a [String],
+    ) -> PortFuture<'a, String>;
+}
+
+pub trait InferencePort: Send + Sync {
+    fn generate(
+        &self,
+        prompt: &str,
+        parameters: &LLMParameters,
+        tools: Option<&[ChatToolDefinition]>,
+    ) -> InferenceFuture<'_>;
+
+    /// Falls back to `generate()` when `model_override` is `None`.
+    fn generate_with_model(
+        &self,
+        prompt: &str,
+        parameters: &LLMParameters,
+        _model_override: Option<&str>,
+        tools: Option<&[ChatToolDefinition]>,
+    ) -> InferenceFuture<'_> {
+        self.generate(prompt, parameters, tools)
+    }
+
+    /// Multi-turn inference with an explicit message array.
+    ///
+    /// This is the correct path for chat/REPL: each message carries its own
+    /// `role` ("system", "user", "assistant"), so the provider sees the
+    /// conversation as `[system, user, assistant, user, ...]` — not a single
+    /// flattened string. This eliminates the "you responding to yourself"
+    /// defect where previous assistant responses were embedded inside a
+    /// `user` role message.
+    ///
+    /// Default: flattens messages to a string and delegates to
+    /// `generate_with_model`. Backends that speak the OpenAI wire format
+    /// override this to pass the message array directly.
+    fn generate_with_messages(
+        &self,
+        messages: &[ChatMessage],
+        parameters: &LLMParameters,
+        model_override: Option<&str>,
+        tools: Option<&[ChatToolDefinition]>,
+    ) -> InferenceFuture<'_> {
+        let prompt = messages
+            .iter()
+            .map(|m| format!("{}: {}", m.role, m.content))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        self.generate_with_model(&prompt, parameters, model_override, tools)
+    }
+
+    /// Streaming variant of `generate_with_messages`.
+    ///
+    /// Default: yields a single chunk from `generate_with_messages`.
+    fn generate_stream_with_messages(
+        &self,
+        messages: &[ChatMessage],
+        parameters: &LLMParameters,
+        model_override: Option<&str>,
+        tools: Option<&[ChatToolDefinition]>,
+    ) -> Pin<Box<dyn Stream<Item = Result<InferenceStreamChunk, InferenceError>> + Send + '_>> {
+        let future = self.generate_with_messages(messages, parameters, model_override, tools);
+        Box::pin(futures_util::stream::once(async move {
+            Ok(InferenceStreamChunk::from(future.await?))
+        }))
+    }
+
+    fn generate_n(
+        &self,
+        prompt: &str,
+        parameters: &LLMParameters,
+        n: usize,
+    ) -> PortFuture<'_, Vec<InferenceResult>> {
+        use futures_util::future::join_all;
+        let futures: Vec<_> = (0..n)
+            .map(|_| self.generate(prompt, parameters, None))
+            .collect();
+        Box::pin(async move {
+            let results = join_all(futures).await;
+            results.into_iter().collect()
+        })
+    }
+
+    /// Stream inference chunks. Default: yields single chunk from `generate()`. Override for SSE/streaming backends.
+    fn generate_stream(
+        &self,
+        prompt: &str,
+        parameters: &LLMParameters,
+        tools: Option<&[ChatToolDefinition]>,
+    ) -> Pin<Box<dyn Stream<Item = Result<InferenceStreamChunk, InferenceError>> + Send + '_>> {
+        let future = self.generate(prompt, parameters, tools);
+        Box::pin(futures_util::stream::once(async move {
+            Ok(InferenceStreamChunk::from(future.await?))
+        }))
+    }
+
+    /// Stream with optional model override. Falls back to `generate_stream()` when `model_override` is `None`.
+    fn generate_stream_with_model(
+        &self,
+        prompt: &str,
+        parameters: &LLMParameters,
+        model_override: Option<&str>,
+        tools: Option<&[ChatToolDefinition]>,
+    ) -> Pin<Box<dyn Stream<Item = Result<InferenceStreamChunk, InferenceError>> + Send + '_>> {
+        if model_override.is_some() {
+            let future = self.generate_with_model(prompt, parameters, model_override, tools);
+            Box::pin(futures_util::stream::once(async move {
+                Ok(InferenceStreamChunk::from(future.await?))
+            }))
+        } else {
+            self.generate_stream(prompt, parameters, tools)
+        }
+    }
+
+    /// Vision inference — send base64-encoded images to a multimodal model.
+    ///
+    /// The default rejects the request so an implementation cannot silently drop images.
+    fn generate_vision(
+        &self,
+        _prompt: &str,
+        _images: &[String],
+        _parameters: &LLMParameters,
+        _model_override: Option<&str>,
+    ) -> InferenceFuture<'_> {
+        Box::pin(async {
+            Err(InferenceError::VisionUnsupported(
+                "backend does not implement vision inference".to_string(),
+            ))
+        })
+    }
+
+    /// Generate embeddings for a batch of texts.
+    ///
+    /// `model` is the provider-prefixed model string (e.g.
+    /// the configured embedding model). The implementation strips the
+    /// prefix and resolves credentials from the appropriate provider.
+    ///
+    /// Default: returns an error. `InferenceIpcClient` overrides this to
+    /// route through zed's `LanguageModelEmbeddingPort` via the IPC bridge.
+    fn embed<'a>(&'a self, _model: &str, _texts: &[String]) -> EmbedFuture<'a> {
+        Box::pin(async {
+            Err(EmbeddingGenerationError::Connection(
+                "embed not supported by this InferencePort".into(),
+            ))
+        })
+    }
+
+    /// Generate embeddings while preserving request and provider identities.
+    /// The compatibility default delegates to `embed` and reports actual model
+    /// identity as unavailable; implementations with provider response access
+    /// override this method.
+    fn embed_with_identity<'a>(
+        &'a self,
+        model: &str,
+        texts: &[String],
+    ) -> EmbedWithIdentityFuture<'a> {
+        let requested_model = model.to_string();
+        let texts = texts.to_vec();
+        Box::pin(async move {
+            let batch = self.embed(&requested_model, &texts).await?;
+            Ok(EmbeddingBatch {
+                vectors: batch.vectors,
+                requested_model,
+                actual_model: batch.actual_model,
+                usage: batch.usage,
+                cost_usd: batch.cost_usd,
+            })
+        })
+    }
+
+    /// Generate embeddings requesting a specific output width from
+    /// MRL-capable embedding models (Matryoshka truncation — e.g. Qwen3
+    /// Embedding, text-embedding-3). Callers whose vector stores are
+    /// width-bound (sqlite-vec `float[N]` tables) pass the store's width so
+    /// returned vectors always fit; `None` requests the model's native
+    /// width. The default delegates to [`InferencePort::embed_with_identity`]
+    /// and `debug_assert!`s against a requested width: a port that does not
+    /// override this method cannot honor one, and silently discarding it
+    /// would hand native-width vectors to a caller under the belief they fit
+    /// its store. The assert makes the forgotten override loud in debug/test
+    /// builds; release keeps the historical delegation. Ports that talk to a
+    /// provider override it.
+    fn embed_with_dimensions<'a>(
+        &'a self,
+        model: &str,
+        texts: &[String],
+        dimensions: Option<u32>,
+    ) -> EmbedWithIdentityFuture<'a> {
+        debug_assert!(
+            dimensions.is_none(),
+            "InferencePort::embed_with_dimensions default used with a requested width \
+             ({dimensions:?}): this implementation does not override the method, so the \
+             width would be discarded and native-width vectors returned — override \
+             embed_with_dimensions or request the native width (None)"
+        );
+        let model = model.to_string();
+        let texts = texts.to_vec();
+        Box::pin(async move { self.embed_with_identity(&model, &texts).await })
+    }
+
+    /// Rerank documents against a query with a dedicated reranker.
+    ///
+    /// `model` is the provider-prefixed model string (e.g.
+    /// the configured rerank model); the implementation strips the prefix and
+    /// routes to that provider's rerank endpoint. Returns one
+    /// `RerankScoreEntry` per scored document — the provider's native
+    /// relevance judgment, not a parsed LLM generation.
+    ///
+    /// Default: returns an error so an implementation cannot silently drop
+    /// rerank requests. `InferenceIpcClient` overrides this to route through
+    /// the zed-side rerank handler via the IPC bridge.
+    fn rerank<'a>(&'a self, _model: &str, _query: &str, _documents: &[String]) -> RerankFuture<'a> {
+        Box::pin(async {
+            Err(InferenceError::NotConfigured(
+                "rerank not supported by this InferencePort".to_string(),
+            ))
+        })
+    }
+
+    /// List available models across all configured providers.
+    ///
+    /// Default: returns an empty vec. `InferenceIpcClient` overrides this to
+    /// enumerate models from zed's `LanguageModelRegistry` via the IPC bridge.
+    /// when running standalone without the IPC bridge).
+    ///
+    /// Returns `Err` when the underlying provider is unreachable (IPC bridge
+    /// down, registry query failed) so callers can distinguish "no models
+    /// configured" from "the bridge is broken." Previously this collapsed both
+    /// to an empty vec, making a broken IPC indistinguishable from an empty
+    /// registry (F9 — variety-deficit: the regulator can act on "broken" but
+    /// callers couldn't tell).
+    #[must_use]
+    fn list_models<'a>(
+        &'a self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<ModelEntry>, InferenceError>> + Send + 'a>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
+    /// List only vision-capable models.
+    ///
+    /// Default: delegates to `list_models()` and filters by the vision flag.
+    /// Returns empty when `list_models()` returns empty. Propagates errors
+    /// from `list_models()` so a broken IPC is not masked as "no vision models."
+    #[must_use]
+    fn list_vision_models<'a>(
+        &'a self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<ModelEntry>, InferenceError>> + Send + 'a>> {
+        Box::pin(async {
+            let models = self.list_models().await?;
+            Ok(models.into_iter().filter(|m| m.supports_vision).collect())
+        })
+    }
+
+    /// Generate media (image, video, speech, transcription) via the MediaRouter.
+    ///
+    /// `op` selects the backend method (see `MediaGenerateParams::op`).
+    /// Media generation is child-local: `LazyInferencePort` overrides this
+    /// to dispatch to a `MediaRouter` constructed in the MCP server process
+    /// from its env-injected keys — media APIs are not LanguageModel calls,
+    /// so they never route through the IPC bridge. The default returns an
+    /// error for ports with no media support.
+    fn media_generate<'a>(&'a self, _op: &str, _params: &MediaGenerateParams) -> MediaFuture<'a> {
+        let op = _op.to_string();
+        Box::pin(async move {
+            Err(InferenceError::Connection(format!(
+                "media_generate not supported by this InferencePort (op: {op})"
+            )))
+        })
+    }
+}
+
+impl From<InferenceResult> for InferenceStreamChunk {
+    fn from(r: InferenceResult) -> Self {
+        Self {
+            text_delta: r.text,
+            reasoning_delta: r.reasoning.unwrap_or_default(),
+            model: r.model,
+            finish_reason: Some(r.finish_reason),
+            usage: Some(r.usage),
+            tool_calls: r.tool_calls,
+            cost_usd: r.cost_usd,
+        }
+    }
+}
+
+#[cfg(test)]
+mod embed_dimensions_tests {
+    use super::*;
+
+    /// A port that implements only `generate` and relies on the trait
+    /// defaults for the embed family — the exact shape a future port that
+    /// forgets to override `embed_with_dimensions` takes.
+    struct DefaultEmbedPort;
+
+    impl InferencePort for DefaultEmbedPort {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &LLMParameters,
+            _tools: Option<&[ChatToolDefinition]>,
+        ) -> InferenceFuture<'_> {
+            Box::pin(async {
+                Err(InferenceError::NotConfigured(
+                    "generation unused".to_string(),
+                ))
+            })
+        }
+    }
+
+    /// The seam pin (fails without the fix): a width request routed to the
+    /// trait default — a port that cannot honor it — must fail loudly in
+    /// debug/test builds instead of silently discarding the width and
+    /// returning native-width vectors to a width-bound caller.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "does not override")]
+    fn default_rejects_a_requested_width() {
+        let texts = vec!["text".to_string()];
+        // Not awaited: the guard fires synchronously, before the future is
+        // created.
+        let _future = DefaultEmbedPort.embed_with_dimensions("provider/model", &texts, Some(1024));
+    }
+
+    /// The default's legitimate path: `None` (native width) routes through
+    /// without tripping the guard.
+    #[test]
+    fn default_accepts_a_native_width_request() {
+        let texts = vec!["text".to_string()];
+        let _future = DefaultEmbedPort.embed_with_dimensions("provider/model", &texts, None);
+    }
+}

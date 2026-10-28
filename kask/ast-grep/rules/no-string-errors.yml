@@ -1,0 +1,29 @@
+# .rules / check-string-errors.sh scope: "No `Result<_, String>` in
+# library code — string error types discard structured error
+# information; use a thiserror enum (library) or anyhow (application)."
+#
+# Structural, not textual: the pattern matches the generic TYPE node, so
+# a `Result<T, String>` split across lines IS matched (the line-based
+# pass's documented blind spot 1) and a nested-String Ok type —
+# `Result<(String, String), MyError>` — is NOT (the line-based pass's
+# documented blind spot 2: its regex false-positived there). The second
+# generic argument must be exactly the `String` type node.
+#
+# TRAP (live 2026-10-11): the naive `pattern: Result<$T, String>` parses
+# as a COMPARISON EXPRESSION in Rust pattern context (`a < b, c > d`)
+# and matches nothing — the selftest caught it after a real-surface run
+# had read "0 instances" consistently with both "clean" and "broken".
+# The context+selector form parses in type position and selects the
+# generic_type node; the selector carries the argument shape (two
+# args, second exactly String) in ANY position (return, parameter,
+# field, alias, bound — verified position-by-position 2026-10-11).
+# Exclusions applied by the consuming script (check-string-errors.sh):
+# tests/examples/target dirs, main.rs, and `string-error-ok` marker lines.
+id: no-string-errors
+language: Rust
+severity: error
+message: "Result<_, String> — use a thiserror enum (library) or anyhow (application); string errors discard structured error information"
+rule:
+  pattern:
+    context: 'fn f() -> Result<$T, String>'
+    selector: generic_type

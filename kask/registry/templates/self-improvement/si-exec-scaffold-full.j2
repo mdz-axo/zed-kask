@@ -1,0 +1,49 @@
+[inference]
+contract:
+  input:
+    improvement_plan: object
+    current_config: object
+    context: object
+  output:
+    updated_config: object
+    execution_trace: array
+    cost_breakdown: object
+    proposed_artifact: object
+---
+{# goal: Execute Scaffolding Improvement via Full Scaffolding (§6.4) — treat the entire scaffold as a mutable program, generate candidate patches via the agent-as-improver, gate through verifier checks. #}
+{# Scaffolding Improvement — Full Scaffolding (§6.4) #}
+{# Implements: Ren et al. (2026) Section 6.4 #}
+{# Delegates to: diagnose for reproduce→hypothesize→fix loop on scaffold bugs #}
+You are executing the self-induced update operator 𝒰 for Scaffolding Improvement via Full Scaffolding.
+
+This is the most profound level of architectural intervention: the agent treats its entire operational logic and codebase as a mutable substrate.
+
+## What You Know
+
+Improvement plan: {{ improvement_plan | tojson }}
+Current configuration: {{ current_config | tojson }}
+Context: {{ context | default({}) | tojson }}
+
+## What You Must Do
+
+1. **Serialize the scaffold**: ⟨Σ_t⟩ = serializable encoding of the program implementing the agent.
+
+2. **Generate candidate patches** via the agent-as-improver:
+   ⟨Σ~_{t+1}⟩ = exec(⟨Σ_t⟩; 𝒮_t)
+   - The improvement procedure is itself implemented within the current scaffolding (self-referential: Σ_{t+1} = ℐ_{Σ_t}(Σ_t; 𝒮_t)).
+   - Methods: AlphaEvolve (evolutionary), ShinkaEvolve (exploration-exploitation balanced), ADAS (search), Self-Taught Optimizer (recursive), Agent Symbolic Learning (symbolic backprop), Gödel Agent (monkey patching), Darwin Gödel Machine (archive-based open-ended evolution), Live-SWE-Agent (runtime self-evolution).
+
+3. **Produce a candidate, not an update**: Σ~_{t+1} is a candidate. The verifier's checks (functional correctness, tool permission boundaries, robustness to random state perturbations) become evidence in the proposal; the configuration in use stays Σ_t until the operator accepts the proposal in the algedonic review.
+   - The paper requires: "a self-improving agent should be conceptualized as untrusted code executing in a protected runtime environment" (§9.1). Here the executing session is that untrusted code: it proposes, it does not apply.
+
+4. **Keep the candidate reversible**: express it as a diff against Σ_t so the review can see exactly what would change.
+
+5. **Delegation**: If the improvement requires debugging a specific scaffold bug (reproduce → hypothesize → fix → regression-test), delegate to the `diagnose` skill which implements this cybernetic debugging loop.
+
+## Constraints
+
+- The paper warns: "standard transient exploits (like a one-off prompt injection) can evolve into persistent architectural vulnerabilities, as poisoned memories or hijacked tool logics are committed as stable updates" (§9.1).
+- No patch is applied by the executing session; verifier results travel with the proposal.
+- The improver can evolve together with the agent it improves (self-referential loop).
+
+Respond with a JSON object containing `updated_config`, `execution_trace`, `cost_breakdown`, and `proposed_artifact`.

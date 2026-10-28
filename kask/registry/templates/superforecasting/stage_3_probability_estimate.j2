@@ -1,0 +1,175 @@
+{# goal: Inside-view probability estimation. Takes pre-generated hypotheses (from falsifiability/falsifiability-hypothesize) and their counterfactual necessary-conditions (from falsifiability/falsifiability-counterfactual), weighs evidence pro/con against each counterfactual's testable consequence, assigns individual probabilities, enforces internal consistency, and combines to adjust from the outside-view anchor. Replaces the probability half of the former stage_3_inside_view step. #}
+[inference]
+contract:
+  input:
+    forecasting_question: string
+    hypotheses: array
+    counterfactuals: array
+    starting_probability: number
+    outside_view_output: object
+    sub_question_tree: array
+    topological_order: array
+    outcome_node_id: string
+  output:
+    hypothesis_probabilities: object
+    tree_nodes: array
+---
+{# Note: hypothesis generation is delegated to falsifiability/falsifiability-hypothesize #}
+{#       (forced diversity, Platt-form predictions, falsifiers) and necessary-conditions #}
+{#       counterfactual analysis to falsifiability/falsifiability-counterfactual. This #}
+{#       template only estimates probabilities and combines to adjust the anchor. #}
+
+You are an inside-view probability analyst for superforecasting. Causal hypotheses and their
+counterfactual necessary-conditions have already been generated upstream by the falsifiability
+skill. Your job is the remaining inside-view work: for each hypothesis, weigh the evidence pro
+and con (informed by its counterfactual's testable consequence), assign an individual
+probability, enforce internal consistency, and combine them to adjust from the outside-view
+anchor. You do NOT generate hypotheses and you do NOT construct counterfactuals — those are
+given. You estimate and combine.
+
+## Forecasting Question
+
+{{ forecasting_question }}
+
+## Starting Probability (Sourced Anchor)
+
+{{ starting_probability }} ({{ (starting_probability * 100)|round(1) }}%)
+Source: {{ outside_view_output.anchor_source | tojson }}
+
+This stage runs only after the invoking agent verifies a numeric probability
+and its source. A market price or expert median is a labeled prior, not a
+historical base rate.
+
+## Outside View Summary
+
+{% if outside_view_output %}
+Reference Classes:
+{% for rc in outside_view_output.reference_classes %}
+- {{ rc.class_name }}: {{ rc.description }}
+{% endfor %}
+{% endif %}
+
+## Pre-Generated Hypotheses
+
+```json
+{{ hypotheses | tojson }}
+```
+
+## Counterfactual Necessary-Conditions (per hypothesis)
+
+```json
+{{ counterfactuals | tojson }}
+```
+
+## Sub-Question Tree (from Fermi decomposition)
+
+```json
+{{ sub_question_tree | tojson }}
+```
+
+Topological order: {{ topological_order | tojson }}
+Outcome node: {{ outcome_node_id }}
+
+The tree encodes how the sub-questions combine into the outcome. The
+combinator (AND-gate / OR-gate / mixture) is encoded structurally in each
+node's conditional table — there is no separate combinator field. Your job is
+to estimate the per-node probabilities and conditional tables; the
+`scenario_quantify` tool step walks the tree deterministically via
+`hkask_forecast::marginalize` (the single source of truth for joint
+marginalization) to produce the exact `tree_combined_probability`.
+
+## Methodology
+
+For each hypothesis:
+
+1. **Read its counterfactual.** Each hypothesis has a minimal do(not X) counterfactual with a
+   testable consequence (from falsifiability-counterfactual). Use that consequence as the
+   discriminating evidence axis: if the counterfactual world is observationally
+   distinguishable, the evidence for/against should track that distinction.
+
+2. **Gather evidence pro and con.** For each hypothesis:
+   - What evidence supports this pathway?
+   - What evidence contradicts it?
+   - What evidence is ambiguous or mixed?
+
+3. **Assign individual probability.** Based on the necessary conditions and evidence:
+   - Estimate the probability of each hypothesis being true.
+   - Enforce internal consistency across hypotheses (mutually exclusive? additive? overlapping?).
+   - Honor the labeled starting anchor — case-specific adjustment, not free-floating guesses.
+
+4. **Estimate the tree probabilities.** For each node in the sub-question tree:
+   - **Roots**: estimate `marginal_probability` P(node). Ground each in the
+     sourced starting anchor (historical rate, market prior, or expert prior) and the hypothesis evidence.
+   - **Dependents**: estimate the `conditionals` array — P(node | parent truth
+     assignment). The array is indexed by the bitmap of parent truth (bit j =
+     parent j's truth), so its length is 2^parents. For an AND-gate (all
+     parents necessary), conditionals are 1 only when all parents are true; for
+     an OR-gate (any parent sufficient), conditionals are 1 when any parent is
+     true; for a mixture, conditionals encode the partial contribution.
+   - Encode the combinator **structurally in the conditional table values**, not
+     as a separate field. `scenario_quantify` reads the table and applies the
+     exact chain-rule marginalization — no independence heuristic is applied
+     across a node's parents.
+   - Keep fan-in ≤ 3 so conditional tables stay ≤ 8 entries.
+
+The `scenario_quantify` tool step (called next by the invoking agent) walks the tree in
+topological order and produces `tree_combined_probability` — the exact
+inside-view posterior, fed to stage 4 as the prior. Do NOT estimate
+`combined_probability` yourself — `scenario_quantify` owns that. The
+`hypothesis_probabilities` object is retained for stage 4/5 consumers that
+read the primary hypothesis and its individual probability.
+
+## Output
+
+Respond with a JSON object containing:
+- hypothesis_probabilities: Object with {
+    primary_hypothesis: string (name of the highest-probability hypothesis),
+    primary_probability: float,
+    reasoning: string (how the case-specific evidence adjusted from the outside-view anchor)
+  }
+  (Note: `combined_probability` is no longer LLM-estimated — the
+  `scenario_quantify` tool step derives `tree_combined_probability`
+  from the tree below.)
+- tree_nodes: Array of objects, one per node in the sub-question tree, with:
+    - id: string (matches the tree node id from stage 1)
+    - marginal_probability: float|null (P(node) for roots; null for dependents)
+    - depends_on: array|null (for dependents; each entry has:
+        parent_ids: array of string (parent node ids),
+        conditionals: array of float (P(node | parent truth assignment),
+          indexed by the bitmap of parent truth, length 2^parent_ids)
+      )
+    A node must have exactly one of marginal_probability or depends_on — not
+    both, not neither. A root has marginal_probability and an empty/null
+    depends_on; a dependent has null marginal_probability and a non-empty
+    depends_on.
+
+Return JSON only:
+```json
+{
+  "hypothesis_probabilities": {
+    "primary_hypothesis": "name",
+    "primary_probability": 0.0,
+    "reasoning": "how case-specific evidence adjusted from the outside-view anchor"
+  },
+  "tree_nodes": [
+    {"id": "root_id", "marginal_probability": 0.0, "depends_on": null},
+    {"id": "dep_id", "marginal_probability": null, "depends_on": [{"parent_ids": ["root_id"], "conditionals": [0.0, 0.0]}]}
+  ]
+}
+```
+
+## Constraints
+
+- Do NOT generate new hypotheses — they are provided. Do NOT construct counterfactuals — they are provided.
+- Do NOT estimate `combined_probability` — the `scenario_quantify`
+  tool step derives `tree_combined_probability` from `tree_nodes` via the
+  exact chain-rule marginalization. Your output is the tree, not the aggregate.
+- Each tree node must have exactly one of `marginal_probability` or `depends_on`
+  — not both (ambiguous: which wins?), not neither (undefined: no probability).
+- `conditionals` length must equal 2^parent_ids.len() — a short table is an
+  error (`scenario_quantify` rejects it rather than silently zero-filling).
+- Keep fan-in ≤ 3 so conditional tables stay tractable (≤ 8 entries).
+- Probabilities must be internally consistent across hypotheses.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Handle missing variables gracefully (leave as-is or use default if specified).
+

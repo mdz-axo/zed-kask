@@ -1,0 +1,44 @@
+[package]
+name = "hkask-mcp-curator"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Curator MCP server — system observability and regulatory memory access"
+
+[dependencies]
+hkask-mcp-server.workspace = true
+hkask-types.workspace = true
+hkask-storage.workspace = true
+hkask-bridge-ontology.workspace = true
+
+hkask-memory.workspace = true
+hkask-inference.workspace = true
+
+rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+tracing.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+
+[lib]
+name = "hkask_mcp_curator"
+path = "src/hkask_mcp_curator.rs"
+
+[[bin]]
+name = "hkask-mcp-curator"
+path = "src/main.rs"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "test-util"] }
+tempfile.workspace = true
+sha2.workspace = true
+
+[lints]
+workspace = true
+
+
+[build-dependencies]
+regex.workspace = true

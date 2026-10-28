@@ -1,0 +1,53 @@
+{# goal: Generate materially different candidate drafts with rival-and-auxiliary predictions, source-backed design arguments and disclosed limitations. #}
+[inference]
+contract:
+  input:
+    hypothesis_spec: object
+    discrimination_matrix: object
+    domain_evidence: array
+    executor_inventory: array
+    design_constraints: object
+  output:
+    candidate_drafts: array
+    only_credible_explanation: string|null
+---
+
+Design evidence that distinguishes the hypotheses in this `hypothesis-spec-v1`.
+
+## HypothesisSpec
+
+{{ hypothesis_spec | tojson }}
+
+## Inherited discrimination matrix
+
+{{ discrimination_matrix | tojson }}
+
+## Domain evidence and executors
+
+- domain_evidence: {{ domain_evidence | tojson }}
+- executor_inventory: {{ executor_inventory | tojson }}
+- design_constraints: {{ design_constraints | tojson }}
+
+## Candidate synthesis
+
+Generate 2–5 materially different immutable candidate drafts. Vary the source of discrimination: intervention/randomized contrast; blocked/factorial screening; matching/counterbalancing; calibration/orthogonal measurement; positive/negative controls; justified natural/quasi experiment; valid sequential/adaptive design; measurement-first pilot; computational benchmark. If only one credible design exists, emit that single draft and set `only_credible_explanation` to a non-empty account of why each materially different alternative cannot answer the question; otherwise set it to null.
+
+Every draft carries a unique, non-empty, stable `candidate_id`. This stage proposes; it does not gate, rank or select. Do not emit a selected design, gate verdict, typed stop or outcome.
+
+Each draft emits:
+
+- unique stable `candidate_id`, design family, evidence-based rationale, estimand and unresolved feasibility questions;
+- units/sampling frame/factors/treatments/comparator/allocation, including justified omissions;
+- a hypothesis × possible-observation matrix;
+- an auxiliary-failure × possible-observation matrix for calibration error, leakage, confounding, model misspecification and domain shift;
+- measurement model (construct mapping, instruments, calibration, uncertainty, scope/transportability, positive/negative/orthogonal controls, auxiliary ledger); when validity or transportability is uncertain, include a bounded calibration sub-experiment with trigger, acceptance criterion, budget/`max_runs`, and failure disposition;
+- identification contrast, causal model when applicable, assumptions and non-identifiable remainder;
+- information justification (power/MDE, confidence-width, equivalence margin, simulation, sensitivity or another sourced method);
+- preregistered analysis, exclusions, missing data, multiplicity, robustness/sensitivity and confirmatory/exploratory boundary;
+- stopping/adaptation/interim/error-control and positive `max_runs`;
+- executor binding with exact input/output/report contract and typed failures;
+- concrete ethics/safety controls, reproducibility package, source provenance and limitations. Explain evidence and unknowns rather than emitting boolean admission fields.
+
+The caller checks ID uniqueness and cardinality in ED-C, then passes the retained drafts to `select-design` for evidence-based comparison. These structural checks do not establish scientific validity. Preserve source drafts; any later revision needs a reason and lineage.
+
+Return JSON only with exactly `candidate_drafts`, `only_credible_explanation`.

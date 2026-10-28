@@ -1,0 +1,106 @@
+{# goal: Verify surgical completeness after a domain migration or full extraction: dependency direction, depth test, code-hygiene compliance (no stubs, no deprecation attributes, behavioral tests), clippy, test suite, deletion test on service modules. Produces a structured pass/fail report. #}
+[inference]
+contract:
+  input:
+    domain: string
+    migration_phase: string
+    initial_condition: object
+    target_condition: object
+    code_context: object
+    known_adrs: array
+  output:
+    verification_report: object
+    depth_test_results: array
+    dependency_check: object
+    code_hygiene_compliance: object
+    clippy_result: string
+    test_result: string
+    checklist: array
+---
+
+You are a service layer verification agent. After a domain migration or full extraction, verify surgical completeness: dependency direction, depth, code-hygiene compliance, clippy, test suite, deletion test.
+
+## Domain
+
+{{ domain }}
+
+## Migration Phase
+
+{{ migration_phase }}
+
+## User-Grounded Initial and Target Conditions
+
+Initial: {{ initial_condition | tojson }}
+Target: {{ target_condition | tojson }}
+
+A passing build is insufficient if the original friction remains.
+
+{% if code_context %}
+## Code Context
+
+```json
+{{ code_context | tojson }}
+```
+{% endif %}
+
+{% if known_adrs %}
+## Known ADRs
+
+```json
+{{ known_adrs | tojson }}
+```
+{% endif %}
+
+## Verification Checklist
+
+Evaluate each check against observed commands and code evidence supplied in `code_context`. This render does not execute tools; missing command output is `unmeasured`, never pass:
+
+### 1. Dependency Direction
+
+Verify the actual selected surfaces depend on the shared service and the service depends on domain logic, never the reverse. Discover the package names from the current Cargo manifests, and cite `cargo tree -p <actual-service-package>` or inspected imports. A missing surface, circular dependency or an unobserved graph is not a pass.
+
+### 2. Depth Test
+
+For each touched module in the actual selected service crate, apply the deletion test: would removing it lose behavior and force complexity into callers, or merely remove a pass-through? Count public surface items as a review signal; more than seven is a prompt to inspect depth, **not** a mechanical shallow verdict. State behavior hidden and caller benefit before judging depth.
+
+### 3. Code-Hygiene Compliance (the skill's own three checks — not the PRINCIPLES.md P6/P7/P8, which are per-user data directories, evolutionary architecture, and semantic grounding)
+
+- **Delete stubs:** inspect the touched crate for `todo!()` and `unimplemented!()`; cite the searched paths and any hits.
+- **Prefer deletion over deprecation:** inspect for new `#[deprecated]` attributes rather than leaving a compatibility path.
+- **Test with invariants:** tests at the selected service seam verify the user's stated behavioral property, not merely current implementation structure.
+
+### 4. Clippy
+
+```bash
+./script/clippy -p <actual-service-package>
+```
+
+Must pass with zero warnings.
+
+### 5. Test Suite
+
+```bash
+cargo test -p <actual-service-package>
+cargo test -p <actual-cli-package>
+cargo test -p <actual-api-package>
+cargo check --workspace
+```
+
+Run scoped tests only for packages that exist and were changed, after resolving their names from the tree. Report any skipped, blocked, or failing check explicitly; run a broader suite when feasible.
+
+### 6. Surface Adapter Thinness
+
+Inspect each actual surface adapter: it should call the selected service and translate its result into that surface's output/error format. Do not require a one-line call, a `ServiceError` type, or Axum when the project uses another interface. Duplicated domain decisions or direct storage access in the adapter are evidence of an incomplete migration; cite the reaching line.
+
+## Output Requirements
+
+Respond with a JSON object carrying **exactly** the contract's top-level fields: `verification_report`, `depth_test_results`, `dependency_check`, `code_hygiene_compliance`, `clippy_result`, `test_result`, and `checklist`.
+
+`verification_report` contains `domain`, `phase`, `target_condition_status` (`met|unmet|unmeasured`), and file:line or run-output evidence comparing initial and target conditions; `overall_status` (`pass|fail|partial`) is derived deterministically from `checklist` and `target_condition_status` via `lisp_eval` `RA-2` (never self-reported by the model). A build-only pass leaves `target_condition_status` `"unmeasured"`, which `RA-2` evaluates to `"partial"`. The depth list records touched modules, actual public-item counts, behavior hidden, deletion-test reasoning, and evidence; counts do not set a verdict by themselves. The dependency and code-hygiene objects record observed status and violations. `clippy_result` and `test_result` cite commands and their real outputs or say not run. Every checklist item (red seam test, green behavior, both adapters, deletion, dependency direction, target friction, and tests) carries `done|not_done|unmeasured` plus evidence; no Boolean defaults to true.
+
+## Constraints
+
+- Every verification must produce evidence (command output, file paths, line numbers).
+- If any check fails, report the specific failure with remediation steps.
+- Depth test must be applied honestly — shallow modules must be flagged.
+

@@ -1,0 +1,96 @@
+{# goal: Guide the scan phase of memory therapy. #}
+{# Curator memory is the sole therapy object; no target-selection inputs. #}
+{# Output: a findings list as JSON #}
+[inference]
+contract:
+  input: {}
+  output:
+    findings: array
+---
+
+You are scanning curator memory (`curator.db`) for therapy issues.
+
+## Scan instructions
+
+First inventory the memory architecture's own valves (section 0) — the memory system maintains itself, and manual maintenance must be reconciled against what the architecture already does. Then query the memory database and collect findings in five categories:
+
+### 0. Architecture valve inventory (run before any maintenance proposal)
+
+The memory system maintains itself — reconcile the store's state against its built-in valves before interpreting anything as waste. For curator memory: the decay setting (`memory_life_days` — confidence decays with days since last recall; recall resets the clock), the distillation timer (compresses finished conversations into lessons, watermarks coverage), the forgetting horizon (`forgetting_days`, default 7 days — deletes covered conversation copies once the watermark ages past it; rides the distillation timer), the manual prune valve (`curator_memory_prune`), and the alarm sensors (memory-life, growth). Record each valve's setting and the store's corresponding state (e.g., episodic-tier age span vs the forgetting horizon; row count vs the growth ceiling). A maintenance finding must name the valve it replicates or adjusts and why the automatic path hasn't already done the work — routine architecture behavior is not a finding.
+
+### 1. Contradictions
+
+Query by entity and compare values:
+- Use `curator_memory_recall` with each entity to retrieve all h_mems.
+- Use `curator_semantic_search` to find related entities that may contradict.
+- Compare h_mems with the same entity+attribute for divergent values or confidence.
+
+### 2. Fragmentation
+
+Look for isolated h_mems (low connectedness) that are semantically similar to well-connected clusters:
+- Query by embedding similarity to find near-duplicates.
+- Check if the near-duplicates are connected (co-occur in recall) or isolated.
+- Isolated near-duplicates are dilution candidates.
+
+### 3. Miscalibrated confidence
+
+Look for confidence values that don't match evidence:
+- High-confidence h_mems with no evidence citation.
+- Low-confidence h_mems recalled many times without contradiction.
+- Confidence values that diverge significantly from related h_mems.
+- Memories verified accurate by this scan's ground-truth checks (direct read-only DB inspection, code verification, successful reproduction) — raise_confidence candidates: verification work is the outcome signal that strengthens confidence (via memory_update's Bayesian combination, never a raw write).
+
+### 4. Reification candidates
+
+Look for clusters of episodic memories that share a common pattern or lesson:
+- Repeated patterns across multiple entities (e.g., skill-use issues that share a root cause).
+- Accumulated experience that could inform a rule or template.
+- Episodic detail superseded by an existing skill or rule (purge candidates).
+
+### 5. System wiring defects
+
+Systematic patterns in the data are wiring symptoms — the memory system's own code is suspect, not just the memories:
+- Confidence-floor escapes: rows above 0.5 → the writing path used `HMem::new`'s 1.0 default instead of `.with_confidence(0.5)`. Grep the writers.
+- Embedding-invisible memories: knowledge-layer entities (structured memories, skill-use reports) with no row in the embeddings table → semantic search cannot see them, and absence gets read as "no memory exists." Verify insert paths call the shared embedding contract.
+- Key-scheme drift: the same knowledge under multiple entity/attribute keys.
+- Isolated knowledge: structured entities absent from memory_links.
+- Unbounded episodic growth: row-count trend, episodic-to-structured ratio, max value size.
+
+Prefer a complete read-only SQL audit (sqlcipher, mode=ro) over sampling via recall tools — sampling misses systemic patterns and cannot see embedding-less entities at all.
+
+Each wiring finding records the data symptom, the root cause (file:line in the writer), and the proposed fix (code edit + pinning test). Wiring defects are fixed before or alongside memory hygiene — a writer bug re-corrupts cleaned rows.
+
+### 6. Charter alignment (the values pass)
+
+Run on operator request or on charter version change, not every session. Scope: the normative layer only (reified lessons, preferences, rulings, process guidance — rows that steer behavior); the raw episodic layer is evidence and is explicitly out of scope. Two checks:
+- **Guidance check** — one batched model pass over the normative rows: does this guidance steer behavior in a way that conflicts with a charter value (V1–V8, `kask/docs/architecture/core/magnifica-humanitas.md`)? Each candidate conflict cites the lesson h_mem, the charter value, and the discernment-test reasoning (*does this make human life more human?*).
+- **Practice check** — per charter value, search lessons and history for evidence the system practices it; values with no practice evidence are flagged.
+
+### Skill-use attribution gate
+
+Before using a `skill_use_issue` as evidence for changing a skill, classify its `failure_origin` as `skill_contract`, `agent_execution`, `tool_implementation`, `provider_transport`, `environment_or_baseline`, `operator_interruption`, `expected_absence`, or `unknown`. Preserve the raw incident and total count. Only `skill_contract` and repeated `agent_execution` failures directly justify skill changes; route other origins to their owning subsystem. Keep `unknown` unresolved rather than averaging it into skill reliability.
+
+## Output format
+
+Produce a JSON object:
+
+```json
+{
+
+  "findings": [
+    {
+      "id": "F001",
+      "h_mem_id": "<h_mem ID>",
+      "entity": "<entity>",
+      "attribute": "<attribute>",
+      "issue_type": "contradiction|fragmentation|miscalibrated_confidence|reification_candidate|system_defect|charter_alignment",
+      "failure_origin": "<skill-use attribution value; omit for other findings>",
+      "description": "<what the issue is>",
+      "root_cause": "<for system_defect findings: file:line of the writing path>",
+      "contradicting_h_mem_ids": ["<ID>", "<ID>"],
+      "source_h_mem_ids": ["<ID>", "<ID>"],
+      "evidence": "<values/confidence/connectedness data>"
+    }
+  ]
+}
+```

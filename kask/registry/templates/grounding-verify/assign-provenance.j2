@@ -1,0 +1,190 @@
+{# goal: Assign a provenance tier to each factual claim using the strength lattice. #}
+{# #}
+{# This is the second step of the grounding-verify process. It determines WHERE #}
+{# each claim comes from — the provenance tier that controls how much reliance #}
+{# a reader can place on it. The extraction ceiling is enforced here: #}
+{# LLM-synthesized claims are model_inference (strength 1), never tool_verified #}
+{# (strength 2). Only direct citations that will be mechanically verified in #}
+{# Step 3 can be provisionally classified as tool_verified. #}
+{# #}
+{# Output schema: #}
+{#   provenance_assignments: array of { #}
+{#     claim_id: string, #}
+{#     provenance: "tool_verified" | "platform_derived" | "model_inference" | "unavailable" | "tool_no_match" | "pending_check", #}
+{#     strength: 0 | 1 | 2, #}
+{#     source_reference: string | null, #}
+{#     response_field: string | null,  # which field in the source output #}
+{#     cross_check: string | null,  # lisp_eval form for mechanical verification (string-contains for quotes; value-returning derivation forms for arithmetic) #}
+{#     claimed_value: number | null,  # platform_derived only — the value the report states #}
+{#     unit: number | null,  # platform_derived only — unit of the claim's last decimal place (0.1 for 17.9, 0.0001 for 0.1196, 1 for an integer) #}
+{#     inputs: array | null,  # platform_derived only — [{name: string, origin: string}] where origin is "source:<tool>:<field>" or "claim:<claim_id>" of an EARLIER claim #}
+{#     library_form: string | null,  # platform_derived only — the canonical library form selected ("sum", "mean", "ratio", "change_pct", "diff_pct", "median"), null when authored #}
+{#     why: string  # min 40 chars — why this provenance tier #}
+{#   } #}
+{#   sourced_blocks: array of { block_name: string, claim_ids: array of claim_id, is_sourced: boolean (provisional only) } #}
+{#   cross_check_exemptions: array of { claim_id: string, reason: string } #}
+[inference]
+contract:
+  input:
+    claims: array
+    source_outputs: array
+    pipeline_tool_log: array
+    congruence_rules: array
+  output:
+    provenance_assignments: array
+    sourced_blocks: array
+    cross_check_exemptions: array
+---
+
+You are a provenance analyst. Your job is to assign a provenance tier to each factual claim, determining where the claim's value comes from and how much reliance a reader can place on it.
+
+## Claims to classify
+
+{{ claims | tojson }}
+
+## Source outputs available
+
+{{ source_outputs | tojson }}
+
+## Pipeline tool log (which tools were actually called)
+
+{{ pipeline_tool_log | tojson }}
+
+## Congruence rules (optional — which source is authoritative for which quantity)
+
+{{ congruence_rules | default([]) | tojson }}
+
+When a claim cites a source that a rule marks non-authoritative for that quantity, note the rule and the authoritative source in the claim's `why` — Step 3's consistency pass surfaces the conflict; your note explains the citation choice.
+
+## Canonical derivation forms (prefer over authoring)
+
+Select and bind inputs — do not author your own form when one of these fits. Each references inputs by name; never embed the claimed result as a literal: a form that evaluates without its inputs fails Step 3's empty-env dependency check.
+
+- Sum: `"(+ part_a part_b)"` — a total stated as the sum of its parts
+- Mean: `"(/ total count)"` — an average stated over a counted set
+- Ratio: `"(/ numerator denominator)"` — a rate or proportion
+- Change %: `"(* 100 (/ (- current prior) prior))"` — a relative change between two measurements
+- Diff %: `"(* 100 (/ (- value_a value_b) value_b))"` — a percentage difference between two values
+- Median (any n) — the one recursive library form. It is provided pre-wrapped with the grading wrapper (its helper defines cannot sit inside a `let` binding): bind `values`, `claimed`, `unit` only, call it as-is, and pass `max_depth` >= 8 x list length:
+
+```
+(define insert-sorted (lambda (x lst) (cond ((is_null lst) (list x)) ((<= x (car lst)) (cons x lst)) (t (cons (car lst) (insert-sorted x (cdr lst))))))) (define isort (lambda (lst) (cond ((is_null lst) '()) (t (insert-sorted (car lst) (isort (cdr lst))))))) (define drop-last (lambda (lst) (cond ((is_null (cdr lst)) '()) (t (cons (car lst) (drop-last (cdr lst))))))) (define middle-of (lambda (s) (cond ((= (length s) 1) (car s)) ((= (length s) 2) (/ (+ (car s) (car (cdr s))) 2)) (t (middle-of (cdr (drop-last s))))))) (let ((computed (middle-of (isort values)))) (list computed (let ((diff (abs (- computed claimed)))) (cond ((<= diff (* 0.5 unit)) 'pass) ((<= diff (* 1.001 unit)) 'warn) (t 'fail)))))
+```
+
+- Data-driven batch drivers — each runs ONE call for the whole family, taking all claims as data and returning per-claim results. Pass `max_depth` >= 8 x record count.
+
+Cited-number membership checks — env: `{ "records": [{ "claim_id", "value", "values" }, ...] }`:
+
+```
+(define check-num (lambda (c) (member (assoc "value" c) (assoc "values" c)))) (define check-all (lambda (lst) (cond ((is_null lst) '()) (t (cons (check-num (car lst)) (check-all (cdr lst))))))) (check-all records)
+```
+
+Cited-quote substring checks — env: `{ "records": [{ "claim_id", "quote", "source_text" }, ...] }`:
+
+```
+(define check-quote (lambda (c) (string-contains (assoc "quote" c) (assoc "source_text" c)))) (define check-all (lambda (lst) (cond ((is_null lst) '()) (t (cons (check-quote (car lst)) (check-all (cdr lst))))))) (check-all records)
+```
+
+Origins checks — env: `{ "claims": [{ "claim_id", "inputs": [{ "name", "origin" }, ...] }, ...] in extraction order, "source_allowed": [verified source:<tool>:<field> origins only] }`. The driver adds earlier claim IDs as it walks; a global list of all claim IDs would admit cycles:
+
+```
+(define bad-count (lambda (inputs permitted) (cond ((is_null inputs) 0) ((member (assoc "origin" (car inputs)) permitted) (bad-count (cdr inputs) permitted)) (t (+ 1 (bad-count (cdr inputs) permitted)))))) (define check-all (lambda (rest permitted) (if (is_null rest) '() (let ((c (car rest))) (cons (list (assoc "claim_id" c) (bad-count (assoc "inputs" c) permitted)) (check-all (cdr rest) (cons (concat "claim:" (assoc "claim_id" c)) permitted))))))) (check-all claims source_allowed)
+```
+
+Consistency comparisons — env: `{ "rules": [{ "quantity", "primary", "cross", "tolerance" }, ...] }`, one record per rule × cross-check pair:
+
+```
+(define check-rule (lambda (r) (let ((diff (abs (- (assoc "primary" r) (assoc "cross" r))))) (list (assoc "quantity" r) (if (> diff (* (abs (assoc "primary" r)) (assoc "tolerance" r))) 'conflict 'consistent))))) (define check-all (lambda (lst) (cond ((is_null lst) '()) (t (cons (check-rule (car lst)) (check-all (cdr lst))))))) (check-all rules)
+```
+
+Library-form verification — env: `{ "records": [{ "claim_id", "library_form", "cross_check" }, ...] }`, one record per claim with a non-null `library_form`. The driver embeds the library texts as literals — keep it in sync with the list above:
+
+```
+(define library (list (list "sum" "(+ part_a part_b)") (list "mean" "(/ total count)") (list "ratio" "(/ numerator denominator)") (list "change_pct" "(* 100 (/ (- current prior) prior))") (list "diff_pct" "(* 100 (/ (- value_a value_b) value_b))") (list "median" "(define middle-of)"))) (define text-for (lambda (name entries) (cond ((is_null entries) nil) ((member name (list (car (car entries)))) (car (cdr (car entries)))) (t (text-for name (cdr entries)))))) (define check-one (lambda (r) (let ((text (text-for (assoc "library_form" r) library))) (cond ((is_null text) (list (assoc "claim_id" r) 'unknown_name)) ((string-contains text (assoc "cross_check" r)) (list (assoc "claim_id" r) 'ok)) (t (list (assoc "claim_id" r) 'mismatch)))))) (define check-all (lambda (lst) (cond ((is_null lst) '()) (t (cons (check-one (car lst)) (check-all (cdr lst))))))) (check-all records)
+```
+
+## The provenance lattice
+
+Every claim is classified into one of these tiers:
+
+| Tier | Provenance Value | Strength | Meaning |
+|------|-----------------|----------|---------|
+| 2 | `tool_verified` | 2 | Value found in source output via mechanical match (provisional — Step 3 verifies) |
+| 2 | `platform_derived` | 2 | Value computed by lisp_eval from sourced values |
+| 1 | `model_inference` | 1 | LLM synthesized from source outputs — the extraction ceiling |
+| 0 | `unavailable` | 0 | No source the pipeline called can supply this claim |
+| 0 | `tool_no_match` | 0 | Source was called but returned nothing for this subject |
+| 0 | `pending_check` | 0 | Check exists but has not run yet — not graded: counted in `pending_count`, excluded from the floor (Step 6) |
+
+## The extraction ceiling
+
+A claim that the LLM synthesizes from tool outputs is `model_inference`, NEVER `tool_verified`. The LLM is the ontologist; synthesis is extraction. Only direct citations — verbatim quotes from the source, exact numbers copied from an MCP tool output — can be `tool_verified`. A claim like "latency fell 12% due to the new cache" has two parts: "latency fell 12%" (could be `tool_verified` if the numbers are in the source) and "due to the new cache" (is `model_inference` — the LLM synthesized the causal explanation).
+
+## Instructions
+
+1. For each claim, determine which provenance tier applies:
+   - If the claim's value appears to come directly from a source output (the exact number, the exact quote), classify it as `tool_verified` (provisional — Step 3 will mechanically verify). You MUST also emit a `cross_check` specification:
+     - For quotes: a `lisp_eval` form — `"(string-contains quote source_text)"` — Step 3 binds `quote` (the cited substring) and `source_text` (the referenced chunk's text)
+     - For numbers: a `lisp_eval` form like `"(member 142.0 source_p95_values)"`
+   - If the claim is arithmetic on sourced values (a total, a median, a percentage change, a scoring formula), classify as `platform_derived` and emit the derivation as a value-returning `cross_check` form, plus `claimed_value` (the number the report states), `unit` (the unit of the claim's last decimal place: 0.1 for 17.9, 0.0001 for 0.1196, 1 for an integer), and `inputs` — each input value's name and origin (`source:<tool>:<field>`, or `claim:<claim_id>` for the output of an EARLIER claim in this run; forward references are rejected by Step 3's origins check). Prefer a canonical form from the library above when one fits — select and bind instead of authoring, and record the selection in `library_form` (null when authored; library forms skip Step 3's empty-env check). Never embed the claimed result as a literal: a form that evaluates without its inputs fails Step 3's empty-env dependency check. Arithmetic without a falsifiable derivation is `model_inference`.
+   - If the claim synthesizes or interprets source data (e.g., "the latency drop was driven by the new cache"), classify as `model_inference`.
+   - If no source the pipeline called can supply this claim (the model produced it from parametric knowledge), classify as `unavailable`.
+   - If a source was called but returned nothing for this subject, classify as `tool_no_match`.
+
+2. For each `tool_verified` or `platform_derived` claim, the `cross_check` specification is MANDATORY. A strength-2 claim with no cross-check is a claim nobody can falsify. If you cannot construct a cross-check, reclassify as `model_inference` with a `why` explaining why it cannot be mechanically verified.
+
+3. Each claim entry MUST carry a `why` field with at least 40 characters explaining its provenance status. "n/a" and "tool" do not pass. The next person to read this registry cannot tell a considered `unavailable` from a lazy one without the explanation.
+
+4. Emit `sourced_blocks` with each block's `block_name` and the `claim_ids` provisionally assigned to it. The `is_sourced` value is provisional: Step 3 may reject those citations. The invoking agent must recompute it from surviving strength-2 IDs before the narrative scanner. Never pass this preliminary Boolean directly downstream.
+
+5. If a claim cannot be cross-checked but should be (the source exists but the check is infeasible), emit it in `cross_check_exemptions` with a reason. This is the honest half of the completeness claim — a sourced claim that is neither cross-checked nor exempt is a claim nobody can falsify.
+
+## Output format
+
+Produce a JSON object:
+
+```json
+{
+  "provenance_assignments": [
+    {
+      "claim_id": "claim_001",
+      "provenance": "tool_verified",
+      "strength": 2,
+      "source_reference": "benchmark_run:p95_latency",
+      "response_field": "p95_latency_ms",
+      "cross_check": "(member 142.0 source_p95_values)",
+      "why": "The p95 latency figure appears directly in the source tool's output under the p95_latency_ms field."
+    },
+    {
+      "claim_id": "claim_002",
+      "provenance": "model_inference",
+      "strength": 1,
+      "source_reference": null,
+      "response_field": null,
+      "cross_check": null,
+      "why": "The causal claim that the cache drove the latency drop is synthesized by the LLM from the latency and request-volume data — it is a judgment, not a retrieval."
+    },
+    {
+      "claim_id": "claim_003",
+      "provenance": "platform_derived",
+      "strength": 2,
+      "source_reference": "benchmark_run:p95_latency + baseline_run:p95_latency",
+      "response_field": null,
+      "cross_check": "(* 100 (/ (- current prior) prior))",
+      "claimed_value": -11.0,
+      "unit": 0.1,
+      "inputs": [
+        { "name": "current", "origin": "source:benchmark_run:p95_latency" },
+        { "name": "prior", "origin": "source:baseline_run:p95_latency" }
+      ],
+      "library_form": "change_pct",
+      "why": "The reported percentage change is the change_pct derivation over the two benchmark runs; the canonical library form re-derives it so Step 3 can grade the difference."
+    }
+  ],
+  "sourced_blocks": [
+    { "block_name": "performance_profile", "claim_ids": ["claim_001", "claim_003"], "is_sourced": true },
+    { "block_name": "methodology_notes", "claim_ids": [], "is_sourced": false }
+  ],
+  "cross_check_exemptions": []
+}
+```

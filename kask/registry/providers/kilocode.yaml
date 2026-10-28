@@ -1,0 +1,61 @@
+# Provider profile — KiloCode (kilo.ai). Structural contract pinned by
+# kask/scripts/check-provider-profiles.sh; semantic reading owned by the
+# provider-audit skill.
+id: kilocode
+name: KiloCode
+status: active
+roles:
+  - chat-inference
+keychain:
+  slot: https://api.kilo.ai/api/gateway
+  env_var: KILOCODE_API_KEY
+consumed_capabilities:
+  - capability: chat completions gateway (OpenAI-compatible, pre-seeded)
+    source: assets/settings/default.json (DIVERGENCE.md D69)
+deliberate_non_consumption:
+  - capability: embeddings
+    reason: chat-only gateway — no /embeddings endpoint, no
+      DIRECT_EMBEDDING_PROVIDERS row (kask/crates/kask_bridge/src/inference_providers.rs)
+  - capability: MCP child credential injection
+    reason: no MCP server consumes KILOCODE_API_KEY — the key stays in the
+      provider slot and is not collected for child-process injection or
+      restart (DIVERGENCE.md D69)
+known_failure_modes:
+  - payment exhaustion surfaces as HTTP 503, not 402 — billing masquerades as
+    "service unavailable" (DIVERGENCE.md D69)
+  - tool-call repair (dedup, orphan cleanup, id normalization) is gateway-side
+  - model ids are nested (anthropic/claude-sonnet-4.5) — resolve by exact id
+    after the first-slash split
+data_terms:
+  # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
+  extracted_at: "2026-10-13"
+  trains_on_customer_data: >-
+    license-to-improve — Terms of Service §7.A (kilo.ai/terms, last
+    updated 2026-09-30, extracted 2026-10-13): uploading Customer Data grants
+    Kilo "a perpetual, irrevocable, fully-paid, royalty-free, worldwide,
+    sublicensable, transferable right and license to use such Customer
+    Data to provide and improve the Services and Kilo's other products
+    and services"; model-side use is governed by each AI provider's
+    terms, and refusing a training license may exclude certain models.
+    Vendor identity: Anaconda, Inc. on behalf of itself and affiliates
+    including Kilo Code Inc.
+  retention_published: >-
+    yes — privacy policy (kilo.ai/privacy, extracted 2026-10-13): "Data Retention
+    & Deletion: We retain this data as long as your Kilo Code account is
+    active."
+  operator_ruling: >-
+    accept-as-is (operator ruling 2026-10-13): the license-to-improve
+    posture is accepted for current traffic — coding/chat workloads, no
+    private or personal data. Revisit if KiloCode enters a sensitive-data
+    path.
+status_surface:
+  status_page: >-
+    none found — status.kilo.ai unreachable and kilo.ai/status 404
+    (probed 2026-10-13).
+  sla: none found (probed 2026-10-13).
+pricing:
+  machine_readable: >-
+    pricing published (kilo.ai/pricing, HTTP 200, probed 2026-10-13); per-model
+    pricing varies by routed provider (terms §4.A read 2026-10-13); no
+    machine-readable pricing source found this run.
+first_audit_pending: false

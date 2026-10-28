@@ -1,0 +1,40 @@
+[package]
+name = "hkask-types"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Foundation types for the hKask platform — IDs, errors, events, visibility, hexagonal ports, and shared domain primitives"
+
+
+[lib]
+path = "src/hkask_types.rs"
+
+[dependencies]
+# NOTE: hkask-types must NOT depend on hkask-tool-port (would create a cycle).
+# Modules that need capability types (kanban, goal, loops/curation) are being
+# migrated to their domain crates.
+# Ontology vocabulary bridge — fixture-guarded concept URIs. The bridge is a
+# leaf crate (serde/schemars only); it must STAY leaf — if it ever needs
+# hkask-types, this dependency becomes a cycle.
+hkask-bridge-ontology.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars = { workspace = true, features = ["derive"] }
+uuid.workspace = true
+chrono = { workspace = true, features = ["clock"] }
+thiserror.workspace = true
+futures-util.workspace = true
+tracing.workspace = true
+dirs.workspace = true
+
+rusqlite = { workspace = true, optional = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true
+
+[features]
+default = []
+sql = ["dep:rusqlite"]

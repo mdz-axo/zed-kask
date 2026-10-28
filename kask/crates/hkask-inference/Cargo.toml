@@ -1,0 +1,31 @@
+[package]
+name = "hkask-inference"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "IPC bridge client, shared inference configuration, and child-local media routing for hKask MCP servers"
+
+[lib]
+path = "src/hkask_inference.rs"
+
+[dependencies]
+hkask-types.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+futures-util.workspace = true
+reqwest.workspace = true
+bytes.workspace = true
+base64.workspace = true
+thiserror.workspace = true
+minijinja.workspace = true
+
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
+

@@ -1,0 +1,307 @@
+//! Helper for formatting ```media fenced blocks in tool responses.
+//!
+//! When a media tool (video_fetch, audio_capture, etc.) returns a result,
+//! it includes a `display_hint` field containing a pre-formatted ```media
+//! markdown block. The model can copy this into its reply, and the D18 seam
+//! in `crates/markdown` will render it as a `MediaWidget`.
+//!
+//! The block body carries OMC concept tags + server-authoritative provenance
+//! (tool, server, args, span_id) so the media widget can dispatch the
+//! OMC-driven "Explain" affordance.
+//! Ontology and provenance are intentional optional metadata: blocks without
+//! them render without explain affordances. JSON serialization
+//! preserves paths and metadata verbatim, including quotes and newlines.
+
+use crate::omc;
+use hkask_types::BlockProvenance;
+
+/// Format a ```media fenced block for inclusion in tool responses.
+///
+/// The block body is a JSON object: `{"kind","src","ontology","provenance"}`.
+/// `ontology` and `provenance` are optional metadata, supplied by the enriched writer.
+///
+/// ```text
+/// ```media
+/// {"kind":"image","src":"/path/to/image.png","ontology":"omc:CreativeWork","provenance":{"tool":"image_create_collage","server":"hkask-mcp-media","args":{}}}
+/// ```
+/// ```
+pub fn media_block(kind: &str, src: &str) -> String {
+    media_block_with_omc(kind, src, None, None)
+}
+
+/// Format a ```media block with an OMC concept tag and provenance.
+///
+/// `omc` is the OMC concept URI (e.g. `omc:CreativeWork`) — `None` omits the
+/// `ontology` field (the widget falls back to its default explain tool). `provenance` is
+/// the server-authoritative record of which tool produced this artifact, with
+/// which args, under which regulation span — `None` omits the field (the widget
+/// renders without dispatch affordances).
+pub fn media_block_with_omc(
+    kind: &str,
+    src: &str,
+    omc: Option<&str>,
+    provenance: Option<&BlockProvenance>,
+) -> String {
+    media_block_with_gallery_asset_id(kind, src, omc, provenance, None)
+}
+
+pub(crate) fn media_block_with_gallery_asset_id(
+    kind: &str,
+    src: &str,
+    omc: Option<&str>,
+    provenance: Option<&BlockProvenance>,
+    gallery_asset_id: Option<&str>,
+) -> String {
+    let mut body = serde_json::json!({"kind": kind, "src": src});
+    if let Some(omc) = omc {
+        body["ontology"] = serde_json::json!(omc);
+    }
+    if let Some(provenance) = provenance {
+        body["provenance"] = serde_json::json!(provenance);
+    }
+    if let Some(gallery_asset_id) = gallery_asset_id {
+        body["gallery_asset_id"] = serde_json::json!(gallery_asset_id);
+    }
+    format!("```media\n{body}\n```")
+}
+
+/// Build `BlockProvenance` for a tool invocation on this server (`hkask-mcp-media`).
+pub(crate) fn provenance_for_tool(
+    tool: &str,
+    args: serde_json::Value,
+    span_id: Option<String>,
+) -> BlockProvenance {
+    BlockProvenance::for_server_tool("hkask-mcp-media", tool, args, span_id)
+}
+
+/// Build an OMC-tagged, provenance-carrying display hint for a tool output,
+/// then attach it to the result as `display_hint`.
+///
+/// This is the OMC-aware enrichment path. It:
+/// 1. Resolves the OMC concept for `tool` via `omc::tool_to_omc`.
+/// 2. Extracts the asset src from the result (via `extract_src`).
+/// 3. Formats a ```media block carrying `kind`, `src`, `omc`, `provenance`,
+///    and stable `gallery_asset_id` when the result identifies an indexed Asset.
+/// 4. Attaches the block to the result as `display_hint`.
+///
+/// `tool` is the MCP tool name (drives the OMC tag). `kind` is the media
+/// kind ("image"/"video"/"audio"). `args` is the JSON args the tool was
+/// invoked with (baked into provenance). `span_id` is the regulation span.
+/// Returns the enriched result (unchanged if no src could be extracted).
+pub fn enrich_with_omc_and_provenance(
+    mut result: serde_json::Value,
+    tool: &str,
+    kind: &str,
+    args: serde_json::Value,
+    span_id: Option<String>,
+) -> serde_json::Value {
+    if let Some(src) = extract_src(&result, kind) {
+        let omc = omc::tool_to_omc(tool);
+        let provenance = provenance_for_tool(tool, args, span_id);
+        let gallery_asset_id = result
+            .get("gallery_asset_id")
+            .and_then(serde_json::Value::as_str);
+        let hint =
+            media_block_with_gallery_asset_id(kind, &src, omc, Some(&provenance), gallery_asset_id);
+        result["display_hint"] = serde_json::Value::String(hint);
+    }
+    result
+}
+
+/// Extract the asset src (a persisted file path) from a tool result,
+/// dispatching on the media kind. Media tools compose their results via
+/// staged publication in `persist_slim_and_enrich` (assets.rs), so `output` carries the
+/// persisted path for every kind; the audio arm additionally accepts the
+/// `audio_path` field produced by the record-and-transcribe tools.
+pub fn extract_src(result: &serde_json::Value, kind: &str) -> Option<String> {
+    match kind {
+        "audio" => result
+            .get("audio_path")
+            .and_then(|path| path.as_str())
+            .map(str::to_string)
+            .or_else(|| {
+                result
+                    .get("output")
+                    .and_then(|output| output.as_str())
+                    .map(str::to_string)
+            }),
+        _ => result
+            .get("output")
+            .and_then(|output| output.as_str())
+            .map(str::to_string),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// expect: [P7] Paths and provenance survive the production display-hint writer.
+    #[test]
+    fn media_blocks_round_trip_escaped_paths() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "/tmp/雪/quote\"-back\\slash\nimage.png";
+        let provenance = provenance_for_tool(
+            "image_create_collage",
+            serde_json::json!({"prompt": "quote\"\n雪"}),
+            Some("span-1".into()),
+        );
+        for block in [
+            media_block("image", source),
+            media_block_with_omc("image", source, Some("omc:CreativeWork"), Some(&provenance)),
+        ] {
+            let body = block
+                .strip_prefix("```media\n")
+                .ok_or("missing fence")?
+                .strip_suffix("\n```")
+                .ok_or("missing closing fence")?;
+            let payload: serde_json::Value = serde_json::from_str(body)?;
+            assert_eq!(payload["src"], source);
+            assert_eq!(payload["kind"], "image");
+            if let Some(record) = payload.get("provenance") {
+                assert_eq!(record["args"], provenance.args);
+                assert_eq!(record["span_id"], "span-1");
+                assert_eq!(payload["ontology"], "omc:CreativeWork");
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_media_block_format() {
+        let block = media_block("image", "/path/to/img.png");
+        assert_eq!(
+            block,
+            "```media\n{\"kind\":\"image\",\"src\":\"/path/to/img.png\"}\n```"
+        );
+    }
+
+    #[test]
+    fn test_media_block_with_omc_includes_tag_and_provenance() {
+        let prov = provenance_for_tool(
+            "image_create_collage",
+            serde_json::json!({"image_indices": [0, 1]}),
+            Some("span-1".into()),
+        );
+        let block = media_block_with_omc(
+            "image",
+            "/tmp/img.png",
+            Some("omc:CreativeWork"),
+            Some(&prov),
+        );
+        assert!(block.contains("\"kind\":\"image\""));
+        assert!(block.contains("/tmp/img.png"));
+        assert!(block.contains("\"ontology\":\"omc:CreativeWork\""));
+        assert!(block.contains("\"tool\":\"image_create_collage\""));
+        assert!(block.contains("\"server\":\"hkask-mcp-media\""));
+        assert!(block.contains("\"span_id\":\"span-1\""));
+    }
+
+    #[test]
+    fn test_media_block_with_omc_omits_optional_fields_when_none() {
+        let block = media_block_with_omc("image", "/tmp/img.png", None, None);
+        assert!(block.contains("\"kind\":\"image\""));
+        assert!(block.contains("/tmp/img.png"));
+        assert!(!block.contains("\"ontology\""));
+        assert!(!block.contains("\"provenance\""));
+    }
+
+    #[test]
+    fn test_enrich_with_omc_and_provenance_contact_sheet() {
+        // The slim result shape every media tool returns after
+        // authoritative derived publication: `output` carries the persisted path.
+        let result = serde_json::json!({"output": "/tmp/img.png"});
+        let enriched = enrich_with_omc_and_provenance(
+            result,
+            "image_create_collage",
+            "image",
+            serde_json::json!({"image_indices": [0, 1]}),
+            None,
+        );
+        let hint = enriched["display_hint"].as_str().expect("hint attached");
+        assert!(hint.contains("\"ontology\":\"omc:CreativeWork\""));
+        assert!(hint.contains("\"tool\":\"image_create_collage\""));
+        assert!(hint.contains("\"kind\":\"image\""));
+    }
+
+    #[test]
+    fn test_enrich_with_omc_and_provenance_frame_maps_to_shot() {
+        let result = serde_json::json!({"output": "/tmp/out.png"});
+        let enriched = enrich_with_omc_and_provenance(
+            result,
+            "video_extract_frames",
+            "image",
+            serde_json::json!({}),
+            None,
+        );
+        let hint = enriched["display_hint"].as_str().expect("hint attached");
+        let expected_shot_tag = format!("\"ontology\":\"{}\"", hkask_bridge_ontology::omc::SHOT);
+        assert!(hint.contains(&expected_shot_tag));
+    }
+
+    #[test]
+    fn test_enrich_with_omc_and_provenance_audio_uses_audio_path() {
+        let result = serde_json::json!({"audio_path": "/tmp/rec.wav"});
+        let enriched = enrich_with_omc_and_provenance(
+            result,
+            "record_and_transcribe",
+            "audio",
+            serde_json::json!({}),
+            None,
+        );
+        let hint = enriched["display_hint"].as_str().expect("hint attached");
+        assert!(hint.contains("\"kind\":\"audio\""));
+        assert!(hint.contains("/tmp/rec.wav"));
+        assert!(hint.contains("\"ontology\":\"omc:Capture\""));
+    }
+
+    #[test]
+    fn test_enrich_with_omc_and_provenance_no_src_leaves_result_unchanged() {
+        let result = serde_json::json!({"status": "ok"});
+        let enriched = enrich_with_omc_and_provenance(
+            result,
+            "image_create_collage",
+            "image",
+            serde_json::json!({}),
+            None,
+        );
+        assert!(enriched.get("display_hint").is_none());
+    }
+
+    #[test]
+    fn test_enrich_with_omc_unknown_tool_omits_omc_field() {
+        // A tool not in the OMC map still gets provenance, just no `omc` tag.
+        let result = serde_json::json!({"output": "/tmp/x.png"});
+        let enriched = enrich_with_omc_and_provenance(
+            result,
+            "some_unknown_tool",
+            "image",
+            serde_json::json!({}),
+            None,
+        );
+        let hint = enriched["display_hint"].as_str().expect("hint attached");
+        assert!(hint.contains("\"tool\":\"some_unknown_tool\""));
+        assert!(!hint.contains("\"ontology\""));
+    }
+
+    #[test]
+    fn test_extract_src_image_from_output_field() {
+        let result = serde_json::json!({"output": "/tmp/b.png"});
+        assert_eq!(extract_src(&result, "image"), Some("/tmp/b.png".into()));
+    }
+
+    #[test]
+    fn test_extract_src_audio_from_audio_path() {
+        let result = serde_json::json!({"audio_path": "/tmp/c.wav"});
+        assert_eq!(extract_src(&result, "audio"), Some("/tmp/c.wav".into()));
+    }
+
+    // Source-derived audio publication uses the same `output` path as video.
+    #[test]
+    fn test_extract_src_audio_falls_back_to_output_field() {
+        let result = serde_json::json!({"output": "/tmp/speech.mp3"});
+        assert_eq!(
+            extract_src(&result, "audio"),
+            Some("/tmp/speech.mp3".into())
+        );
+    }
+}

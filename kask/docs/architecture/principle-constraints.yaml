@@ -1,0 +1,83 @@
+# Governance/enforcement inventory, not a formal axiom system.
+# Status describes the named scope, not universal self-change coverage.
+# The checker validates structure and references; it does not run the checks,
+# authenticate approval, or establish that an assertion follows from a test.
+# Operator approved R3 corrections on 2026-09-18; changes still require review.
+principles:
+  - id: self-change-acceptance
+    name: Self-Change Acceptance Inventory
+    description: >-
+      Separate process instructions, runtime enforcement, CI wiring,
+      revision-bound formal verification, and unresolved gaps. No automatic
+      promotion is authorized by a green inventory or proof result.
+    date: '2026-09-18'
+    source: Revised Goedel gap-closure plan R3; operator approval 2026-09-18
+    constraint_set:
+      # The three training constraints (ax-training-math-gates,
+      # ax-harness-refusal, ax-training-math-proofs) were removed 2026-10-17
+      # with the training server: model training is out of scope for the
+      # co-researcher mandate, so the capability they constrained no longer
+      # exists. Their enforcement sites and Kani harnesses went with the crate.
+      - id: ax-regulation-set-points
+        assertion: Regulation maps recognized deviations to actions.
+        status: runtime_enforced
+        scope: Action construction; not universal durable delivery or causal improvement
+        owner: regulation maintainer
+        enforced_at: kask/crates/hkask-regulation/src/cybernetics_loop/cycle/tests.rs
+        check:
+          path: kask/crates/hkask-regulation/src/cybernetics_loop/cycle/tests.rs
+          symbol: build_regulation_action_produces_action_for_all_new_reasons
+          command: cargo test -p hkask-regulation build_regulation_action_produces_action_for_all_new_reasons
+      - id: ax-goal-outcome-claims
+        assertion: The self-improvement skill instructs goal registration and outcome scoring.
+        status: documented_process
+        scope: Agent procedure; supplied citation validation does not mandate every self-change
+        owner: operator and implementation agent
+        enforced_at: .agents/skills/self-improvement/SKILL.md
+        check:
+          path: kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/tests.rs
+          symbol: task_create_validates_goal_citations
+          command: cargo test -p hkask-mcp-kata-kanban task_create_validates_goal_citations
+      - id: ax-scaffold-empirical-gate
+        assertion: Skills prescribe before/after evaluation; runtime promotion enforcement is unfinished.
+        status: documented_process
+        scope: Process instruction, not exclusive activation authority
+        owner: operator and implementation agent
+        enforced_at: .agents/skills/self-improvement/SKILL.md
+      - id: ax-skill-corpus-gates
+        assertion: A runnable structural skill sweep exists; it does not measure utility.
+        status: documented_process
+        scope: Locally invoked skill-structure checks
+        owner: skill maintainer
+        enforced_at: kask/scripts/audit/skill-corpus-s9-s10-sweep.sh
+        check:
+          path: kask/scripts/audit/skill-corpus-s9-s10-sweep.sh
+          command: bash kask/scripts/audit/skill-corpus-s9-s10-sweep.sh
+      - id: ax-commit-message-gate
+        assertion: The installed local hook rejects fenced and placeholder messages but is bypassable.
+        status: documented_process
+        scope: Local hook installation and invocation; not every commit or merge
+        owner: repository maintainer
+        enforced_at: kask/githooks/commit-msg
+        check:
+          path: kask/scripts/check-commit-msg-selftest.sh
+          command: bash kask/scripts/check-commit-msg-selftest.sh
+      - id: ax-goal-traceability-advisory
+        assertion: Local hook and independent CI job report skill goal trailers without blocking.
+        status: documented_process
+        scope: UUID trailer syntax only; goal existence and approval are not verified; remote CI not executed here
+        owner: repository maintainer
+        enforced_at: .github/workflows/kask-invariants.yml
+        check:
+          path: kask/scripts/check-goal-traceability-selftest.sh
+          command: bash kask/scripts/check-goal-traceability-selftest.sh
+      - id: ax-port-typing
+        assertion: Unsupported schema keywords do not yield a successful validation verdict.
+        status: runtime_enforced
+        scope: Port registry schema checks; not complete permission or information-flow enforcement
+        owner: swarm maintainer
+        enforced_at: kask/mcp-servers/hkask-mcp-swarm/src/port_registry.rs
+        check:
+          path: kask/mcp-servers/hkask-mcp-swarm/src/port_registry.rs
+          symbol: unsupported_keyword_is_never_a_pass
+          command: cargo test -p hkask-mcp-swarm unsupported_keyword_is_never_a_pass

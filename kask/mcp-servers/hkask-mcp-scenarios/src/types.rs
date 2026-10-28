@@ -1,0 +1,774 @@
+//! Data model for scenario planning and superforecasting.
+//!
+//! Scenario construction paradigm: MAIA event-tree — binomial events
+//! with conditional dependencies.
+//!
+//! Shared: Fermi decomposition, outside/inside view calibration, Bayesian updating,
+//! Brier scoring, event tree computation, dragonfly-eye synthesis, calibration tracking.
+
+use chrono::NaiveDate;
+use hkask_forecast::ForecastError;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+// ── Error type ──────────────────────────────────────────────────────────────
+
+/// Errors from scenario computation and validation.
+#[derive(Debug, Error)]
+pub(crate) enum ScenarioError {
+    #[error("no events provided")]
+    NoEvents,
+
+    #[error("event '{0}': probability {1} not in [0, 1]")]
+    InvalidProbability(String, f64),
+
+    #[error("event '{0}': dependency on '{1}': conditional probability {2} not in [0, 1]")]
+    InvalidDependencyProbability(String, String, f64),
+
+    #[error("event '{0}': invalid dependency: {1}")]
+    InvalidDependency(String, String),
+
+    #[error("event '{0}' depends on unknown parent '{1}'")]
+    UnknownParent(String, String),
+
+    #[error("cycle detected in event dependency graph")]
+    CycleDetected,
+
+    #[error("event '{0}' not found")]
+    EventNotFound(String),
+
+    /// Wrapped forecast-engine error (Fermi validation, Brier scoring).
+    #[error(transparent)]
+    Forecast(#[from] ForecastError),
+
+    #[error("cannot synthesize: fewer than 2 perspectives provided")]
+    InsufficientPerspectives,
+
+    #[error("no stored forecasts found for calibration")]
+    NoForecastData,
+
+    #[error("empty input: {0}")]
+    EmptyInput(String),
+}
+
+// ── Framing (Chermack Phase 1 + Schwartz Stage 1) ──────────────────────────
+
+/// The output of a scenario framing session — the essential parameters
+/// established BEFORE brainstorming begins.
+///
+/// This is the "semi-structured discussion" that scopes the project:
+/// what are we trying to learn, for whom, by when, and why?
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct FramingDocument {
+    /// The focal question or decision this scenario project informs.
+    /// Schwartz: must be decision-relevant, time-bounded, scope-bounded.
+    pub focal_question: String,
+
+    /// What decision does this scenario project inform?
+    /// If the answer is "nothing" — the project has no purpose.
+    pub decision_at_stake: String,
+
+    /// Time horizon for scenario events.
+    pub time_horizon: TimeHorizon,
+
+    /// When do we need to act on the insights? (May differ from event horizon.)
+    pub action_deadline: Option<String>,
+
+    /// What is explicitly in scope?
+    pub in_scope: Vec<String>,
+
+    /// What is explicitly out of scope?
+    pub out_of_scope: Vec<String>,
+
+    /// Who are the stakeholders? Whose perspectives matter?
+    pub stakeholders: Vec<StakeholderConfig>,
+
+    /// How will the scenario output be consumed?
+    pub use_case: UseCase,
+
+    /// What constitutes success for this project?
+    /// Chermack: define assessment criteria BEFORE building scenarios.
+    pub success_criteria: Vec<String>,
+
+    /// Explicit constraints (budget, time, information access, confidentiality).
+    pub constraints: Vec<String>,
+
+    /// Key assumptions to surface and track.
+    /// Chermack: hidden assumptions are the primary source of scenario error.
+    pub surfaced_assumptions: Vec<String>,
+
+    /// What specific questions should the personas explore?
+    /// These guide the brainstorming protocol.
+    pub exploration_prompts: Vec<String>,
+}
+
+/// A stakeholder whose perspective should be represented in the scenario process.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct StakeholderConfig {
+    /// Role or name
+    pub role: String,
+    /// What does this stakeholder care about most?
+    pub primary_concern: String,
+    /// What blind spots might this stakeholder have?
+    pub likely_blind_spots: Vec<String>,
+    /// Should this stakeholder be a brainstorming persona?
+    pub include_as_persona: bool,
+}
+
+/// How the scenario output will be consumed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum UseCase {
+    /// Informing a specific strategic decision (e.g., "should we enter market X?")
+    StrategicDecision,
+    /// Validating or stress-testing an investment thesis
+    InvestmentThesis,
+    /// Ongoing monitoring of early-warning indicators
+    MonitoringDashboard,
+    /// General exploration — understanding the landscape before committing to a decision
+    LandscapeExploration,
+    /// Preparing contingency plans for specific trigger events
+    ContingencyPlanning,
+}
+
+// ── Time horizons ──────────────────────────────────────────────────────────
+
+/// Planning horizon for scenario construction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TimeHorizon {
+    /// 12–18 months: near-term opportunities and challenges
+    Tactical,
+    /// 3–5 years: investment thesis validation
+    Strategic,
+    /// 7–10 years: domain-level economic potential
+    LongTerm,
+}
+
+impl TimeHorizon {
+    pub fn display(&self) -> &'static str {
+        match self {
+            Self::Tactical => "12-18 months",
+            Self::Strategic => "3-5 years",
+            Self::LongTerm => "7-10 years",
+        }
+    }
+}
+
+// ── Scenario types ─────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ScenarioType {
+    /// Quarterly or periodic company updates
+    CompanyUpdate,
+    /// Investment thesis construction
+    CompanyAnalysis,
+    /// Near-term disruption or shift
+    EmergingEconomic,
+    /// Long-term economic driver analysis
+    EconomicPotential,
+}
+
+impl ScenarioType {
+    /// Snake-case category label matching the serde serialization, used as
+    /// the `category` on `StoredForecastRecord` so per-domain calibration
+    /// can group resolved history by scenario type.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::CompanyUpdate => "company_update",
+            Self::CompanyAnalysis => "company_analysis",
+            Self::EmergingEconomic => "emerging_economic",
+            Self::EconomicPotential => "economic_potential",
+        }
+    }
+}
+
+// ── Certainty tiers (MAIA three-level system) ──────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CertaintyTier {
+    /// Already started to happen, could stop (67%+)
+    Proximate,
+    /// All elements exist for it to happen (33–66%)
+    Probable,
+    /// Could happen but unlikely (<33%)
+    Possible,
+}
+
+impl CertaintyTier {
+    pub fn from_probability(p: f64) -> Self {
+        // Delegate the thresholds to `hkask_forecast::certainty_tier` so the
+        // server's tiering and the graph widget's node coloring share one
+        // source of truth and cannot drift.
+        match hkask_forecast::certainty_tier(p) {
+            "proximate" => Self::Proximate,
+            "probable" => Self::Probable,
+            _ => Self::Possible,
+        }
+    }
+}
+
+// ── Scenario Event (MAIA event-tree node) ──────────────────────────────────
+
+/// A binomial scenario event — a yes/no question with a deadline.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ScenarioEvent {
+    /// Unique event identifier
+    pub id: String,
+    /// Short descriptive name
+    pub name: String,
+    /// Yes/no framed question including specific date/deadline
+    pub question: String,
+    /// When the event resolves
+    pub deadline: NaiveDate,
+    /// Planning horizon for this event
+    pub time_horizon: TimeHorizon,
+    /// Type of scenario this event belongs to
+    pub scenario_type: ScenarioType,
+    /// Subject (company ticker, industry, country, technology domain)
+    pub subject: String,
+
+    // Probabilistic
+    /// Current calibrated probability that the event occurs (0.0–1.0)
+    pub probability: f64,
+    /// Basis for the probability estimate. Two semantics flow through this
+    /// field: the MAIA estimate basis ("technical_feasibility" or
+    /// "scaling_distribution" — the event-based scenario template's fifth
+    /// component) and the market bridges' provenance strings
+    /// ("prediction_market:{source}", "cmp_index:{method}").
+    pub basis: Option<String>,
+
+    // Dependencies (tree structure)
+    /// Events this event's probability depends on
+    pub depends_on: Vec<EventDependency>,
+
+    // Calibration metadata
+    /// Fermi decomposition sub-questions
+    pub sub_questions: Vec<SubQuestion>,
+    /// Outside-view base rate from reference class
+    pub base_rate: Option<f64>,
+    /// Reference class description
+    pub reference_class: Option<String>,
+    /// Brier score (populated after outcome is known)
+    pub brier_score: Option<f64>,
+    /// How many Bayesian update cycles
+    pub update_count: u64,
+}
+
+/// Conditional dependency: this event's probability depends on one or more
+/// parent events. Encodes the full joint conditional table as a bitmap-indexed
+/// vector. Parent probabilities are assumed independent during marginalization.
+///
+/// # Bitmap indexing
+///
+/// `conditionals[i]` = P(this_event | parent truth assignment i), where bit j
+/// of i corresponds to `parent_event_ids[j]`. For a single parent:
+/// `conditionals[0]` = P(E | ¬parent), `conditionals[1]` = P(E | parent).
+///
+/// # Validation
+///
+/// `conditionals.len()` must equal 2^`parent_event_ids.len()`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EventDependency {
+    /// IDs of parent events that jointly condition this event's probability.
+    pub parent_event_ids: Vec<String>,
+    /// Full joint conditional table P(this_event | parent truth assignment),
+    /// indexed by bitmap across all parents. See struct-level docs for encoding.
+    pub conditionals: Vec<f64>,
+}
+
+// ── Fermi decomposition ─────────────────────────────────────────────────────
+
+/// A sub-question from Fermi decomposition.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SubQuestion {
+    /// The sub-question text
+    pub question: String,
+    /// Best estimate for this sub-question (0.0–1.0)
+    pub estimate: f64,
+    /// Confidence in this estimate (0.0–1.0)
+    pub confidence: f64,
+}
+
+// ── Calibrated forecast ────────────────────────────────────────────────────
+
+// ── Dragonfly-Eye Synthesis (P1) ───────────────────────────────────────────
+
+/// A single perspective on an event — one analyst's probability estimate
+/// with their Fermi decomposition and rationale.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct Perspective {
+    /// Who or what produced this perspective (analyst name, agent ID, model name)
+    pub source: String,
+    /// Calibrated probability for this event (0.0–1.0)
+    pub probability: f64,
+    /// Fermi decomposition sub-questions backing this estimate
+    pub fermi_sub_questions: Vec<SubQuestion>,
+    /// Outside-view base rate for this perspective
+    pub base_rate: Option<f64>,
+    /// Reference class description
+    pub reference_class: Option<String>,
+    /// Free-text rationale for this estimate
+    pub rationale: Option<String>,
+    /// Historical raw loss retained as context only; never used as a weight.
+    pub historical_brier: Option<f64>,
+}
+
+/// Synthesized forecast from multiple independent perspectives.
+/// The dragonfly has 30,000 lenses — this aggregates them into one view.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct DragonflySynthesis {
+    /// Which event is being synthesized
+    pub event_id: String,
+    /// All perspectives considered
+    pub perspectives: Vec<Perspective>,
+    /// Aggregated probability (explicit equal-weight average)
+    pub aggregated_probability: f64,
+    /// 0 = perfect consensus, 1 = maximum divergence among perspectives
+    pub disagreement_score: f64,
+    /// Strongest counter-argument from the dissenting perspective
+    pub dissent_summary: Option<String>,
+    /// Weight assigned to each perspective in the aggregation
+    pub perspective_weights: Vec<(String, f64)>,
+    /// Interpretation of the synthesis quality
+    pub synthesis_quality: String,
+}
+
+// ── Calibration Tracking (P2) ──────────────────────────────────────────────
+
+/// A single stored forecast awaiting or having received an outcome.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredForecastRecord {
+    /// Schema version for deserialization (current: 5).
+    /// Old files without this field default to 0.
+    /// v2 adds `category` for per-domain calibration.
+    /// v3 scores the tree MARGINAL (PR-02): `probability` is the node's
+    /// resolved marginal at scoring time, marked by `scored_from_marginal`.
+    /// v2-and-earlier records hold the caller-supplied prior.
+    /// v5 admits complete declarations with exact resolution timestamps.
+    /// Date-only v4 declarations remain history, not prospective evidence.
+    #[serde(default)]
+    pub schema_version: u32,
+    pub forecast_id: String,
+    pub event_id: String,
+    pub event_name: String,
+    pub subject: String,
+    pub probability: f64,
+    /// v3 marker: `probability` is the tree's resolved marginal, not the
+    /// caller-supplied prior (PR-02). Defaults false on older records.
+    #[serde(default)]
+    pub scored_from_marginal: bool,
+    pub created_at: NaiveDate,
+    /// None = still pending, Some = outcome known
+    pub outcome: Option<bool>,
+    pub resolved_at: Option<NaiveDate>,
+    /// Domain category (e.g. "Politics", "Sports") for per-domain calibration.
+    /// `None` for records that predate the field (schema v0/v1) or for
+    /// forecasts with no natural category. Does not authorize bias correction.
+    #[serde(default)]
+    pub category: Option<String>,
+    /// Frozen prospective declaration. Missing on provenance-limited history.
+    #[serde(default)]
+    pub declaration: Option<ScenarioDeclaration>,
+}
+
+/// Immutable event, marginal probability and resolver frozen before resolution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScenarioDeclaration {
+    pub event: ScenarioEvent,
+    pub resolver: String,
+    pub declared_at: String,
+    /// Missing on date-only history, which is not retrospectively eligible.
+    #[serde(default)]
+    pub resolution_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl ScenarioDeclaration {
+    pub(crate) fn is_prospective(&self) -> bool {
+        self.resolution_at.is_some_and(|cutoff| {
+            chrono::DateTime::parse_from_rfc3339(&self.declared_at)
+                .is_ok_and(|declared| declared < cutoff)
+        })
+    }
+}
+
+/// One bin in a calibration curve — forecasts in a probability range
+/// and their actual hit rate.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct CalibrationBin {
+    /// Probability range (e.g. 0.7–0.8)
+    pub probability_range: String,
+    /// How many forecasts fall in this bin
+    pub forecast_count: u64,
+    /// Observed occurrence frequency in this bin.
+    pub hit_rate: Option<f64>,
+    /// Mean declared probability; absent for an empty bin.
+    pub expected_rate: Option<f64>,
+    /// Mean declared p minus observed occurrence frequency. Its sign depends
+    /// on event orientation, not the forecaster's degree of confidence.
+    pub signed_probability_error: Option<f64>,
+}
+
+/// Display convention for the descriptive signed mean, not a sufficiency claim.
+pub(crate) const SIGNED_PROBABILITY_ERROR_MIN_BIN_COUNT: u64 = 5;
+
+/// Full calibration curve across all stored forecasts.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct CalibrationCurve {
+    pub bins: Vec<CalibrationBin>,
+    pub total_forecasts: u64,
+    /// Eligible resolved declarations only; legacy outcomes are reported separately.
+    pub resolved_forecasts: u64,
+    pub unscored_resolved_forecasts: u64,
+    pub overall_brier: f64,
+    /// Signed mean error over bins with at least five observations.
+    /// Missing means insufficient qualifying data; zero may reflect cancellation.
+    pub signed_probability_error: Option<f64>,
+    pub signed_probability_error_sample_count: u64,
+    pub signed_probability_error_qualifying_bins: Vec<String>,
+}
+
+// ── Triage (P4) ────────────────────────────────────────────────────────────
+
+/// Triage assessment for a forecasting question.
+/// Evaluates whether a question is worth the full superforecasting pipeline.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct TriageAssessment {
+    /// The original question
+    pub question: String,
+    /// Is this worth forecasting?
+    pub is_forecastable: bool,
+    /// Difficulty classification
+    pub difficulty: String,
+    /// How clearly is the question specified? (0–1)
+    pub clarity_score: f64,
+    /// How available is the data needed? (0–1)
+    pub data_availability_score: f64,
+    /// How clear are the resolution criteria? (0–1)
+    pub resolution_criteria_clarity: f64,
+    /// Overall triage recommendation
+    pub recommendation: String,
+}
+
+// ── Brainstorming Protocol ────────────────────────────────────────────────
+
+/// A persona for divergent event generation.
+/// Each persona brings a distinct perspective to the brainstorming session.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct PersonaConfig {
+    /// Persona name (e.g., "Bull", "Bear", "Contrarian", "Domain Expert")
+    pub name: String,
+    /// Lens: what this persona focuses on
+    pub lens: String,
+    /// Prompt fragment: how this persona should think
+    pub prompt: String,
+}
+
+/// A single round in the multi-round brainstorming protocol.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct BrainstormRound {
+    /// Round number (1-4)
+    pub round: u8,
+    /// Round name
+    pub name: String,
+    /// Cognitive mode: "diverge", "ground", "link", "prune"
+    pub mode: String,
+    /// Temperature guidance for the LLM
+    pub temperature_guidance: String,
+    /// What this round produces
+    pub output_type: String,
+    /// Detailed instructions for the LLM
+    pub instructions: String,
+    /// Quality gate: what must be true before proceeding to next round?
+    pub quality_gate: Option<String>,
+}
+
+/// Full multi-round brainstorming protocol.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct BrainstormProtocol {
+    /// Subject being brainstormed
+    pub subject: String,
+    /// Time horizon
+    pub time_horizon: String,
+    /// Research context (from web search)
+    pub research_context: String,
+    /// Personas configured for this session
+    pub personas: Vec<PersonaConfig>,
+    /// Rounds in the protocol
+    pub rounds: Vec<BrainstormRound>,
+    /// Pipeline: what tools to use at each stage
+    pub pipeline: Vec<String>,
+}
+
+// ── Chermack Project Assessment (P5) ──────────────────────────────────────
+
+/// Input bundle for `assess_project`. Groups the 11 former positional
+/// parameters into a single struct so callers don't need to remember
+/// argument order.
+///
+/// The seven quantitative metrics are `Option`: a `None` metric was not
+/// reported by the caller and is NOT a zero measurement — `assess_project`
+/// names it in `ProjectAssessment::unreported_metrics` and withholds the
+/// phase scores that depend on it as insufficient data (null).
+#[derive(Debug)]
+pub(crate) struct AssessInput<'a> {
+    pub project_id: &'a str,
+    pub subject: &'a str,
+    /// The project's framing document. When present, Chermack Phase 1
+    /// (Preparation) is scored from its typed fields directly; the
+    /// `perspective_count` proxy is the fallback when no framing
+    /// document exists.
+    pub framing_document: Option<&'a FramingDocument>,
+    pub perspective_count: Option<usize>,
+    pub disagreement_score: Option<f64>,
+    pub event_count: Option<usize>,
+    pub events_with_deps: Option<usize>,
+    pub calibration_curve: Option<&'a CalibrationCurve>,
+    pub strategies_generated: Option<usize>,
+    pub strategies_implemented: Option<usize>,
+    pub learning_events: Vec<String>,
+    pub has_early_warning_indicators: Option<bool>,
+}
+
+/// Assessment of a scenario project's effectiveness.
+/// Based on Chermack's five-phase performance-based scenario system
+/// (Scenario Planning in Organizations, 2011).
+///
+/// Evaluates not just forecast accuracy (Tetlock) but whether the
+/// scenario project improved decision quality and organizational learning.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct ProjectAssessment {
+    /// Project identifier
+    pub project_id: String,
+    /// Subject domain
+    pub subject: String,
+
+    // Phase 1: Preparation — was scope clear? Stakeholders engaged?
+    pub preparation: PhaseScore,
+    // Phase 2: Exploration — were diverse perspectives considered?
+    pub exploration: PhaseScore,
+    // Phase 3: Development — are scenarios internally consistent?
+    pub development: PhaseScore,
+    // Phase 4: Implementation — did strategies change?
+    pub implementation: PhaseScore,
+    // Phase 5: Project Assessment — did the project improve outcomes?
+    pub project_assessment: PhaseScore,
+
+    /// Quantitative metrics the caller did not report. Phase scores that
+    /// depend on one of these are withheld as insufficient data (null)
+    /// instead of being scored from a fabricated zero.
+    pub unreported_metrics: Vec<String>,
+    /// Composite score averaged over the phases with reported data only
+    /// (0-1); null when no phase could be scored.
+    pub overall_score: Option<f64>,
+    /// Overall assessment narrative
+    pub overall_assessment: String,
+    /// Observable learning events (Chermack: evidence of mental model change)
+    pub learning_evidence: Vec<String>,
+    /// Recommendations for improvement
+    pub recommendations: Vec<String>,
+}
+
+/// Score for a single phase of the scenario project.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct PhaseScore {
+    /// Phase name
+    pub phase: String,
+    /// Score 0-1; null when the phase's dependent metrics were not reported
+    /// (insufficient data — the gaps name the missing metrics).
+    pub score: Option<f64>,
+    /// What was done well
+    pub strengths: Vec<String>,
+    /// What needs improvement
+    pub gaps: Vec<String>,
+}
+// ── Probability-weighted scenarios ─────────────────────────────────────────
+
+/// An event tree node with resolved probability (after conditional computation).
+/// Full event tree with resolved probabilities.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct EventTreeNode {
+    pub event: ScenarioEvent,
+    /// Resolved marginal probability after applying all dependencies
+    pub marginal_probability: f64,
+    /// All paths from root nodes to this node (event ID chains).
+    /// For single-parent events, this is a one-element Vec.
+    /// For multi-parent events, each parent produces a separate path.
+    pub paths: Vec<Vec<String>>,
+    /// Certainty distance: |P − 0.5| × 2, scaled to [0, 1] — 1 = most
+    /// certain, 0 = a coin flip. The sensitivity ranking inverts this
+    /// (1 − certainty_distance) to rank uncertainty.
+    pub certainty_distance: f64,
+}
+
+/// Full event tree with resolved probabilities.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EventTree {
+    pub subject: String,
+    pub(crate) time_horizon: TimeHorizon,
+    pub(crate) scenario_type: ScenarioType,
+    pub(crate) nodes: Vec<EventTreeNode>,
+    /// Root nodes (no dependencies)
+    pub root_ids: Vec<String>,
+    /// Topologically sorted node IDs
+    pub topo_order: Vec<String>,
+    /// Approximate probability that all events occur, using parent-true
+    /// conditionals. Multi-parent nodes use the documented average proxy.
+    pub joint_probability: f64,
+}
+
+// ── Scenario project record ─────────────────────────────────────────────
+
+/// The scenario project record — Chermack's unit of assessment.
+///
+/// One project per subject by default: `scenario_frame_document` defaults
+/// the project id to the subject, and re-running a subject's project
+/// updates it in place. Carries the framing document (Phase 1 evidence),
+/// the last quantified tree (the durable tree cache), and the assessment
+/// history (Phase 5 evidence).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ScenarioProject {
+    /// The project key — defaults to the subject.
+    pub project_id: String,
+    /// The domain the project's events apply to (MAIA: the company or
+    /// domain/issue).
+    pub subject: String,
+    /// The structured framing document (Chermack Phase 1 evidence).
+    #[serde(default)]
+    pub framing_document: Option<FramingDocument>,
+    /// The last quantified/propagated tree — the durable tree cache (the
+    /// documented default a restarted server reads via
+    /// `ProjectStore::last_tree()`).
+    #[serde(default)]
+    pub last_tree: Option<EventTree>,
+    /// One record per `scenario_assess` call (Phase 5 history).
+    #[serde(default)]
+    pub assessment_history: Vec<AssessmentRecord>,
+    pub created_at: NaiveDate,
+    pub updated_at: NaiveDate,
+}
+
+/// One `scenario_assess` call's headline result, for the project's history.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct AssessmentRecord {
+    pub date: NaiveDate,
+    /// The overall score; `None` when every phase was withheld as
+    /// insufficient data.
+    pub overall_score: Option<f64>,
+}
+
+// ── Cross-Validation ────────────────────────────────────────────────────
+
+/// Result of cross-validating two probability estimates — typically
+/// an LLM-generated estimate (superforecasting skill) against a
+/// server-computed estimate (scenario_calibrate tool).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CrossValidation {
+    /// Event or question being validated
+    pub event_id: String,
+    /// First estimate (e.g., LLM-generated from superforecasting skill)
+    pub estimate_a: f64,
+    /// Source of estimate A
+    pub source_a: String,
+    /// Second estimate (e.g., server-computed from scenario_calibrate)
+    pub estimate_b: f64,
+    /// Source of estimate B
+    pub source_b: String,
+    /// Absolute divergence |P_a - P_b|
+    pub divergence: f64,
+    /// Does the divergence exceed the review threshold?
+    pub requires_review: bool,
+    /// Threshold used (default 0.15)
+    pub review_threshold: f64,
+    /// Which sub-questions diverge most between the two estimates?
+    pub(crate) sub_question_divergences: Vec<SubQuestionDivergence>,
+    /// Recommended action
+    pub recommendation: String,
+    /// Concrete Socratic questions for grill-me skill interrogation.
+    /// Populated when requires_review is true. Each question targets
+    /// a specific assumption or sub-question divergence for adversarial probing.
+    pub grill_me_questions: Vec<String>,
+}
+
+/// Per-sub-question divergence between two Fermi decompositions.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct SubQuestionDivergence {
+    /// The sub-question text
+    pub question: String,
+    /// Estimate from source A
+    pub estimate_a: f64,
+    /// Estimate from source B
+    pub estimate_b: f64,
+    /// Absolute divergence
+    pub divergence: f64,
+}
+
+// ── Validation ─────────────────────────────────────────────────────────────
+
+impl ScenarioEvent {
+    /// Derive the certainty tier from the current probability.
+    /// Always consistent — no stale-field divergence possible.
+    pub fn certainty_tier(&self) -> CertaintyTier {
+        CertaintyTier::from_probability(self.probability)
+    }
+
+    /// Validate probability is in [0, 1] and finite (no NaN).
+    pub(crate) fn validate(&self) -> Result<(), ScenarioError> {
+        if !self.probability.is_finite() || !(0.0..=1.0).contains(&self.probability) {
+            return Err(ScenarioError::InvalidProbability(
+                self.name.clone(),
+                self.probability,
+            ));
+        }
+        // Parent IDs must be unique across the union of all dependency groups:
+        // the marginalizer treats each group as an independent channel, so a
+        // repeated parent would be double-counted with no signal to the caller.
+        let mut seen_parent_ids = std::collections::HashSet::new();
+        for dep in &self.depends_on {
+            // Validate parent IDs are non-empty
+            if dep.parent_event_ids.is_empty() {
+                return Err(ScenarioError::InvalidDependency(
+                    self.name.clone(),
+                    "parent_event_ids must not be empty".into(),
+                ));
+            }
+            for parent_id in &dep.parent_event_ids {
+                if !seen_parent_ids.insert(parent_id.as_str()) {
+                    return Err(ScenarioError::InvalidDependency(
+                        self.name.clone(),
+                        format!(
+                            "parent '{parent_id}' appears in more than one dependency group (or twice in one group)"
+                        ),
+                    ));
+                }
+            }
+            // Validate conditionals length = 2^n
+            let expected_len = 1usize << dep.parent_event_ids.len();
+            if dep.conditionals.len() != expected_len {
+                return Err(ScenarioError::InvalidDependency(
+                    self.name.clone(),
+                    format!(
+                        "conditionals length {} must be 2^{} = {}",
+                        dep.conditionals.len(),
+                        dep.parent_event_ids.len(),
+                        expected_len
+                    ),
+                ));
+            }
+            // Validate all conditional probabilities are finite and in [0, 1]
+            for (i, &p) in dep.conditionals.iter().enumerate() {
+                if !p.is_finite() || !(0.0..=1.0).contains(&p) {
+                    return Err(ScenarioError::InvalidDependencyProbability(
+                        self.name.clone(),
+                        format!("conditionals[{}]", i),
+                        p,
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}

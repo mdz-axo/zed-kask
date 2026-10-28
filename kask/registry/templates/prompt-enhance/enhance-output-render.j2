@@ -1,0 +1,259 @@
+[inference]
+contract:
+  input:
+    enhanced_prompt:
+      type: string
+      description: The rewritten prompt to deliver
+    prompt_type:
+      type: string
+    effort_tier:
+      type: string
+    output_format_resolved:
+      type: string
+      enum: [inline, file, both]
+    output_path_resolved:
+      type: string
+    audit_findings:
+      type: array
+      description: Findings from the inline audit with constraint_force labels
+    grill_ratings:
+      type: array
+      description: Verify-step ratings per area (empty if verify skipped)
+    grill_findings:
+      type: array
+      description: Final critic findings unchanged from verification; empty when verification is skipped
+    grill_verdict:
+      type: string
+      description: Verify-step verdict (pass, rewrite_needed, fail, or skipped)
+    mutations_applied:
+      type: array
+      description: Mutations applied during the rewrite
+    mutations_deferred:
+      type: array
+      description: Hypothesis-tier findings deferred for user verification
+    unfold_mode_resolved:
+      type: string
+      default: rewrite_only
+      required: false
+      description: Resolved unfolding mode (rewrite_only, inquiry, task_graph, clarify_first)
+    reference_models:
+      type: array
+      default: []
+      required: false
+      description: Reference models anchored via onto_anchor and zk-ref-open
+    unfolded_plan:
+      type: array
+      default: []
+      required: false
+      description: Unfolded inquiry branches or dependency-ordered task graph
+
+  output:
+    delivered_output:
+      type: string
+      description: The final formatted output (inline block + change log)
+    output_path_written:
+      type: string
+      description: Path written if file/both; empty otherwise
+    change_log:
+      type: object
+---
+{# ACT phase: Deterministic format and deliver the enhanced prompt. #}
+{# goal: Deliver the enhanced prompt per output_format with specific critic findings preserved in the change log. #}
+{# Deterministic formatting consumes structured findings and ratings directly;
+   an extra inference call cannot improve their presentation contract. #}
+
+{# ── Input-shape guards (algedonic card 5057d441; therapy 2026-10-08 F008) ──
+   A stringified-JSON array iterates character-by-character in minijinja,
+   silently rendering placeholder rows that look like real findings (the
+   2026-10-08 receipts: "Hypothesis | unspecified | unspecified | False"
+   while the summary line still interpolated). Convert that class into a
+   loud, machine-readable input error instead — the change log must never
+   fabricate plausible-looking rows from a malformed input. #}
+{%- set input_errors = [] -%}
+{%- if grill_findings is sequence -%}
+{%- set grill_findings_list = grill_findings -%}
+{%- else -%}
+{%- set grill_findings_list = [] -%}
+{% set input_errors = input_errors + ["grill_findings: expected a JSON array of critic findings, not a string, object, scalar, or null"] %}
+{%- endif -%}
+{%- if audit_findings is string -%}{% set input_errors = input_errors + ["audit_findings: expected a JSON array of finding objects, got a string — pass plain arrays, never stringified JSON"] %}{%- endif -%}
+{%- if grill_ratings is string -%}{% set input_errors = input_errors + ["grill_ratings: expected a JSON array of rating objects, got a string — pass plain arrays, never stringified JSON"] %}{%- endif -%}
+{%- if mutations_applied is string -%}{% set input_errors = input_errors + ["mutations_applied: expected a JSON array of mutation objects, got a string — pass plain arrays, never stringified JSON"] %}{%- endif -%}
+{%- if mutations_deferred is string -%}{% set input_errors = input_errors + ["mutations_deferred: expected a JSON array of deferred-finding objects, got a string — pass plain arrays, never stringified JSON"] %}{%- endif -%}
+{%- if reference_models is defined and reference_models is string -%}{% set input_errors = input_errors + ["reference_models: expected a JSON array of reference model objects, got a string — pass plain arrays, never stringified JSON"] %}{%- endif -%}
+{%- if unfolded_plan is defined and unfolded_plan is string -%}{% set input_errors = input_errors + ["unfolded_plan: expected a JSON array of unfolded task/inquiry objects, got a string — pass plain arrays, never stringified JSON"] %}{%- endif -%}
+{%- set findings_input_error = "" -%}{%- if audit_findings is string -%}{% set findings_input_error = "**INPUT ERROR — audit_findings arrived as a string, not an array.** The findings table was NOT rendered; pass plain arrays (never stringified JSON) and re-render." %}{%- endif -%}
+{%- set ratings_input_error = "" -%}{%- if grill_ratings is string -%}{% set ratings_input_error = "**INPUT ERROR — grill_ratings arrived as a string, not an array.** The ratings list was NOT rendered; pass plain arrays (never stringified JSON) and re-render." %}{%- endif -%}
+{%- set mutations_input_error = "" -%}{%- if mutations_applied is string -%}{% set mutations_input_error = "**INPUT ERROR — mutations_applied arrived as a string, not an array.** The mutations list was NOT rendered; pass plain arrays (never stringified JSON) and re-render." %}{%- endif -%}
+{%- set deferred_input_error = "" -%}{%- if mutations_deferred is string -%}{% set deferred_input_error = "**INPUT ERROR — mutations_deferred arrived as a string, not an array.** The deferred list was NOT rendered; pass plain arrays (never stringified JSON) and re-render." %}{%- endif -%}
+{%- set ref_models_input_error = "" -%}{%- if reference_models is defined and reference_models is string -%}{% set ref_models_input_error = "**INPUT ERROR — reference_models arrived as a string, not an array.** The reference models table was NOT rendered; pass plain arrays (never stringified JSON) and re-render." %}{%- endif -%}
+{%- set unfolded_input_error = "" -%}{%- if unfolded_plan is defined and unfolded_plan is string -%}{% set unfolded_input_error = "**INPUT ERROR — unfolded_plan arrived as a string, not an array.** The unfolded plan list was NOT rendered; pass plain arrays (never stringified JSON) and re-render." %}{%- endif -%}
+{# Safe lists for the JSON arm — a string must not reach map(attribute=...). #}
+{%- if mutations_applied is string -%}{% set mutations_applied_list = [] %}{%- else -%}{% set mutations_applied_list = mutations_applied %}{%- endif -%}
+{%- if mutations_deferred is string -%}{% set mutations_deferred_list = [] %}{%- else -%}{% set mutations_deferred_list = mutations_deferred %}{%- endif -%}
+{%- if reference_models is not defined or reference_models is string -%}{% set reference_models_list = [] %}{%- else -%}{% set reference_models_list = reference_models %}{%- endif -%}
+{%- if unfolded_plan is not defined or unfolded_plan is string -%}{% set unfolded_plan_list = [] %}{%- else -%}{% set unfolded_plan_list = unfolded_plan %}{%- endif -%}
+{%- set unfold_mode_display = unfold_mode_resolved | default("rewrite_only") -%}
+
+{# ── Build the change log sections deterministically ── #}
+
+{# Summary line: only report state produced by the active stages. #}
+{%- set summary_line -%}
+type={{ prompt_type }} effort={{ effort_tier }} unfold_mode={{ unfold_mode_display }} grill_verdict={{ grill_verdict }}
+{%- endset -%}
+
+{# Audit findings table — in step order (minijinja has no sort_by filter; the step 2 template already emits findings in constraint-force order)
+   Note: minijinja does not support list.append() — use block-set with inline for loops instead. #}
+{%- set findings_table -%}
+{%- if findings_input_error -%}
+{{ findings_input_error }}
+{%- else -%}
+| Force | Lens | Finding | Addressed |
+|-------|------|---------|----------|
+{%- for finding in audit_findings %}
+| {{ finding.constraint_force | default("Hypothesis") }} | {{ finding.lens | default("unspecified") }} | {{ finding.finding | default("unspecified") }} | {{ finding.addressed | default(false) | string }} |
+{%- endfor %}
+{%- endif -%}
+{%- endset -%}
+
+{# Grill ratings list #}
+{%- if ratings_input_error -%}
+{%- set grill_ratings_text = ratings_input_error -%}
+{%- elif grill_ratings and (grill_ratings | length) > 0 -%}
+{%- set grill_ratings_text -%}
+{%- for rating in grill_ratings %}
+- **{{ rating.area | default("unknown") }}** — {{ rating.rating | default("unrated") }}: {{ rating.evidence | default("no evidence") }}
+{%- endfor %}
+{%- endset -%}
+{%- else -%}
+{%- set grill_ratings_text = "_Skipped (low tier or no verify step)." -%}
+{%- endif -%}
+
+{# Mutations applied list #}
+{%- if mutations_input_error -%}
+{%- set mutations_text = mutations_input_error -%}
+{%- elif mutations_applied and (mutations_applied | length) > 0 -%}
+{%- set mutations_text -%}
+{%- for mutation in mutations_applied %}
+- **{{ mutation.finding | default("unspecified") }}** → {{ mutation.mutation | default("unspecified") }} _({{ mutation.section | default("unspecified") }})_
+{%- endfor %}
+{%- endset -%}
+{%- else -%}
+{%- set mutations_text = "_None._" -%}
+{%- endif -%}
+
+{# Deferred findings list #}
+{%- if deferred_input_error -%}
+{%- set deferred_text = deferred_input_error -%}
+{%- elif mutations_deferred and (mutations_deferred | length) > 0 -%}
+{%- set deferred_text -%}
+{%- for deferred in mutations_deferred %}
+- {{ deferred.finding | default("unspecified") }} — {{ deferred.reason | default("Hypothesis-tier — needs user verification") }}
+{%- endfor %}
+{%- endset -%}
+{%- else -%}
+{%- set deferred_text = "_None._" -%}
+{%- endif -%}
+
+{# Reference models table #}
+{%- if ref_models_input_error -%}
+{%- set ref_models_text = ref_models_input_error -%}
+{%- elif reference_models_list and (reference_models_list | length) > 0 -%}
+{%- set ref_models_text -%}
+| Reference Model | Provenance | Discovery Capability | Execution Capability | Status |
+|-----------------|-----------|----------------------|----------------------|--------|
+{%- for rm in reference_models_list %}
+| {{ rm.reference_model_id | default("unspecified") }} | {{ rm.provenance | default("unspecified") }} | {{ rm.discovery_capability_unlocked | default("unspecified") }} | {{ rm.execution_capability_unlocked | default("unspecified") }} | {{ rm.status | default("anchored") }} |
+{%- endfor %}
+{%- endset -%}
+{%- else -%}
+{%- set ref_models_text = "_None (rewrite_only or low tier)._" -%}
+{%- endif -%}
+
+{# Unfolded plan list #}
+{%- if unfolded_input_error -%}
+{%- set unfolded_plan_text = unfolded_input_error -%}
+{%- elif unfolded_plan_list and (unfolded_plan_list | length) > 0 -%}
+{%- set unfolded_plan_text -%}
+{%- for item in unfolded_plan_list %}
+- **{{ item.id | default("step") }} ({{ item.d_p_mode | default("P") }})** — {{ item.title | default("unspecified") }} _(depends_on: {{ item.depends_on | default([]) | join(", ") | default("none", true) }}; model: {{ item.reference_model_id | default("none") }}; oracle: {{ item.verification_oracle | default("none") }})_
+{%- endfor %}
+{%- endset -%}
+{%- else -%}
+{%- set unfolded_plan_text = "_None (rewrite_only)._" -%}
+{%- endif -%}
+
+
+{# ── Assemble the change log ── #}
+{%- set change_log_md -%}
+## Change Log
+
+**Summary:** {{ summary_line }}
+
+### Reference models anchored
+
+{{ ref_models_text }}
+
+### Unfolded plan ({{ unfold_mode_display }})
+
+{{ unfolded_plan_text }}
+
+### Audit findings
+
+{{ findings_table }}
+
+### Grill verdict: {{ grill_verdict }}
+
+{{ grill_ratings_text }}
+
+### Specific critic findings
+
+{% if grill_findings is not sequence %}
+**INPUT ERROR — grill_findings must be a JSON array.** The critic findings were not rendered; correct the input and render again.
+{% else %}
+```json
+{{ grill_findings_list | tojson }}
+```
+{% endif %}
+
+### Mutations applied
+
+{{ mutations_text }}
+
+### Deferred findings
+
+{{ deferred_text }}
+
+
+{%- endset -%}
+
+{# ── Assemble the delivered output per output_format ── #}
+{%- if output_format_resolved == "inline" or output_format_resolved == "both" -%}
+{%- set delivered_output = "```\n" ~ enhanced_prompt ~ "\n```\n\n" ~ change_log_md -%}
+{%- elif output_format_resolved == "file" -%}
+{# F5: render steps cannot write files — only render text. The agent or
+   operator must save the output to output_path_resolved. Don't claim the
+   file was written. #}
+{%- set delivered_output = "Enhanced prompt ready for save to `" ~ output_path_resolved ~ "` (render steps cannot write files — copy the output below).\n\n```\n" ~ enhanced_prompt ~ "\n```\n\n" ~ change_log_md -%}
+{%- else -%}
+{%- set delivered_output = "```\n" ~ enhanced_prompt ~ "\n```\n\n" ~ change_log_md -%}
+{%- endif -%}
+
+{# ── Emit the structured result as JSON (the render step's stored value) ── #}
+{
+  "delivered_output": {{ delivered_output | tojson }},
+  "output_path_written": {{ "" | tojson }},
+  "change_log": {
+    "summary": {{ summary_line | tojson }},
+    "audit_findings_table": {{ findings_table | tojson }},
+    "grill_verdict": {{ grill_verdict | tojson }},
+    "grill_findings": {{ grill_findings_list | tojson }},
+    "grill_ratings": {{ grill_ratings_text | tojson }},
+    "mutations_applied": {{ mutations_applied_list | map(attribute="mutation") | list | tojson }},
+    "deferred_findings": {{ mutations_deferred_list | map(attribute="finding") | list | tojson }},
+    "unfold_mode_resolved": {{ unfold_mode_display | tojson }},
+    "reference_models_anchored": {{ reference_models_list | map(attribute="reference_model_id") | list | tojson }},
+    "unfolded_plan_ids": {{ unfolded_plan_list | map(attribute="id") | list | tojson }},
+    "input_errors": {{ input_errors | tojson }}
+  }
+}

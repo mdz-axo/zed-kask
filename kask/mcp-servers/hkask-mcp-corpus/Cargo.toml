@@ -1,0 +1,87 @@
+[package]
+name = "hkask-mcp-corpus"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Unified corpus MCP server — gather, process, and output: document conversion, OCR, chunking, tagging, embedding, evidence-carrying QA exports, style exemplar composition"
+
+[dependencies]
+tempfile.workspace = true
+# Shared infrastructure
+hkask-mcp-server.workspace = true
+hkask-types.workspace = true
+hkask-lisp.workspace = true
+
+# Ontology bridges — vocabulary constants for metadata, provenance, and domain predicates
+hkask-bridge-ontology.workspace = true
+
+# OCR pipeline (from markitdown)
+hkask-inference.workspace = true
+
+image.workspace = true
+
+base64.workspace = true
+
+
+# Office format backends (S2: backend/pipeline separation)
+# docx-rs: DOCX reader (paragraphs, tables, lists, headings)
+docx-rs.workspace = true
+# calamine: XLSX/XLS/ODS reader (pure Rust, MIT)
+calamine.workspace = true
+# pptx-to-md: PPTX/ODP reader (extracts slide text to markdown)
+pptx-to-md.workspace = true
+
+# Knowledge pipeline (from doc-knowledge)
+hkask-memory.workspace = true
+hkask-storage.workspace = true
+
+# Protocol + utilities
+
+rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "process"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+schemars.workspace = true
+tracing.workspace = true
+
+thiserror.workspace = true
+async-trait.workspace = true
+
+regex.workspace = true
+minijinja.workspace = true
+pulldown-cmark.workspace = true
+# Charset detection/transcoding for legacy-encoded text documents (WHATWG
+# windows-1252 default; 2026-10-02: Latin-1 saved pages were unconvertible).
+encoding_rs.workspace = true
+
+serde_yaml_neo.workspace = true
+
+# Folded-service dependencies
+anyhow.workspace = true
+
+# Read host-compatible settings files outside the editor process.
+dirs.workspace = true
+serde_json_lenient.workspace = true
+
+[lib]
+name = "hkask_mcp_corpus"
+path = "src/hkask_mcp_corpus.rs"
+
+[[bin]]
+name = "hkask-mcp-corpus"
+path = "src/main.rs"
+
+[dev-dependencies]
+proptest = { workspace = true }
+# Root Cargo.toml [profile.release] parse — tests/build_profile.rs, the
+# build-profile gate's TOML half (operator ruling 2026-10-13: zero Python).
+toml.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true
+
+
+[build-dependencies]
+regex.workspace = true

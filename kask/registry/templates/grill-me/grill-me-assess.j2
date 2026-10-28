@@ -1,0 +1,36 @@
+{# goal: Assess actual learner answers with explicit evidence IDs, leaving unanswered areas Unassessed and prioritizing study recommendations. #}
+[inference]
+contract:
+  input:
+    topic: string
+    question_bank: array
+    answers: array
+    calibrated_level: integer|null
+  output:
+    summary: array
+    recommendations: array
+    overall_assessment: string
+---
+Synthesize a final knowledge assessment for **{{ topic }}**.
+Question bank, including unanswered areas:
+{{ question_bank | tojson }}
+Actual answer ledger, with latest grades (failed is historical bookkeeping):
+{{ answers | tojson }}
+Initial calibrated level: {{ calibrated_level | tojson }}.
+
+Cover each asked area once. Grade it Solid, Partial or Gap only with actual graded
+answer_ids from that area. Without graded evidence use Unassessed and answer_ids:[];
+an unanswered question is not evidence of a Gap. Compare the final evidence with
+the initial calibrated level; null means calibration was unassessed.
+
+Return:
+```json
+{
+  "summary": [{"area":"area","rating":"Solid","answer_ids":[1],"notes":"answer-specific evidence"}],
+  "recommendations": ["Specific study recommendation"],
+  "overall_assessment": "Brief narrative"
+}
+```
+The example ID is schematic, not permission to invent an answer. Prioritize
+recommendations by impact; be candid without demoralizing. The caller checks
+summary references before delivery; that check does not establish semantic quality.

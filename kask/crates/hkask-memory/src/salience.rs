@@ -1,0 +1,734 @@
+//! Salience scoring and method signal extraction for style corpora.
+//!
+//! Provides three metadata and retrieval operations (zero LLM cost):
+//! 1. **Method signals** — cheap stylometric metrics (parataxis ratio,
+//!    adjective density, dialogue ratio, etc.) that constitute the "how"
+//!    dimension of the 5W1H framework.
+//! 2. **Salience score** — graph centrality over shared concept/entity tags.
+//! 3. **Keyword overlap score** — lightweight keyword-matching scorer for
+//!    ranking chat episodes by relevance to a query.
+//!
+//! Method signals are computed by corpus tagging, recomputed after corpus
+//! consolidation, and persisted alongside durable passage embeddings. Corpus
+//! composition matches stored signals against declared method thresholds.
+//! Corpus tagging uses graph salience; bridge chat recall uses keyword overlap
+//! for its keyword-scored candidates. No embedding-budget gate is implied.
+
+// ── Method Signals ────────────────────────────────────────────────────────
+
+pub use hkask_types::corpus::MethodSignals;
+
+/// Compute method signals from raw passage text.
+///
+/// All signals are cheap substring/character operations. No allocations
+/// beyond what's needed for word splitting.
+///
+/// expect: "Passages carry measured stylistic features for method-aware retrieval."
+/// \[P3\] Motivating: Generative Space — extracts cheap stylometric signals for method-aware retrieval
+/// \[P8\] Constraining: Semantic Grounding — signals are deterministic heuristics over raw text
+/// pre:  text is a valid &str
+/// post: returns MethodSignals with computed linguistic features
+/// post: returns MethodSignals::default() for empty text
+pub fn compute_method_signals(text: &str) -> MethodSignals {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let word_count = words.len();
+    if word_count == 0 {
+        return MethodSignals::default();
+    }
+
+    // Sentence boundaries
+    let sentence_count = text
+        .chars()
+        .filter(|c| matches!(c, '.' | '!' | '?'))
+        .count()
+        .max(1);
+    let sentence_lengths = sentence_lengths(text);
+    let avg_sentence_length = word_count as f32 / sentence_count as f32;
+    let sentence_length_variance = if sentence_lengths.len() > 1 {
+        let mean = sentence_lengths.iter().sum::<usize>() as f32 / sentence_lengths.len() as f32;
+        let variance = sentence_lengths
+            .iter()
+            .map(|&l| (l as f32 - mean).powi(2))
+            .sum::<f32>()
+            / sentence_lengths.len() as f32;
+        variance.sqrt()
+    } else {
+        0.0
+    };
+
+    // ── Signal extraction ─────────────────────────────────────────
+
+    let per_100 = |count: usize| -> f32 { (count as f32 / word_count as f32) * 100.0 };
+
+    // Parataxis ratio: coordinating ÷ (coordinating + subordinating)
+    let coord_count = words
+        .iter()
+        .filter(|w| matches!(w.to_lowercase().as_str(), "and" | "but" | "or" | "nor"))
+        .count();
+    let subord_count = words
+        .iter()
+        .filter(|w| {
+            matches!(
+                w.to_lowercase().as_str(),
+                "because"
+                    | "although"
+                    | "though"
+                    | "since"
+                    | "while"
+                    | "unless"
+                    | "until"
+                    | "whereas"
+                    | "after"
+                    | "before"
+                    | "if"
+                    | "when"
+            )
+        })
+        .count();
+    let total_conj = coord_count + subord_count;
+    let parataxis_ratio = if total_conj > 0 {
+        coord_count as f32 / total_conj as f32
+    } else {
+        0.5 // neutral
+    };
+
+    // Adjective density: suffix-heuristic
+    let adj_suffixes = [
+        "y", "ous", "ful", "less", "ive", "able", "ible", "al", "ent", "ic", "ish",
+    ];
+    let adj_count = words
+        .iter()
+        .filter(|w| {
+            let lower = w.to_lowercase();
+            // Exclude very short words and common non-adjective -y words
+            if lower.len() < 3 {
+                return false;
+            }
+            adj_suffixes
+                .iter()
+                .any(|suf| lower.ends_with(suf) && lower.len() > suf.len() + 1)
+        })
+        .count();
+    let adjective_density = per_100(adj_count);
+
+    // Adverb density: -ly suffix, minus false positives
+    let ly_false_positives = [
+        "only",
+        "early",
+        "family",
+        "july",
+        "jelly",
+        "belly",
+        "holy",
+        "reply",
+        "apply",
+        "supply",
+        "multiply",
+        "butterfly",
+        "barfly",
+    ];
+    let adv_count = words
+        .iter()
+        .filter(|w| {
+            let lower = w.to_lowercase();
+            lower.ends_with("ly")
+                && lower.len() > 3
+                && !ly_false_positives.contains(&lower.as_str())
+        })
+        .count();
+    let adverb_density = per_100(adv_count);
+
+    // Passive voice: count "was *ed", "were *ed" patterns
+    let passive_count = words
+        .windows(2)
+        .filter(|pair| {
+            let first = pair[0].to_lowercase();
+            let second = pair[1].to_lowercase();
+            (first == "was" || first == "were") && (second.ends_with("ed") && second.len() > 4)
+        })
+        .count();
+    // The coarse verb estimate must stay nonzero for short passages; 0/0
+    // becomes NaN and serializes as null, making stored signals unreadable.
+    let passive_voice_ratio = passive_count as f32 / (word_count / 10).max(1) as f32;
+
+    // Dialogue ratio: words inside double quotes
+    let in_quotes = {
+        let mut inside = false;
+        let mut quote_words = 0usize;
+        for word in &words {
+            let has_open = word.contains('"') || word.contains('\u{201c}');
+            let has_close = word.contains('"') || word.contains('\u{201d}');
+            if inside {
+                quote_words += 1;
+            }
+            if has_open && !has_close {
+                inside = true;
+                quote_words += 1;
+            } else if has_close && !has_open {
+                inside = false;
+            } else if has_open && has_close {
+                // Single-word quote
+                quote_words += 1;
+            }
+        }
+        quote_words
+    };
+    let dialogue_ratio = if word_count > 0 {
+        in_quotes as f32 / word_count as f32
+    } else {
+        0.0
+    };
+
+    // Hedge density
+    let hedge_words = [
+        "perhaps",
+        "maybe",
+        "seemed",
+        "almost",
+        "rather",
+        "quite",
+        "fairly",
+        "somewhat",
+        "apparently",
+        "presumably",
+    ];
+    let hedge_count = words
+        .iter()
+        .filter(|w| hedge_words.contains(&w.to_lowercase().as_str()))
+        .count();
+    let hedge_density = per_100(hedge_count);
+
+    // Intensifier density
+    let intensifiers = [
+        "very",
+        "really",
+        "absolutely",
+        "extremely",
+        "utterly",
+        "completely",
+        "totally",
+        "entirely",
+        "thoroughly",
+    ];
+    let intensifier_count = words
+        .iter()
+        .filter(|w| intensifiers.contains(&w.to_lowercase().as_str()))
+        .count();
+    let intensifier_density = per_100(intensifier_count);
+
+    // Concrete noun ratio: rough heuristic based on common concrete suffixes
+    // vs abstract suffixes (-tion, -ness, -ity, -ism, -ment, -ance, -ence)
+    let abstract_suffixes = [
+        "tion", "ness", "ity", "ism", "ment", "ance", "ence", "hood", "ship",
+    ];
+    let abstract_count = words
+        .iter()
+        .filter(|w| {
+            let lower = w.to_lowercase();
+            lower.len() > 4 && abstract_suffixes.iter().any(|s| lower.ends_with(s))
+        })
+        .count();
+    let concrete_count = words.len().saturating_sub(abstract_count);
+    let concrete_noun_ratio = if !words.is_empty() {
+        concrete_count as f32 / words.len() as f32
+    } else {
+        0.7 // default: mostly concrete
+    };
+
+    // Sensory word density
+    let sensory_words = [
+        // Sight
+        "bright",
+        "dark",
+        "red",
+        "blue",
+        "green",
+        "white",
+        "black",
+        "pale",
+        "shadow",
+        "light",
+        "color",
+        "gleam",
+        "glitter",
+        "shine",
+        "dim",
+        "glow",
+        // Sound
+        "loud",
+        "quiet",
+        "silent",
+        "noise",
+        "sound",
+        "echo",
+        "whisper",
+        "roar",
+        "crash",
+        // Touch
+        "cold",
+        "hot",
+        "warm",
+        "cool",
+        "rough",
+        "smooth",
+        "hard",
+        "soft",
+        "wet",
+        "dry",
+        "sharp",
+        "heavy",
+        "light",
+        // Taste
+        "sweet",
+        "bitter",
+        "sour",
+        "salty",
+        // Smell
+        "scent",
+        "smell",
+        "odor",
+        "fragrance",
+        "stink",
+    ];
+    let sensory_count = words
+        .iter()
+        .filter(|w| sensory_words.contains(&w.to_lowercase().as_str()))
+        .count();
+    let sensory_word_ratio = per_100(sensory_count);
+
+    // ── Academic signals ────────────────────────────────────────────
+
+    // Citation density: detect "(Author, Year)" and "[N]" patterns
+    let per_1000 = |count: usize| -> f32 { (count as f32 / word_count as f32) * 1000.0 };
+    let citation_pattern_count = {
+        // Count "(...)" parenthetical patterns that look like citations
+        let chars: Vec<char> = text.chars().collect();
+        let mut i = 0;
+        let mut count = 0usize;
+        while i + 2 < chars.len() {
+            if chars[i] == '(' {
+                // Look for "Author, Year" or "Author Year" pattern
+                let slice: String = chars[i + 1..].iter().take_while(|&&c| c != ')').collect();
+                let has_year = slice
+                    .split_whitespace()
+                    .any(|s| s.len() == 4 && s.chars().all(|c| c.is_ascii_digit()));
+                if has_year && slice.len() > 3 {
+                    count += 1;
+                }
+                i += slice.len() + 1;
+            } else if chars[i] == '[' {
+                // Look for "[N]" or "[N,N]" numeric citation pattern
+                let slice: String = chars[i + 1..].iter().take_while(|&&c| c != ']').collect();
+                let is_numeric = slice
+                    .split(',')
+                    .all(|s| s.trim().chars().all(|c| c.is_ascii_digit() || c == '-'));
+                if is_numeric && !slice.is_empty() {
+                    count += 1;
+                }
+                i += slice.len() + 1;
+            } else {
+                i += 1;
+            }
+        }
+        count
+    };
+    let citation_density = per_1000(citation_pattern_count);
+
+    // Formalism ratio: math/LaTeX/notation characters to total
+    let formal_chars = text
+        .chars()
+        .filter(|c| {
+            matches!(
+                c,
+                '$' | '\\'
+                    | '{'
+                    | '}'
+                    | '^'
+                    | '_'
+                    | '∑'
+                    | '∫'
+                    | '∂'
+                    | 'π'
+                    | '∞'
+                    | '≤'
+                    | '≥'
+                    | '±'
+                    | '→'
+                    | '⇒'
+                    | 'α'
+                    | 'β'
+                    | 'γ'
+                    | 'δ'
+                    | 'ε'
+                    | 'θ'
+                    | 'λ'
+                    | 'μ'
+                    | 'σ'
+                    | 'φ'
+                    | 'ω'
+            )
+        })
+        .count();
+    let total_chars = text.chars().count().max(1);
+    let formalism_ratio = formal_chars as f32 / total_chars as f32;
+
+    // Technical term density: multi-syllable words with Latin/Greek roots
+    // Heuristic: words ≥8 chars with common academic suffixes
+    let academic_suffixes = [
+        "tion", "sion", "ology", "ism", "icity", "ization", "ability", "ential", "istical",
+        "ogenous", "opathy", "oscopy", "ometric", "ographic",
+    ];
+    let tech_count = words
+        .iter()
+        .filter(|w| {
+            let lower = w.to_lowercase();
+            lower.len() >= 8 && academic_suffixes.iter().any(|suf| lower.ends_with(suf))
+        })
+        .count();
+    let technical_term_density = per_100(tech_count);
+
+    MethodSignals {
+        parataxis_ratio: parataxis_ratio.clamp(0.0, 1.0),
+        adjective_density,
+        adverb_density,
+        passive_voice_ratio: passive_voice_ratio.clamp(0.0, 1.0),
+        dialogue_ratio,
+        sentence_length_variance,
+        hedge_density,
+        intensifier_density,
+        concrete_noun_ratio: concrete_noun_ratio.clamp(0.0, 1.0),
+        sensory_word_ratio,
+        word_count,
+        sentence_count,
+        avg_sentence_length,
+        citation_density,
+        formalism_ratio: formalism_ratio.clamp(0.0, 1.0),
+        technical_term_density,
+    }
+}
+
+/// Compute sentence lengths by splitting on `. ! ?` boundaries.
+fn sentence_lengths(text: &str) -> Vec<usize> {
+    let mut lengths = Vec::new();
+    let mut current = 0usize;
+    for word in text.split_whitespace() {
+        current += 1;
+        let last_char = word.chars().last();
+        if matches!(last_char, Some('.') | Some('!') | Some('?')) && current > 0 {
+            lengths.push(current);
+            current = 0;
+        }
+    }
+    if current > 0 {
+        lengths.push(current);
+    }
+    lengths
+}
+
+// ── Declared Method Matching ──────────────────────────────────────────────
+
+/// A declared method with signal thresholds for matching.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct DeclaredMethod {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub signal: MethodThresholds,
+    /// Legacy single-threshold declaration, not evaluated by `matches`.
+    /// Corpus composition rejects this field rather than silently ignoring it;
+    /// use the per-signal thresholds above.
+    #[serde(default)]
+    pub threshold: Option<f64>,
+}
+
+/// Thresholds for matching a declared method to a passage's signals.
+///
+/// Each field is optional — only the fields present constrain the match.
+/// A passage matches if ALL present constraints are satisfied.
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
+pub struct MethodThresholds {
+    #[serde(default)]
+    pub parataxis_ratio_min: Option<f32>,
+    #[serde(default)]
+    pub parataxis_ratio_max: Option<f32>,
+    #[serde(default)]
+    pub adjective_density_max: Option<f32>,
+    #[serde(default)]
+    pub adverb_density_max: Option<f32>,
+    #[serde(default)]
+    pub passive_voice_ratio_max: Option<f32>,
+    #[serde(default)]
+    pub dialogue_ratio_min: Option<f32>,
+    #[serde(default)]
+    pub sentence_length_variance_max: Option<f32>,
+    #[serde(default)]
+    pub hedge_density_max: Option<f32>,
+    #[serde(default)]
+    pub intensifier_density_max: Option<f32>,
+    #[serde(default)]
+    pub concrete_noun_ratio_min: Option<f32>,
+    #[serde(default)]
+    pub sensory_word_ratio_min: Option<f32>,
+    #[serde(default)]
+    pub avg_sentence_length_min: Option<f32>,
+    #[serde(default)]
+    pub avg_sentence_length_max: Option<f32>,
+
+    // ── Academic-specific signals ────────────────────────────────────────
+    /// Citations per 1000 words (academic corpora).
+    #[serde(default)]
+    pub citation_density_min: Option<f32>,
+    #[serde(default)]
+    pub citation_density_max: Option<f32>,
+    /// Ratio of math/code/notation to prose (academic corpora).
+    #[serde(default)]
+    pub formalism_ratio_min: Option<f32>,
+    #[serde(default)]
+    pub formalism_ratio_max: Option<f32>,
+    /// Domain-specific terminology per 100 words (academic corpora).
+    #[serde(default)]
+    pub technical_term_density_min: Option<f32>,
+    #[serde(default)]
+    pub technical_term_density_max: Option<f32>,
+}
+
+impl DeclaredMethod {
+    /// Check whether a passage's signals match this method's thresholds.
+    ///
+    /// expect: "Only passages meeting my declared method thresholds become exemplars."
+    /// \[P3\] Motivating: Generative Space — matches passage signals against declared method thresholds
+    /// \[P8\] Constraining: Semantic Grounding — unconfigured thresholds are always satisfied
+    /// pre:  signals is a valid MethodSignals
+    /// post: returns true iff all configured min/max thresholds are satisfied
+    /// post: unconfigured thresholds (None) are always satisfied
+    pub fn matches(&self, signals: &MethodSignals) -> bool {
+        let t = &self.signal;
+        check_min(t.parataxis_ratio_min, signals.parataxis_ratio)
+            && check_max(t.parataxis_ratio_max, signals.parataxis_ratio)
+            && check_max(t.adjective_density_max, signals.adjective_density)
+            && check_max(t.adverb_density_max, signals.adverb_density)
+            && check_max(t.passive_voice_ratio_max, signals.passive_voice_ratio)
+            && check_min(t.dialogue_ratio_min, signals.dialogue_ratio)
+            && check_max(
+                t.sentence_length_variance_max,
+                signals.sentence_length_variance,
+            )
+            && check_max(t.hedge_density_max, signals.hedge_density)
+            && check_max(t.intensifier_density_max, signals.intensifier_density)
+            && check_min(t.concrete_noun_ratio_min, signals.concrete_noun_ratio)
+            && check_min(t.sensory_word_ratio_min, signals.sensory_word_ratio)
+            && check_min(t.avg_sentence_length_min, signals.avg_sentence_length)
+            && check_max(t.avg_sentence_length_max, signals.avg_sentence_length)
+            && check_min(t.citation_density_min, signals.citation_density)
+            && check_max(t.citation_density_max, signals.citation_density)
+            && check_min(t.formalism_ratio_min, signals.formalism_ratio)
+            && check_max(t.formalism_ratio_max, signals.formalism_ratio)
+            && check_min(t.technical_term_density_min, signals.technical_term_density)
+            && check_max(t.technical_term_density_max, signals.technical_term_density)
+    }
+}
+
+fn check_min(min: Option<f32>, value: f32) -> bool {
+    min.is_none_or(|m| value >= m)
+}
+
+fn check_max(max: Option<f32>, value: f32) -> bool {
+    max.is_none_or(|m| value <= m)
+}
+
+// ── Entity Tagging ────────────────────────────────────────────────────────
+
+/// Entity tags for one passage, built by the caller (corpus tagging).
+#[derive(Debug, Clone, Default)]
+pub struct EntityTags {
+    pub characters: Vec<String>,
+    pub places: Vec<String>,
+    pub events: Vec<String>,
+    pub concepts: Vec<String>,
+    pub methods: Vec<String>,
+}
+
+impl EntityTags {
+    /// All entity and method names as a single iterator for graph construction.
+    ///
+    /// expect: "The system scores passage salience to gate h_mem storage budget"
+    /// \[P3\] Motivating: Generative Space — flattens entity categories for graph construction
+    /// \[P5\] Constraining: Essentialism — minimal iterator over existing vectors
+    /// post: returns iterator over all tag strings across all categories
+    pub fn all_tags(&self) -> impl Iterator<Item = &str> {
+        self.characters
+            .iter()
+            .map(String::as_str)
+            .chain(self.places.iter().map(String::as_str))
+            .chain(self.events.iter().map(String::as_str))
+            .chain(self.concepts.iter().map(String::as_str))
+            .chain(self.methods.iter().map(String::as_str))
+    }
+}
+
+// ── Salience Score ────────────────────────────────────────────────────────
+
+/// Compute salience scores for all tagged passages using graph centrality.
+/// Compute passage salience scores for budget-gated h_mem storage.
+///
+/// Salience = connectedness × (1 − redundancy):
+///
+///   connectedness = (one_hop + avg_neighbor_quality) / 2
+///   redundancy    = local_clustering_coefficient(sampled_neighbors)
+///   salience      = connectedness × (1 − redundancy)
+///
+/// **one_hop** — degree centrality: fraction of all passages sharing at
+/// least one entity with this passage. High = well-connected.
+///
+/// **avg_neighbor_quality** — mean one_hop score of this passage's
+/// neighbors (evenly sampled, max 50). Being connected to well-connected
+/// passages boosts this term (eigenvector-like).
+///
+/// **redundancy** — Watts-Strogatz local clustering coefficient: what
+/// fraction of my neighbor pairs are themselves connected? High clustering
+/// = I sit in a dense, redundant clique. Low clustering = I bridge
+/// otherwise-disconnected communities.
+///
+/// The multiplicative penalty ensures moderate clustering gets moderate
+/// reduction rather than being zeroed out. Only fully interconnected
+/// cliques (redundancy=1) get salience=0.
+///
+/// All expansion steps are capped at 50 sampled neighbors to bound
+/// worst-case complexity at O(n × k × d) where k=50, d=average degree.
+/// Foundational rules (passages with zero tags) get salience 0.0.
+///
+/// expect: "The system scores passage salience to gate h_mem storage budget"
+/// \[P3\] Motivating: Generative Space — scores passage salience to gate h_mem storage budget
+/// \[P9\] Constraining: Homeostatic Self-Regulation — graph centrality bounded by neighbor sampling
+/// pre:  all_tags is a slice of EntityTags
+/// post: returns `Vec<f32>` with one salience score per passage
+/// post: passages with zero tags get salience 0.0
+/// post: returns empty Vec for empty input
+pub fn compute_salience_batch(all_tags: &[EntityTags]) -> Vec<f32> {
+    let n = all_tags.len();
+    if n == 0 {
+        return Vec::new();
+    }
+
+    // Build inverted index: entity_name → set of passage indices
+    let mut entity_to_passages: std::collections::HashMap<&str, Vec<usize>> =
+        std::collections::HashMap::new();
+
+    for (i, tags) in all_tags.iter().enumerate() {
+        for tag in tags.all_tags() {
+            entity_to_passages.entry(tag).or_default().push(i);
+        }
+    }
+
+    // For each passage, compute its neighbor set (union of all entity co-occurrences)
+    let mut neighbors: Vec<Vec<usize>> = vec![Vec::new(); n];
+
+    for (i, tags) in all_tags.iter().enumerate() {
+        let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        for tag in tags.all_tags() {
+            if let Some(passages) = entity_to_passages.get(tag) {
+                for &p in passages {
+                    if p != i {
+                        seen.insert(p);
+                    }
+                }
+            }
+        }
+        neighbors[i] = seen.into_iter().collect();
+    }
+
+    // One-hop: degree centrality — fraction of passages directly connected
+    let n_f = n as f32;
+    let one_hop: Vec<f32> = neighbors.iter().map(|nb| nb.len() as f32 / n_f).collect();
+
+    // For each passage, compute connectedness and redundancy via capped sampling.
+    // Both expansions capped at 50 neighbors to bound O(n × k × d).
+    const MAX_SAMPLE: usize = 50;
+
+    let salience: Vec<f32> = neighbors
+        .iter()
+        .enumerate()
+        .map(|(i, nb)| {
+            if nb.is_empty() {
+                return 0.0;
+            }
+
+            // Evenly sample neighbors (avoids bias toward first neighbors)
+            let sample: Vec<usize> = if nb.len() > MAX_SAMPLE {
+                let step = nb.len() / MAX_SAMPLE;
+                nb.iter().step_by(step.max(1)).copied().collect()
+            } else {
+                nb.clone()
+            };
+
+            // ── avg_neighbor_quality: mean one_hop of sampled neighbors ──
+            let avg_nq: f32 = sample.iter().map(|&j| one_hop[j]).sum::<f32>() / sample.len() as f32;
+
+            // ── connectedness = (one_hop + avg_neighbor_quality) / 2 ──
+            let connectedness = (one_hop[i] + avg_nq) / 2.0;
+
+            // ── redundancy: local clustering coefficient ──
+            // What fraction of sampled neighbor pairs are themselves connected?
+            let redundancy = if sample.len() < 2 {
+                0.0
+            } else {
+                // Build hash sets for sampled neighbors for O(1) edge checks
+                let sample_sets: Vec<std::collections::HashSet<usize>> = sample
+                    .iter()
+                    .map(|&j| neighbors[j].iter().copied().collect())
+                    .collect();
+
+                let mut edges = 0usize;
+                let mut pairs = 0usize;
+                for (a_idx, a_set) in sample_sets.iter().enumerate() {
+                    for &b in &sample[(a_idx + 1)..] {
+                        pairs += 1;
+                        if a_set.contains(&b) {
+                            edges += 1;
+                        }
+                    }
+                }
+                edges as f32 / pairs as f32
+            };
+
+            // ── salience = connectedness × (1 − redundancy) ──
+            // Multiplicative penalty: moderate clustering → moderate reduction.
+            // Only fully interconnected cliques (redundancy=1) get zeroed.
+            connectedness * (1.0 - redundancy)
+        })
+        .collect();
+
+    salience
+}
+
+/// Count query keywords present as case-insensitive passage substrings.
+///
+/// expect: "Episodes matching more of my query rank above incidental matches." [P1]
+/// pre: keywords are lowercased by the caller.
+/// post: returns the number of matching entries, from zero to keywords.len().
+/// Restored from the original method-signals implementation (`2b651fc956`).
+pub fn keyword_overlap_score(keywords: &[String], text: &str) -> usize {
+    let text_lower = text.to_lowercase();
+    keywords
+        .iter()
+        .filter(|keyword| text_lower.contains(keyword.as_str()))
+        .count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// expect: "Short passages have finite method measurements that survive storage." [P3]
+    #[test]
+    fn method_signals_round_trip_for_short_passages() {
+        for text in ["", "A river.", "It was polished.", "He ran and she walked."] {
+            let signals = compute_method_signals(text);
+            let encoded = serde_json::to_value(&signals).expect("serialize signals");
+            let decoded: MethodSignals =
+                serde_json::from_value(encoded).expect("deserialize finite signals");
+            assert_eq!(signals, decoded, "passage: {text}");
+        }
+    }
+}

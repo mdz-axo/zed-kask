@@ -1,0 +1,558 @@
+//! Media Panel — a Steer-only surface for the `hkask-mcp-media` MCP server.
+//!
+//! A cross-domain curator conversation supports ingesting, organizing,
+//! annotating, and extracting existing research evidence. The viewer exposes
+//! Media, Library, Queue, and Detail tabs; chat drives the server tools.
+//! The prompt highlights the server's generated `TOOL_NAMES` without hiding
+//! other MCP tools. Source-linked media results render inline (the D18 seam).
+
+pub mod media_viewer;
+pub mod panel_button;
+
+use gpui::{
+    App, ClickEvent, Context, DefiniteLength, Entity, EventEmitter, FocusHandle, Focusable,
+    SharedString, Task, WeakEntity, Window, actions, px,
+};
+use ui::{Icon, IconName, prelude::*};
+use util::ResultExt as _;
+use workspace::{
+    Workspace,
+    item::{Item, ItemEvent, SerializableItem},
+    register_serializable_item,
+};
+
+pub use media_viewer::MediaViewer;
+pub use panel_button::MediaPanelButton;
+
+actions!(
+    media_panel,
+    [
+        /// Deploys a new Media Panel if none is open, else focuses the
+        /// existing one. Used by the View menu entry and the status bar button.
+        Toggle,
+        /// Focuses an existing Media Panel (no-op if none is open).
+        ToggleFocus,
+    ]
+);
+
+/// Register the panel's actions on every new `Workspace`.
+pub fn init(cx: &mut App) {
+    register_serializable_item::<MediaPanel>(cx);
+    cx.observe_new(move |workspace: &mut Workspace, window, _cx| {
+        let Some(_window) = window else {
+            return;
+        };
+        // Per the `.rules` trap "Center-pane Item Toggle vs ToggleFocus", the
+        // View menu entry uses `Toggle` (deploys a new item if none exists),
+        // not `ToggleFocus` (silent no-op when absent).
+        workspace
+            .register_action(move |workspace, _: &Toggle, window, cx| {
+                let existing = workspace
+                    .active_pane()
+                    .read(cx)
+                    .items()
+                    .find_map(|item| item.downcast::<MediaPanel>());
+
+                if let Some(existing) = existing {
+                    workspace.activate_item(&existing, true, true, window, cx);
+                } else {
+                    let panel = MediaPanel::new(workspace, window, cx);
+                    workspace.add_item_to_active_pane(
+                        Box::new(panel.clone()),
+                        None,
+                        true,
+                        window,
+                        cx,
+                    );
+                    panel.focus_handle(cx).focus(window, cx);
+                }
+            })
+            .register_action(move |workspace, _: &ToggleFocus, window, cx| {
+                let existing = workspace
+                    .active_pane()
+                    .read(cx)
+                    .items()
+                    .find_map(|item| item.downcast::<MediaPanel>());
+                if let Some(existing) = existing {
+                    workspace.activate_item(&existing, true, true, window, cx);
+                }
+            });
+    })
+    .detach();
+}
+
+/// The Media panel: a tabbed viewing pane above a Steer director pane,
+/// split by a draggable horizontal divider.
+///
+/// The director (bottom) is a cross-domain curator conversation — media
+/// operations (ingest, search, organize, annotate, transcribe, excerpt) are
+/// driven through chat. The viewing pane (top) surfaces what the tools
+/// produced: assets are extracted structurally from tool-result
+/// `display_hint` fields, so the viewer updates on every tool
+/// result regardless of whether the model echoes fenced blocks.
+pub struct MediaPanel {
+    focus_handle: FocusHandle,
+    steer: hkask_steer::SteerSurface,
+    project: Entity<project::Project>,
+    fs: std::sync::Arc<dyn fs::Fs>,
+    workspace_handle: WeakEntity<Workspace>,
+    /// The tabbed viewing pane (Media / Library).
+    viewer: Entity<MediaViewer>,
+    /// The observed conversation thread + the observation subscription.
+    /// Wired lazily in `render` once the Steer conversation exists.
+    thread_observation: Option<gpui::Subscription>,
+    /// The "Open Thread" picker — resumes a database thread in this panel's
+    /// Steer surface.
+    thread_picker: Entity<hkask_steer::ThreadPicker>,
+    /// The session id to resume on the next `ensure_steer` — set by
+    /// `open_thread`, consumed by `ensure_steer`.
+    pending_resume: Option<agent_client_protocol::schema::v2::SessionId>,
+    /// The steer pane's share of the panel height (the bottom of the
+    /// split). Drag the divider to change it; double-click the divider to
+    /// reset it. In-memory only — the split is not serialized.
+    split: hkask_steer::VerticalSplitState,
+}
+
+impl MediaPanel {
+    pub fn new(
+        workspace: &Workspace,
+        _window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Entity<Self> {
+        let workspace_handle = workspace.weak_handle();
+        let project = workspace.project().clone();
+        let fs = workspace.app_state().fs.clone();
+        cx.new(|cx| {
+            let panel_handle: gpui::WeakEntity<MediaPanel> = cx.weak_entity();
+            let thread_picker = cx.new(|cx| {
+                hkask_steer::ThreadPicker::new(
+                    std::rc::Rc::new(move |session_id, window, cx: &mut gpui::App| {
+                        panel_handle
+                            .update(cx, |panel, cx| panel.open_thread(session_id, window, cx))
+                            .log_err();
+                    }),
+                    cx,
+                )
+            });
+            Self {
+                focus_handle: cx.focus_handle(),
+                steer: hkask_steer::SteerSurface::new(),
+                project,
+                fs,
+                workspace_handle: workspace_handle.clone(),
+                viewer: cx.new(|_| MediaViewer::new()),
+                thread_observation: None,
+                thread_picker,
+                pending_resume: None,
+                split: hkask_steer::VerticalSplitState::default(),
+            }
+        })
+    }
+
+    /// Resume a database thread in this panel's Steer surface, replacing the
+    /// live conversation. The viewer's thread observation is dropped so the
+    /// next render re-wires it against the resumed conversation's thread.
+    fn open_thread(
+        &mut self,
+        session_id: agent_client_protocol::schema::v2::SessionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.pending_resume = Some(session_id);
+        self.steer.invalidate();
+        self.thread_observation = None;
+        self.ensure_steer(window, cx);
+        cx.notify();
+    }
+
+    /// The split divider: a 1px rule with an invisible grab area. Drag to
+    /// resize the panes; double-click to reset the split. The same handle
+    /// pattern as the git graph's split (`git_ui/src/git_graph.rs`).
+    fn render_split_handle(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("media-panel-split-divider")
+            .relative()
+            .w_full()
+            .flex_shrink_0()
+            .h(px(1.))
+            .bg(cx.theme().colors().border_variant)
+            .child(
+                div()
+                    .id("media-panel-split-handle")
+                    .absolute()
+                    .top(px(-hkask_steer::SPLIT_HANDLE_HIT_HEIGHT / 2.0))
+                    .h(px(hkask_steer::SPLIT_HANDLE_HIT_HEIGHT))
+                    .w_full()
+                    .cursor_row_resize()
+                    .block_mouse_except_scroll()
+                    .on_click(cx.listener(|this, event: &ClickEvent, _window, cx| {
+                        if event.click_count() >= 2 {
+                            this.split.reset();
+                            cx.notify();
+                        }
+                        cx.stop_propagation();
+                    }))
+                    .on_drag(hkask_steer::VerticalSplitDrag, |_, _, _, cx| {
+                        cx.new(|_| gpui::Empty)
+                    }),
+            )
+    }
+
+    /// Lazily construct the cross-domain Steer `ConversationView`. Media tool
+    /// guidance is verified against the server's generated `TOOL_NAMES`.
+    fn ensure_steer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        hkask_steer::ensure_steer(
+            &mut self.steer,
+            hkask_steer::SteerContext {
+                system_prompt: steer_system_prompt(),
+                fs: self.fs.clone(),
+                project: self.project.clone(),
+                workspace: self.workspace_handle.clone(),
+                resume_session_id: self.pending_resume.take(),
+            },
+            hkask_mcp_media::TOOL_NAMES,
+            &[
+                "gallery_",
+                "image_",
+                "video_",
+                "audio_",
+                "face_",
+                "transcribe",
+                "record_",
+                "educt_",
+                "model_",
+                "job_",
+                "describe_",
+            ],
+            window,
+            cx,
+        );
+    }
+}
+
+/// The Steer prompt. Behavioral prose is written by hand; the tool list is
+/// rendered from the server's generated `TOOL_NAMES` by
+/// `render_grouped_tool_advertisement`, so a rename/merge/addition in the
+/// server propagates here at the next build instead of degrading to
+/// "tool not found" at dispatch. `verify_tool_advertisement` inside
+/// `ensure_steer` still checks the prose's tool mentions.
+fn steer_system_prompt() -> SharedString {
+    // Labels and prefixes only — never tool names. First matching group wins,
+    // so `kanban`-style overlaps resolve by declaration order; tools matching
+    // no group land in "Other tools" and are still advertised.
+    let tool_section = hkask_steer::render_grouped_tool_advertisement(
+        hkask_mcp_media::TOOL_NAMES,
+        &[
+            ("Gallery tools", &["gallery_"]),
+            ("Face tools", &["face_"]),
+            ("Image tools", &["image_", "describe_"]),
+            ("Video tools", &["video_"]),
+            ("Audio tools", &["audio_", "transcribe", "record_"]),
+            ("Transcript store tools (local)", &["educt_"]),
+            ("Model tools", &["model_"]),
+            ("Job tools", &["job_"]),
+        ],
+    );
+    let prompt = format!(
+        "## Media Panel — Steer Mode\n\
+         You are operating in the Media panel's cross-domain Steer mode. The \
+         full MCP tool surface remains available. Use media tools to ingest, \
+         organize, annotate, search, transcribe, and extract existing research evidence.\n\
+         \n\
+         {tool_section}\
+         \n\
+         Preserve source bytes and stable asset identities. Keep user-authored \
+         annotations distinct from model-derived observations; neither is verified \
+         source evidence by itself. Link excerpts and reels to their source and \
+         transcript ranges, and retain historical provenance. Use gallery_annotation_ \
+         tools with stable gallery_asset_id, never positional indices, for researcher \
+         tags/notes; educt_annotation_ tools use immutable source-word ranges. \
+         Search stored transcripts with educt_search_transcripts in lexical mode; \
+         follow returned continuation offsets and retain source/timing citations. \
+         A lexical match is not semantic retrieval or verified evidence. Use face identification \
+         only when explicitly selected by the operator. Do not synthesize \
+         research evidence. Media results render inline; the Library, Queue, and \
+         Detail tabs expose indexed assets, research jobs, and provenance."
+    );
+    prompt.into()
+}
+
+impl gpui::Render for MediaPanel {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Lazily ensure the Steer surface the first time the panel draws —
+        // `ensure_steer` needs `&mut Window`.
+        self.ensure_steer(window, cx);
+
+        // Wire the thread observation as soon as the conversation exists:
+        // every thread update re-ingests tool-result display hints into the
+        // viewer. This is the structural path — the viewer reflects what
+        // the tools produced, not what the model echoed.
+        if self.thread_observation.is_none()
+            && let Some(conversation) = self.steer.conversation()
+            && let Some(thread_view) = conversation.read(cx).active_thread()
+        {
+            let thread = thread_view.read(cx).thread.clone();
+            let viewer = self.viewer.clone();
+            self.thread_observation = Some(cx.observe(&thread, move |_, thread, cx| {
+                viewer.update(cx, |viewer, cx| viewer.ingest_thread(thread.clone(), cx));
+            }));
+            // Ingest whatever the (possibly resumed) thread already holds.
+            let thread_for_ingest = thread.clone();
+            self.viewer
+                .update(cx, |viewer, cx| viewer.ingest_thread(thread_for_ingest, cx));
+        }
+
+        let conversation = self.steer.conversation().cloned();
+        // The director (bottom): the Steer conversation drives all media
+        // operations through media guidance without restricting other MCP tools. Definite fractional
+        // height — the viewer above flexes to fill whatever the director
+        // leaves.
+        let director = div()
+            .w_full()
+            .h(DefiniteLength::Fraction(self.split.bottom_fraction()))
+            // The director is a flex-column child: without min_h_0 its
+            // content's min-content height would override the dragged
+            // fraction (the conversation would hold the pane open).
+            .min_h_0()
+            .flex()
+            .flex_col()
+            // The Open Thread affordance sits above the conversation so the
+            // operator can resume a previous steer session at any time.
+            .child(
+                h_flex()
+                    .px_2()
+                    .py_1()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(self.thread_picker.clone()),
+            )
+            .when_some(conversation, |el, conversation| el.child(conversation));
+
+        v_flex()
+            .size_full()
+            // The drag surface for the split divider: the handle's `on_drag`
+            // starts a shared `VerticalSplitDrag`, and this root receives
+            // every move event for the drag's duration with `event.bounds`
+            // = the whole panel — the reference frame the split math uses.
+            .on_drag_move::<hkask_steer::VerticalSplitDrag>(cx.listener(
+                |this, event, _window, cx| {
+                    this.split.update_from_drag(event);
+                    cx.notify();
+                },
+            ))
+            // The viewing pane (top): what the tools produced, structurally.
+            // flex_1 + min_h_0 — the pane is a flex-column child and must
+            // shrink below its content's min-content height as the divider
+            // drags (the vertical counterpart of the viewer's own min_h_0
+            // tab content). min_w_0 keeps the horizontal-fit invariant:
+            // without it the pane cannot shrink below its content's
+            // min-content width, so a long untruncated header src or a wide
+            // toolbar inflated the pane past the dock and the video rendered
+            // clipped (the recurring horizontal-overflow bug — see
+            // viewer_layout_tests::viewer_content_fits_narrow_pane).
+            .child(
+                div()
+                    .w_full()
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    .child(self.viewer.clone()),
+            )
+            // The movable divider between the panes.
+            .child(self.render_split_handle(cx))
+            .child(director)
+    }
+}
+
+impl EventEmitter<ItemEvent> for MediaPanel {}
+
+impl Focusable for MediaPanel {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Item for MediaPanel {
+    type Event = ItemEvent;
+
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "Media".into()
+    }
+
+    fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
+        Some(Icon::new(IconName::Image).color(Color::Muted))
+    }
+
+    fn show_toolbar(&self) -> bool {
+        false
+    }
+
+    fn to_item_events(event: &Self::Event, function: &mut dyn FnMut(ItemEvent)) {
+        function(*event)
+    }
+}
+
+impl SerializableItem for MediaPanel {
+    fn serialized_item_kind() -> &'static str {
+        "MediaPanel"
+    }
+
+    fn cleanup(
+        _workspace_id: workspace::WorkspaceId,
+        _alive_items: Vec<workspace::ItemId>,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Task<anyhow::Result<()>> {
+        Task::ready(Ok(()))
+    }
+
+    fn serialize(
+        &mut self,
+        _workspace: &mut Workspace,
+        _item_id: workspace::ItemId,
+        _closing: bool,
+        _cx: &mut Context<Self>,
+    ) -> Option<Task<anyhow::Result<()>>> {
+        None
+    }
+
+    fn should_serialize(&self, _event: &Self::Event) -> bool {
+        false
+    }
+
+    fn deserialize(
+        _project: Entity<project::Project>,
+        workspace: WeakEntity<Workspace>,
+        _workspace_id: workspace::WorkspaceId,
+        _item_id: workspace::ItemId,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> Task<anyhow::Result<Entity<Self>>> {
+        cx.spawn(async move |cx| {
+            workspace.update_in(cx, |workspace, window, cx| {
+                MediaPanel::new(workspace, window, cx)
+            })
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every tool name the Steer prompt advertises in backticks must exist
+    /// in the server's generated TOOL_NAMES. The list itself is rendered
+    /// from TOOL_NAMES (`render_grouped_tool_advertisement`), so this passes
+    /// by construction — it exists to catch a regression back to a
+    /// hand-written list, which is how the 2026-09-03 media consolidation
+    /// shipped stale names.
+    #[test]
+    fn steer_prompt_advertises_only_known_tools() {
+        let prompt = steer_system_prompt();
+        for name in hkask_steer::advertised_tool_names(
+            &prompt,
+            &[
+                "gallery_",
+                "image_",
+                "video_",
+                "audio_",
+                "face_",
+                "transcribe",
+                "record_",
+                "educt_",
+                "model_",
+                "job_",
+                "describe_",
+            ],
+        ) {
+            assert!(
+                hkask_mcp_media::TOOL_NAMES.contains(&name.as_str()),
+                "steer prompt advertises `{name}`, not in hkask_mcp_media::TOOL_NAMES"
+            );
+        }
+    }
+
+    /// expect: [P7] The approved research surface excludes creative operations
+    /// while retaining source processing, annotations, retrieval, and history.
+    #[test]
+    fn steer_prompt_carries_research_scope_and_boundaries() {
+        assert_eq!(hkask_mcp_media::TOOL_NAMES.len(), 71);
+        let prompt = steer_system_prompt();
+        for required in [
+            "gallery_annotation_create",
+            "gallery_annotation_list",
+            "gallery_annotation_update",
+            "gallery_annotation_delete",
+            "educt_annotation_create",
+            "educt_annotation_list",
+            "educt_annotation_update",
+            "educt_annotation_delete",
+            "educt_search_transcripts",
+            "gallery_lineage",
+            "gallery_asset_detail",
+            "transcribe_bundle",
+            "audio_trim",
+            "audio_concat",
+            "video_clip",
+            "video_concat",
+        ] {
+            assert!(
+                prompt.contains(required),
+                "research prompt missing {required}"
+            );
+        }
+        for retired in [
+            "voice_design",
+            "generate_speech",
+            "gallery_record_generation",
+            "gallery_reproduce",
+            "generate_image",
+            "transform_image",
+            "upscale_image",
+            "generate_video",
+            "expand_prompt",
+            "image_edit_region",
+            "image_remove_background",
+            "image_apply_style",
+            "image_to_video",
+            "video_remix",
+            "video_from_images",
+            "video_meme",
+            "workflow_save",
+            "workflow_list",
+            "workflow_load",
+            "workflow_delete",
+        ] {
+            assert!(
+                !prompt.contains(retired),
+                "retired operation advertised: {retired}"
+            );
+        }
+        for boundary in [
+            "full MCP tool surface remains available",
+            "Preserve source bytes",
+            "immutable source-word ranges",
+            "lexical mode",
+            "source/timing citations",
+            "neither is verified",
+            "explicitly selected by the operator",
+            "historical provenance",
+        ] {
+            assert!(prompt.contains(boundary), "missing boundary: {boundary}");
+        }
+    }
+
+    /// Every tool the server exposes should be advertised in the prompt — a
+    /// missing name means the curator cannot discover it in Steer mode.
+    /// Generated by construction; pins the renderer's completeness.
+    #[test]
+    fn server_tools_are_all_advertised() {
+        let prompt = steer_system_prompt();
+        for tool in hkask_mcp_media::TOOL_NAMES {
+            assert!(
+                prompt.contains(tool),
+                "hkask_mcp_media::TOOL_NAMES lists `{tool}` but the Steer prompt never mentions it"
+            );
+        }
+    }
+}

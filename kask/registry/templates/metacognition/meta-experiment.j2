@@ -1,0 +1,72 @@
+{# goal: Apply the predicted calibration — Falstaffian perspective rotation, ellipsis analysis, or strategy adjustment. Re-measure the current condition after the experiment. Produces new current_artifacts and current_procedure. #}
+[inference]
+contract:
+  input:
+    goal: string
+    current_condition: object
+    prediction: object
+    perspectives: array|null
+    context_text: string|null
+    prev_experiment: object|null
+  output:
+    current_artifacts: array
+    current_procedure: array
+    applied_calibration: string
+    result_description: string
+    rationale: string
+---
+{# Improvement Kata Step 4: Experiment (Do) #}
+{# Apply the predicted calibration. This is the actual intervention. #}
+
+You are performing Step 4 of the Toyota Improvement Kata: **Experiment (Do)**.
+
+Your job is to apply the calibration predicted in Step 3. This is the actual intervention — the Falstaffian perspective rotation, the ellipsis analysis, or the strategy adjustment. After applying it, re-measure the current condition (the experiment changed the system).
+
+## Goal
+{{ goal }}
+
+## Current Condition (before the experiment)
+```json
+{{ current_condition | tojson }}
+```
+
+## Prediction (what we expect to happen)
+```json
+{{ prediction | tojson }}
+```
+
+## Perspectives Available
+{{ perspectives | default(['falstaffian', 'ellipsis']) | tojson }}
+
+{% if context_text %}
+## Context Text (for ellipsis analysis)
+
+{# Callers bound context_text to ~2000 characters — minijinja has no
+   truncate filter (live-observed 2026-09-09); the bound is the caller's
+   contract, not the template's. #}
+{{ context_text }}
+{% endif %}
+
+{% if prev_experiment %}
+## Previous Experiment (for refinement)
+```json
+{{ prev_experiment | tojson }}
+```
+This is a refinement cycle. Build on the previous experiment's results — don't redo what was already done.
+{% endif %}
+
+## What to Do
+
+1. **Apply the predicted calibration**: Execute the specific intervention the prediction identified. If it's a Falstaffian shape, apply the semantic rotation to the assessment. If it's an ellipsis analysis, apply Bloom's five-step method to detect gaps. If it's a strategy adjustment, adjust the obstacle prioritization.
+
+2. **Re-measure the current condition**: After applying the calibration through the relevant tool or evidence source, measure the new state. Rendering this prompt does not execute the intervention; if it could not run, report it as pending and keep prior measurements rather than asserting new grounded artifacts. What artifacts exist now? What procedure steps are complete? What obstacles remain? What assumptions are surfaced? What claims are grounded?
+
+3. **Describe the result**: What actually happened? Did the calibration close the gap as predicted? Did it surface new obstacles? Did it invalidate assumptions? Preserve the Step 3 reduction threshold; if the before/after gaps cannot be measured against the same target, leave its binary outcome pending rather than scoring a guess.
+
+## Instructions
+
+- Apply ONE calibration, not several. The Kata is about single-step experiments whose effects are measurable.
+- The re-measured current condition is what the gap computation will use. Cite the observation source for changed artifacts and procedure statuses; if no observation is available, mark the result pending rather than inventing an improvement.
+- If the calibration didn't help, say so honestly. Compare measured evidence with the frozen expectation; only a separately eligible forecast has a score, and raw loss is not calibration.
+
+Return JSON only with `current_artifacts` (rows `{id, exists, grounded, evidence_ref}`), `current_procedure` (rows `{name, status, evidence_ref}`), `applied_calibration` (string), `result_description` (string), and `rationale` (string). Preserve the prior rows' stable ids/names so before/after gap joins compare the same target. Report only observations backed by the executed intervention. If it did not run or measurements are unavailable, retain the prior artifact/procedure rows, say `pending` in the result description, and name the missing evidence. Do not copy an example of a successful experiment as an outcome.

@@ -1,0 +1,20 @@
+[package]
+name = "hkask-forecast"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared superforecasting computation engine — Fermi decomposition, outside/inside view, Bayesian updating, Brier scoring"
+
+
+[lib]
+path = "src/hkask_forecast.rs"
+
+[dependencies]
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true

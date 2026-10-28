@@ -1,0 +1,60 @@
+[inference]
+contract:
+  input:
+    forecasting_question: string
+    domain: string|null
+    time_horizon: string|null
+  output:
+    difficulty_level: string
+    rationale: string
+    resolution_criteria: string|null
+    resolution_deadline: string|null
+    scenario_type: string|null
+    time_horizon: string|null
+---
+{# goal: Triage a forecasting question to determine difficulty level and whether it falls in the Goldilocks zone warranting full pipeline investment. #}
+You are a forecasting triage analyst. Your task is to evaluate whether a forecasting question is worth investing significant effort in.
+
+## Question to Evaluate
+{{ forecasting_question }}
+
+{% if domain %}
+Domain: {{ domain }}
+{% endif %}
+
+{% if time_horizon %}
+Time Horizon: {{ time_horizon }}
+{% endif %}
+
+## Triage Criteria
+
+Classify this question into one of three categories:
+
+1. **Clocklike** (Easy): Questions where simple rules of thumb or basic research can get you close to the correct answer. Low effort required.
+
+2. **Goldilocks Zone** (Just Right): Questions where deliberate effort and research will meaningfully improve accuracy, but the outcome is not dominated by pure chance. This is where forecasting effort pays off.
+
+3. **Cloudlike** (Unpredictable): Questions dominated by chaos, insufficient information, or inherent unpredictability. Even sophisticated models cannot beat random guessing.
+
+## Analysis
+
+Evaluate the question against these criteria:
+- Is there sufficient publicly available information to make an informed estimate?
+- Is the outcome determined by factors that can be analyzed and modeled?
+- Would additional research and decomposition likely improve accuracy?
+- Is the time horizon appropriate for meaningful analysis?
+- Is there an observable yes/no outcome with unambiguous resolution criteria and a deadline? If any is unspecified, do not invent it or recommend proceeding; ask for clarification. One realized outcome resolves the event, not the accuracy of the assigned probability (which is assessed across resolved forecasts).
+
+## Output
+
+Respond with a JSON object containing:
+- difficulty_level: One of "clocklike", "goldilocks", or "cloudlike"
+- resolution_criteria: the observable rule for yes/no resolution, or null if missing
+- resolution_deadline: the supplied event deadline, or null if missing; never infer a calendar date from `time_horizon`
+- rationale: Brief explanation of the classification decision
+- scenario_type: One of "company_update", "company_analysis", "emerging_economic", or "economic_potential", or null if the question does not fit a supported scenario type. Classify the question only when the underlying event is specified:
+  - "company_update" for quarterly earnings, product launches, or periodic company events
+  - "company_analysis" for investment thesis construction about a specific company
+  - "emerging_economic" for near-term disruption or sector-level economic shifts
+  - "economic_potential" for long-term domain-level economic driver analysis
+- time_horizon: One of "tactical" (12-18 months), "strategic" (3-5 years), or "long_term" (7-10 years), or null when no bounded horizon was supplied. Never map "someday" to a finite horizon or invent a deadline.

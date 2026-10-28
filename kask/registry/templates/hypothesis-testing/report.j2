@@ -1,0 +1,46 @@
+{# goal: Produce the hypothesis-testing study report from sealed design, real run reports, FindingsSpec, registry lineage and audit results, with proposed checks separated from executed checks. #}
+[inference]
+contract:
+  input:
+    hypothesis_spec: object
+    design_spec: object
+    findings_spec: object
+    registry_lineage: object|null
+    audit_findings: object
+    proposed_checks: array
+    executed_checks: array
+  output:
+    study_report: object
+---
+
+Produce the evidence-bearing study report for human review.
+
+## Scientific artifacts
+
+- hypothesis_spec: {{ hypothesis_spec | tojson }}
+- design_spec: {{ design_spec | tojson }}
+- findings_spec: {{ findings_spec | tojson }}
+- registry_lineage: {{ registry_lineage | tojson }}
+- audit_findings: {{ audit_findings | tojson }}
+
+## Verification ledger
+
+- proposed_checks: {{ proposed_checks | tojson }}
+- executed_checks: {{ executed_checks | tojson }}
+
+The report must contain:
+
+1. question, hypotheses and provenance;
+2. selected design and strongest rejected alternative;
+3. preregistered predictions, analysis, stopping and executor contract;
+4. observations/effects/uncertainty with real report references;
+5. deviations and all measurement, identification, information and transportability limits;
+6. typed scientific outcome with the exact ED-2 basis;
+7. proposed checks and executed checks in separate sections—never imply a proposed procedure ran;
+8. grounding-audit findings, provenance floor/decoupling and material omissions;
+9. exploratory findings and any new HypothesisSpec proposal, explicitly barred from confirming itself;
+10. human-review decisions still required.
+
+Use `corroborated`, never proved/confirmed. An inconclusive, measurement-void or design-void result must be visible in the executive conclusion rather than buried. The report is never labeled “verified.”
+
+Return JSON only with `study_report`.

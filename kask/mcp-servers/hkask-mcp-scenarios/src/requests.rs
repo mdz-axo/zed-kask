@@ -1,0 +1,282 @@
+use hkask_types::AnyJsonValue;
+use schemars::JsonSchema;
+use serde::Deserialize;
+
+use crate::types::{Perspective, ScenarioEvent, SubQuestion};
+
+// ── Request types for MCP tools ────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct BuildEventsRequest {
+    /// Subject: company ticker, industry, country, or technology domain
+    pub subject: String,
+    /// Time horizon for the scenario
+    pub time_horizon: Option<String>,
+    /// Scenario type
+    pub scenario_type: Option<String>,
+    /// Natural language context about the subject
+    pub context: Option<String>,
+    /// Maximum number of events to generate
+    pub max_events: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct BrainstormRequest {
+    /// Subject: company ticker, industry, country, or technology domain
+    pub subject: String,
+    /// Time horizon: "tactical", "strategic", or "long_term"
+    pub time_horizon: Option<String>,
+    /// Raw text from web searches about this subject
+    pub research_context: Option<String>,
+    /// Persona names to use (e.g., 'Bull,Bear,Contrarian'). Empty = use defaults.
+    pub personas: Option<String>,
+    /// Start at a specific round (1-4). Default: 1 (full protocol).
+    pub start_round: Option<u8>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct FrameRequest {
+    /// Subject: company ticker, industry, country, or technology domain
+    pub subject: String,
+    /// Optional: complete JSON text encoding the pre-populated answer object
+    /// from a previous framing session. It is decoded before framing.
+    pub prior_answers: Option<AnyJsonValue>,
+}
+
+/// Request to structure a completed framing conversation into a FramingDocument.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct FrameDocumentRequest {
+    /// Subject for the scenario project
+    pub subject: String,
+    /// Project id for the persisted project record. Defaults to the
+    /// subject — a re-run updates the same project in place.
+    pub project_id: Option<String>,
+    /// JSON object with answers from the 7-turn framing conversation.
+    /// Expected keys: focal_question, decision_at_stake, time_horizon,
+    /// action_deadline, in_scope, out_of_scope, stakeholders, use_case,
+    /// success_criteria, constraints, surfaced_assumptions, exploration_prompts.
+    ///
+    /// Supply the answer object as complete JSON text; the shared argument
+    /// decoder preserves the object's nested values before processing.
+    pub answers: AnyJsonValue,
+}
+
+/// One dependency edge for `scenario_from_markets_set`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct DependencySpecRequest {
+    /// Child market id (the `market_id` of the conditioned market).
+    pub child_market_id: String,
+    /// Parent market ids (the conditioning markets).
+    pub parent_market_ids: Vec<String>,
+    /// P(child | parent truth assignment), bitmap-ordered; length must be
+    /// 2^parent_market_ids.len(). Caller-authored — the server computes
+    /// marginals but never invents conditional probabilities.
+    pub conditionals: Vec<f64>,
+}
+
+/// Request for `scenario_propagate`: update one event's prior and recompute
+/// the whole tree.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct PropagateRequest {
+    /// The current tree's events (e.g. from a prior
+    /// scenario_from_markets_set / scenario_quantify output).
+    pub events: Vec<ScenarioEvent>,
+    /// ID of the event whose prior is being revised.
+    pub event_id: String,
+    /// The new prior probability in [0, 1].
+    pub new_prior: f64,
+}
+
+/// Request for `scenario_from_markets_set`: compose N market records into a
+/// dependent event tree.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct MarketsSetBridgeRequest {
+    /// Annotated MarketRecords from hkask-mcp-prediction-markets. Typed as
+    /// [`AnyJsonValue`] because `MarketRecord` is defined in the
+    /// prediction-markets crate and does not derive `JsonSchema`.
+    pub market_records: AnyJsonValue,
+    /// Optional per-record match confidences ("high"/"medium"/"low" or null),
+    /// parallel to the records array. Omit for direct lookups.
+    pub match_confidences: Option<Vec<Option<String>>>,
+    /// Caller-authored dependency edges. Omit for a flat (independent) tree.
+    pub dependency_specs: Option<Vec<DependencySpecRequest>>,
+}
+
+/// Request for `scenario_recompute_posteriors`: recompute the event tree's
+/// posterior probabilities under evidence, in both directions.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PosteriorsRequest {
+    /// The event tree — the same valid tree `scenario_quantify` accepts
+    /// (probabilities in [0,1], conditional lengths 2^parents, no cycles).
+    pub events: Vec<ScenarioEvent>,
+    /// Evidence to apply before recomputation. Each entry attaches to one
+    /// event and must set exactly one of its three fields.
+    pub evidence: Vec<PosteriorEvidenceEntry>,
+}
+
+/// One evidence entry for `scenario_recompute_posteriors`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PosteriorEvidenceEntry {
+    /// The event the evidence attaches to (must be among the request's events).
+    pub event_id: String,
+    /// Hard evidence: the observed probability — clamps the node's marginal
+    /// to this value in [0, 1].
+    pub observed_probability: Option<f64>,
+    /// Hard evidence: the observed outcome — clamps the node's marginal to
+    /// 1.0 (true) or 0.0 (false).
+    pub occurred: Option<bool>,
+    /// Soft evidence: a likelihood ratio P(evidence | event true) /
+    /// P(evidence | event false); the posterior is
+    /// P·LR / (P·LR + (1−P)), then propagated. Finite and >= 0.
+    pub likelihood_ratio: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct CrossValidateRequest {
+    /// Event or question identifier
+    pub event_id: String,
+    /// Label for the first estimate source (e.g., 'superforecasting_skill')
+    pub source_a: String,
+    /// First probability estimate (0.0-1.0)
+    pub estimate_a: f64,
+    /// Fermi sub-questions for estimate A
+    pub sub_questions_a: Vec<SubQuestion>,
+    /// Label for the second estimate source (e.g., 'scenario_calibrate')
+    pub source_b: String,
+    /// Second probability estimate (0.0-1.0)
+    pub estimate_b: f64,
+    /// Fermi sub-questions for estimate B
+    pub sub_questions_b: Vec<SubQuestion>,
+    /// Review threshold (default 0.15). Divergence above this triggers review.
+    pub review_threshold: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct QuantifyRequest {
+    /// Events to quantify
+    pub events: Vec<ScenarioEvent>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct UpdateRequest {
+    /// Forecast record ID
+    pub forecast_id: String,
+    /// Event ID being updated
+    pub event_id: String,
+    /// Current calibrated probability (prior)
+    pub prior_probability: f64,
+    /// P(evidence | hypothesis is true)
+    pub evidence_likelihood: f64,
+    /// P(evidence) — base rate of this evidence in general
+    pub evidence_base_rate: f64,
+    /// Description of the new evidence
+    pub evidence_description: Option<String>,
+}
+
+/// One outcome entry for `ScoreRequest`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct OutcomeEntry {
+    /// The event ID this outcome refers to.
+    pub event_id: String,
+    /// Whether the event occurred (true = Yes, false = No).
+    pub occurred: bool,
+}
+
+/// Prospective declaration; probability and proposition cannot be rewritten at resolution.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DeclareRequest {
+    pub forecast_id: String,
+    pub events: Vec<ScenarioEvent>,
+    /// Exact RFC 3339 outcome cutoff for every event ID, with no missing or
+    /// extra IDs. Declaration must precede it; resolution cannot precede it.
+    pub resolution_at: std::collections::BTreeMap<String, chrono::DateTime<chrono::Utc>>,
+    /// Named source responsible for the caller-reported boolean outcomes.
+    /// This records a rule, not authentication of that source.
+    pub resolver: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ScoreRequest {
+    /// Forecast record ID
+    pub forecast_id: String,
+    /// Exact declared events; changed propositions require a new forecast identity.
+    pub events: Vec<ScenarioEvent>,
+    /// Must match the source rule frozen by scenario_declare.
+    pub resolver: String,
+    /// Outcomes: which events occurred.
+    pub outcomes: Vec<OutcomeEntry>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CalibrateRequest {
+    /// The forecast question
+    pub question: String,
+    /// Fermi sub-questions
+    pub sub_questions: Vec<SubQuestion>,
+    /// Reference class description
+    pub reference_class: Option<String>,
+    /// Base rate from outside view
+    pub base_rate: Option<f64>,
+    /// Number of reference cases considered
+    pub reference_count: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SynthesizeRequest {
+    /// Event ID to synthesize perspectives for
+    pub event_id: String,
+    /// Perspectives to aggregate
+    pub(crate) perspectives: Vec<Perspective>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CalibrationRequest {
+    /// Optional: filter to a specific subject
+    pub subject: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TriageRequest {
+    /// The forecasting question to triage
+    pub question: String,
+    /// Does the question have a specific deadline?
+    pub has_deadline: Option<bool>,
+    /// Is a reference class available?
+    pub has_reference_class: Option<bool>,
+    /// Are resolution criteria clear?
+    pub has_resolution_criteria: Option<bool>,
+}
+
+/// Request for `scenario_assess` (Chermack Phase 5 project assessment).
+///
+/// Omitted quantitative metrics are never defaulted to zero: the
+/// assessment lists them in `unreported_metrics` and withholds the phase
+/// scores that depend on them as insufficient data (null).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AssessRequest {
+    /// Project identifier — the project record created by
+    /// scenario_frame_document (where the id defaults to the subject).
+    /// An unknown project id is not found; the project's own subject
+    /// scopes the calibration evidence.
+    pub project_id: String,
+    /// How many perspectives were engaged
+    pub perspective_count: Option<usize>,
+    /// Disagreement score from dragonfly-eye synthesis
+    pub disagreement_score: Option<f64>,
+    /// Total events in the scenario tree
+    pub event_count: Option<usize>,
+    /// How many events have conditional dependencies
+    pub events_with_dependencies: Option<usize>,
+    /// How many strategies were generated
+    pub strategies_generated: Option<usize>,
+    /// How many strategies were actually implemented
+    pub strategies_implemented: Option<usize>,
+    /// Observable learning events (free-text descriptions)
+    pub learning_events: Option<String>,
+    /// Whether early-warning indicators were defined
+    pub has_early_warning_indicators: Option<bool>,
+}
+
+/// Empty request for scenario_status (no parameters needed).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct StatusRequest {}

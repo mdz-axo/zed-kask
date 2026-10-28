@@ -1,0 +1,2324 @@
+#![forbid(unsafe_code)]
+#![warn(clippy::let_underscore_future)]
+
+pub(crate) mod evidence_service;
+pub(crate) mod ontology;
+pub mod research;
+pub(crate) mod synthetic_service;
+
+// Shared cfg(test) fixtures — `src/test_support.rs` (the media crate's
+// test_support precedent).
+#[cfg(test)]
+mod test_support;
+
+// Re-export service crate modules for test compatibility
+pub use crate::research::db;
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use base64::Engine;
+
+use hkask_mcp_server::server::{
+    CredentialRequirement, McpToolError, ServerContext, execute_tool, map_join_error,
+    resolve_db_passphrase, validate_tool_url_with_dns,
+};
+use reqwest::Client;
+use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
+use rusqlite::Connection;
+
+use crate::evidence_service::{
+    run_source_record, search_url_in_domains, sensitivity_json, supporting_evidence_note,
+    validate_extraction,
+};
+use crate::research::db::*;
+use crate::synthetic_service::items_synthetic_feed;
+
+use crate::research::{
+    AnnotateResearchRunRequest, BeginResearchRunRequest, BrowseOutput, BrowseRequest,
+    CiteSourcesRequest, CiteStyle, Continuation, DEFAULT_CACHE_MAX_ENTRIES, DEFAULT_CACHE_TTL_SECS,
+    DEFAULT_PROFILE, DeleteSyntheticRequest, DiscoverRequest, EditTagRequest,
+    EvaluateEvidenceRequest, ExtractOptions, ExtractOutput, ExtractRequest, FetchRequest,
+    FindSimilarOutput, FindSimilarRequest, FindSimilarResultOutput, FinishResearchRunRequest,
+    GetEntriesRequest, GetResearchRunRequest, ImportOpmlRequest, ListSubscriptionsRequest,
+    MAX_CACHE_MAX_ENTRIES, MAX_CACHE_TTL_SECS, MAX_INSTRUCTION_LENGTH, MAX_JSON_PROMPT_LENGTH,
+    MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH, MAX_URL_LENGTH, MarkReadRequest, NewResearchRun,
+    PingOutput, ProviderProfileOutput, ProviderRecommendation, RateLimiter, RerankInfo,
+    RerankOutcome, ResolvePaperRequest, ResponseCache, RunSourceRecord, SearchMetadata,
+    SearchOutput, SearchQuery, SearchRequest, SearchResultOutput, SearchStrategy, SubscribeRequest,
+    SynthesizeRequest, UnreadCountRequest, UnsubscribeRequest, WebSearchPort, build_provider_pool,
+    cache_key, discover_feeds, fetch_feed, llm_rerank, normalize_closed_vocab, parse_closed_vocab,
+    parse_closed_vocab_const, provider_profile, score_evidence_set, validated_fetch_client,
+};
+
+// ── Constants ──
+
+const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
+const DEFAULT_PAGE_SIZE: usize = 20;
+const MAX_PAGE_SIZE: usize = 100;
+const RATE_LIMIT_MAX_REQUESTS: u32 = 30;
+const RATE_LIMIT_WINDOW_SECS: u64 = 60;
+/// Maximum response body size for feed/synthetic fetches (64 MiB). Prevents
+/// OOM from malicious or misconfigured feeds that serve unbounded content.
+pub(crate) const MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
+
+// ── ResearchServer ──
+
+hkask_mcp_server::mcp_server!(
+    pub struct ResearchServer {
+        pub pool: Arc<dyn WebSearchPort>,
+        pub cache: Arc<ResponseCache>,
+        pub rate_limiter: RateLimiter,
+        pub research_db: Option<r2d2::Pool<hkask_storage::SqliteConnectionManager>>,
+        pub rss_client: Client,
+        /// Strict-policy fetch client for `rss_discover_feeds`: every redirect
+        /// hop re-validated, every connect-time DNS resolution gated, proxies
+        /// disabled (`validated_fetch_client`). The permissive `rss_client`
+        /// above is deliberately different — user-curated RSS fetches may live
+        /// on local networks by ratified policy, so they keep default redirect
+        /// following. Do not use `rss_client` for arbitrary user URLs.
+        pub discover_client: Client,
+        /// Inference port for the deep strategy's templated LLM rerank.
+        /// Resolved via `hkask_inference::resolve_inference_port()` — a
+        /// `LazyInferencePort` that bridges to zed's LanguageModelRegistry
+        /// over `HKASK_INFERENCE_SOCKET` on each call.
+        pub inference_port: Arc<dyn hkask_types::InferencePort>,
+        /// The deep strategy's rerank model — resolved ONCE at the
+        /// construction seam from `HKASK_RERANK_MODEL` (the visible
+        /// `kask.models.rerank_model` setting). `None` = not configured:
+        /// the deep strategy degrades to heuristic order with a fail-visible
+        /// reason naming the setting — never a hidden constant (the
+        /// operator's no-hidden-models spec).
+        pub rerank_model: Option<String>,
+        /// The embedding model for the semantic duplication tier — resolved
+        /// ONCE at the construction seam from `HKASK_EMBEDDING_MODEL` (the
+        /// visible `kask.embedding_model` setting chain). `None` = not
+        /// configured: the tier degrades to the deterministic shingle floor
+        /// with a surfaced reason naming the setting — unset is a legitimate
+        /// degraded mode because the floor exists (never a hidden constant).
+        pub embedding_model: Option<String>,
+    } = crate::ontology::annotate;
+);
+
+// ── RSS helpers ──
+
+pub(crate) fn spawn_db<F, T>(
+    pool: r2d2::Pool<hkask_storage::SqliteConnectionManager>,
+    f: F,
+) -> tokio::task::JoinHandle<Result<T, anyhow::Error>>
+where
+    F: FnOnce(&Connection) -> Result<T, anyhow::Error> + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(move || {
+        let conn = pool.get().map_err(|e| anyhow::anyhow!("pool get: {e}"))?;
+        f(&conn)
+    })
+}
+
+/// Handle the result of `spawn_db`: maps Ok(Ok) → Ok(v), Ok(Err)/Err → Err(McpToolError).
+macro_rules! handle_db_result {
+    ($result:expr, $ok:expr) => {
+        match $result {
+            Ok(Ok(v)) => {
+                let v: serde_json::Value = $ok(v);
+                Ok(v)
+            }
+            Ok(Err(e)) => Err($crate::map_db_error(e)),
+            Err(e) => Err(map_join_error(e, "db task failed")),
+        }
+    };
+}
+
+/// Classify an `anyhow::Error` from a `spawn_db` closure (almost always a wrapped
+/// `rusqlite::Error`) into the MCP wire-level `McpToolError` kind by the
+/// underlying SQLite error code: constraint violations are user-input problems
+/// (`invalid_argument`), a missing DB row is `not_found`, a read-only DB is a
+/// failed precondition, lock/busy/cannot-open/full/IO failures are availability
+/// issues (`unavailable`), permission errors are `permission_denied`, and the
+/// remaining SQL/infra failures remain `internal`.
+pub(crate) fn map_db_error(e: anyhow::Error) -> McpToolError {
+    let message = e.to_string();
+    if let Some(rusqlite::Error::SqliteFailure(ffi, _)) = e.downcast_ref::<rusqlite::Error>() {
+        return match ffi.code {
+            rusqlite::ErrorCode::ConstraintViolation => McpToolError::invalid_argument(message),
+            rusqlite::ErrorCode::PermissionDenied => McpToolError::permission_denied(message),
+            rusqlite::ErrorCode::NotFound => McpToolError::not_found(message),
+            rusqlite::ErrorCode::ReadOnly => McpToolError::failed_precondition(message),
+            rusqlite::ErrorCode::CannotOpen
+            | rusqlite::ErrorCode::DatabaseBusy
+            | rusqlite::ErrorCode::DatabaseLocked
+            | rusqlite::ErrorCode::DiskFull
+            | rusqlite::ErrorCode::SystemIoFailure => McpToolError::unavailable(message),
+            _ => McpToolError::internal(message),
+        };
+    }
+    McpToolError::internal(message)
+}
+
+/// Require the research database, returning an Err if not configured.
+/// The message names the actual causes: the DB opens at its DEFAULT path
+/// when `HKASK_RESEARCH_DB` is unset, so an unconfigured DB is almost always
+/// a missing `HKASK_DB_PASSPHRASE` or an open failure — not a missing
+/// `HKASK_RESEARCH_DB` (the var only selects a custom location).
+macro_rules! require_research_db {
+    ($self:expr) => {
+        match &$self.research_db {
+            Some(db) => db.clone(),
+            None => {
+                return Err(McpToolError::permission_denied(
+                    "Research database not available — set HKASK_DB_PASSPHRASE \
+                     (the DB opens at its default path; set HKASK_RESEARCH_DB only for a \
+                     custom location) and check the server log for an open failure.",
+                ));
+            }
+        }
+    };
+}
+
+// ── Tool implementations ──
+
+#[tool_router(server_handler)]
+impl ResearchServer {
+    // ═══════════════════ Web tools ═══════════════════
+
+    #[tool(description = "Liveness and provider health check")]
+    pub async fn web_ping(&self) -> Result<String, McpToolError> {
+        execute_tool(self, "web_ping", async {
+            if let Err(e) = self.rate_limiter.check("web_ping") {
+                tracing::warn!(
+                    target: "hkask.web",
+                    error = %e,
+                    "web_ping rate limited"
+                );
+                return Err(McpToolError::from(e));
+            }
+
+            let providers = self.pool.health_check().await;
+            // Static provider profiles live here (2026-09-30, zk-reference
+            // lesson L5): the table is per-server-version constant, so it is
+            // served once per ping instead of ~1KB on every web_search
+            // response. web_search keeps the per-call
+            // `provider_recommendations` audit of tool-selected picks.
+            let provider_profiles: Vec<ProviderProfileOutput> = self
+                .pool
+                .provider_kinds()
+                .iter()
+                .filter_map(|kind| provider_profile(kind).map(ProviderProfileOutput::from))
+                .collect();
+            let output = PingOutput {
+                status: "ok".to_string(),
+                version: SERVER_VERSION.to_string(),
+                providers,
+                provider_profiles,
+            };
+            Ok(serde_json::to_value(&output)
+                .unwrap_or_else(|_| serde_json::json!({"error": "serialization failed"})))
+        })
+        .await
+    }
+
+    #[tool(description = "Search the web with RRF fusion across providers. \
+         Set `provider` to query a single named provider (tavily, brave, exa, \
+         firecrawl, serpapi, or the free scholarly providers openalex, arxiv, \
+         semantic_scholar) — no fusion, no fallback. Or set `intent` (news, \
+         academic, semantic, research, freshness, general, transcript) to have the tool \
+         score the configured providers against the query and pick the top \
+         recommendation for you — the ranking is surfaced in \
+         provider_recommendations (carried on every tool-selected path). \
+         When both are None, `strategy` selects: \
+         quick (best-scored single keyword provider, live-performance-aware — \
+         a provider that keeps failing drops out), web (all, RRF fusion), \
+         news (news-capable), deep (all + 2x results + content extraction). \
+         The google_scholar and google_books engines need operator-qualified \
+         queries for exact-title lookups (e.g. intitle:\"The Logic of Scientific \
+         Discovery\") — plain titles return generic web noise; their results do \
+         not expose Google Books view status (full view vs preview). For an \
+         exact-title paper lookup, prefer resolve_paper's `title` mode.")]
+    pub async fn web_search(
+        &self,
+        Parameters(mut req): Parameters<SearchRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "web_search", async {
+            self.rate_limiter.check("web_search")?;
+
+            if req.query.is_empty() {
+                return Err(McpToolError::invalid_argument("query must not be empty"));
+            }
+            if req.query.len() > MAX_QUERY_LENGTH {
+                return Err(McpToolError::invalid_argument(format!(
+                    "query exceeds maximum length of {} characters",
+                    MAX_QUERY_LENGTH
+                )));
+            }
+            // Closed-vocabulary fields cross the LLM boundary: normalize
+            // predictable emission noise (surrounding whitespace, one layer
+            // of symmetric quotes) once, up front — before validation AND
+            // before the cache key, so the quoted and bare forms of the same
+            // request share one cache entry (observed live: `"\"quick\""`
+            // rejected as an unknown strategy cost agents retries). The
+            // `provider` pass-through normalizes here (classification lives
+            // in the pool); `intent` parses to its canonical spelling via
+            // the shared closed-vocabulary helper (C2).
+            req.provider = req.provider.map(|p| normalize_closed_vocab(&p).to_string());
+            // Intent is a closed vocabulary, not a free string: the scorer
+            // silently maps an unrecognized intent to no-bonus generic
+            // ranking, so a typo would read as a successful request routed
+            // under the intended lens. parse_closed_vocab normalizes
+            // emission noise and rejects unknown values up front.
+            let intent = match req.intent.as_deref() {
+                Some(raw) => Some(
+                    parse_closed_vocab(
+                        "intent",
+                        raw,
+                        &[
+                            (&["news"], "news"),
+                            (&["academic"], "academic"),
+                            (&["semantic"], "semantic"),
+                            (&["research"], "research"),
+                            (&["freshness"], "freshness"),
+                            (&["general"], "general"),
+                            (&["transcript"], "transcript"),
+                        ],
+                    )
+                    .map_err(McpToolError::from)?,
+                ),
+                None => None,
+            };
+
+            let strat = match req.strategy.as_deref() {
+                Some(s) => s.parse::<SearchStrategy>().map_err(McpToolError::from)?,
+                None => SearchStrategy::Quick,
+            };
+
+            let num_results = req.num_results.unwrap_or(10).min(50);
+
+            let freshness = match req.freshness.as_deref() {
+                Some(f) => Some(
+                    f.parse::<crate::research::types::Freshness>()
+                        .map_err(McpToolError::from)?,
+                ),
+                None => None,
+            };
+
+            let fingerprint = self.pool.provider_fingerprint();
+            let ckey = cache_key(
+                &strat.to_string(),
+                &req.query,
+                &serde_json::json!({
+                    "num_results": num_results,
+                    "freshness": freshness,
+                    "include_domains": req.include_domains,
+                    "exclude_domains": req.exclude_domains,
+                    "provider": req.provider,
+                    "intent": intent,
+                }),
+                &fingerprint,
+            );
+
+            // A run-scoped search bypasses the response-cache read so the
+            // run ledger records what THIS request returned; the recording
+            // happens on the fresh path below.
+            if req.run_id.is_none()
+                && let Some(cached) = self.cache.get(&ckey).await
+            {
+                return Ok(cached);
+            }
+
+            // Provider selection + audit ranking. C4: the ranking is
+            // surfaced on every path where the tool makes the selection
+            // (intent pick, quick pick, fusion) — the audit trail for WHY
+            // providers were (or would be) chosen. The intent path picks the
+            // top configured recommendation (the former
+            // web_recommend_provider + web_search(provider) two-step, folded
+            // in); quick picks inside the pool under the same live-merged
+            // model; web/news/deep fuse. Explicit-provider calls are the
+            // caller's own deliberate override — they carry
+            // selected_provider and skip the ranking.
+            let mut provider = req.provider.clone();
+            let mut provider_recommendations: Vec<ProviderRecommendation> = Vec::new();
+            if provider.is_none() {
+                provider_recommendations = self.pool.score_providers(&req.query, intent);
+                if intent.is_some()
+                    && let Some(top) = provider_recommendations.iter().find(|r| r.configured)
+                {
+                    provider = Some(top.kind.clone());
+                }
+            }
+
+            let search_query = SearchQuery {
+                query: req.query.clone(),
+                num_results,
+                include_domains: req.include_domains.unwrap_or_default(),
+                exclude_domains: req.exclude_domains.unwrap_or_default(),
+                freshness,
+            };
+
+            let mut compound = self
+                .pool
+                .search(&search_query, strat, provider.as_deref())
+                .await
+                .map_err(McpToolError::from)?;
+
+            let before_domain_filter = compound.results.len();
+            compound.results.retain(|result| {
+                search_url_in_domains(
+                    &result.url,
+                    &search_query.include_domains,
+                    &search_query.exclude_domains,
+                )
+            });
+            let domain_filter_removed = before_domain_filter - compound.results.len();
+            if domain_filter_removed > 0 {
+                tracing::warn!(
+                    target: "hkask.web",
+                    domain_filter_removed,
+                    "search provider returned results outside the requested domain boundary"
+                );
+            }
+            compound.results.truncate(num_results as usize);
+
+            // Deep strategy rerank stage: ONE templated rerank call
+            // carrying all candidates as documents, routed through the
+            // inference IPC bridge to the provider's rerank endpoint. The
+            // model resolves from `HKASK_RERANK_MODEL` (the visible
+            // `kask.models.rerank_model` setting) — unconfigured is a
+            // fail-visible degraded outcome naming the setting, never a
+            // hidden constant (the operator's no-hidden-models spec). Every
+            // degraded outcome is surfaced in `rerank` — never a silent
+            // fallback.
+            let rerank = if strat == SearchStrategy::Deep && compound.results.len() >= 2 {
+                let outcome = match self.rerank_model.as_deref() {
+                    Some(model) => {
+                        llm_rerank(
+                            self.inference_port.as_ref(),
+                            &req.query,
+                            &mut compound.results,
+                            model,
+                        )
+                        .await
+                    }
+                    None => RerankOutcome {
+                        scored: 0,
+                        failed: compound.results.len(),
+                        first_error: Some(
+                            "no rerank model configured — set \
+                             kask.models.rerank_model (injected as \
+                             HKASK_RERANK_MODEL); kask never falls back to a \
+                             hidden code constant"
+                                .to_string(),
+                        ),
+                    },
+                };
+                if outcome.scored == 0 {
+                    tracing::warn!(
+                        target: "hkask.web",
+                        error = ?outcome.first_error,
+                        "LLM rerank failed — keeping heuristic RRF order"
+                    );
+                    Some(RerankInfo {
+                        mode: "heuristic".to_string(),
+                        reason: outcome
+                            .first_error
+                            .or_else(|| Some("no candidates scored".to_string())),
+                    })
+                } else if outcome.failed > 0 {
+                    Some(RerankInfo {
+                        mode: "llm".to_string(),
+                        reason: Some(format!(
+                            "{} of {} rerank scoring calls failed; unscored results \
+                                 kept heuristic order at the end",
+                            outcome.failed,
+                            outcome.scored + outcome.failed
+                        )),
+                    })
+                } else {
+                    Some(RerankInfo {
+                        mode: "llm".to_string(),
+                        reason: None,
+                    })
+                }
+            } else {
+                None
+            };
+
+            // Surface which provider was actually used when a single
+            // provider was selected (explicit override, intent-driven pick,
+            // or quick strategy).
+            let selected_provider = if provider.is_some() || strat == SearchStrategy::Quick {
+                compound
+                    .providers_succeeded
+                    .first()
+                    .cloned()
+                    .or_else(|| provider.clone())
+            } else {
+                None
+            };
+
+            let metadata = SearchMetadata::from(&compound);
+            tracing::info!(
+                target: "hkask.web",
+                strategy = %metadata.strategy,
+                selected_provider = ?selected_provider.as_ref(),
+                providers_queried = ?metadata.providers_queried,
+                providers_succeeded = ?metadata.providers_succeeded,
+                providers_failed = ?metadata.providers_failed,
+                total_before_dedup = metadata.total_before_dedup,
+                duplicates_removed = metadata.duplicates_removed,
+                top_rrf_scores = ?metadata.top_rrf_scores,
+                "Regulation web_search metadata"
+            );
+
+            let search_output = SearchOutput {
+                query: compound.query.clone(),
+                strategy: compound.strategy.clone(),
+                results: compound
+                    .results
+                    .iter()
+                    .map(SearchResultOutput::from)
+                    .collect(),
+                answer_box: compound.answer_box.clone(),
+                related_questions: compound.related_questions.clone(),
+                count: compound.results.len(),
+                providers_failed: compound.providers_failed.clone(),
+                domain_filter_removed,
+                selected_provider,
+                provider_recommendations,
+                rerank,
+            };
+
+            let output = serde_json::to_value(&search_output)
+                .unwrap_or_else(|_| serde_json::json!({ "error": "serialization failed" }));
+
+            // Cache only clean responses. A compound carrying provider
+            // failures — in single-provider mode that is an empty result
+            // plus a failure record — must not be cached: a transient
+            // provider failure would otherwise be replayed as a
+            // "successful" empty result for the full cache TTL.
+            if compound.providers_failed.is_empty() {
+                self.cache.insert(ckey, output.clone()).await;
+            }
+
+            // Server-side ledger append (the non-repudiation path): record
+            // what this tool actually returned under the run. Best-effort —
+            // the outcome is surfaced as a run_ledger note, never swallowed.
+            let mut output = output;
+            if let Some(run_id) = req.run_id.as_deref() {
+                let records: Vec<RunSourceRecord> = search_output
+                    .results
+                    .iter()
+                    .map(|result| {
+                        run_source_record(
+                            &result.url,
+                            &result.title,
+                            result.published.as_deref(),
+                            result.source.as_deref(),
+                            result.content_preview.as_deref(),
+                            result.description.as_deref(),
+                            result.providers.first().cloned(),
+                        )
+                    })
+                    .collect();
+                let note = self.append_run_ledger(run_id, records).await;
+                output["run_ledger"] = note;
+            }
+
+            Ok(output)
+        })
+        .await
+    }
+
+    #[tool(description = "Find pages similar to a given URL using Exa findSimilar")]
+    pub async fn web_find_similar(
+        &self,
+        Parameters(FindSimilarRequest {
+            url,
+            num_results,
+            run_id,
+        }): Parameters<FindSimilarRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "web_find_similar", async {
+            self.rate_limiter.check("web_find_similar")?;
+
+            validate_tool_url_with_dns(&url).await?;
+
+            let num = num_results.unwrap_or(5).min(20);
+
+            // Not cached: web_find_similar skips the response cache (unlike
+            // web_search and web_extract). A find-similar result is sensitive
+            // to the source URL's evolving neighbourhood and stale quickly.
+            tracing::debug!(target: "hkask.web", "web_find_similar cache miss (not cached)");
+
+            let similar = self
+                .pool
+                .find_similar(&url, num)
+                .await
+                .map_err(McpToolError::from)?;
+
+            let results: Vec<FindSimilarResultOutput> = similar
+                .results
+                .into_iter()
+                .map(|r| {
+                    let key = r.url.to_lowercase();
+                    FindSimilarResultOutput {
+                        title: r.title,
+                        url: r.url,
+                        description: r.description,
+                        source: r.source,
+                        published: r.published,
+                        semantic_score: similar.semantic_scores.get(&key).copied(),
+                        content_preview: similar.content_previews.get(&key).cloned(),
+                    }
+                })
+                .collect();
+
+            let fs_output = FindSimilarOutput {
+                source_url: url,
+                count: results.len(),
+                results,
+            };
+
+            let mut output = serde_json::to_value(&fs_output)
+                .unwrap_or_else(|_| serde_json::json!({ "error": "serialization failed" }));
+
+            // Server-side ledger append (see web_search.run_id). The origin
+            // is Exa's findSimilar API — that is the server-observed origin.
+            if let Some(run_id) = run_id.as_deref() {
+                let records: Vec<RunSourceRecord> = fs_output
+                    .results
+                    .iter()
+                    .map(|result| {
+                        run_source_record(
+                            &result.url,
+                            &result.title,
+                            result.published.as_deref(),
+                            result.source.as_deref(),
+                            result.content_preview.as_deref(),
+                            result.description.as_deref(),
+                            Some("exa".to_string()),
+                        )
+                    })
+                    .collect();
+                let note = self.append_run_ledger(run_id, records).await;
+                output["run_ledger"] = note;
+            }
+
+            Ok(output)
+        })
+        .await
+    }
+
+    #[tool(description = "Extract content from a URL into markdown or structured JSON")]
+    pub async fn web_extract(
+        &self,
+        Parameters(ExtractRequest {
+            url,
+            format,
+            json_prompt,
+            json_schema,
+            main_content_only,
+            wait_for_ms,
+            run_id,
+        }): Parameters<ExtractRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "web_extract", async {
+            self.rate_limiter.check("web_extract")?;
+
+            if url.len() > MAX_URL_LENGTH {
+                return Err(McpToolError::invalid_argument(format!(
+                    "url exceeds maximum length of {} characters",
+                    MAX_URL_LENGTH
+                )));
+            }
+            if let Some(ref prompt) = json_prompt
+                && prompt.len() > MAX_JSON_PROMPT_LENGTH
+            {
+                return Err(McpToolError::invalid_argument(format!(
+                    "json_prompt exceeds maximum length of {} characters",
+                    MAX_JSON_PROMPT_LENGTH
+                )));
+            }
+            if let Some(ref schema) = json_schema
+                && let Ok(bytes) = serde_json::to_string(schema)
+                && bytes.len() > MAX_JSON_SCHEMA_BYTES
+            {
+                return Err(McpToolError::invalid_argument(format!(
+                    "json_schema exceeds maximum size of {} bytes",
+                    MAX_JSON_SCHEMA_BYTES
+                )));
+            }
+
+            validate_tool_url_with_dns(&url).await?;
+
+            // Format is an enum, not a free string: Firecrawl silently maps
+            // unknown formats to markdown while echoing the REQUESTED format
+            // in its output — the caller would read markdown labelled as
+            // something else. parse_closed_vocab normalizes emission noise
+            // and rejects unknown values up front (the shared
+            // closed-vocabulary contract, C2).
+            let fmt: &str = match format.as_deref() {
+                None => "markdown",
+                Some(raw) => parse_closed_vocab(
+                    "format",
+                    raw,
+                    &[(&["markdown"], "markdown"), (&["json"], "json")],
+                )
+                .map_err(McpToolError::from)?,
+            };
+            let main_content_only = main_content_only.unwrap_or(true);
+            let wait_for_ms_val = wait_for_ms.unwrap_or(0);
+            // Compute the cache key before moving json_schema into opts.
+            let json_schema_str = json_schema
+                .as_ref()
+                .and_then(|v| serde_json::to_string(v).ok());
+            let json_schema_inner = json_schema.map(serde_json::Value::from);
+
+            let fingerprint = self.pool.provider_fingerprint();
+            let cache_params = serde_json::json!({
+                "format": fmt,
+                "main_content_only": main_content_only,
+                "json_prompt": json_prompt,
+                "json_schema": json_schema_str,
+                "wait_for_ms": wait_for_ms_val,
+            });
+            let ckey = cache_key("extract", &url, &cache_params, &fingerprint);
+
+            let opts = ExtractOptions {
+                format: fmt.to_string(),
+                json_prompt,
+                json_schema: json_schema_inner,
+                main_content_only,
+                wait_for_ms: wait_for_ms_val,
+            };
+
+            // A run-scoped extract bypasses the response-cache read so the
+            // run ledger records what THIS request returned.
+            if run_id.is_none()
+                && let Some(cached) = self.cache.get(&ckey).await
+            {
+                if validate_extraction(
+                    fmt,
+                    cached.get("format").and_then(serde_json::Value::as_str),
+                    cached.get("content").and_then(serde_json::Value::as_str),
+                )
+                .is_ok()
+                {
+                    return Ok(cached);
+                }
+                tracing::warn!(target: "hkask.web", "Ignoring cached extraction that violates the requested format");
+            }
+
+            let extracted = self
+                .pool
+                .extract(&url, &opts)
+                .await
+                .map_err(McpToolError::from)?;
+            validate_extraction(
+                fmt,
+                Some(&extracted.format),
+                Some(&extracted.content),
+            )?;
+            // Degradation surfacing (2026-09-30, zk-reference lesson L1): an
+            // extraction can succeed HTTP-wise yet capture only page chrome —
+            // the origin served a JS shell, a bot-block page, or an empty
+            // body (observed: a Cloudflare-gated publisher article extracted
+            // as nav chrome + metadata with statusCode 200 and was cached as
+            // a valid extraction). A near-empty body on a successful fetch is
+            // surfaced as a note, never a bare success — and a degraded
+            // extraction is NOT cached, so a retry re-fetches the origin
+            // instead of replaying the shell.
+            const MIN_SUBSTANTIVE_CONTENT_CHARS: usize = 500;
+            let content_chars = extracted.content.trim().chars().count();
+            let degraded = content_chars < MIN_SUBSTANTIVE_CONTENT_CHARS;
+            let note = degraded.then(|| {
+                // P2 (2026-10-01): when the fetch metadata carries a
+                // non-2xx status, name it — a thin 404 body is a gone or
+                // moved URL, not a JS shell (observed: a 404 origin
+                // surfaced as "36 chars — JS shell / bot-block / empty
+                // body" while the metadata held statusCode 404).
+                let origin_status = extracted
+                    .metadata
+                    .as_ref()
+                    .and_then(|m| m.get("statusCode"))
+                    .and_then(|v| {
+                        v.as_u64()
+                            .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+                    })
+                    .filter(|code| !(200..300).contains(code));
+                match origin_status {
+                    Some(code) => format!(
+                        "extraction captured only {content_chars} chars — the origin \
+                         returned HTTP {code} (the URL may be gone or moved); the \
+                         content may be incomplete (consider the Wayback Machine \
+                         or a headless-browser route for this URL)"
+                    ),
+                    None => format!(
+                        "extraction captured only {content_chars} chars — the origin \
+                         likely served a JS shell, a bot-block page, or an empty body; \
+                         the content may be incomplete (consider the Wayback Machine \
+                         or a headless-browser route for this URL)"
+                    ),
+                }
+            });
+            if degraded {
+                tracing::warn!(
+                    target: "hkask.web",
+                    url = %url,
+                    content_chars,
+                    "web_extract captured a near-empty body; surfacing degradation note"
+                );
+            }
+            let extract_output = ExtractOutput {
+                url: extracted.url,
+                format: extracted.format,
+                content: extracted.content,
+                metadata: extracted.metadata,
+                note,
+            };
+            let mut output = serde_json::to_value(&extract_output)
+                .unwrap_or_else(|_| serde_json::json!({ "error": "serialization failed" }));
+            if !degraded {
+                self.cache.insert(ckey, output.clone()).await;
+            }
+
+            // Server-side ledger append (see web_search.run_id): the audit
+            // copy is the extracted content, capped by the ledger.
+            if let Some(run_id) = run_id.as_deref() {
+                let record = RunSourceRecord {
+                    url: extract_output.url.clone(),
+                    provider: None,
+                    title: None,
+                    published: None,
+                    source: None,
+                    excerpt: Some(extract_output.content.clone()),
+                };
+                let note = self.append_run_ledger(run_id, vec![record]).await;
+                output["run_ledger"] = note;
+            }
+
+            Ok(output)
+        })
+        .await
+    }
+
+    #[tool(description = "Interactive browsing of JS-heavy pages via headless browser")]
+    pub async fn web_browse(
+        &self,
+        Parameters(BrowseRequest {
+            url,
+            instruction,
+            timeout_secs,
+        }): Parameters<BrowseRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "web_browse", async {
+            self.rate_limiter.check("web_browse")?;
+
+            // Not cached: web_browse skips the response cache (unlike
+            // web_search and web_extract). Browsed content is interactive and
+            // session-specific; a cached snapshot would mislead on re-browse.
+            tracing::debug!(target: "hkask.web", "web_browse cache miss (not cached)");
+
+            if url.len() > MAX_URL_LENGTH {
+                return Err(McpToolError::invalid_argument(format!(
+                    "url exceeds maximum length of {} characters",
+                    MAX_URL_LENGTH
+                )));
+            }
+            if let Some(ref instr) = instruction
+                && instr.len() > MAX_INSTRUCTION_LENGTH
+            {
+                return Err(McpToolError::invalid_argument(format!(
+                    "instruction exceeds maximum length of {} characters",
+                    MAX_INSTRUCTION_LENGTH
+                )));
+            }
+
+            validate_tool_url_with_dns(&url).await?;
+
+            let instr = instruction.unwrap_or_else(|| "Extract page content".to_string());
+            let timeout =
+                Duration::from_secs(timeout_secs.unwrap_or(30)).min(Duration::from_secs(120));
+
+            self.pool
+                .browse(&url, &instr, timeout)
+                .await
+                .map(|result| {
+                    let output = BrowseOutput {
+                        url: result.url,
+                        content: result.content,
+                        instruction: result.instruction,
+                        actions_taken: result.actions_taken,
+                    };
+                    serde_json::to_value(&output)
+                        .unwrap_or_else(|_| serde_json::json!({ "error": "serialization failed" }))
+                })
+                .map_err(McpToolError::from)
+        })
+        .await
+    }
+
+    // ═══════════════════ RSS tools ═══════════════════
+
+    #[tool(description = "Subscribe to an RSS/Atom feed (Google Reader stream model)")]
+    pub async fn rss_subscribe(
+        &self,
+        Parameters(SubscribeRequest { url, label, folder }): Parameters<SubscribeRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "rss_subscribe", async {
+            self.rate_limiter.check("rss_subscribe")?;
+            let db = require_research_db!(self);
+
+            // Use permissive SSRF config: RSS feeds may be self-hosted on
+            // local networks (e.g., http://localhost:4000/feed.xml). The user
+            // is explicitly subscribing to this URL by choice.
+            hkask_mcp_server::server::validate_tool_url_permissive(&url)?;
+            let fetch_result = fetch_feed(&self.rss_client, &url, None, None).await
+                .map_err(|e| McpToolError::unavailable(format!("Fetch failed: {}", e)))?;
+            let stream_id = format!("feed/{url}");
+            let (url_c, label_c, folder_c) = (url, label, folder);
+            let etag = fetch_result.etag.clone();
+            let lm = fetch_result.last_modified.clone();
+            let feed_title = fetch_result
+                .feed
+                .title
+                .as_ref()
+                .map(|t| t.content.clone())
+                .unwrap_or_default();
+            let entry_count = fetch_result.feed.entries.len();
+            let result = spawn_db(db, move |conn| {
+                // N3 (panic-safe): use rusqlite's Transaction guard so a panic
+                // between BEGIN and COMMIT automatically rolls back.
+                let tx = rusqlite::Transaction::new_unchecked(
+                    conn,
+                    rusqlite::TransactionBehavior::Deferred,
+                )?;
+                let feed_id = upsert_feed(&tx, &url_c, &fetch_result.feed)?;
+                insert_entries(&tx, feed_id, &fetch_result.feed.entries)?;
+                update_feed_cache_headers(&tx, feed_id, etag.as_deref(), lm.as_deref())?;
+                let exists: bool = tx.query_row("SELECT COUNT(*) FROM subscriptions WHERE stream_id = ?1", [&stream_id], |row| row.get::<_, i64>(0)).map(|c| c > 0)?;
+                let result = if exists {
+                    serde_json::json!({"stream_id": stream_id, "url": url_c, "subscribed": true, "note": "Already subscribed, feed refreshed"})
+                } else {
+                    tx.execute("INSERT INTO subscriptions (feed_id, stream_id, title, label, folder) VALUES (?1, ?2, ?3, ?4, ?5)", rusqlite::params![feed_id, stream_id, feed_title, label_c, folder_c])?;
+                    serde_json::json!({"stream_id": stream_id, "url": url_c, "label": label_c, "folder": folder_c, "subscribed": true, "entry_count": entry_count})
+                };
+                tx.commit()?;
+                Ok::<serde_json::Value, anyhow::Error>(result)
+            }).await;
+            handle_db_result!(result, |v| v)
+        }).await
+    }
+
+    #[tool(description = "Unsubscribe from a feed (stream_id e.g. 'feed/http://...')")]
+    pub async fn rss_unsubscribe(
+        &self,
+        Parameters(UnsubscribeRequest { stream_id }): Parameters<UnsubscribeRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "rss_unsubscribe", async {
+            let db = require_research_db!(self);
+
+            let sid = stream_id.clone();
+            let result = spawn_db(db, move |conn| {
+                conn.execute("DELETE FROM subscriptions WHERE stream_id = ?1", [&sid])
+                    .map_err(|e| anyhow::anyhow!(e))
+            })
+            .await;
+            handle_db_result!(
+                result,
+                |removed| serde_json::json!({"stream_id": stream_id, "unsubscribed": removed > 0, "removed": removed})
+            )
+        }).await
+    }
+
+    #[tool(description = "List subscriptions, optionally filtered by folder")]
+    pub async fn rss_list_subscriptions(
+        &self,
+        Parameters(ListSubscriptionsRequest { folder }): Parameters<ListSubscriptionsRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "rss_list_subscriptions", async {
+            let db = require_research_db!(self);
+            let result = spawn_db(db, move |conn| list_subscriptions(conn, folder.as_deref())).await;
+            handle_db_result!(
+                result,
+                |subs: Vec<serde_json::Value>| serde_json::json!({"count": subs.len(), "subscriptions": subs})
+            )
+        }).await
+    }
+
+    #[tool(description = "Fetch/sync new entries from a feed (supports ETag/Last-Modified)")]
+    pub async fn rss_fetch(
+        &self,
+        Parameters(FetchRequest { stream_id }): Parameters<FetchRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "rss_fetch", async {
+            self.rate_limiter.check("rss_fetch")?;
+            let db = require_research_db!(self);
+            let sid = stream_id.clone();
+            let lookup = spawn_db(db, move |conn| resolve_feed_with_headers(conn, &sid)).await;
+
+            let (feed_url, cached_etag, cached_lm) = match lookup {
+                Ok(Ok(v)) => v,
+                Ok(Err(e)) => {
+                    return Err(McpToolError::not_found(e.to_string()));
+                }
+                Err(e) => {
+                    return Err(map_join_error(e, "rss fetch task failed"));
+                }
+            };
+
+            // Dispatch: synthetic feeds (url starts with synthetic://) are
+            // re-extracted via the synthetic fetch path rather than fetched as RSS.
+            if feed_url.starts_with("synthetic://") {
+                return self
+                    .fetch_synthetic_inner(&stream_id, feed_url)
+                    .await;
+            }
+
+            // Stored-SSRF defense: validate the DB-stored feed URL before
+            // fetching. The URL was originally user-supplied via rss_subscribe
+            // or rss_import_opml; re-validate at fetch time to catch URLs that
+            // were inserted before validation was added, or that a compromised
+            // DB could have altered. Use permissive config (allows localhost/
+            // private IPs) because RSS feeds may be self-hosted on local
+            // networks — the user explicitly subscribed to them.
+            hkask_mcp_server::server::validate_tool_url_permissive(&feed_url)?;
+
+            let db = require_research_db!(self);
+            let fetch_result = fetch_feed(
+                &self.rss_client,
+                &feed_url,
+                cached_etag.as_deref(),
+                cached_lm.as_deref(),
+            )
+            .await
+            .map_err(|e| McpToolError::unavailable(format!("Fetch failed: {}", e)))?;
+
+            if fetch_result.status == 304 {
+                return Ok(serde_json::json!({
+                    "stream_id": stream_id,
+                    "new_entries": 0,
+                    "fetched": true,
+                    "not_modified": true,
+                }));
+            }
+
+            let sid2 = stream_id.clone();
+            let etag = fetch_result.etag.clone();
+            let lm = fetch_result.last_modified.clone();
+
+            let result = spawn_db(db, move |conn| {
+                // N3 (panic-safe): use rusqlite's Transaction guard so a panic
+                // between BEGIN and COMMIT automatically rolls back.
+                let tx = rusqlite::Transaction::new_unchecked(
+                    conn,
+                    rusqlite::TransactionBehavior::Deferred,
+                )?;
+                let feed_id = upsert_feed(&tx, &feed_url, &fetch_result.feed)?;
+                let new_count = insert_entries(&tx, feed_id, &fetch_result.feed.entries)?;
+                update_feed_cache_headers(&tx, feed_id, etag.as_deref(), lm.as_deref())?;
+                tx.commit()?;
+                Ok::<usize, anyhow::Error>(new_count)
+            })
+            .await;
+
+            handle_db_result!(
+                result,
+                |new_count| serde_json::json!({"stream_id": sid2, "new_entries": new_count, "fetched": true})
+            )
+        }).await
+    }
+
+    #[tool(
+        description = "Get entries from a stream (Google Reader stream IDs: feed/*, user/-/state/*, user/-/label/*)"
+    )]
+    pub async fn rss_get_entries(
+        &self,
+        Parameters(GetEntriesRequest {
+            stream_id,
+            unread_only,
+            starred_only,
+            count,
+            continuation_token,
+        }): Parameters<GetEntriesRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "rss_get_entries", async {
+            let db = require_research_db!(self);
+            let limit = (count.unwrap_or(DEFAULT_PAGE_SIZE as u32) as usize).min(MAX_PAGE_SIZE);
+            let offset = match continuation_token.as_ref() {
+                None => 0,
+                Some(t) => {
+                    // A malformed continuation token must surface as an
+                    // explicit error, not silently reset to offset 0 —
+                    // otherwise a corrupted token is indistinguishable from
+                    // "no token" and the client silently re-reads the first
+                    // page (`.rules` broken-feedback-loop trap).
+                    let bytes = base64::engine::general_purpose::STANDARD
+                        .decode(t)
+                        .map_err(|e| {
+                            McpToolError::invalid_argument(format!(
+                                "continuation_token is not valid base64: {e}"
+                            ))
+                        })?;
+                    let cont: Continuation = serde_json::from_slice(&bytes)
+                        .map_err(|e| {
+                            McpToolError::invalid_argument(format!(
+                                "continuation_token is not a valid continuation payload: {e}"
+                            ))
+                        })?;
+                    cont.offset
+                }
+            };
+
+            let sid = stream_id.clone();
+            let result = spawn_db(db, move |conn| {
+                query_entries(
+                    conn,
+                    &sid,
+                    unread_only.unwrap_or(false),
+                    starred_only.unwrap_or(false),
+                    offset,
+                    limit + 1,
+                )
+            })
+            .await;
+
+            handle_db_result!(result, |mut entries: Vec<serde_json::Value>| {
+                let has_more = entries.len() > limit;
+                if has_more {
+                    entries.truncate(limit);
+                }
+                let next_token = has_more.then(|| {
+                    let cont = Continuation {
+                        offset: offset + limit,
+                        stream_id: stream_id.clone(),
+                    };
+                    base64::engine::general_purpose::STANDARD
+                        .encode(serde_json::to_vec(&cont).unwrap_or_default())
+                });
+                serde_json::json!({"stream_id": stream_id, "entries": entries, "count": entries.len(), "continuation_token": next_token})
+            })
+        }).await
+    }
+
+    #[tool(description = "Mark all entries in a stream as read")]
+    pub async fn rss_mark_all_read(
+        &self,
+        Parameters(MarkReadRequest { stream_id }): Parameters<MarkReadRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "rss_mark_all_read", async {
+            let db = require_research_db!(self);
+            let sid = stream_id.clone();
+            let result = spawn_db(db, move |conn| mark_stream_read(conn, &sid)).await;
+            handle_db_result!(
+                result,
+                |marked| serde_json::json!({"stream_id": stream_id, "marked_read": marked})
+            )
+        })
+        .await
+    }
+
+    #[tool(description = "Get unread count for a stream")]
+    pub async fn rss_get_unread_count(
+        &self,
+        Parameters(UnreadCountRequest { stream_id }): Parameters<UnreadCountRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "rss_get_unread_count", async {
+            let db = require_research_db!(self);
+            let sid = stream_id.clone();
+            let result = spawn_db(db, move |conn| count_entries(conn, &sid, true)).await;
+            handle_db_result!(
+                result,
+                |count| serde_json::json!({"stream_id": stream_id, "unread_count": count})
+            )
+        })
+        .await
+    }
+
+    #[tool(description = "Full-text search across feed entries")]
+    pub async fn rss_search(
+        &self,
+        Parameters(crate::research::rss_types::SearchRequest { query, limit }): Parameters<
+            crate::research::rss_types::SearchRequest,
+        >,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "rss_search", async {
+            let db = require_research_db!(self);
+            let limit = (limit.unwrap_or(10) as usize).min(MAX_PAGE_SIZE);
+            let q = query.clone();
+            let result = spawn_db(db, move |conn| search_entries(conn, &q, limit)).await;
+            handle_db_result!(
+                result,
+                |results: Vec<serde_json::Value>| serde_json::json!({"query": query, "results": results, "count": results.len()})
+            )
+        }).await
+    }
+
+    #[tool(description = "Export subscriptions as OPML 2.0")]
+    pub async fn rss_export_opml(&self) -> Result<String, McpToolError> {
+        execute_tool(self, "rss_export_opml", async {
+            let db = require_research_db!(self);
+            let result = spawn_db(db, export_opml).await;
+            handle_db_result!(result, |opml| serde_json::json!({"opml": opml}))
+        })
+        .await
+    }
+
+    #[tool(description = "Import subscriptions from OPML content")]
+    pub async fn rss_import_opml(
+        &self,
+        Parameters(ImportOpmlRequest { opml_content }): Parameters<ImportOpmlRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "rss_import_opml", async {
+            let db = require_research_db!(self);
+            let result = spawn_db(db, move |conn| import_opml(conn, &opml_content)).await;
+            handle_db_result!(result, |v| v)
+        })
+        .await
+    }
+
+    #[tool(description = "Discover RSS/Atom feeds from a URL via HTML link autodiscovery")]
+    pub async fn rss_discover_feeds(
+        &self,
+        Parameters(DiscoverRequest { url }): Parameters<DiscoverRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "rss_discover_feeds", async {
+            self.rate_limiter.check("rss_discover_feeds")?;
+            validate_tool_url_with_dns(&url).await?;
+            match discover_feeds(&self.discover_client, &url).await {
+                Ok(feeds) => {
+                    Ok(serde_json::json!({"url": url, "feeds": feeds, "count": feeds.len()}))
+                }
+                Err(e) => Err(McpToolError::unavailable(e.to_string())),
+            }
+        })
+        .await
+    }
+
+    #[tool(description = "Edit tags on entries: mark read/unread, star/unstar, add/remove labels")]
+    pub async fn rss_edit_tag(
+        &self,
+        Parameters(req): Parameters<EditTagRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "rss_edit_tag", async {
+            let db = require_research_db!(self);
+            let result = spawn_db(db, move |conn| edit_tags(conn, &req)).await;
+            handle_db_result!(result, |v| v)
+        })
+        .await
+    }
+
+    // ═══════════════════ Synthetic feed tools ═══════════════════
+
+    #[tool(
+        description = "Create a synthetic feed from a non-feed website or JSON API. Extracts items using the specified extractor kind (css, json_path, diff_hash) and stores them as feed entries. Optionally subscribes to the created feed."
+    )]
+    pub async fn rss_synthesize(
+        &self,
+        Parameters(req): Parameters<SynthesizeRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "rss_synthesize", async {
+            self.rate_limiter.check("rss_synthesize")?;
+            let db = require_research_db!(self);
+
+            // Parse the extractor kind.
+            let kind: crate::research::synthetic::ExtractorKind =
+                req.extractor_kind.parse().map_err(McpToolError::from)?;
+
+            // Parse the extractor spec JSON.
+            let spec: crate::research::synthetic::ExtractorSpec =
+                serde_json::from_str(&req.extractor_spec).map_err(|e| {
+                    McpToolError::invalid_argument(format!("invalid extractor_spec JSON: {e}"))
+                })?;
+
+            let body = self
+                .fetch_synthetic_source_bytes(&req.source_url)
+                .await
+                .map_err(|(_, e)| e)?;
+
+            let title = req.title.clone().unwrap_or_else(|| req.source_url.clone());
+            let description = req.description.clone().unwrap_or_default();
+            let source_url = req.source_url.clone();
+            let extractor_kind_str = req.extractor_kind.clone();
+            let extractor_spec_str = req.extractor_spec.clone();
+            let cadence = req.cadence_hint_secs;
+            let label = req.label.clone();
+            let folder = req.folder.clone();
+            let want_subscribe = req.subscribe.unwrap_or(true);
+
+            let (feed, _entry_count, extract_hash) =
+                if kind == crate::research::synthetic::ExtractorKind::DiffHash {
+                    let (feed, hash) = crate::research::synthetic::build_diff_hash_feed(
+                        &body,
+                        &source_url,
+                        &title,
+                    );
+                    let count = feed.entries.len();
+                    (feed, count, Some(hash))
+                } else {
+                    let items = self
+                        .extract_synthetic_items(kind, &spec, &source_url, &body)
+                        .await?;
+                    if kind == crate::research::synthetic::ExtractorKind::PdfOcr && items.is_empty()
+                    {
+                        let (feed, hash) = crate::research::synthetic::build_diff_hash_feed(
+                            &body,
+                            &source_url,
+                            &title,
+                        );
+                        let count = feed.entries.len();
+                        (feed, count, Some(hash))
+                    } else {
+                        let (feed, count) =
+                            items_synthetic_feed(items, &source_url, &title, &description);
+                        (feed, count, None)
+                    }
+                };
+
+            // Insert into DB: create feeds row, synthetic_feeds row, entries.
+            let feed_title = feed
+                .title
+                .as_ref()
+                .map(|t| t.content.clone())
+                .unwrap_or_else(|| source_url.clone());
+            let feed_for_upsert = feed;
+            let result = spawn_db(db, move |conn| {
+                let tx = rusqlite::Transaction::new_unchecked(
+                    conn,
+                    rusqlite::TransactionBehavior::Deferred,
+                )?;
+
+                // Insert the feed with a placeholder synthetic:// URL.
+                // We insert with a temporary URL, get the feed_id, then update
+                // the URL to synthetic://<feed_id>.
+                let temp_url = "synthetic://pending".to_string();
+                let feed_id = upsert_feed(&tx, &temp_url, &feed_for_upsert)?;
+
+                // Update the URL to the canonical synthetic:// form.
+                tx.execute(
+                    "UPDATE feeds SET url = ?1 WHERE id = ?2",
+                    rusqlite::params![format!("synthetic://{feed_id}"), feed_id],
+                )?;
+
+                // Insert entries.
+                let new_entries = insert_entries(&tx, feed_id, &feed_for_upsert.entries)?;
+
+                // Insert synthetic_feeds binding.
+                insert_synthetic_feed(
+                    &tx,
+                    feed_id,
+                    &source_url,
+                    &extractor_kind_str,
+                    &extractor_spec_str,
+                    cadence,
+                )?;
+
+                // Update extraction status.
+                update_synthetic_status(
+                    &tx,
+                    feed_id,
+                    new_entries,
+                    extract_hash.as_deref(),
+                    None,
+                )?;
+
+                // Optionally subscribe.
+                let stream_id = format!("feed/synthetic://{feed_id}");
+                let sub_note = if want_subscribe {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO subscriptions (feed_id, stream_id, title, label, folder)
+                         VALUES (?1, ?2, ?3, ?4, ?5)",
+                        rusqlite::params![feed_id, &stream_id, &feed_title, label, folder],
+                    )?;
+                    "subscribed"
+                } else {
+                    "not_subscribed"
+                };
+
+                tx.commit()?;
+
+                Ok::<serde_json::Value, anyhow::Error>(serde_json::json!({
+                    "feed_id": feed_id,
+                    "stream_id": stream_id,
+                    "source_url": source_url,
+                    "extractor_kind": extractor_kind_str,
+                    "new_entries": new_entries,
+                    "subscribed": want_subscribe,
+                    "subscription_status": sub_note,
+                }))
+            })
+            .await;
+            handle_db_result!(result, |v| v)
+        })
+        .await
+    }
+
+    #[tool(description = "List all synthetic feeds with their specs and last-extraction stats")]
+    pub async fn rss_list_synthetic(&self) -> Result<String, McpToolError> {
+        execute_tool(self, "rss_list_synthetic", async {
+            let db = require_research_db!(self);
+            let result = spawn_db(db, move |conn| list_synthetic_feeds(conn)).await;
+            handle_db_result!(result, |feeds: Vec<serde_json::Value>| serde_json::json!({
+                "count": feeds.len(),
+                "synthetic_feeds": feeds
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Delete a synthetic feed and all its entries (stream_id e.g. 'feed/synthetic://123')"
+    )]
+    pub async fn rss_delete_synthetic(
+        &self,
+        Parameters(req): Parameters<DeleteSyntheticRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "rss_delete_synthetic", async {
+            let db = require_research_db!(self);
+
+            // Resolve feed_url from stream_id.
+            let sid = req.stream_id.clone();
+            let feed_url_result = spawn_db(db.clone(), move |conn| {
+                // resolve_feed_url returns Option<String>, wrap in Ok for the
+                // spawn_db Result<Result<_, anyhow>, JoinError> shape.
+                Ok::<Option<String>, anyhow::Error>(resolve_feed_url(conn, &sid))
+            })
+            .await;
+
+            let feed_url = match feed_url_result {
+                Ok(Ok(Some(url))) => url,
+                Ok(Ok(None)) => {
+                    return Err(McpToolError::not_found("stream_id not found"));
+                }
+                Ok(Err(e)) => return Err(map_db_error(e)),
+                Err(e) => return Err(map_join_error(e, "db lookup failed")),
+            };
+
+            if !feed_url.starts_with("synthetic://") {
+                return Err(McpToolError::invalid_argument(
+                    "not a synthetic feed; use rss_unsubscribe instead",
+                ));
+            }
+
+            let feed_id: i64 = feed_url
+                .strip_prefix("synthetic://")
+                .ok_or_else(|| {
+                    McpToolError::internal(
+                        "feed_url missing synthetic:// prefix despite starts_with check",
+                    )
+                })?
+                .parse()
+                .map_err(|e| McpToolError::invalid_argument(format!("invalid feed_id: {e}")))?;
+
+            let result = spawn_db(db, move |conn| delete_synthetic_feed(conn, feed_id)).await;
+            handle_db_result!(result, |removed| serde_json::json!({
+                "stream_id": req.stream_id,
+                "deleted": removed > 0,
+                "removed": removed
+            }))
+        })
+        .await
+    }
+
+    // ═══════════════════ Research-run ledger ═══════════════════
+
+    #[tool(
+        description = "Begin a research run: opens a server-side ledger that records what the research tools actually return under this run. Returns {run_id, status}. Pass the run_id to web_search / web_extract / web_find_similar to record their results non-repudiably (recorded_by='server'); read the manifest via get_research_run. Use this for bulk-retrieval sweeps too: begin the run first and pass run_id on every search/extract, and the sweep's claims are backed by a server-recorded manifest instead of agent assertion (observed 2026-09-30: a 46-upgrade reference sweep ran without a run and its evidence stayed agent-asserted)."
+    )]
+    pub async fn begin_research_run(
+        &self,
+        Parameters(BeginResearchRunRequest { question }): Parameters<BeginResearchRunRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "begin_research_run", async {
+            if question.trim().is_empty() {
+                return Err(McpToolError::invalid_argument("question must not be empty"));
+            }
+            let database = require_research_db!(self);
+            let question_for_task = question.clone();
+            let result = spawn_db(database, move |connection| {
+                crate::research::runs::begin_research_run(connection, &question_for_task)
+            })
+            .await;
+            handle_db_result!(result, |run: NewResearchRun| serde_json::json!({
+                "run_id": run.run_id,
+                "status": "planned",
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Get a research run's manifest: question, status, every recorded source (server-observed and agent-declared), and per-source confidence recomputed server-side from the ledger's own excerpt copies — deterministic, not the agent's claim."
+    )]
+    pub async fn get_research_run(
+        &self,
+        Parameters(GetResearchRunRequest { run_id }): Parameters<GetResearchRunRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "get_research_run", async {
+            if run_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument("run_id must not be empty"));
+            }
+            let database = require_research_db!(self);
+            let run_id_for_task = run_id.clone();
+            let result = spawn_db(database, move |connection| {
+                crate::research::runs::get_research_run(connection, &run_id_for_task)
+            })
+            .await;
+            match result {
+                Ok(Ok(Some(manifest))) => Ok(manifest),
+                Ok(Ok(None)) => Err(McpToolError::not_found(format!(
+                    "research run '{run_id}' not found"
+                ))),
+                Ok(Err(error)) => Err(map_db_error(error)),
+                Err(error) => Err(map_join_error(error, "db task failed")),
+            }
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Mark a research run finished with a terminal status (completed, partial, blocked, or failed). The sources ledger is never mutated: the transition appends to the run's status history (the audit trail) and updates the run's latest status. completed/partial require at least one server-recorded source — finish as blocked or failed when no run-scoped search/extract recorded anything."
+    )]
+    pub async fn finish_research_run(
+        &self,
+        Parameters(req): Parameters<FinishResearchRunRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "finish_research_run", async {
+            if req.run_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument("run_id must not be empty"));
+            }
+            if req.status.trim().is_empty() {
+                return Err(McpToolError::invalid_argument("status must not be empty"));
+            }
+            // Status is a closed vocabulary owned by runs.rs
+            // (FINISH_STATUSES): parse at the boundary for emission
+            // tolerance — the domain guard in finish_research_run stays
+            // the owner and receives the canonical spelling.
+            let status = parse_closed_vocab_const(
+                "status",
+                &req.status,
+                crate::research::runs::FINISH_STATUSES,
+            )
+            .map_err(McpToolError::from)?;
+            let database = require_research_db!(self);
+            let run_id_for_task = req.run_id.clone();
+            let status_for_task = status.to_string();
+            let note_for_task = req.note.clone();
+            let result = spawn_db(database, move |connection| {
+                Ok(crate::research::runs::finish_research_run(
+                    connection,
+                    &run_id_for_task,
+                    &status_for_task,
+                    note_for_task.as_deref(),
+                ))
+            })
+            .await;
+            match result {
+                Ok(Ok(Ok(Some(summary)))) => Ok(summary),
+                Ok(Ok(Ok(None))) => Err(McpToolError::not_found(format!(
+                    "research run '{}' not found",
+                    req.run_id
+                ))),
+                Ok(Ok(Err(error @ crate::research::runs::FinishRunError::InvalidStatus(_)))) => {
+                    Err(McpToolError::invalid_argument(error.to_string()))
+                }
+                Ok(Ok(Err(
+                    error @ crate::research::runs::FinishRunError::RequiresServerSource(_),
+                ))) => Err(McpToolError::failed_precondition(error.to_string())),
+                Ok(Ok(Err(crate::research::runs::FinishRunError::Db(error)))) => {
+                    Err(map_db_error(error))
+                }
+                Ok(Err(error)) => Err(map_db_error(error)),
+                Err(error) => Err(map_join_error(error, "db task failed")),
+            }
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Annotate a research run's source with an agent-declared verification state (not_checked, inferred, partial, verified, blocked, failed). `verified` is accepted ONLY for sources the server itself recorded under this run (pass run_id to web_search/web_extract/web_find_similar) and requires a basis — the server refuses verification claims about sources it never served. Annotations are upsert-idempotent; annotating an unseen URL records it as an agent-declared row."
+    )]
+    pub async fn annotate_research_run(
+        &self,
+        Parameters(AnnotateResearchRunRequest {
+            run_id,
+            url,
+            verification_state,
+            basis,
+        }): Parameters<AnnotateResearchRunRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "annotate_research_run", async {
+            if run_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument("run_id must not be empty"));
+            }
+            if url.trim().is_empty() {
+                return Err(McpToolError::invalid_argument("url must not be empty"));
+            }
+            // verification_state is a closed vocabulary owned by runs.rs
+            // (VERIFICATION_STATES): boundary tolerance, domain ownership —
+            // the guard in annotate_run_source receives the canonical
+            // spelling.
+            let state = parse_closed_vocab_const(
+                "verification_state",
+                &verification_state,
+                crate::research::runs::VERIFICATION_STATES,
+            )
+            .map_err(McpToolError::from)?;
+            let database = require_research_db!(self);
+            let run_id_for_task = run_id.clone();
+            let url_for_task = url.clone();
+            let state_for_task = state.to_string();
+            let basis_for_task = basis.clone();
+            let result = spawn_db(database, move |connection| {
+                Ok(crate::research::runs::annotate_run_source(
+                    connection,
+                    &run_id_for_task,
+                    &url_for_task,
+                    &state_for_task,
+                    basis_for_task.as_deref(),
+                ))
+            })
+            .await;
+            match result {
+                Ok(Ok(Ok(()))) => Ok(serde_json::json!({
+                    "run_id": run_id,
+                    "url": url,
+                    "verification_state": state,
+                    "recorded_by": "agent",
+                })),
+                Ok(Ok(Err(crate::research::runs::AnnotateError::RunNotFound))) => Err(
+                    McpToolError::not_found(format!("research run '{run_id}' not found")),
+                ),
+                Ok(Ok(Err(crate::research::runs::AnnotateError::Invalid(rule)))) => {
+                    Err(McpToolError::invalid_argument(rule))
+                }
+                Ok(Ok(Err(crate::research::runs::AnnotateError::Db(error)))) => {
+                    Err(map_db_error(error))
+                }
+                Ok(Err(error)) => Err(map_db_error(error)),
+                Err(error) => Err(map_join_error(error, "db task failed")),
+            }
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Resolve a paper reference to a typed identity. Two modes: (1) identifier — pass `query` with any supported form (DOI, arXiv ID, PMID, PMCID, OpenAlex work ID — bare, prefixed, or registry URL) to parse, normalize, and enrich it; (2) bibliographic — pass `title` with a work's title for Crossref's bibliographic search: up to 3 candidates (DOI, title, year, venue, first author) are surfaced, ranked with exact-title matches first (Crossref relevance within ties), and the top candidate is resolved to the typed identity and enriched via OpenAlex — check the candidates before trusting the resolution (a title search can hit a different work than intended). Both modes return the identifier kind/value, canonical URL, stable ledger key, and OpenAlex metadata (title, authors, year, venue, and the candidate open-access copy URL `oa_pdf_url` when the record holds one — a candidate, not a verified document) — the identity is always returned even when the metadata lookup degrades. Pass run_id to record the resolution into a research run's ledger. Every rejection names what was expected."
+    )]
+    pub async fn resolve_paper(
+        &self,
+        Parameters(ResolvePaperRequest {
+            query,
+            title,
+            run_id,
+        }): Parameters<ResolvePaperRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "resolve_paper", async {
+            // Exactly one of query (identifier) / title (bibliographic) —
+            // passing both is ambiguous, neither is empty input. Both
+            // rejections name what was expected.
+            let (parsed, candidates) = match (query, title) {
+                (Some(query), None) => {
+                    let query = query.trim().to_string();
+                    if query.is_empty() {
+                        return Err(McpToolError::invalid_argument(
+                            "query must not be empty (pass either query — an identifier — or title — a bibliographic lookup)",
+                        ));
+                    }
+                    (crate::research::paper_id::parse_paper_id(&query)?, None)
+                }
+                (None, Some(title)) => {
+                    let title = title.trim().to_string();
+                    if title.is_empty() {
+                        return Err(McpToolError::invalid_argument(
+                            "title must not be empty (pass either query — an identifier — or title — a bibliographic lookup)",
+                        ));
+                    }
+                    // Crossref bibliographic resolution: candidates are
+                    // surfaced in full so the caller can verify the match
+                    // (the no-substitution rule) before trusting the top
+                    // candidate's resolution. P1 (2026-10-01): exact-title
+                    // matches rank first — Crossref's relevance can put a
+                    // superstring title above the exact work (observed:
+                    // "Computing Machinery and Intelligence Amplification"
+                    // outranked Turing's "Computing Machinery and
+                    // Intelligence"); the stable sort keeps Crossref's order
+                    // within each group, so equally-exact candidates (a
+                    // preprint and the published version of the same work)
+                    // stay consumer-verifiable via the surfaced list.
+                    let mut candidates = self.pool.resolve_title(&title, 3).await.map_err(|e| {
+                        McpToolError::failed_precondition(format!(
+                            "Crossref bibliographic search failed: {e}"
+                        ))
+                    })?;
+                    candidates.sort_by_key(|c| {
+                        !crate::research::providers::title_matches_exactly(&title, &c.title)
+                    });
+                    let Some(top) = candidates.first() else {
+                        return Ok(serde_json::json!({
+                            "mode": "bibliographic",
+                            "query_title": title,
+                            "note": "no Crossref candidates for this title — the work may be unregistered, or the title may not match any registered bibliographic record",
+                        }));
+                    };
+                    let parsed = crate::research::paper_id::parse_paper_id(&top.doi)?;
+                    (parsed, Some(candidates))
+                }
+                (Some(_), Some(_)) => {
+                    return Err(McpToolError::invalid_argument(
+                        "pass either query (an identifier) or title (a bibliographic lookup), not both",
+                    ));
+                }
+                (None, None) => {
+                    return Err(McpToolError::invalid_argument(
+                        "pass either query (an identifier: DOI, arXiv ID, PMID, PMCID, or OpenAlex work ID) or title (a bibliographic lookup)",
+                    ));
+                }
+            };
+            let mut result = serde_json::json!({
+                "identifier": {
+                    "kind": parsed.kind(),
+                    "value": parsed.value(),
+                },
+                "canonical_url": parsed.canonical_url(),
+                "stable_key": crate::research::paper_id::stable_paper_key(&parsed),
+            });
+            if let Some(candidates) = candidates {
+                result["mode"] = serde_json::json!("bibliographic");
+                result["candidates"] = serde_json::to_value(&candidates)
+                    .unwrap_or_else(|_| serde_json::json!("serialization failed"));
+            }
+
+            // OpenAlex enrichment — best-effort, surfaced either way: the
+            // identity is the deterministic floor and never blocked by the
+            // metadata tier. Ok(None) = no record (or no lookup path for the
+            // kind); Err = the lookup failed — both surface as notes.
+            let metadata = match self.pool.resolve_paper_id(&parsed).await {
+                Ok(Some(metadata)) => {
+                    result["openalex"] = serde_json::json!({
+                        "openalex_id": metadata.openalex_id,
+                        "doi": metadata.doi,
+                        "title": metadata.title,
+                        "publication_year": metadata.publication_year,
+                        "authors": metadata.authors,
+                        "venue": metadata.venue,
+                        "oa_pdf_url": metadata.oa_pdf_url,
+                    });
+                    Some(metadata)
+                }
+                Ok(None) => {
+                    result["openalex"] = serde_json::json!({
+                        "note": "no OpenAlex record for this identifier",
+                    });
+                    None
+                }
+                Err(error) => {
+                    result["openalex"] = serde_json::json!({
+                        "error": error.to_string(),
+                    });
+                    None
+                }
+            };
+
+            // Run-ledger recording (C2 composition): the server observed
+            // this resolution — record the canonical URL with the metadata
+            // (when present) as the audit copy.
+            if let Some(run_id) = run_id.as_deref() {
+                let record = RunSourceRecord {
+                    url: parsed.canonical_url(),
+                    provider: Some("openalex".to_string()),
+                    title: metadata.as_ref().map(|metadata| metadata.title.clone()),
+                    published: metadata.as_ref().and_then(|metadata| {
+                        metadata.publication_year.map(|year| year.to_string())
+                    }),
+                    source: metadata
+                        .as_ref()
+                        .and_then(|metadata| metadata.venue.clone()),
+                    excerpt: metadata.as_ref().map(|metadata| {
+                        format!(
+                            "openalex {} — {} ({})",
+                            metadata.openalex_id,
+                            metadata.authors.join(", "),
+                            metadata
+                                .publication_year
+                                .map(|year| year.to_string())
+                                .unwrap_or_else(|| "no year".to_string())
+                        )
+                    }),
+                };
+                result["run_ledger"] = self.append_run_ledger(run_id, vec![record]).await;
+            }
+
+            Ok(result)
+        })
+        .await
+    }
+
+    // ═══════════════════ Evidence evaluation ═══════════════════
+
+    #[tool(
+        description = "Evaluate retrieved evidence against a research question. Scores each artifact deterministically into per-component signals (base, corroboration as independent evidence units with syndication-aware content clustering, recency, content) with basis strings, plus a set-level report (content clusters, ordering sensitivity under weight-profile substitution, duplication mode). Emits SEPIO-anchored confidence and corroboration links. Use after web_search/web_extract to assess evidence quality before synthesis."
+    )]
+    pub async fn evaluate_evidence(
+        &self,
+        Parameters(EvaluateEvidenceRequest {
+            question,
+            artifacts,
+            duplication,
+        }): Parameters<EvaluateEvidenceRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "evaluate_evidence", async {
+            if question.trim().is_empty() {
+                return Err(McpToolError::invalid_argument("question must not be empty"));
+            }
+            if artifacts.is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "artifacts must not be empty",
+                ));
+            }
+            // Duplication is a closed vocabulary: parse_closed_vocab
+            // normalizes emission noise and rejects unknown values (the
+            // shared closed-vocabulary contract, C2).
+            let duplication: Option<&str> = match duplication.as_deref() {
+                None => None,
+                Some(raw) => Some(
+                    parse_closed_vocab("duplication", raw, &[(&["semantic"], "semantic")])
+                        .map_err(McpToolError::from)?,
+                ),
+            };
+
+            // Tier-2 duplication (parameter-gated): the caller opts in with
+            // duplication="semantic". The deterministic shingle floor runs
+            // when the tier is not requested, no model is configured, or the
+            // embed call fails — every degradation surfaced with its reason,
+            // never silent (the rerank degradation contract).
+            let mut duplication_reason: Option<String> = None;
+            let semantic_vectors: Option<Vec<(usize, Vec<f32>)>> = match duplication {
+                Some("semantic") => match self.embedding_model.as_deref() {
+                    None => {
+                        duplication_reason = Some(
+                            "semantic duplication requested but no embedding model \
+                                 configured — set kask.embedding_model (injected as \
+                                 HKASK_EMBEDDING_MODEL); the deterministic shingle \
+                                 floor ran instead"
+                                .to_string(),
+                        );
+                        None
+                    }
+                    Some(model) => {
+                        let content_indices: Vec<usize> = artifacts
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, artifact)| artifact.content.is_some())
+                            .map(|(index, _)| index)
+                            .collect();
+                        let texts: Vec<String> = content_indices
+                            .iter()
+                            .map(|&index| artifacts[index].content.clone().unwrap_or_default())
+                            .collect();
+                        // Within-batch comparison only — the vectors never
+                        // touch a width-bound store, so the model's native
+                        // width is correct here (no `dimensions` request).
+                        match self.inference_port.embed(model, &texts).await {
+                            Ok(batch) if batch.vectors.len() == content_indices.len() => {
+                                // S-01 completion: the embedding call's
+                                // measured usage flows to the executing
+                                // tool's envelope.
+                                hkask_mcp_server::server::record_tool_usage(
+                                    batch.usage.clone(),
+                                    batch.cost_usd,
+                                );
+                                Some(content_indices.into_iter().zip(batch.vectors).collect())
+                            }
+                            Ok(batch) => {
+                                duplication_reason = Some(format!(
+                                    "embedding tier returned {} vectors for {} \
+                                         content-bearing artifacts — the deterministic \
+                                         shingle floor ran instead",
+                                    batch.vectors.len(),
+                                    content_indices.len()
+                                ));
+                                None
+                            }
+                            Err(error) => {
+                                duplication_reason = Some(format!(
+                                    "embedding tier failed ({error}) — the \
+                                         deterministic shingle floor ran instead"
+                                ));
+                                None
+                            }
+                        }
+                    }
+                },
+                _ => None,
+            };
+
+            // Deterministic signal computation (not LLM relay — G3 contract).
+            // Scoring lives in `score_evidence_set` (pure, unit-tested).
+            let scored =
+                score_evidence_set(&artifacts, &DEFAULT_PROFILE, semantic_vectors.as_deref());
+
+            let artifact_reports: Vec<serde_json::Value> = artifacts
+                .iter()
+                .zip(scored.artifacts.iter())
+                .map(|(artifact, score)| {
+                    let mut report = serde_json::Map::new();
+                    report.insert("url".to_string(), serde_json::json!(artifact.url));
+                    report.insert("title".to_string(), serde_json::json!(artifact.title));
+                    report.insert(
+                        "confidence".to_string(),
+                        serde_json::json!((score.confidence * 100.0).round() / 100.0),
+                    );
+                    report.insert(
+                        "signals".to_string(),
+                        serde_json::json!(
+                            score
+                                .signals
+                                .iter()
+                                .map(|signal| serde_json::json!({
+                                    "component": signal.component.name(),
+                                    "earned": (signal.earned * 100.0).round() / 100.0,
+                                    "basis": signal.basis,
+                                }))
+                                .collect::<Vec<serde_json::Value>>()
+                        ),
+                    );
+                    report.insert(
+                        "corroboration_count".to_string(),
+                        serde_json::json!(score.corroboration_count),
+                    );
+                    report.insert(
+                        "published_age_days".to_string(),
+                        serde_json::json!(score.published_age_days),
+                    );
+                    // Ontology-concept keys (the fixture-guarded labeling
+                    // contract), routed through the bridge constants.
+                    report.insert(
+                        hkask_bridge_ontology::sepio::HAS_CONFIDENCE_LEVEL.to_string(),
+                        serde_json::json!(format!("{:.2}", score.confidence)),
+                    );
+                    report.insert(
+                        hkask_bridge_ontology::sepio::HAS_SUPPORTING_EVIDENCE.to_string(),
+                        supporting_evidence_note(score, &scored),
+                    );
+                    serde_json::Value::Object(report)
+                })
+                .collect();
+
+            // Overall assessment: the question's evidence base.
+            let average_confidence: f64 = scored
+                .artifacts
+                .iter()
+                .map(|score| score.confidence)
+                .sum::<f64>()
+                / scored.artifacts.len() as f64;
+
+            let mut set_block = serde_json::json!({
+                "distinct_domains": scored.distinct_domains,
+                "sourced_count": scored.sourced_count,
+                "content_clusters": scored
+                    .content_clusters
+                    .iter()
+                    .map(|cluster| serde_json::json!({
+                        "domains": cluster.domains,
+                        "artifact_urls": cluster.artifact_urls,
+                    }))
+                    .collect::<Vec<serde_json::Value>>(),
+                "sensitivity": sensitivity_json(&scored.sensitivity),
+                "duplication_mode": scored.duplication_mode,
+            });
+            if let Some(reason) = duplication_reason {
+                set_block["duplication_reason"] = serde_json::json!(reason);
+            }
+
+            let mut result = serde_json::json!({
+                "question": question,
+                "average_confidence": (average_confidence * 100.0).round() / 100.0,
+                "artifacts": artifact_reports,
+                "set": set_block,
+            });
+            // Ontology-concept key: the StepVerification concept labels this
+            // result (evidence quality was assessed). Routed through the
+            // fixture-guarded bridge constant, not a string literal.
+            result[hkask_bridge_ontology::pko::STEP_VERIFICATION] =
+                serde_json::json!("evidence_quality_assessed");
+
+            Ok(result)
+        })
+        .await
+    }
+
+    // ═══════════════════ Citation ═══════════════════
+
+    #[tool(
+        description = "Generate citations from retrieved sources. Normalizes web_search/web_extract results into a canonical citation record and emits citations in the requested style (apa, bibtex, chicago, json). Deterministic formatting — no LLM relay."
+    )]
+    pub async fn cite_sources(
+        &self,
+        Parameters(CiteSourcesRequest { sources, style }): Parameters<CiteSourcesRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(
+            self,
+            "cite_sources",
+            async {
+                if sources.is_empty() {
+                    return Err(McpToolError::invalid_argument("sources must not be empty"));
+                }
+                // Style is a closed vocabulary: parse_closed_vocab normalizes
+                // emission noise (quoted/padded/case variants) and rejects
+                // unknown values with a teaching error (the shared
+                // closed-vocabulary contract).
+                let style = parse_closed_vocab(
+                    "style",
+                    &style,
+                    &[
+                        (&["apa"], CiteStyle::Apa),
+                        (&["bibtex"], CiteStyle::Bibtex),
+                        (&["chicago"], CiteStyle::Chicago),
+                        (&["json"], CiteStyle::Json),
+                    ],
+                )
+                .map_err(McpToolError::from)?;
+
+                let citations: Vec<String> = sources
+                    .iter()
+                    .map(|s| {
+                        let authors = s.authors.as_ref().and_then(|a| {
+                            if a.is_empty() {
+                                None
+                            } else {
+                                Some(a.join(", "))
+                            }
+                        });
+                        let year = s
+                            .published
+                            .as_deref()
+                            .and_then(|p| p.get(..4))
+                            .unwrap_or("n.d.");
+                        let title = s.title.clone().unwrap_or_else(|| {
+                            s.url.split('/').nth(3).unwrap_or("Untitled").to_string()
+                        });
+
+                        match style {
+                            CiteStyle::Apa => {
+                                let author_part = authors.unwrap_or_else(|| {
+                                    s.source.clone().unwrap_or_else(|| "Anonymous".to_string())
+                                });
+                                format!(
+                                    "{author_part} ({year}). {title}. Retrieved from {url}",
+                                    author_part = author_part,
+                                    year = year,
+                                    title = title,
+                                    url = s.url,
+                                )
+                            }
+                            CiteStyle::Bibtex => {
+                                let key = s
+                                    .source
+                                    .as_deref()
+                                    .unwrap_or("unknown")
+                                    .split('.')
+                                    .next()
+                                    .unwrap_or("unknown");
+                                let author_field = authors.unwrap_or_else(|| {
+                                    s.source.clone().unwrap_or_else(|| "Anonymous".to_string())
+                                });
+                                format!(
+                                    "@misc{{{key}_{year},\n  author = {{{author_field}}},\n  title = {{{title}}},\n  year = {{{year}}},\n  url = {{{url}}}\n}}",
+                                    key = key,
+                                    year = year,
+                                    author_field = author_field,
+                                    title = title,
+                                    url = s.url,
+                                )
+                            }
+                            CiteStyle::Chicago => {
+                                let author_part = authors.unwrap_or_else(|| {
+                                    s.source.clone().unwrap_or_else(|| "Anonymous".to_string())
+                                });
+                                format!(
+                                    "{author_part}. \"{title}.\" Accessed {url}.",
+                                    author_part = author_part,
+                                    title = title,
+                                    url = s.url,
+                                )
+                            }
+                            CiteStyle::Json => serde_json::json!({
+                                "url": s.url,
+                                "title": title,
+                                "authors": s.authors,
+                                "published": s.published,
+                                "source": s.source,
+                                "year": year,
+                            })
+                            .to_string(),
+                        }
+                    })
+                    .collect();
+
+                let mut result = serde_json::json!({
+                    "style": serde_json::to_value(&style).unwrap_or_default(),
+                    "count": citations.len(),
+                    "citations": citations,
+                });
+                // Ontology-concept key: the dcterms:references concept labels
+                // this result (citations were generated). Routed through the
+                // fixture-guarded bridge constant, not a string literal.
+                result[hkask_bridge_ontology::dc_bibo::REFERENCES] =
+                    serde_json::json!("citations_generated");
+                Ok(result)
+            },
+        )
+        .await
+    }
+}
+
+// ── Entry point ──
+
+/// Run the research MCP server (used by binary target).
+pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
+    // Resolve the inference port before entering the sync server-
+    // construction closure. `resolve_inference_port` is async (it constructs
+    // a `LazyInferencePort` — the bridge connection itself is deferred to
+    // each call, which re-tries the socket); the closure passed to
+    // `run_server` is sync, so the await must happen here. Used by the deep
+    // strategy's LLM rerank stage.
+    let inference_port = hkask_inference::resolve_inference_port().await;
+    hkask_mcp_server::run_server(
+        "hkask-mcp-research",
+        SERVER_VERSION,
+        |ctx: ServerContext| {
+            let cache_ttl = hkask_mcp_server::parse_env_warn(
+                "HKASK_WEB_CACHE_TTL_SECS",
+                DEFAULT_CACHE_TTL_SECS,
+            )
+            .min(MAX_CACHE_TTL_SECS);
+            let cache_max = hkask_mcp_server::parse_env_warn(
+                "HKASK_WEB_CACHE_MAX_ENTRIES",
+                DEFAULT_CACHE_MAX_ENTRIES,
+            )
+            .min(MAX_CACHE_MAX_ENTRIES);
+
+            let pool = build_provider_pool(&ctx.credentials).map_err(|e| {
+                hkask_mcp_server::McpError::UnexpectedResponse {
+                    context: "research server init".into(),
+                    detail: e.to_string(),
+                }
+            })?;
+
+            let research_db = {
+                // Databases live in the internal data dir (the ONLY thing that
+                // lives there — artifact files and outputs go to the visible
+                // artifacts dir under {server}-mcp/{artifact-type}/). Default
+                // DB path is `{kask_data_dir}/mcp/research/research.db`, resolved
+                // via `resolve_under_data_dir`. Override via `HKASK_RESEARCH_DB`.
+                // The DB is plaintext SQLite by recorded design decision
+                // (operator ruling 2026-09-29, F-P1): MCP-server data stays
+                // unencrypted so this server runs in an independent
+                // MCP-server pattern without the zed keychain or
+                // HKASK_DB_PASSPHRASE.
+                let research_db_path = std::env::var("HKASK_RESEARCH_DB").ok().unwrap_or_else(|| {
+                    let default_path = hkask_types::agent_paths::resolve_under_data_dir(
+                        &hkask_types::agent_paths::mcp_server_db("research", "research"),
+                    );
+                    if let Some(parent) = default_path.parent() {
+                        if let Err(error) = std::fs::create_dir_all(parent) {
+                            tracing::warn!(
+                                target: "hkask.research.init",
+                                path = %default_path.display(),
+                                %error,
+                                "Failed to create default research DB directory \
+                                 — the subsequent DB open will surface the failure"
+                            );
+                        }
+                    }
+                    tracing::info!(
+                        target: "hkask.research.init",
+                        path = %default_path.display(),
+                        "Using default research database path (HKASK_RESEARCH_DB not set)"
+                    );
+                    default_path.to_string_lossy().to_string()
+                });
+
+                // Resolve passphrase via the canonical 2-tier chain
+                // (ctx.credentials → resolve_credential which does env → keychain).
+                let passphrase = match resolve_db_passphrase(&ctx.credentials) {
+                    Ok(passphrase) => Some(passphrase),
+                    Err(error) => {
+                        tracing::warn!(
+                            target = "hkask.research.init",
+                            %error,
+                            "Falling back to no research database. RSS and research-run tools will be unavailable."
+                        );
+                        None
+                    }
+                };
+
+                match passphrase {
+                    Some(passphrase) => {
+                        match hkask_storage::Database::open_with_extensions(
+                            &research_db_path,
+                            &passphrase,
+                            db::RESEARCH_SCHEMA_DDL,
+                        ) {
+                            Ok(db) => db
+                                .sqlite_pool()
+                                .map_err(|e| {
+                                    // Opened-but-broken must not read as "not
+                                    // configured" — warn so the operator can
+                                    // distinguish the two.
+                                    tracing::warn!(
+                                        target = "hkask.research.init",
+                                        error = %e,
+                                        path = %research_db_path,
+                                        "Research database opened but pool extraction failed — \
+                                         RSS and research-run tools will be unavailable"
+                                    );
+                                    e
+                                })
+                                .ok(),
+                            Err(e) => {
+                                tracing::warn!(
+                                    target = "hkask.research.init",
+                                    error = %e,
+                                    path = %research_db_path,
+                                    "Failed to open research database — RSS and research-run tools will be \
+                                     unavailable. Check HKASK_RESEARCH_DB path and \
+                                     HKASK_DB_PASSPHRASE."
+                                );
+                                None
+                            }
+                        }
+                    }
+                    None => None,
+                }
+            };
+
+            let rss_client = Client::builder()
+                .user_agent(format!("hkask-mcp-research/{}", SERVER_VERSION))
+                .build()
+                .map_err(|e| hkask_mcp_server::McpError::UnexpectedResponse {
+                    context: "research rss client build".into(),
+                    detail: e.to_string(),
+                })?;
+
+            // Strict-policy fetch client for `rss_discover_feeds` — every
+            // redirect hop and every connect-time resolution gated.
+            let discover_client = validated_fetch_client().map_err(|e| {
+                hkask_mcp_server::McpError::UnexpectedResponse {
+                    context: "research discover client build".into(),
+                    detail: e.to_string(),
+                }
+            })?;
+
+            // Resolve the inference port for the deep strategy's LLM rerank.
+            // Resolved above (before the sync construction closure); the lazy
+            // port re-tries the bridge on each call, so a socket that appears
+            // after server start is picked up without a restart.
+            Ok(ResearchServer::new(
+                ctx.webid,
+                Arc::new(pool),
+                Arc::new(ResponseCache::new(
+                    cache_max,
+                    Duration::from_secs(cache_ttl),
+                )),
+                RateLimiter::new(RATE_LIMIT_MAX_REQUESTS, RATE_LIMIT_WINDOW_SECS),
+                research_db,
+                rss_client,
+                discover_client,
+                inference_port.clone(),
+                // The visible settings chain, resolved once at the
+                // construction seam (no hidden constant — the operator's
+                // no-hidden-models spec).
+                hkask_inference::model_constants::rerank_model(),
+                // The embedding model for the semantic duplication tier —
+                // same construction-seam resolution; unset is a legitimate
+                // degraded mode (the shingle floor exists).
+                hkask_inference::model_constants::embedding_model(),
+            ))
+        },
+        credential_requirements(),
+    )
+    .await
+}
+
+pub(crate) fn credential_requirements() -> Vec<CredentialRequirement> {
+    let opt = CredentialRequirement::optional;
+    vec![
+        opt("HKASK_BRAVE_API_KEY", "Brave Search API key"),
+        opt("HKASK_FIRECRAWL_API_KEY", "Firecrawl API key"),
+        opt("HKASK_TAVILY_API_KEY", "Tavily API key"),
+        opt("HKASK_SERPAPI_API_KEY", "SerpAPI key"),
+        opt("HKASK_EXA_API_KEY", "Exa API key"),
+        opt(
+            "HKASK_DB_PASSPHRASE",
+            "SQLCipher passphrase for the research DB — RSS and research-run tools are unavailable without it (the DB opens at its default path; HKASK_RESEARCH_DB only overrides the location)",
+        ),
+    ]
+}
+
+// Pins the registered tool-surface count end-to-end against the router the
+// `#[tool_router(server_handler)]` block generates. Adding or removing a
+// research tool is an intentional surface change — this pin catches
+// accidental drift (a dropped `#[tool]` attribute, a registration change)
+// instead of shipping as an undocumented surface change. Mirrors
+// the shared `tool_surface_pin!` macro every built-in server carries.
+#[cfg(test)]
+mod tool_surface_tests {
+    use super::{ResearchServer, validate_extraction};
+
+    /// expect: "A JSON request cannot succeed with Markdown, raw PDF, or invalid JSON."
+    #[test]
+    fn extraction_contract_rejects_wrong_format_and_binary() {
+        assert!(validate_extraction("json", Some("markdown"), Some("some text")).is_err());
+        assert!(validate_extraction("json", Some("json"), Some("%PDF-1.6 raw bytes")).is_err());
+        assert!(validate_extraction("json", Some("json"), Some("not JSON")).is_err());
+        assert!(validate_extraction("json", Some("json"), Some("{\"title\":\"ok\"}")).is_ok());
+        assert!(validate_extraction("markdown", Some("markdown"), Some("ordinary text")).is_ok());
+    }
+
+    /// expect: unsupported strategy and duplication values are not advertised
+    /// by the actual MCP tool schemas; optional null remains accepted.
+    #[test]
+    fn registered_research_tools_constrain_optional_input_values() {
+        let tools = ResearchServer::tool_router().list_all();
+        for (name, field, values) in [
+            (
+                "web_search",
+                "strategy",
+                serde_json::json!(["quick", "web", "semantic", "news", "deep", "research"]),
+            ),
+            (
+                "evaluate_evidence",
+                "duplication",
+                serde_json::json!(["semantic"]),
+            ),
+        ] {
+            let tool = tools
+                .iter()
+                .find(|tool| tool.name == name)
+                .expect("tool registered");
+            let schema = serde_json::to_value(&tool.input_schema).expect("tool input schema");
+            assert_eq!(schema["properties"][field]["anyOf"][0]["enum"], values);
+            assert_eq!(schema["properties"][field]["anyOf"][1]["type"], "null");
+        }
+        // Required closed-vocabulary fields carry the enum directly (no
+        // null arm): cite_sources style.
+        let cite = tools
+            .iter()
+            .find(|tool| tool.name == "cite_sources")
+            .expect("cite_sources registered");
+        let cite_schema = serde_json::to_value(&cite.input_schema).expect("tool input schema");
+        assert_eq!(
+            cite_schema["properties"]["style"]["enum"],
+            serde_json::json!(["apa", "bibtex", "chicago", "json"])
+        );
+    }
+
+    include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
+    hkask_mcp_server::tool_surface_pin!(
+        ResearchServer::tool_router(),
+        "tool_router",
+        27,
+        tool_surface_is_exactly_27_registered_tools,
+    );
+}

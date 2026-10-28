@@ -1,0 +1,582 @@
+//! Document admission contracts at the public corpus_convert boundary.
+use super::ConvertRequest;
+use crate::CorpusServer;
+use hkask_types::template::LLMParameters;
+use hkask_types::{ChatToolDefinition, InferenceError, InferencePort, InferenceResult};
+use rmcp::handler::server::wrapper::Parameters;
+use std::io::{Seek, Write};
+use std::{future::Future, path::Path, pin::Pin, sync::Arc};
+
+fn server() -> CorpusServer {
+    crate::helpers::corpus_test_server(Arc::new(crate::helpers::NoInference(
+        "native document fixtures must not invoke inference",
+    )))
+}
+
+fn fixture() -> anyhow::Result<tempfile::TempDir> {
+    let root = std::env::current_dir()?.join("target/document-test");
+    std::fs::create_dir_all(&root)?;
+    Ok(tempfile::tempdir_in(root)?)
+}
+
+fn request(path: &Path, output: &Path) -> ConvertRequest {
+    ConvertRequest {
+        path: path.to_string_lossy().into_owned(),
+        output: Some(output.to_string_lossy().into_owned()),
+        force_ocr: false,
+        target_pages: None,
+        include_structure: None,
+        pdf_text_order: super::PdfTextOrder::Layout,
+    }
+}
+
+/// A CorpusServer whose OCR vision port always returns `response` — the
+/// construction the OCR protocol tests share (VisionPort + executor +
+/// server under the fixture template-root label), varying exactly the
+/// response body. Tests that assert on the port's call counter keep their
+/// inline construction (they need the handle).
+fn ocr_response_server(response: String) -> CorpusServer {
+    let port: Arc<dyn InferencePort> = Arc::new(VisionPort {
+        calls: 0.into(),
+        response,
+    });
+    let ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(port.clone()));
+    CorpusServer::new(
+        hkask_types::WebID::new(),
+        Some("fixture/ocr".into()),
+        port,
+        Default::default(),
+        ocr,
+    )
+}
+
+/// The staged-OCR fixture: sources/output/staging dirs under one tempdir,
+/// an 80-term book.txt in sources and its staged book.txt.txt twin — the
+/// prologue the staged-resume tests share. Returns
+/// (dir, sources, output, staging, text); the per-test report construction
+/// stays inline. The dir binding keeps the TempDir alive for the test.
+fn staged_ocr_fixture() -> anyhow::Result<(
+    tempfile::TempDir,
+    std::path::PathBuf,
+    std::path::PathBuf,
+    std::path::PathBuf,
+    String,
+)> {
+    let dir = fixture()?;
+    let sources = dir.path().join("sources");
+    let output = dir.path().join("extracted");
+    let staging = dir.path().join("extracted-ocr-staging");
+    std::fs::create_dir(&sources)?;
+    std::fs::create_dir(&staging)?;
+    let text = (0..80)
+        .map(|n| format!("term {n}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    std::fs::write(sources.join("book.txt"), &text)?;
+    std::fs::write(staging.join("book.txt.txt"), &text)?;
+    Ok((dir, sources, output, staging, text))
+}
+
+// An unreferenced sparse stream makes the PDF large without a large test
+// allocation. Real Poppler still reads the xref and the native page content.
+fn large_native_pdf(path: &Path) -> anyhow::Result<()> {
+    let mut file = std::fs::File::create(path)?;
+    file.write_all(b"%PDF-1.4\n")?;
+    let mut offsets = Vec::new();
+    let mut text =
+        String::from("1 0 0 rg 40 400 100 100 re f\n0 0 0 rg\nBT /F1 12 Tf 40 760 Td 16 TL\n");
+    for line in 0..12 {
+        text.push_str(&format!("(Source line {line} explains how evidence supports careful decisions about systems and their observed behavior.) Tj T*\n"));
+    }
+    text.push_str("ET\n");
+    for (id, body) in [
+        (1, "<< /Type /Catalog /Pages 2 0 R >>".to_string()),
+        (2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string()),
+        (3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>".to_string()),
+        (4, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string()),
+        (5, format!("<< /Length {} >>\nstream\n{text}endstream", text.len())),
+    ] {
+        offsets.push(file.stream_position()?);
+        writeln!(file, "{id} 0 obj\n{body}\nendobj")?;
+    }
+    offsets.push(file.stream_position()?);
+    let padding = crate::path_safety::MAX_READ_BYTES + 1;
+    writeln!(file, "6 0 obj\n<< /Length {padding} >>\nstream")?;
+    let end = file.stream_position()? + padding;
+    file.set_len(end)?;
+    file.seek(std::io::SeekFrom::Start(end))?;
+    file.write_all(b"\nendstream\nendobj\n")?;
+    let xref = file.stream_position()?;
+    file.write_all(b"xref\n0 7\n0000000000 65535 f \n")?;
+    for offset in offsets {
+        writeln!(file, "{offset:010} 00000 n ")?;
+    }
+    writeln!(
+        file,
+        "trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF"
+    )?;
+    Ok(())
+}
+
+/// expect: a two-column source can read one column at a time without changing every PDF's default.
+#[tokio::test]
+async fn pdf_raw_order_reads_column_source_sequentially() -> anyhow::Result<()> {
+    let dir = fixture()?;
+    let input = dir.path().join("columns.pdf");
+    let mut file = std::fs::File::create(&input)?;
+    file.write_all(b"%PDF-1.4\n")?;
+    let mut offsets = Vec::new();
+    let mut stream = String::from("BT /F1 10 Tf 40 760 Td 18 TL\n");
+    for line in 0..10 {
+        stream.push_str(&format!(
+            "(Left column {} interview evidence stays with its explanation.) Tj T*\n",
+            if line == 0 { "begins" } else { "continues" }
+        ));
+    }
+    stream.push_str("ET\nBT /F1 10 Tf 325 760 Td 18 TL\n");
+    for line in 0..10 {
+        stream.push_str(&format!(
+            "(Right column {} independent coding evidence and procedure.) Tj T*\n",
+            if line == 0 { "begins" } else { "continues" }
+        ));
+    }
+    stream.push_str("ET\n");
+    for (id, body) in [
+        (1, "<< /Type /Catalog /Pages 2 0 R >>".to_string()),
+        (2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string()),
+        (3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>".to_string()),
+        (4, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string()),
+        (5, format!("<< /Length {} >>\nstream\n{stream}endstream", stream.len())),
+    ] {
+        offsets.push(file.stream_position()?);
+        writeln!(file, "{id} 0 obj\n{body}\nendobj")?;
+    }
+    let xref = file.stream_position()?;
+    file.write_all(b"xref\n0 6\n0000000000 65535 f \n")?;
+    for offset in offsets {
+        writeln!(file, "{offset:010} 00000 n ")?;
+    }
+    writeln!(
+        file,
+        "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF"
+    )?;
+    drop(file);
+
+    let raw_output = dir.path().join("raw.txt");
+    let layout_output = dir.path().join("layout.txt");
+    let mut raw_request = request(&input, &raw_output);
+    raw_request.pdf_text_order = super::PdfTextOrder::Raw;
+    let raw_report = server().corpus_convert(Parameters(raw_request)).await?;
+    let raw_report =
+        hkask_types::tool_response::unwrap_tool_envelope(serde_json::from_str(&raw_report)?);
+    assert_eq!(raw_report["output"], raw_output.to_string_lossy().as_ref());
+    assert_eq!(raw_report["pdf_text_order"], "raw");
+    let layout_report = server()
+        .corpus_convert(Parameters(request(&input, &layout_output)))
+        .await?;
+    let layout_report =
+        hkask_types::tool_response::unwrap_tool_envelope(serde_json::from_str(&layout_report)?);
+    assert_eq!(
+        layout_report["output"],
+        layout_output.to_string_lossy().as_ref()
+    );
+    assert_eq!(layout_report["pdf_text_order"], "layout");
+    let raw = std::fs::read_to_string(raw_output)?;
+    let layout = std::fs::read_to_string(layout_output)?;
+    let raw_left_end = raw
+        .find("Left column continues")
+        .ok_or_else(|| anyhow::anyhow!("left-column continuation missing"))?;
+    let raw_right_start = raw
+        .find("Right column begins")
+        .ok_or_else(|| anyhow::anyhow!("right-column start missing"))?;
+    assert!(
+        raw_left_end < raw_right_start,
+        "raw order must preserve the left column before the right: {raw}"
+    );
+    let layout_right_start = layout
+        .find("Right column begins")
+        .ok_or_else(|| anyhow::anyhow!("layout right-column start missing"))?;
+    assert!(
+        layout_right_start
+            < layout
+                .find("Left column continues")
+                .ok_or_else(|| anyhow::anyhow!("layout left-column continuation missing"))?,
+        "fixture must discriminate layout from raw: {layout}"
+    );
+    Ok(())
+}
+
+/// expect: a PDF-only reading-order choice never silently changes text or batch conversion.
+#[tokio::test]
+async fn pdf_raw_order_rejects_non_pdf_and_directory() -> anyhow::Result<()> {
+    let dir = fixture()?;
+    let text = dir.path().join("notes.txt");
+    std::fs::write(&text, "Substantive source prose for a non-PDF conversion.")?;
+    for input in [&text, dir.path()] {
+        let mut request = request(input, &dir.path().join("rejected.txt"));
+        request.pdf_text_order = super::PdfTextOrder::Raw;
+        let result = server().corpus_convert(Parameters(request)).await;
+        assert!(result.is_err(), "raw order must reject {}", input.display());
+        assert!(!dir.path().join("rejected.txt").exists());
+    }
+    Ok(())
+}
+
+/// expect: requesting native PDF text order cannot claim it was applied when OCR bypasses native extraction.
+#[tokio::test]
+async fn pdf_raw_order_rejects_forced_ocr_before_output() -> anyhow::Result<()> {
+    let dir = fixture()?;
+    let input = dir.path().join("native.pdf");
+    large_native_pdf(&input)?;
+    let output = dir.path().join("rejected.txt");
+    let mut request = request(&input, &output);
+    request.pdf_text_order = super::PdfTextOrder::Raw;
+    request.force_ocr = true;
+    let error = server()
+        .corpus_convert(Parameters(request))
+        .await
+        .expect_err("raw text order must not be accepted for forced OCR");
+    assert!(
+        error
+            .to_json_string()
+            .contains("OCR does not use PDF text order")
+    );
+    assert!(!output.exists());
+    Ok(())
+}
+
+/// expect: [P7] Every approved book can use normal conversion, even when PDF bytes exceed the text-input cap.
+/// pre: a contained native-text PDF larger than MAX_READ_BYTES, with Poppler installed.
+/// post: directory conversion writes its extracted text without inference or scope loss.
+/// inv: the input document remains unchanged.
+#[tokio::test]
+async fn large_pdf_converts_through_directory_without_ocr() -> anyhow::Result<()> {
+    let dir = fixture()?;
+    let sources = dir.path().join("sources");
+    let output = dir.path().join("extracted");
+    std::fs::create_dir(&sources)?;
+    let pdf = sources.join("large.pdf");
+    large_native_pdf(&pdf)?;
+    let original_size = std::fs::metadata(&pdf)?.len();
+    assert!(original_size > crate::path_safety::MAX_READ_BYTES);
+    let result = server()
+        .corpus_convert(Parameters(request(&sources, &output)))
+        .await?;
+    let result = hkask_types::tool_response::unwrap_tool_envelope(serde_json::from_str(&result)?);
+    assert_eq!(result["failed"], 0, "{result}");
+    assert_eq!(result["source_documents"], 1);
+    assert_eq!(result["extracted"], 1);
+    let text = std::fs::read_to_string(output.join("large.pdf.txt"))?;
+    assert!(text.contains("Source line 0 explains"));
+    assert!(text.contains("Source line 11 explains"));
+    assert_eq!(std::fs::metadata(&pdf)?.len(), original_size);
+    Ok(())
+}
+
+const PAGE_HEADER: &str = "---\nprimary_language: en\nis_rotation_valid: true\nrotation_correction: 0\nis_table: false\nis_diagram: false\n---\n";
+
+struct VisionPort {
+    calls: std::sync::atomic::AtomicUsize,
+    response: String,
+}
+impl InferencePort for VisionPort {
+    fn generate(
+        &self,
+        _: &str,
+        _: &LLMParameters,
+        _: Option<&[ChatToolDefinition]>,
+    ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>> {
+        panic!("OCR must use the vision route")
+    }
+
+    fn list_models(
+        &self,
+    ) -> Pin<
+        Box<dyn Future<Output = Result<Vec<hkask_types::ModelEntry>, InferenceError>> + Send + '_>,
+    > {
+        Box::pin(async {
+            Ok(vec![hkask_types::ModelEntry {
+                prefixed_name: "fixture/ocr".into(),
+                model: "ocr".into(),
+                supports_vision: true,
+            }])
+        })
+    }
+
+    fn generate_vision(
+        &self,
+        _: &str,
+        _: &[String],
+        _: &LLMParameters,
+        model: Option<&str>,
+    ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>> {
+        assert_eq!(model, Some("fixture/ocr"));
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async {
+            Ok(InferenceResult {
+                text: self.response.clone(),
+                model: "fixture/ocr".into(),
+                usage: hkask_types::InferenceUsage {
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    total_tokens: 0,
+                    reported: false,
+                },
+                finish_reason: "stop".into(),
+                tool_calls: vec![],
+                reasoning: None,
+                cost_usd: None,
+            })
+        })
+    }
+}
+
+/// expect: [P7] OCR preserves transcribed text and reports model figure annotations separately, never as created files or source quotations.
+#[tokio::test]
+async fn ocr_protocol_separates_page_text_and_annotations() -> anyhow::Result<()> {
+    crate::helpers::seed_registry_template_root();
+    let dir = fixture()?;
+    let input = dir.path().join("control.png");
+    crate::helpers::inked_page().save(&input)?;
+    let body = "The pump runs for seventeen minutes.\n\n![Pump diagram](page_0_0_100_100.png)\n\nThe gauge reads five bars.";
+    let server = ocr_response_server(format!("{PAGE_HEADER}{body}"));
+    let output = dir.path().join("text.txt");
+    let mut request = request(&input, &output);
+    request.force_ocr = true;
+    let result = server.corpus_convert(Parameters(request)).await?;
+    let result = hkask_types::tool_response::unwrap_tool_envelope(serde_json::from_str(&result)?);
+    let text = std::fs::read_to_string(output)?;
+    assert_eq!(
+        text.split_whitespace().collect::<Vec<_>>().join(" "),
+        "The pump runs for seventeen minutes. The gauge reads five bars."
+    );
+    assert_eq!(
+        result["page_reports"][0]["metadata"]["primary_language"],
+        "en"
+    );
+    assert_eq!(
+        result["page_reports"][0]["figure_annotations"][0]["description"],
+        "Pump diagram"
+    );
+    assert_eq!(
+        result["page_reports"][0]["figure_annotations_provenance"],
+        "model_inference"
+    );
+    assert_eq!(result["page_reports"][0]["figure_artifacts_created"], false);
+    let second = server
+        .corpus_ocr(Parameters(super::OcrRequest {
+            path: input.to_string_lossy().into_owned(),
+            model: None,
+        }))
+        .await?;
+    let second = hkask_types::tool_response::unwrap_tool_envelope(serde_json::from_str(&second)?);
+    assert_eq!(
+        second["text"]
+            .as_str()
+            .expect("corpus_ocr returns text")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" "),
+        text.split_whitespace().collect::<Vec<_>>().join(" ")
+    );
+    assert_eq!(second["page_reports"], result["page_reports"]);
+    Ok(())
+}
+
+/// expect: [P4] A rejected page response cannot create a purported extraction file.
+#[tokio::test]
+async fn ocr_protocol_rejects_bad_page_before_output() -> anyhow::Result<()> {
+    crate::helpers::seed_registry_template_root();
+    let dir = fixture()?;
+    let input = dir.path().join("control.png");
+    crate::helpers::inked_page().save(&input)?;
+    for (index, response) in [
+        "legacy plain text".to_string(),
+        format!("{PAGE_HEADER}![Bad](https://example.com/fake.png)"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let server = ocr_response_server(response);
+        let output = dir.path().join(format!("rejected-{index}.txt"));
+        let mut request = request(&input, &output);
+        request.force_ocr = true;
+        let error = server
+            .corpus_convert(Parameters(request))
+            .await
+            .expect_err("invalid page response");
+        assert!(error.to_string().contains("page protocol"), "{error}");
+        assert!(!output.exists());
+    }
+    Ok(())
+}
+
+/// expect: [P4] Page rendering preserves color and treats its bound as pixels, not DPI.
+#[tokio::test]
+async fn ocr_page_rendering_preserves_color_with_pixel_bound() -> anyhow::Result<()> {
+    let dir = fixture()?;
+    let input = dir.path().join("control.pdf");
+    large_native_pdf(&input)?;
+    for images in [
+        crate::ocr::decimation::pdf_to_images(&input, 80)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?,
+        crate::ocr::decimation::pdf_to_images_for_pages(&input, 80, &[0])
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?,
+    ] {
+        let image = images.first().expect("rendered page");
+        assert_eq!(image.width().max(image.height()), 80);
+        assert!(image.to_rgb8().pixels().any(|pixel| {
+            let [r, g, b] = pixel.0;
+            r > g && r > b
+        }));
+    }
+    Ok(())
+}
+
+/// expect: [P7] A real OCR execution persists its report and resumes without paying for OCR again.
+#[tokio::test]
+async fn staged_ocr_report_round_trips_without_reinference() -> anyhow::Result<()> {
+    crate::helpers::seed_registry_template_root();
+    let dir = fixture()?;
+    let sources = dir.path().join("sources");
+    let output = dir.path().join("extracted");
+    std::fs::create_dir(&sources)?;
+    large_native_pdf(&sources.join("book.pdf"))?;
+    let port = Arc::new(VisionPort {
+        calls: 0.into(),
+        response: format!(
+            "{PAGE_HEADER}{}",
+            (0..80)
+                .map(|n| format!("term {n}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        ),
+    });
+    let inference: Arc<dyn InferencePort> = port.clone();
+    let ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(inference.clone()));
+    let server = CorpusServer::new(
+        hkask_types::WebID::new(),
+        Some("fixture/ocr".into()),
+        inference,
+        Default::default(),
+        ocr,
+    );
+    let mut first = request(&sources, &output);
+    first.force_ocr = true;
+    let first = server.corpus_convert(Parameters(first)).await?;
+    let first = hkask_types::tool_response::unwrap_tool_envelope(serde_json::from_str(&first)?);
+    assert_eq!(first["staged"], 1, "{first}");
+    assert_eq!(first["verification_failed"], 0);
+    assert_eq!(first["document_reports"][0]["verification_passed"], true);
+    let calls = port.calls.load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(calls, 1);
+    let second = server
+        .corpus_convert(Parameters(request(&sources, &output)))
+        .await?;
+    let second = hkask_types::tool_response::unwrap_tool_envelope(serde_json::from_str(&second)?);
+    assert_eq!(second["skipped_staged"], 1, "{second}");
+    assert_eq!(second["document_reports"], first["document_reports"]);
+    assert_eq!(port.calls.load(std::sync::atomic::Ordering::SeqCst), calls);
+    let report_path = dir
+        .path()
+        .join("extracted-ocr-staging/book.pdf.report.json");
+    let report: serde_json::Value = serde_json::from_slice(&std::fs::read(&report_path)?)?;
+    for field in ["text", "path", "verification_passed", "ocr_protocol"] {
+        let mut mismatched = report.clone();
+        mismatched[field] = serde_json::Value::Null;
+        std::fs::write(&report_path, serde_json::to_vec(&mismatched)?)?;
+        let rejected = server
+            .corpus_convert(Parameters(request(&sources, &output)))
+            .await?;
+        let rejected =
+            hkask_types::tool_response::unwrap_tool_envelope(serde_json::from_str(&rejected)?);
+        assert_eq!(rejected["failed"], 1, "{field}: {rejected}");
+        assert_eq!(rejected["skipped_staged"], 0);
+        assert_eq!(port.calls.load(std::sync::atomic::Ordering::SeqCst), calls);
+    }
+    assert!(!output.join("book.pdf.txt").exists());
+    Ok(())
+}
+
+/// expect: [P4] A staged OCR extraction without its page verification cannot be resumed as success.
+#[tokio::test]
+async fn staged_ocr_without_report_stays_unverified() -> anyhow::Result<()> {
+    let (_dir, sources, output, staging, text) = staged_ocr_fixture()?;
+    let result = server()
+        .corpus_convert(Parameters(request(&sources, &output)))
+        .await?;
+    let result = hkask_types::tool_response::unwrap_tool_envelope(serde_json::from_str(&result)?);
+    assert_eq!(result["failed"], 1, "{result}");
+    assert_eq!(result["skipped_staged"], 0);
+    assert!(
+        result["failures"]
+            .to_string()
+            .contains("verification report")
+    );
+    assert!(!output.join("book.txt.txt").exists());
+    assert_eq!(std::fs::read_to_string(staging.join("book.txt.txt"))?, text);
+    Ok(())
+}
+
+/// expect: [P4] Resuming staged text must surface its failed per-page verification, not hide it behind whole-file quality.
+#[tokio::test]
+async fn staged_ocr_resume_returns_failed_report() -> anyhow::Result<()> {
+    let (_dir, sources, output, staging, text) = staged_ocr_fixture()?;
+    let source = sources.join("book.txt");
+    let report = serde_json::json!({"path":source,"method":"selective_ocr", "verification_passed":false,
+        "ocr_protocol":crate::ocr::response::OCR_PROTOCOL,
+        "page_count_match":true,"quality_failed_pages":[7],"error_count":0});
+    let mut stored = report.clone();
+    stored["text"] = serde_json::json!(text);
+    std::fs::write(
+        staging.join("book.txt.report.json"),
+        serde_json::to_vec(&stored)?,
+    )?;
+    let result = server()
+        .corpus_convert(Parameters(request(&sources, &output)))
+        .await?;
+    let result = hkask_types::tool_response::unwrap_tool_envelope(serde_json::from_str(&result)?);
+    assert_eq!(result["skipped_staged"], 1, "{result}");
+    assert_eq!(result["verification_failed"], 1, "{result}");
+    assert_eq!(result["document_reports"][0], report);
+    assert!(!output.join("book.txt.txt").exists());
+    Ok(())
+}
+
+/// expect: [P4] Large-document support must not remove the raw-text input safety cap.
+#[tokio::test]
+async fn oversized_text_still_rejected_before_output() -> anyhow::Result<()> {
+    let dir = fixture()?;
+    let input = dir.path().join("large.txt");
+    let output = dir.path().join("output.txt");
+    std::fs::File::create(&input)?.set_len(crate::path_safety::MAX_READ_BYTES + 1)?;
+    let error = server()
+        .corpus_convert(Parameters(request(&input, &output)))
+        .await
+        .expect_err("text cap");
+    assert!(error.to_string().contains("read cap"), "{error}");
+    assert!(!output.exists());
+    Ok(())
+}
+
+/// expect: [P4] PDF path-based extraction must still reject out-of-root documents before creating output.
+#[cfg(unix)]
+#[tokio::test]
+async fn pdf_symlink_escape_rejected_before_output() -> anyhow::Result<()> {
+    let dir = fixture()?;
+    let outside = tempfile::tempdir()?;
+    let pdf = outside.path().join("outside.pdf");
+    large_native_pdf(&pdf)?;
+    let input = dir.path().join("escaped.pdf");
+    std::os::unix::fs::symlink(pdf, &input)?;
+    let output = dir.path().join("output.txt");
+    let error = server()
+        .corpus_convert(Parameters(request(&input, &output)))
+        .await
+        .expect_err("containment");
+    assert!(error.to_string().contains("escapes"), "{error}");
+    assert!(!output.exists());
+    Ok(())
+}

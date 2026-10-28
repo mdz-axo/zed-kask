@@ -1,0 +1,34 @@
+[package]
+name = "hkask-regulation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Cybernetic Nervous System for hKask"
+
+[lib]
+path = "src/hkask_regulation.rs"
+
+[dependencies]
+hkask-types.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+serde_yaml_neo.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+
+parking_lot = { workspace = true }
+
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+
+[dev-dependencies]
+hkask-storage.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true
+

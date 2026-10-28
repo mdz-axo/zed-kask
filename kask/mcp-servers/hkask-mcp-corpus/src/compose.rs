@@ -1,0 +1,626 @@
+//! Style composition — exemplar retrieval, prose generation, centroid validation.
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use hkask_memory::MemoryStore;
+use hkask_types::{InferencePort, template::LLMParameters};
+use serde::Deserialize;
+
+use tracing::debug;
+
+use crate::McpToolError;
+use crate::helpers::{map_embedding_error, map_inference_error};
+
+// ── Cognition configuration ──────────────────────────────────────────────
+
+/// Cognition configuration for the style composition pipeline.
+///
+/// Deserialized from a YAML file that specifies the embedding model,
+/// retrieval parameters, and centroid validation threshold.
+///
+/// Example YAML:
+/// ```yaml
+/// embedding:
+///   model: "OpenRouter/qwen/qwen3-embedding-8b"
+///   dim: 1024
+///   centroid_entity_ref: "style:hemingway:centroid"
+///   retrieval:
+///     k_min: 3
+///     k_max: 7
+///     distance_threshold: 0.50
+/// validation:
+///   centroid_distance_max: 0.35
+/// ```
+#[derive(Debug, Deserialize)]
+pub(crate) struct CognitionConfig {
+    /// Author identifier — used in the system prompt and centroid entity ref.
+    /// When a `jinja2_template` is declared, the author is available as
+    /// `{{ author }}` in the template. When no template is present, the
+    /// author is used in a generic fallback prompt.
+    #[serde(default = "default_author")]
+    pub author: String,
+    pub embedding: EmbeddingSection,
+    pub validation: ValidationSection,
+    /// Jinja2 template for the system prompt. When present, this is rendered
+    /// with context variables (prompt, exemplars, author, rules) and used
+    /// as the system prompt. When absent, falls back to the hardcoded
+    /// Rust function for the author.
+    #[serde(default)]
+    pub jinja2_template: Option<String>,
+}
+
+fn default_author() -> String {
+    "hemingway".to_string()
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct EmbeddingSection {
+    pub model: String,
+    pub dim: usize,
+    pub centroid_entity_ref: String,
+    #[serde(default)]
+    pub retrieval: RetrievalSection,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct RetrievalSection {
+    #[serde(default = "default_k_max")]
+    pub k_max: usize,
+    #[serde(default = "default_distance_threshold")]
+    pub distance_threshold: f64,
+    /// Salience floor: only consider passages with salience >= this value.
+    #[serde(default)]
+    pub salience_min: f64,
+    /// Top-K by salience: only consider the K most salient matching passages.
+    #[serde(default)]
+    pub salience_top_k: Option<usize>,
+    /// Require every configured per-signal threshold of this declared method.
+    /// Missing method metadata excludes a passage; omitted declaration preserves retrieval.
+    #[serde(default)]
+    pub declared_method: Option<hkask_memory::salience::DeclaredMethod>,
+}
+
+impl Default for RetrievalSection {
+    fn default() -> Self {
+        Self {
+            k_max: default_k_max(),
+            distance_threshold: default_distance_threshold(),
+            salience_min: 0.0,
+            salience_top_k: None,
+            declared_method: None,
+        }
+    }
+}
+
+fn default_k_max() -> usize {
+    7
+}
+fn default_distance_threshold() -> f64 {
+    0.50
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ValidationSection {
+    pub centroid_distance_max: f64,
+}
+
+// ── Request / Response types ────────────────────────────────────────────
+
+/// Input for `ComposeService::compose()`.
+pub(crate) struct ComposeRequest {
+    /// The user's prompt for prose generation.
+    pub prompt: String,
+    /// Path to the per-agent semantic database.
+    pub db_path: PathBuf,
+    /// Passphrase for opening the database.
+    pub db_passphrase: String,
+    /// Parsed cognition configuration.
+    pub cognition: CognitionConfig,
+    pub inference: Arc<dyn InferencePort>,
+    /// Operator-selected generation model, independent of the embedding model.
+    pub generation_model: String,
+    /// Skip centroid distance validation.
+    pub no_validate: bool,
+}
+
+/// Result of a style composition operation.
+pub(crate) struct ComposeResult {
+    /// The generated prose text.
+    pub generated_prose: String,
+    /// Number of exemplar passages used.
+    pub exemplar_count: usize,
+    /// Candidates excluded because no stored method signals were available.
+    pub method_signals_missing: usize,
+    /// Exemplar candidates the model gate excluded — stored under a
+    /// different embedding model than the query. Surfaced so a model
+    /// migration reads as degraded exemplar retrieval, never as a
+    /// mysteriously small exemplar set.
+    pub excluded_model_mismatch: usize,
+    /// Centroid validation result (None if skipped or the centroid is absent).
+    pub validation: Option<CentroidValidation>,
+    /// Validation was requested, but its configured centroid does not exist.
+    pub centroid_missing: bool,
+}
+
+/// Centroid distance validation result.
+pub(crate) struct CentroidValidation {
+    /// Cosine distance between generated prose and style centroid.
+    pub distance: f64,
+
+    /// Whether the prose passes validation (distance <= threshold).
+    pub passed: bool,
+}
+
+/// Input for `ComposeService::style_centroid()`.
+pub(crate) struct CentroidComputeRequest {
+    /// Path to the corpus database.
+    pub db_path: PathBuf,
+    /// Passphrase for opening the database.
+    pub db_passphrase: String,
+    /// Author identifier for the default source prefix and destination.
+    pub author: String,
+    /// Optional quality dimension for the destination centroid.
+    pub dimension: Option<String>,
+    /// Existing source refs; None preserves author-prefix selection.
+    pub entity_refs: Option<Vec<String>>,
+    /// Embedding model name recorded on the stored centroid.
+    pub model: String,
+    /// Embedding dimension — must match the stored vectors' dimension.
+    pub dim: usize,
+}
+
+/// Result of a style-centroid computation.
+pub(crate) struct CentroidComputeResult {
+    /// Number of passage embeddings averaged into the centroid.
+    pub passage_count: usize,
+    /// Whether the centroid was stored under `centroid_entity_ref`.
+    pub stored: bool,
+    /// The entity ref the centroid is stored under.
+    pub centroid_entity_ref: String,
+}
+
+pub(crate) fn style_centroid_ref(author: &str, dimension: Option<&str>) -> String {
+    match dimension {
+        Some(dimension) => format!("style:{author}:{dimension}:centroid"),
+        None => format!("style:{author}:centroid"),
+    }
+}
+
+fn open_style_memory_store(
+    db_path: &std::path::Path,
+    db_passphrase: &str,
+    dim: usize,
+) -> Result<MemoryStore, McpToolError> {
+    MemoryStore::open_existing(&db_path.to_string_lossy(), db_passphrase, dim)
+        .map_err(|error| McpToolError::invalid_argument(error.to_string()))
+}
+
+// ── Service ──────────────────────────────────────────────────────────────
+
+/// Style composition service — exemplar retrieval, prose generation, centroid validation.
+pub(crate) struct ComposeService;
+
+impl ComposeService {
+    /// Execute the full style composition pipeline.
+    ///
+    /// \[P5\] Motivating: Essentialism — service-layer orchestration earns its existence; no raw domain logic.
+    /// pre:  request.db_path must point to a valid database; request.prompt must be non-empty; request.cognition must have valid embedding config
+    /// post: returns ComposeResult with generated_prose, exemplar_count, and optional CentroidValidation; Err on DB open failure, embedding failure, or inference failure
+    /// # REQ: P3-svc-compose-001 — compose returns generated prose with exemplar retrieval
+    /// # expect: "The service layer enables generative access to domain capabilities"
+    /// # REQ: P3-svc-compose-002 — compose validates centroid distance when no_validate is false
+    /// # expect: "The service layer enables generative access to domain capabilities"
+    /// # REQ: P3-svc-compose-003 — compose returns validation=None when no_validate is true
+    /// # expect: "The service layer enables generative access to domain capabilities"
+    /// # REQ: P3-svc-compose-004 — compose uses Jinja2 template from cognition config
+    /// # expect: "The service layer enables generative access to domain capabilities"
+    #[must_use = "result must be used"]
+    pub async fn compose(request: ComposeRequest) -> Result<ComposeResult, McpToolError> {
+        if request
+            .cognition
+            .embedding
+            .retrieval
+            .declared_method
+            .as_ref()
+            .is_some_and(|method| method.threshold.is_some())
+        {
+            return Err(McpToolError::invalid_argument(
+                "declared_method.threshold is unsupported; configure per-signal thresholds in declared_method.signal",
+            ));
+        }
+        // Input length validation
+        if request.prompt.len() > 50_000 {
+            return Err(McpToolError::invalid_argument(format!(
+                "Prompt exceeds 50KB limit (received {} bytes)",
+                request.prompt.len()
+            )));
+        }
+
+        // 1. Open DB + construct memory infrastructure
+        let store = open_style_memory_store(
+            &request.db_path,
+            &request.db_passphrase,
+            request.cognition.embedding.dim,
+        )?;
+
+        // 2. Embed the prompt through the injected port, reused for generation
+        // and centroid validation below.
+        let inference = &request.inference;
+        let prompt_batch = inference
+            .embed_with_dimensions(
+                &request.cognition.embedding.model,
+                std::slice::from_ref(&request.prompt),
+                Some(crate::embedding_dim() as u32),
+            )
+            .await
+            .map_err(map_embedding_error)?;
+        let prompt_vector = prompt_batch
+            .vectors
+            .into_iter()
+            .next()
+            .ok_or(hkask_types::EmbeddingGenerationError::EmptyResponse)
+            .map_err(map_embedding_error)?;
+
+        // 3. KNN search for exemplar passages, gated on model identity
+        let outcome = store
+            .search_similar(
+                &prompt_vector,
+                request.cognition.embedding.retrieval.k_max,
+                &request.cognition.embedding.model,
+                prompt_batch.actual_model.as_deref(),
+            )
+            .map_err(|error| McpToolError::invalid_argument(error.to_string()))?;
+        if outcome.excluded_model_mismatch > 0 {
+            tracing::warn!(
+                target: "hkask.mcp.corpus.compose",
+                excluded = outcome.excluded_model_mismatch,
+                query_model = %request.cognition.embedding.model,
+                "Exemplar KNN excluded stored embeddings from a different model — re-embed pending"
+            );
+        }
+        let results = outcome.results;
+
+        // Debug: log top-5 distances regardless of threshold to diagnose retrieval gaps
+        if !results.is_empty() {
+            let top_n = results.iter().take(5.min(results.len()));
+            debug!(
+                "KNN search returned {} results. Top-{} distances: [{}]",
+                results.len(),
+                top_n.len(),
+                top_n
+                    .map(|r| format!("{:.4}", r.distance))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        } else {
+            debug!("KNN search returned 0 results — corpus may be empty or unembedded");
+        }
+
+        // 4. Filter by prefix, centroid exclusion, rule exclusion, distance threshold
+        let prefix = format!("style:{}", request.cognition.author);
+        let retrieval = &request.cognition.embedding.retrieval;
+        let mut matched: Vec<(f64, String, f64)> = Vec::new(); // (distance, entity_ref, salience)
+        let mut method_signals_missing = 0;
+
+        for r in &results {
+            if !r.embedding.entity_ref.starts_with(&prefix)
+                || r.embedding.entity_ref == request.cognition.embedding.centroid_entity_ref
+                || !hkask_types::corpus::is_corpus_passage_ref(&r.embedding.entity_ref)
+                || r.distance > retrieval.distance_threshold
+            {
+                continue;
+            }
+
+            let h_mems = match store.query_deduped(&r.embedding.entity_ref) {
+                Ok(h_mems) => h_mems,
+                Err(error) => {
+                    if retrieval.declared_method.is_some() {
+                        return Err(McpToolError::invalid_argument(format!(
+                            "Cannot check declared method for {}: {error}",
+                            r.embedding.entity_ref
+                        )));
+                    }
+                    tracing::warn!(target: "hkask.mcp.corpus.compose", entity_ref = %r.embedding.entity_ref, %error,
+                        "Salience lookup failed — treating salience as 0.0");
+                    Vec::new()
+                }
+            };
+            let salience = h_mems
+                .iter()
+                .find(|record| record.attribute == "salience")
+                .and_then(|record| record.value.as_f64())
+                .unwrap_or(0.0);
+            if let Some(method) = &retrieval.declared_method {
+                let Some(record) = h_mems
+                    .iter()
+                    .find(|record| record.attribute == "method_signals")
+                else {
+                    method_signals_missing += 1;
+                    tracing::warn!(target: "hkask.mcp.corpus.compose", entity_ref = %r.embedding.entity_ref,
+                        "Method signals missing — excluding passage; re-embed to enable method-aware retrieval");
+                    continue;
+                };
+                let signals = serde_json::from_value::<hkask_memory::salience::MethodSignals>(
+                    record.value.clone(),
+                )
+                .map_err(|error| {
+                    McpToolError::invalid_argument(format!(
+                        "Invalid method signals for {}: {error}",
+                        r.embedding.entity_ref
+                    ))
+                })?;
+                if !method.matches(&signals) {
+                    continue;
+                }
+            }
+
+            if salience < retrieval.salience_min {
+                continue;
+            }
+
+            matched.push((r.distance, r.embedding.entity_ref.clone(), salience));
+        }
+
+        debug!(
+            "Filtered: {} of {} results passed prefix/distance/salience/method gates (threshold={})",
+            matched.len(),
+            results.len(),
+            retrieval.distance_threshold
+        );
+
+        // Sort by salience descending if salience_top_k is set, then take top K
+        if let Some(top_k) = retrieval.salience_top_k {
+            matched.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+            matched.truncate(top_k);
+        }
+
+        // Extract passage text from h_mems.
+        //
+        // NOTE: Passages in the embedding-only set (not budget-selected for h_mems)
+        // will lack a `text` h_mem and fall back to placeholder strings like
+        // "[work_title: entity_ref]". These are useless as style exemplars.
+        //
+        // Two resolution paths (architectural decision pending):
+        //   (a) Lower the budget threshold so more passages earn h_mem storage.
+        //   (b) Store `text` h_mems for ALL passages regardless of budget, and
+        //       only gate the richer metadata (entity tags, method signals, salience)
+        //       on the budget. The `text` h_mem is ~150 words — tiny compared to
+        //       the 11 method signals and entity tags.
+        let exemplar_passages: Vec<String> = matched
+            .into_iter()
+            .take(retrieval.k_max)
+            .filter_map(|(_distance, entity_ref, _salience)| {
+                match store.query_deduped(&entity_ref) {
+                    Ok(h_mems) => {
+                        let text = h_mems
+                            .iter()
+                            .find(|t| t.attribute == "text")
+                            .and_then(|t| t.value.as_str().map(|s| s.to_string()));
+                        text.or_else(|| {
+                            let work = h_mems
+                                .iter()
+                                .find(|t| t.attribute == "work_title")
+                                .and_then(|t| t.value.as_str());
+                            work.map(|w| {
+                                format!("[{}: {} — passage text not in h_mems]", w, entity_ref)
+                            })
+                        })
+                    }
+                    _ => Some(format!("[passage: {}]", entity_ref)),
+                }
+            })
+            .collect();
+
+        let exemplar_count = exemplar_passages.len();
+
+        // 5. Compose system prompt — Jinja2 template if declared, else generic fallback
+        let system_prompt = if let Some(ref template) = request.cognition.jinja2_template {
+            render_jinja2_prompt(
+                template,
+                &request.cognition.author,
+                &request.prompt,
+                &exemplar_passages,
+                request.no_validate,
+                request.cognition.validation.centroid_distance_max,
+            )?
+        } else {
+            generic_system_prompt(
+                &request.cognition.author,
+                &request.prompt,
+                &exemplar_passages,
+                request.no_validate,
+                request.cognition.validation.centroid_distance_max,
+            )
+        };
+
+        // 6. Keep the operator's generation model separate from the stored
+        // vectors' embedding model and forward it as the port's model override.
+        let params = LLMParameters {
+            temperature: 0.7,
+            top_p: 0.9,
+            top_k: 40,
+            min_p: 0.0,
+            typical_p: 0.0,
+            frequency_penalty: 0.0,
+            presence_penalty: 0.0,
+            seed: None,
+            thinking_allowed: true,
+            system_prompt: None,
+            timeout_hint_secs: None,
+        };
+        let result = inference
+            .generate_with_model(
+                &system_prompt,
+                &params,
+                Some(&request.generation_model),
+                None,
+            )
+            .await
+            .map_err(map_inference_error)?;
+        crate::helpers::record_usage(&result);
+        let generated_prose = result.text.trim().to_string();
+
+        // 7. Only an absent centroid degrades validation; lookup failures are errors.
+        let mut centroid_missing = false;
+        let validation = if request.no_validate {
+            None
+        } else {
+            match store
+                .embedding_store()
+                .get(&request.cognition.embedding.centroid_entity_ref)
+            {
+                Ok(centroid_embedding) => {
+                    let prose_vector = inference
+                        .embed_with_dimensions(
+                            &request.cognition.embedding.model,
+                            std::slice::from_ref(&generated_prose),
+                            Some(crate::embedding_dim() as u32),
+                        )
+                        .await
+                        .map_err(map_embedding_error)?
+                        .vectors
+                        .into_iter()
+                        .next()
+                        .ok_or(hkask_types::EmbeddingGenerationError::EmptyResponse)
+                        .map_err(map_embedding_error)?;
+                    let distance =
+                        crate::cosine_distance(&prose_vector, &centroid_embedding.vector);
+                    let threshold = request.cognition.validation.centroid_distance_max;
+                    Some(CentroidValidation {
+                        distance,
+                        passed: distance <= threshold,
+                    })
+                }
+                Err(hkask_storage::EmbeddingError::NotFound(_)) => {
+                    centroid_missing = true;
+                    None
+                }
+                Err(error) => {
+                    return Err(McpToolError::unavailable(format!(
+                        "Centroid lookup failed: {error}"
+                    )));
+                }
+            }
+        };
+
+        Ok(ComposeResult {
+            generated_prose,
+            exemplar_count,
+            method_signals_missing,
+            excluded_model_mismatch: outcome.excluded_model_mismatch,
+            validation,
+            centroid_missing,
+        })
+    }
+
+    /// Compute and store the style centroid for an author's corpus.
+    ///
+    /// Uses explicit existing refs when supplied, otherwise the unchanged
+    /// `style:{author}:` source prefix. Derived `:centroid` and `:rule:` refs
+    /// are excluded. Stores at `style:{author}:{dimension}:centroid` when a
+    /// dimension is supplied, otherwise `style:{author}:centroid`.
+    /// Missing validation centroids are surfaced by `compose.centroid_missing`.
+    ///
+    /// pre: db_path contains the explicit refs or author-prefix embeddings;
+    /// model is non-empty; dim matches the stored vectors' dimension
+    /// post: returns the passage count and stored flag; Err on DB open
+    /// failure, a missing ref, an empty eligible set, or a store failure
+    pub(crate) fn style_centroid(
+        request: CentroidComputeRequest,
+    ) -> Result<CentroidComputeResult, McpToolError> {
+        let store = open_style_memory_store(&request.db_path, &request.db_passphrase, request.dim)?;
+
+        let prefix = format!("style:{}:", request.author);
+        let centroid_entity_ref = style_centroid_ref(&request.author, request.dimension.as_deref());
+        let result = match request.entity_refs {
+            Some(refs) => store.compute_centroid_for_refs(
+                &refs,
+                &centroid_entity_ref,
+                request.dim,
+                Some(&centroid_entity_ref),
+                Some(&request.model),
+            ),
+            None => store.compute_centroid(
+                &prefix,
+                &centroid_entity_ref,
+                request.dim,
+                Some(&centroid_entity_ref),
+                Some(&request.model),
+            ),
+        }
+        .map_err(|error| McpToolError::invalid_argument(error.to_string()))?;
+
+        Ok(CentroidComputeResult {
+            passage_count: result.passage_count,
+            stored: result.stored,
+            centroid_entity_ref,
+        })
+    }
+}
+
+// ── Prompt composition ───────────────────────────────────────────────────
+
+/// Render a Jinja2 system prompt template with context variables.
+///
+/// Template variables:
+/// - `{{ prompt }}` — user's input text
+/// - `{{ author }}` — author identifier
+/// - `{{ exemplars }}` — list of retrieved passage strings
+/// - `{{ exemplar_count }}` — number of exemplars retrieved
+/// - `{{ no_validate }}` — whether validation is skipped
+/// - `{{ centroid_distance_max }}` — validation threshold
+fn render_jinja2_prompt(
+    template: &str,
+    author: &str,
+    prompt: &str,
+    exemplars: &[String],
+    no_validate: bool,
+    centroid_distance_max: f64,
+) -> Result<String, McpToolError> {
+    let ctx = minijinja::context! {
+        prompt,
+        author,
+        exemplars,
+        exemplar_count => exemplars.len(),
+        no_validate,
+        centroid_distance_max,
+    };
+    crate::template::render_one_shot("system_prompt", template, &ctx)
+}
+
+/// Generic fallback system prompt — used when no Jinja2 template is declared.
+/// Concatenates exemplar passages with a simple instruction to match the author's style.
+fn generic_system_prompt(
+    author: &str,
+    prompt: &str,
+    exemplar_passages: &[String],
+    no_validate: bool,
+    centroid_distance_max: f64,
+) -> String {
+    let mut parts = vec![format!(
+        "You are an expert prose stylist writing in the authentic style of {author}."
+    )];
+
+    if !exemplar_passages.is_empty() {
+        parts.push(
+            "\n## Exemplar Passages\nThe following passages exemplify the target style. \
+             Use them as reference for rhythm, syntax, and cadence — not as content to imitate.\n"
+                .to_string(),
+        );
+        for passage in exemplar_passages {
+            parts.push(format!("---\n{passage}\n---\n"));
+        }
+    }
+
+    if !no_validate {
+        parts.push(format!(
+            "\n## Centroid Validation\nYour output will be embedded and compared against the style centroid.\n\
+             Centroid distance threshold: {centroid_distance_max}\n\
+             If the distance exceeds {centroid_distance_max}, the output will be rejected.\n"
+        ));
+    }
+
+    parts.push(format!("\n## Task\n{prompt}"));
+    parts.join("")
+}

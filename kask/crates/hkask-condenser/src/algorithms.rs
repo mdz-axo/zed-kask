@@ -1,0 +1,1027 @@
+//! hKask MCP Condenser — Compression algorithms (Phase 1: local, no LLM)
+
+use super::types::*;
+
+/// Emit `"...\n"` markers between non-consecutive lines in `indices`.
+fn join_with_ellipsis(lines: &[&str], indices: &[usize]) -> String {
+    let mut result = String::new();
+    let mut last_idx: Option<usize> = None;
+    for &idx in indices {
+        if let Some(li) = last_idx
+            && idx > li + 1
+        {
+            result.push_str("...\n");
+        }
+        result.push_str(lines[idx]);
+        result.push('\n');
+        last_idx = Some(idx);
+    }
+    result.trim_end().to_string()
+}
+
+/// Inputs shorter than this are passed through uncompressed.
+///
+/// Terminal output arrives fenced (` ```\n<payload>\n``` `), so even a
+/// one-line command is three lines. At the `normal` profile the line budget
+/// for such an input rounds to a single line, and the head/tail split then
+/// elides the payload in favour of an ellipsis — the agent reads `...` where
+/// the command's output should be. An output this short is already minimal:
+/// compressing it saves no meaningful tokens while risking the loss of
+/// everything the tool reported.
+const MIN_COMPRESSIBLE_LINES: usize = 8;
+
+/// Compute the line budget for compression given the input size and profile.
+///
+/// Returns `(budget, is_passthrough)` — if `is_passthrough`, the algorithm
+/// should return the input unchanged.
+pub(crate) fn compute_budget(lines: usize, profile: Profile) -> (usize, bool) {
+    if lines < MIN_COMPRESSIBLE_LINES {
+        // Report the input's own line count as the budget so the caller's
+        // invariants (`budget <= lines`, `passthrough == budget >= lines`)
+        // hold without a special case.
+        return (lines, true);
+    }
+    let max_lines = profile.max_lines().unwrap_or(usize::MAX);
+    let target_lines = ((lines as f64) * profile.retention_pct()).max(1.0).round() as usize;
+    let budget = target_lines.min(max_lines).min(lines);
+    (budget, budget >= lines)
+}
+
+/// Collect the input's lines and compute the profile budget — the shared
+/// prologue of the compress implementations. Returns `None` on passthrough
+/// (the profile's budget covers every line): the caller returns the input
+/// unchanged.
+fn budgeted_lines(input: &str, profile: Profile) -> Option<(Vec<&str>, usize)> {
+    let lines: Vec<&str> = input.lines().collect();
+    let (budget, passthrough) = compute_budget(lines.len(), profile);
+    if passthrough {
+        return None;
+    }
+    Some((lines, budget))
+}
+
+pub(crate) trait CondenserAlgorithm: Send + Sync {
+    fn name(&self) -> &str;
+
+    /// Compress the input and return (compressed_content, health_signals).
+    /// `ontology_anchor` provides domain context for saliency weighting (P8.1).
+    /// Health signals are empty when the algorithm performed within expected bounds.
+    ///
+    /// The default body carries the shared prologue — collect the input's
+    /// lines, compute the profile budget, and return the input unchanged on
+    /// passthrough — then delegates the budgeted body to
+    /// [`Self::compress_budgeted`].
+    fn compress(
+        &self,
+        input: &str,
+        profile: Profile,
+        _category: ContextCategory,
+        ontology_anchor: Option<&OntologyAnchor>,
+    ) -> (String, Vec<CondenserHealthSignal>) {
+        let Some((lines, budget)) = budgeted_lines(input, profile) else {
+            return (input.to_string(), vec![]);
+        };
+        self.compress_budgeted(input, &lines, budget, ontology_anchor)
+    }
+
+    /// The budgeted compression body — `lines` are the input's lines and
+    /// `budget` is the profile's line budget. The passthrough return is
+    /// handled by the [`Self::compress`] default; implementations select
+    /// from `lines` within `budget`.
+    fn compress_budgeted(
+        &self,
+        input: &str,
+        lines: &[&str],
+        budget: usize,
+        ontology_anchor: Option<&OntologyAnchor>,
+    ) -> (String, Vec<CondenserHealthSignal>);
+}
+
+pub struct RtkStyleAlgorithm;
+
+impl CondenserAlgorithm for RtkStyleAlgorithm {
+    fn name(&self) -> &str {
+        "rtk_style"
+    }
+
+    fn compress_budgeted(
+        &self,
+        input: &str,
+        lines: &[&str],
+        budget: usize,
+        ontology_anchor: Option<&OntologyAnchor>,
+    ) -> (String, Vec<CondenserHealthSignal>) {
+        // Ontology-aware head/tail split: denser-anchored content gets more
+        // tail (summary/conclusion often carries the key measured values)
+        let density_factor = ontology_anchor.map(|a| a.density_factor()).unwrap_or(1.0);
+        let head_ratio = (0.3 / density_factor).clamp(0.15, 0.5);
+        // Retain at least one head line. `(budget as f64 * head_ratio) as usize`
+        // truncates to zero for any budget below 1/head_ratio (≈4 at the 0.3
+        // nominal ratio, ≈7 at the 0.15 clamp floor), and a zero head replaces
+        // the beginning of the output with an ellipsis — the whole payload is
+        // dropped whenever the budget is small relative to the line count.
+        let head_count = ((budget as f64 * head_ratio) as usize).max(1).min(budget);
+        let tail_count = budget.saturating_sub(head_count);
+
+        let mut filtered: Vec<&str> = Vec::new();
+        for line in lines.iter().take(head_count) {
+            filtered.push(*line);
+        }
+
+        // Emit the separator only when tail lines actually follow it — a
+        // zero-line tail would otherwise leave a trailing, meaningless
+        // ellipsis after the head.
+        let tail_start = lines.len().saturating_sub(tail_count);
+        if tail_start > head_count && tail_start < lines.len() {
+            filtered.push("...");
+            for line in lines.iter().skip(tail_start) {
+                filtered.push(*line);
+            }
+        }
+
+        let result = filtered.join("\n");
+        let health = if result.len() > input.len() {
+            vec![CondenserHealthSignal {
+                algorithm: "rtk_style".into(),
+                signal_type: "negative_compression".into(),
+                detail: format!(
+                    "Compressed {}B > original {}B — bounds violation",
+                    result.len(),
+                    input.len()
+                ),
+                zero_score_count: None,
+                budget_requested: None,
+                budget_filled: None,
+            }]
+        } else {
+            vec![]
+        };
+        (result, health)
+    }
+}
+
+pub(crate) struct WordRankAlgorithm;
+
+impl WordRankAlgorithm {
+    fn compute_word_frequencies(lines: &[&str]) -> std::collections::HashMap<String, f64> {
+        let words: Vec<&str> = lines.iter().flat_map(|l| l.split_whitespace()).collect();
+        crate::saliency::word_frequencies(&words)
+    }
+
+    /// Score a single line: TF-IDF average + structural bonus + ontology anchoring.
+    fn line_score(
+        line: &str,
+        freq: &std::collections::HashMap<String, f64>,
+        anchor: Option<&OntologyAnchor>,
+    ) -> f64 {
+        let words: Vec<&str> = line.split_whitespace().filter(|w| w.len() > 2).collect();
+        if words.is_empty() {
+            return 0.0;
+        }
+        let tf_sum: f64 = words
+            .iter()
+            .map(|w| freq.get(&w.to_lowercase()).copied().unwrap_or(0.0))
+            .sum();
+
+        let structural_bonus =
+            if line.contains("error") || line.contains("Error") || line.contains("ERROR") {
+                2.0
+            } else if line.contains("warning") || line.contains("Warning") {
+                1.0
+            } else if line.starts_with('#') || line.starts_with("##") {
+                0.5
+            } else if line.starts_with('-') || line.starts_with('*') {
+                0.2
+            } else {
+                0.0
+            };
+
+        // Domain-aware ontology bonus (P8.1) — layered on top of TF-IDF
+        tf_sum / words.len() as f64 + structural_bonus + domain_saliency(line, anchor)
+    }
+}
+
+impl CondenserAlgorithm for WordRankAlgorithm {
+    fn name(&self) -> &str {
+        "word_rank"
+    }
+
+    fn compress_budgeted(
+        &self,
+        _input: &str,
+        lines: &[&str],
+        budget: usize,
+        ontology_anchor: Option<&OntologyAnchor>,
+    ) -> (String, Vec<CondenserHealthSignal>) {
+        let freq = Self::compute_word_frequencies(lines);
+
+        let mut scored: Vec<(usize, f64, &str)> = lines
+            .iter()
+            .enumerate()
+            .map(|(i, line)| (i, Self::line_score(line, &freq, ontology_anchor), *line))
+            .collect();
+
+        let zero_count = scored.iter().filter(|(_, s, _)| *s == 0.0).count();
+
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        let mut selected_indices: Vec<usize> =
+            scored.into_iter().take(budget).map(|(i, _, _)| i).collect();
+        selected_indices.sort_unstable();
+
+        let result = join_with_ellipsis(lines, &selected_indices);
+        let health = if zero_count > lines.len() / 2 {
+            vec![CondenserHealthSignal {
+                algorithm: "word_rank".into(),
+                signal_type: "low_signal".into(),
+                detail: format!(
+                    "{} of {} lines scored 0.0 — content had no usable signal to rank by",
+                    zero_count,
+                    lines.len()
+                ),
+                zero_score_count: Some(zero_count),
+                budget_requested: None,
+                budget_filled: None,
+            }]
+        } else {
+            vec![]
+        };
+        (result, health)
+    }
+}
+
+/// Domain saliency: score a line against an ontology anchor using graph proximity.
+///
+/// Returns 0.0 (unrelated) up to ~1.0 (strong domain match). Combines direct
+/// keyword recognition with graph adjacency from the ontology concept graph (P5.4).
+///
+/// Extracted from the condenser's ontology bonus logic for reuse by the
+/// communication gate and other callers that need domain relevance without the
+/// full compression pipeline.
+pub(crate) fn domain_saliency(line: &str, anchor: Option<&OntologyAnchor>) -> f64 {
+    let direct = match anchor {
+        Some(OntologyAnchor::DomainSupplement {
+            namespace: OntologyNamespace::Sumo,
+            ..
+        }) => {
+            if line.contains("memory")
+                || line.contains("recall")
+                || line.contains("encoding")
+                || line.contains("salience")
+                || line.contains("consolidation")
+                || line.contains("forgetting")
+                || line.contains("chunking")
+            {
+                0.4
+            } else {
+                0.0
+            }
+        }
+        Some(OntologyAnchor::DualAxis {
+            axis: OntologyAxis::Pko,
+            ..
+        }) => {
+            if line.contains("status")
+                || line.contains("verify")
+                || line.contains("execution")
+                || line.contains("step")
+            {
+                0.3
+            } else if line.contains("error") || line.contains("issue") {
+                0.4
+            } else {
+                0.0
+            }
+        }
+        Some(OntologyAnchor::DomainSupplement {
+            namespace: OntologyNamespace::Golem,
+            ..
+        }) if line.contains("character")
+            || line.contains("narrative")
+            || line.contains("scene")
+            || line.contains("event") =>
+        {
+            0.3
+        }
+        Some(OntologyAnchor::DomainSupplement {
+            namespace: OntologyNamespace::MlSchema,
+            ..
+        }) if line.contains("accuracy")
+            || line.contains("loss")
+            || line.contains("epoch")
+            || line.contains("learning_rate")
+            || line.contains("batch")
+            || line.contains("evaluation")
+            || line.chars().any(|c| c.is_ascii_digit()) =>
+        {
+            0.3
+        }
+        _ => 0.0,
+    };
+
+    let graph_bonus = match anchor {
+        Some(a) => {
+            let kws = crate::ontology_graph::anchor_keywords(a);
+            if kws.is_empty() {
+                0.0
+            } else {
+                crate::ontology_graph::graph().graph_adjacency_bonus(line, &kws)
+            }
+        }
+        None => 0.0,
+    };
+
+    direct + graph_bonus
+}
+
+pub struct FlashrankAlgorithm;
+
+impl FlashrankAlgorithm {
+    fn relevance_score(line: &str, query_terms: &[String]) -> f64 {
+        let lower = line.to_lowercase();
+        query_terms
+            .iter()
+            .map(|term| {
+                if lower.contains(&term.to_lowercase()) {
+                    1.0
+                } else {
+                    0.0
+                }
+            })
+            .sum()
+    }
+
+    fn novelty_score(line: &str, selected: &[&str]) -> f64 {
+        let lower = line.to_lowercase();
+        let words: std::collections::HashSet<&str> = lower.split_whitespace().collect();
+        let mut overlap = 0usize;
+        let mut total = 0usize;
+        for prev in selected {
+            let prev_lower = prev.to_lowercase();
+            let prev_words: std::collections::HashSet<&str> =
+                prev_lower.split_whitespace().collect();
+            for w in &words {
+                total += 1;
+                if prev_words.contains(w) {
+                    overlap += 1;
+                }
+            }
+        }
+        if total == 0 {
+            return 1.0;
+        }
+        1.0 - (overlap as f64 / total as f64)
+    }
+
+    fn brevity_score(line: &str) -> f64 {
+        let len = line.len() as f64;
+        if len == 0.0 {
+            return 0.0;
+        }
+        1.0 / (1.0 + len / 100.0)
+    }
+}
+
+impl CondenserAlgorithm for FlashrankAlgorithm {
+    fn name(&self) -> &str {
+        "flashrank"
+    }
+
+    fn compress_budgeted(
+        &self,
+        _input: &str,
+        lines: &[&str],
+        budget: usize,
+        _ontology_anchor: Option<&OntologyAnchor>,
+    ) -> (String, Vec<CondenserHealthSignal>) {
+        let alpha = 0.4f64;
+        let beta = 0.3f64;
+        let gamma = 0.3f64;
+
+        let query_terms: Vec<String> = lines
+            .iter()
+            .take(5)
+            .flat_map(|l| {
+                l.split_whitespace()
+                    .filter(|w| w.len() > 3)
+                    .map(|s| s.to_string())
+            })
+            .take(20)
+            .collect();
+
+        let mut selected_indices: std::collections::HashSet<usize> =
+            std::collections::HashSet::new();
+        let mut selected_lines: Vec<&str> = Vec::new();
+
+        while selected_indices.len() < budget {
+            let mut best_idx: Option<usize> = None;
+            let mut best_score = f64::NEG_INFINITY;
+
+            for (i, line) in lines.iter().enumerate() {
+                if selected_indices.contains(&i) {
+                    continue;
+                }
+
+                let rel = Self::relevance_score(line, &query_terms);
+                let nov = Self::novelty_score(line, &selected_lines);
+                let brev = Self::brevity_score(line);
+
+                let score = alpha * rel + beta * nov - gamma * (1.0 - brev);
+                if score > best_score {
+                    best_score = score;
+                    best_idx = Some(i);
+                }
+            }
+
+            match best_idx {
+                Some(idx) => {
+                    selected_indices.insert(idx);
+                    selected_lines.push(lines[idx]);
+                }
+                None => break,
+            }
+        }
+
+        let filled = selected_indices.len();
+        let mut selected_indices: Vec<usize> = selected_indices.into_iter().collect();
+        selected_indices.sort_unstable();
+        let result = join_with_ellipsis(lines, &selected_indices);
+
+        let health = if filled < budget {
+            vec![CondenserHealthSignal {
+                algorithm: "flashrank".into(),
+                signal_type: "budget_shortfall".into(),
+                detail: format!(
+                    "Filled {}/{} budget — all remaining lines had non-positive score",
+                    filled, budget
+                ),
+                zero_score_count: None,
+                budget_requested: Some(budget),
+                budget_filled: Some(filled),
+            }]
+        } else {
+            vec![]
+        };
+        (result, health)
+    }
+}
+
+/// Keyword→category mapping — single source of truth for both exact-token (Phase 1)
+/// and substring (Phase 2) matching in [`classify_tool`].
+const KEYWORD_CATEGORIES: &[(&[&str], ContextCategory)] = &[
+    (
+        &[
+            "git", "docker", "cargo", "npm", "shell", "bash", "exec", "run", "terminal",
+        ],
+        ContextCategory::ShellCommand,
+    ),
+    (&["test", "pytest", "spec"], ContextCategory::TestOutput),
+    (&["build", "compile", "make"], ContextCategory::BuildOutput),
+    (
+        &["chat", "conversation", "message"],
+        ContextCategory::ConversationHistory,
+    ),
+    (&["log", "journal", "trace"], ContextCategory::LogOutput),
+    (&["json", "api", "query"], ContextCategory::StructuredData),
+    (&["file", "read", "cat"], ContextCategory::FileContents),
+];
+
+/// Classify a tool name into a `ContextCategory`.
+/// Phase 1: exact token match on `_`/`-`-split parts. Phase 2: substring fallback.
+pub fn classify_tool(tool_name: &str) -> ContextCategory {
+    let lower = tool_name.to_lowercase();
+    let parts: Vec<&str> = lower.split('_').chain(lower.split('-')).collect();
+
+    // Phase 1: exact token match — no false positives
+    for part in &parts {
+        for (keywords, cat) in KEYWORD_CATEGORIES {
+            if keywords.contains(part) {
+                return *cat;
+            }
+        }
+    }
+
+    // Phase 2: substring heuristic for compound names without separators.
+    // False positives possible ("logistics"→LogOutput) but Phase 2 only fires
+    // after Phase 1 fails, so the tool name is already non-standard.
+    for (keywords, cat) in KEYWORD_CATEGORIES {
+        if keywords.iter().any(|kw| lower.contains(kw)) {
+            return *cat;
+        }
+    }
+    ContextCategory::Unknown
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compute_budget_passthrough_when_within_profile() {
+        let (budget, passthrough) = compute_budget(10, Profile::Light);
+        assert!(passthrough);
+        assert_eq!(budget, 10);
+    }
+
+    #[test]
+    fn compute_budget_respects_max_lines_cap() {
+        let (budget, passthrough) = compute_budget(1000, Profile::Heavy);
+        assert!(!passthrough);
+        assert_eq!(budget, 30);
+    }
+
+    // Note: retention_pct is applied first, then capped. Below the
+    // compressible floor the input passes through with its own line count.
+    #[test]
+    fn compute_budget_never_exceeds_input() {
+        let (budget, passthrough) = compute_budget(5, Profile::Normal);
+        assert_eq!(budget, 5);
+        assert!(passthrough, "below the floor the input is not compressed");
+    }
+
+    // Above the floor, the retention budget applies as before.
+    #[test]
+    fn compute_budget_applies_retention_above_the_floor() {
+        let (budget, passthrough) = compute_budget(20, Profile::Normal);
+        assert_eq!(budget, 4);
+        assert!(!passthrough);
+    }
+
+    #[test]
+    fn compute_budget_single_line() {
+        let (budget, passthrough) = compute_budget(1, Profile::Heavy);
+        assert!(passthrough);
+        assert_eq!(budget, 1);
+    }
+
+    #[test]
+    fn compute_budget_zero_lines() {
+        let (budget, passthrough) = compute_budget(0, Profile::Heavy);
+        assert!(passthrough);
+        assert_eq!(budget, 0);
+    }
+
+    // Note: Phase 1 exact-token matching checks split parts in order. "npm" matches
+    // ShellCommand before "build" is reached. "cargo_test" matches ShellCommand via "cargo".
+    #[test]
+    fn classify_tool_exact_match() {
+        assert_eq!(classify_tool("git_status"), ContextCategory::ShellCommand);
+        assert_eq!(classify_tool("docker_run"), ContextCategory::ShellCommand);
+        // "npm_build" → "npm" matches ShellCommand before "build" → BuildOutput
+        assert_eq!(classify_tool("npm_build"), ContextCategory::ShellCommand);
+        // "cargo_test" → "cargo" matches ShellCommand before "test" → TestOutput
+        assert_eq!(classify_tool("cargo_test"), ContextCategory::ShellCommand);
+    }
+
+    // Note: Phase 2 substring matching can produce false positives on short keywords (e.g., "run"
+    // matches "testrunner", overriding the intended TestOutput classification).
+    #[test]
+    fn classify_tool_substring_fallback() {
+        // "buildsystem" — no exact match, Phase 2: "build" → BuildOutput
+        assert_eq!(classify_tool("buildsystem"), ContextCategory::BuildOutput);
+        // "testrunner" contains "run" (ShellCommand) before Phase 2 reaches TestOutput
+        assert_eq!(classify_tool("testrunner"), ContextCategory::ShellCommand);
+        // "jsonparser" contains "json" → StructuredData
+        assert_eq!(classify_tool("jsonparser"), ContextCategory::StructuredData);
+    }
+
+    #[test]
+    fn classify_tool_unknown() {
+        assert_eq!(classify_tool("unknown_tool"), ContextCategory::Unknown);
+        assert_eq!(classify_tool(""), ContextCategory::Unknown);
+        assert_eq!(classify_tool("xyz"), ContextCategory::Unknown);
+    }
+
+    // Note: Both hyphen and underscore splits yield the same token set. First match wins.
+    #[test]
+    fn classify_tool_hyphen_vs_underscore() {
+        assert_eq!(classify_tool("cargo-test"), ContextCategory::ShellCommand);
+        assert_eq!(classify_tool("cargo_test"), ContextCategory::ShellCommand);
+        assert_eq!(classify_tool("npm-build"), ContextCategory::ShellCommand);
+        assert_eq!(classify_tool("npm_build"), ContextCategory::ShellCommand);
+    }
+
+    #[test]
+    fn rtk_style_compression_within_budget() {
+        let input = (0..200)
+            .map(|i| format!("line {}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let algo = RtkStyleAlgorithm;
+        let (result, health) =
+            algo.compress(&input, Profile::Normal, ContextCategory::ShellCommand, None);
+        let result_lines = result.lines().count();
+        assert!(
+            result_lines <= 80,
+            "result has {} lines, expected <= 80",
+            result_lines
+        );
+        assert!(
+            result.len() <= input.len(),
+            "compressed output larger than input"
+        );
+        assert!(
+            health.is_empty(),
+            "no health signals expected for normal compression"
+        );
+    }
+
+    #[test]
+    fn rtk_style_preserves_head_tail_structure() {
+        let input = "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10";
+        let algo = RtkStyleAlgorithm;
+        let (result, _) =
+            algo.compress(input, Profile::Normal, ContextCategory::ShellCommand, None);
+        assert!(result.contains("line1"));
+        assert!(result.contains("line10"));
+        assert!(result.contains("..."));
+    }
+
+    #[test]
+    fn rtk_style_passthrough_small_input() {
+        let input = "line1\nline2\nline3";
+        let algo = RtkStyleAlgorithm;
+        let (result, health) =
+            algo.compress(input, Profile::Light, ContextCategory::ShellCommand, None);
+        assert_eq!(result, input);
+        assert!(health.is_empty());
+    }
+
+    // Regression: a short terminal result must reach the agent intact.
+    //
+    // Terminal output arrives fenced, so a one-line command is three lines
+    // (` ``` `, payload, ` ``` `). At the `normal` profile this once produced a
+    // one-line budget whose head/tail split elided the payload, so the agent
+    // read a bare `...` instead of the command's output. Observed live: every
+    // short command (`echo`, `ls`, `git status`) returned `...` to the agent.
+    #[test]
+    fn rtk_style_preserves_short_fenced_terminal_output() {
+        let input = "```\nhello\n```";
+        let algo = RtkStyleAlgorithm;
+        for profile in [
+            Profile::Heavy,
+            Profile::Normal,
+            Profile::Soft,
+            Profile::Light,
+        ] {
+            let (result, _) = algo.compress(input, profile, ContextCategory::ShellCommand, None);
+            assert_eq!(
+                result, input,
+                "{profile:?}: short terminal output must pass through verbatim"
+            );
+            assert!(
+                result.contains("hello"),
+                "{profile:?}: payload lost — agent would read only the ellipsis"
+            );
+        }
+    }
+
+    // Regression: a small budget must never elide the whole head.
+    //
+    // `(budget as f64 * head_ratio) as usize` truncates to 0 for any budget
+    // below 1/head_ratio, and a zero head replaces the beginning of the output
+    // with an ellipsis. Above the passthrough floor the head must still carry
+    // at least one real line.
+    #[test]
+    fn rtk_style_small_budget_keeps_a_head_line() {
+        let input = (0..8)
+            .map(|i| format!("line{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let algo = RtkStyleAlgorithm;
+        let (result, _) =
+            algo.compress(&input, Profile::Heavy, ContextCategory::ShellCommand, None);
+        let first = result.lines().next().unwrap_or_default();
+        assert_ne!(first, "...", "head was elided entirely: {result}");
+        assert_eq!(first, "line0", "head line not preserved: {result}");
+        assert!(
+            !result.starts_with("..."),
+            "output opens with an ellipsis: {result}"
+        );
+    }
+
+    #[test]
+    fn word_rank_preserves_error_lines() {
+        let input = "info: ok\ninfo: ok\ninfo: ok\nerror: critical failure\ninfo: ok\ninfo: ok";
+        let algo = WordRankAlgorithm;
+        let (result, _) = algo.compress(input, Profile::Heavy, ContextCategory::LogOutput, None);
+        assert!(
+            result.contains("error"),
+            "error line not preserved: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn word_rank_low_signal_when_no_content() {
+        let input = "a\na\na\na\na\na\na\na\na\na";
+        let algo = WordRankAlgorithm;
+        let (_, health) = algo.compress(input, Profile::Heavy, ContextCategory::Unknown, None);
+        assert!(!health.is_empty(), "expected low_signal health signal");
+        assert_eq!(health[0].signal_type, "low_signal");
+    }
+
+    #[test]
+    fn flashrank_selects_within_budget() {
+        let input = (0..100)
+            .map(|i| format!("line {}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let algo = FlashrankAlgorithm;
+        let (result, health) =
+            algo.compress(&input, Profile::Heavy, ContextCategory::FileContents, None);
+        let result_lines = result.lines().count();
+        assert!(
+            result_lines <= 30,
+            "flashrank exceeded budget: {} lines",
+            result_lines
+        );
+        assert!(result.len() <= input.len());
+        assert!(health.is_empty());
+    }
+
+    // Note: 3 lines with Heavy profile (10% retention, max 30) → budget = 1. Flashrank
+    // fills 1 out of 1 → no shortfall. Budget_shortfall only when budget > available lines.
+    #[test]
+    fn flashrank_budget_shortfall() {
+        let input = "line1\nline2\nline3";
+        let algo = FlashrankAlgorithm;
+        let (_, health) = algo.compress(input, Profile::Heavy, ContextCategory::FileContents, None);
+        // 3 lines → budget = min(ceil(3*0.10), 30) = 1 → fills 1 → no shortfall
+        assert!(
+            health.is_empty(),
+            "expected no budget_shortfall with budget=1 from 3 lines"
+        );
+    }
+
+    // ── End-to-end ontology-aware compression tests (P8.1) ───────────────
+
+    /// SUMO-anchored structured data preserves key numeric measurements.
+    #[test]
+    fn sumo_anchor_preserves_structured_metrics() {
+        let input = concat!(
+            "Benchmark Profile: p95 latency\n",
+            "Run: 2026-10-18\n",
+            "p95 latency: 142.0 ms\n",
+            "p50 latency: 61.5 ms\n",
+            "Throughput change: 5.2%\n",
+            "Peak memory: 102 MB\n",
+            "Error rate: 0.45%\n",
+            "This is a general description of the run's conditions.\n",
+            "The harness was run on a Framework laptop in 2026.\n",
+            "It measures request handling under load.\n",
+            "The comparison baseline is the prior release.\n",
+            "Operator commentary: we expect continued improvement in latency.\n",
+        );
+        let algo = WordRankAlgorithm;
+        let anchor = Some(OntologyAnchor::DomainSupplement {
+            namespace: OntologyNamespace::Sumo,
+            concept: hkask_bridge_ontology::sumo::PROCESS.into(),
+        });
+        let (result, _) = algo.compress(
+            input,
+            Profile::Soft,
+            ContextCategory::StructuredData,
+            anchor.as_ref(),
+        );
+        // The SUMO anchor's graph bonus should prioritize lines carrying
+        // process/measurement vocabulary.
+        // Soft profile (60% retention): enough budget for multiple metric lines
+        assert!(
+            result.contains("p95 latency"),
+            "measurement not preserved: {result}"
+        );
+        let has_numbers = result.contains("p50 latency")
+            || result.contains("Throughput change")
+            || result.contains("Peak memory");
+        assert!(
+            has_numbers,
+            "at least one additional measurement should be preserved: {result}"
+        );
+        let result_lines: Vec<&str> = result.lines().collect();
+        assert!(result_lines.len() <= 30, "result exceeds budget");
+    }
+
+    /// SUMO-anchored text preserves memory/cognitive keywords.
+    #[test]
+    fn sumo_anchor_preserves_memory_keywords() {
+        let input = concat!(
+            "Memory Operation Report\n",
+            "Encoding completed successfully for all events.\n",
+            "Memory consolidation is now in progress.\n",
+            "Salience ranking identified 3 high-priority memories.\n",
+            "Cued recall returned 7 matching contexts.\n",
+            "General system health check passed.\n",
+            "Routine maintenance scheduled for tomorrow.\n",
+            "Disk usage is at 42% capacity.\n",
+            "Network latency is within normal bounds.\n",
+        );
+        let algo = WordRankAlgorithm;
+        let anchor = Some(OntologyAnchor::DomainSupplement {
+            namespace: OntologyNamespace::Sumo,
+            concept: hkask_bridge_ontology::sumo::PROCESS.into(),
+        });
+        let (result, _) = algo.compress(
+            input,
+            Profile::Soft,
+            ContextCategory::LogOutput,
+            anchor.as_ref(),
+        );
+        // SUMO anchor should prioritize lines with cognitive/memory keywords
+        // Soft profile (60% retention): enough budget for multiple lines
+        let preserved_keywords = result.contains("Encoding")
+            || result.contains("Salience")
+            || result.contains("Cued recall")
+            || result.contains("memory");
+        assert!(
+            preserved_keywords,
+            "at least one cognitive/memory keyword should be preserved: {result}"
+        );
+        // Consolidation/memory line should be present
+        assert!(
+            result.contains("consolidation") || result.contains("memory"),
+            "core memory concept not preserved: {result}"
+        );
+    }
+
+    /// Core anchor (no domain) produces baseline results — no bonus applied.
+    #[test]
+    fn core_anchor_no_domain_bonus() {
+        let input = concat!(
+            "System Log\n",
+            "error: database connection timeout\n",
+            "info: service restarted successfully\n",
+            "info: 42 requests processed\n",
+            "debug: cache hit ratio 0.87\n",
+            "info: user session created\n",
+            "warning: approaching rate limit\n",
+            "error: downstream service unavailable\n",
+            "info: health check passed\n",
+            "debug: garbage collection completed\n",
+        );
+        let algo = WordRankAlgorithm;
+        // Core anchor — no domain bonus, but error structural bonus (2.0) and warning bonus (1.0) apply
+        let (result, _) = algo.compress(
+            input,
+            Profile::Soft,
+            ContextCategory::LogOutput,
+            Some(OntologyAnchor::Core).as_ref(),
+        );
+        // Errors (2.0 structural bonus) and warnings (1.0 bonus) always preserved regardless of anchor
+        assert!(
+            result.contains("error"),
+            "error lines must be preserved even with core anchor"
+        );
+        assert!(
+            result.contains("warning"),
+            "warning lines must be preserved: {result}"
+        );
+        // No domain-specific bonuses expected with core anchor
+        assert!(result.lines().count() <= 30);
+    }
+
+    /// Test that `select_ontology_anchor` + compress produces correct anchors end-to-end.
+    #[test]
+    fn derive_and_compress_with_correct_anchor() {
+        // Simulate the engine's workflow: tool_name → derive anchor → compress
+        let tool_name = "corpus_chunk";
+        let anchor = select_ontology_anchor(tool_name);
+        assert_eq!(
+            anchor,
+            OntologyAnchor::DomainSupplement {
+                namespace: OntologyNamespace::Golem,
+                concept: hkask_bridge_ontology::golem::WORK.to_string()
+            }
+        );
+
+        let input = "The character enters the scene, and the narrative turns on that event.";
+        let algo = WordRankAlgorithm;
+        let (result, _) = algo.compress(
+            input,
+            Profile::Normal,
+            ContextCategory::StructuredData,
+            Some(&anchor),
+        );
+        // With the GOLEM narrative anchor, narrative vocabulary is high-signal.
+        // Normal profile (20% retention): short enough to pass through
+        assert!(!result.is_empty());
+        // The result should include the narrative terms
+        // (with Normal profile on short input, it may pass through entirely)
+        let has_narrative = result.contains("character")
+            || result.contains("scene")
+            || result.contains("narrative");
+        assert!(has_narrative, "narrative content not preserved: {result}");
+    }
+
+    // ── Property-based tests (Wave 2) ─────────────────────────────────────
+
+    use proptest::prelude::*;
+    use proptest::sample::select;
+
+    /// Strategy: generate a non-empty string with varied content.
+    fn arbitrary_input() -> BoxedStrategy<String> {
+        proptest::arbitrary::any::<String>()
+            .prop_filter("must be non-empty", |s| !s.is_empty())
+            .boxed()
+    }
+
+    /// Strategy: any compression profile.
+    fn profile_strategy() -> BoxedStrategy<Profile> {
+        select(&[
+            Profile::Heavy,
+            Profile::Normal,
+            Profile::Soft,
+            Profile::Light,
+        ])
+        .boxed()
+    }
+
+    /// Strategy: any context category.
+    fn category_strategy() -> BoxedStrategy<ContextCategory> {
+        select(&[
+            ContextCategory::ShellCommand,
+            ContextCategory::TestOutput,
+            ContextCategory::BuildOutput,
+            ContextCategory::FileContents,
+            ContextCategory::ConversationHistory,
+            ContextCategory::StructuredData,
+            ContextCategory::LogOutput,
+            ContextCategory::Unknown,
+        ])
+        .boxed()
+    }
+
+    // For any input, re-compressing the output produces the same result.
+    proptest! {
+        #[test]
+        fn compression_is_idempotent(
+            input in arbitrary_input(),
+            profile in profile_strategy(),
+            category in category_strategy(),
+        ) {
+            let algo = RtkStyleAlgorithm;
+            let (first, _) = algo.compress(&input, profile, category, None);
+            let (second, _) = algo.compress(&first, profile, category, None);
+            let first_len = first.len();
+            let second_len = second.len();
+            prop_assert_eq!(first, second,
+                "re-compression changed output: first={} bytes, second={} bytes",
+                first_len, second_len);
+        }
+    }
+
+    // Compression never produces output larger than input.
+    proptest! {
+        #[test]
+        fn compression_never_expands(
+            input in arbitrary_input(),
+            profile in profile_strategy(),
+            category in category_strategy(),
+        ) {
+            let algo = RtkStyleAlgorithm;
+            let (compressed, _) = algo.compress(&input, profile, category, None);
+            prop_assert!(compressed.len() <= input.len(),
+                "compressed {} > original {}", compressed.len(), input.len());
+        }
+    }
+
+    // Flashrank's greedy marginal-utility selection works on any content type — it must never
+    // expand input even when given arbitrary Unknown-category content.
+    proptest! {
+        #[test]
+        fn flashrank_fallback_never_expands(
+            input in arbitrary_input(),
+            profile in profile_strategy(),
+        ) {
+            let algo = FlashrankAlgorithm;
+            let (compressed, _) =
+                algo.compress(&input, profile, ContextCategory::Unknown, None);
+            prop_assert!(compressed.len() <= input.len(),
+                "flashrank fallback expanded: compressed {} > original {}", compressed.len(), input.len());
+        }
+    }
+
+    // compute_budget: budget never exceeds input, respects max_lines cap,
+    // and passthrough flag is consistent. Subsumes the 5 hardcoded compute_budget_* tests.
+    proptest! {
+        #[test]
+        fn compute_budget_invariants(
+            lines in 0usize..10_000usize,
+            profile in profile_strategy(),
+        ) {
+            let (budget, passthrough) = compute_budget(lines, profile);
+
+            prop_assert!(budget <= lines,
+                "budget exceeds input: budget={}, lines={}", budget, lines);
+
+            if let Some(max) = profile.max_lines() {
+                prop_assert!(budget <= max,
+                    "budget exceeds max_lines: budget={}, max={}, profile={:?}", budget, max, profile);
+            }
+
+            prop_assert_eq!(passthrough, budget >= lines,
+                "passthrough flag inconsistent: budget={}, lines={}, passthrough={}",
+                budget, lines, passthrough);
+        }
+    }
+}

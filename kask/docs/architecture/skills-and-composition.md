@@ -1,0 +1,974 @@
+---
+title: "Agent System and Skills — Prompt Surfaces, Skill Anatomy, and Composition"
+audience: [architects, developers, agents]
+last_updated: 2026-10-21
+version: "2.3.2"
+status: "Active"
+domain: "architecture"
+mds_categories: [composition, trust, domain, curation]
+---
+
+This document consolidates the two surfaces that instruct the zed-kask agent:
+the system prompt (base template + five overlays, and its divergences from
+upstream Zed) and the skill system (SKILL.md body injection, composition
+principles, testing). Formerly two documents — `AGENT_SYSTEM_PROMPT.md` and
+`explanation/skills-and-composition.md` — folded 2026-08-28 during the docs
+condensation; git history preserves the originals.
+
+# Part I — The Agent System Prompt
+
+> **Scope:** the agent system prompt only. Verified against zed-kask `HEAD`
+> (`e510ec4a92`) and upstream Zed `upstream/main` (`e3adf43f37`) on
+> 2026-08-28. Every claim here is traceable to a `file:line` or a named test.
+
+## 1. Purpose
+
+This document answers two questions an upstream rebase or a prompt edit has to
+answer immediately: **what is the agent system prompt made of**, and **where does
+zed-kask deviate from upstream Zed**. It exists because the prompt is a divergence
+surface that `DIVERGENCE.md` covers only in passing — the base template is tracked
+under D1/D2, but the three overlay prompts had no entry at all until 2026-08-12.
+
+Treating a prompt as a versioned interface with an explicit change log follows
+the same reasoning that motivates architecture decision records: the cost of a
+change is dominated not by writing it but by later readers reconstructing why it
+was made[^nygard-adr]. Prompts are especially prone to this because their
+"behaviour" is unobservable from the artifact alone.
+
+## 2. The base prompt and five overlays
+
+Upstream Zed renders one base system prompt. zed-kask keeps that shared file and
+adds four scoped contexts:
+
+| # | Surface | Location | Scope |
+|---|---------|----------|-------|
+| 1 | Base template | `crates/agent/src/templates/system_prompt.hbs` | Every thread |
+| 2 | Curator overlay | `crates/agent/src/curator_agent_server.rs` (`CURATOR_STATIC_CONTEXT`) | Curator threads |
+| 3 | Swarm Steer overlay | `crates/swarm_panel/src/swarm_panel.rs` (`steer_system_prompt`) | Swarm panel |
+| 4 | Kanban Steer overlay | `crates/kanban_panel/src/kanban_panel.rs` (`steer_system_prompt`) | Kanban panel |
+| 5 | Media Steer overlay | `crates/media_panel/src/media_panel.rs:203-278` (`ensure_steer`, `steer_system_prompt`) | Media panel |
+
+The three panel overlays all use `hkask_steer::ensure_steer`; their advertised
+tool names are rendered from each server's generated `TOOL_NAMES` and checked
+before the conversation is created (`crates/hkask-steer/src/hkask_steer.rs:174-184`;
+media coverage pins at `crates/media_panel/src/media_panel.rs:478-543`).
+
+Overlays are **appended, never substituted**: the Zed coding instructions remain
+intact and the overlay adds role and scope on top. `CuratorAgentServer` documents
+this explicitly (`curator_agent_server.rs:33-36`). Composing a specialisation onto
+a stable base, rather than forking a second full prompt, is the open/closed
+principle applied to instruction text — the base is extended without being
+modified, so upstream changes to it keep flowing through[^martin-ocp].
+
+## 3. Rendering pipeline
+
+`SystemPromptTemplate` (`crates/agent/src/templates.rs:37-69`) is the Handlebars
+render context; `TEMPLATE_NAME` pins it to `system_prompt.hbs` (`:82`).
+
+```mermaid
+flowchart TD
+    P[Project context, tools, rules, and skills] --> T[SystemPromptTemplate]
+    T --> B[system_prompt.hbs base]
+    C[Curator static context] --> K[KaskThreadState static context]
+    K --> B
+
+    S[Swarm Steer prompt] --> H[hkask_steer ensure_steer]
+    N[Kanban Steer prompt] --> H
+    O[Portfolio Steer prompt] --> H
+    M[Media Steer prompt] --> H
+    H --> V[Scoped ConversationView]
+```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-PROMPT-001
+verified_date: 2026-09-28
+verified_against: crates/agent/src/templates.rs:37-82; crates/agent/src/curator_agent_server.rs:51; crates/agent/src/kask_thread_state.rs; crates/hkask-steer/src/hkask_steer.rs:174-184; crates/media_panel/src/media_panel.rs:203-278
+status: VERIFIED
+-->
+
+The Curator context is stored on `KaskThreadState`. Panel Steer overlays construct
+cross-domain conversation views through the shared `hkask_steer` lifecycle;
+changing panel state invalidates and rebuilds that conversation. The overlay frames
+the workflow but does not filter the MCP tool surface.
+
+### 3.1 Conditional sections
+
+The prompt is not a static string. Sections appear or vanish based on the render
+context, so the model is never told about a capability it does not have — an
+application of the principle that an interface should not advertise operations it
+cannot honour[^parnas-1972].
+
+| Guard | Line | Effect when false |
+|-------|------|-------------------|
+| `(gt (len available_tools) 0)` | `:41` | Entire tool-use half is replaced by a no-tools instruction |
+| `(gt mcp_tools_hidden 0)` | `:62` | Drops the hidden-tools visibility marker (D44) — the count of registered-but-filtered MCP tools, with the `list_mcp_tools` recovery path |
+| `(contains available_tools 'grep')` | `:80` | Drops the grep/find_path search guidance |
+| `(contains available_tools 'spawn_agent')` | `:135` | Drops `## Multi-agent delegation` |
+| `sandboxing` + `(contains available_tools 'terminal')` | `:177-178` | Drops `## Terminal sandbox` entirely |
+| `is_linux` / `is_windows` | `:184`, `:191`, `:208` | Selects the platform-correct writable-temp and network story |
+| `model_name` | `:235` | Drops `## Model Information` |
+| `has_skills` | `:241` | Drops `## Agent Skills` and the `<available_skills>` catalog |
+| `(or user_agents_md has_rules)` | `:269` | Drops `## User's Custom Instructions` |
+| `(contains available_tools 'kanban_goal_create')` | conditional goal section | Drops the four-moves → goal-tools wiring inside `## Division of Responsibilities` (D40) |
+| `static_context` | `:359` | Drops `## Session Context` |
+
+## 4. Section inventory
+
+Section headings are **identical to upstream** except for two additions. The
+divergence is in section *contents*, not structure.
+
+*Scope-exempt from the Sourced-Ideas Mandate: this section is a traceability
+matrix over §5's divergences and the template's own headings; it decides nothing.*
+
+| Section | Line | Status vs. upstream |
+|---------|------|---------------------|
+| Expectation-led inquiry (kask) | `:5` | **New section** (D75 — one falsifiable expected observation before substantive inquiry; pinned by `test_system_prompt_establishes_expectation_before_substantive_inquiry`, `templates.rs:140`) |
+| Communication | `:9` | Identical |
+| Formatting Responses | `:20` | **Modified** (§5.3, §5.4) |
+| Tool Use | `:42` | **Modified** (structured tool-call bullet; D44 hidden-tools marker bullet at `:62-63`) |
+| Task Execution | `:66` | **Modified** (§5.2, §5.7) |
+| Searching and Reading | `:73` | Identical |
+| Making Code Changes | `:86` | Identical |
+| Ambition vs. Precision | `:100` | **Modified** (§5.7, D40 — "creative touches when scope is vague" replaced with "resolve the vagueness with the user") |
+| Validation | `:106` | Identical |
+| Fixing Diagnostics | `:114` | Identical |
+| Debugging | `:119` | Identical |
+| Calling External APIs | `:128` | Identical |
+| Multi-agent delegation | `:136` | Identical |
+| Final Message | `:151` | **Modified** (§5.7, D40 — functional-outcome-first bullet) |
+| System Information | `:165` | Identical |
+| Terminal sandbox | `:179` | Identical |
+| Model Information | `:236` | Identical |
+| Agent Skills | `:242` | **Modified** — em-dash only (§5.5) |
+| User's Custom Instructions | `:270` | Identical |
+| → Personal `AGENTS.md` | `:274` | Identical |
+| → Project Rules | `:285` | Identical |
+| Opening identity + roles (kask) | `:1`–`:3` | **Amended upstream opening** (§5.7, D40 evolution — agent renamed Z-K; roles fixed at the top) |
+| Redeemable-claims bullet (kask) | `:14` | **Amended upstream section** (§5.9 — claims carry their ground) |
+| Feature-justification bullet (kask) | `:94` | **Amended upstream section** (§5.7 — every feature names its functional requirement) |
+
+| Division of Responsibilities (kask) | `:302` | **New section** (§5.7, D40 — now the working loop; roles live in the opening) |
+| Ontology anchoring bullet in Tool Use (kask) | `:49` | **Amended upstream section** (§5.8, D53 de-ghettoized + D54 — names the `onto_anchor` tool) |
+| Session Context | `:360` | **New section** (§5.1) |
+
+## 5. Divergences from upstream
+
+`git diff upstream/main -- crates/agent/src/templates/system_prompt.hbs` reports
+**95 insertions, 6 deletions** (verified 2026-09-28). Each is catalogued below with its
+D-seam and its pinning test, except the structured tool-call bullet (`:46`, a
+single added line in `## Tool Use` instructing the model to emit tool calls via
+the structured tool-call mechanism rather than narrating parameters as text).
+Every zed-kask deviation that disables or replaces upstream behaviour carries a
+test, per the repo's divergence rule.
+
+### 5.1 `## Session Context` — new section (D2 / D6)
+
+- **zed-kask** renders `{{{static_context}}}`. Field declared at
+  `templates.rs:52`.
+- **Upstream** has no such block and no `static_context` field.
+- **Why:** it is the render target for agent overlays (Curator role, Steer
+  panel prompts). Memory recall is per-turn via `inject_context`
+  (`Role::System` message), not via this block.
+- **Pinned by** `test_system_prompt_renders_session_context_without_rules_or_agents_md`.
+
+**Defect fixed 2026-08-12 — the reason the test exists.** The block was
+originally nested *inside* the `{{#if (or user_agents_md has_rules)}}` guard.
+For any project with no `.rules` file **and** no personal `AGENTS.md`,
+`static_context` rendered as nothing — silently dropping the Curator, swarm Steer,
+and kanban Steer prompts. It went unnoticed because this repo has a `.rules` file
+(making `has_rules` true) and because all eleven pre-existing template tests
+passed `static_context: None`. The block is now a **sibling** of that guard. This
+is the class of failure that motivates asserting on observable behaviour rather
+than on the presence of code: the overlay existed, was wired, and never
+arrived[^hunt-thomas-1999].
+
+**Refactored 2026-08-25 — `inject_static_context` deleted.** The
+`ContextInjector::inject_static_context` method and `Thread.static_context` /
+`static_context_loaded` fields were removed. Tool-use warnings moved into the
+`system_prompt.hbs` template; since 2026-09-26 they are three `## Tool Use`
+bullets (`read_file`, `edit_file`, `terminal`), not a separate section. Thread-scoped memory recall (`recall_thread_curator`; recall is curator-scoped since 2026-09-28) was folded into the per-turn `inject_context` path so
+memory is fresh at decision time rather than snapshotted once per session. The
+`## Session Context` block now carries only agent overlays (Curator role + Steer
+prompts). Pinned by `test_system_prompt_contains_tool_failure_mode_warnings`.
+
+### 5.2 Loop-termination guardrail — new bullet
+
+- **zed-kask** `:71`: *"If a tool loop repeats without measurable progress (the
+  same error recurring or no new state appearing) **three times**, stop, summarize
+  what you tried, and ask the user rather than continuing indefinitely."*
+- **Upstream** `## Task Execution` ends at its `:51` with no loop bound.
+- **Why:** upstream pairs a strong autonomy injunction (`:49`, "keep going
+  until… completely resolved") with no termination signal. A control loop with no
+  bound on corrective action is an unregulated loop; the bound is what makes the
+  autonomy safe rather than open-ended[^ashby-1956]. The threshold is a concrete
+  count deliberately — "several iterations" left the stop point to model
+  discretion, which varied by model.
+- **Pinned by** `test_system_prompt_contains_loop_termination_guardrail`, which
+  asserts both the sentence and the literal `three times`.
+
+### 5.3 Mermaid diagram-type list (D18)
+
+- **zed-kask** `:33` names the exact directives the renderer accepts —
+  `sankey-beta`, `xychart-beta`, `architecture-beta`, `radar-beta`,
+  `treemap-beta`,
+  `block`, `kanban` — and separately notes that the ` ```media `, ` ```graph `,
+  ` ```kanban `, ` ```portfolio `, ` ```scenarios `, and
+  ` ```swarm_delegate_results ` fenced blocks are kask viz widgets, not
+  mermaid.
+- **Upstream** `:26` lists only its thirteen core types.
+- **Why:** the renderer's allowlist is `crates/markdown/src/mermaid.rs:428-451`,
+  whose comment asked for manual sync with the prompt — and drifted anyway. The
+  prompt had advertised bare `sankey`/`xychart`, which the renderer silently
+  drops, while denying `kanban` was a mermaid type at all (it is; `mermaid.rs:445`).
+- **Pinned by** `test_system_prompt_advertises_every_supported_diagram_type`
+  (`mermaid.rs:1253`) — an exhaustive prompt-vs-allowlist check living next to
+  the constant, replacing the manual-sync comment. Also
+  `test_system_prompt_mermaid_list_uses_renderer_directives` in `templates.rs`.
+
+**Note on `kanban`:** it is *both* a valid mermaid directive *and* a viz-widget
+fenced tag. The prompt must disambiguate the two, not deny either.
+
+### 5.4 Display-hint bullets (D18)
+
+- **zed-kask** `:59`: copy the ` ```media ` block from a `display_hint`
+  tool-result field verbatim into the reply.
+- **zed-kask** `:60`: copy the ` ```media ` blocks from a `display_hints`
+  array verbatim into the reply.
+- **Upstream** has none of these bullets.
+- **Why load-bearing:** the block *renderers* live in
+  `hkask_viz_core::block_renderer()` (wired at
+  `crates/agent_ui/src/conversation_view.rs:3574`), so the prompt bullets
+  remain live for any tool that emits a display-hint fenced block.
+
+### 5.5 `## Agent Skills` — project-aware body injection (D1)
+
+The prompt uses progressive disclosure: skill name, description, and location are
+listed up front; the body is loaded only when the model invokes `skill`.[^anthropic-skills]
+The live execution path is project-aware rather than filesystem-only:
+
+- `NativeAgent::register_session` constructs `SkillTool::with_body_resolver`
+  with `skill_body_resolver_for_project` (`crates/agent/src/agent.rs:1126`).
+- Project-local skill bodies are opened through the project buffer, so remote
+  workspaces and unsaved buffer edits are visible (`crates/agent/src/agent.rs:4843-4887`).
+- Global skills still resolve through `agent_skills::read_skill_body` on the
+  filesystem (`crates/agent/src/agent.rs:4875`).
+- Slash activation uses the same resolver, preventing tool and slash invocation
+  from reading different bodies (`crates/agent/src/agent.rs:2420-2509`).
+
+`test_project_skill_body_resolves_through_buffer` proves the distinction by
+changing a buffer without saving it and asserting that the resolver returns the
+buffer content rather than the disk content (`crates/agent/src/agent.rs:9032-9095`).
+The Kask authorization, dependency, and outcome-recording behavior remains around
+this upstream resolver seam; unreadable bodies and missing dependencies surface as
+errors rather than no-body fallbacks.
+
+### 5.6 `skill_bundle` composition — removed section (D1)
+
+**Removed 2026-08-20 (commit `e7503c0cf4`, "revert skill cascade").** The
+`## Multi-skill composition with skill_bundle` prompt section and the
+`skill_bundle` tool no longer exist: the template carries no `skill_bundle`
+text, and no `skill_bundle` tool is registered in `crates/agent/src`. Merging
+peer-level skill outputs is driven by the **skill-bundler** skill (see Part
+II, "Merging Skill Outputs").
+
+### 5.7 `## Division of Responsibilities (kask)` — new section (D40)
+
+- **zed-kask** `:302-358` carries the four-moves interaction loop from the
+  functional-interaction spec
+  ([`functional-interaction-spec.md`](functional-interaction-spec.md)):
+  point at the same target (intake interpretation, user corrects), bring
+  choices to the user as experiences (options + recommendation, user
+  decides), report outcomes not artifacts (functional outcome first),
+  bank the learning. Three shared-section bullets are amended alongside:
+  the `## Task Execution` autonomy bullet's ask-trigger gains "a choice
+  changes what the user will experience" and its "prematurely" is
+  reframed to "for information you can find yourself"; the
+  `## Ambition vs. Precision` bullet replaces "creative touches when
+  scope is vague" with "resolve the vagueness with the user"; and
+  `## Final Message` gains a functional-outcome-first bullet.
+- **Upstream** has none of these; its autonomy bullet licenses unilateral
+  functional decisions (the trigger is missing information, not authority),
+  and its Final Message bullet rehearses a file-list summary format.
+- **Why:** the severance of functional requirements from technical work is
+  structural — technical tokens crowd out the functional frame in a shared
+  context window. The section is deliberately **preference-framed** (an
+  evaluation axis: "the user evaluates this work by what it lets them do")
+  rather than prohibition-framed, per the spec's gradient-over-constraint
+  principle: constraint walls habituate and provoke escape-seeking.
+- **Loop-closing wiring (2026-08-29):** a conditional block inside the
+  section — `{{#if (contains available_tools 'kanban_goal_create')}}` —
+  maps the moves to the native goal tools (Move 1 → `kanban_goal_create`,
+  Move 3 → `kanban_goal_judge`; separately gated Move 4 → native `kanban_goal_close` and correction → `kanban_goal_correct_outcome`) when the
+  kata-kanban server is connected, and vanishes when it isn't (§3.1: never
+  advertise a capability the turn doesn't have).
+- **Skill rubrics (2026-09-04):** a paragraph after the four moves names
+  each side's operational rubric — the `program-manager` skill (the
+  agent's side: spec recovery, design-before-coding, definition of done,
+  actual verification and honest reporting) and the `product-manager` skill (the user's side: what
+  to deliver at intake, decision points, and confirmation) — and directs
+  underspecified intake to the product-manager skill rather than
+  improvisation.
+- **Evolution (operator ruling 2026-09-10):** the mid-prompt section
+  underperformed — agents read it as an overlay and kept asking technical
+  questions at intake while ignoring functional requirements (observed
+  live in the companies-fix session). Roles now live in the OPENING: the
+  first line renames the agent ("You are the Z-K agent running inside the
+  Zed-Kask fork of Zed.dev") and fixes the roles (user = product manager
+  owning functional requirements; agent = technical program manager /
+  VP of engineering owning technical implementation), followed by a role
+  paragraph carrying the question-class rule — functional questions are
+  the user's to answer, asked in functional terms; technical questions
+  are the agent's to decide, "do not route technical decisions to the
+  user as questions". The section (now at `:302`) opens "The roles are
+  fixed in the opening of this prompt" and move 2 is **Decide by class**:
+  functional decisions surfaced as experiences with a recommendation;
+  technical decisions decided and presented with their functional
+  consequence, "never route one to the user as a question".
+- **Indicator reframing (operator ruling 2026-09-10, same pass):** the
+  prohibition tails were removed per the gradient-over-constraint
+  principle — move 2 now reads "decide and present the result with its
+  functional consequence, as a decision the user can veto on functional
+  grounds", and the opening's question-class rule gained the positive
+  form: a technical choice that genuinely needs the user's input is
+  "present[ed] in functional terms — what each option lets the user do —
+  with the technical detail attached as context". A feature-justification
+  bullet was added to `## Making Code Changes` (":94"): every feature
+  names the functional requirement it serves; a feature that cannot
+  name its requirement is a functional question for the user, not code
+  to write. The opening role paragraph now carries the skills pointer
+  (`program-manager` / `product-manager`).
+- **Pinned by** `test_system_prompt_contains_division_of_responsibilities`
+  (section + all four moves + the authority boundary + both skill
+  references + the no-improvisation directive),
+  `test_division_skill_references_resolve_on_disk` (the named skills
+  exist — a prompt reference to a missing skill is a ghost instruction),
+  `test_system_prompt_autonomy_bullet_includes_experience_trigger`,
+  `test_system_prompt_autonomy_bullet_reframes_prematurely`,
+  `test_system_prompt_vagueness_resolved_with_user`,
+  `test_system_prompt_final_message_leads_with_functional_outcome`,
+  `test_system_prompt_wires_four_moves_to_goal_tools_when_available`, and
+  `test_system_prompt_omits_goal_tool_wiring_when_tools_unavailable`.
+
+### 5.8 `## Tool Use` ontology-anchoring bullet — D53 de-ghettoized + D54 canonical ladder (2026-09-10)
+
+Operator rulings 2026-09-10: ontology resolution is a CRITICAL TOOL, not
+a standalone section (D53), and the tool follows the pre-existing
+anchoring pattern (D54). The former `## Ontology-anchored reasoning
+(kask)` section is removed; its content lives in two places: a
+required-tool-of-analysis bullet inside `## Tool Use` (beside "gather
+enough context before acting" — resolve domain terms with the
+**`onto_anchor` tool**, which walks the canonical fallback ladder over the
+pinned `hkask-bridge-ontology` sources (including W3C RDF Data Cube;
+local SDMX aliases and unlicensed DLP constants are removed) — domain
+supplements → derived concepts → full SUMO
+upper → full schema.org → published Dublin Core/BIBO/CiTO state-axis senses
+→ 5W1H core — and always terminates on a real anchor: nothing is ever
+untagged; published definitions are returned when supplied, and a coarse core-rung anchor carries the
+ruling path), and the identity clause in the opening ("no
+professional works in a private language"). Pinned by the rewritten
+`test_system_prompt_contains_ontology_anchored_reasoning`, which asserts
+the new locations, the ladder invariant phrase, AND the ABSENCE of the
+standalone section header.
+
+### 5.9 `## Communication` redeemable-claims bullet — new (2026-09-10)
+
+Communicative-action layer (Habermas): every assertion is a claim the
+user or a reviewer can challenge, and each claim names its ground —
+functional claims answer to the user's stated requirement, technical
+claims to the tree, the run, and the commit, domain terms to their
+published ontology anchor. "A claim with no ground is not communication —
+it is noise that coordinates nothing; mark it as an inference or
+unanchored, or do not send it." This is the prompt-level expression of the
+session's core lesson: an unanchored term is an unredeemable claim — it
+can only be sustained by reassertion, and resolution then requires the
+operator's authority instead of inspectable grounds.
+
+## 6. Shared upstream structure and seam boundary
+
+`system_prompt.hbs` remains an upstream-shared file, but it is not byte-identical:
+the current fork diff is 95 inserted and 6 deleted lines. Kask changes include
+the role opening, ontology/tool guidance, media display hints, functional decision
+rules, failure-mode warnings, the expectation-led-inquiry section (D75), and
+session context. Unchanged regions should still
+merge from upstream normally; only the named D1/D2/D26/D40/D54 prompt obligations
+are mapped reapplications. The complete authoritative boundary is the current
+`DIVERGENCE.md`, not a count of apparently identical sections.
+
+*Scope-exempt from the Sourced-Ideas Mandate: this section records the observable
+vendor-branch boundary (`git diff upstream/main -- crates/agent/src/templates/system_prompt.hbs`).*
+
+## 7. Rebase procedure for this file
+
+`system_prompt.hbs` is a **shared upstream file with zed-kask edits**, the
+highest-conflict category in `DIVERGENCE.md`. The procedure below treats the
+pinning tests as the executable record of intent: a merge that silently drops a
+divergence fails a named test instead of shipping, which is the regression-test
+discipline applied to a vendor-branch merge[^fowler-vendor-branch]. On upstream
+sync:
+
+1. Merge normally and inspect every conflict against the seam records in
+   `DIVERGENCE.md`; the number and location of hunks are not stable.
+2. Re-apply each mapped prompt obligation. Run the targeted agent template and
+   markdown Mermaid tests; do not encode test-count totals in the procedure.
+3. If upstream restructures `## Agent Skills`, treat §5.5 as a **re-application**,
+   not a merge: the two versions state opposite instructions, so a textual merge
+   can produce a prompt that both forbids and requires reading `SKILL.md`.
+4. Check `mermaid.rs:428-451` against `:33` — upstream adds diagram types, and
+   the drift test will fail until the prompt is updated.
+
+## 8. Verification
+
+Every claim above is checkable. Reproducible commands are given rather than
+asserted results, so a reader can falsify this document rather than trust
+it[^popper-1959].
+
+```sh
+# The complete current seam
+git diff --numstat upstream/main -- crates/agent/src/templates/system_prompt.hbs
+git diff upstream/main -- crates/agent/src/templates/system_prompt.hbs
+
+# Targeted pinning tests
+cargo test -p agent --lib templates::
+cargo test -p agent --lib test_project_skill_body_resolves_through_buffer
+cargo test -p markdown --lib mermaid
+```
+
+## References
+
+[^nygard-adr]: Nygard, M. (2011). *Documenting architecture decisions*. https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions.
+    Cited for the practice of recording the *why* of a structural decision alongside the artifact; applied here to prompt divergences, which are otherwise unrecoverable from the template alone.
+
+[^parnas-1972]: Parnas, D. L. (1972). On the criteria to be used in decomposing systems into modules. *Communications of the ACM*, 15(12), 1053–1058. https://doi.org/10.1145/361598.361623.
+    Cited for information hiding: a module's interface should expose only what callers can act on. The conditional sections apply this to the prompt — the model is told about a tool or sandbox only when it actually has one.
+
+[^ashby-1956]: Ashby, W. R. (1956). *An introduction to cybernetics*. Chapman & Hall. http://pespmc1.vub.ac.be/books/IntroCyb.pdf.
+    Cited for regulation requiring a bounded corrective response; the loop-termination guardrail is the bound on an otherwise open-ended autonomy injunction.
+
+[^anthropic-skills]: Anthropic. (2025). *Equipping agents for the real world with Agent Skills*. https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills.
+    Cited for progressive disclosure (name + description preloaded, body loaded on relevance). zed-kask's body injection is this pattern with the body-loading step replaced rather than removed.
+
+[^hunt-thomas-1999]: Hunt, A., & Thomas, D. (1999). *The pragmatic programmer: From journeyman to master*. Addison-Wesley.
+    Cited for the discipline of testing observable behaviour over implementation presence; §5.1's defect was wired code that produced no output, invisible to every existing test.
+
+[^martin-ocp]: Martin, R. C. (1996). The open-closed principle. *C++ Report*, 8(1). https://web.archive.org/web/20150905081105/http://www.objectmentor.com/resources/articles/ocp.pdf.
+    Cited for extension without modification. The overlay channel specialises the base prompt without editing it, which is what keeps upstream's base changes mergeable.
+
+[^fowler-vendor-branch]: Fowler, M. (2020). *Patterns for managing source code branches: Vendor branch*. https://martinfowler.com/articles/branching-patterns.html#vendor-branch.
+    Cited for the vendor-branch pattern and the practice of making local deviations from an upstream baseline explicit and re-applicable; §7's per-divergence pinning tests are the mechanical form of that record.
+
+[^popper-1959]: Popper, K. (1959). *The logic of scientific discovery*. Hutchinson. https://doi.org/10.4324/9780203994627.
+    Cited for falsifiability as the test of a claim's content. §8 gives commands that can refute this document's assertions rather than restating them as conclusions.
+
+
+# Part II — Skills and Composition
+
+# Skills and Composition
+
+Design, invoke, audit, and compose hKask skills. Skills execute via **upstream Zed body injection**: `SkillTool::run` resolves the current catalog and reads the selected `SKILL.md` through an injected body resolver (`crates/agent/src/tools/skill_tool.rs:194-240`). Session registration supplies the project-aware resolver, so project-local bodies come through project buffers—including remote workspaces and unsaved edits—while global bodies come through the filesystem (`crates/agent/src/agent.rs:4843-4887`; registration at `:1126`). The model reads the resulting `render_skill_envelope`; the agent is the executor.[^anthropic-skills]
+
+This guide also covers building MCP servers that provide tool surfaces for skills and agents — in zed-kask, MCP servers are launched as child processes over stdio by the in-process governed `McpRuntime` (D3 — single spawn authority since 2026-08-29; kask servers are no longer registered with zed's per-project `ContextServerStore`); the standalone `kask mcp start <id>` CLI is deleted.
+
+---
+
+## Skill Anatomy
+
+A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kask/`) containing a `SKILL.md` file:
+
+```
+.agents/skills/my-skill/
+└── SKILL.md          ← YAML frontmatter + markdown body (process instructions)
+```
+
+- **`SKILL.md`** has YAML frontmatter (`name`, `description`, and optional metadata) and a markdown body. The body is the process instructions the model reads and follows when the skill is invoked. This is the source of truth — there is no derived manifest.
+- **Template crates** under `kask/registry/templates/<name>/` are optional companion resources. A skill body may instruct the model to call the `render_template` tool to render a Jinja2 template from a template crate. The template crate is not required for skill execution — it is a resource the skill body may reference.
+- **Development skill identity:** when this checkout exists, discovery reads authored skills directly from `.agents/skills/<name>/` as global catalog entries and skips those files in project discovery. Redundant global copies of authored skills are removed, not linked or archived. The model and `skill` tool therefore see one body per authored skill name; global-only user skills remain separate. Installed binaries without a source checkout seed a disk body from the bundled payload.
+
+### The Body-Injection Model
+
+When the agent invokes the `skill` tool with a skill name:
+
+1. `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:194-240`) receives the skill name from `SkillToolInput` and snapshots the current project catalog.
+2. It selects the skill and invokes the injected body resolver (`skill_tool.rs:214-235`). In production that is `skill_body_resolver_for_project` (`crates/agent/src/agent.rs:4843-4887`), shared by tool and slash activation (`:1126,2420-2509`).
+3. It calls `render_skill_envelope(&skill, &body)` (`skill_tool.rs:48-74`), which wraps the resolved body in a structured envelope.
+4. The envelope is returned to the agent as `SkillToolOutput::Found { rendered }` (`skill_tool.rs:235`).
+5. The agent reads the envelope content (the skill body) and follows the instructions — calling `lisp_eval` for deterministic computation, `render_template` for structured prompt scaffolding, and MCP tools for external capabilities.
+
+The model is the executor. Convergence is the model's judgment, optionally checked by `lisp_eval` when the skill body instructs it.
+
+### Two Supporting Tools
+
+| Tool | Location | Purpose |
+|------|----------|---------|
+| `lisp_eval` | `crates/agent/src/tools/lisp_eval_tool.rs` | Sandboxed Lisp for skill-directed convergence, invariants and scoring; no I/O/`eval`/network. Defaults 100000 steps / depth 1024 (`lisp_eval_tool.rs:291@default_max_steps`, `:295@default_max_depth`). Native typed decode/evaluation run in the background with one cooperative cancellation flag, mandatory teardown, cleanup join and publication/weak pending-owner guards (`lisp_eval_tool.rs:374@LispEvalTool::run`; `thread.rs:4413@Thread::process_tool_result`). Raw/pure APIs are unchanged; raw-output copying/display remain foreground. H7 authorized host decode/eval uses existing Tokio blocking execution and public shared `evaluate_lisp_controlled` (`lisp_eval_tool.rs:487@evaluate_lisp_controlled`; `kask/crates/kask_bridge/src/host_skill_tools.rs:119-190@run_lisp`). Its pre-spawn invocation guard signals on owner drop when actual IPC EOF wins; eventual worker exit is tested, not an immediate join or hard deadline. H8 direct/routed corpus queries share one body; only Lisp-option work is offloaded and observes request-context cancellation, not later inference/retrieval/generation (`kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs:108-243`). Explicit rmcp cancel reaches the worker; plain EOF does not immediately signal it (tested context cancellation follows service-owner teardown after drain). No immediate disconnect or service-shutdown-worker-join promise. [Bounds, transport evidence and nonpreemptible phases](../reference/lisp-eval-dialect.md#numeric-admission-and-limits); H4C measurements remain deferred, H6 native Stop validation not performed, installed live build `1c247be309` predates H7/H8. No hard time/heap/concurrency quota or new runtime/service/dependency/cache/configuration. |
+| `render_template` | `crates/agent/src/tools/render_template_tool.rs` | Renders Jinja2 templates from `kask/registry/templates/` using `minijinja`. Strips the `[inference]`-keyed header. Path traversal protection via `canonicalize` + `starts_with` check. Template base path wired via `agent::set_template_base_path()` in `crates/zed/src/main.rs:711-729`. |
+
+### PDCA Loops Are Model-Coordinated
+
+A skill body may describe a PDCA (Plan-Do-Check-Act) loop with convergence criteria. The model self-iterates: it reads the instructions, performs the plan step, calls `lisp_eval` to check convergence, and loops until the convergence criterion is met or the model judges the task complete. There is no runtime that drives the loop — the SKILL.md body describes the convergence criteria; the model coordinates the iteration using `lisp_eval` for deterministic checks and `render_template` for structured prompt scaffolding.
+
+This is the "model-coordinated PDCA" pattern: the skill body is the process specification, the model is the executor, `lisp_eval` is the deterministic oracle, and `render_template` is the scaffolding tool.
+
+This split is the **D/P labelling convention** (P8.4, [`core/PRINCIPLES.md`](core/PRINCIPLES.md)): every computation-prescribing SKILL.md carries a labelling section naming each step's regime — **D** with its oracle, or **P** with its collapse path (propose-verify gate, probabilistic server, or calibrated forecast) and critique. The presence floor is enforced mechanically by the skill-corpus prescreen (`kask/scripts/audit/skill-corpus-prescreen.sh`, check 5), and the conservative label-vs-tool floor by its check 6 (a SKILL.md that names a D oracle must assert a D regime somewhere in the file); the routing correctness of any label is judgment, critiqued in review. S13's condition-statement floor is check 7: every SKILL.md body states both an initial and a target condition. Its selftest rejects initial-only, target-only and frontmatter-only fixtures; semantic loop anatomy — Check signal, threshold, bound and Act re-entry — remains a read-triage judgment.
+
+---
+
+## Listing and Checking Skills
+
+Skill listing, status, and auditing are performed in-process through the zed-kask agent panel or the skill maintenance tooling. The former `kask skill list`, `kask skill status`, and `kask skill audit` standalone CLI commands have been removed.[^fagan-skill-audit]
+
+### List Available Skills
+
+Invoke the skill-listing surface from the agent panel. The output shows the skill directory layout with name, description, and namespace:
+
+```
+  .agents/skills/:
+    coding-guidelines     description="Behavioral guardrails for LLM coding based on Karpathy's four principles: Think Before Coding, Simplicity First, Surgical Changes, Goal-Driven Execution."
+    diagnose              description="Disciplined diagnosis loop"
+    ...
+```
+
+### Skill Auditing
+
+Run a dual-layer audit to check skill health through the skill maintenance tooling or agent panel. The audit checks:
+- `SKILL.md` presence and frontmatter validity
+- Template crate existence (if the skill body references `render_template`)
+- Content consistency between SKILL.md and any companion template crates
+
+---
+
+## Designing a Skill
+
+### Writing a `SKILL.md`
+
+Create `.agents/skills/my-skill/SKILL.md`:
+
+```markdown
+---
+name: my-skill
+description: A custom skill for automated code review
+---
+
+# My Skill
+
+This skill performs an automated code review using a PDCA cycle:
+- **Plan:** Analyze the code structure and identify review targets
+- **Do:** Execute the review using available tools
+- **Check:** Validate findings against quality criteria (use `lisp_eval` to check invariants)
+- **Act:** Produce a review report with recommendations
+
+## When to Use
+
+Use this skill when reviewing Rust code for idiomatic patterns and correctness.
+
+## Process
+
+1. Read the target file(s) using `read_file`.
+2. Identify review targets (functions, types, modules).
+3. For each target, check against the criteria below.
+4. Use `lisp_eval` to verify structural invariants (e.g., function count, complexity thresholds).
+5. Produce a structured report with findings and recommendations.
+
+## Convergence
+
+The skill is complete when all identified targets have been reviewed and the `lisp_eval` invariant check passes.
+```
+
+The `description` field in the frontmatter is what the agent sees in the skill catalog (preloaded into the system prompt). The body is injected only when the skill is invoked — this is progressive disclosure.[^anthropic-skills]
+
+### Writing Templates (`.j2` Files)
+
+Templates are optional Jinja2 files rendered with context variables at invocation time via the `render_template` tool. A skill body may instruct the model to call `render_template` with a template path and context variables:
+
+```jinja2
+{# registry/templates/my-skill/plan.j2 #}
+You are executing the "my-skill" skill. This is the PLAN phase.
+
+Context: {{ context }}
+
+Based on the context above, develop a structured plan for achieving the goal.
+Consider:
+1. What information is needed
+2. What tools should be used
+3. What intermediate outputs are required
+
+Return your plan as a numbered list.
+```
+
+The model calls `render_template(template_path="my-skill/plan.j2", context={...})` and receives the rendered text. The template crate at `kask/registry/templates/my-skill/` is the companion resource; the `SKILL.md` body is the source of truth for the skill's process.
+
+### Context Variables
+
+The `render_template` tool accepts a `context` map. The skill body instructs the model on what variables to pass. There are no automatically-injected context variables — the model constructs the context from its current state and prior tool results.
+
+---
+
+## Testing a Skill Locally
+
+### Step 1: Verify Discovery
+
+List skills through the agent panel. Your skill should appear in the list.
+
+### Step 2: Invoke from the Agent Panel
+
+Open the zed-kask agent panel and invoke the skill:
+
+```
+/skill my-skill "Review the authentication module in src/auth.rs"
+```
+
+The agent panel routes this through `SkillTool::run` (D1), which:
+1. Resolves the skill from the current project catalog
+2. Reads the body through the project-aware resolver shared with slash activation
+3. Calls `render_skill_envelope(&skill, &body)` (`skill_tool.rs:48-74`)
+4. Returns the envelope to the agent
+5. The agent reads the body and follows the instructions
+
+---
+
+## Invoking Skills
+
+Skills are invoked in-process through `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:194-240`), which resolves the current catalog, obtains the body through its injected resolver, and injects it via `render_skill_envelope`.[^mcp-spec-skill-invoke]
+
+### Via the Agent Panel
+
+Open the zed-kask agent panel and invoke a skill:
+
+```
+/skill diagnose "My application crashes on startup"
+```
+
+Model tool invocation uses `SkillTool::run`; `/skill` slash activation uses `send_skill_invocation`. Both execute in-process and share `skill_body_resolver_for_project`, so they resolve the same project-local body (`crates/agent/src/agent.rs:1126,2420-2509,4843-4887`).
+
+### What Happens During Execution
+
+When a skill is invoked in-process:
+
+1. **Lookup** — The skill name is resolved against the current loaded catalog (`skill_tool.rs:205-235`).
+2. **Body resolution** — The injected resolver obtains the body; production tool and slash activation share `skill_body_resolver_for_project`, so project-local unsaved/remote content is authoritative (`crates/agent/src/agent.rs:1126,2420-2509,4843-4887`).
+3. **Envelope rendering** — `render_skill_envelope(&skill, &body)` (`skill_tool.rs:48-74`) wraps the body in a structured envelope and returns `SkillToolOutput::Found { rendered }` (`:235`).
+4. **Agent follows instructions** — The agent reads the envelope content and calls `lisp_eval`, `render_template`, and MCP tools as the skill directs.
+5. **Regulation feedback** — activation success or resolver/dependency failure is persisted as `reg.skill.<skill-id>.outcome`; direct ratings and skill-naming advice applications persist `reg.skill.<skill-id>.operator_feedback` (`kask/crates/hkask-regulation/src/runtime.rs:45-93`; wiring at `crates/zed/src/main.rs:1029-1060`).
+
+### Convergence (Model-Coordinated)
+
+A skill body may describe convergence criteria. The model self-iterates:
+1. Performs the plan step (may call `render_template` for scaffolding)
+2. Performs the do step (may call MCP tools)
+3. Performs the check step (may call `lisp_eval` for deterministic invariant checks)
+4. If convergence is not reached, loops back to plan with refined context
+5. If convergence is reached, produces the final output
+
+The convergence signal is typically produced by a `lisp_eval` call that deterministically computes a gap score from the model's output. The model reads the score and decides whether to iterate.
+
+### Composition Principles for Skill Design
+
+Five principles discovered through the co-evolution of skills and MCP tools. Apply these when designing the process instructions in a SKILL.md body.
+
+#### 1. The Determinism Frontier
+
+Every skill has a boundary between deterministic steps (output fully determined by inputs) and probabilistic steps (LLM exercises judgment). Push as much work as possible to the deterministic side.
+
+- Use `lisp_eval` for math, invariant checks, convergence signals.
+- Use MCP tool calls (via the agent's tool-use loop) for data retrieval with deterministic inputs.
+- Use LLM judgment only for steps that require synthesis, reasoning, classification, or prediction.
+
+The test: "Could a deterministic function produce this output from these inputs?" If yes, it should be `lisp_eval` or a direct tool call, not LLM judgment.
+
+#### 2. Persistence-Grounded Learning
+
+Every skill that produces forecasts, analyses, or recommendations should read its own prior outputs from MCP persistence before starting. This closes the feedback loop: the skill's current invocation is informed by its past performance.
+
+The pattern: the skill body instructs the model to call the relevant MCP tool (e.g., `scenario_calibration`) at intake to read descriptive eligible history and limitations, then thread that context into reasoning; raw loss or signed bias is not a calibration certificate or an automatic correction.
+
+#### 3. Failure Surfacing
+
+Every MCP tool call the skill instructs should have a failure path. The skill body should instruct the model to report failures to the Curator (via `curator_report_skill_use_issue`) before escalating. Without this, a failed tool call silently propagates and the operator sees no context.
+
+#### 4. The Lisp Scaffold Pattern
+
+When an LLM step produces structured output with invariant properties (count, completeness, diversity, mutual exclusivity), follow it with a `lisp_eval` call that checks those invariants deterministically. The Lisp step's output (defect list or gap score) feeds the convergence signal.
+
+Pattern: LLM generates → `lisp_eval` checks → LLM repairs (on next iteration).
+
+#### 5. The Co-Evolution Loop
+
+Skills and MCP tools evolve together. Skills reveal MCP tool design issues (missing inputs, confusing schemas) via failure reports. The Curator reads skill-use reports and issues `EvolveMcpToolSchema` directives. MCP tools gain new capabilities that skills should adopt.
+
+The three co-evolution feedback loops are described in the Co-Evolution Loop principle above.
+
+### Company research verification
+
+`company-research-deep` runs its stages as dependency waves: independent
+stages (evidence collection and the industry outside-view searches; LISTEN;
+IMAGINE and THESIS) run in parallel, and each later stage waits only for the
+outputs it consumes. collect-evidence reads the sources once and compacts
+them into a working evidence digest; synthesis stages work from the digest.
+Every perspective runs on every report; none is skipped or bypassed. The
+report is the only durable artifact — no run folders, no retained-output
+files, no intermediate evidence files.
+
+Both company pipelines check their work with one author-side evidence review
+over the composed report texts, modeled on published verification practice (operator
+rulings 2026-09-27): ISA 500 assertion-orientation (evidence must be relevant
+to the claim being tested — never excerpt-matching), vouching (claim →
+source) and tracing (source → report) so omissions surface, ISA 320 materiality
+scoping (only the claims the report's conclusions depend on), and ISA 230
+documentation — the review's summary goes in the report as the review
+note, and a report without one is labelled "no evidence review performed".
+The review never labels a report verified, and its mechanical match counts
+are never verdicts.
+There is no investment-grade verdict in either pipeline: an investment-grade
+judgment is a separate outcome the pipelines never claim. Flash's publication
+decision additionally requires its ENTER gate and adjusted confidence ≥ 0.50,
+computed with its in-skill `lisp_eval` form over the review's outcome.
+
+The skill bodies own collection and correction. A missing or unperformed check
+is a recorded limitation, never a clean result. Corrected reports and newly
+composed summaries need the review to run again on the edited deliverable.
+
+### Gas Consumption
+
+Skill execution is bounded by the **per-agent call cap** (System A): every governed MCP tool call via `McpRuntime::invoke` charges one call against the agent's `CallCap` (`CallCapManager::charge_metered` → `CallMeterOutcome`). The cap resets to its ceiling each regulation tick. An agent with no registered cap is **auto-registered** at `DEFAULT_RUNAWAY_CALL_CEILING` (10 000) and the wiring gap is logged — a missing seed is a wiring omission, not an authorization decision.
+
+Tool-call bounding is the per-agent `CallCap`.
+
+Tool use is observable after dispatch through the authoritative host paths: governed client dispatch persists `SpanKind::ToolCompleted` after the invocation returns (`kask/crates/hkask-mcp/src/runtime.rs`), and agent context-server dispatch forwards outcomes through `record_mcp_tool_outcome`. Successful server responses carry `duration_ms` and aggregate inference `usage` in-band (`kask/crates/hkask-mcp-server/src/server/tool_execution.rs:78-149`). The child wrapper emits no duplicate `reg.tool` stderr event.
+
+### Error Handling
+
+| Error | Cause | Resolution |
+|-------|-------|------------|
+| `Skill 'X' not found` | Skill name not in the loaded catalog | List skills through the agent panel to see available names; ensure zed-kask was launched from the project root containing `.agents/skills/` |
+| `Inference failed` | Inference port error | Check inference backend configuration via zed-kask's `CredentialsProvider` (D9); ensure the provider API key is set |
+| `lisp_eval` error | Lisp evaluation exceeded budget or depth | Check the Lisp form for infinite recursion or excessive steps; increase `max_steps` if needed |
+| `render_template` error | Template not found or Jinja2 syntax error | Verify the template path exists under `kask/registry/templates/`; validate Jinja2 syntax |
+
+---
+
+## Merging Skill Outputs
+
+Merging peer-level skill outputs is driven by the **skill-bundler** skill. The former `BundleService` in the deleted `hkask-services-skill` crate and the `kask bundle compose/list/show/apply/evolve/skills/off` CLI commands have been removed.[^ousterhout-bundle]
+
+### Merging outputs
+
+Run the peer skills on the same task, obtain their outputs, then invoke the skill-bundler skill with the task, the ordered skill names, and the corresponding outputs (its template contract: `skill_names`, `task`, `skill_outputs`):
+
+```
+skill: skill-bundler
+task: review this change against the coding guidelines and the Rust idiom guidance
+skill_names: coding-guidelines, idiomatic-rust
+skill_outputs: <the peer skills' outputs on that task>
+```
+
+The skill-bundler merges the supplied outputs into one report — per-skill summaries, cross-skill insights, explicit conflicts, prioritized recommendations — with one bounded correction. It does not compose, order, or dispatch skills, and it never re-runs them.
+
+### Bundle Management (removed)
+
+The former bundle-management surface (list, show, apply, evolve, session-scoped bundle activation) has been removed with the CLI commands; there is no bundle management. The skill-bundler skill merges outputs per invocation and persists nothing.
+
+---
+
+## Skill Routing and Discovery
+
+One meta-skill, **skill-discovery**, governs how tasks find the right skills: its **route** phase matches tasks to installed skills, and its **detect-gap** and **evaluate** phases handle what route cannot cover. The phases compose in a feedback loop.[^beer-feedback-loop]
+
+### How It Works
+
+```
+task-breakdown (decompose) / metacognition (inquiry)
+  → emits skill_match_query per slice
+    → skill-discovery route
+      → full coverage → ranked recommendations with invocation hints
+      → partial/none → uncovered_capabilities
+        → skill-discovery detect-gap → evaluate → operator installs
+          → catalog grows → route has better coverage
+```
+
+### Route scoring
+
+Given a task description and the installed skill catalog, route scores each skill 0.0–1.0 on three dimensions:
+
+| Dimension | Weight | What it measures |
+|-----------|--------|------------------|
+| Capability overlap | 0.50 | Does the skill description cover the task core need? |
+| Description alignment | 0.25 | Do task verbs/nouns overlap with the skill's description? |
+| Trigger alignment | 0.25 | Does the task match the skill When-to-Use conditions? |
+
+Coverage assessment: **full** (fit >= 0.80), **partial** (0.40-0.79), **none** (< 0.40). Partial/none emits `uncovered_capabilities` for detect-gap.
+
+### Gap handling
+
+**detect-gap** classifies gaps (coverage, feature, automation, knowledge, governance, quality, epistemic) and recommends an action; **evaluate** scores a candidate's format, quality and safety. Installation is the operator's decision.
+
+### Regulation feedback records
+
+Routing and discovery are model-coordinated skill behavior; they do not emit dedicated runtime events. The durable `RegulationArchive` holds three skill phases, read by the algedonic review's gemba walk through `reg_query` (the whole loop is `DIAG-ARCH-LEARNING-LOOP-001` in [`../diagrams/architecture.md`](../diagrams/architecture.md#skill-learning-loop)); `outcome` and `operator_feedback` also feed the in-memory ledger (`kask/crates/hkask-regulation/src/runtime.rs:780`):
+
+| Record key | Producer |
+|---|---|
+| `reg.skill.<skill-id>.outcome` | `SkillTool::run` and `activate_delegated_skill` record successful envelope delivery and dependency/body-resolution failures, stamped with `invoker` (`Curator`, `Zed Agent`, `delegated`); not-found and authorization denial remain request errors (`crates/agent/src/tools/skill_tool.rs:194-310`; `crates/zed/src/main.rs:1029-1060`). |
+| `reg.skill.<skill-id>.tool_failure` | `Thread::run_tool` records a non-`skill` tool failure while that skill is the thread's active skill (authorization failures excluded) — unclassified evidence (`crates/agent/src/thread.rs:4875@Thread::run_tool`, `:4947-4948@Thread::run_tool`, `crates/agent/src/agent.rs:5117@record_skill_tool_failure`; `crates/zed/src/main.rs:1763-1768`). |
+| `reg.skill.<skill-id>.operator_feedback` | `record_skill_feedback` (Curator sessions only — the operator's evaluation during the algedonic review, separated from execution) is the only producer; it feeds the process-global recorder (applying curator advice records no verdict) (`crates/zed/src/main.rs:1726-1762`). |
+
+---
+
+## Building MCP Servers
+
+zed-kask owns one managed `McpRuntime` in the editor process. It spawns the 12
+registered `hkask-mcp-*` binaries as child processes over stdio, performs the MCP
+handshake and tool discovery, and owns child shutdown/reconnect
+(`kask/crates/hkask-mcp/src/runtime.rs`). The canonical
+server-id/binary/env mapping is `BUILT_IN_MCP_SERVERS`
+(`kask/crates/kask_bridge/src/mcp_servers.rs:28-46,55-549`).[^mcp-spec-build][^ousterhout-mcp-build]
+
+### Current crate shape
+
+Create the package under `kask/mcp-servers/hkask-mcp-<name>/`. Follow the
+repository's no-`mod.rs` and explicit-library-root conventions:
+
+```toml
+[lib]
+name = "hkask_mcp_example"
+path = "src/hkask_mcp_example.rs"
+
+[[bin]]
+name = "hkask-mcp-example"
+path = "src/main.rs"
+```
+
+The production servers use the workspace dependencies rather than relative path
+dependencies. For example, the corpus package declares its explicit lib and bin
+at `kask/mcp-servers/hkask-mcp-corpus/Cargo.toml:63-70`.
+
+### Server and tool routers
+
+Define the server with `hkask_mcp_server::mcp_server!`; the macro supplies the
+constructor and `ToolContext` implementation. Put tool methods in one or more
+`#[tool_router(router = ..., vis = "pub")]` impl blocks, and combine every
+sub-router into the server router. Missing a router compiles but silently removes
+its tools, so each server should pin `combined_router().list_all()` against its
+intended surface (corpus example: `hkask_mcp_corpus.rs:321-326`).
+
+Every tool boundary returns a typed MCP result and wraps its future with
+`execute_tool(self, "tool_name", ...)`. The shared boundary isolates per-call
+inference usage, applies optional ontology annotation, and returns successful
+`content` with `duration_ms` and `usage` while preserving typed errors
+(`kask/crates/hkask-mcp-server/src/server/tool_execution.rs:78-149`). The
+editor-side managed runtime records completed governed calls through the
+injected Regulation sink (`kask/crates/hkask-mcp/src/runtime.rs`); the
+child wrapper does not duplicate that outcome on stderr.
+
+### Bootstrap and child binary
+
+Expose `pub async fn run() -> Result<(), hkask_mcp_server::McpError>` in the
+library. Resolve async dependencies before the synchronous factory when needed,
+then call:
+
+```rust
+hkask_mcp_server::run_server(
+    "hkask-mcp-example",
+    env!("CARGO_PKG_VERSION"),
+    |ctx: hkask_mcp_server::ServerContext| {
+        Ok(ExampleServer::new(ctx.webid /* domain fields */))
+    },
+    vec![],
+).await
+```
+
+The framework signature is at
+`kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:42-52`; the corpus server
+shows async inference-port resolution followed by factory construction at
+`kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:441-449`. The binary
+entry point is intentionally thin:
+
+```rust
+#[tokio::main]
+async fn main() -> Result<(), hkask_mcp_server::McpError> {
+    hkask_mcp_example::run().await
+}
+```
+
+### Register the managed child
+
+Add a `BuiltinMcpServer` entry in
+`kask/crates/kask_bridge/src/mcp_servers.rs`. All four fields are required:
+
+```rust
+BuiltinMcpServer {
+    id: "example",
+    binary: "hkask-mcp-example",
+    description: "Example — what it does",
+    credentials: Some(&[]),
+    config_env: Some(&[]),
+}
+```
+
+The runtime resolves `HKASK_MCP_<ID>_BIN` (upper case, dashes as underscores)
+or the registered binary on `PATH`, then starts it as a child. Add the package to
+the workspace and to `kask/scripts/build/mcp-servers.txt` so release installation
+builds and copies the child binary.
+
+### Validation and common failures
+
+- Build and test the package by its real package name; run live-mutation tests
+  with `--test-threads=1`.
+- Assert the registered tool surface and any generated `TOOL_NAMES` coverage.
+- Treat missing credentials as `permission_denied` naming the env var; never
+  silently substitute an empty result or in-memory store.
+- Keep `credentials` and `config_env` allowlists aligned with actual reads.
+- An unset/invalid `HKASK_WEBID` produces a warning and anonymous child identity
+  (`kask/crates/hkask-mcp-server/src/server/transport.rs:93-105`). This is
+  distinct from editor startup, which proceeds immediately with fallback agent
+  identity `kask` when the Zed account has not resolved.
+
+## Common Skill Pitfalls
+
+### Skill Not Found in Agent Panel
+
+**Symptom:** `/skill my-skill` says "Skill 'my-skill' not found."
+
+**Fix:** Ensure zed-kask was launched from the project root containing `.agents/skills/`. Skills are loaded from the `.agents/skills/` directory at the project root.
+
+### Template Rendering Fails
+
+**Symptom:** `render_template` returns an error.
+
+**Fix:** Validate Jinja2 syntax in all `.j2` files. Ensure the template path exists under `kask/registry/templates/`. Verify the template base path is wired (check `agent::set_template_base_path` in `crates/zed/src/main.rs`).
+
+### Lisp Eval Errors
+
+**Symptom:** `lisp_eval` returns an error.
+
+**Fix:** Check the Lisp form for infinite recursion or excessive steps. The interpreter is bounded by `max_steps` (default 100000) and `max_depth` (default 1024). Simplify the form or increase the budget if needed.
+
+---
+
+## Related
+
+- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1 (skill execution), D2 (Curator agent), D3 (MCP tool transport — child processes over stdio)
+- [Regulation Explanation](../diataxis/hkask-regulation/explanation.md) — Regulation spans emitted by skill execution
+
+---
+
+## Footnotes
+
+[^anthropic-skills]: Anthropic. (2025). *Equipping agents for the real world with Agent Skills*. https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills
+    Cited for progressive disclosure (name + description preloaded, body loaded on relevance). zed-kask's body-injection model is this pattern: the catalog is preloaded, the body is injected on invocation.
+
+[^fagan-skill-audit]: Fagan, M. E. (1976). Design and code inspections to reduce errors in program development. *IBM Systems Journal*, 15(3), 182–211. https://doi.org/10.1147/sj.153.0182
+    Cited for the inspection-based audit methodology the skill audit applies to SKILL.md and template consistency.
+
+[^mcp-spec-skill-invoke]: Anthropic. (2024). *Model Context Protocol Specification*. Anthropic PBC. https://modelcontextprotocol.io/specification
+    Cited for the MCP protocol that skill execution uses for tool invocation.
+
+[^ousterhout-bundle]: Ousterhout, J. (2018). *A Philosophy of Software Design*. Yakny Press.
+    Cited for the deletion-test discipline behind the removal — the `BundleService` and its CLI had no remaining consumers, and a module nothing calls is dead surface to delete, not preserve.
+
+[^beer-feedback-loop]: Beer, S. (1979). *The Heart of Enterprise*. John Wiley & Sons.
+    Cited for the cybernetic feedback-loop design skill-discovery's route → detect-gap loop implements.
+
+[^mcp-spec-build]: Anthropic. (2024). *Model Context Protocol Specification*. Anthropic PBC. https://modelcontextprotocol.io/specification
+    Cited for the MCP protocol every builtin MCP server follows.
+
+[^ousterhout-mcp-build]: Ousterhout, J. (2018). *A Philosophy of Software Design*. Yakny Press.
+    Cited for the deep-module principle that the composition root wires individual components directly instead of a `KaskCore` singleton.

@@ -1,0 +1,153 @@
+{# goal: Adversarial review of a proof attempt. Search for counterexamples that invalidate the proposition. Identify failed proof paths (tactics that don't apply, induction that doesn't terminate, simp lemmas that loop). Challenge proof irrelevance assumptions. Test edge cases (empty types, uninhabited Props, proof terms that don't erase). Produce refinement directives for each failure. #}
+[inference]
+contract:
+  input:
+    proof_obligation: string
+    proof_attempt: object
+    anchor: object
+    lean_diagnostics: object
+  output:
+    counterexamples: array
+    failed_paths: array
+    assumptions_challenged: array
+    edge_cases: array
+    refinement_directives: array
+    erasure_classification: object
+    prop_type_boundary: string
+    compiler_grounding: object
+    reasoning: string
+---
+You are Curry-Howard's, de Bruijn's, and Carneiro's adversarial reviewer. Your
+job is to find what's wrong with the proof — not to be pleasant, to be correct.
+Try to falsify the specific statement or verification claim. A valid proof
+may survive; do not invent gaps when Lean provides none.
+
+## Proof Obligation
+
+{{ proof_obligation }}
+
+## Anchor (Phase 1)
+
+```json
+{{ anchor | tojson }}
+```
+
+## Proof Attempt (Phase 2)
+
+```json
+{{ proof_attempt | tojson }}
+```
+
+{% if lean_diagnostics and lean_diagnostics | length > 0 %}
+## Lean Diagnostics (type-checker ground truth)
+
+```json
+{{ lean_diagnostics | tojson }}
+```
+
+For each diagnostic:
+1. What does it reveal about the proof's failure?
+2. Which Curry-Howard principle does it violate?
+3. Does the proof attempt address it?
+{% else %}
+## Lean Diagnostics
+
+No Lean diagnostics provided. Run `lean` or `lake build` on the proof attempt
+before this step — the type-checker's errors are ground truth.
+{% endif %}
+
+## Refutation Method
+
+### 1. Search for Counterexamples
+
+The proposition might be false. Try to find a counterexample:
+- For universal propositions (`∀ x, P x`), find an `x` where `P x` fails.
+- For implications (`A → B`), find a case where `A` holds but `B` doesn't.
+- For decidable propositions, prove the negation of a concrete instance with
+  `decide` when possible; a failed tactic alone does not prove the opposite.
+- For inductive propositions, check the base cases and inductive steps.
+
+### 2. Identify Failed Proof Paths
+
+The proof attempt might use tactics that don't apply:
+- `induction` with a motive that isn't general enough
+- `simp` with lemmas that loop or don't apply
+- `apply` with a hypothesis that doesn't unify
+- `decide` on an undecidable proposition
+- `rw` with an equation that doesn't hold definitionally
+
+### 3. Challenge Assumptions
+
+The proof made claims about termination, decidability, and erasure. Test them:
+- "This definition is total" — check its termination diagnostics and whether
+  it was marked `partial`.
+- "This proposition is decidable" — check if a reducible `Decidable` instance
+  exists in the actual imports; audit `native_decide`'s axiom if used.
+- "This proof erases" — check if the proof term is in `Prop` and proof-irrelevant.
+- "This induction is valid" — check if the motive covers all cases.
+- "This simp lemma applies" — check if the pattern matches.
+
+### 4. Test Edge Cases
+
+- Empty types (what happens when the domain is empty?)
+- Uninhabited Props (what happens when the proposition has no proof?)
+- A hole hidden behind a successful exit: `theorem hole : False := by sorry`
+  checks with a warning but `#print axioms hole` lists `sorryAx`.
+- An invalid large elimination (Lean v4.34.0):
+  ```lean
+  def extractWitness (h : ∃ n : Nat, n = n) : Nat :=
+    match h with
+    | ⟨n, _⟩ => n
+  ```
+  Lean must reject `Exists.casesOn` into `Type`.
+- Universe inconsistencies (what happens when universes don't line up?)
+
+For a separate false-goal control use `example : 1 = 2 := by decide`;
+expect a nonzero Lean exit and a diagnostic saying the proposition is false.
+For a positive negation use `example : 1 ≠ 2 := by decide` and require exit 0.
+Run the cases with `kask/scripts/test-lean-prover-skill.sh <lean-binary>`.
+A negative control's failure never establishes an unrelated theorem.
+
+### 5. Produce Refinement Directives
+
+For each counterexample or failed path, state: what specifically must change,
+which Curry-Howard principle it addresses, and how much it improves the proof.
+
+## Output
+
+```json
+{
+  "counterexamples": [
+    {"input": "specific input", "proposition_fails": false, "evidence": "Lean command and diagnostic, if tested"}
+  ],
+  "failed_paths": [
+    {"tactic": "induction/apply/simp/rw", "failure": "why it doesn't apply", "fix": "what would make it work"}
+  ],
+  "assumptions_challenged": [
+    {"assumption": "what the proof claimed", "counterexample": "why it doesn't hold", "validated": false, "compiler_evidence": "Lean diagnostic if any"}
+  ],
+  "edge_cases": [
+    {"scenario": "empty type / uninhabited Prop / universe inconsistency", "outcome": "what happens", "principle_violated": 3}
+  ],
+  "refinement_directives": [
+    {"directive": "specific change to make", "targets": "which part of the proof", "principle_addressed": 1, "expected_improvement": "high|medium|low", "compiler_action": "what to run to verify"}
+  ],
+  "erasure_classification": {
+    "universe": "Prop | Type",
+    "erases": null,
+    "proof_relevant": null,
+    "allows_large_elimination": null
+  },
+  "prop_type_boundary": "clean | violation — description of any boundary crossing",
+  "compiler_grounding": {
+    "diagnostics_confirmed": 0,
+    "counterexamples_confirmed": 0,
+    "termination_failures": 0,
+    "proof_compiles": null,
+    "sorry_warnings": 0
+  },
+  "reasoning": "Summary of the adversarial review — what's solid, what's broken, what needs another pass. Cite Lean diagnostics where available."
+}
+```
+
+The JSON values illustrate shape, not observations; populate counts only from actual runs. Record exit status and diagnostic for each case; missing tools or diagnostics mean `unverified`.

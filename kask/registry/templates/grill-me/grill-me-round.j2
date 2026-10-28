@@ -1,0 +1,62 @@
+{# goal: Draft questions or grade actual identified answers, with deterministic feedback between executions and no generated bookkeeping. #}
+[inference]
+contract:
+  input:
+    topic: string
+    phase: string
+    mode: string
+    current_level: integer
+    round_number: integer
+    question_bank: array
+    answer_ids: array
+    feedback: object
+  output:
+    question_drafts: array
+    retired_explanations: array
+    evaluations: array
+    calibrated_level: integer|null
+---
+Examine **{{ topic }}**, batch {{ round_number }}, level {{ current_level }}, mode {{ mode }}.
+Local ladder: 1 Recall; 2 Mechanism; 3 Rationale/tradeoffs; 4 Edge cases; 5 Synthesis.
+This adapts Bloom; it is not the revised taxonomy's six categories.
+
+
+{% if phase not in ["ask", "grade"] or mode not in ["calibrate", "interrogate"] %}
+invalid_phase_or_mode — stop.
+{% elif phase == "grade" %}
+## Grade Identified Answers Only
+Selected actual answers (a regrade keeps the same answer ID):
+{% for answer in feedback.answers if answer.id in answer_ids %}
+{% set question = question_bank | selectattr("id", "equalto", answer.question_id) | first %}
+{{ {"answer": answer, "question": question} | tojson }}
+{% endfor %}
+Grade each selected answer Solid, Partial or Gap, with an answer-specific reason.
+Return `{"evaluations":[{"answer_id":7,"rating":"Solid","note":"reason"}]}`;
+the example ID is schematic: use only the supplied IDs, in any order.
+Do not generate questions, answers, counters or a running assessment.
+An empty selection is `no_answers_to_grade`, not permission to invent evidence.
+{% if mode == "calibrate" %}
+Also return `calibrated_level` (integer 1–5) based on these actual answers.
+{% else %}
+Omit `calibrated_level`; the caller supplies null to the update.
+{% endif %}
+{% elif feedback.stop or feedback.direction == "await_grades" or answer_ids | length > 0 %}
+ask_blocked — finish grading or assess; do not generate questions.
+{% else %}
+## Draft Next Questions Only
+Question bank: {{ question_bank | tojson }}
+Feedback: {{ feedback.direction }}; retired IDs: {{ feedback.retired_ids | tojson }}.
+Draft 2–3 questions at the supplied level. Hold probes deeper; reprobe changes angle;
+escalate uses the already-raised level. Calibration asks baseline questions, not grades.
+Return `question_drafts`: new `{retry_id:null,question,area}` records, or
+`{retry_id:<original bank ID>,question:null,area:null}` for a legitimate retry.
+The caller's delivery filter assigns new IDs and restores original retry records.
+For every feedback.retired_ids entry return one `{question_id,explanation}` in
+`retired_explanations`, explaining the correct answer instead of re-asking it.
+Do not disguise a retired question as a new ID/paraphrase. If none are retired,
+omit the explanation field; the caller retains the known empty set directly.
+No assessment copy, level, ratio, counter or gate decision belongs in ask output.
+{% endif %}
+
+Stay within the topic; direct and challenging, never mean-spirited. Give minimal
+hints without solving an active question. Grades use exact Solid/Partial/Gap casing.

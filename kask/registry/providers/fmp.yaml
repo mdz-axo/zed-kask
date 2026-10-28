@@ -1,0 +1,53 @@
+# Provider profile — FMP (Financial Modeling Prep). RETIRED 2026-10-18:
+# archived in place per the provider-audit retirement pass (Step 9). The sole
+# consumer was the companies MCP server, removed with the companies/FMP/EODHD/
+# FIBO removal. No in-tree code adopts this vendor. The dated readings below
+# are preserved as the audit record, not as a live contract.
+# Structural contract pinned by kask/scripts/check-provider-profiles.sh;
+# semantic reading owned by the provider-audit skill.
+id: fmp
+name: FMP (Financial Modeling Prep)
+status: retired
+retired:
+  date: "2026-10-18"
+  reason: >-
+    sole consumer (the companies MCP server's fundamentals/filings/transcripts
+    path) removed with the companies/FMP/EODHD/FIBO removal — the co-researcher
+    mandate does not carry the companies data surface.
+  purged:
+    - companies server credentials and config_env HKASK_FMP_API_KEY
+      (kask/crates/kask_bridge/src/mcp_servers.rs)
+  retained_user_data:
+    - Any pre-existing kask://credentials/fmp keychain entry is dormant and
+      left operator-owned; no code exposes, restores, reads, or injects it.
+roles:
+  - companies-data   # retired role — no in-tree consumer
+keychain:
+  slot: none
+  env_var: ""
+  note: the kask://credentials/fmp slot has no reader or settings row;
+    any old entry is dormant operator-owned data, not a live capability.
+consumed_capabilities: []  # retired — no in-tree consumer remains
+deliberate_non_consumption: []
+data_terms:
+  # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
+  extracted_at: "2026-10-13"
+  trains_on_customer_data: >-
+    no training clause — financial-data vendor; the terms read
+    (site.financialmodelingprep.com/terms-of-service, extracted 2026-10-13)
+    center on data licensing: a Data Deletion Agreement exhibit requires
+    the customer to delete all FMP data on termination.
+  retention_published: >-
+    privacy policy live (site.financialmodelingprep.com/privacy-policy,
+    HTTP 200, probed 2026-10-13) but its retention text was not extracted this
+    run — evidence gap on duration.
+status_surface:
+  status_page: >-
+    https://status.financialmodelingprep.com live (HTTP 200, probed 2026-10-13).
+  sla: none found (probed 2026-10-13).
+pricing:
+  machine_readable: >-
+    pricing published (pricing-plans and developer/docs/pricing pages,
+    HTTP 200, probed 2026-10-13); no machine-readable pricing source found this
+    run.
+first_audit_pending: false

@@ -1,0 +1,607 @@
+//! Algedonic alerts — Variety deficit escalation
+//!
+//! Implements algedonic (pain/pleasure) feedback for cybernetic control.
+//! When variety deficit exceeds threshold, alerts are escalated to the Curator/human.
+//!
+//! Per architecture v0.22.0: Variety deficit >50 → Warning escalation to Curator;
+//! deficit >100 → Critical escalation to human. Binary threshold.
+
+use crate::runtime::VarietyTracker;
+use chrono::{DateTime, Utc};
+use hkask_types::regulation::LedgerHealth;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use tracing::{error, warn};
+
+/// Default DateTime for serde deserialization
+fn default_datetime() -> DateTime<Utc> {
+    Utc::now()
+}
+
+/// Default expected variety per domain — distinct tools exercised per 60s
+/// window on an MCP-server domain. A healthy active minute uses 2–5 distinct
+/// tools per server; the previous default of 10 made every active domain
+/// read as deficient. Per-domain override:
+/// `RegulationLedger::calibrate_threshold`.
+pub(crate) const DEFAULT_EXPECTED_VARIETY: u64 = 3;
+
+/// Fraction of `max_alerts` at which the approaching-cap signal fires.
+/// 0.8 → 160 of 200. Gives the operator a window to review before eviction.
+pub(crate) const ALERT_CAP_APPROACHING_FRACTION: f64 = 0.8;
+
+/// Alert severity levels — simple binary threshold classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AlertSeverity {
+    /// Informational - deficit detected but below threshold
+    Info,
+    /// Warning - deficit approaching threshold
+    Warning,
+    /// Critical - deficit exceeds threshold, escalation required
+    Critical,
+}
+
+/// Algedonic alert
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeAlert {
+    pub domain: String,
+    pub deficit: u64,
+    pub threshold: u64,
+    pub severity: AlertSeverity,
+    pub escalated: bool,
+    #[serde(default = "default_datetime")]
+    pub timestamp: DateTime<Utc>,
+    pub message: String,
+    /// How many cycles this condition has recurred into the same log slot
+    /// (coalesced by domain + severity). 1 = first occurrence. The count
+    /// carries the condition's persistence for review — "active, N
+    /// recurrences, last seen <timestamp>" — without per-cycle duplicates
+    /// flooding the log (operator ruling 2026-09-28: consolidate the alert
+    /// paths).
+    #[serde(default = "default_occurrence_count")]
+    pub occurrence_count: u64,
+}
+
+fn default_occurrence_count() -> u64 {
+    1
+}
+
+/// Sink for sending algedonic alerts via email as a last-resort loop closure
+/// when the live channel and persistence are both unavailable (S1->S5 algedonic
+/// fallback path).
+///
+/// Implementations should be non-blocking — spawn async work internally
+/// rather than blocking the cybernetics loop.
+pub trait AlertEmailSink: Send + Sync + std::fmt::Debug {
+    /// Send an alert email. Non-blocking — implementations should spawn
+    /// async work rather than blocking the caller.
+    ///
+    /// Implementations should store a `tokio::runtime::Handle` and use
+    /// `handle.spawn(...)` rather than bare `tokio::spawn(...)`, so the
+    /// method is safe to call from any thread (including the GPUI
+    /// foreground thread, which has no tokio reactor). The sole caller is
+    /// `CyberneticsLoop::tick()`, which runs inside `Tokio::spawn`, but
+    /// the `Send + Sync` bound on this trait means a future caller could
+    /// invoke it from a non-tokio context.
+    fn send_alert_email(&self, alert: &RuntimeAlert);
+}
+
+/// Sink for delivering algedonic alerts to the review board.
+///
+/// Implementations must be non-blocking and best-effort — a failing or missing
+/// sink never breaks the regulation loop. The regulation archive remains a
+/// secondary fallback for alert durability.
+/// The durable-write outcome of [`AlertEscalationSink::try_persist_alert`].
+/// The three states are distinct so an explicit escalation's acknowledgment
+/// never conflates confirmed, attempted, and failed delivery.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AlertDeliveryOutcome {
+    /// The alert is confirmed on the board. Carries the new card id, or
+    /// `None` when an existing open card received a repeat comment.
+    Confirmed(Option<String>),
+    /// The alert was handed to a best-effort sink that cannot report
+    /// whether the durable write succeeded.
+    Attempted,
+}
+
+/// Persistence failure for an algedonic alert. Best-effort surface: the
+/// caller logs it and never propagates — alert persistence is never a
+/// correctness path. The board lives behind the governed tool boundary, so
+/// the variant carries the tool failure message.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum AlertPersistError {
+    #[error("algedonic board read failed: {0}")]
+    BoardRead(String),
+    #[error("algedonic board write failed: {0}")]
+    BoardWrite(String),
+}
+
+#[async_trait::async_trait]
+pub trait AlertEscalationSink: Send + Sync {
+    /// Reconcile open alert conditions against fresh observations for self-recovery.
+    /// Missing observations must never resolve an alert.
+    async fn reconcile_conditions(
+        &self,
+        _observations: &[crate::loops::Signal],
+    ) -> Result<(), AlertPersistError> {
+        Ok(())
+    }
+
+    /// Deliver an alert to the reviewable board, reporting the tool outcome.
+    ///
+    /// `output` is the human-readable alert message; `error_context` is a
+    /// serialized JSON blob carrying the structured alert fields (domain,
+    /// deficit, threshold, severity) for later triage; `confidence` is 1.0
+    /// for Critical, 0.5 for Warning.
+    ///
+    /// Returns `Ok(Confirmed(Some(id)))` for a new card and
+    /// `Ok(Confirmed(None))` when the open condition card received a repeat
+    /// comment. The regulation loop uses that single delivery outcome to
+    /// suppress duplicate live/archive alerts. `Attempted` is unconfirmed;
+    /// `Err` means delivery failed.
+    ///
+    /// Errors are logged by the caller and never propagated — alert
+    /// persistence is best-effort, never a correctness path.
+    async fn try_persist_alert(
+        &self,
+        output: &str,
+        confidence: f64,
+        error_context: &str,
+    ) -> Result<AlertDeliveryOutcome, AlertPersistError>;
+}
+
+impl RuntimeAlert {
+    /// Create an alert using binary thresholds. Returns None if domain is empty
+    /// or threshold is 0.
+    ///
+    /// expect: "The system creates algedonic alerts when variety deficit exceeds threshold"
+    /// \[P9\] Motivating: Homeostatic Self-Regulation — algedonic feedback loop
+    /// \[P4\] Constraining: Clear Boundaries — cap enforcement through binary classification
+    /// \[P5\] Constraining: Essentialism — simplest possible threshold model
+    /// pre:  domain is non-empty, threshold > 0
+    /// post: returns Some(RuntimeAlert) with severity based on deficit vs threshold,
+    ///       or None if preconditions violated
+    pub fn new(domain: &str, deficit: u64, threshold: u64) -> Option<Self> {
+        if domain.is_empty() || threshold == 0 {
+            return None;
+        }
+
+        let severity = if deficit > threshold {
+            AlertSeverity::Critical
+        } else if deficit > threshold / 2 {
+            AlertSeverity::Warning
+        } else {
+            AlertSeverity::Info
+        };
+
+        let result = Self {
+            domain: domain.to_string(),
+            deficit,
+            threshold,
+            severity,
+            escalated: severity == AlertSeverity::Critical,
+            timestamp: Utc::now(),
+            message: format!(
+                "Variety deficit {} in domain '{}' (threshold: {})",
+                deficit, domain, threshold
+            ),
+            occurrence_count: 1,
+        };
+        debug_assert!(
+            (result.severity == AlertSeverity::Critical && deficit > threshold)
+                || (result.severity == AlertSeverity::Warning
+                    && deficit > threshold / 2
+                    && deficit <= threshold)
+                || (result.severity == AlertSeverity::Info && deficit <= threshold / 2),
+            "severity must match deficit vs threshold"
+        );
+        Some(result)
+    }
+
+    /// Check if alert should be escalated.
+    ///
+    /// expect: "I can check whether an alert warrants escalation to the Curator"
+    /// \[P9\] Motivating: Homeostatic Self-Regulation — escalation feedback loop
+    /// \[P4\] Constraining: Clear Boundaries — binary threshold boundary check
+    /// post: returns true iff severity is Critical
+    pub fn should_escalate(&self) -> bool {
+        let result = self.escalated;
+        debug_assert!(
+            result == (self.severity == AlertSeverity::Critical),
+            "result must match critical severity"
+        );
+        result
+    }
+
+    /// Check if alert is critical severity.
+    ///
+    /// expect: "I can check whether an alert has reached critical severity"
+    /// \[P9\] Motivating: Homeostatic Self-Regulation — critical threshold detection
+    /// \[P4\] Constraining: Clear Boundaries — severity boundary check
+    /// post: returns true iff severity == Critical
+    pub fn is_critical(&self) -> bool {
+        self.severity == AlertSeverity::Critical
+    }
+
+    /// Check if alert is warning severity.
+    ///
+    /// expect: "I can check whether an alert is at warning severity"
+    /// \[P9\] Motivating: Homeostatic Self-Regulation — warning threshold detection
+    /// \[P4\] Constraining: Clear Boundaries — mid-range boundary check
+    /// post: returns true iff severity == Warning
+    pub fn is_warning(&self) -> bool {
+        self.severity == AlertSeverity::Warning
+    }
+}
+
+/// Algedonic alert manager
+pub(crate) struct AlgedonicManager {
+    threshold: u64,
+    default_expected_variety: u64,
+    expected_variety: HashMap<String, u64>,
+    /// Diagnostic alert ring buffer. Capped at `max_alerts`; oldest entries
+    /// are evicted on overflow. Alert cards are the actionable backlog;
+    /// this buffer is diagnostic history, not review state.
+    alerts: Vec<RuntimeAlert>,
+    /// Maximum alerts retained before oldest are evicted.
+    max_alerts: usize,
+    /// Outcome success rate warning threshold. Falls back to DEFAULT_OUTCOME_WARNING_THRESHOLD.
+    outcome_warning_threshold: f64,
+    /// Outcome success rate critical threshold. Falls back to DEFAULT_OUTCOME_CRITICAL_THRESHOLD.
+    outcome_critical_threshold: f64,
+}
+
+impl AlgedonicManager {
+    /// Construct with a custom alert-log cap. Used by `with_set_points` to
+    /// thread the operator-configured `max_alerts` through.
+    pub(crate) fn with_max_alerts(
+        threshold: u64,
+        default_expected_variety: u64,
+        max_alerts: usize,
+    ) -> Self {
+        let max_alerts = max_alerts.max(1);
+        Self {
+            threshold,
+            default_expected_variety,
+            expected_variety: HashMap::new(),
+            alerts: Vec::with_capacity(max_alerts),
+            max_alerts,
+            outcome_warning_threshold: Self::DEFAULT_OUTCOME_WARNING_THRESHOLD,
+            outcome_critical_threshold: Self::DEFAULT_OUTCOME_CRITICAL_THRESHOLD,
+        }
+    }
+
+    /// Override the outcome quality thresholds from SetPointsConfig.
+    ///
+    /// expect: "The system escalates variety deficits through binary-threshold algedonic alerting"
+    pub(crate) fn set_outcome_thresholds(&mut self, warning: f64, critical: f64) {
+        self.outcome_warning_threshold = warning;
+        self.outcome_critical_threshold = critical;
+    }
+
+    /// Set expected variety for a specific domain.
+    ///
+    /// expect: "The system escalates variety deficits through binary-threshold algedonic alerting"
+    pub(crate) fn set_expected_variety(&mut self, domain: &str, expected: u64) {
+        self.expected_variety.insert(domain.to_string(), expected);
+    }
+
+    /// Check variety counter and generate alert using binary thresholds.
+    ///
+    /// expect: "The system escalates variety deficits through binary-threshold algedonic alerting"
+    /// pre: counter is a valid VarietyTracker; domain is non-empty
+    /// post: returns Some(&RuntimeAlert) when the active domain's observed
+    ///       variety falls below expected (deficit > 0), None when the
+    ///       domain meets its expected variety or is idle (no observations
+    ///       in the current window)
+    pub(crate) fn check(
+        &mut self,
+        counter: &VarietyTracker,
+        domain: &str,
+    ) -> Option<&RuntimeAlert> {
+        // Idle gate: a domain with no observations in the current window
+        // is at rest, not deficient. Without this gate every check on an
+        // idle domain pushes a max-deficit alert into the diagnostic log,
+        // growing it by the full expected variety per idle domain per
+        // cycle.
+        if counter.variety() == 0 {
+            return None;
+        }
+        let expected = self
+            .expected_variety
+            .get(domain)
+            .copied()
+            .unwrap_or(self.default_expected_variety);
+        let deficit = counter.deficit(expected);
+
+        // Healthy gate: an active domain meeting its expected variety has
+        // nothing to report. Pushing a deficit-0 Info alert on every check
+        // populated the diagnostic log during normal tool use, which the
+        // AlgedonicEvents sensor (any-population deviation) read as a
+        // standing review demand.
+        if deficit == 0 {
+            return None;
+        }
+
+        let alert = RuntimeAlert::new(domain, deficit, self.threshold)
+            .unwrap_or_else(|| {
+                // Preconditions violated (empty domain or zero threshold);
+                // create a safe fallback Info alert.
+                RuntimeAlert {
+                    domain: domain.to_string(),
+                    deficit,
+                    threshold: self.threshold.max(1),
+                    severity: AlertSeverity::Info,
+                    escalated: false,
+                    timestamp: Utc::now(),
+                    message: format!(
+                        "Variety deficit {} in domain '{}' (threshold: {} — fallback, preconditions violated)",
+                        deficit, domain, self.threshold.max(1)
+                    ),
+                    occurrence_count: 1,
+                }
+            });
+
+        if alert.should_escalate() {
+            error!(
+                target: "reg.alert",
+                domain = %alert.domain,
+                deficit = alert.deficit,
+                threshold = alert.threshold,
+                "ALGEDONIC ALERT - Escalation required"
+            );
+        } else if alert.is_warning() {
+            warn!(
+                target: "reg.alert",
+                domain = %alert.domain,
+                deficit = alert.deficit,
+                "Variety deficit approaching threshold"
+            );
+        }
+
+        Some(self.push_alert(alert))
+    }
+
+    /// Get the configured default threshold.
+    ///
+    /// expect: "The system escalates variety deficits through binary-threshold algedonic alerting"
+    pub(crate) fn default_threshold(&self) -> u64 {
+        self.threshold
+    }
+
+    /// Get all alerts.
+    ///
+    /// expect: "The system escalates variety deficits through binary-threshold algedonic alerting"
+    pub(crate) fn alerts(&self) -> &[RuntimeAlert] {
+        &self.alerts
+    }
+
+    /// Get critical alerts only.
+    ///
+    /// expect: "The system escalates variety deficits through binary-threshold algedonic alerting"
+    pub(crate) fn critical_alerts(&self) -> Vec<&RuntimeAlert> {
+        self.alerts.iter().filter(|a| a.is_critical()).collect()
+    }
+
+    /// Current total variety deficit across live trackers — a level, not an
+    /// accumulation.
+    ///
+    /// Each tracked domain contributes `expected − observed` distinct states
+    /// for the current window; idle domains (empty window) contribute zero
+    /// via `VarietyTracker::deficit`. This is what `LedgerHealth::
+    /// overall_deficit` reports. The previous implementation summed the
+    /// alert log, whose entries accumulate one per check cycle — a
+    /// monotonically growing integral that no threshold could ever clear,
+    /// and a channel through which outcome-quality alerts (deficit =
+    /// failure-rate %) leaked into the variety metric. The log remains
+    /// diagnostics-only.
+    ///
+    /// expect: "The system escalates variety deficits through binary-threshold algedonic alerting"
+    pub(crate) fn current_total_deficit(&self, counters: &HashMap<String, VarietyTracker>) -> u64 {
+        counters
+            .iter()
+            .map(|(domain, tracker)| {
+                let expected = self
+                    .expected_variety
+                    .get(domain)
+                    .copied()
+                    .unwrap_or(self.default_expected_variety);
+                tracker.deficit(expected)
+            })
+            .sum()
+    }
+
+    // ── Outcome Quality Checking ──
+
+    /// Default outcome success rate warning threshold (50%).
+    pub(crate) const DEFAULT_OUTCOME_WARNING_THRESHOLD: f64 = 0.50;
+    /// Default outcome success rate critical threshold (25%).
+    pub(crate) const DEFAULT_OUTCOME_CRITICAL_THRESHOLD: f64 = 0.25;
+
+    /// Check outcome quality and generate alert if success rate is degraded.
+    ///
+    /// Uses binary thresholds on success_rate (higher is better, so we invert):
+    /// - success_rate < critical_threshold → Critical
+    /// - success_rate < warning_threshold → Warning
+    /// - success_rate ≥ warning_threshold → Info (healthy)
+    ///
+    /// Thresholds come from the instance fields (defaulting to 0.50/0.25),
+    /// which can be overridden via `set_outcome_thresholds()` from SetPointsConfig.
+    ///
+    /// expect: "The system escalates variety deficits through binary-threshold algedonic alerting"
+    pub(crate) fn check_outcome(
+        &mut self,
+        domain: &str,
+        success_rate: f64,
+        total_ops: u64,
+    ) -> Option<&RuntimeAlert> {
+        let severity = if success_rate < self.outcome_critical_threshold {
+            AlertSeverity::Critical
+        } else if success_rate < self.outcome_warning_threshold {
+            AlertSeverity::Warning
+        } else {
+            return None; // Healthy — no alert needed
+        };
+
+        let alert = RuntimeAlert {
+            domain: format!("outcome:{domain}"),
+            deficit: ((1.0 - success_rate) * 100.0) as u64, // failure rate as "deficit"
+            threshold: ((1.0 - self.outcome_warning_threshold) * 100.0) as u64,
+            severity,
+            escalated: severity == AlertSeverity::Critical,
+            timestamp: Utc::now(),
+            message: format!(
+                "Outcome success rate {:.1}% in domain '{}' ({} operations, {} failures)",
+                success_rate * 100.0,
+                domain,
+                total_ops,
+                total_ops.saturating_sub((success_rate * total_ops as f64) as u64),
+            ),
+            occurrence_count: 1,
+        };
+
+        if alert.should_escalate() {
+            error!(
+                target: "reg.outcome",
+                domain = %domain,
+                success_rate = %format!("{:.1}%", success_rate * 100.0),
+                total_ops = total_ops,
+                "OUTCOME ALERT - Critical failure rate"
+            );
+        } else {
+            warn!(
+                target: "reg.outcome",
+                domain = %domain,
+                success_rate = %format!("{:.1}%", success_rate * 100.0),
+                total_ops = total_ops,
+                "Outcome success rate degraded"
+            );
+        }
+
+        Some(self.push_alert(alert))
+    }
+
+    /// Push an alert onto the log, coalescing by stable condition identity
+    /// (domain + severity). Called by both `check` and `check_outcome` — the
+    /// single chokepoint for log growth. A recurrence of a condition already
+    /// active in the log refreshes the surviving alert in place — occurrence
+    /// count incremented, deficit/threshold/message/timestamp updated to the
+    /// latest observation — instead of pushing a per-cycle duplicate
+    /// (operator ruling 2026-09-28: consolidate the alert paths; prior
+    /// rulings: deduplicate at the source by stable condition identity;
+    /// latch until the underlying condition clears; recurrence after
+    /// recovery emits again). A severity change is a transition, not a
+    /// recurrence — it pushes a new alert. The log still evicts oldest at
+    /// the cap. Returns the surviving alert so callers read the condition's
+    /// current state, not `alerts.last()`.
+    fn push_alert(&mut self, alert: RuntimeAlert) -> &RuntimeAlert {
+        let coalesce_index = self.alerts.iter().rposition(|existing| {
+            existing.domain == alert.domain && existing.severity == alert.severity
+        });
+        let target_index = match coalesce_index {
+            Some(index) => {
+                let existing = &mut self.alerts[index];
+                existing.occurrence_count = existing.occurrence_count.saturating_add(1);
+                existing.deficit = alert.deficit;
+                existing.threshold = alert.threshold;
+                existing.message = alert.message;
+                existing.timestamp = alert.timestamp;
+                index
+            }
+            None => {
+                if self.alerts.len() >= self.max_alerts {
+                    self.alerts.remove(0);
+                }
+                self.alerts.push(alert);
+                self.alerts.len().saturating_sub(1)
+            }
+        };
+        self.alerts
+            .get(target_index)
+            .expect("the surviving alert is present")
+    }
+
+    /// Number of alerts currently in the log.
+    pub(crate) fn alert_count(&self) -> usize {
+        self.alerts.len()
+    }
+
+    /// Number of escalated alerts still in the diagnostic log, independent
+    /// of the board's non-Done card count. Sensed as `PendingEscalations`.
+    pub(crate) fn escalated_alert_count(&self) -> usize {
+        self.alerts.iter().filter(|alert| alert.escalated).count()
+    }
+
+    /// Number of actionable alerts currently in the log — Warning or
+    /// Critical severity. Info entries are healthy-range diagnostics and
+    /// do not demand review; the cybernetics loop senses this count as
+    /// `AlgedonicEvents` so normal-operation diagnostics don't read as a
+    /// standing review demand.
+    pub(crate) fn actionable_alert_count(&self) -> usize {
+        self.alerts
+            .iter()
+            .filter(|alert| alert.is_warning() || alert.is_critical())
+            .count()
+    }
+
+    /// The configured alert-log cap.
+    pub(crate) fn max_alerts(&self) -> usize {
+        self.max_alerts
+    }
+
+    /// Whether the alert log is approaching the cap (≥
+    /// `ALERT_CAP_APPROACHING_FRACTION * max_alerts`). When true, the
+    /// cybernetics loop should emit an `AlgedonicLogApproachingCap` signal
+    /// so the operator (or the `algedonic-review` skill) can review and
+    /// inspect recent diagnostics before they self-evict.
+    pub(crate) fn log_approaching_cap(&self) -> bool {
+        let threshold = (self.max_alerts as f64 * ALERT_CAP_APPROACHING_FRACTION) as usize;
+        self.alerts.len() >= threshold
+    }
+
+    /// Clear non-critical diagnostic history as an explicit maintenance
+    /// action, not as a board-review step. Retains unresolved Critical alerts;
+    /// clearing those could discard the live signal.
+    ///
+    /// `retain_unresolved` controls what survives: when `true` (the default
+    /// from `RegulationLedger`), only Info and Warning alerts and already-
+    /// escalated Critical alerts are cleared. When `false`, the entire log
+    /// is cleared.
+    pub(crate) fn clear_reviewed(&mut self, retain_unresolved: bool) {
+        if retain_unresolved {
+            // Retain Critical alerts that have not been escalated yet —
+            // these are the live signals the operator needs to act on.
+            // Everything else (Info, Warning, escalated Critical) has been
+            // reviewed or persisted and can be cleared.
+            self.alerts.retain(|a| a.is_critical() && !a.escalated);
+        } else {
+            self.alerts.clear();
+        }
+    }
+}
+
+/// Construct LedgerHealth from the algedonic manager's current state.
+///
+/// `overall_deficit` is the caller-computed current level from the live
+/// variety trackers (`AlgedonicManager::current_total_deficit`) — not the
+/// manager's alert history, which accumulates and can only grow.
+pub(crate) fn reg_health_check(
+    manager: &AlgedonicManager,
+    variety_ema: f64,
+    overall_deficit: u64,
+) -> LedgerHealth {
+    LedgerHealth {
+        overall_deficit,
+        critical_count: manager.critical_alerts().len(),
+        warning_count: manager.alerts().iter().filter(|a| a.is_warning()).count(),
+        healthy: manager.critical_alerts().is_empty(),
+        variety_ema,
+        alert_log_count: manager.alert_count(),
+        alert_log_cap: manager.max_alerts(),
+        alert_log_approaching_cap: manager.log_approaching_cap(),
+    }
+}
+
+// ── Tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests;

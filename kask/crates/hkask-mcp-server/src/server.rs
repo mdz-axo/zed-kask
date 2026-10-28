@@ -1,0 +1,51 @@
+//! MCP server scaffolding — shared helpers for hKask MCP server binaries.
+//
+//! WebID resolution order: `HKASK_WEBID` → anonymous.
+//! No ambient authority — all identity and credentials flow through `ServerContext`.
+//
+//! ```rust,ignore
+//! use hkask_mcp_server::{run_stdio_server, CredentialRequirement, ServerContext};
+//!
+//! #[tokio::main]
+//! async fn main() -> anyhow::Result<()> {
+//!     run_stdio_server(
+//!         "hkask-mcp-web",
+//!         env!("CARGO_PKG_VERSION"),
+//!         |ctx: ServerContext| {
+//!             Ok(WebServer::new(ctx.webid))
+//!         },
+//!         vec![],
+//!     ).await
+//! }
+//! ```
+
+mod context;
+mod credentials;
+mod error;
+mod http_helpers;
+#[doc(hidden)]
+pub mod test_support;
+mod tool_execution;
+mod transport;
+mod validation;
+
+// ── Re-exports ─────────────────────────────────────────────────────────────
+
+pub use crate::security::{
+    validate_resolved_addresses, validate_tool_url_literal, validate_tool_url_permissive,
+    validate_tool_url_with_dns,
+};
+pub use context::{CredentialRequirement, ServerContext};
+pub use credentials::{parse_env_warn, resolve_credential, resolve_db_passphrase};
+pub use error::{McpError, McpToolError};
+pub use http_helpers::{classify_http_error, serpapi_get_json, url_encode_query_value};
+pub use tool_execution::{ToolContext, execute_tool, record_tool_usage};
+pub use transport::run_stdio_server;
+pub use validation::{
+    MAX_READ_BYTES, contain_for_read, contain_for_write, ensure_existing_dir, ensure_existing_file,
+    read_capped, resolve_max_read_bytes, set_artifact_owner, write_contained,
+};
+pub use validation::{
+    map_database_error, map_infra_error, map_io_error, map_join_error, map_memory_store_error,
+    validate_identifier, validate_path,
+};

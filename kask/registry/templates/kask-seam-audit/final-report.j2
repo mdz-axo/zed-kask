@@ -1,0 +1,93 @@
+{# goal: Synthesize the engagement report — three tracks, defense coverage, MCDA, remediations, hard-stop, convergence. #}
+[inference]
+contract:
+  input:
+    task: string
+    seam_map: object
+    security_track: object
+    arch_track: object
+    ui_track: object
+    annotated_findings: array
+    mcda: object
+    applied_remediations: array
+    hard_stop: object
+    convergence_score: number
+    iterations: number
+  output:
+    report: object
+---
+You are synthesizing the final engagement report. Task: {{ task }}.
+
+## Inputs
+
+seam_map (divergence surface + prior verdicts + slices):
+{{ seam_map }}
+
+security track (findings + defense_layer_coverage):
+{{ security_track }}
+
+architecture track (findings + dead_surface_summary):
+{{ arch_track }}
+
+ui track (findings + pattern_gap_summary):
+{{ ui_track }}
+
+annotated_findings (constraint_force + deletion_test + feedback verdict):
+{{ annotated_findings }}
+
+mcda (weight_vector + ranked_remediations, merged with the `KSA-2` result — weighted_totals, baseline_top3, perturbations, stable_under_perturbation):
+{{ mcda }}
+
+applied_remediations:
+{{ applied_remediations }}
+
+hard_stop decision:
+{{ hard_stop }}
+
+convergence_score: {{ convergence_score }} (count of uncited-or-unadjudicated findings, computed by the Converge `lisp_eval` form in gates.md; 0 = clean)
+iterations: {{ iterations }}
+
+## Measured counts (Jinja-computed over the inputs above; verified by the `KSA-3` `lisp_eval` form in `gates.md` — never counted by the model)
+
+{% set all_findings = security_track.findings + arch_track.findings + ui_track.findings %}
+- findings_per_track: security={{ security_track.findings | length }}, architecture={{ arch_track.findings | length }}, ui={{ ui_track.findings | length }} (adjudicated findings: {{ annotated_findings | length }})
+- findings_per_severity: critical={{ all_findings | selectattr('severity', 'equalto', 'critical') | list | length }}, high={{ all_findings | selectattr('severity', 'equalto', 'high') | list | length }}, medium={{ all_findings | selectattr('severity', 'equalto', 'medium') | list | length }}, low={{ all_findings | selectattr('severity', 'equalto', 'low') | list | length }}, info={{ all_findings | selectattr('severity', 'equalto', 'info') | list | length }}
+- defense_layer_coverage: {{ security_track.defense_layer_coverage.layers | length }} layers declared (the covered/missing split is computed by `KSA-3` from `total_layers` + `missing_layers`)
+
+## Synthesis
+
+Produce a consolidated report with: (1) a verdict (Pass / Conditional / Fail)
+derived from the defense-layer coverage + whether any blocking finding remains
+unremediated (per-track/severity counts and defense-layer coverage counts are
+Jinja-computed over the inputs above and verified by the `KSA-3` `lisp_eval`
+form in `gates.md` — never counted by the model); (2) the MCDA top-3 and whether `stable_under_perturbation`
+held; (3) the applied remediations (with test descriptions) and the hard-stop
+decision; (4) the deliverable paths (ledger at `kask/docs/research/d-seam-audit.md`,
+templates under `kask/registry/templates/kask-seam-audit/`); (5) the convergence
+score and iteration count. Cite `file:line` throughout.
+
+## Output (JSON only)
+
+```json
+{
+  "report": {
+    "verdict": "Pass|Conditional|Fail",
+    "mcda_top3": [ { "id": "...", "weighted_total": 0.0 } ],
+    "mcda_stable_under_perturbation": true,
+    "applied_remediations": [ { "id": "...", "test_description": "..." } ],
+    "hard_stop_triggered": false,
+    "deferred_remediations": [ { "id": "...", "reason": "..." } ],
+    "deliverable_paths": {
+      "reports": "kask/docs/research/d-seam-audit.md",
+      "skill_templates": "kask/registry/templates/kask-seam-audit/"
+    },
+    "convergence_score": 0,
+    "iterations": 1
+  }
+}
+```
+
+Do not fabricate. If a track produced no findings, record 0. If remediations
+were deferred (not applied in-session), list them in `deferred_remediations`
+with the reason (e.g. "requires workspace compile verification exceeding a
+safe single-session bound").

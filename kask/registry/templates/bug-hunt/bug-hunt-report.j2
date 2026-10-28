@@ -1,0 +1,168 @@
+{# goal: Produce a structured JSON bug report from charter, oracle findings, and BH-1 oracle_summary. Emits lessons_learned and pattern_signatures for feedback loop closure. #}
+[inference]
+contract:
+  input:
+    charter: object
+    evaluated_findings: array
+    oracle_summary: object
+    quality_criteria: string
+    probes_executed: integer
+    files_read: integer
+    tests_run: integer
+    crates_examined: array
+    prior_expedition: object|null
+    predicted_findings: integer
+    predicted_category: string
+  output:
+    expedition_id: string
+    charter: object
+    findings: array
+    summary: object
+    lessons_learned: array
+    pattern_signatures: array
+    next_charter_focus: string
+    probes_executed: integer
+---
+{# Phase 5 — REPORT (structured JSON bug report) #}
+{#
+  the report now emits lessons_learned and
+  pattern_signatures. The agent routes them back to the next expedition's
+  charter (as prior_expedition.lessons_learned and
+  prior_expedition.pattern_signatures) to close the feedback loop. Without
+  these fields, each expedition is a one-shot and cannot learn from prior
+  iterations.
+#}
+
+You are a bug report compiler. Produce a structured JSON bug report from all prior phases.
+
+## Charter
+```json
+{{ charter | tojson }}
+```
+
+## Evaluated Findings (Oracle + Taxonomy)
+```json
+{{ evaluated_findings | tojson }}
+```
+
+## Oracle Summary (from `BH-1` `lisp_eval`)
+```json
+{{ oracle_summary | tojson }}
+```
+
+## Expedition Metadata
+- Probes executed: {{ probes_executed | default(0) }}
+- Files read: {{ files_read | default(0) }}
+- Tests run: {{ tests_run | default(0) }}
+- Crates examined: {{ crates_examined | default([]) | tojson }}
+- Quality criteria: {{ quality_criteria }}
+- Prediction (from probe step 0): predicted_findings = {{ predicted_findings | default(0) }}, predicted_category = {{ predicted_category | default('') }}
+{% if prior_expedition and prior_expedition | length > 0 %}
+- Prior expedition: consumed (this is iteration N+1)
+{% else %}
+- Prior expedition: none (first pass)
+{% endif %}
+
+## Step 0 — Reconcile the prediction (D)
+
+The probe step 0 recorded `predicted_findings` and `predicted_category` before
+probing. Reconcile them against the observed results in `oracle_summary` (computed by `BH-1` `lisp_eval`):
+- `confirmed_findings` = `oracle_summary.confirmed_bugs + oracle_summary.potential_bugs`
+- `observed_category` = the `oracle_summary.by_category` category with the highest count
+
+Compute the count gap with `lisp_eval` (D):
+`(- confirmed_findings predicted_findings)`
+
+Report all four values plus the gap in `summary.prediction_reconciliation`.
+The gap is the charter's calibration signal for the next expedition, not a
+finding — an unreported gap is.
+
+## Output
+
+Respond with the complete expedition report as JSON. Combine all prior phase outputs into the final structure:
+
+```json
+{
+  "expedition_id": "bughunt-{date}-{target_crate}",
+  "charter": {
+    "statement": "...",
+    "target_area": "...",
+    "strategy": "...",
+    "expected_category": "..."
+  },
+  "probes_executed": 0,
+  "findings": [
+    {
+      "id": "BUG-001",
+      "summary": "one sentence — what the bug is and why it matters",
+      "location": { "file": "...", "function": "...", "line_approx": "..." },
+      "verdict": "BUG | POTENTIAL_BUG | OBSERVATION",
+      "confidence": 0.0,
+      "reproducibility": "reproduced | reproducible | hard_to_reproduce | not_reproducible",
+      "beizer_category": "...",
+      "severity": "CRITICAL | HIGH | MEDIUM | LOW",
+      "evidence": "verbatim code snippet read from the cited location (≤5 lines)",
+      "pattern_signature": "how to detect this class of bug elsewhere",
+      "fix_suggestion": "if obvious, suggest a fix; otherwise 'needs investigation'"
+    }
+  ],
+  "summary": {
+    "confirmed_bugs": 0,
+    "potential_bugs": 0,
+    "contract_gaps": 0,
+    "rejected_findings": 0,
+    "crates_examined": [],
+    "files_read": 0,
+    "tests_run": 0,
+    "prediction_reconciliation": {"predicted_findings": 0, "confirmed_findings": 0, "count_gap": 0, "predicted_category": "...", "observed_category": "..."},
+    "taxonomy_coverage": {
+      "by_category": {},
+      "by_severity": {}
+    }
+  },
+  "lessons_learned": [
+    "concrete, actionable lesson that the next expedition's charter should consume — e.g. 'async lock held across .await at 3 sites; next charter should target all .await points in lock scope'",
+    "probe strategy adjustment — e.g. 'static analysis found 80% of findings; dynamic probes added little because no tests exist; next expedition should prioritize test coverage'",
+    "coverage gap — e.g. 'Beizer timing category not explored because no runtime probes were run; next charter should include dynamic probe_depth'"
+  ],
+  "pattern_signatures": [
+    {
+      "signature": "grep-able pattern or structural description",
+      "beizer_category": "...",
+      "derived_from": "BUG-001",
+      "notes": "how to apply this signature in the next probe"
+    }
+  ],
+  "next_charter_focus": "one-sentence directive for the next expedition's charter — e.g. 'focus on async lock scope across all .await points' or 'prioritize Beizer timing category with dynamic probes'"
+}
+```
+
+### lessons_learned and pattern_signatures — purpose
+
+These two fields close the feedback loop. The agent routes them back to the
+charter as `prior_expedition.lessons_learned` and
+`prior_expedition.pattern_signatures`. The next charter consumes them to:
+- adjust probe strategy (lessons_learned)
+- extend the probe pattern list (pattern_signatures)
+
+Without these fields, each expedition is a one-shot and cannot learn from prior
+iterations. Treat them as first-class outputs, not afterthoughts.
+
+### Report Persistence
+
+After producing the report JSON, the agent creates the run directory and writes the report to
+`~/Documents/zk-data/skills/bug-hunt/{date}-{run}/bug-hunt-report.json` (fixed filename,
+`expedition_id` inside the JSON) via `terminal` (built-in file tools cannot write under `~/Documents/zk-data`).
+
+The report is the durable record of the expedition: later expeditions consume
+it via `prior_expedition`, and an operator can read it to target test gaps at
+the found locations.
+
+## Constraints
+
+- Carry `evaluated_findings` directly into `findings` — each oracle finding already carries location, evidence, verdict, confidence, reproducibility, `beizer_category`, `severity`, `pattern_signature`, and `fix_suggestion`.
+- Populate `summary` (`confirmed_bugs`, `potential_bugs`, `contract_gaps`, `rejected_findings`, and `taxonomy_coverage.by_category` / `by_severity`) directly from `oracle_summary` (computed by `BH-1` `lisp_eval`) — do not recompute them by hand.
+- Each finding must include all fields: id, summary, location, verdict, confidence, reproducibility, beizer_category, severity, evidence, pattern_signature, fix_suggestion.
+- Summary counts must be accurate, including rejected_findings from `oracle_summary`.
+- lessons_learned must be concrete and actionable, not generic platitudes.
+- pattern_signatures must be derived from actual findings, not fabricated.

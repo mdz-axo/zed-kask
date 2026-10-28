@@ -1,0 +1,82 @@
+{# goal: Run adversarial probes against the proposed layout: a 40-character button label, a localized German string (~30% longer), a 300px container (the agent panel's minimum dock width), 7 actions, an empty description. If any probe breaks a gate, the layout is rejected and the remedy phase re-enters. Grounded in Klein's premortem and the squint test for visual hierarchy. #}
+[inference]
+contract:
+  input:
+    target:
+      type: object
+    act_result:
+      type: object
+      description: Output of the ACT phase — remedies, revised_layout.
+    decide_result:
+      type: object
+      description: The `KSA-1` deterministic gate result object (`all_gates_passed`,
+        `failing_gates`, `sum_min_widths`, `overflow_delta`, `text_column_residual`,
+        `fitts_violations`) to re-check against adversarial probes.
+  output:
+    probes:
+      type: array
+      description: Array of {probe_name, input, gate_results, overall_passed} for
+        each adversarial probe. `overall_passed` and the probe-level aggregates
+        are computed by the `KSA-4` gate, never typed here.
+    squint_test_result:
+      type: object
+      description: Result of the mechanical squint test — {dominant_element, hierarchy_present}.
+---
+{# Phase: REVIEW — adversarial probes + squint test #}
+
+You are an adversarial layout reviewer. Your job is to break the proposed layout with worst-case inputs before it is accepted. If any probe breaks a gate, the layout is rejected.
+
+## Target
+
+{{ target | tojson }}
+
+## Revised Layout (after ACT remedies)
+
+{{ act_result | tojson }}
+
+## Prior Gate Verdicts
+
+{{ decide_result | tojson }}
+
+## Adversarial Probes (Klein Premortem)
+
+Run each probe against the revised layout. For each, re-evaluate all 5 gates.
+
+### Probe 1: Long Label
+- **Input**: Replace the longest button label with a 40-character string (e.g. "Clone to Local Registry and Sync Now").
+- **Check**: Does the button row overflow? Does the text column collapse? Does the long label push other buttons off-screen?
+
+### Probe 2: Localized Text (German)
+- **Input**: Replace all labels with German equivalents (~30% longer on average). E.g. "Hire" → "Anheuern", "Clone to Local" → "Lokal klonen", "Publish…" → "Veröffentlichen…".
+- **Check**: Does the 30% length increase break any gate?
+
+### Probe 3: Narrow Container
+- **Input**: Set container width to 300px (the agent panel's minimum dock width, `MIN_PANEL_WIDTH` at crates/agent_ui/src/agent_panel.rs:108).
+- **Check**: Does the layout still fit? Is the primary action still visible? Is the text column still ≥160px?
+
+### Probe 4: High Action Count
+- **Input**: Add 2 more secondary actions to the menu (7 total actions).
+- **Check**: Does the PopoverMenu handle 7 entries gracefully? Does the primary button row stay at 2 visible buttons?
+
+### Probe 5: Empty Description
+- **Input**: Set the description to an empty string.
+- **Check**: Does the card render gracefully without a description? Does the name label still truncate correctly?
+
+## Mechanical Squint Test
+
+Strip all color and weight from the layout — reduce every element to size-only. Check:
+- Is exactly one element visually dominant (the primary action)?
+- If all elements are the same size, there is no hierarchy → FAIL.
+- The dominant element should be the primary action (Hire/Details), not a secondary action.
+
+## Output
+
+Produce a JSON object with:
+- `probes`: array of {probe_name, input, gate_results: {gate_name, passed}}
+- `squint_test_result`: {dominant_element, hierarchy_present: boolean}
+
+Do NOT emit `all_probes_passed` or `failing_gates` — the `KSA-4` `lisp_eval`
+gate folds the `probes` array and set-differences the `gate_results`; the
+model cannot restate an aggregate it did not compute.
+
+If any probe fails, the layout is NOT ready to accept. The failing gates route back to the ACT phase for further remedy.

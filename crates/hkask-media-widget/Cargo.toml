@@ -1,0 +1,66 @@
+[package]
+name = "hkask-media-widget"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "GPUI media widget for viewing images, video, and audio from the hkask media storage"
+
+[lib]
+path = "src/hkask_media_widget.rs"
+doctest = false
+
+[dependencies]
+gpui.workspace = true
+theme.workspace = true
+rodio.workspace = true
+image.workspace = true
+smallvec.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+parking_lot.workspace = true
+base64.workspace = true
+url.workspace = true
+hkask-types.workspace = true
+hkask_tool_invoker.workspace = true
+hkask-bridge-ontology.workspace = true
+gpui_util.workspace = true
+tracing.workspace = true
+ui.workspace = true
+smol.workspace = true
+futures.workspace = true
+http_client.workspace = true
+
+# Video decode — gated behind cargo features to keep dev builds fast.
+# - `video`: uses system FFmpeg via pkg-config
+# - `vendored`: compiles FFmpeg from source (no system dep, slow first build)
+ffmpeg-next = { workspace = true, optional = true }
+
+[features]
+default = ["vendored"]
+# `vendored` must imply `video` — the decoder is cfg-gated on `video`, so a
+# vendored build that omits it compiles the stub and every `open()` fails
+# with "video decode is not enabled" (the default build shipped broken).
+vendored = [
+    "dep:ffmpeg-next",
+    "ffmpeg-next/static",
+    "ffmpeg-next/build",
+    "ffmpeg-next/build-lib-openssl",
+    "video",
+]
+video = ["dep:ffmpeg-next"]
+# Narrow production-faithful observation/control surface for GPUI benchmarks.
+# Must not enable `test-support` directly or transitively.
+bench-support = []
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+settings.workspace = true
+theme_settings.workspace = true
+tempfile.workspace = true
+http_client = { workspace = true, features = ["test-support"] }

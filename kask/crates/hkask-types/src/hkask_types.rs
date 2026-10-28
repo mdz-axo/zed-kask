@@ -1,0 +1,92 @@
+#![forbid(unsafe_code)]
+#![warn(clippy::let_underscore_future)]
+//! hKask Types — Foundation types for the hKask tool platform
+//!
+
+pub mod agent_paths;
+pub mod block_provenance;
+pub mod closed_vocab;
+pub mod corpus;
+
+pub mod curator;
+pub mod document;
+pub(crate) mod error;
+pub mod event;
+
+pub(crate) mod hmem_ontology;
+pub mod id;
+pub mod inference_ipc;
+
+pub mod json_extract;
+pub(crate) mod kanban_status;
+pub mod kanban_wire;
+pub mod maybe_string;
+pub mod media_limits;
+pub mod ocr_health;
+pub mod ytdlp;
+
+pub mod regulation;
+pub mod secret;
+pub mod server_env;
+pub mod template;
+
+pub use server_env::ServerEnv;
+
+pub mod ports;
+pub mod process_global;
+pub mod time;
+pub mod tool_response;
+pub mod tool_schema;
+
+#[cfg(test)]
+mod property_tests;
+
+pub mod voice;
+
+pub use voice::VoiceDesign;
+
+#[cfg(feature = "sql")]
+pub mod sql_impls;
+pub mod visibility;
+
+// ── Essential re-exports (used by ≥3 downstream crates) ─────────────────
+
+pub use curator::{CurationThresholdConfig, CuratorDirective, EscalationSeverity};
+pub use document::{Block, DocStructure, Page};
+pub use error::{DatabaseErrorKind, DbError, InfrastructureError, McpErrorKind, NotFound};
+pub use event::{RegulationRecord, RegulationSink};
+// The canonical closed-vocabulary emission-noise normalizer (operator
+// ruling 2026-10-13) — every closed-vocab MCP field parses through it.
+pub use closed_vocab::normalize_closed_vocab;
+
+pub use block_provenance::BlockProvenance;
+pub use id::{
+    BoardId, BotID, ColumnId, CommentId, EmbeddingID, EventID, GoalID, HMemId, Id, PhaseId, TaskId,
+    TemplateID, WebID,
+};
+pub use kanban_status::TaskStatus;
+pub use regulation::LedgerHealth;
+
+pub use template::LLMParameters;
+pub use tool_schema::{AnyJsonValue, find_boolean_schema_positions};
+
+pub use hmem_ontology::HMemOntology;
+pub use visibility::{Confidence, Dimension, Visibility};
+
+pub use ports::*;
+
+/// A proposal template for a contract missing its user-facing `expect:` annotation.
+/// Agents use this to compose and submit contract grounding proposals.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ExpectProposal {
+    pub crate_name: String,
+    pub contract_id: String,
+    pub function: String,
+    pub file: String,
+    pub line: usize,
+    pub pre: String,
+    pub post: String,
+    pub expect_template: String,
+    pub suggested_goal_principle: String,
+    pub existing_constraining_principles: Vec<String>,
+}

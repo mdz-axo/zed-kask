@@ -1,0 +1,3196 @@
+//! Unified memory store — one store for all h_mems, ontology-discriminated.
+//!
+//! The ontology blob on each h_mem carries dual-axis anchoring
+//! (PKO process axis + DC state axis). A process-anchored h_mem carries
+//! PKO procedure/step; a state-anchored h_mem carries DC type/subject.
+//!
+//! The `perspective` field is provenance (who wrote the memory), not a
+//! type classifier. The intended flow is chat stream → chunks → each
+//! chunk tagged with both the best-fit state axis (Dublin Core) and the
+//! best-fit process axis (PKO), so the `HMemOntology` blob is the discriminator.
+//!
+//! `MemoryStore` wraps `HMemStore` + `EmbeddingStore` and provides:
+//! - `prepare_semantic_write()` / `prepare_semantic_revision()` — derive the
+//!   canonical passage and require atomic row/vector publication
+//! - `store()` — raw EAV/control writes, without a semantic-recall guarantee
+//! - `query_deduped()` / `query_deduped_untouched()` — recall with decay + dedup
+//! - `query_for_deduped_untouched()` — filter by who wrote the memory (the
+//!   swarm hive uses this to scope by agent)
+//! - Embedding operations (store, search, purge)
+//! - Consolidation helpers (update_confidence, delete_h_mem)
+//!
+//! The decay model (Wozniak-Gorzelanczyk, 1995: R(t) = exp(-t/S)) is applied
+//! at recall time.
+
+use std::sync::Arc;
+
+use hkask_storage::database::value::DbValue;
+use hkask_storage::{EmbeddingError, EmbeddingStore, HMem, HMemError, HMemStore, SearchOutcome};
+use hkask_types::RegulationSink;
+use hkask_types::WebID;
+use hkask_types::event::{CyclePhase, RegulationRecord, Span};
+use hkask_types::visibility::Confidence;
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum MemoryStoreError {
+    #[error("HMem error: {0}")]
+    HMem(#[from] HMemError),
+    #[error("Embedding error: {0}")]
+    Embedding(#[from] EmbeddingError),
+    #[error("No embeddings found for centroid: {0}")]
+    NoEmbeddingsForCentroid(String),
+    #[error("Invalid entity key: {0}")]
+    InvalidEntityKey(String),
+}
+
+/// Canonical entity-key validation (operator instruction 2026-10-08;
+/// algedonic card ba0ac90d — different agents invented per-session key
+/// standards before this existed). A curator entity key is lowercase
+/// `[a-z0-9:._-]+`: no spaces, no pipes, no uppercase. The live audit
+/// (2026-10-08) measured the drift this closes — 56 pipe-concatenated
+/// entities (`category | lesson`), 68 space-containing entities (11 of
+/// them Capitalized With Spaces) against 881 canonical/namespaced keys.
+/// Dots are allowed (amendment 2026-10-10, algedonic card 91ea8f27): the
+/// corpus crate's production entity refs embed source file names
+/// (`corpus:researcher:consolidated:river.txt:0`), and a file extension
+/// is data, not drift — the audit's drift classes were pipes, spaces,
+/// and uppercase, and the dot was collateral exclusion.
+/// Existing rows are grandfathered until the normalization session
+/// (card 7d17d334); `update_confidence` replaces an existing key and is
+/// deliberately unvalidated — this gate stops new drift, it does not
+/// migrate history.
+/// Whether an entity key is in the canonical form — lowercase
+/// [a-z0-9:._-]+ (no spaces, pipes, or uppercase). Shared by the store
+/// gate (`validate_entity_key`) and the distillation writer's
+/// per-candidate skip (therapy 2026-10-09, algedonic card 7d17d334) so
+/// the two cannot drift — one predicate, two callers.
+pub fn is_canonical_entity_key(entity: &str) -> bool {
+    !entity.is_empty()
+        && entity.bytes().all(|b| {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b':' | b'_' | b'-' | b'.')
+        })
+}
+
+fn validate_entity_key(entity: &str) -> Result<(), MemoryStoreError> {
+    if is_canonical_entity_key(entity) {
+        return Ok(());
+    }
+    Err(MemoryStoreError::InvalidEntityKey(format!(
+        "'{entity}' is not a canonical curator entity key — keys are lowercase [a-z0-9:._-] \
+         (no spaces, pipes, or uppercase). Namespaced system records use '<namespace>:…' \
+         (curator:, curator:goal:, curator:thread:, skill_use_issue:, kanban:, skill:, agent:); \
+         skill knowledge uses the BARE skill name (ruling ac85c2c8); lessons use bare \
+         lowercase-hyphen slugs; the curator's own process records use 'curator-process'. \
+         Never concatenate category and slug with ' | '. See \
+         kask/docs/architecture/memory-system-specification.md §3."
+    )))
+}
+
+/// Reconstruct the exact semantic passage a supported h_mem writer embeds.
+///
+/// Plain chunks use their string value. Distilled mutable state requires its
+/// provenance-bearing `recall_text`; durable lessons use `text`. Goal projections
+/// preserve their complete canonical payload, without score-based redaction.
+pub fn semantic_passage_for_h_mem(h_mem: &HMem) -> Option<String> {
+    semantic_passage_for_value(&h_mem.entity, &h_mem.attribute, &h_mem.value)
+}
+
+fn semantic_passage_for_value(
+    entity: &str,
+    attribute: &str,
+    value: &serde_json::Value,
+) -> Option<String> {
+    if let Some(text) = value.as_str() {
+        return (!text.is_empty()).then(|| text.to_string());
+    }
+    if value
+        .get("mutable_state")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+    {
+        return value
+            .get("recall_text")
+            .and_then(serde_json::Value::as_str)
+            .filter(|text| !text.is_empty())
+            .map(ToString::to_string);
+    }
+    if let Some(recall_text) = value
+        .get("recall_text")
+        .and_then(serde_json::Value::as_str)
+        .filter(|text| !text.is_empty())
+    {
+        return Some(recall_text.to_string());
+    }
+    if let Some(text) = value
+        .get("text")
+        .and_then(serde_json::Value::as_str)
+        .filter(|text| !text.is_empty())
+    {
+        return Some(text.to_string());
+    }
+    if entity.starts_with("curator:goal:") {
+        return Some(format!("goal event {attribute}: {}", value));
+    }
+    None
+}
+
+/// A semantic write cannot publish its row without the vector for its passage.
+/// Preparation derives missing recall text; inference runs outside database locks.
+#[must_use = "embed passage() and publish, or no memory is written"]
+pub struct SemanticWrite<'a> {
+    memory: &'a MemoryStore,
+    h_mem: HMem,
+    passage: String,
+    replacing: Option<(hkask_storage::HMemId, Option<String>)>,
+}
+
+impl SemanticWrite<'_> {
+    pub fn passage(&self) -> &str {
+        &self.passage
+    }
+
+    /// Commit the row and vector together, preserving the prior row on failure.
+    pub fn publish(
+        self,
+        vector: &[f32],
+        model: &str,
+    ) -> Result<hkask_storage::HMemId, MemoryStoreError> {
+        if !self
+            .memory
+            .embedding
+            .uses_driver(self.memory.h_mem_store.driver())
+        {
+            return Err(HMemError::Infra(hkask_types::InfrastructureError::database(
+                "semantic publication requires h_mem and embedding stores to share one database driver; use MemoryStore::open/open_existing or construct both stores from the same driver",
+            )).into());
+        }
+        self.memory.embedding.publish_h_mem(
+            &self.h_mem,
+            self.replacing
+                .as_ref()
+                .map(|(id, passage)| (id, passage.as_deref())),
+            vector,
+            model,
+            &self.passage,
+            |attribute, value| semantic_passage_for_value(&self.h_mem.entity, attribute, value),
+        )?;
+        self.memory.emit_store_event(&self.h_mem);
+        Ok(self.h_mem.id)
+    }
+}
+
+/// Result of computing a style centroid over a prefix-scoped embedding set.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CentroidResult {
+    pub centroid: Vec<f32>,
+    pub passage_count: usize,
+    pub stored: bool,
+}
+
+/// Outcome of an age-based prune operation.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PruneOutcome {
+    /// Total h_mems that matched the age cutoff.
+    pub candidates: usize,
+    /// Successfully deleted.
+    pub deleted_count: usize,
+    /// Spared because they were recalled within the grace window.
+    pub spared_count: usize,
+    /// Individual delete failures (counted, not aborting the batch).
+    pub failed_count: usize,
+}
+
+/// Outcome of a normalized-value dedup operation.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DedupOutcome {
+    /// Total h_mems scanned.
+    pub scanned: usize,
+    /// Groups that contained 2+ near-duplicate values.
+    pub groups_with_dupes: usize,
+    /// Successfully deleted (forgotten — the row is removed).
+    pub deleted_count: usize,
+    /// Individual delete failures (counted, not aborting the batch).
+    pub failed_count: usize,
+    /// Non-string h_mems skipped (structural dedup is the EAV path's job).
+    pub skipped_non_string: usize,
+    /// Turn-storage h_mems skipped: repeated turn text is a repeated turn,
+    /// not a duplicate fact.
+    pub skipped_turn_storage: usize,
+}
+
+/// Normalize a string value for near-duplicate comparison: lowercase,
+/// strip leading/trailing whitespace, collapse internal whitespace runs to
+/// a single space, and strip common punctuation. Two values that differ only
+/// in case, spacing, or trailing punctuation are treated as duplicates.
+fn normalize_value(value: &str) -> String {
+    let lower = value.to_lowercase();
+    let mut result = String::with_capacity(lower.len());
+    let mut prev_was_space = false;
+    for ch in lower.chars() {
+        if ch.is_whitespace() {
+            if !prev_was_space && !result.is_empty() {
+                result.push(' ');
+            }
+            prev_was_space = true;
+        } else if ch.is_ascii_punctuation() {
+            // Skip punctuation — "AAPL." and "aapl" are the same value.
+            prev_was_space = false;
+        } else {
+            result.push(ch);
+            prev_was_space = false;
+        }
+    }
+    result.trim_end().to_string()
+}
+
+/// Default memory life in days: 90 days (a quarter).
+///
+/// Wozniak & Gorzelanczyk (1995), equation (3): R(t) = exp(-t/S).
+pub(crate) const DEFAULT_MEMORY_LIFE_DAYS: f64 = crate::bayesian::DEFAULT_MEMORY_LIFE_DAYS;
+
+/// Entity prefixes holding conversation-turn storage, not knowledge facts.
+const TURN_STORAGE_PREFIX: &str = "curator:thread:";
+
+/// Unified memory store — one store for all h_mems.
+///
+/// The ontology blob on each h_mem carries dual-axis anchoring. `store()`
+/// accepts any h_mem; the ontology classifies it. Recall queries filter by
+/// `perspective` (who wrote this) when needed — the swarm hive uses this
+/// to scope by agent.
+///
+/// Decay (Wozniak-Gorzelanczyk, 1995) is applied at recall time:
+/// `R(t) = exp(-t/S)` where `t` is days since `recalled_at` and `S` is
+/// `memory_life_days` (default 90). `touch_recall` resets the clock.
+///
+/// Text chunking (`chunk_text`, `strip_gutenberg_headers`) is exposed as
+/// associated functions delegating to [`crate::text_chunking`] — they touch
+/// no store state.
+pub struct MemoryStore {
+    event_sink: Option<Arc<dyn RegulationSink>>,
+    h_mem_store: HMemStore,
+    embedding: Arc<EmbeddingStore>,
+    memory_life_days: f64,
+}
+
+impl MemoryStore {
+    /// The default memory life in days (the decay constant S in
+    /// R(t) = exp(-t/S), Wozniak-Gorzelanczyk 1995). Exposed so
+    /// `RealMemoryPort::new` can fall back to it when
+    /// `HKASK_MEMORY_LIFE_DAYS` is unset or malformed.
+    pub fn default_memory_life_days() -> f64 {
+        DEFAULT_MEMORY_LIFE_DAYS
+    }
+
+    /// Create a new `MemoryStore` from h_mem and embedding stores.
+    pub fn new(h_mem_store: HMemStore, embedding_store: EmbeddingStore) -> Self {
+        Self {
+            h_mem_store,
+            embedding: Arc::new(embedding_store),
+            event_sink: None,
+            memory_life_days: DEFAULT_MEMORY_LIFE_DAYS,
+        }
+    }
+
+    /// Open a SQLCipher database and construct a `MemoryStore` from a single
+    /// shared connection pool. Canonical constructor for writable file-backed storage.
+    pub fn open(
+        db_path: &str,
+        passphrase: &str,
+        dim: usize,
+    ) -> Result<Self, hkask_storage::DatabaseError> {
+        let database = hkask_storage::open_or_repair(db_path, passphrase)?;
+        Self::from_database(database, db_path, dim)
+    }
+
+    /// Open an existing SQLCipher database for read-write access without
+    /// creating directories or a new database file when `db_path` is absent.
+    pub fn open_existing(
+        db_path: &str,
+        passphrase: &str,
+        dim: usize,
+    ) -> Result<Self, hkask_storage::DatabaseError> {
+        let database = hkask_storage::open_existing(db_path, passphrase)?;
+        Self::from_database(database, db_path, dim)
+    }
+
+    /// Open an existing SQLCipher database for sealed, read-only retrieval.
+    ///
+    /// The storage handle enforces SQLite read-only flags and skips schema,
+    /// migration, maintenance, and inventory writes. Mutating `MemoryStore`
+    /// methods therefore fail at the database boundary rather than relying on
+    /// caller discipline.
+    pub fn open_read_only(
+        db_path: &str,
+        passphrase: &str,
+        dim: usize,
+    ) -> Result<Self, hkask_storage::DatabaseError> {
+        let database = hkask_storage::Database::open_read_only(db_path, passphrase)?;
+        Self::from_database(database, db_path, dim)
+    }
+
+    fn from_database(
+        database: hkask_storage::Database,
+        db_path: &str,
+        dim: usize,
+    ) -> Result<Self, hkask_storage::DatabaseError> {
+        use hkask_storage::database::sqlite::SqliteDriver;
+        let pool = database.sqlite_pool()?;
+        let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
+            Arc::new(SqliteDriver::new_labeled(pool, db_path));
+        let h_mem_store = HMemStore::from_driver(Arc::clone(&driver))
+            .map_err(|error| hkask_storage::DatabaseError::SqlCipher(error.to_string()))?;
+        let embedding_store = EmbeddingStore::from_driver(driver, dim)
+            .map_err(|error| hkask_storage::DatabaseError::SqlCipher(error.to_string()))?;
+        Ok(Self::new(h_mem_store, embedding_store))
+    }
+
+    /// Create an `MemoryStore` with no usable embedding capability.
+    ///
+    /// For callers that recall by entity/EAV only and never embed (the
+    /// could not be opened). Embedding calls on the returned store will
+    /// fail at the storage layer rather than being silently accepted.
+    ///
+    /// Fallible because `EmbeddingStore::from_driver` can fail for a
+    /// driver-shape reason (a `Sqlite` provider whose `sqlite_pool()` is
+    /// `None`) that has nothing to do with the dimension. A caller reaching
+    /// here *because* its own `from_driver` call already failed would panic
+    /// on an `expect`, turning a degraded-memory path into a crash.
+    pub fn try_new_without_embeddings(h_mem_store: HMemStore) -> Result<Self, MemoryStoreError> {
+        let embedding_store = EmbeddingStore::from_driver(
+            Arc::clone(h_mem_store.driver()),
+            1, // dim=1 — never used; this store does not embed
+        )?;
+        Ok(Self::new(h_mem_store, embedding_store))
+    }
+
+    pub fn with_ledger(mut self, sink: Arc<dyn RegulationSink>) -> Self {
+        self.event_sink = Some(sink);
+        self
+    }
+
+    pub fn with_memory_life_days(mut self, days: f64) -> Self {
+        self.memory_life_days = days;
+        self
+    }
+
+    pub fn memory_life_days(&self) -> f64 {
+        self.memory_life_days
+    }
+
+    /// Access the underlying `EmbeddingStore` for direct operations.
+    pub fn embedding_store(&self) -> &EmbeddingStore {
+        &self.embedding
+    }
+
+    // ── Store ──────────────────────────────────────────────────────────────
+
+    /// Prepare a knowledge write, deriving a passage from the supplied value
+    /// when it has no supported text. Raw EAV/control writes use `store` instead.
+    pub fn prepare_semantic_write(
+        &self,
+        h_mem: HMem,
+    ) -> Result<SemanticWrite<'_>, MemoryStoreError> {
+        validate_entity_key(&h_mem.entity)?;
+        Ok(self.semantic_write(h_mem, None))
+    }
+
+    /// Revise a memory without losing its semantic identity or metadata.
+    /// Row rotation is retained; a stale handle cannot resurrect a deleted row.
+    pub fn prepare_semantic_revision(
+        &self,
+        id: &hkask_storage::HMemId,
+        value: serde_json::Value,
+        confidence: Confidence,
+    ) -> Result<SemanticWrite<'_>, MemoryStoreError> {
+        self.prepare_semantic_change(id, Some((value, confidence)))
+    }
+
+    /// Repair passage coverage without rejuvenating a memory's decay clock.
+    /// The replacement retains observation, recall, confidence, and provenance.
+    pub fn prepare_semantic_repair(
+        &self,
+        id: &hkask_storage::HMemId,
+    ) -> Result<SemanticWrite<'_>, MemoryStoreError> {
+        self.prepare_semantic_change(id, None)
+    }
+
+    fn prepare_semantic_change(
+        &self,
+        id: &hkask_storage::HMemId,
+        revision: Option<(serde_json::Value, Confidence)>,
+    ) -> Result<SemanticWrite<'_>, MemoryStoreError> {
+        let mut h_mem = self.h_mem_store.get_by_id(id)?.ok_or_else(|| {
+            HMemError::NotFound(hkask_types::NotFound {
+                entity_type: "h_mem".into(),
+                id: id.to_string(),
+            })
+        })?;
+        let old_passage = semantic_passage_for_h_mem(&h_mem);
+        h_mem.id = hkask_storage::HMemId::new();
+        if let Some((value, confidence)) = revision {
+            h_mem.value = value;
+            h_mem.confidence = confidence;
+            h_mem.observed_at = chrono::Utc::now();
+            h_mem.recalled_at = h_mem.observed_at;
+        }
+        Ok(self.semantic_write(h_mem, Some((*id, old_passage))))
+    }
+
+    fn semantic_write<'a>(
+        &'a self,
+        mut h_mem: HMem,
+        replacing: Option<(hkask_storage::HMemId, Option<String>)>,
+    ) -> SemanticWrite<'a> {
+        let passage = semantic_passage_for_h_mem(&h_mem).unwrap_or_else(|| {
+            let passage = format!("{} {}: {}", h_mem.entity, h_mem.attribute, h_mem.value);
+            if let Some(object) = h_mem.value.as_object_mut() {
+                object.insert(
+                    "recall_text".into(),
+                    serde_json::Value::String(passage.clone()),
+                );
+            } else {
+                h_mem.value = serde_json::json!({"value": h_mem.value, "recall_text": passage});
+            }
+            passage
+        });
+        SemanticWrite {
+            memory: self,
+            h_mem,
+            passage,
+            replacing,
+        }
+    }
+
+    /// Store raw EAV/control state without a semantic-recall guarantee.
+    /// Knowledge writers use `prepare_semantic_write` / `prepare_semantic_revision`.
+    /// No visibility/perspective invariants — the ontology
+    /// blob classifies the memory. The caller is responsible for setting the
+    /// ontology (state-anchored h_mems get `HMemOntology::state()`,
+    /// process-anchored h_mems get `HMemOntology::process()`).
+    ///
+    /// Rejects a non-canonical entity key (see `validate_entity_key`).
+    ///
+    /// Emits a `reg.memory.encode` span for observability.
+    pub fn store(&self, h_mem: HMem) -> Result<(), MemoryStoreError> {
+        validate_entity_key(&h_mem.entity)?;
+        self.h_mem_store.insert(&h_mem)?;
+        self.emit_store_event(&h_mem);
+        Ok(())
+    }
+
+    /// Publish related h_mems while atomically replacing one EAV control key.
+    /// Every h_mem in the batch must carry a canonical entity key (see
+    /// `validate_entity_key`); the control key identifies a row the batch
+    /// replaces, so it is covered by the batch's own validation.
+    pub fn store_batch_replacing_key_atomic(
+        &self,
+        h_mems: &[HMem],
+        entity: &str,
+        attribute: &str,
+    ) -> Result<(), MemoryStoreError> {
+        for h_mem in h_mems {
+            validate_entity_key(&h_mem.entity)?;
+        }
+        self.h_mem_store
+            .insert_batch_replacing_key_atomic(h_mems, entity, attribute)?;
+        for h_mem in h_mems {
+            self.emit_store_event(h_mem);
+        }
+        Ok(())
+    }
+
+    fn emit_store_event(&self, h_mem: &HMem) {
+        if let Some(sink) = &self.event_sink {
+            let span = Span::new(crate::MEMORY_ENCODE_SPAN.clone(), "stored");
+            let event = RegulationRecord::new(
+                h_mem.access.owner_webid,
+                span,
+                CyclePhase::Act,
+                serde_json::json!({"entity": h_mem.entity, "attribute": h_mem.attribute}),
+                0,
+            );
+            if let Err(e) = sink.persist(&event) {
+                tracing::warn!(target: "hkask.memory", error = %e, "Failed to persist reg.memory span");
+            }
+        }
+    }
+
+    // ── Recall ─────────────────────────────────────────────────────────────
+
+    /// Query by entity with deduplication, confidence decay, and recall-touch.
+    ///
+    /// Applies Wozniak-Gorzelanczyk (1995) forgetting curve decay at recall
+    /// and resets the recall clock via `touch_recall`.
+    pub fn query_deduped(&self, entity: &str) -> Result<Vec<HMem>, MemoryStoreError> {
+        let deduped = self.query_deduped_untouched(entity)?;
+        for t in &deduped {
+            if let Err(e) = self.h_mem_store.touch_recall(&t.id) {
+                tracing::warn!(
+                    target: "reg.memory.decay",
+                    triple_id = %t.id,
+                    error = %e,
+                    "Failed to touch_recall h_mem — decay clock not reset"
+                );
+            }
+        }
+        Ok(deduped)
+    }
+
+    /// Query by entity with deduplication and confidence decay, **without**
+    /// touching `recalled_at`. Use for recall paths that inspect many
+    /// candidates but only act on a few.
+    pub fn query_deduped_untouched(&self, entity: &str) -> Result<Vec<HMem>, MemoryStoreError> {
+        let h_mems = self.h_mem_store.query_by_entity(entity)?;
+        let decayed: Vec<HMem> = h_mems
+            .into_iter()
+            .map(|mut t| {
+                let days_since = crate::bayesian::days_since(t.recalled_at);
+                let original_confidence = t.confidence;
+                t.confidence = t.confidence.memory_decay(days_since, self.memory_life_days);
+                tracing::debug!(
+                    target: "reg.memory.decay",
+                    entity = %t.entity,
+                    attribute = %t.attribute,
+                    original_confidence = %original_confidence,
+                    decayed_confidence = %t.confidence,
+                    days_since_recall = days_since,
+                    memory_life_days = self.memory_life_days,
+                    "Confidence decayed (Wozniak-Gorzelanczyk forgetting curve)"
+                );
+                t
+            })
+            .collect();
+        Ok(crate::recall_dedup::dedup_h_mems(decayed))
+    }
+
+    /// Query by entity for a specific perspective (who wrote this), with
+    /// deduplication and decay, **without** touching `recalled_at`.
+    ///
+    /// This is the recall path for perspective-scoped memory: filter to
+    /// the memories written by a specific agent/user. The swarm hive uses
+    /// this to scope by agent.
+    pub fn query_for_deduped_untouched(
+        &self,
+        entity: &str,
+        perspective: WebID,
+    ) -> Result<Vec<HMem>, MemoryStoreError> {
+        let h_mems = self.h_mem_store.query_by_entity(entity)?;
+        let scoped: Vec<HMem> = h_mems
+            .into_iter()
+            .filter(|t| t.access.perspective == Some(perspective))
+            .collect();
+        Ok(self.decay_sort_dedup(scoped))
+    }
+
+    /// The shared recall pipeline: decay each h_mem's confidence by its
+    /// recall age, order newest-first, and deduplicate — the tail of every
+    /// deduped query.
+    fn decay_sort_dedup(&self, h_mems: Vec<HMem>) -> Vec<HMem> {
+        let mut filtered: Vec<HMem> = h_mems
+            .into_iter()
+            .map(|mut t| {
+                let days_since = crate::bayesian::days_since(t.recalled_at);
+                t.confidence = t.confidence.memory_decay(days_since, self.memory_life_days);
+                t
+            })
+            .collect();
+        filtered.sort_by_key(|b| std::cmp::Reverse(b.observed_at));
+        crate::recall_dedup::dedup_h_mems(filtered)
+    }
+
+    /// Query by entity for a specific perspective, with deduplication and
+    /// decay, touching `recalled_at` on every survivor.
+    ///
+    /// The touching variant of [`Self::query_for_deduped_untouched`]. Prefer
+    /// the untouched variant for recall paths that inspect many candidates
+    /// but only act on a few — touching every recalled h_mem turns recall
+    /// into a write storm under concurrent load (one UPDATE per row per call).
+    pub fn query_for_deduped(
+        &self,
+        entity: &str,
+        perspective: WebID,
+    ) -> Result<Vec<HMem>, MemoryStoreError> {
+        let deduped = self.query_for_deduped_untouched(entity, perspective)?;
+        for t in &deduped {
+            if let Err(e) = self.h_mem_store.touch_recall(&t.id) {
+                tracing::warn!(
+                    target: "reg.memory.decay",
+                    triple_id = %t.id,
+                    error = %e,
+                    "Failed to touch_recall h_mem — decay clock not reset"
+                );
+            }
+        }
+        Ok(deduped)
+    }
+
+    /// Query by entity prefix, perspective-free. Shared h_mems carry no
+    /// perspective, so keyword recall over the shared thread
+    /// prefix must not scope by one. Without touching `recalled_at`; caps
+    /// rows via SQL LIMIT.
+    pub fn query_deduped_untouched_by_prefix(
+        &self,
+        prefix: &str,
+        limit: usize,
+    ) -> Result<Vec<HMem>, MemoryStoreError> {
+        let h_mems = self.h_mem_store.query_by_entity_prefix(prefix, limit)?;
+        Ok(self.decay_sort_dedup(h_mems))
+    }
+
+    /// Touch `recalled_at` on a single h_mem, resetting its decay clock.
+    pub fn touch_recall(&self, id: &hkask_storage::HMemId) -> Result<(), MemoryStoreError> {
+        self.h_mem_store.touch_recall(id).map_err(Into::into)
+    }
+
+    /// Fetch a single h_mem by ID, without decay and without touching
+    /// `recalled_at`. Deleted h_mems are absent — forgetting removes the
+    /// row from the database (there is no "expired" state) — so this is
+    /// the "does this citation exist" check `memory_insert` runs on its
+    /// evidence, not a recall path.
+    pub fn get_by_id(&self, id: &hkask_storage::HMemId) -> Result<Option<HMem>, MemoryStoreError> {
+        self.h_mem_store.get_by_id(id).map_err(Into::into)
+    }
+
+    /// Query all h_mems by entity prefix, without decay or dedup.
+    /// Used by the purge tool to find all h_mems (assertions, QA pairs,
+    /// and any other attributes) matching a corpus prefix for deletion.
+    pub fn h_mems_by_entity_prefix(&self, prefix: &str) -> Result<Vec<HMem>, MemoryStoreError> {
+        self.h_mem_store
+            .query_by_entity_prefix(prefix, 100_000)
+            .map_err(Into::into)
+    }
+
+    /// Load the newest lessons attributed to one source thread, untouched by
+    /// decay and bounded for prompt construction.
+    pub fn h_mems_by_source_thread(
+        &self,
+        source_thread: &str,
+        limit: usize,
+    ) -> Result<Vec<HMem>, MemoryStoreError> {
+        self.h_mem_store
+            .query_by_source_thread(source_thread, limit)
+            .map_err(Into::into)
+    }
+
+    /// Query h_mems by entity prefix observed at or after `since`, without
+    /// decay or dedup. The curator's distillation pass uses this to find
+    /// threads with un-distilled turns without loading the whole store.
+    pub fn h_mems_by_prefix_since(
+        &self,
+        prefix: &str,
+        since: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<HMem>, MemoryStoreError> {
+        self.h_mem_store
+            .query_by_entity_prefix_since(prefix, &since.to_rfc3339(), 100_000)
+            .map_err(Into::into)
+    }
+
+    /// Query by attribute, applying confidence decay and resetting the recall
+    /// clocks. Exports and candidate scans should use the untouched variant.
+    pub fn query_by_attribute(&self, attribute: &str) -> Result<Vec<HMem>, MemoryStoreError> {
+        let decayed = self.query_by_attribute_untouched(attribute)?;
+        for t in &decayed {
+            if let Err(e) = self.h_mem_store.touch_recall(&t.id) {
+                tracing::warn!(
+                    target: "reg.memory.decay",
+                    triple_id = %t.id,
+                    error = %e,
+                    "Failed to touch_recall h_mem (query_by_attribute) — decay clock not reset"
+                );
+            }
+        }
+        Ok(decayed)
+    }
+
+    /// Query by attribute with the same confidence decay as recall, without
+    /// updating `recalled_at`. Dataset assembly is an export, not a recall.
+    pub fn query_by_attribute_untouched(
+        &self,
+        attribute: &str,
+    ) -> Result<Vec<HMem>, MemoryStoreError> {
+        let h_mems = self.h_mem_store.query_by_attribute(attribute)?;
+        Ok(h_mems
+            .into_iter()
+            .map(|mut t| {
+                let days_since = crate::bayesian::days_since(t.recalled_at);
+                t.confidence = t.confidence.memory_decay(days_since, self.memory_life_days);
+                t
+            })
+            .collect())
+    }
+
+    // ── Ontology recall (P5.4 dual-axis anchoring) ───────────────────────
+    //
+    // These are what make the ontology blob load-bearing rather than
+    // decorative: an h_mem's dual-axis anchoring is a query axis, not just
+    // metadata. All four apply decay without touching `recalled_at` — an
+    // ontology sweep inspects many h_mems and should not reset their decay
+    // clocks wholesale (the same write-storm reasoning as
+    // `query_deduped_untouched`).
+
+    /// Recall by Dublin Core type (`dc_type`) — the state-axis type query.
+    pub fn query_by_dc_type(&self, dc_type: &str) -> Result<Vec<HMem>, MemoryStoreError> {
+        Ok(self.decayed(self.h_mem_store.query_by_dc_type(dc_type)?))
+    }
+
+    /// Recall by Dublin Core subject substring — the state-axis topic query.
+    pub fn query_by_dc_subject(&self, subject: &str) -> Result<Vec<HMem>, MemoryStoreError> {
+        Ok(self.decayed(self.h_mem_store.query_by_dc_subject(subject)?))
+    }
+
+    /// Recall every step of a PKO procedure — the process-axis query.
+    pub fn query_by_pko_procedure(&self, procedure: &str) -> Result<Vec<HMem>, MemoryStoreError> {
+        Ok(self.decayed(self.h_mem_store.query_by_pko_procedure(procedure)?))
+    }
+
+    /// Recall h_mems tagged by an open-world ontology namespace (`golem`,
+    /// `omc`, …) — the domain-supplement query.
+    pub fn query_by_ontology_namespace(
+        &self,
+        namespace: &str,
+    ) -> Result<Vec<HMem>, MemoryStoreError> {
+        Ok(self.decayed(self.h_mem_store.query_by_ontology_namespace(namespace)?))
+    }
+
+    /// Apply the Wozniak-Gorzelanczyk forgetting curve to a recalled batch
+    /// without touching `recalled_at`.
+    fn decayed(&self, h_mems: Vec<HMem>) -> Vec<HMem> {
+        h_mems
+            .into_iter()
+            .map(|mut t| {
+                let days_since = crate::bayesian::days_since(t.recalled_at);
+                t.confidence = t.confidence.memory_decay(days_since, self.memory_life_days);
+                t
+            })
+            .collect()
+    }
+
+    // ── Embedding operations ────────────────────────────────────────
+
+    pub fn store_embedding(
+        &self,
+        entity_ref: &str,
+        vector: &[f32],
+        model: &str,
+        passage_text: Option<&str>,
+    ) -> Result<String, MemoryStoreError> {
+        Ok(self
+            .embedding
+            .store(entity_ref, vector, model, passage_text)?)
+    }
+
+    /// Return whether one entity already has an embedding for exact passage text.
+    pub fn has_embedding_for_passage(
+        &self,
+        entity_ref: &str,
+        passage_text: &str,
+    ) -> Result<bool, MemoryStoreError> {
+        Ok(self
+            .embedding
+            .contains_entity_passage(entity_ref, passage_text)?)
+    }
+
+    /// Check exact-passage semantic eligibility for a resolved active producer.
+    /// Unlike the model-agnostic existence check, this also requires the vector
+    /// index row, producer model and freshly generated vector to match. An
+    /// alias can retarget even when echoed as actual: stale vectors must be
+    /// repaired, not re-labelled.
+    pub fn has_embedding_for_passage_with_model(
+        &self,
+        entity_ref: &str,
+        passage_text: &str,
+        producer_model: &str,
+        fresh_vector: &[f32],
+    ) -> Result<bool, MemoryStoreError> {
+        Ok(self.embedding.contains_entity_passage_with_model(
+            entity_ref,
+            passage_text,
+            producer_model,
+            fresh_vector,
+        )?)
+    }
+
+    /// Delete the exact embedding row for one (entity_ref, passage) pair,
+    /// preserving sibling passages under the same entity_ref — the surgical
+    /// delete the model-mismatch re-embed uses to retire a stale-model row
+    /// before storing its replacement. Returns how many rows were deleted.
+    pub fn delete_embedding_by_entity_ref_and_passage(
+        &self,
+        entity_ref: &str,
+        passage_text: &str,
+    ) -> Result<usize, MemoryStoreError> {
+        Ok(self
+            .embedding
+            .delete_by_entity_ref_and_passages(entity_ref, &[passage_text.to_string()])?)
+    }
+
+    /// KNN search gated on model identity: rows whose recorded model matches
+    /// neither the query's requested model nor its provider-confirmed actual
+    /// model are excluded and counted in the outcome — an embedding-model
+    /// change degrades loudly (filtered + surfaced), never silently poisons
+    /// cosine rankings with cross-model distances.
+    pub fn search_similar(
+        &self,
+        query_vector: &[f32],
+        limit: usize,
+        query_model: &str,
+        query_actual_model: Option<&str>,
+    ) -> Result<SearchOutcome, MemoryStoreError> {
+        Ok(self
+            .embedding
+            .search(query_vector, limit, query_model, query_actual_model)?)
+    }
+
+    pub fn embedding_count(&self) -> Result<usize, MemoryStoreError> {
+        Ok(self.embedding.count()?)
+    }
+
+    pub fn embeddings_by_prefix(
+        &self,
+        prefix: &str,
+    ) -> Result<Vec<(String, Vec<f32>)>, MemoryStoreError> {
+        Ok(self.embedding.get_all_by_prefix(prefix)?)
+    }
+
+    pub fn embedding_models_for_refs(
+        &self,
+        entity_refs: &[String],
+    ) -> Result<Vec<(String, String)>, MemoryStoreError> {
+        Ok(self.embedding.models_for_entity_refs(entity_refs)?)
+    }
+
+    /// Load all embeddings with passage text and model for in-memory index
+    /// hydration. Returns `(entity_ref, vector, passage_text, model)` for
+    /// every stored embedding — the model rides along so the corpus index's
+    /// model gate can see each row's recorded identity.
+    pub fn all_embeddings_with_text(
+        &self,
+    ) -> Result<Vec<(String, Vec<f32>, Option<String>, String)>, MemoryStoreError> {
+        Ok(self.embedding.all_with_text()?)
+    }
+
+    /// Compute the centroid (mean embedding) over a prefix-scoped
+    /// embedding set.
+    ///
+    /// Only refs under `prefix` count; `exclude_ref`, derived `:centroid`
+    /// refs and `:rule:` refs are excluded so stored author/dimension
+    /// centroids never feed back into the passage mean. When
+    /// `store_as` is provided with a `model` name, the centroid is stored
+    /// as an embedding under that ref — e.g. `style:{author}:centroid`,
+    /// the entity ref `corpus_compose` reads for centroid validation.
+    /// `dim` must match the store's configured dimension (the store step
+    /// validates it).
+    pub fn compute_centroid(
+        &self,
+        prefix: &str,
+        exclude_ref: &str,
+        dim: usize,
+        store_as: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<CentroidResult, MemoryStoreError> {
+        let matching: Vec<(String, Vec<f32>)> = self
+            .embedding
+            .get_all_by_prefix(prefix)?
+            .into_iter()
+            .filter(|(entity_ref, _)| {
+                entity_ref != exclude_ref && hkask_types::corpus::is_corpus_passage_ref(entity_ref)
+            })
+            .collect();
+        self.centroid_from_embeddings(&matching, prefix, dim, store_as, model)
+    }
+
+    /// Compute a centroid from existing embeddings named by explicit entity refs.
+    ///
+    /// expect: "I can select passages without copying embeddings or weighting duplicate refs twice." [P3]
+    /// pre: every distinct eligible ref exists; dim matches the stored vectors
+    /// post: averages each eligible ref once; missing refs fail before any write
+    /// Uses the same exclusions as `compute_centroid`; no prefix is imposed.
+    pub fn compute_centroid_for_refs(
+        &self,
+        entity_refs: &[String],
+        exclude_ref: &str,
+        dim: usize,
+        store_as: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<CentroidResult, MemoryStoreError> {
+        let mut seen = std::collections::HashSet::new();
+        let mut matching = Vec::new();
+        for entity_ref in entity_refs {
+            if entity_ref != exclude_ref
+                && hkask_types::corpus::is_corpus_passage_ref(entity_ref)
+                && seen.insert(entity_ref)
+            {
+                let embedding = self.embedding.get(entity_ref)?;
+                matching.push((entity_ref.clone(), embedding.vector));
+            }
+        }
+        self.centroid_from_embeddings(&matching, "explicit entity refs", dim, store_as, model)
+    }
+
+    fn centroid_from_embeddings(
+        &self,
+        matching: &[(String, Vec<f32>)],
+        selection: &str,
+        dim: usize,
+        store_as: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<CentroidResult, MemoryStoreError> {
+        if matching.is_empty() {
+            return Err(MemoryStoreError::NoEmbeddingsForCentroid(
+                selection.to_string(),
+            ));
+        }
+
+        let mut centroid = vec![0.0f32; dim];
+        for (_, vector) in matching {
+            if vector.len() != dim {
+                return Err(EmbeddingError::DimensionMismatch {
+                    expected: dim,
+                    actual: vector.len(),
+                }
+                .into());
+            }
+            for (sum, value) in centroid.iter_mut().zip(vector) {
+                *sum += value;
+            }
+        }
+
+        let count = matching.len();
+        let n = count as f32;
+        for v in centroid.iter_mut() {
+            *v /= n;
+        }
+
+        let stored = if let Some(ref_to_store) = store_as {
+            match model {
+                Some(m) => {
+                    // A centroid has one current value, unlike multi-passage entities.
+                    self.embedding.replace(ref_to_store, &centroid, m, None)?;
+                    true
+                }
+                None => false,
+            }
+        } else {
+            false
+        };
+
+        Ok(CentroidResult {
+            centroid,
+            passage_count: count,
+            stored,
+        })
+    }
+
+    pub fn purge_by_prefix(&self, prefix: &str) -> Result<usize, MemoryStoreError> {
+        let to_delete = self.embedding.query_by_prefix(prefix)?;
+        let mut count = 0;
+        for entity_ref in &to_delete {
+            match self.embedding.delete(entity_ref) {
+                Ok(()) => count += 1,
+                Err(e) => tracing::warn!(
+                    target: "hkask.memory",
+                    error = %e,
+                    entity_ref = %entity_ref,
+                    "Failed to delete embedding during purge_by_prefix"
+                ),
+            }
+        }
+        Ok(count)
+    }
+
+    // ── Consolidation helpers ─────────────────────────────────────────────
+
+    /// Replace raw EAV/control state atomically, without maintaining an embedding.
+    /// Knowledge revisions use `prepare_semantic_revision` instead.
+    /// Deletes the prior row rather than retaining a superseded version.
+    pub fn update_confidence(
+        &self,
+        existing_id: &hkask_storage::HMemId,
+        current_value: serde_json::Value,
+        new_confidence: Confidence,
+    ) -> Result<(), MemoryStoreError> {
+        self.h_mem_store
+            .update(existing_id, current_value, new_confidence)?;
+        tracing::debug!(
+            target: "reg.consolidation",
+            triple_id = %existing_id.as_uuid(),
+            new_confidence = %new_confidence,
+            "h_mem confidence updated via Bayesian combination"
+        );
+        Ok(())
+    }
+
+    /// Delete every h_mem under an entity prefix, in one statement,
+    /// then remove the emptied entities' embeddings and memory_links
+    /// rows. Returns the number of h_mems deleted. The forgetting pass
+    /// uses this to forget a distilled thread's shared-copy turns —
+    /// forgotten rows are removed from the database (operator ruling
+    /// 2026-09-04: there is no "expired" state).
+    pub fn delete_h_mems_by_entity_prefix(&self, prefix: &str) -> Result<usize, MemoryStoreError> {
+        let (count, affected) = self
+            .h_mem_store
+            .delete_by_entity_prefix_with_entities(prefix)?;
+        for entity in &affected {
+            // Prefix deletion empties every affected entity — no single
+            // deleted passage to clean; the emptied-entity branch handles
+            // the full reference sweep.
+            self.cleanup_orphaned_references_for_entity(entity, None);
+        }
+        if count > 0 {
+            tracing::debug!(
+                target: "hkask.memory",
+                prefix,
+                count,
+                "h_mems deleted by entity prefix (forgotten)"
+            );
+        }
+        Ok(count)
+    }
+
+    /// Delete every embedding under an entity — vectors and metadata.
+    /// The forgetting pass uses this so a forgotten thread's turn
+    /// embeddings stop dominating semantic recall.
+    pub fn delete_embeddings_by_entity(&self, entity_ref: &str) -> Result<usize, MemoryStoreError> {
+        Ok(self.embedding.delete_all_by_entity_ref(entity_ref)?)
+    }
+
+    /// Delete the embedding rows of one entity whose passage text is in
+    /// `passages`. The coverage-scoped forgetting pass uses this to remove
+    /// only the embeddings of chunks a distillation watermark proves
+    /// distilled, keeping newer chunks' embeddings recallable. Rows whose
+    /// passage is not listed (including NULL-passage legacy rows) survive —
+    /// the caller decides what is covered.
+    pub fn delete_embeddings_by_entity_passages(
+        &self,
+        entity_ref: &str,
+        passages: &[String],
+    ) -> Result<usize, MemoryStoreError> {
+        Ok(self
+            .embedding
+            .delete_by_entity_ref_and_passages(entity_ref, passages)?)
+    }
+
+    /// Delete orphaned rows in all three coupled stores: embeddings whose
+    /// entity has no h_mem (the entity_ref join key is broken — KNN
+    /// silently drops them, so they are dead weight and a false "memory
+    /// exists" signal), vector rows orphaned from their metadata rows,
+    /// and memory_links rows referencing entities with no h_mems.
+    /// Deletion sites clean their own orphans (`delete_h_mem`, the prune
+    /// valve, `delete_h_mems_by_entity_prefix`); this sweep is the
+    /// belt-and-suspenders backstop that also catches rows predating the
+    /// site-level cleanup (the 57 entity-ref orphans found by the
+    /// 2026-09-09 therapy scan) and anything a failed site-level cleanup
+    /// left behind. Returns the total number of rows removed.
+    pub fn delete_orphaned_embeddings(&self) -> Result<usize, MemoryStoreError> {
+        let driver = self.h_mem_store.driver();
+        let mut deleted = driver
+            .execute(
+                "DELETE FROM embeddings WHERE entity_ref NOT IN (SELECT DISTINCT entity FROM hmems)",
+                &[],
+            )
+            .map_err(|e| MemoryStoreError::HMem(HMemError::from(e)))?;
+        deleted += driver
+            .execute(
+                "DELETE FROM memory_links WHERE entity_a NOT IN (SELECT DISTINCT entity FROM hmems) \
+                 OR entity_b NOT IN (SELECT DISTINCT entity FROM hmems)",
+                &[],
+            )
+            .map_err(|e| MemoryStoreError::HMem(HMemError::from(e)))?;
+        deleted += self.embedding.delete_orphaned_vectors()?;
+        Ok(deleted)
+    }
+
+    // ── Budget / cleanup ──────────────────────────────────────────────────
+
+    pub fn h_mem_count(&self) -> Result<usize, MemoryStoreError> {
+        Ok(self.h_mem_store.count()?)
+    }
+
+    /// Count of h_mems with a live forgetting valve: conversation-turn storage
+    /// (`curator:thread:`), handled by the distillation-gated turn pass.
+    /// Goal acknowledgment no longer deletes records. The knowledge layer is
+    /// deliberately excluded: it is additive-by-design (distillation
+    /// appends candidate lessons and nothing deletes them; recall quality is
+    /// protected by confidence decay, not deletion — operator ruling on
+    /// algedonic card 33b0eebb, option (A), 2026-10-18). This is the count the
+    /// regulation growth sensor (`TripleCount`) senses — the ceiling monitors
+    /// a valve-stall signal on the tiers that CAN shed, not store size
+    /// (option (B), making the system forget true lessons unused, was
+    /// declined; option (C), a recall-visibility floor, is a recall-behavior
+    /// change and would not stop the size alarm without (A)).
+    ///
+    /// Goal projections are excluded now that acknowledgment is a retained
+    /// receipt rather than a forgetting valve. Canonical goals live separately.
+    pub fn sheddable_h_mem_count(&self) -> Result<usize, MemoryStoreError> {
+        let turns = self
+            .h_mem_store
+            .count_by_entity_prefix(TURN_STORAGE_PREFIX)?;
+        Ok(turns)
+    }
+
+    /// Delete an h_mem and, when this was the entity's last row, the
+    /// entity's embeddings and memory_links rows. The entity_ref is the
+    /// join key between embeddings and h_mems (README: "One entity_ref
+    /// string links each embedding vector to its relational h_mem row"),
+    /// so rows left behind after the entity empties are orphans. The
+    /// operator's 2026-09-09 ruling: deletions must clean up what they
+    /// orphan — no orphan piles, no compatibility states.
+    /// Delete an h_mem and the references it orphans. When this was the
+    /// entity's last row, the entity's embeddings and memory_links rows go
+    /// (the entity_ref is the join key between embeddings and h_mems —
+    /// README: "One entity_ref string links each embedding vector to its
+    /// relational h_mem row"). When the entity survives, the deleted row's
+    /// own passage-scoped embedding goes — unless a surviving sibling shares
+    /// the passage. The operator's 2026-09-09 ruling: deletions must clean up
+    /// what they orphan — no orphan piles, no compatibility states; the
+    /// 2026-10-01 consolidation meals showed the live-entity case the
+    /// entity-scoped sweep cannot see.
+    pub fn delete_h_mem(&self, id: &hkask_storage::HMemId) -> Result<(), MemoryStoreError> {
+        let deleted = self.h_mem_store.get_by_id(id)?;
+        self.h_mem_store.delete_by_id(id)?;
+        let Some(deleted) = deleted else {
+            return Ok(());
+        };
+        let passage = semantic_passage_for_h_mem(&deleted);
+        self.cleanup_orphaned_references_for_entity(&deleted.entity, passage.as_deref());
+        Ok(())
+    }
+
+    /// Remove the references a deletion orphans. When the entity emptied,
+    /// all of its embeddings and memory_links rows go. When the entity
+    /// survives, only the deleted row's passage-scoped embedding goes — and
+    /// only when no surviving sibling shares the passage. Failures are
+    /// logged, not propagated: callers have already deleted the h_mems (the
+    /// primary operation succeeded), and the periodic orphan sweep in
+    /// [`Self::delete_orphaned_embeddings`] is the backstop that catches
+    /// anything a failed cleanup leaves behind.
+    fn cleanup_orphaned_references_for_entity(&self, entity: &str, deleted_passage: Option<&str>) {
+        let remaining = match self.h_mem_store.query_by_entity(entity) {
+            Ok(rows) => rows,
+            Err(error) => {
+                tracing::warn!(
+                    target: "hkask.memory",
+                    %error,
+                    entity,
+                    "Failed to check for orphaned references after deletion — periodic sweep will retry"
+                );
+                return;
+            }
+        };
+        if remaining.is_empty() {
+            match self.embedding.delete_all_by_entity_ref(entity) {
+                Ok(count) if count > 0 => tracing::debug!(
+                    target: "hkask.memory",
+                    entity,
+                    count,
+                    "Deleted orphaned embeddings of emptied entity"
+                ),
+                Ok(_) => {}
+                Err(error) => tracing::warn!(
+                    target: "hkask.memory",
+                    %error,
+                    entity,
+                    "Failed to delete orphaned embeddings of emptied entity — periodic sweep will retry"
+                ),
+            }
+            if let Err(error) = self.h_mem_store.driver().execute(
+                "DELETE FROM memory_links WHERE entity_a = ?1 OR entity_b = ?1",
+                &[DbValue::Text(entity.to_string())],
+            ) {
+                tracing::warn!(
+                    target: "hkask.memory",
+                    %error,
+                    entity,
+                    "Failed to delete orphaned memory_links of emptied entity — periodic sweep will retry"
+                );
+            }
+            return;
+        }
+        let Some(deleted_passage) = deleted_passage else {
+            return;
+        };
+        let passage_shared = remaining
+            .iter()
+            .any(|row| semantic_passage_for_h_mem(row).as_deref() == Some(deleted_passage));
+        if passage_shared {
+            return;
+        }
+        if let Err(error) = self.delete_embedding_by_entity_ref_and_passage(entity, deleted_passage)
+        {
+            tracing::warn!(
+                target: "hkask.memory",
+                %error,
+                entity,
+                "Failed to delete the deleted row's passage embedding — periodic sweep will retry"
+            );
+        }
+    }
+
+    pub fn low_confidence_count(&self, threshold: f64) -> Result<usize, MemoryStoreError> {
+        Ok(self.h_mem_store.count_below_confidence(threshold)?)
+    }
+
+    pub(crate) fn low_confidence_h_mems(
+        &self,
+        threshold: f64,
+        limit: usize,
+    ) -> Result<Vec<HMem>, MemoryStoreError> {
+        Ok(self.h_mem_store.query_below_confidence(threshold, limit)?)
+    }
+
+    // ── Age-based pruning ──────────────────────────────────────────────
+    //
+    // Confidence decay (Wozniak-Gorzelanczyk) lowers recall weight over time
+    // but never deletes. Age-based pruning is the complementary operation:
+    // it hard-deletes h_mems older than a cutoff, bounding storage growth from
+    // the time axis. The caller can spare actively-recalled memories by
+    // setting `spare_recalled_within_days` — an h_mem recalled recently stays
+    // even if it is old.
+
+    /// Prune h_mems older than `max_age_days`, optionally sparing h_mems
+    /// recalled within the last `spare_recalled_within_days` days.
+    ///
+    /// Full-store scope — every entity is a candidate, including
+    /// knowledge-layer rows (operator rulings, verified status, reified
+    /// lessons). The curator's forgetting valve uses
+    /// [`prune_by_age_in_prefixes`] instead, so durable knowledge survives
+    /// episodic turnover.
+    ///
+    /// Returns the count of deleted h_mems. Failures on individual deletes
+    /// are counted but do not abort the batch — a single stale row must not
+    /// block pruning of the rest.
+    pub fn prune_by_age(
+        &self,
+        max_age_days: i64,
+        spare_recalled_within_days: Option<i64>,
+    ) -> Result<PruneOutcome, MemoryStoreError> {
+        let cutoff = chrono::Utc::now() - chrono::Duration::days(max_age_days);
+        let candidates = self.h_mem_store.query_older_than(&cutoff, 100_000)?;
+        let spare_cutoff = spare_recalled_within_days
+            .map(|days| chrono::Utc::now() - chrono::Duration::days(days));
+        Ok(self.prune_candidates(max_age_days, candidates, spare_cutoff))
+    }
+
+    /// Prune aged h_mems scoped to entity prefixes — the safe default for
+    /// the curator's forgetting valve. Turn storage (`curator:thread:`)
+    /// is episodic and prunable by age;
+    /// knowledge-layer rows outside the prefixes outlive episodic turnover
+    /// unless the caller explicitly opts into full-store [`prune_by_age`].
+    pub fn prune_by_age_in_prefixes(
+        &self,
+        prefixes: &[&str],
+        max_age_days: i64,
+        spare_recalled_within_days: Option<i64>,
+    ) -> Result<PruneOutcome, MemoryStoreError> {
+        let cutoff = chrono::Utc::now() - chrono::Duration::days(max_age_days);
+        let candidates = self
+            .h_mem_store
+            .query_older_than(&cutoff, 100_000)?
+            .into_iter()
+            .filter(|h_mem| {
+                prefixes
+                    .iter()
+                    .any(|prefix| h_mem.entity.starts_with(prefix))
+            })
+            .collect();
+        let spare_cutoff = spare_recalled_within_days
+            .map(|days| chrono::Utc::now() - chrono::Duration::days(days));
+        Ok(self.prune_candidates(max_age_days, candidates, spare_cutoff))
+    }
+
+    /// Delete each prune candidate, sparing ones recalled more recently
+    /// than `spare_cutoff`. Each delete routes through `delete_h_mem` so the
+    /// pruned row takes its passage-scoped embedding with it and the last
+    /// row of an entity sweeps the emptied entity's references (deletions
+    /// must clean up what they orphan — operator ruling 2026-09-09; the
+    /// former raw `delete_by_id` + post-loop cleanup only saw emptied
+    /// entities, stranding passage embeddings under live entities — the
+    /// 2026-10-01 orphan class). Individual delete failures are counted,
+    /// not propagated — one stuck row must not block pruning of the rest.
+    fn prune_candidates(
+        &self,
+        max_age_days: i64,
+        candidates: Vec<HMem>,
+        spare_cutoff: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> PruneOutcome {
+        let mut deleted_count = 0usize;
+        let mut spared_count = 0usize;
+        let mut failed_count = 0usize;
+
+        for h_mem in &candidates {
+            // Spare actively-recalled memories when the caller requested it.
+            if let Some(ref spare_cutoff) = spare_cutoff {
+                if h_mem.recalled_at > *spare_cutoff {
+                    spared_count += 1;
+                    continue;
+                }
+            }
+            match self.delete_h_mem(&h_mem.id) {
+                Ok(()) => {
+                    deleted_count += 1;
+                }
+                Err(error) => {
+                    failed_count += 1;
+                    tracing::warn!(
+                        target: "reg.consolidation",
+                        %error,
+                        h_mem_id = %h_mem.id.as_uuid(),
+                        "Failed to delete aged h_mem during prune_by_age"
+                    );
+                }
+            }
+        }
+
+        tracing::info!(
+            target: "reg.consolidation",
+            max_age_days,
+            candidates = candidates.len(),
+            deleted = deleted_count,
+            spared = spared_count,
+            failed = failed_count,
+            "Age-based prune complete"
+        );
+
+        PruneOutcome {
+            candidates: candidates.len(),
+            deleted_count,
+            spared_count,
+            failed_count,
+        }
+    }
+
+    // ── Near-duplicate value dedup ─────────────────────────────────
+    //
+    // The existing dedup layers do NOT cover this case:
+    // 1. `recall_dedup::dedup_h_mems` — recall-time exact-EAV hash filter
+    //    (first-seen wins, no store mutation, no fuzzy matching).
+    // 2. Therapy skill — LLM-driven semantic contradiction resolution
+    //    (operator-in-the-loop, handles divergent values, not near-duplicates).
+    //
+    // This pass is the missing fourth layer: deterministic fuzzy string
+    // dedup that deletes stored near-duplicates. It normalizes string
+    // values (lowercase, strip punctuation, collapse whitespace) and groups
+    // h_mems by (entity, attribute, normalized_value), keeping the
+    // highest-confidence one and deleting the rest. Non-string values are
+    // skipped — structural dedup is the EAV path's job.
+
+    /// Deduplicate h_mems by normalized string value within each
+    /// (entity, attribute) group. For each group of near-duplicate
+    /// values, the highest-confidence h_mem is kept and the rest are
+    /// deleted. Returns the count of deleted duplicates.
+    /// Scans all stored h_mems (no perspective filter)
+    /// — the curator's memory is a single store and dedup is global.
+    /// Turn-storage entities (`curator:thread:`) are
+    /// excluded and counted in `skipped_turn_storage`.
+    pub fn dedup_by_normalized_value(
+        &self,
+        limit: usize,
+    ) -> Result<DedupOutcome, MemoryStoreError> {
+        let h_mems = self.h_mem_store.query_all(limit)?;
+
+        // Group by (entity, attribute, normalized_value) for string values.
+        let mut groups: std::collections::HashMap<(String, String, String), Vec<&HMem>> =
+            std::collections::HashMap::new();
+        let mut skipped_non_string = 0usize;
+        let mut skipped_turn_storage = 0usize;
+
+        for h_mem in &h_mems {
+            if h_mem.entity.starts_with(TURN_STORAGE_PREFIX) {
+                skipped_turn_storage += 1;
+                continue;
+            }
+            let Some(value_str) = h_mem.value.as_str() else {
+                skipped_non_string += 1;
+                continue;
+            };
+            let normalized = normalize_value(value_str);
+            let key = (h_mem.entity.clone(), h_mem.attribute.clone(), normalized);
+            groups.entry(key).or_default().push(h_mem);
+        }
+
+        let mut deleted_count = 0usize;
+        let mut failed_count = 0usize;
+        let mut groups_with_dupes = 0usize;
+
+        for (_key, group) in &groups {
+            if group.len() < 2 {
+                continue;
+            }
+            groups_with_dupes += 1;
+            // Keep the highest-confidence h_mem; delete the rest.
+            let mut sorted = group.clone();
+            sorted.sort_by(|a, b| {
+                b.confidence
+                    .value()
+                    .partial_cmp(&a.confidence.value())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            // The first one is kept; delete the rest.
+            for h_mem in &sorted[1..] {
+                match self.h_mem_store.delete_by_id(&h_mem.id) {
+                    Ok(()) => deleted_count += 1,
+                    Err(error) => {
+                        failed_count += 1;
+                        tracing::warn!(
+                            target: "reg.consolidation",
+                            %error,
+                            h_mem_id = %h_mem.id.as_uuid(),
+                            "Failed to delete duplicate h_mem during dedup_by_normalized_value"
+                        );
+                    }
+                }
+            }
+        }
+
+        tracing::info!(
+            target: "reg.consolidation",
+            scanned = h_mems.len(),
+            groups_with_dupes,
+            deleted = deleted_count,
+            failed = failed_count,
+            skipped_non_string,
+            skipped_turn_storage,
+            "Normalized-value dedup complete"
+        );
+
+        Ok(DedupOutcome {
+            scanned: h_mems.len(),
+            groups_with_dupes,
+            deleted_count,
+            failed_count,
+            skipped_non_string,
+            skipped_turn_storage,
+        })
+    }
+
+    // ── Co-occurrence connectedness (Priority 3) ────────────────────────
+    //
+    // When memories are recalled together, their entities are linked.
+    // The link count is the `connectedness` signal for recall ranking:
+    // a memory referenced by many others has been tested against more
+    // contexts. Grounding: Tetlock's dilution effect — connectedness
+    // down-weights similar-but-isolated memories (dilution candidates).
+
+    /// Record co-occurrence links between a set of entities recalled in
+    /// the same context. For each pair (a, b) where a < b lexicographically,
+    /// increment the co-occurrence count.
+    ///
+    /// Called by the context injector after a successful recall.
+    pub fn record_co_occurrence(&self, entities: &[String]) -> Result<(), MemoryStoreError> {
+        if entities.len() < 2 {
+            return Ok(());
+        }
+        let driver = self.h_mem_store.driver();
+        let mut sorted: Vec<&str> = entities.iter().map(|s| s.as_str()).collect();
+        sorted.sort();
+        sorted.dedup();
+        for i in 0..sorted.len() {
+            for j in (i + 1)..sorted.len() {
+                let sql = "INSERT INTO memory_links (entity_a, entity_b, co_count, last_linked) \
+                           VALUES (?1, ?2, 1, datetime('now')) \
+                           ON CONFLICT(entity_a, entity_b) DO UPDATE SET \
+                           co_count = co_count + 1, \
+                           last_linked = datetime('now')";
+                driver
+                    .execute(
+                        sql,
+                        &[
+                            DbValue::Text(sorted[i].to_string()),
+                            DbValue::Text(sorted[j].to_string()),
+                        ],
+                    )
+                    .map_err(|e| MemoryStoreError::HMem(HMemError::from(e)))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Get the connectedness score for an entity — the total co-occurrence
+    /// count across all links. Higher = more connected = more salient.
+    ///
+    /// Returns 0 for entities with no links (new or isolated memories).
+    pub fn connectedness(&self, entity: &str) -> Result<u64, MemoryStoreError> {
+        let driver = self.h_mem_store.driver();
+        let sql = "SELECT COALESCE(SUM(co_count), 0) FROM memory_links \
+                   WHERE entity_a = ?1 OR entity_b = ?1";
+        let rows = driver
+            .query(sql, &[DbValue::Text(entity.to_string())])
+            .map_err(|e| MemoryStoreError::HMem(HMemError::from(e)))?;
+        if rows.is_empty() {
+            return Ok(0);
+        }
+        // A column-read error must surface, not read as 0 (the
+        // `.rules` unwrap_or(0) sense-input trap).
+        let count = rows[0]
+            .get_int(0)
+            .map_err(|e| MemoryStoreError::HMem(HMemError::from(e)))? as u64;
+        Ok(count)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hkask_storage::SqliteDriver;
+    use hkask_types::Confidence;
+
+    fn test_store() -> MemoryStore {
+        let driver = SqliteDriver::in_memory_driver();
+        let h_mem_store =
+            hkask_storage::HMemStore::from_driver(Arc::clone(&driver)).expect("h_mem store");
+        let embedding_store =
+            hkask_storage::EmbeddingStore::from_driver(driver, hkask_storage::embedding_dim())
+                .expect("embedding store");
+        MemoryStore::new(h_mem_store, embedding_store)
+    }
+
+    #[test]
+    fn semantic_write_derives_missing_passages_and_preserves_explicit_text() -> anyhow::Result<()> {
+        let store = test_store();
+        let vector = vec![1.0; hkask_storage::embedding_dim()];
+        for value in [
+            serde_json::json!({"resolution": "revised finding"}),
+            serde_json::json!({"mutable_state": true, "text": "finding", "source": "instrument log"}),
+            serde_json::json!({"text": "", "recall_text": ""}),
+            serde_json::json!(["revised finding"]),
+            serde_json::json!(42),
+            serde_json::json!(null),
+            serde_json::json!(""),
+            serde_json::json!({"text": "explicit text"}),
+            serde_json::json!({"text": "other text", "recall_text": "explicit recall"}),
+            serde_json::json!("plain passage"),
+        ] {
+            let row = HMem::new("semantic:target", "finding", value.clone(), WebID::new());
+            let original_passage = semantic_passage_for_h_mem(&row);
+            let write = store.prepare_semantic_write(row)?;
+            let passage = write.passage().to_string();
+            let id = write.publish(&vector, "test-model")?;
+            let stored = store.get_by_id(&id)?.expect("written row");
+            assert_eq!(
+                semantic_passage_for_h_mem(&stored).as_deref(),
+                Some(passage.as_str())
+            );
+            if let Some(original_passage) = original_passage {
+                assert_eq!(
+                    stored.value, value,
+                    "supported representations remain unchanged"
+                );
+                assert_eq!(passage, original_passage);
+            } else {
+                assert!(!passage.is_empty());
+                assert!(stored.value.get("recall_text").is_some());
+            }
+            assert!(store.has_embedding_for_passage("semantic:target", &passage)?);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn semantic_repair_preserves_age_and_recall_history() -> anyhow::Result<()> {
+        let store = test_store();
+        let mut row = HMem::new(
+            "semantic:legacy",
+            "finding",
+            serde_json::json!({"resolution": "old finding"}),
+            WebID::new(),
+        )
+        .with_confidence(Confidence::new(0.35))
+        .with_provenance(hkask_storage::Provenance::ToolObserved);
+        row.observed_at = chrono::Utc::now() - chrono::Duration::days(100);
+        row.recalled_at = row.observed_at + chrono::Duration::days(10);
+        let old_id = row.id;
+        store.store(row.clone())?;
+        let write = store.prepare_semantic_repair(&old_id)?;
+        let passage = write.passage().to_string();
+        let id = write.publish(&vec![1.0; hkask_storage::embedding_dim()], "test-model")?;
+        let repaired = store.get_by_id(&id)?.expect("repaired row");
+        assert_ne!(id, old_id);
+        assert_eq!(repaired.observed_at, row.observed_at);
+        assert_eq!(repaired.recalled_at, row.recalled_at);
+        assert_eq!(repaired.confidence, row.confidence);
+        assert_eq!(repaired.provenance, row.provenance);
+        assert_eq!(repaired.value["resolution"], row.value["resolution"]);
+        assert!(store.has_embedding_for_passage("semantic:legacy", &passage)?);
+        assert!(store.get_by_id(&old_id)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn semantic_publication_rejects_split_database_handles() -> anyhow::Result<()> {
+        let h_mem_driver = SqliteDriver::in_memory_driver();
+        let embedding_driver = SqliteDriver::in_memory_driver();
+        let store = MemoryStore::new(
+            HMemStore::from_driver(Arc::clone(&h_mem_driver))?,
+            EmbeddingStore::from_driver(embedding_driver, hkask_storage::embedding_dim())?,
+        );
+        let result = store
+            .prepare_semantic_write(HMem::new(
+                "semantic:target",
+                "finding",
+                serde_json::json!("must not vanish"),
+                WebID::new(),
+            ))?
+            .publish(&vec![1.0; hkask_storage::embedding_dim()], "test-model");
+        let error = result.expect_err("split stores cannot publish atomically");
+        assert!(error.to_string().contains("share one database driver"));
+        assert_eq!(store.h_mem_count()?, 0);
+        assert_eq!(store.embedding_count()?, 0);
+        assert!(
+            HMemStore::from_driver(Arc::clone(&h_mem_driver))?
+                .query_by_entity("semantic:target")?
+                .is_empty()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn semantic_revision_preserves_siblings_and_consumes_old_handle() -> anyhow::Result<()> {
+        let store = test_store();
+        let vector = vec![1.0; hkask_storage::embedding_dim()];
+        let owner = WebID::new();
+        let row = HMem::new(
+            "semantic:target",
+            "finding",
+            serde_json::json!("old"),
+            owner,
+        )
+        .with_perspective(owner)
+        .with_provenance(hkask_storage::Provenance::ToolObserved);
+        let old_id = store
+            .prepare_semantic_write(row)?
+            .publish(&vector, "test-model")?;
+        let sibling_id = store
+            .prepare_semantic_write(HMem::new(
+                "semantic:target",
+                "sibling",
+                serde_json::json!({"mutable_state": true, "text": "not canonical", "recall_text": "old"}),
+                owner,
+            ))?
+            .publish(&vector, "test-model")?;
+        let write = store.prepare_semantic_revision(
+            &old_id,
+            serde_json::json!({"resolution": "new"}),
+            Confidence::new(0.7),
+        )?;
+        let stale = store.prepare_semantic_revision(
+            &old_id,
+            serde_json::json!("stale"),
+            Confidence::full(),
+        )?;
+        let passage = write.passage().to_string();
+        let id = write.publish(&vector, "test-model")?;
+        assert_ne!(id, old_id);
+        assert!(store.get_by_id(&old_id)?.is_none());
+        assert!(matches!(
+            stale.publish(&vector, "test-model"),
+            Err(MemoryStoreError::HMem(HMemError::NotFound(_)))
+        ));
+        let stored = store.get_by_id(&id)?.expect("revised row");
+        assert_eq!(stored.access.owner_webid, owner);
+        assert_eq!(stored.access.perspective, Some(owner));
+        assert_eq!(stored.provenance, hkask_storage::Provenance::ToolObserved);
+        assert!(store.get_by_id(&sibling_id)?.is_some());
+        assert!(store.has_embedding_for_passage("semantic:target", "old")?);
+        assert!(store.has_embedding_for_passage("semantic:target", &passage)?);
+        assert!(!store.has_embedding_for_passage("semantic:target", "stale")?);
+        Ok(())
+    }
+
+    #[test]
+    fn semantic_revision_retirement_failure_preserves_previous_memory() -> anyhow::Result<()> {
+        let store = test_store();
+        let vector = vec![1.0; hkask_storage::embedding_dim()];
+        let id = store
+            .prepare_semantic_write(HMem::new(
+                "semantic:target",
+                "finding",
+                serde_json::json!("old"),
+                WebID::new(),
+            ))?
+            .publish(&vector, "test-model")?;
+        let pool = store.h_mem_store.driver().sqlite_pool().expect("pool");
+        pool.get()?.execute_batch(
+            "CREATE TRIGGER fail_retirement BEFORE DELETE ON embeddings
+             WHEN OLD.passage_text = 'old'
+             BEGIN SELECT RAISE(FAIL, 'forced old-vector retirement failure'); END;",
+        )?;
+        let result = store
+            .prepare_semantic_revision(&id, serde_json::json!("new"), Confidence::full())?
+            .publish(&vector, "test-model");
+        assert!(
+            result.is_err(),
+            "failed retirement must roll back the entire revision"
+        );
+        assert_eq!(
+            store.get_by_id(&id)?.expect("prior row survives").value,
+            "old"
+        );
+        assert_eq!(store.embedding_count()?, 1);
+        assert!(store.has_embedding_for_passage("semantic:target", "old")?);
+        assert!(!store.has_embedding_for_passage("semantic:target", "new")?);
+        Ok(())
+    }
+
+    #[test]
+    fn semantic_publication_rolls_back_row_and_vector_on_database_failure() -> anyhow::Result<()> {
+        for trigger in [
+            "CREATE TRIGGER fail_publish BEFORE INSERT ON embeddings BEGIN SELECT RAISE(FAIL, 'forced failure'); END;",
+            "CREATE TRIGGER fail_publish AFTER INSERT ON embeddings BEGIN INSERT INTO vec_embeddings (rowid, embedding) VALUES (NEW.rowid, NEW.vector); END;",
+        ] {
+            let store = test_store();
+            let vector = vec![1.0; hkask_storage::embedding_dim()];
+            let id = store
+                .prepare_semantic_write(HMem::new(
+                    "semantic:target",
+                    "finding",
+                    serde_json::json!("old"),
+                    WebID::new(),
+                ))?
+                .publish(&vector, "test-model")?;
+            let pool = store.h_mem_store.driver().sqlite_pool().expect("pool");
+            pool.get()?.execute_batch(trigger)?;
+            let result = store
+                .prepare_semantic_revision(
+                    &id,
+                    serde_json::json!({"resolution": "new"}),
+                    Confidence::full(),
+                )?
+                .publish(&vector, "test-model");
+            assert!(result.is_err());
+            assert_eq!(
+                store.get_by_id(&id)?.expect("old row survives").value,
+                "old"
+            );
+            assert_eq!(store.embedding_count()?, 1);
+            let hits = store.search_similar(&vector, 5, "test-model", None)?;
+            assert_eq!(hits.results.len(), 1);
+            assert_eq!(
+                hits.results[0].embedding.passage_text.as_deref(),
+                Some("old")
+            );
+            assert!(
+                store
+                    .prepare_semantic_write(HMem::new(
+                        "semantic:new",
+                        "finding",
+                        serde_json::json!("new"),
+                        WebID::new()
+                    ))?
+                    .publish(&vector, "test-model")
+                    .is_err()
+            );
+            assert!(store.query_deduped_untouched("semantic:new")?.is_empty());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn semantic_revision_round_trips_both_encrypted_deployments() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let dim = hkask_storage::embedding_dim();
+        let vector = vec![1.0; dim];
+        for name in ["curator.db", "corpus.db"] {
+            let path = directory.path().join(name);
+            let path = path.to_str().expect("UTF-8 fixture path");
+            let store = MemoryStore::open(path, "semantic-fixture-key", dim)?;
+            let id = store
+                .prepare_semantic_write(HMem::new(
+                    "semantic:target",
+                    "finding",
+                    serde_json::json!("old"),
+                    WebID::new(),
+                ))?
+                .publish(&vector, "test-model")?;
+            let write = store.prepare_semantic_revision(
+                &id,
+                serde_json::json!({"resolution": "new"}),
+                Confidence::new(0.7),
+            )?;
+            let passage = write.passage().to_string();
+            let written = write.publish(&vector, "test-model")?;
+            drop(store);
+            let store = MemoryStore::open_existing(path, "semantic-fixture-key", dim)?;
+            let hits = store.search_similar(&vector, 5, "test-model", None)?;
+            assert_eq!(hits.results.len(), 1);
+            assert_eq!(
+                hits.results[0].embedding.passage_text.as_deref(),
+                Some(passage.as_str())
+            );
+            assert_eq!(
+                semantic_passage_for_h_mem(&store.get_by_id(&written)?.expect("durable row"))
+                    .as_deref(),
+                Some(passage.as_str())
+            );
+            let read_only = MemoryStore::open_read_only(path, "semantic-fixture-key", dim)?;
+            assert!(
+                read_only
+                    .prepare_semantic_revision(
+                        &written,
+                        serde_json::json!("forbidden"),
+                        Confidence::full()
+                    )?
+                    .publish(&vector, "test-model")
+                    .is_err()
+            );
+            assert!(
+                store.get_by_id(&written)?.is_some(),
+                "read-only publication cannot rotate the row"
+            );
+        }
+        Ok(())
+    }
+
+    fn store_h_mem(store: &MemoryStore, entity: &str, attribute: &str, value: &str, webid: WebID) {
+        let h_mem = hkask_storage::HMem::new(
+            entity,
+            attribute,
+            serde_json::Value::String(value.to_string()),
+            webid,
+        );
+        store.store(h_mem).expect("store h_mem");
+    }
+
+    /// algedonic card ba0ac90d: the store rejects non-canonical entity keys
+    /// at insert — the pipe-concatenation, space, and uppercase forms
+    /// measured live (2026-10-08: 56 pipe / 68 space / 11 uppercase
+    /// entities) — with an error that teaches the canonical form, while
+    /// every canonical class (namespaced system record, bare skill name,
+    /// bare lesson slug, curator process entity) passes. Dots pass
+    /// (amendment 2026-10-10, card 91ea8f27): the corpus crate's
+    /// production entity refs embed source file names, and a file
+    /// extension is data, not drift. Existing rows are
+    /// grandfathered: `update_confidence` and the direct `HMemStore` path
+    /// are deliberately unvalidated.
+    #[test]
+    fn store_rejects_non_canonical_entity_keys() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+
+        for malformed in [
+            "configuration-safety | semantic-naming-collision-risk",
+            "Operator Interaction Protocol",
+            "verification protocol",
+        ] {
+            let h_mem = hkask_storage::HMem::new(
+                malformed,
+                "lesson",
+                serde_json::Value::String("text".to_string()),
+                webid,
+            );
+            let err = store
+                .store(h_mem)
+                .expect_err("malformed key must be rejected");
+            assert!(matches!(err, MemoryStoreError::InvalidEntityKey(_)));
+            assert!(err.to_string().contains("canonical curator entity key"));
+        }
+
+        // Every canonical class passes — including the corpus crate's
+        // dot-bearing source-file refs (amendment 2026-10-10, card
+        // 91ea8f27: `river.txt`'s extension is data, not drift).
+        for canonical in [
+            "curator:thread:9c8d4a2e-1f2b-4c3d-8e5f-6a7b8c9d0e1f",
+            "deep-module",
+            "verification-protocol",
+            "curator-process",
+            "corpus:researcher:consolidated:river.txt:0",
+        ] {
+            store_h_mem(&store, canonical, "lesson", "text", webid);
+        }
+    }
+
+    /// expect: "The configured memory life changes how memories decay — the
+    /// setting is behavior, not monitoring decoration." [P1]
+    /// pre: two stores over in-memory drivers hold an identical h_mem whose
+    /// recall clock was last touched 15 days ago; one store uses the default
+    /// S=90, the other the operator-configured S=30.
+    /// post: querying through the decay-applying path returns measurably
+    /// deeper decay under S=30 than S=90 — R(15/30) = exp(-0.5) ≈ 0.607
+    /// vs R(15/90) = exp(-1/6) ≈ 0.846 — so `with_memory_life_days`
+    /// vs R(15/180) ≈ 0.920 — so `with_memory_life_days` demonstrably
+    /// reaches the curve, not just a sensor field.
+    #[test]
+    fn memory_life_days_controls_decay_depth() {
+        let webid = WebID::from_persona(b"curator");
+        let driver_short = SqliteDriver::in_memory_driver();
+        let h_mem_store_short =
+            hkask_storage::HMemStore::from_driver(std::sync::Arc::clone(&driver_short))
+                .expect("hmem store");
+        let embedding_store_short = hkask_storage::EmbeddingStore::from_driver(
+            driver_short,
+            hkask_storage::embedding_dim(),
+        )
+        .expect("embedding store");
+        let short_store =
+            MemoryStore::new(h_mem_store_short, embedding_store_short).with_memory_life_days(30.0);
+        let default_store = test_store();
+
+        for store in [&default_store, &short_store] {
+            let mut h_mem = hkask_storage::HMem::new(
+                "decay:probe",
+                "fact",
+                serde_json::Value::String("probe".to_string()),
+                webid,
+            );
+            h_mem.recalled_at = chrono::Utc::now() - chrono::Duration::days(15);
+            store.h_mem_store.insert(&h_mem).expect("seed probe");
+        }
+
+        let decayed_default = default_store
+            .query_by_attribute("fact")
+            .expect("query default")
+            .remove(0)
+            .confidence
+            .value();
+        let decayed_short = short_store
+            .query_by_attribute("fact")
+            .expect("query short")
+            .remove(0)
+            .confidence
+            .value();
+
+        assert!(
+            decayed_short < decayed_default,
+            "S=30 must decay deeper than S=90 for the same recall age: \
+             {decayed_short} !< {decayed_default}"
+        );
+        let expected_default = (-15.0_f64 / 90.0).exp();
+        assert!(
+            (decayed_default - expected_default).abs() < 1e-9,
+            "default store must follow R(t)=exp(-t/90) from full confidence: \
+             {decayed_default} vs {expected_default}"
+        );
+    }
+
+    /// Approved slice 6: exports inspect without recall, while the genuine
+    /// recall API still applies decay and resets only matching rows' clocks.
+    #[test]
+    fn attribute_inspection_preserves_clocks_but_recall_still_touches() -> anyhow::Result<()> {
+        let store = test_store();
+        let mut qa = HMem::new(
+            "qa:one",
+            "training_qa_pair",
+            serde_json::json!("qa"),
+            WebID::new(),
+        );
+        qa.recalled_at = chrono::Utc::now() - chrono::Duration::days(30);
+        let mut other = HMem::new("other", "fact", serde_json::json!("fact"), WebID::new());
+        other.recalled_at = qa.recalled_at;
+        store.store(qa.clone())?;
+        store.store(other.clone())?;
+        let inspected = store.query_by_attribute_untouched("training_qa_pair")?;
+        let inspected = inspected
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("missing inspected QA"))?;
+        assert_eq!(inspected.id, qa.id);
+        assert_eq!(inspected.recalled_at, qa.recalled_at);
+        assert!(inspected.confidence < qa.confidence);
+        assert_eq!(
+            store.get_by_id(&qa.id)?.expect("QA exists").recalled_at,
+            qa.recalled_at
+        );
+        let recalled = store.query_by_attribute("training_qa_pair")?;
+        let recalled = recalled
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("missing recalled QA"))?;
+        assert_eq!(recalled.id, inspected.id);
+        assert!((recalled.confidence.value() - inspected.confidence.value()).abs() < 1e-6);
+        assert!(store.get_by_id(&qa.id)?.expect("QA exists").recalled_at > qa.recalled_at);
+        assert_eq!(
+            store
+                .get_by_id(&other.id)?
+                .expect("other exists")
+                .recalled_at,
+            other.recalled_at
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn prune_by_age_deletes_old_h_mems() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        // Insert an old h_mem by backdating its observed_at via direct store access.
+        let mut old = hkask_storage::HMem::new(
+            "company:aapl",
+            "sector",
+            serde_json::Value::String("technology".to_string()),
+            webid,
+        );
+        old.observed_at = chrono::Utc::now() - chrono::Duration::days(100);
+        // Backdate valid_from in the DB by inserting then updating — simpler:
+        // insert directly with the backdated timestamp via the store's insert.
+        store.h_mem_store.insert(&old).expect("insert old h_mem");
+
+        // Insert a recent h_mem.
+        store_h_mem(&store, "company:msft", "sector", "technology", webid);
+
+        let outcome = store.prune_by_age(50, None).expect("prune succeeds");
+        assert_eq!(outcome.candidates, 1, "one h_mem is older than 50 days");
+        assert_eq!(outcome.deleted_count, 1);
+        assert_eq!(outcome.spared_count, 0);
+
+        // The recent h_mem survives.
+        let remaining = store
+            .h_mem_store
+            .query_by_entity("company:msft")
+            .expect("query");
+        assert_eq!(remaining.len(), 1);
+
+        // The old h_mem is gone.
+        let old_remaining = store
+            .h_mem_store
+            .query_by_entity("company:aapl")
+            .expect("query");
+        assert!(old_remaining.is_empty(), "old h_mem was pruned");
+        assert!(store.get_by_id(&old.id).expect("query pruned ID").is_none());
+        assert_eq!(store.h_mem_count().expect("row count"), 1);
+    }
+
+    #[test]
+    fn prune_by_age_in_prefixes_spares_knowledge_rows() {
+        // The forgetting valve is turn-scoped by default: aged episodic
+        // rows are deleted while knowledge-layer rows (rulings, verified
+        // status, lessons) survive regardless of age. Pinning this guards
+        // the valve against silently widening to full-store.
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+
+        let mut aged_turn = hkask_storage::HMem::new(
+            "curator:thread:prune-scope-test",
+            "turn",
+            serde_json::Value::String("aged turn".to_string()),
+            webid,
+        );
+        aged_turn.observed_at = chrono::Utc::now() - chrono::Duration::days(100);
+        store
+            .h_mem_store
+            .insert(&aged_turn)
+            .expect("insert aged turn");
+
+        let mut aged_ruling = hkask_storage::HMem::new(
+            "zed-kask/provider_budget_blocks",
+            "operator_ruling",
+            serde_json::Value::String("do not touch the provider files".to_string()),
+            webid,
+        );
+        aged_ruling.observed_at = chrono::Utc::now() - chrono::Duration::days(100);
+        store
+            .h_mem_store
+            .insert(&aged_ruling)
+            .expect("insert aged ruling");
+
+        let outcome = store
+            .prune_by_age_in_prefixes(&["curator:thread:"], 50, None)
+            .expect("scoped prune succeeds");
+        assert_eq!(outcome.candidates, 1, "only the turn row is in scope");
+        assert_eq!(outcome.deleted_count, 1);
+
+        let ruling = store
+            .h_mem_store
+            .query_by_entity("zed-kask/provider_budget_blocks")
+            .expect("query ruling");
+        assert_eq!(ruling.len(), 1, "knowledge row survives the scoped valve");
+
+        let turn = store
+            .h_mem_store
+            .query_by_entity("curator:thread:prune-scope-test")
+            .expect("query turn");
+        assert!(turn.is_empty(), "aged turn row was pruned");
+
+        // Explicit full-store opt-in does reach knowledge rows.
+        let outcome = store.prune_by_age(50, None).expect("full prune succeeds");
+        assert_eq!(
+            outcome.deleted_count, 1,
+            "the aged knowledge row is deleted"
+        );
+    }
+
+    #[test]
+    fn prune_by_age_sares_recalled_within_grace_window() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        // Old h_mem that was recalled recently.
+        let mut old_recalled = hkask_storage::HMem::new(
+            "company:aapl",
+            "sector",
+            serde_json::Value::String("technology".to_string()),
+            webid,
+        );
+        old_recalled.observed_at = chrono::Utc::now() - chrono::Duration::days(100);
+        old_recalled.recalled_at = chrono::Utc::now() - chrono::Duration::days(1);
+        store.h_mem_store.insert(&old_recalled).expect("insert");
+
+        // Old h_mem that was NOT recalled recently.
+        let mut old_stale = hkask_storage::HMem::new(
+            "company:goog",
+            "sector",
+            serde_json::Value::String("technology".to_string()),
+            webid,
+        );
+        old_stale.observed_at = chrono::Utc::now() - chrono::Duration::days(100);
+        old_stale.recalled_at = chrono::Utc::now() - chrono::Duration::days(90);
+        store.h_mem_store.insert(&old_stale).expect("insert");
+
+        let outcome = store.prune_by_age(50, Some(30)).expect("prune succeeds");
+        assert_eq!(outcome.candidates, 2);
+        assert_eq!(outcome.deleted_count, 1, "only the stale one is deleted");
+        assert_eq!(
+            outcome.spared_count, 1,
+            "the recently-recalled one is spared"
+        );
+
+        // The recalled one survives.
+        let survived = store
+            .h_mem_store
+            .query_by_entity("company:aapl")
+            .expect("query");
+        assert_eq!(survived.len(), 1, "recently-recalled old h_mem was spared");
+
+        // The stale one is gone.
+        let gone = store
+            .h_mem_store
+            .query_by_entity("company:goog")
+            .expect("query");
+        assert!(gone.is_empty(), "stale old h_mem was pruned");
+    }
+
+    #[test]
+    fn dedup_by_normalized_value_deletes_near_duplicates() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        // Three h_mems for the same entity+attribute with near-duplicate values.
+        store_h_mem(&store, "company:aapl", "ticker", "AAPL", webid);
+        store_h_mem(&store, "company:aapl", "ticker", "aapl.", webid);
+        store_h_mem(&store, "company:aapl", "ticker", " AAPL ", webid);
+        // A distinct value that should NOT be deleted.
+        store_h_mem(&store, "company:aapl", "ticker", "MSFT", webid);
+        // A non-string value that should be skipped.
+        let numeric = hkask_storage::HMem::new(
+            "company:aapl",
+            "price",
+            serde_json::Value::Number(serde_json::Number::from(150)),
+            webid,
+        );
+        store.store(numeric).expect("store numeric");
+
+        let outcome = store
+            .dedup_by_normalized_value(1000)
+            .expect("dedup succeeds");
+        assert_eq!(outcome.scanned, 5);
+        assert_eq!(
+            outcome.groups_with_dupes, 1,
+            "one group has near-duplicates"
+        );
+        assert_eq!(outcome.deleted_count, 2, "two near-duplicates deleted");
+        assert_eq!(outcome.skipped_non_string, 1, "numeric value skipped");
+
+        // The remaining h_mems for ticker: one of the AAPL variants + MSFT.
+        let remaining = store
+            .h_mem_store
+            .query_by_entity_attribute("company:aapl", "ticker")
+            .expect("query");
+        // query_by_entity_attribute returns all current h_mems — forgetting
+        // deletes rows; there is no validity filter.
+        assert_eq!(
+            remaining.len(),
+            2,
+            "one AAPL variant + MSFT survive; two AAPL variants deleted"
+        );
+    }
+
+    /// Repeated turn text is a repeated turn: value-dedup must not delete it
+    /// (Phase B 2026-09-26 removed two such rows as "duplicates").
+    #[test]
+    fn dedup_skips_turn_storage() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        store_h_mem(&store, "curator:thread:t1", "chunk:0", "continue", webid);
+        store_h_mem(&store, "curator:thread:t1", "chunk:0", "continue", webid);
+
+        let outcome = store.dedup_by_normalized_value(1000).expect("dedup");
+        assert_eq!(outcome.deleted_count, 0);
+        assert_eq!(outcome.skipped_turn_storage, 2);
+        let remaining = store
+            .h_mem_store
+            .query_by_entity("curator:thread:t1")
+            .expect("query");
+        assert_eq!(remaining.len(), 2, "both turns survive");
+    }
+
+    #[test]
+    fn dedup_keeps_highest_confidence() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        // Low-confidence duplicate inserted first.
+        let mut low = hkask_storage::HMem::new(
+            "company:aapl",
+            "sector",
+            serde_json::Value::String("technology".to_string()),
+            webid,
+        );
+        low.confidence = Confidence::new(0.3);
+        store.store(low).expect("store");
+
+        // High-confidence duplicate inserted second.
+        let mut high = hkask_storage::HMem::new(
+            "company:aapl",
+            "sector",
+            serde_json::Value::String("Technology".to_string()),
+            webid,
+        );
+        high.confidence = Confidence::new(0.9);
+        store.store(high).expect("store");
+
+        let outcome = store
+            .dedup_by_normalized_value(1000)
+            .expect("dedup succeeds");
+        assert_eq!(outcome.deleted_count, 1);
+
+        // The high-confidence one survives.
+        let remaining = store
+            .h_mem_store
+            .query_by_entity_attribute("company:aapl", "sector")
+            .expect("query");
+        assert_eq!(remaining.len(), 1);
+        assert!((remaining[0].confidence.value() - 0.9).abs() < 1e-9);
+        let stored_rows = store
+            .h_mem_store
+            .driver()
+            .query_optional("SELECT count(*) FROM hmems", &[])
+            .expect("raw row count")
+            .expect("count row")
+            .get_int(0)
+            .expect("integer count");
+        assert_eq!(
+            stored_rows, 1,
+            "dedup must delete, not hide, the duplicate row"
+        );
+    }
+
+    #[test]
+    fn normalize_value_handles_case_punctuation_and_whitespace() {
+        // Direct unit test of the normalization helper.
+        assert_eq!(normalize_value("AAPL"), "aapl");
+        assert_eq!(normalize_value("AAPL."), "aapl");
+        assert_eq!(normalize_value(" aapl "), "aapl");
+        assert_eq!(normalize_value("AaPL,  Inc."), "aapl inc");
+        assert_eq!(normalize_value("  multiple   spaces  "), "multiple spaces");
+        assert_eq!(normalize_value(""), "");
+    }
+
+    #[test]
+    fn normalize_value_strips_punctuation_from_numeric_strings() {
+        // Documents the aggressive punctuation stripping: all ASCII
+        // punctuation is removed, not just trailing. This means "3.14" and
+        // "314" normalize to the same key. This is intentional for ticker-like
+        // values ("AAPL." == "aapl") but may surprise for decimal strings.
+        // Non-string JSON values (numbers) are skipped by dedup entirely, so
+        // this only affects numeric values stored as JSON strings.
+        assert_eq!(normalize_value("3.14"), "314");
+        assert_eq!(normalize_value("3,14"), "314");
+        assert_eq!(normalize_value("3-14"), "314");
+        // Values that differ only in punctuation are treated as duplicates.
+        assert_eq!(normalize_value("3.14"), normalize_value("314"));
+        // But values with different digits are NOT duplicates.
+        assert_ne!(normalize_value("3.14"), normalize_value("3.15"));
+    }
+
+    #[test]
+    fn h_mems_by_entity_prefix_scopes_shared_thread_chunks() {
+        // Curator and non-curator turns use the same shared-copy prefix;
+        // extraction scopes that prefix to one thread.
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+
+        let curator_turn = hkask_storage::HMem::new(
+            "curator:thread:curator-thread",
+            "chunk:0",
+            serde_json::Value::String("curator turn content".to_string()),
+            webid,
+        );
+        store.store(curator_turn).expect("store curator turn");
+
+        let shared_turn = hkask_storage::HMem::new(
+            "curator:thread:agent-thread",
+            "chunk:0",
+            serde_json::Value::String("shared turn content".to_string()),
+            webid,
+        );
+        store.store(shared_turn).expect("store shared turn");
+
+        let curator_results = store
+            .h_mems_by_entity_prefix("curator:thread:curator-thread")
+            .expect("query curator thread");
+        assert_eq!(curator_results.len(), 1);
+
+        let agent_results = store
+            .h_mems_by_entity_prefix("curator:thread:agent-thread")
+            .expect("query agent thread");
+        assert_eq!(agent_results.len(), 1);
+        assert_ne!(curator_results[0].entity, agent_results[0].entity);
+        assert_eq!(
+            store
+                .h_mems_by_entity_prefix("curator:thread:")
+                .expect("query all threads")
+                .len(),
+            2
+        );
+    }
+
+    /// Pin the 2026-09-09 orphan-cleanup ruling (operator: "changes can
+    /// orphan things if they delete them — you can't orphan things and
+    /// leave them"): deleting the last h_mem of an entity must remove the
+    /// entity's embedding and memory_links rows. The entity_ref is the
+    /// join key between embeddings and h_mems; once no h_mem backs it,
+    /// the remaining rows are orphans KNN silently drops.
+    #[test]
+    fn delete_h_mem_cleans_references_when_entity_emptied() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        store_h_mem(&store, "thread:a", "turn", "one", webid);
+        store_h_mem(&store, "thread:a", "turn", "two", webid);
+        store
+            .store_embedding(
+                "thread:a",
+                &vec![0.1; hkask_storage::embedding_dim()],
+                "test-model",
+                Some("turn text"),
+            )
+            .expect("seed embedding");
+        store
+            .record_co_occurrence(&["thread:a".to_string(), "thread:b".to_string()])
+            .expect("seed link");
+
+        let first = store
+            .h_mem_store
+            .query_by_entity("thread:a")
+            .expect("query first")
+            .remove(0);
+        store.delete_h_mem(&first.id).expect("delete one");
+        // The entity still holds a row — its references must survive.
+        assert_eq!(
+            store
+                .embedding
+                .get_all_by_prefix("thread:a")
+                .expect("embeddings survive")
+                .len(),
+            1
+        );
+        assert!(store.connectedness("thread:a").expect("link survives") > 0);
+
+        let second = store
+            .h_mem_store
+            .query_by_entity("thread:a")
+            .expect("query second")
+            .remove(0);
+        store.delete_h_mem(&second.id).expect("delete last");
+        assert_eq!(
+            store
+                .embedding
+                .get_all_by_prefix("thread:a")
+                .expect("embeddings swept")
+                .len(),
+            0,
+            "deleting the last h_mem of an entity must remove its embeddings"
+        );
+        assert_eq!(
+            store.connectedness("thread:a").expect("links swept"),
+            0,
+            "deleting the last h_mem of an entity must remove its memory_links"
+        );
+    }
+
+    /// Pin the live-entity orphan class (2026-10-01 consolidation meals):
+    /// deleting one row of a multi-row entity must take its passage-scoped
+    /// embedding with it — the entity's survival must not strand the
+    /// embedding where the entity-scoped orphan sweep can never see it.
+    #[test]
+    fn delete_h_mem_removes_the_deleted_rows_passage_embedding_under_a_live_entity() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        store_h_mem(&store, "thread:t10", "chunk:0", "alpha content", webid);
+        store_h_mem(&store, "thread:t10", "chunk:1", "beta content", webid);
+        let dim = hkask_storage::embedding_dim();
+        store
+            .store_embedding(
+                "thread:t10",
+                &vec![0.4; dim],
+                "test-model",
+                Some("alpha content"),
+            )
+            .expect("seed alpha embedding");
+        store
+            .store_embedding(
+                "thread:t10",
+                &vec![0.6; dim],
+                "test-model",
+                Some("beta content"),
+            )
+            .expect("seed beta embedding");
+
+        let first = store
+            .h_mem_store
+            .query_by_entity("thread:t10")
+            .expect("query rows")
+            .into_iter()
+            .find(|row| row.value == serde_json::json!("alpha content"))
+            .expect("alpha row");
+        store
+            .delete_h_mem(&first.id)
+            .expect("delete one row of the live entity");
+
+        assert!(
+            !store
+                .has_embedding_for_passage("thread:t10", "alpha content")
+                .expect("probe alpha"),
+            "the deleted row's passage embedding must not survive as an orphan under the live entity"
+        );
+        assert!(
+            store
+                .has_embedding_for_passage("thread:t10", "beta content")
+                .expect("probe beta"),
+            "the surviving sibling's passage embedding must stay"
+        );
+        assert_eq!(
+            store
+                .h_mem_store
+                .query_by_entity("thread:t10")
+                .expect("query rows")
+                .len(),
+            1,
+            "the sibling row survives"
+        );
+    }
+
+    /// The safety case the per-row cleanup must not break: rows sharing one
+    /// canonical passage — deleting one spares the passage's embedding
+    /// because a surviving sibling still holds it.
+    #[test]
+    fn delete_h_mem_spares_a_passage_shared_with_a_surviving_sibling() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        store_h_mem(&store, "thread:t11", "chunk:0", "shared content", webid);
+        store_h_mem(&store, "thread:t11", "chunk:1", "shared content", webid);
+        let dim = hkask_storage::embedding_dim();
+        store
+            .store_embedding(
+                "thread:t11",
+                &vec![0.5; dim],
+                "test-model",
+                Some("shared content"),
+            )
+            .expect("seed shared embedding");
+
+        let first = store
+            .h_mem_store
+            .query_by_entity("thread:t11")
+            .expect("query rows")
+            .into_iter()
+            .find(|row| row.attribute == "chunk:0")
+            .expect("chunk 0");
+        store
+            .delete_h_mem(&first.id)
+            .expect("delete one of the duplicate rows");
+
+        assert!(
+            store
+                .has_embedding_for_passage("thread:t11", "shared content")
+                .expect("probe shared"),
+            "the surviving sibling still holds the passage — its embedding must stay"
+        );
+    }
+
+    /// Pin the prune valve to the same orphan-cleanup ruling: pruning the
+    /// aged rows of an entity must not leave its embeddings behind.
+    #[test]
+    fn prune_by_age_cleans_references_of_emptied_entities() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        let mut aged = hkask_storage::HMem::new(
+            "thread:old",
+            "turn",
+            serde_json::Value::String("aged".to_string()),
+            webid,
+        );
+        aged.observed_at = chrono::Utc::now() - chrono::Duration::days(100);
+        store.h_mem_store.insert(&aged).expect("insert aged h_mem");
+        store
+            .store_embedding(
+                "thread:old",
+                &vec![0.1; hkask_storage::embedding_dim()],
+                "test-model",
+                Some("aged turn text"),
+            )
+            .expect("seed embedding");
+
+        let outcome = store.prune_by_age(50, None).expect("prune succeeds");
+        assert!(outcome.deleted_count >= 1, "aged row must be pruned");
+        assert_eq!(
+            store
+                .embedding
+                .get_all_by_prefix("thread:old")
+                .expect("embeddings swept")
+                .len(),
+            0,
+            "pruning the last h_mem of an entity must remove its embeddings"
+        );
+    }
+
+    /// Approved slice 1: cleanup must cover the rows beyond the former
+    /// 100,000-row discovery cap, with the same literal prefix as deletion.
+    #[test]
+    fn prefix_deletion_cleans_references_beyond_query_cap() -> anyhow::Result<()> {
+        let store = test_store();
+        let owner = WebID::new();
+        let prefix = "qa:%_Case:";
+        // The entities here are deliberately non-canonical (LIKE wildcards,
+        // case variants) — they pin that prefix deletion matches literally.
+        // They are seeded through the direct HMemStore path because
+        // MemoryStore::store now rejects non-canonical keys (card ba0ac90d):
+        // legacy rows like these exist in the live store (124 entities,
+        // 2026-10-08 audit) and the deletion/cleanup paths must keep
+        // handling them — grandfathered, not migrated.
+        let bulk = HMem::new("qa:%_Case:bulk", "qa", serde_json::json!("bulk"), owner);
+        store.h_mem_store.insert(&bulk)?;
+        // One bulk entity fills the entire old discovery window; the oldest
+        // row belongs to another entity whose coupled references must go too.
+        store.h_mem_store.driver().execute(
+            "WITH RECURSIVE numbers(n) AS (
+                SELECT 1 UNION ALL SELECT n + 1 FROM numbers WHERE n < 99999
+             ) INSERT INTO hmems (id, entity, attribute, value, valid_from, recalled_at, owner_webid)
+             SELECT printf('00000000-0000-0000-0000-%012d', n), entity, attribute,
+                    value, valid_from, recalled_at, owner_webid
+             FROM numbers CROSS JOIN hmems WHERE id = ?1",
+            &[DbValue::Text(bulk.id.to_string())],
+        )?;
+        let mut tail = HMem::new("qa:%_Case:tail", "qa", serde_json::json!("tail"), owner);
+        tail.observed_at = chrono::Utc::now() - chrono::Duration::days(1);
+        store.h_mem_store.insert(&tail)?;
+        let retained = ["qa:%_case:keep", "qa:X_Case:keep", "qa:%XCase:keep"];
+        let vector = vec![0.2; hkask_storage::embedding_dim()];
+        for entity in &retained {
+            store
+                .h_mem_store
+                .insert(&HMem::new(entity, "qa", serde_json::json!("keep"), owner))?;
+            store.store_embedding(entity, &vector, "test-model", Some("keep"))?;
+        }
+        for entity in [&bulk.entity, &tail.entity] {
+            store.store_embedding(entity, &vector, "test-model", Some("delete"))?;
+            store.record_co_occurrence(&[entity.clone(), retained[0].to_string()])?;
+        }
+        store.record_co_occurrence(&[retained[0].to_string(), retained[1].to_string()])?;
+        assert_eq!(store.h_mem_count()?, 100_001 + retained.len());
+        assert_eq!(store.delete_h_mems_by_entity_prefix(prefix)?, 100_001);
+        assert_eq!(store.h_mem_count()?, retained.len());
+        for entity in [&bulk.entity, &tail.entity] {
+            assert!(
+                matches!(
+                    store.embedding.get(entity),
+                    Err(EmbeddingError::NotFound(_))
+                ),
+                "deleted entity {entity} must not retain an embedding"
+            );
+            assert_eq!(
+                store.connectedness(entity)?,
+                0,
+                "deleted entity links must go"
+            );
+        }
+        for entity in &retained {
+            assert_eq!(store.h_mem_store.query_by_entity(entity)?.len(), 1);
+            assert_eq!(
+                store.embedding.get(entity)?.passage_text.as_deref(),
+                Some("keep")
+            );
+        }
+        assert_eq!(
+            store.connectedness(retained[0])?,
+            1,
+            "unrelated link survives"
+        );
+        let vectors = store
+            .h_mem_store
+            .driver()
+            .query("SELECT COUNT(*) FROM vec_embeddings", &[])?;
+        assert_eq!(
+            vectors
+                .first()
+                .ok_or_else(|| anyhow::anyhow!("missing count"))?
+                .get(0)?
+                .as_int()?,
+            retained.len() as i64
+        );
+        assert_eq!(store.delete_h_mems_by_entity_prefix(prefix)?, 0);
+        Ok(())
+    }
+
+    /// Literal deletion must not decode unrelated wildcard/case matches or
+    /// require a valid QA payload to clean a selected entity's references.
+    #[test]
+    fn prefix_deletion_uses_identities_not_decoded_memories() -> anyhow::Result<()> {
+        for (prefix, unrelated) in [
+            ("qa:%:", "qa:other:"),
+            ("qa:_:", "qa:X:"),
+            ("qa:Case:", "qa:case:"),
+            ("qa:\\:", "qa:plain:"),
+        ] {
+            let store = test_store();
+            let target = HMem::new(
+                &format!("{prefix}target"),
+                "qa",
+                serde_json::json!("target"),
+                WebID::new(),
+            );
+            let retained = HMem::new(unrelated, "qa", serde_json::json!("keep"), WebID::new());
+            // Deliberately non-canonical keys (wildcards, case) seeded via
+            // the direct path — same grandfathering as the query-cap test.
+            store.h_mem_store.insert(&target)?;
+            store.h_mem_store.insert(&retained)?;
+            let vector = vec![0.2; hkask_storage::embedding_dim()];
+            store.store_embedding(&target.entity, &vector, "test-model", None)?;
+            store.store_embedding(&retained.entity, &vector, "test-model", None)?;
+            store
+                .h_mem_store
+                .driver()
+                .execute("UPDATE hmems SET value = 'malformed JSON'", &[])?;
+            assert_eq!(store.delete_h_mems_by_entity_prefix(prefix)?, 1);
+            assert!(store.get_by_id(&target.id)?.is_none());
+            assert!(matches!(
+                store.embedding.get(&target.entity),
+                Err(EmbeddingError::NotFound(_))
+            ));
+            assert!(store.embedding.get(&retained.entity).is_ok());
+            assert_eq!(store.h_mem_count()?, 1);
+        }
+        Ok(())
+    }
+
+    /// Pin the periodic sweep: embeddings whose entity has no h_mem row
+    /// (broken join key) and links referencing h_mem-less entities are
+    /// removed — the backstop that also catches rows predating the
+    /// site-level cleanup (the 57 entity-ref orphans of the 2026-09-09
+    /// therapy scan).
+    #[test]
+    fn delete_orphaned_embeddings_sweeps_entity_ref_and_link_orphans() {
+        let store = test_store();
+        // An embedding whose entity has no h_mem — the join key is broken.
+        store
+            .store_embedding(
+                "goal:ghost",
+                &vec![0.2; hkask_storage::embedding_dim()],
+                "test-model",
+                Some("ghost text"),
+            )
+            .expect("seed orphan embedding");
+        // A link whose endpoints have no h_mems.
+        store
+            .record_co_occurrence(&["goal:ghost".to_string(), "goal:missing".to_string()])
+            .expect("seed orphan link");
+
+        let deleted = store.delete_orphaned_embeddings().expect("sweep succeeds");
+        assert!(
+            deleted >= 2,
+            "sweep must remove the orphaned embedding and link rows, got {deleted}"
+        );
+        assert_eq!(
+            store
+                .embedding
+                .get_all_by_prefix("goal:ghost")
+                .expect("embeddings swept")
+                .len(),
+            0
+        );
+        assert_eq!(store.connectedness("goal:ghost").expect("links swept"), 0);
+    }
+
+    /// Passage-scoped deletion removes exactly the named passage's
+    /// text and vector; sibling passages of the same entity survive and
+    /// remain semantically retrievable; the entity's h_mems are untouched.
+    #[test]
+    fn passage_deletion_removes_only_the_named_passage() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"tester");
+        store_h_mem(&store, "thread:t09", "turn", "turn content", webid);
+        let dim = hkask_storage::embedding_dim();
+        let one_hot = |index: usize| {
+            let mut vector = vec![0.0; dim];
+            vector[index % dim] = 1.0;
+            vector
+        };
+        let alpha = one_hot(0);
+        let beta = one_hot(1);
+        let gamma = one_hot(2);
+
+        store
+            .store_embedding("thread:t09", &alpha, "test-model", Some("alpha passage"))
+            .expect("seed alpha");
+        store
+            .store_embedding("thread:t09", &beta, "test-model", Some("beta passage"))
+            .expect("seed beta");
+        store
+            .store_embedding("thread:t09", &gamma, "test-model", Some("gamma passage"))
+            .expect("seed gamma");
+        assert_eq!(store.embedding_count().expect("count"), 3);
+
+        // Delete only the middle passage.
+        let deleted = store
+            .delete_embeddings_by_entity_passages("thread:t09", &["beta passage".to_string()])
+            .expect("delete passage");
+        assert_eq!(deleted, 1, "exactly the named passage's row is deleted");
+        assert_eq!(store.embedding_count().expect("count"), 2);
+
+        // The deleted passage is no longer retrievable.
+        let hits = store
+            .search_similar(&beta, 3, "test-model", None)
+            .expect("search");
+        assert!(
+            hits.results
+                .iter()
+                .all(|hit| hit.embedding.passage_text.as_deref() != Some("beta passage")),
+            "the deleted passage must not be retrievable"
+        );
+
+        // The siblings are the nearest matches for their own vectors.
+        for (vector, name) in [(&alpha, "alpha passage"), (&gamma, "gamma passage")] {
+            let hits = store
+                .search_similar(vector, 1, "test-model", None)
+                .expect("search");
+            assert_eq!(
+                hits.results[0].embedding.passage_text.as_deref(),
+                Some(name),
+                "the surviving sibling must remain semantically retrievable"
+            );
+        }
+
+        // The entity's h_mems survive — passage deletion is not entity
+        // deletion, and the surviving embeddings are not orphans.
+        let h_mems = store.query_deduped("thread:t09").expect("query");
+        assert!(!h_mems.is_empty(), "the entity's h_mems must survive");
+        assert_eq!(
+            store.delete_orphaned_embeddings().expect("orphan sweep"),
+            0,
+            "surviving passages with a live entity are not orphans"
+        );
+    }
+
+    /// Control: a NULL-passage legacy row survives a passage-listed
+    /// deletion (the caller decides what is covered — a NULL passage is
+    /// never in the list), and deleting an unlisted passage's text deletes
+    /// nothing.
+    #[test]
+    fn passage_deletion_spares_null_passage_and_unlisted_entities() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"tester");
+        store_h_mem(&store, "thread:t09b", "turn", "turn content", webid);
+        let dim = hkask_storage::embedding_dim();
+        let vector = vec![0.5; dim];
+
+        store
+            .store_embedding(
+                "thread:t09b",
+                &vector,
+                "test-model",
+                Some("covered passage"),
+            )
+            .expect("seed covered");
+        store
+            .store_embedding("thread:t09b", &vector, "test-model", None)
+            .expect("seed legacy NULL-passage row");
+        assert_eq!(store.embedding_count().expect("count"), 2);
+
+        // Deleting a passage from a DIFFERENT entity removes nothing here.
+        assert_eq!(
+            store
+                .delete_embeddings_by_entity_passages(
+                    "thread:other",
+                    &["covered passage".to_string()]
+                )
+                .expect("delete other entity"),
+            0
+        );
+        // Deleting the named passage spares the NULL-passage legacy row.
+        assert_eq!(
+            store
+                .delete_embeddings_by_entity_passages(
+                    "thread:t09b",
+                    &["covered passage".to_string()]
+                )
+                .expect("delete covered"),
+            1
+        );
+        assert_eq!(store.embedding_count().expect("count"), 1);
+        let hits = store
+            .search_similar(&vector, 1, "test-model", None)
+            .expect("search");
+        assert_eq!(
+            hits.results[0].embedding.passage_text, None,
+            "the NULL-passage legacy row must survive"
+        );
+    }
+
+    // ── compute_centroid ─────────────────────────────────────────────
+
+    #[test]
+    fn compute_centroid_averages_prefix_embeddings_and_stores() {
+        let store = test_store();
+        let dim = hkask_storage::embedding_dim();
+        let flat = |x: f32| vec![x; dim];
+        store
+            .store_embedding("style:test:chunk:1", &flat(0.2), "m", None)
+            .expect("seed 1");
+        store
+            .store_embedding("style:test:chunk:2", &flat(0.4), "m", None)
+            .expect("seed 2");
+        store
+            .store_embedding("style:test:chunk:3", &flat(0.6), "m", None)
+            .expect("seed 3");
+        // Off-prefix embeddings must not count toward the mean.
+        store
+            .store_embedding("other:chunk:1", &flat(9.0), "m", None)
+            .expect("seed off-prefix");
+
+        let result = store
+            .compute_centroid(
+                "style:test:",
+                "style:test:centroid",
+                dim,
+                Some("style:test:centroid"),
+                Some("m"),
+            )
+            .expect("centroid");
+
+        assert_eq!(result.passage_count, 3);
+        assert!(result.stored);
+        for value in &result.centroid {
+            assert!(
+                (value - 0.4).abs() < 1e-6,
+                "mean of 0.2/0.4/0.6 is 0.4, got {value}"
+            );
+        }
+
+        // Idempotency: the stored centroid is excluded from its own
+        // recomputation, so the passage count stays at the seeded set.
+        let again = store
+            .compute_centroid(
+                "style:test:",
+                "style:test:centroid",
+                dim,
+                Some("style:test:centroid"),
+                Some("m"),
+            )
+            .expect("recompute");
+        assert_eq!(
+            again.passage_count, 3,
+            "a stored centroid must never fold into its own successor"
+        );
+        for value in &again.centroid {
+            assert!((value - 0.4).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn compute_centroid_excludes_rule_refs() {
+        let store = test_store();
+        let dim = hkask_storage::embedding_dim();
+        store
+            .store_embedding("style:test:chunk:1", &vec![0.5; dim], "m", None)
+            .expect("seed passage");
+        store
+            .store_embedding("style:test:rule:1", &vec![9.0; dim], "m", None)
+            .expect("seed rule");
+
+        let result = store
+            .compute_centroid("style:test:", "style:test:centroid", dim, None, None)
+            .expect("centroid");
+        assert_eq!(result.passage_count, 1, "rule refs must be excluded");
+        assert!(!result.stored, "no store_as → nothing stored");
+        for value in &result.centroid {
+            assert!(
+                (value - 0.5).abs() < 1e-6,
+                "rule ref must not skew the mean"
+            );
+        }
+    }
+
+    #[test]
+    fn compute_centroid_store_as_without_model_does_not_store() {
+        let store = test_store();
+        let dim = hkask_storage::embedding_dim();
+        store
+            .store_embedding("style:test:chunk:1", &vec![0.5; dim], "m", None)
+            .expect("seed passage");
+        let result = store
+            .compute_centroid(
+                "style:test:",
+                "style:test:centroid",
+                dim,
+                Some("style:test:centroid"),
+                None,
+            )
+            .expect("centroid");
+        assert_eq!(result.passage_count, 1);
+        assert!(
+            !result.stored,
+            "store_as without a model name must not store"
+        );
+    }
+
+    /// expect: "Selected refs contribute once, without duplicating or altering source embeddings." [P3]
+    #[test]
+    fn compute_centroid_for_refs_math_and_exclusions() {
+        let store = test_store();
+        let dim = hkask_storage::embedding_dim();
+        let first: Vec<f32> = (0..dim).map(|i| i as f32).collect();
+        let second: Vec<f32> = first.iter().map(|v| v + 4.0).collect();
+        for (entity_ref, vector) in [
+            ("corpus:first", first.clone()),
+            ("other:second", second.clone()),
+            ("corpus:unselected", vec![99.0; dim]),
+            ("style:test:rule:1", vec![99.0; dim]),
+            ("style:test:centroid", vec![99.0; dim]),
+        ] {
+            store
+                .store_embedding(entity_ref, &vector, "m", None)
+                .expect("seed");
+        }
+        let refs: Vec<String> = [
+            "corpus:first",
+            "other:second",
+            "corpus:first",
+            "style:test:rule:1",
+            "style:test:centroid",
+            "style:test:hopper:centroid",
+            "excluded:missing",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        for _ in 0..2 {
+            let result = store
+                .compute_centroid_for_refs(
+                    &refs,
+                    "excluded:missing",
+                    dim,
+                    Some("style:test:hopper:centroid"),
+                    Some("m"),
+                )
+                .expect("selected centroid");
+            assert_eq!(result.passage_count, 2);
+            assert!(result.stored);
+            assert_eq!(
+                result.centroid,
+                first.iter().map(|v| v + 2.0).collect::<Vec<_>>()
+            );
+            assert_eq!(store.embedding_count().expect("count"), 6);
+        }
+        assert_eq!(
+            store
+                .embedding
+                .get("corpus:first")
+                .expect("original")
+                .vector,
+            first
+        );
+        assert_eq!(
+            store
+                .embedding
+                .get("other:second")
+                .expect("original")
+                .vector,
+            second
+        );
+        let prefix = store.compute_centroid("style:test:", "style:test:centroid", dim, None, None);
+        assert!(matches!(
+            prefix,
+            Err(MemoryStoreError::NoEmbeddingsForCentroid(_))
+        ));
+    }
+
+    /// expect: "A missing selected passage or invalid dimension cannot silently produce a partial centroid." [P3]
+    #[test]
+    fn compute_centroid_for_refs_rejects_missing_empty_and_wrong_dimension() {
+        let store = test_store();
+        let dim = hkask_storage::embedding_dim();
+        store
+            .store_embedding("corpus:present", &vec![2.0; dim], "m", None)
+            .expect("seed");
+        let refs = vec!["corpus:present".into(), "corpus:missing".into()];
+        let error = store
+            .compute_centroid_for_refs(
+                &refs,
+                "style:test:centroid",
+                dim,
+                Some("style:test:centroid"),
+                Some("m"),
+            )
+            .expect_err("missing ref");
+        assert!(matches!(
+            error,
+            MemoryStoreError::Embedding(EmbeddingError::NotFound(_))
+        ));
+        assert_eq!(store.embedding_count().expect("count"), 1);
+        for refs in [
+            Vec::new(),
+            vec![
+                "style:test:rule:absent".into(),
+                "style:test:centroid".into(),
+            ],
+        ] {
+            assert!(matches!(
+                store.compute_centroid_for_refs(&refs, "style:test:centroid", dim, None, None),
+                Err(MemoryStoreError::NoEmbeddingsForCentroid(_))
+            ));
+        }
+        assert!(matches!(
+            store.compute_centroid_for_refs(&["corpus:present".into()], "", dim + 1, None, None),
+            Err(MemoryStoreError::Embedding(
+                EmbeddingError::DimensionMismatch { .. }
+            ))
+        ));
+    }
+
+    /// expect: "A failed centroid INSERT preserves the previous value and its KNN index." [P3]
+    #[test]
+    fn compute_centroid_insert_failure_preserves_original() -> anyhow::Result<()> {
+        for trigger in [
+            // Fail the metadata INSERT after replacement has deleted the old rows.
+            "CREATE TRIGGER fail_centroid_insert BEFORE INSERT ON embeddings
+             WHEN NEW.entity_ref = 'style:test:hopper:centroid'
+             BEGIN SELECT RAISE(FAIL, 'forced centroid INSERT failure'); END;",
+            // Occupy the new rowid so the subsequent vec INSERT actually fails.
+            "CREATE TRIGGER fail_centroid_vec_insert AFTER INSERT ON embeddings
+             WHEN NEW.entity_ref = 'style:test:hopper:centroid'
+             BEGIN INSERT INTO vec_embeddings (rowid, embedding)
+                 VALUES (NEW.rowid, NEW.vector); END;",
+        ] {
+            let driver = SqliteDriver::in_memory_driver();
+            let store = MemoryStore::new(
+                hkask_storage::HMemStore::from_driver(Arc::clone(&driver))?,
+                hkask_storage::EmbeddingStore::from_driver(
+                    Arc::clone(&driver),
+                    hkask_storage::embedding_dim(),
+                )?,
+            );
+            let dim = hkask_storage::embedding_dim();
+            let destination = "style:test:hopper:centroid";
+            let source = vec![2.0; dim];
+            let original = vec![1.0; dim];
+            let source_id = store.store_embedding("corpus:source", &source, "m", Some("source"))?;
+            let original_id =
+                store.store_embedding(destination, &original, "old", Some("original"))?;
+            let pool = driver.sqlite_pool().expect("SQLite pool");
+            pool.get()?.execute_batch(trigger)?;
+
+            let error = store
+                .compute_centroid_for_refs(
+                    &["corpus:source".into()],
+                    destination,
+                    dim,
+                    Some(destination),
+                    Some("new"),
+                )
+                .expect_err("forced INSERT must fail");
+            assert!(
+                matches!(
+                    error,
+                    MemoryStoreError::Embedding(EmbeddingError::Storage(_))
+                ),
+                "{error}"
+            );
+            let retained = store.embedding.get(destination)?;
+            assert_eq!(retained.id, original_id);
+            assert_eq!(retained.vector, original);
+            assert_eq!(retained.model, "old");
+            assert_eq!(retained.passage_text.as_deref(), Some("original"));
+            assert_eq!(store.embedding_count()?, 2);
+            assert_eq!(store.embedding.get("corpus:source")?.id, source_id);
+            assert_eq!(store.embedding.get("corpus:source")?.vector, source);
+            let nearest = store.search_similar(&original, 1, "old", None)?;
+            let nearest = nearest
+                .results
+                .first()
+                .expect("old centroid remains indexed");
+            assert_eq!(nearest.embedding.id, original_id);
+            assert_eq!(nearest.distance, 0.0);
+            let vectors: i64 =
+                pool.get()?
+                    .query_row("SELECT COUNT(*) FROM vec_embeddings", [], |row| row.get(0))?;
+            assert_eq!(vectors, 2, "rollback must also remove any new index row");
+        }
+        Ok(())
+    }
+
+    /// expect: "Concurrent recomputations leave one centroid without copying source embeddings." [P3]
+    #[test]
+    fn compute_centroid_concurrently_keeps_one_destination() -> anyhow::Result<()> {
+        let store = Arc::new(test_store());
+        let dim = hkask_storage::embedding_dim();
+        let destination = "style:test:hopper:centroid";
+        let source = vec![2.0; dim];
+        let source_id = store.store_embedding("corpus:source", &source, "m", Some("source"))?;
+        // Ordinary embedding writes must still append, including old duplicate destinations.
+        store.store_embedding(destination, &vec![0.0; dim], "old", None)?;
+        store.store_embedding(destination, &vec![1.0; dim], "old", None)?;
+        assert_eq!(store.embedding_count()?, 3);
+        let barrier = std::sync::Barrier::new(8);
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..8)
+                .map(|_| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        for _ in 0..4 {
+                            let result = store.compute_centroid_for_refs(
+                                &["corpus:source".into(), "corpus:source".into()],
+                                destination,
+                                dim,
+                                Some(destination),
+                                Some("new"),
+                            )?;
+                            assert!(result.stored);
+                            assert_eq!(result.passage_count, 1);
+                            assert_eq!(result.centroid, source);
+                        }
+                        Ok::<_, MemoryStoreError>(())
+                    })
+                })
+                .collect();
+            for handle in handles {
+                handle.join().expect("centroid worker")?;
+            }
+            Ok::<_, MemoryStoreError>(())
+        })?;
+        assert_eq!(store.embeddings_by_prefix(destination)?.len(), 1);
+        assert_eq!(store.embedding_count()?, 2);
+        assert_eq!(store.embedding.get(destination)?.vector, source);
+        assert_eq!(store.embedding.get("corpus:source")?.id, source_id);
+        assert_eq!(store.embedding.get("corpus:source")?.vector, source);
+        assert_eq!(
+            store.search_similar(&source, 10, "m", None)?.results.len(),
+            1,
+            "the source row remains indexed under its model"
+        );
+        assert_eq!(
+            store
+                .search_similar(&source, 10, "new", None)?
+                .results
+                .len(),
+            1,
+            "the recomputed centroid remains indexed under its model"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn compute_centroid_empty_prefix_set_errors() {
+        let store = test_store();
+        let dim = hkask_storage::embedding_dim();
+        let error = store
+            .compute_centroid("style:absent:", "style:absent:centroid", dim, None, None)
+            .expect_err("no embeddings under prefix");
+        assert!(
+            matches!(error, MemoryStoreError::NoEmbeddingsForCentroid(ref prefix) if prefix == "style:absent:"),
+            "wrong error: {error:?}"
+        );
+    }
+}
