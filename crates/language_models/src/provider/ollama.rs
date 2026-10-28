@@ -658,6 +658,7 @@ fn map_to_language_model_completion_events(
                     output_tokens: delta.eval_count.unwrap_or(0),
                     cache_creation_input_tokens: 0,
                     cache_read_input_tokens: 0,
+                    cost: None,
                 })));
                 if state.used_tools {
                     state.used_tools = false;
@@ -900,11 +901,7 @@ impl ConfigurationView {
             self.api_key_editor.clone().into_any_element()
         } else {
             ConfiguredApiCard::new("ollama-reset-key", configured_card_label)
-                .disabled(env_var_set)
                 .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx)))
-                .when(env_var_set, |this| {
-                    this.tooltip_label(format!("To reset your API key, unset the {API_KEY_ENV_VAR_NAME} environment variable."))
-                })
                 .into_any_element()
         };
 

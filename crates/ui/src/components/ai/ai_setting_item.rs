@@ -8,6 +8,7 @@ pub enum AiSettingItemStatus {
     Stopped,
     Starting,
     Running,
+    Unknown,
     Error,
     AuthRequired,
     ClientSecretRequired,
@@ -20,6 +21,7 @@ impl AiSettingItemStatus {
             Self::Stopped => "Server is stopped.",
             Self::Starting => "Server is starting.",
             Self::Running => "Server is active.",
+            Self::Unknown => "Server status is not confirmed.",
             Self::Error => "Server has an error.",
             Self::AuthRequired => "Authentication Required.",
             Self::ClientSecretRequired => "Client Secret Required.",
@@ -32,6 +34,7 @@ impl AiSettingItemStatus {
             Self::Stopped => None,
             Self::Starting | Self::Authenticating => Some(Color::Muted),
             Self::Running => Some(Color::Success),
+            Self::Unknown => Some(Color::Muted),
             Self::Error => Some(Color::Error),
             Self::AuthRequired | Self::ClientSecretRequired => Some(Color::Warning),
         }
@@ -47,6 +50,9 @@ pub enum AiSettingItemSource {
     Extension,
     Custom,
     Registry,
+    /// zed-kask: a built-in kask MCP server, owned by the governed kask
+    /// runtime rather than the per-project context-server store (D45).
+    BuiltIn,
 }
 
 impl AiSettingItemSource {
@@ -55,6 +61,7 @@ impl AiSettingItemSource {
             Self::Extension => IconName::ZedSrcExtension,
             Self::Custom => IconName::ZedSrcCustom,
             Self::Registry => IconName::AcpRegistry,
+            Self::BuiltIn => IconName::Kask,
         }
     }
 
@@ -63,6 +70,9 @@ impl AiSettingItemSource {
             Self::Extension => format!("{label} was installed from an extension."),
             Self::Registry => format!("{label} was installed from the ACP registry."),
             Self::Custom => format!("{label} was configured manually."),
+            Self::BuiltIn => {
+                format!("{label} is a built-in kask MCP server, managed by the kask runtime.")
+            }
         }
     }
 }
@@ -326,6 +336,25 @@ impl Component for AiSettingItem {
                     .into_any_element(),
             ),
             single_example(
+                "Built-in kask MCP server (running) — zed-kask D45",
+                container()
+                    .child(
+                        AiSettingItem::new(
+                            "builtin-mcp",
+                            "swarm",
+                            AiSettingItemStatus::Running,
+                            AiSettingItemSource::BuiltIn,
+                        )
+                        .detail_label("42 tools")
+                        .action(
+                            IconButton::new("builtin-toggle", IconName::Check)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted),
+                        ),
+                    )
+                    .into_any_element(),
+            ),
+            single_example(
                 "MCP server (starting, animated)",
                 container()
                     .child(AiSettingItem::new(
@@ -410,5 +439,38 @@ impl Component for AiSettingItem {
         ];
 
         example_group(examples).vertical().into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unknown_server_status_is_neutral_and_not_animated() {
+        assert_eq!(
+            AiSettingItemStatus::Unknown.tooltip_text(),
+            "Server status is not confirmed."
+        );
+        assert_eq!(
+            AiSettingItemStatus::Unknown.indicator_color(),
+            Some(Color::Muted)
+        );
+        assert!(!AiSettingItemStatus::Unknown.is_animated());
+        assert!(AiSettingItemStatus::Starting.is_animated());
+    }
+
+    /// zed-kask: pins the `BuiltIn` source badge (D45) — the tooltip must name
+    /// the kask runtime so the row's provenance reads correctly in the MCP
+    /// servers settings page, and the icon must be the Kask mark (pinned by
+    /// construction: `icon_name` is the only mapping site and a wrong variant
+    /// there fails to compile).
+    #[test]
+    fn builtin_source_tooltip_names_the_kask_runtime() {
+        assert_eq!(
+            AiSettingItemSource::BuiltIn.tooltip_text("swarm"),
+            "swarm is a built-in kask MCP server, managed by the kask runtime."
+        );
+        assert_eq!(AiSettingItemSource::BuiltIn.icon_name(), IconName::Kask);
     }
 }

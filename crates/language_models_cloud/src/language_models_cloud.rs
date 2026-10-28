@@ -336,12 +336,13 @@ fn anthropic_request(
         request,
         config.id.to_string(),
         1.0,
-        config.max_output_tokens as u64,
+        Some(config.max_output_tokens as u64),
         if enable_thinking && effort.is_some() {
             AnthropicModelMode::AdaptiveThinking
         } else if enable_thinking {
+            // zed-kask: D42 — do not impose a hidden reasoning budget.
             AnthropicModelMode::Thinking {
-                budget_tokens: Some(4_096),
+                budget_tokens: None,
             }
         } else {
             AnthropicModelMode::Default
@@ -359,33 +360,16 @@ fn open_ai_request(
     config: &cloud_llm_client::LanguageModel,
     request: LanguageModelRequest,
 ) -> Result<open_ai::responses::Request> {
-    let enable_thinking = request.thinking_allowed && config.supports_thinking;
-    let effort = request
-        .thinking_effort
-        .as_ref()
-        .and_then(|effort| open_ai::ReasoningEffort::from_str(effort).ok())
-        .filter(|effort| *effort != open_ai::ReasoningEffort::None);
-    let supports_none_reasoning_effort = config.supported_effort_levels.iter().any(|effort| {
-        open_ai::ReasoningEffort::from_str(&effort.value)
-            .is_ok_and(|effort| effort == open_ai::ReasoningEffort::None)
-    });
-    let mut request = into_open_ai_response(
+    // zed-kask: D42 — the converter sends explicit effort none when disabled.
+    into_open_ai_response(
         request,
         &config.id.0,
         config.supports_parallel_tool_calls,
         true,
         None,
         None,
-        supports_none_reasoning_effort,
         &OPEN_AI_PROVIDER_ID,
-    )?;
-    if enable_thinking && let Some(effort) = effort {
-        request.reasoning = Some(open_ai::responses::ReasoningConfig {
-            effort,
-            summary: Some(open_ai::responses::ReasoningSummaryMode::Auto),
-        });
-    }
-    Ok(request)
+    )
 }
 
 fn needs_llm_token_refresh(response: &Response<AsyncBody>) -> bool {
@@ -723,7 +707,7 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudModelProvider<TP> {
             request,
             config.id.to_string(),
             1.0,
-            config.max_output_tokens as u64,
+            Some(config.max_output_tokens as u64),
             AnthropicModelMode::Default,
             AnthropicPromptCacheMode::Automatic,
             &ANTHROPIC_PROVIDER_ID,
@@ -791,10 +775,6 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudModelProvider<TP> {
         let app_version = self.app_version.clone();
         let model_provider = config.provider;
         let provider_name = provider_name(&config.provider);
-        let supports_none_reasoning_effort = config.supported_effort_levels.iter().any(|effort| {
-            open_ai::ReasoningEffort::from_str(&effort.value)
-                .is_ok_and(|effort| effort == open_ai::ReasoningEffort::None)
-        });
         // Cloud proxies to OpenAI's own infrastructure, so the resulting
         // compaction state is owned by (and interchangeable with) OpenAI
         // proper, not by the cloud transport.
@@ -805,7 +785,6 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudModelProvider<TP> {
             true,
             None,
             None,
-            supports_none_reasoning_effort,
             &OPEN_AI_PROVIDER_ID,
         ) {
             Ok(request) => request,
@@ -1576,6 +1555,7 @@ mod tests {
                 output_tokens: 10,
                 cache_creation_input_tokens: 0,
                 cache_read_input_tokens: 20,
+                cost: None,
             }
         );
         let language_model::CompactedContext::ProviderState(state) = result.context else {

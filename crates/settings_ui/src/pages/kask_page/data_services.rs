@@ -1,0 +1,280 @@
+//! Data Services sub-page — API key entry for Exa, Tavily,
+//! Brave, RunPod OCR, FRED, and other live descriptors. Keys
+//! live in the OS keychain. The key's presence is the toggle — there is no
+//! separate enable/disable bool.
+
+use super::*;
+use language_model::{LanguageModelProviderId, LanguageModelRegistry};
+
+/// The RunPod language-model provider id (D29). Must match the provider's
+/// `PROVIDER_ID` (`"runpod"`); [`LanguageModelRegistry::provider`] is an exact
+/// id match and returns `None` on mismatch, which would silently turn the live
+/// refresh below into a no-op.
+const RUNPOD_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("runpod");
+
+/// Ask the RunPod endpoint provider to adopt `key` through its existing
+/// `set_api_key` path: it writes the keychain entry at the provider's
+/// `api_url` (`https://api.runpod.io` — the ONE location for the RunPod
+/// key), updates the in-memory `ApiKeyState`, and notifies discovery so
+/// `RunPod/*` models refresh immediately — no restart required. The Data
+/// Services row writes the same slot via `write_credential`; no MCP child
+/// receives that key after training removal, so this direct provider refresh
+/// is the only runtime notification needed.
+fn refresh_runpod_endpoint_key(api_key: Option<String>, cx: &mut App) {
+    let Some(provider) = LanguageModelRegistry::global(cx)
+        .read(cx)
+        .provider(&RUNPOD_PROVIDER_ID)
+    else {
+        // Provider not registered yet (startup ordering). The key is persisted
+        // on the provider's next authenticate/restart; nothing to refresh.
+        return;
+    };
+    provider.set_api_key(api_key, cx).detach();
+}
+
+pub(crate) fn render_data_services_page(
+    _settings_window: &SettingsWindow,
+    scroll_handle: &ScrollHandle,
+    _window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
+    super::ensure_keychain_prefetch(cx);
+    let provider = zed_credentials::global(cx);
+
+    let mut rows: Vec<AnyElement> = Vec::new();
+    for (key, label, dashboard_url, env_var, credential_url) in data_service_descriptors() {
+        rows.push(render_data_service_row(
+            key,
+            label,
+            dashboard_url,
+            env_var,
+            credential_url,
+            provider.clone(),
+            cx,
+        ));
+    }
+
+    v_flex()
+        .id("kask-data-services-page")
+        .size_full()
+        .pt_2p5()
+        .px_8()
+        .pb_16()
+        .gap_4()
+        .overflow_y_scroll()
+        .track_scroll(scroll_handle)
+        .child(
+            v_flex()
+                .gap_1()
+                .child(SettingsSectionHeader::new("Data Services"))
+                .child(
+                    Label::new(
+                        "API keys are stored in the system keychain. A service \
+                         is enabled when its key is present — enter the key to \
+                         activate it.",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                ),
+        )
+        .child(Divider::horizontal())
+        .child(v_flex().gap_6().children(rows))
+        .into_any_element()
+}
+
+fn render_data_service_row(
+    key: &'static str,
+    label: &'static str,
+    dashboard_url: &'static str,
+    env_var: &'static str,
+    credential_url: String,
+    provider: Arc<dyn CredentialsProvider>,
+    _cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
+    let has_key = has_credential(&provider, &[&credential_url], env_var);
+
+    // Built before the closures below move `credential_url` — the copy names
+    // the exact keychain slot this row reads and writes.
+    let storage_copy = format!(
+        "Enabled when the API key is present. Stored in the \
+         keychain under {credential_url}, or set the \
+         {env_var} environment variable."
+    );
+
+    let key_input = if has_key {
+        let reset_id = format!("kask-{key}-reset");
+        ConfiguredApiCard::new(reset_id, "API Key Configured")
+            .button_label("Reset Key")
+            .button_tab_index(0)
+            .on_click({
+                let provider = provider.clone();
+                move |_, _, cx| {
+                    delete_credential(&provider, &credential_url, cx).detach();
+                    if key == "runpod" {
+                        refresh_runpod_endpoint_key(None, cx);
+                    }
+                }
+            })
+            .into_any_element()
+    } else {
+        let input_id = format!("kask-{key}-api-key-input");
+        let aria_label = format!("{label} API Key");
+        let provider = provider.clone();
+        v_flex()
+            .gap_2()
+            .child(
+                h_flex()
+                    .pt_2p5()
+                    .w_full()
+                    .min_w_0()
+                    .gap_4()
+                    .justify_between()
+                    .child(
+                        v_flex()
+                            .w_full()
+                            .min_w_0()
+                            .max_w_1_2()
+                            .gap_0p5()
+                            .child(Label::new("API Key"))
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .min_w_0()
+                                    .flex_wrap()
+                                    .gap_0p5()
+                                    .child(
+                                        Label::new("Visit the")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(
+                                        ButtonLink::new(
+                                            format!("{label} dashboard"),
+                                            dashboard_url,
+                                        )
+                                        .no_icon(true)
+                                        .label_size(LabelSize::Small)
+                                        .label_color(Color::Muted),
+                                    )
+                                    .child(
+                                        Label::new("to generate an API key.")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    ),
+                            )
+                            .child(
+                                Label::new(format!(
+                                    "Or set the {env_var} env var and restart Zed for it to take effect."
+                                ))
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                            ),
+                    )
+                    .child(
+                        SettingsInputField::new(input_id)
+                            .tab_index(0)
+                            .with_placeholder("xxxxxxxxxxxxxxxxxxxx")
+                            .aria_label(aria_label)
+                            .on_confirm(move |api_key, _window, cx| {
+                                if let Some(key_value) =
+                                    api_key.filter(|key_value| !key_value.is_empty())
+                                {
+                                    write_credential(
+                                        &provider,
+                                        &credential_url,
+                                        &key_value,
+                                        cx,
+                                    )
+                                    .detach();
+                                    if key == "runpod" {
+                                        refresh_runpod_endpoint_key(Some(key_value), cx);
+                                    }
+                                }
+                            }),
+                    ),
+            )
+            .into_any_element()
+    };
+
+    v_flex()
+        .gap_2()
+        .child(
+            v_flex().gap_0p5().child(Label::new(label)).child(
+                Label::new(storage_copy)
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            ),
+        )
+        .child(key_input)
+        .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The removed Reduct.cloud integration must not reappear as a settings
+    /// row (removed 2026-10-22 with the media server's Reduct cloud tools).
+    #[test]
+    fn removed_reduct_cloud_row_is_absent() {
+        let keys = data_service_descriptors()
+            .into_iter()
+            .map(|(key, _, _, _, _)| key)
+            .collect::<std::collections::HashSet<_>>();
+        assert!(
+            !keys.contains("reduct_api_key"),
+            "the Reduct.cloud removal is complete — no Data Services row may carry its key"
+        );
+    }
+
+    #[test]
+    fn runpod_row_keeps_native_keychain_slot_without_mcp_restart() {
+        let row = data_service_descriptors()
+            .into_iter()
+            .find(|(key, _, _, _, _)| *key == "runpod")
+            .expect("RunPod OCR must remain on Data Services");
+        assert_eq!(row.3, "RUNPOD_API_KEY");
+        assert_eq!(row.4, "https://api.runpod.io");
+        assert!(!credential_url_feeds_mcp_servers(&row.4));
+    }
+
+    /// The retired training-only vendors must not reappear as settings rows.
+    #[test]
+    fn training_only_data_services_are_absent() {
+        let keys = data_service_descriptors()
+            .into_iter()
+            .map(|(key, _, _, _, _)| key)
+            .collect::<std::collections::HashSet<_>>();
+        assert!(!keys.contains("hf_token"));
+        assert!(!keys.contains("nebius_project_id"));
+        assert!(!keys.contains("nebius_subnet_id"));
+    }
+
+    /// The endpoint-refresh id must identify the RunPod provider in the
+    /// `LanguageModelRegistry`. [`LanguageModelRegistry::provider`] is an exact
+    /// id match and returns `None` on mismatch — a drift would silently turn the
+    /// live refresh into a no-op (broken feedback loop). Pin it against the
+    /// canonical lowercase id the RunPod provider registers under (D29
+    /// `PROVIDER_ID` is `"runpod"`).
+    #[test]
+    fn runpod_provider_id_resolves_against_registry() {
+        assert_eq!(RUNPOD_PROVIDER_ID.0.to_string(), "runpod");
+        // Also case-insensitive vs the display-form descriptor id, matching the
+        // IPC contract that resolves model names case-insensitively.
+        let desc = kask_bridge::INFERENCE_PROVIDERS
+            .iter()
+            .find(|p| p.credential_key == "runpod")
+            .expect("RunPod descriptor present");
+        assert!(
+            desc.id.eq_ignore_ascii_case(RUNPOD_PROVIDER_ID.0.as_ref()),
+            "registry lookup must be case-insensitive per the IPC contract"
+        );
+    }
+
+    /// Keeps `refresh_runpod_endpoint_key` callable from the Data Services
+    /// RunPod row (render write and reset paths), pinning its signature.
+    #[test]
+    fn refresh_runpod_endpoint_key_symbol_exists() {
+        let _: fn(Option<String>, &mut gpui::App) = refresh_runpod_endpoint_key;
+    }
+}

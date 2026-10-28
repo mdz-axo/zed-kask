@@ -214,10 +214,10 @@ pub enum ModelMode {
         budget_tokens: Option<u64>,
     },
     AdaptiveThinking {
-        effort: bedrock::BedrockAdaptiveThinkingEffort,
+        effort: bedrock::BedrockAdaptiveReasoningEffort,
     },
     Reasoning {
-        effort: bedrock::BedrockAdaptiveThinkingEffort,
+        effort: bedrock::BedrockAdaptiveReasoningEffort,
     },
 }
 
@@ -1051,7 +1051,7 @@ fn converse_language_model(model: &ConverseModel) -> LanguageModel {
             none: model.supports_tool_use(),
         },
         supports_streaming_tools: true,
-        max_output_tokens: Some(model.max_output_tokens()),
+        max_output_tokens: model.max_output_tokens(),
         ..LanguageModel::new(
             LanguageModelId::from(model.id().to_string()),
             LanguageModelName::from(model.display_name().to_string()),
@@ -1952,7 +1952,7 @@ fn mantle_language_model(model: &MantleModel) -> LanguageModel {
         supports_thinking: model.supports_thinking(),
         supported_effort_levels: mantle_supported_effort_levels(model).into(),
         supports_split_token_display: true,
-        max_output_tokens: Some(model.max_output_tokens()),
+        max_output_tokens: model.max_output_tokens(),
         ..LanguageModel::new(
             LanguageModelId::from(model.id().to_string()),
             LanguageModelName::from(model.display_name().to_string()),
@@ -1986,7 +1986,7 @@ impl BedrockLanguageModelProvider {
         }
 
         let model_id = config.request_id().to_string();
-        let max_output_tokens = Some(config.max_output_tokens());
+        let max_output_tokens = config.max_output_tokens();
 
         match config.protocol() {
             MantleProtocol::Responses => {
@@ -1997,7 +1997,6 @@ impl BedrockLanguageModelProvider {
                     false,
                     max_output_tokens,
                     mantle_default_reasoning_effort(config),
-                    config.supports_thinking(),
                     &PROVIDER_ID,
                 ) {
                     Ok(request) => request,
@@ -2015,7 +2014,7 @@ impl BedrockLanguageModelProvider {
                 .boxed()
             }
             MantleProtocol::ChatCompletions => {
-                let reasoning_effort = mantle_selected_reasoning_effort(&request, config);
+                let thinking_effort = mantle_selected_reasoning_effort(&request, config);
                 let request = match into_open_ai(
                     request,
                     &model_id,
@@ -2023,7 +2022,7 @@ impl BedrockLanguageModelProvider {
                     false,
                     max_output_tokens,
                     ChatCompletionMaxTokensParameter::MaxCompletionTokens,
-                    reasoning_effort,
+                    thinking_effort,
                     false,
                 ) {
                     Ok(request) => request,
@@ -2115,16 +2114,17 @@ pub fn into_bedrock(
     request: LanguageModelRequest,
     model: String,
     default_temperature: Option<f32>,
-    max_output_tokens: u64,
+    max_output_tokens: Option<u64>,
     thinking_mode: BedrockModelMode,
     supports_caching: bool,
     supports_tool_use: bool,
     guardrail_identifier: Option<String>,
     guardrail_version: Option<String>,
 ) -> Result<bedrock::Request> {
-    let max_output_tokens = request
-        .max_output_tokens
-        .map_or(max_output_tokens, |limit| limit.min(max_output_tokens));
+    // zed-kask: D83 — the model cap is metadata: None means unconfigured,
+    // never a fabricated default; the Converse request then omits
+    // `maxTokens` and Bedrock's own model default binds.
+    let max_output_tokens = request.effective_max_output_tokens(max_output_tokens);
     if request.contains_custom_tool_input() {
         anyhow::bail!("Bedrock does not support custom tools");
     }
@@ -2471,11 +2471,11 @@ pub fn into_bedrock(
             .thinking_effort
             .as_deref()
             .and_then(|effort| match effort {
-                "low" => Some(bedrock::BedrockAdaptiveThinkingEffort::Low),
-                "medium" => Some(bedrock::BedrockAdaptiveThinkingEffort::Medium),
-                "high" => Some(bedrock::BedrockAdaptiveThinkingEffort::High),
-                "xhigh" => Some(bedrock::BedrockAdaptiveThinkingEffort::XHigh),
-                "max" => Some(bedrock::BedrockAdaptiveThinkingEffort::Max),
+                "low" => Some(bedrock::BedrockAdaptiveReasoningEffort::Low),
+                "medium" => Some(bedrock::BedrockAdaptiveReasoningEffort::Medium),
+                "high" => Some(bedrock::BedrockAdaptiveReasoningEffort::High),
+                "xhigh" => Some(bedrock::BedrockAdaptiveReasoningEffort::XHigh),
+                "max" => Some(bedrock::BedrockAdaptiveReasoningEffort::Max),
                 _ => None,
             })
             .unwrap_or(default_effort)
@@ -2704,6 +2704,7 @@ pub fn map_to_language_model_completion_events(
                                     .cache_read_input_tokens
                                     .unwrap_or_default()
                                     as u64,
+                                cost: None,
                             }))
                         }),
                         ConverseStreamOutput::MessageStop(message_stop) => {
@@ -2958,15 +2959,7 @@ impl Render for ConfigurationView {
                 | Some(BedrockAuthMethod::SingleSignOn)
         );
 
-        let tooltip_label = if env_var_set {
-            Some(format!(
-                "To reset your credentials, unset the {}, {}, and {} or {} environment variables.",
-                ZED_BEDROCK_ACCESS_KEY_ID_VAR.name,
-                ZED_BEDROCK_SECRET_ACCESS_KEY_VAR.name,
-                ZED_BEDROCK_SESSION_TOKEN_VAR.name,
-                ZED_BEDROCK_BEARER_TOKEN_VAR.name
-            ))
-        } else if is_settings_derived {
+        let tooltip_label = if is_settings_derived {
             Some(
                 "Authentication method is configured in settings. Edit settings.json to change."
                     .to_string(),
@@ -2977,7 +2970,7 @@ impl Render for ConfigurationView {
 
         let credentials_control = if self.state.read(cx).is_authenticated() {
             ConfiguredApiCard::new("bedrock-reset", configured_label)
-                .disabled(env_var_set || is_settings_derived)
+                .disabled(is_settings_derived)
                 .on_click(cx.listener(|this, _, window, cx| this.reset_credentials(window, cx)))
                 .when_some(tooltip_label, |this, label| this.tooltip_label(label))
                 .into_any_element()
@@ -3155,7 +3148,7 @@ mod tests {
             },
             "claude-sonnet-4-5".to_string(),
             Some(1.0),
-            4096,
+            Some(4096),
             BedrockModelMode::Default,
             true,
             true,
@@ -3765,7 +3758,7 @@ mod tests {
             },
             "us.openai.gpt-6-astra".into(),
             None,
-            128_000,
+            Some(128_000),
             BedrockModelMode::Default,
             false,
             true,
@@ -3938,9 +3931,9 @@ mod tests {
                 },
                 model.to_string(),
                 Some(1.0),
-                128_000,
+                Some(128_000),
                 BedrockModelMode::AdaptiveThinking {
-                    effort: bedrock::BedrockAdaptiveThinkingEffort::High,
+                    effort: bedrock::BedrockAdaptiveReasoningEffort::High,
                 },
                 true,
                 true,
@@ -3949,7 +3942,7 @@ mod tests {
             )
             .unwrap();
 
-            assert_eq!(request.max_tokens, expected_output);
+            assert_eq!(request.max_tokens, Some(expected_output));
             if expects_explicit_opt_out {
                 assert!(
                     matches!(request.thinking, Some(bedrock::Thinking::Disabled)),
@@ -3980,7 +3973,7 @@ mod tests {
             },
             "us.xai.grok-4.6".to_string(),
             None,
-            4096,
+            Some(4096),
             BedrockModelMode::Default,
             false,
             true,
@@ -3997,7 +3990,7 @@ mod tests {
             },
             "us.anthropic.claude-sonnet-4-7".to_string(),
             Some(0.7),
-            4096,
+            Some(4096),
             BedrockModelMode::Default,
             false,
             true,
@@ -4087,9 +4080,9 @@ mod tests {
                 },
                 model.to_string(),
                 Some(1.0),
-                128_000,
+                Some(128_000),
                 BedrockModelMode::AdaptiveThinking {
-                    effort: bedrock::BedrockAdaptiveThinkingEffort::High,
+                    effort: bedrock::BedrockAdaptiveReasoningEffort::High,
                 },
                 true,
                 true,
@@ -4832,6 +4825,99 @@ mod tests {
     }
 
     #[test]
+    fn into_bedrock_without_any_configured_cap_omits_max_tokens() {
+        // zed-kask: D83 — the model's output cap is metadata, not a
+        // client-side default: when neither the request nor the model
+        // carries one, the Converse request omits `maxTokens` entirely and
+        // Bedrock's own model default binds — the same shape as the
+        // OpenRouter `max_tokens` seam. The former `unwrap_or(4_096)` on
+        // custom models fabricated a hidden cap that cut agent streams
+        // mid-tool-call (the D42/D83 hidden output-limit class).
+        let request = || LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hi".into())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+        let mode = || BedrockModelMode::AdaptiveThinking {
+            effort: bedrock::BedrockAdaptiveReasoningEffort::High,
+        };
+
+        let uncapped = into_bedrock(
+            request(),
+            "custom-model".to_string(),
+            Some(1.0),
+            None,
+            mode(),
+            true,
+            true,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(uncapped.max_tokens, None);
+
+        let mut request_capped = request();
+        request_capped.max_output_tokens = Some(1024);
+        assert_eq!(
+            into_bedrock(
+                request_capped,
+                "custom-model".to_string(),
+                Some(1.0),
+                None,
+                mode(),
+                true,
+                true,
+                None,
+                None,
+            )
+            .unwrap()
+            .max_tokens,
+            Some(1024)
+        );
+
+        assert_eq!(
+            into_bedrock(
+                request(),
+                "custom-model".to_string(),
+                Some(1.0),
+                Some(50_000),
+                mode(),
+                true,
+                true,
+                None,
+                None,
+            )
+            .unwrap()
+            .max_tokens,
+            Some(50_000)
+        );
+
+        let mut both_capped = request();
+        both_capped.max_output_tokens = Some(1024);
+        assert_eq!(
+            into_bedrock(
+                both_capped,
+                "custom-model".to_string(),
+                Some(1.0),
+                Some(50_000),
+                mode(),
+                true,
+                true,
+                None,
+                None,
+            )
+            .unwrap()
+            .max_tokens,
+            Some(1024),
+            "the request-level cap still intersects the model cap"
+        );
+    }
+
+    #[test]
     fn test_custom_mantle_model_can_disable_thinking() {
         let model = MantleModel::Custom {
             name: "custom-mantle-model".to_string(),
@@ -4869,9 +4955,8 @@ mod tests {
             MantleModel::Grok4_3.request_id(),
             true,
             false,
-            Some(MantleModel::Grok4_3.max_output_tokens()),
+            MantleModel::Grok4_3.max_output_tokens(),
             mantle_default_reasoning_effort(&MantleModel::Grok4_3),
-            MantleModel::Grok4_3.supports_thinking(),
             &PROVIDER_ID,
         )
         .unwrap();
@@ -4924,7 +5009,6 @@ mod tests {
             false,
             Some(128_000),
             Some(ReasoningEffort::Medium),
-            false,
             &PROVIDER_ID,
         )
         .unwrap();

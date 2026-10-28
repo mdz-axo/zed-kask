@@ -1,0 +1,368 @@
+# zed-kask invariant gates. These are the guards that were previously
+# convention-enforced only (run by hand or from the DIVERGENCE.md runbook) —
+# an upstream merge that reintroduces a guarded surface, a formatting drift,
+# or a broken build used to fail nothing automated. The bash/grep scripts
+# finish in seconds; the build jobs take minutes and are tiered (see below).
+# Every cargo invocation resolves the pinned toolchain from
+# rust-toolchain.toml on first use (rustup auto-install).
+#
+# goal-traceability-advisory (seconds, every push + PR, continue-on-error):
+#   exercises the goal-traceability selftest fixtures and reports skill goal
+#   trailers over the push/PR range — syntax checking only, never approval;
+#   a red run never blocks.
+#
+# check (seconds, every push + PR) — every step below is an independently
+# failing gate:
+# - check-hkask-no-zed-deps.sh: the §13.1 governing invariant (no hKask
+#   crate depends on a zed-kask crate). DIVERGENCE.md advertises this as
+#   "wired into CI" — this workflow is that wiring.
+# - check-zed-isolation.sh: the D7 guards — deleted upstream packaging,
+#   updater, flatpak, and bundler surfaces stay deleted; fail-closed
+#   bundlers stay fail-closed.
+# - check-publish-paths.sh: staged, per-file-atomic binary publication —
+#   a failed publish (missing built binary, staging failure) leaves the
+#   working installation intact, and strip status is truthful.
+# - check-uninstall-paths.sh: uninstall removes the real zed-kask config/data
+#   dirs (never the stale hkask name), opt-in only — previously manual-only;
+#   also pins jq locality (dispatch/uninstall not jq-blocked; the settings
+#   write fails loudly at its consumer).
+# - check-build-monitor.sh: the CPU/RSS sampler attributes only the
+#   build-owned process tree (out-of-tree decoys excluded), reports
+#   interval utilization (not lifetime ps pcpu), and skips a pid that
+#   vanishes between listing and read without stderr noise.
+# - check-build-profile.sh: MCP servers stay cheap to build; installs are
+#   capped and traced.
+# - check-lean-toolchain.sh: the pinned-toolchain install is offline-tested
+#   and failure-gated.
+# - cargo fmt --all -- --check: the workspace stays formatting-clean —
+#   14 hunks of drift landed on main undetected before this gate (2026-09-08).
+# - check-no-new-dead-code-allows.sh: no net-new #[allow(dead_code)] beyond
+#   kask/scripts/dead-code-allow-baseline.txt — the residue-hiding mechanism
+#   from the 2026-09-08 strangler-fig audit (every finding carried one; a
+#   struct-level allow even masked never-read fields). Adding an allow
+#   requires bumping the baseline in the same commit, which makes the
+#   addition a visible, reviewable act.
+# - check-string-errors.sh: no `Result<_, String>` in hkask library code
+#   (justified sites carry a `string-error-ok` marker with the reason in
+#   the surrounding doc comment). Wired 2026-09-10 after clearing the
+#   7-violation backlog that accumulated while the gate sat unwired.
+# - check-mcp-tool-tests.sh: every MCP server carries tool-behavior contract
+#   tests through the public `Parameters<T>` seam (ratchet completed
+#   2026-08-26 — an untested server now fails instead of being allowlisted).
+# - check-mcp-servers.sh: the installer inventory matches the runtime set.
+# - check-mcp-registration.sh: every server in mcp-servers.txt carries the
+#   tool_surface_pin! registration pin (count + TOOL_NAMES-vs-router) — a
+#   silent registration drop, unrouted #[tool] fn, or same-count rename
+#   fails CI instead of degrading to tool-not-found at dispatch.
+# - check-reg-canonical.sh: every `reg.*` tracing target is a canonical
+#   namespace (registered in CANONICAL_NAMESPACES).
+# - check-skill-crossrefs.sh, check-skill-crate-refs.sh,
+#   check-skill-lisp-forms.sh, check-forecast-conformance.sh and
+#   check-template-contracts.sh: skill cross-references resolve,
+#   crate-shaped identifiers in skills/templates name live Cargo packages,
+#   every explicit Lisp form parses through hkask-lisp and avoids mechanically
+#   certain inert/type-broken AST shapes, the forecasting contract matches its
+#   primitives, and template contracts match template bodies.
+# - check-retired-record.sh: every skill retired within the change range
+#   is appended to RETIRED_SKILL_NAMES in the same change (the D1
+#   retirement convention) — a forgotten append would silently shrink
+#   both the installed-copy sweep and the crossrefs gate.
+# - check-unsafe-forbid.sh and check-version-sync.sh: unsafe code stays
+#   gated, crate versions stay in sync.
+# - check-no-mod-rs.sh and check-no-smol-timer.sh: the fork layout stays
+#   mod.rs-free and the GPUI-side surface stays free of smol timers
+#   (both .rules conventions, machine-enforced).
+# - check-docs-count-gate.sh: the docs tree stays under the §3 cap with a
+#   working condensation target, the README's recorded corpus size matches the
+#   real count, and every gate reference carries the canonical numbers
+#   — the 2026-09-30 drift (67 recorded against a 73-file tree) landed
+#   undetected while the gate was documentation-enforced only.
+# - check-docs-frontmatter.sh: every Markdown file under kask/docs carries
+#   the §2 seven-field header — the 2026-10-05 alignment run found two
+#   concurrent-stream additions landing without it (the compaction spec,
+#   the two-symptom findings); the addition class fails CI instead of the
+#   next alignment run.
+# - check-diagram-registry-parity.sh: mermaid fences == DIAGRAM_ALIGNMENT
+#   records == DIAGRAMS_INDEX rows — the same run found the compaction
+#   diagram unregistered and the index prose miscounting (107 vs 108).
+# - check-duplication-ratchet.sh: no net-new duplication clusters (jscpd,
+#   min-tokens 70, over kask/ + fork-diverged files vs the pinned scan
+#   base) beyond duplication-ratchet-baseline.txt — the simplification
+#   program's Phase 1.2 oracle; the redraw-grid two-private-copies class
+#   becomes mechanically detectable. The step fetches the pinned upstream
+#   commit (depth 1) so a bare clone computes the same scan set — the
+#   retired-record step's pattern — and installs jq (jscpd's JSON parser).
+# - Gate selftests: the loop step below runs every
+#   kask/scripts/check-*-selftest.sh — see its comment for scope.
+#
+# lean-spec-pins (minutes, every push + PR): the Lean spec pins in kask/lean
+#   re-check on every merge, not just when an agent runs lean_check — every
+#   positive pin checks clean under the pinned toolchain (exit 0, no sorry)
+#   and every negative control FAILS (a checker that accepts a negative
+#   control is not an oracle). The gate installs the toolchain via the
+#   shared install_lean_toolchain (cached on ~/.elan); its logic is
+#   offline-pinned by check-lean-spec-pins-selftest.sh in the check job's
+#   selftest loop (fake elan/lean fixtures — no toolchain download).
+#
+# kask-tests (minutes, every push + PR): the runbook's verification gate —
+#   cargo test over every hkask-* crate plus the kask_bridge seam. Serial
+#   execution per the .rules live-mutation trap: deterministic beats fast.
+#   Catches kask-side breakage before it lands.
+#
+# zed-check (minutes, main pushes only): the full workspace build, plus
+#   the kask-side lib tests that live in zed-path crates (`agent` — the
+#   skill/lisp_eval/template seam pins; `agent_skills` — the
+#   retirement-record and seeding pins; `settings_ui` — the skill-creator
+#   pins), which the kask-tests job's kask-subtree selection cannot
+#   reach. (remote_server's D1 pin lives in its collab test suite — too
+#   heavy for this tier; a known, accepted gap.) zed depends on every
+#   panel and the bridge, so cargo check -p zed is the gate that catches
+#   zed-side breakage — the kanban_panel class (a removed field still
+#   constructed at a panel call site) that kask-scoped checks cannot
+#   see. PRs skip this job to bound minutes; a red main run is the
+#   fix-forward signal.
+#
+# Both build jobs install mold first: .cargo/config.toml forces
+# -fuse-ld=mold for x86_64-unknown-linux-gnu (dev-box link-speed seam, see
+# the config's own comment), and the ubuntu-latest image ships neither
+# ld.mold nor a fallback the collect2 search accepts — every build-script
+# link dies with "collect2: fatal error: cannot find 'ld'" without it.
+# Beyond mold, each job installs the native libraries its cargo graph
+# needs (ubuntu-latest ships no -dev packages):
+# - kask-tests: libasound2-dev (alsa-sys — the only pkg-config system dep
+#   in the hkask-* + kask_bridge graph, reached via hkask-media-widget →
+#   rodio → cpal) and nasm (hkask-media-widget's default `vendored`
+#   feature compiles FFmpeg from source; the alsa-sys failure masks this
+#   one because cargo aborts at the first build-script failure).
+# - zed-check: script/linux — the canonical, upstream-maintained zed
+#   dependency list (x11, fontconfig, glib, wayland, freetype, ...).
+#   Running the script instead of a hand-curated apt list keeps the set
+#   correct through upstream rebases.
+name: Kask invariants
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Agent-heavy sessions push in rapid bursts. The minutes-tier build jobs
+# (kask-tests, lean-spec-pins, zed-check) each carry a per-job concurrency
+# group with cancel-in-progress: a newer push supersedes that job's
+# in-progress run for the same ref instead of queueing behind it. The
+# seconds-tier check job deliberately has NO concurrency group: every
+# push's check runs to completion, so a red verdict is never erased by a
+# superseding push (the EUREKA-3 erasure finding, 2026-10-24 — under the
+# former workflow-level cancellation, four stale diagram rows and other
+# drift shipped while red check runs were cancelled mid-flight).
+
+jobs:
+  goal-traceability-advisory:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Exercise advisory traceability fixtures
+        run: bash kask/scripts/check-goal-traceability-selftest.sh
+      - name: Report skill goal trailers (syntax only, never approval)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: bash kask/scripts/check-goal-traceability.sh --range "$BASE_SHA" "$HEAD_SHA"
+
+  check:
+    runs-on: ubuntu-latest
+    # Seconds-tier: NO concurrency group — every push's check runs to
+    # completion, so a red verdict is never erased by a superseding push
+    # (the EUREKA-3 erasure finding; the minutes-tier jobs below keep
+    # their per-job cancellation groups).
+    steps:
+      - uses: actions/checkout@v4
+      - name: §13.1 — no hKask crate depends on a zed-kask crate
+        run: bash kask/scripts/check-hkask-no-zed-deps.sh
+      - name: Zed isolation — upstream packaging/updater surfaces stay deleted
+        run: bash kask/scripts/build/check-zed-isolation.sh
+      - name: Installer publication — staged atomic publish; a failed publish preserves the working install
+        run: bash kask/scripts/build/check-publish-paths.sh
+      - name: Installer uninstall + jq locality — config/data removal is opt-in; dispatch and uninstall are not jq-blocked
+        run: bash kask/scripts/build/check-uninstall-paths.sh
+      - name: Build monitor — tree-attributed interval sampling (the build-measurement instrument)
+        run: bash kask/scripts/build/check-build-monitor.sh
+      - name: Build profile seam — MCP servers build cheap, installs are capped and traced
+        run: bash kask/scripts/build/check-build-profile.sh
+      - name: Lean dependency — pinned toolchain install is offline-tested and failure-gated
+        run: bash kask/scripts/build/check-lean-toolchain.sh
+      - name: Formatting — cargo fmt --check
+        run: cargo fmt --all -- --check
+      - name: Dead-code allows — no net-new beyond the committed baseline
+        run: bash kask/scripts/check-no-new-dead-code-allows.sh
+      - name: String errors — no Result<_, String> in hkask library code
+        run: bash kask/scripts/check-string-errors.sh
+      - name: Zero Python — no interpreter surface under kask/ or fork-owned workflows
+        run: bash kask/scripts/check-no-python.sh
+      - name: Structural traps — no net-new unwrap() in production beyond the ratchet baseline
+        run: |
+          # jq for the gate's stream-JSON parsing (the duplication-ratchet
+          # step's install pattern); npx/node is preinstalled on the runner
+          # (the jscpd precedent in the duplication ratchet below).
+          sudo apt-get update -qq && sudo apt-get install -y -qq jq
+          bash kask/scripts/check-structural-traps.sh
+      - name: MCP tool-behavior contract tests — Parameters seam coverage
+        run: bash kask/scripts/check-mcp-tool-tests.sh
+      - name: MCP packaging — installer inventory matches runtime
+        run: bash kask/scripts/check-mcp-servers.sh
+      - name: MCP registration pins — every server carries tool_surface_pin!
+        run: bash kask/scripts/check-mcp-registration.sh
+      - name: Regulation namespaces — reg.* spans are canonical
+        run: bash kask/scripts/check-reg-canonical.sh
+      - name: Skills — references resolve; Lisp gates parse and discriminate; forecasting and template contracts agree
+        run: |
+          bash kask/scripts/check-skill-crossrefs.sh
+          bash kask/scripts/check-skill-crate-refs.sh
+          bash kask/scripts/check-skill-lisp-forms.sh
+          bash kask/scripts/check-forecast-conformance.sh
+          bash kask/scripts/check-template-contracts.sh
+      - name: Provider profiles — every tree-adopted vendor has a registry profile carrying the contract keys
+        run: bash kask/scripts/check-provider-profiles.sh
+      - name: Retired-skill record completeness — every retirement in range is recorded
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          git fetch origin "$BASE_SHA" --depth=1 || true
+          git fetch origin "$HEAD_SHA" --depth=1 || true
+          bash kask/scripts/check-retired-record.sh --range "$BASE_SHA" "$HEAD_SHA"
+      - name: Crate hygiene — unsafe gated, versions in sync
+        run: |
+          bash kask/scripts/check-unsafe-forbid.sh
+          bash kask/scripts/check-version-sync.sh
+      - name: Fork layout — no mod.rs; GPUI-side timers — no smol::Timer
+        run: |
+          bash kask/scripts/check-no-mod-rs.sh
+          bash kask/scripts/check-no-smol-timer.sh
+      - name: Docs count gate — §3 cap, recorded-measurement parity, reference agreement
+        run: bash kask/scripts/check-docs-count-gate.sh
+      - name: Docs frontmatter gate — seven-field header on every Markdown file
+        run: bash kask/scripts/check-docs-frontmatter.sh
+      - name: Docs citations — every path.rs:line citation resolves via the ladder
+        run: bash kask/scripts/check-docs-citations.sh
+      - name: Docs citation anchors — annotated citations still name the symbol at that line
+        run: |
+          bash kask/scripts/check-docs-citation-anchors-selftest.sh
+          bash kask/scripts/check-docs-citation-anchors.sh
+      - name: Docs citation drift — every @symbol form in every file, plus the audit-hash drift ratchet
+        run: |
+          bash kask/scripts/check-docs-citation-drift-selftest.sh
+          bash kask/scripts/check-docs-citation-drift.sh
+      - name: Diagram registry parity — fences, alignment records, index rows agree
+        run: bash kask/scripts/check-diagram-registry-parity.sh
+      - name: Duplication ratchet — no net-new clone clusters beyond the baseline
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq jq
+          git fetch origin "$(head -1 kask/scripts/duplication-scan-base.txt)" --depth=1
+          bash kask/scripts/check-duplication-ratchet.sh
+      - name: Installer best practices — idempotent/resumable/atomic corpus stage; shellcheck; version sync; registry integrity
+        run: bash kask/scripts/build/check-install-best-practices.sh
+      - name: Gate selftests — every kask/scripts/check-*-selftest.sh fails on a violation
+        run: |
+          # The glob covers every gate selftest in kask/scripts: the
+          # check-job gates (including the build/ gates and the fmt step —
+          # each proves its gate fails on a synthetic violation) and the
+          # LOCAL-only gates (check-reg-creep.sh, the commit-msg git hook,
+          # the audit receipt checker), so no gate can silently go vacuous
+          # without CI noticing.
+          for selftest in kask/scripts/check-*-selftest.sh; do
+            # Advisory: runs in goal-traceability-advisory, never blocking.
+            [ "$selftest" = kask/scripts/check-goal-traceability-selftest.sh ] && continue
+            bash "$selftest"
+          done
+
+  lean-spec-pins:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Minutes-tier: a newer push supersedes this job's in-progress run
+    # for the same ref instead of queueing behind it.
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-lean-spec-pins
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lean toolchain cache — elan v4.2.4 + the pinned leanprover/lean4:v4.34.0
+        uses: actions/cache@v4
+        with:
+          path: ~/.elan
+          key: elan-${{ runner.os }}-${{ hashFiles('kask/lean/lean-toolchain', 'kask/scripts/build/install-common.sh') }}
+      - name: Spec pins — every positive checks clean; every negative control fails
+        run: bash kask/scripts/check-lean-spec-pins.sh
+
+  kask-tests:
+    runs-on: ubuntu-latest
+    # Cold builds compile vendored FFmpeg + the full kask dependency graph
+    # on a 4-core runner; rust-cache makes subsequent runs much faster.
+    timeout-minutes: 60
+    # Minutes-tier: a newer push supersedes this job's in-progress run
+    # for the same ref instead of queueing behind it.
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-kask-tests
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: kask-tests
+      - name: Install native build deps — mold linker (forced by
+          .cargo/config.toml), ALSA headers (alsa-sys via cpal), nasm
+          (vendored FFmpeg static build), ffmpeg (the runtime binaries
+          hkask-mcp-media shells out to — ffprobe probes local
+          video metadata, ffmpeg renders video; the vendored ffmpeg-sys-next
+          build provides link libraries, not the binaries on PATH),
+          poppler-utils (the PDF pipeline binaries hkask-mcp-corpus
+          shells out to — pdftotext extracts text, pdftoppm renders
+          pages, pdfimages pulls embedded images)
+        run: sudo apt-get update && sudo apt-get install -y mold libasound2-dev nasm jq ffmpeg poppler-utils
+      - name: Headless audio — ALSA null default output (the runner has no
+          sound card, and the video decoder's audio pipeline opens the
+          default output device eagerly; the null sink keeps the
+          audio-master clock exercised with samples flowing to nowhere)
+        run: printf 'pcm.!default { type null }\n' | sudo tee /etc/asound.conf
+      - name: Kask subtree — cargo test (hkask-* + kask_bridge; fails if zero tests ran)
+        run: bash kask/scripts/cargo-test-nonzero.sh --tests --no-fail-fast -p 'hkask-*' -p kask_bridge -- --test-threads=1
+      - name: MCP registration pins — every server's exact-name pin executes
+        run: |
+          while IFS= read -r server; do
+            case "$server" in
+              ''|'#'*) continue ;;
+            esac
+            bash kask/scripts/cargo-test-nonzero.sh \
+              -p "$server" tool_names_match_live_router -- --test-threads=1
+          done < kask/scripts/build/mcp-servers.txt
+      - name: MCP reconnect — isolated fixture processes (serial; fails if zero tests ran)
+        run: bash kask/scripts/cargo-test-nonzero.sh --locked -p hkask-mcp --features test-fixture --test reconnect_integration -- --test-threads=1
+      - name: Test evidence — real failure, correction, and rejection controls
+        run: |
+          cargo build --locked -p hkask-regulation --bin check_test_evidence
+          bash kask/scripts/evaluate-test-evidence-selftest.sh "$PWD/target/debug/check_test_evidence"
+
+  zed-check:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    # Minutes-tier: a newer push supersedes this job's in-progress run
+    # for the same ref instead of queueing behind it.
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-zed-check
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: zed-check
+      - name: Install zed Linux build deps (script/linux) + mold linker
+        run: |
+          script/linux
+          sudo apt-get install -y mold
+      - name: Full workspace — cargo check -p zed
+        run: cargo check -p zed
+      - name: Zed-path kask seam tests — agent + agent_skills + settings_ui lib pins
+        run: cargo test -p agent -p agent_skills -p settings_ui -p media_panel --lib

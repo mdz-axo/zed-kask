@@ -542,6 +542,14 @@ pub trait LanguageModelClient: 'static {
     fn api_key(&self, _model: &LanguageModel, _cx: &App) -> Option<String> {
         None
     }
+
+    /// zed-kask: D24 — the API base URL used to serve `model`, for callers
+    /// (edit prediction) that talk to the provider's HTTP API directly
+    /// instead of through `stream_completion`. `None` when the provider
+    /// doesn't support direct access.
+    fn api_url(&self, _model: &LanguageModel, _cx: &App) -> Option<String> {
+        None
+    }
 }
 
 pub trait LanguageModelProvider: LanguageModelClient {

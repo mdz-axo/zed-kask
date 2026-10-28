@@ -215,6 +215,10 @@ impl OpenRouterLanguageModelProvider {
                 name: model.name.clone(),
                 display_name: model.display_name.clone(),
                 max_tokens: model.max_tokens,
+                // zed-kask: D83 — settings-configured models carry no
+                // discovered output cap; the request omits `max_tokens` for
+                // them exactly as before this seam.
+                max_output_tokens: None,
                 supports_tools: model.supports_tools,
                 supports_images: model.supports_images,
                 mode,
@@ -400,6 +404,20 @@ impl LanguageModelClient for OpenRouterLanguageModelProvider {
             ))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
+    }
+
+    // zed-kask: D24 — expose the registry-held credentials so edit prediction
+    // can talk to the provider's HTTP API directly, without a second
+    // inference router. Mirrors the pattern used by the kask embedding port.
+    fn api_key(&self, _model: &LanguageModel, cx: &App) -> Option<String> {
+        self.state.read_with(cx, |state, cx| {
+            let api_url = Self::api_url(cx);
+            state.api_key_state.key(&api_url).map(|key| key.to_string())
+        })
+    }
+
+    fn api_url(&self, _model: &LanguageModel, cx: &App) -> Option<String> {
+        Some(Self::api_url(cx).to_string())
     }
 }
 
@@ -602,7 +620,7 @@ pub fn into_open_router(
         stop: request.stop,
         temperature: request.temperature.unwrap_or(0.4),
         max_tokens: max_output_tokens,
-        parallel_tool_calls: (!request.tools.is_empty() && !model.supports_parallel_tool_calls())
+        parallel_tool_calls: (model.supports_parallel_tool_calls() && !request.tools.is_empty())
             .then_some(false),
         usage: open_router::RequestUsage { include: true },
         reasoning: match model.mode {
@@ -622,19 +640,17 @@ pub fn into_open_router(
                     enabled: Some(true),
                     effort: None,
                     max_tokens: budget_tokens,
-                    exclude: None,
+                    exclude: Some(false),
                 })
             }
-            OpenRouterModelMode::Adaptive | OpenRouterModelMode::Thinking { .. }
-                if !model.mandatory_reasoning =>
-            {
-                Some(open_router::Reasoning {
-                    enabled: Some(false),
-                    effort: None,
-                    max_tokens: None,
-                    exclude: None,
-                })
-            }
+            // zed-kask: D42 — the operator's toggle wins over provider metadata
+            // (5f939570bb); preserve explicit disable for every model mode.
+            _ if !request.thinking_allowed => Some(open_router::Reasoning {
+                enabled: Some(false),
+                effort: Some(ReasoningEffort::None),
+                max_tokens: None,
+                exclude: Some(false),
+            }),
             _ => None,
         },
         tools: request
@@ -1112,6 +1128,88 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_discovered_thinking_is_uncapped_in_request() {
+        let models = open_router::parse_models_response_for_test(open_router::ModelEntry {
+            supported_parameters: vec!["reasoning".into()],
+            ..Default::default()
+        })
+        .await
+        .expect("model discovery");
+        let mut model = models.into_iter().next().expect("discovered model");
+        for budget_tokens in [None, Some(8192)] {
+            if budget_tokens.is_some() {
+                model.mode = OpenRouterModelMode::Thinking { budget_tokens };
+            }
+            let request = LanguageModelRequest {
+                thinking_allowed: true,
+                ..Default::default()
+            };
+            let result = into_open_router(request, &model, None).expect("thinking request");
+            let reasoning = result.reasoning.expect("thinking enabled");
+            assert_eq!(reasoning.enabled, Some(true));
+            assert_eq!(reasoning.max_tokens, budget_tokens);
+            assert_eq!(reasoning.effort, None);
+            let serialized = serde_json::to_value(reasoning).expect("reasoning JSON");
+            assert_eq!(
+                serialized.get("max_tokens").is_some(),
+                budget_tokens.is_some()
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_explicit_reasoning_disable_overrides_mode_and_mandatory_metadata() {
+        for mode in [
+            OpenRouterModelMode::Adaptive,
+            OpenRouterModelMode::Thinking {
+                budget_tokens: None,
+            },
+        ] {
+            let mut model = open_router::Model::new(
+                "z-ai/glm-5.2",
+                None,
+                None,
+                None,
+                None,
+                Some(mode),
+                None,
+                None,
+                false,
+                None,
+            );
+            let result = into_open_router(LanguageModelRequest::default(), &model, None)
+                .expect("optional reasoning request");
+            let reasoning = result
+                .reasoning
+                .expect("explicit disable for optional reasoning");
+            assert_eq!(reasoning.enabled, Some(false));
+            assert_eq!(reasoning.effort, Some(ReasoningEffort::None));
+            assert_eq!(reasoning.max_tokens, None);
+
+            model.mandatory_reasoning = true;
+            let result = into_open_router(LanguageModelRequest::default(), &model, None)
+                .expect("mandatory reasoning request");
+            // D42: inspect the actual wire request, not just the in-memory enum.
+            // `exclude` only hides tokens; effort "none" must survive serialization.
+            let wire = serde_json::to_value(&result).expect("OpenRouter request JSON");
+            assert_eq!(wire["reasoning"]["effort"], "none");
+            assert_eq!(wire["reasoning"]["enabled"], false);
+            assert!(wire["reasoning"].get("max_tokens").is_none());
+            let reasoning = result
+                .reasoning
+                .expect("operator disable overrides metadata");
+            assert_eq!(reasoning.enabled, Some(false));
+            assert_eq!(reasoning.effort, Some(ReasoningEffort::None));
+        }
+        let result = into_open_router(LanguageModelRequest::default(), &Model::default(), None)
+            .expect("non-reasoning request");
+        assert_eq!(
+            result.reasoning.expect("explicit disable").effort,
+            Some(ReasoningEffort::None)
+        );
+    }
+
+    #[gpui::test]
     async fn test_into_open_router_sends_requested_effort() {
         let model = open_router::Model::new(
             "z-ai/glm-5.2",
@@ -1151,6 +1249,98 @@ mod tests {
         assert_eq!(reasoning.enabled, Some(true));
     }
 
+    #[test]
+    fn into_open_router_sends_the_discovered_output_cap() {
+        // zed-kask: D83 — a discovered output cap must reach the wire as
+        // `max_tokens`. Without it OpenRouter applies its own default output
+        // limit and cuts agent streams mid-tool-call (four ToolInput::recv
+        // warns on 2026-09-28 with zero truncation-classified finishes —
+        // the stream died with the tool_use input still open). The
+        // serialized request is asserted, not just the struct field: the
+        // wire shape is the fix.
+        let request = || LanguageModelRequest {
+            messages: vec![language_model::LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".to_string())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+
+        let mut capped = open_router::Model::new(
+            "z-ai/glm-5.3",
+            Some("GLM 5.3"),
+            Some(1_048_576),
+            Some(true),
+            Some(false),
+            None,
+            None,
+            None,
+            false,
+            None,
+        );
+        capped.max_output_tokens = Some(131_072);
+        let result = into_open_router(request(), &capped, capped.max_output_tokens()).unwrap();
+        assert_eq!(result.max_tokens, Some(131_072));
+        let wire = serde_json::to_string(&result).unwrap();
+        assert!(
+            wire.contains("\"max_tokens\":131072"),
+            "the discovered cap must reach the wire: {wire}"
+        );
+
+        // No discovered cap → the field is omitted entirely (the pre-fix
+        // wire shape, unchanged for catalogs that report no limit).
+        let uncapped = open_router::Model::new(
+            "z-ai/glm-5.3",
+            Some("GLM 5.3"),
+            Some(1_048_576),
+            Some(true),
+            Some(false),
+            None,
+            None,
+            None,
+            false,
+            None,
+        );
+        let result = into_open_router(request(), &uncapped, uncapped.max_output_tokens()).unwrap();
+        assert_eq!(result.max_tokens, None);
+        let wire = serde_json::to_string(&result).unwrap();
+        assert!(
+            !wire.contains("max_tokens"),
+            "no discovered cap must omit the field, not send null: {wire}"
+        );
+    }
+
+    #[gpui::test]
+    async fn discovered_oversized_cap_is_bounded_on_the_wire() {
+        let models = open_router::parse_models_response_for_test(open_router::ModelEntry {
+            id: "z-ai/glm-5.3".into(),
+            context_length: Some(1_310_720),
+            top_provider: Some(open_router::ModelTopProvider {
+                max_completion_tokens: Some(943_718),
+            }),
+            ..Default::default()
+        })
+        .await
+        .expect("catalog entry parses");
+        let model = &models[0];
+        let request = LanguageModelRequest {
+            messages: vec![language_model::LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".into())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+        let wire = serde_json::to_value(
+            into_open_router(request, model, model.max_output_tokens()).expect("request converts"),
+        )
+        .expect("request serializes");
+        assert_eq!(wire["max_tokens"], 655_360);
+    }
+
     #[gpui::test]
     async fn test_into_open_router_disables_reasoning_when_thinking_not_allowed() {
         let model = open_router::Model::new(
@@ -1184,8 +1374,9 @@ mod tests {
         let reasoning = result.reasoning.expect("reasoning should be set");
         assert_eq!(reasoning.enabled, Some(false));
         assert_eq!(
-            reasoning.effort, None,
-            "effort should not be sent when reasoning is disabled"
+            reasoning.effort,
+            Some(ReasoningEffort::None),
+            "operator disable must send effort none"
         );
         assert_eq!(reasoning.max_tokens, None);
     }

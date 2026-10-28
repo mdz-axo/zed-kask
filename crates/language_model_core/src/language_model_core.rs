@@ -27,7 +27,7 @@ pub use crate::request::*;
 pub use crate::role::*;
 pub use crate::util::{
     fix_streamed_json, is_context_window_exceeded_message, parse_prompt_too_long,
-    parse_tool_arguments,
+    parse_tool_arguments, tool_call_truncation_error,
 };
 pub use gpui_shared_string::SharedString;
 
@@ -249,6 +249,22 @@ pub enum LanguageModelCompletionError {
     },
     #[error("stream from {provider} ended unexpectedly")]
     StreamEndedUnexpectedly { provider: LanguageModelProviderName },
+    /// zed-kask: D36 — the stream ended (`finish_reason: "stop"`) with a
+    /// tool call's arguments still incomplete: the accumulated argument
+    /// string is a JSON fragment, so the call is truncated, not runnable.
+    /// Emitted by the shared `ChatCompletionEventMapper` instead of
+    /// draining the fragment into a tool-call turn; nothing is dispatched.
+    #[error(
+        "tool call '{tool_name}' was truncated mid-JSON before dispatch \
+         ({json_parse_error}; {raw_input_chars} chars of arguments received); \
+         the call was not executed — resend it with complete arguments"
+    )]
+    ToolCallTruncated {
+        tool_name: String,
+        json_parse_error: String,
+        raw_input_chars: usize,
+    },
+
     /// The provider no longer offers a model with this id, for example after
     /// its settings or fetched model list changed.
     #[error("{provider} no longer offers the model {}", model.0)]
@@ -410,6 +426,9 @@ impl LanguageModelCompletionError {
             | Self::BuildRequestBody { .. }
             | Self::DeserializeResponse { .. }
             | Self::StreamEndedUnexpectedly { .. }
+            // zed-kask: D36 — retrying a cut stream re-sends the same
+            // request and cuts at the same output-length boundary.
+            | Self::ToolCallTruncated { .. }
             | Self::ModelUnavailable { .. }
             | Self::Other(_) => false,
         }
@@ -440,6 +459,7 @@ impl LanguageModelCompletionError {
             | Self::BuildRequestBody { .. }
             | Self::DeserializeResponse { .. }
             | Self::StreamEndedUnexpectedly { .. }
+            | Self::ToolCallTruncated { .. }
             | Self::ModelUnavailable { .. }
             | Self::Other(_) => None,
         }
@@ -532,6 +552,18 @@ pub struct TokenUsage {
     pub cache_creation_input_tokens: u64,
     #[serde(default, skip_serializing_if = "is_default")]
     pub cache_read_input_tokens: u64,
+    // zed-kask D20: observed USD cost of this completion, as reported by the
+    // provider in its `usage` object (`usage.cost` / `usage.estimated_cost` /
+    // `usage.market_cost`). `None` when the provider doesn't report cost
+    // (Anthropic, Ollama, local). Cost observability only — surfaced via
+    // `InferenceResult.cost_usd` in `kask_bridge` so the operator can see what
+    // inference costs; nothing gates on it (budgets are deprecated, operator
+    // ruling 2026-09-04). Populated by the OpenRouter and OpenAI-compatible
+    // provider impls; `None` elsewhere.
+    // Pinned by `test_token_usage_cost_round_trips` in this crate + the bridge
+    // cost-extraction test in `kask_bridge`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost: Option<f64>,
 }
 
 impl TokenUsage {
@@ -553,6 +585,11 @@ impl Add<TokenUsage> for TokenUsage {
             cache_creation_input_tokens: self.cache_creation_input_tokens
                 + other.cache_creation_input_tokens,
             cache_read_input_tokens: self.cache_read_input_tokens + other.cache_read_input_tokens,
+            // Cumulative USD cost sums across turns; `None` only when neither side reported a cost.
+            cost: match (self.cost, other.cost) {
+                (None, None) => None,
+                (a, b) => Some(a.unwrap_or(0.0) + b.unwrap_or(0.0)),
+            },
         }
     }
 }
@@ -567,6 +604,11 @@ impl Sub<TokenUsage> for TokenUsage {
             cache_creation_input_tokens: self.cache_creation_input_tokens
                 - other.cache_creation_input_tokens,
             cache_read_input_tokens: self.cache_read_input_tokens - other.cache_read_input_tokens,
+            // USD cost delta; `None` only when neither side reported a cost.
+            cost: match (self.cost, other.cost) {
+                (None, None) => None,
+                (a, b) => Some(a.unwrap_or(0.0) - b.unwrap_or(0.0)),
+            },
         }
     }
 }
@@ -903,6 +945,33 @@ mod tests {
                 error
             ),
         }
+    }
+
+    #[test]
+    fn cloudflare_wrapped_context_overflow_is_prompt_too_large() {
+        let message = r#"Provider returned error
+provider_name: Cloudflare
+raw: {"errors":[{"message":"AiError: {\"message\":\"Requested token count exceeds the model's maximum context length of 1048576 tokens. You requested a total of 1412853 tokens: 818417 tokens from the input messages and 594436 tokens for the completion.\",\"code\":400}","code":8007}]}"#;
+        assert_eq!(
+            ProviderErrorCategory::from_http_status(StatusCode::BAD_REQUEST, message),
+            ProviderErrorCategory::PromptTooLarge { tokens: None }
+        );
+    }
+
+    #[test]
+    fn plain_provider_context_overflow_is_not_a_generic_invalid_request() {
+        let message = "This model's maximum context length is 1048576 tokens, but the request requires 1142292 tokens (530169 input including image/vision expansion + 612123 for the completion). Reduce the input length or max_tokens.";
+        assert_eq!(
+            ProviderErrorCategory::from_http_status(StatusCode::BAD_REQUEST, message),
+            ProviderErrorCategory::PromptTooLarge { tokens: None }
+        );
+        assert_eq!(
+            ProviderErrorCategory::from_http_status(
+                StatusCode::BAD_REQUEST,
+                "Invalid max_tokens parameter"
+            ),
+            ProviderErrorCategory::InvalidRequest
+        );
     }
 
     #[test]
@@ -1343,5 +1412,66 @@ mod tests {
         assert_eq!(deserialized.id, original.id);
         assert_eq!(deserialized.name, original.name);
         assert_eq!(deserialized.thought_signature, None);
+    }
+
+    /// D20: `TokenUsage.cost` round-trips through serde and defaults to `None`
+    /// when the provider omits it (Anthropic, Ollama, local).
+    #[test]
+    fn test_token_usage_cost_round_trips() {
+        let with_cost = TokenUsage {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+            cost: Some(0.001),
+        };
+        let serialized = serde_json::to_value(&with_cost).unwrap();
+        // `cost` is serialized when present.
+        assert_eq!(serialized["cost"], serde_json::json!(0.001));
+        let back: TokenUsage = serde_json::from_value(serialized).unwrap();
+        assert_eq!(back.cost, Some(0.001));
+
+        // Omitted `cost` deserializes to `None` (backward-compatible).
+        let without_cost = serde_json::json!({
+            "input_tokens": 10,
+            "output_tokens": 5
+        });
+        let parsed: TokenUsage = serde_json::from_value(without_cost).unwrap();
+        assert_eq!(parsed.cost, None);
+        // And `None` is skipped on serialize.
+        let none_serialized = serde_json::to_value(&parsed).unwrap();
+        assert!(none_serialized.get("cost").is_none());
+    }
+
+    /// D20: `Add`/`Sub` for `TokenUsage` sum/subtract `cost` for cumulative
+    /// accounting; `None` only when neither side reported a cost.
+    #[test]
+    fn test_token_usage_cost_adds_and_subs() {
+        let a = TokenUsage {
+            input_tokens: 1,
+            output_tokens: 1,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+            cost: Some(0.001),
+        };
+        let b = TokenUsage {
+            input_tokens: 1,
+            output_tokens: 1,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+            cost: Some(0.002),
+        };
+        assert_eq!((a + b).cost, Some(0.003));
+        assert_eq!((b - a).cost, Some(0.001));
+
+        let none = TokenUsage {
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+            cost: None,
+        };
+        assert_eq!((a + none).cost, Some(0.001));
+        assert_eq!((none + none).cost, None);
     }
 }

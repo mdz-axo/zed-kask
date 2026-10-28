@@ -21,6 +21,11 @@ accepted = [
     "BSL-1.0",
     "bzip2-1.0.6",
     "CDLA-Permissive-2.0",
+    # zed-kask: ffmpeg-next / ffmpeg-sys-next (the hkask-media-widget video
+    # decoder, a fork-only dependency) declare WTFPL. It is a maximally
+    # permissive license — no copyleft, no attribution obligation — so it is
+    # accepted rather than hidden. Removing it means removing video decode.
+    "WTFPL",
 ]
 
 [procinfo.clarify]
@@ -40,3 +45,12 @@ license = "BSD-3-Clause"
 [[fuchsia-cprng.clarify.files]]
 path = 'LICENSE'
 checksum = '03b114f53e6587a398931762ee11e2395bfdba252a329940e2c8c9e81813845b'
+
+# zed-kask: nom-exif (a fork-only dependency of hkask-mcp-media) ships a
+# plain MIT LICENSE but declares it via `license-file` with no `license`
+# field, so cargo-about cannot resolve it without this clarification.
+[nom-exif.clarify]
+license = "MIT"
+[[nom-exif.clarify.files]]
+path = 'LICENSE'
+checksum = '9cfbbedc535b1a4b73b2f7f51fd683ac6cae914f6d4bc7f271b9b230dd4e2808'

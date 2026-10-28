@@ -9,7 +9,7 @@ use language_model_core::{
     LanguageModelRequestToolInput, LanguageModelToolChoice, LanguageModelToolResultContent,
     LanguageModelToolUse, LanguageModelToolUseId, LanguageModelToolUseInput, MessageContent,
     ProviderErrorCategory, Role, StopReason, TokenUsage, provider_name_for_id,
-    util::{fix_streamed_json, parse_tool_arguments},
+    util::{fix_streamed_json, parse_tool_arguments, tool_call_truncation_error},
 };
 use std::sync::Arc;
 
@@ -271,7 +271,6 @@ pub fn into_open_ai_response(
     supports_prompt_cache_key: bool,
     max_output_tokens: Option<u64>,
     default_reasoning_effort: Option<ReasoningEffort>,
-    supports_none_reasoning_effort: bool,
     compaction_state_owner: &LanguageModelProviderId,
 ) -> Result<ResponseRequest> {
     let max_output_tokens = request.effective_max_output_tokens(max_output_tokens);
@@ -363,10 +362,8 @@ pub fn into_open_ai_response(
             .and_then(|effort| effort.parse::<ReasoningEffort>().ok())
             .filter(|effort| *effort != ReasoningEffort::None)
             .or(default_reasoning_effort)
-    } else if supports_none_reasoning_effort {
-        Some(ReasoningEffort::None)
     } else {
-        None
+        Some(ReasoningEffort::None)
     };
 
     let reasoning = reasoning_effort.map(|effort| crate::responses::ReasoningConfig {
@@ -946,6 +943,17 @@ impl OpenAiResponseEventMapper {
                             ))]
                         }
                         Err(error) => {
+                            // zed-kask: D36 — an EOF-classified parse failure
+                            // means the argument string ended mid-JSON: a
+                            // transport cut, not model-fault JSON. Surface the
+                            // shared truncation error instead of a parse-error
+                            // recovery event; syntax-classified failures keep
+                            // the ToolUseJsonParseError recovery below.
+                            if let Some(truncation) =
+                                tool_call_truncation_error(&entry.name, &entry.arguments)
+                            {
+                                return vec![Err(truncation)];
+                            }
                             vec![Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
                                 id: LanguageModelToolUseId::from(entry.call_id.clone()),
                                 tool_name: entry.name.clone(),
@@ -1157,6 +1165,20 @@ impl OpenAiResponseEventMapper {
         &mut self,
         output: &[ResponseOutputItem],
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        // zed-kask: D36 — pre-scan the whole batch before emitting: an
+        // EOF-classified argument string means the transport cut mid-call,
+        // so the batch surfaces the truncation error only — a complete
+        // sibling must not dispatch before the cut is seen. Syntax-classified
+        // failures keep the per-call recovery inside the loop below.
+        if let Some(truncation) = output.iter().find_map(|item| match item {
+            ResponseOutputItem::FunctionCall(function_call) => tool_call_truncation_error(
+                function_call.name.as_deref().unwrap_or_default(),
+                &function_call.arguments,
+            ),
+            _ => None,
+        }) {
+            return vec![Err(truncation)];
+        }
         let mut events = Vec::new();
         for item in output {
             match item {
@@ -1489,6 +1511,7 @@ pub fn token_usage_from_response_usage(usage: &ResponsesUsage) -> TokenUsage {
         output_tokens: usage.output_tokens.unwrap_or_default(),
         cache_creation_input_tokens: 0,
         cache_read_input_tokens,
+        cost: None,
     }
 }
 
@@ -1575,7 +1598,6 @@ mod tests {
                 supported,
                 None,
                 None,
-                false,
                 &OPEN_AI_PROVIDER_ID,
             )?;
             assert_eq!(chat.prompt_cache_key.as_deref(), expected);
@@ -1599,6 +1621,23 @@ mod tests {
                 .into_iter()
                 .map(Result::unwrap)
                 .collect()
+        })
+    }
+
+    /// Like [`map_response_events`], but preserves stream errors instead of
+    /// panicking on them, so truncation tests can assert on the `Err` items.
+    fn map_response_events_results(
+        events: Vec<ResponsesStreamEvent>,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        block_on(async {
+            OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID)
+                .map_stream(Box::pin(futures::stream::iter(
+                    events
+                        .into_iter()
+                        .map(Ok::<_, LanguageModelCompletionError>),
+                )))
+                .collect::<Vec<_>>()
+                .await
         })
     }
 
@@ -1737,6 +1776,7 @@ mod tests {
                 output_tokens: 3,
                 cache_creation_input_tokens: 0,
                 cache_read_input_tokens: 2,
+                cost: None,
             }
         );
 
@@ -1919,7 +1959,6 @@ mod tests {
             true,
             Some(2048),
             Some(ReasoningEffort::Low),
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -2108,7 +2147,6 @@ mod tests {
             false,
             None,
             None,
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -2117,6 +2155,7 @@ mod tests {
             serialized,
             json!({
                 "model": "custom-model",
+                "reasoning": {"effort": "none"},
                 "input": [
                     {
                         "type": "custom_tool_call",
@@ -2211,7 +2250,6 @@ mod tests {
             true,
             None,
             Some(ReasoningEffort::Low),
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -2250,7 +2288,7 @@ mod tests {
             serialized["include"],
             json!(["reasoning.encrypted_content"])
         );
-        assert_eq!(serialized.get("reasoning"), None);
+        assert_eq!(serialized["reasoning"], json!({"effort": "none"}));
     }
 
     #[test]
@@ -2298,7 +2336,6 @@ mod tests {
             false,
             None,
             None,
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -2336,7 +2373,8 @@ mod tests {
     }
 
     #[test]
-    fn into_open_ai_response_omits_reasoning_when_thinking_is_disabled_and_none_is_unsupported() {
+    // zed-kask: a2134949e2 — explicit disable must not be gated by model metadata.
+    fn into_open_ai_response_sends_none_when_thinking_is_disabled() {
         let request = LanguageModelRequest {
             thread_id: None,
             prompt_cache_key: None,
@@ -2366,13 +2404,12 @@ mod tests {
             true,
             None,
             Some(ReasoningEffort::Medium),
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
 
         let serialized = serde_json::to_value(&response).unwrap();
-        assert_eq!(serialized.get("reasoning"), None);
+        assert_eq!(serialized["reasoning"], json!({"effort": "none"}));
     }
 
     #[test]
@@ -2405,7 +2442,6 @@ mod tests {
                 true,
                 None,
                 effort,
-                effort == Some(NoReasoning),
                 &OPEN_AI_PROVIDER_ID,
             )?;
             let chat = into_open_ai(
@@ -2477,7 +2513,6 @@ mod tests {
                 true,
                 None,
                 None,
-                true,
                 &OPEN_AI_PROVIDER_ID,
             )
             .unwrap();
@@ -2614,7 +2649,6 @@ mod tests {
                 false,
                 model_maximum,
                 None,
-                false,
                 &language_model_core::OPEN_AI_PROVIDER_ID,
             )?;
             assert_eq!(
@@ -2656,7 +2690,6 @@ mod tests {
             true,
             None,
             Some(ReasoningEffort::Medium),
-            true,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -2699,7 +2732,6 @@ mod tests {
             true,
             None,
             Some(ReasoningEffort::Medium),
-            true,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -2754,7 +2786,6 @@ mod tests {
             true,
             None,
             Some(ReasoningEffort::Medium),
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -2848,7 +2879,6 @@ mod tests {
             true,
             None,
             Some(ReasoningEffort::Medium),
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -2940,7 +2970,6 @@ mod tests {
             false,
             None,
             None,
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -3512,6 +3541,85 @@ mod tests {
             LanguageModelCompletionEvent::ToolUseJsonParseError { ref raw_input, .. }
             if raw_input.as_ref() == "{invalid json"
         ));
+    }
+
+    #[test]
+    fn responses_stream_classifies_eof_fragment_arguments_as_truncated() {
+        // zed-kask: D36 — arguments that end mid-JSON (an EOF-classified
+        // parse failure) are a transport cut, not model-fault bad JSON: the
+        // call must surface as a typed truncation error naming the tool,
+        // never as a ToolUseJsonParseError recovery event.
+        let events = vec![
+            ResponsesStreamEvent::OutputItemAdded {
+                output_index: 0,
+                sequence_number: None,
+                item: response_item_function_call("item_fn", Some("{\"query\":")),
+            },
+            ResponsesStreamEvent::FunctionCallArgumentsDone {
+                item_id: "item_fn".into(),
+                output_index: 0,
+                arguments: "{\"query\":".into(),
+                sequence_number: None,
+            },
+            ResponsesStreamEvent::Completed {
+                response: ResponseSummary::default(),
+            },
+        ];
+
+        let mapped = map_response_events_results(events);
+        assert!(matches!(
+            mapped.first(),
+            Some(Err(LanguageModelCompletionError::ToolCallTruncated {
+                tool_name,
+                json_parse_error,
+                raw_input_chars: 9,
+            })) if tool_name == "get_weather"
+                && json_parse_error.contains("EOF while parsing")
+        ));
+        assert!(!mapped.iter().any(|event| matches!(
+            event,
+            Ok(LanguageModelCompletionEvent::ToolUseJsonParseError { .. })
+        )));
+    }
+
+    #[test]
+    fn responses_stream_completed_batch_with_eof_fragment_dispatches_nothing() {
+        // zed-kask: D36 — one EOF-classified fragment in a completed
+        // response's output truncates the whole batch: the truncation error
+        // is surfaced and no sibling call — however complete its arguments —
+        // is dispatched before the cut is seen.
+        let events = vec![ResponsesStreamEvent::Completed {
+            response: ResponseSummary {
+                output: vec![
+                    response_item_function_call("item_fn_complete", Some("{\"query\":\"test\"}")),
+                    response_item_function_call("item_fn_cut", Some("{\"query\":")),
+                ],
+                ..Default::default()
+            },
+        }];
+
+        let mapped = map_response_events_results(events);
+        assert!(mapped.iter().any(|event| matches!(
+            event,
+            Err(LanguageModelCompletionError::ToolCallTruncated {
+                tool_name,
+                raw_input_chars: 9,
+                ..
+            }) if tool_name == "get_weather"
+        )));
+        assert!(!mapped.iter().any(|event| matches!(
+            event,
+            Ok(LanguageModelCompletionEvent::ToolUse(
+                LanguageModelToolUse {
+                    is_input_complete: true,
+                    ..
+                }
+            ))
+        )));
+        assert!(!mapped.iter().any(|event| matches!(
+            event,
+            Ok(LanguageModelCompletionEvent::ToolUseJsonParseError { .. })
+        )));
     }
 
     #[test]
@@ -4342,7 +4450,6 @@ mod tests {
             true,
             None,
             None,
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -4392,7 +4499,6 @@ mod tests {
             true,
             None,
             None,
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -4438,7 +4544,6 @@ mod tests {
             true,
             None,
             None,
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -4468,7 +4573,6 @@ mod tests {
             true,
             None,
             None,
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -4512,7 +4616,6 @@ mod tests {
             true,
             None,
             None,
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -4569,7 +4672,6 @@ mod tests {
             true,
             None,
             None,
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -4648,7 +4750,6 @@ mod tests {
             true,
             None,
             None,
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
@@ -4699,7 +4800,6 @@ mod tests {
             true,
             None,
             None,
-            false,
             &OPEN_AI_PROVIDER_ID,
         )
         .unwrap_err();
@@ -4763,7 +4863,6 @@ mod tests {
             true,
             None,
             None,
-            false,
             &LanguageModelProviderId::new("my-compatible-endpoint"),
         )
         .unwrap();

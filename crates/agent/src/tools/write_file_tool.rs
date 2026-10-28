@@ -2,7 +2,9 @@ use super::edit_session::{
     EditSession, EditSessionContext, EditSessionMode, EditSessionOutput, EditSessionResult,
     initial_title_from_partial_path, run_session,
 };
-use crate::{AgentTool, Thread, ToolCallEventStream, ToolInput, ToolInputPayload};
+use crate::{
+    AgentTool, Thread, ToolCallEventStream, ToolInput, ToolInputPayload, map_tool_input_error,
+};
 use action_log::ActionLog;
 use agent_client_protocol::schema::v2 as acp;
 use futures::FutureExt as _;
@@ -21,14 +23,14 @@ const DEFAULT_UI_TEXT: &str = "Writing file";
 ///
 /// To make granular edits to an existing file, prefer the `edit_file` tool instead.
 ///
-/// Before using this tool, verify the directory path is correct (only applicable when creating new files). Use the `list_directory` tool to verify the parent directory exists and is the correct location
+/// Before using this tool, verify the directory path is correct (only applicable when creating new files). Use the `list_directory` tool to verify the parent directory exists and is the correct location. If the parent directory does not exist, create it first with the `create_directory` tool (which creates parent directories recursively) before calling this tool.
 ///
-/// The only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.
+/// The only supported path outside the project is the global skills directory or a descendant, for global agent skills.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct WriteFileToolInput {
     /// The full path of the file to create or overwrite in the project.
     ///
-    /// WARNING: When specifying which file path need changing, you MUST start each path with one of the project's root directories, unless it's a global agent skill under `~/.agents/skills`.
+    /// WARNING: When specifying which file path need changing, you MUST start each path with one of the project's root directories, unless it's a global agent skill under the global skills directory.
     ///
     /// The following examples assume we have two root directories in the project:
     /// - /a/b/backend
@@ -45,7 +47,7 @@ pub struct WriteFileToolInput {
     /// </example>
     ///
     /// <example>
-    /// To create or overwrite a global agent skill file, you may provide a path under `~/.agents/skills`, such as `~/.agents/skills/my-skill/SKILL.md`.
+    /// To create or overwrite a global agent skill file, use the global skills directory path shown in the system prompt.
     /// </example>
     pub path: PathBuf,
 
@@ -182,7 +184,7 @@ impl WriteFileTool {
                         },
                         Err(error) => {
                             return EditSessionResult::Failed {
-                                error: error.to_string(),
+                                error: map_tool_input_error(error),
                                 session,
                             };
                         }
@@ -279,7 +281,7 @@ mod tests {
     use prompt_store::ProjectContext;
     use serde_json::json;
     use settings::{Settings, SettingsStore};
-    use std::{path::PathBuf, sync::Arc};
+    use std::sync::Arc;
     use util::path;
     use util::rel_path::{RelPath, rel_path};
 
@@ -345,14 +347,10 @@ mod tests {
         let (write_tool, _project, _action_log, fs, _thread) =
             setup_test_with_fs(cx, fs, &[path!("/root").as_ref()]).await;
 
-        let input_path = PathBuf::from("~")
-            .join(".agents")
-            .join("skills")
-            .join("my-skill")
-            .join("SKILL.md");
         let skill_file = agent_skills::global_skills_dir()
             .join("my-skill")
             .join("SKILL.md");
+        let input_path = skill_file.clone();
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
@@ -525,7 +523,18 @@ mod tests {
         let result = test_resolve_path(&mode, "root/dir/nonexistent_dir/new.txt", cx);
         assert_eq!(
             result.await.unwrap_err(),
-            "Can't create file: parent directory doesn't exist"
+            "Can't create file: parent directory doesn't exist in the project — create it \
+             with create_directory first (or fall back to terminal mkdir -p)"
+        );
+
+        // An out-of-sandbox parent is a refusal, not a missing directory — the
+        // parent often exists on disk (observed with ~/Documents/zk-data;
+        // card 6c88e56d).
+        let result = test_resolve_path(&mode, "/outside/data/new.txt", cx);
+        assert_eq!(
+            result.await.unwrap_err(),
+            "Can't create file: the parent directory is outside the file-tool sandbox — \
+             write via terminal (heredoc) or the owning MCP server's tools"
         );
     }
 

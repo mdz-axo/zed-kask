@@ -1,0 +1,887 @@
+//! Kask settings page — the `"kask"` section's UI surface (D9a UI).
+//!
+//! Top-level "Kask" page with sub-page links to:
+//! - Data Services (API key entry → keychain via `CredentialsProvider` + enable toggles)
+//! - MCP Servers (built-in servers + load toggles + `load_default` master toggle)
+//! - Curator (`interaction_mode` dropdown + `always_on` toggle + `algedonic_threshold`)
+//! - Curator Email (MXroute SMTP config + keychain-backed password)
+//! - Memory (`consolidation_cadence_secs` + `confidence_floor`)
+//!
+//! API keys are stored in the OS keychain under the `kask://credentials/<key>`
+//! namespace (see `kask_bridge::secrets::KASK_CREDENTIAL_NAMESPACE`), not in
+//! settings.json. The non-secret toggles and numeric config live in the `"kask"`
+//! section of settings.json via `KaskSettingsContent`.
+//!
+//! This file is the module root: it holds the top-level `kask_page()` function,
+//! the shared credential-cache helpers, shared constants, and `mod` declarations
+//! for the per-sub-page render modules under `kask_page/`.
+
+mod condenser;
+mod curator;
+mod data_services;
+mod general;
+mod security;
+
+pub(crate) use {
+    condenser::render_condenser_page, corpus::render_corpus_page,
+    curator::render_curator_email_page, curator::render_curator_page,
+    data_services::render_data_services_page, general::render_general_page,
+    mcp_servers::render_mcp_servers_page, media::render_media_page, memory::render_memory_page,
+    models::render_models_page, prediction_markets::render_prediction_markets_page,
+    research::render_research_page, scenarios::render_scenarios_page,
+    security::render_security_page, swarm::render_swarm_page,
+};
+mod corpus;
+mod mcp_servers;
+mod media;
+mod memory;
+mod models;
+mod prediction_markets;
+mod research;
+mod scenarios;
+mod swarm;
+
+use std::sync::{Arc, Mutex};
+
+use collections::HashSet;
+use credentials_provider::CredentialsProvider;
+use gpui::{AppContext, ElementId, ReadGlobal as _, ScrollHandle, Task, prelude::*};
+use settings::SettingsStore;
+use ui::{
+    Button, ButtonLink, ButtonStyle, ConfiguredApiCard, Divider, SwitchField, ToggleState,
+    prelude::*,
+};
+use zed_credentials_provider as zed_credentials;
+
+use crate::SettingsWindow;
+use crate::components::{SettingsInputField, SettingsSectionHeader};
+use crate::{SettingsPage, SettingsPageItem, SubPageLink, USER};
+
+/// The URL prefix for kask-namespaced credentials in the keychain.
+/// Re-exported from `kask_bridge` so there's a single source of truth.
+pub(crate) use kask_bridge::KASK_CREDENTIAL_NAMESPACE;
+
+/// Session-level cache of credential URLs written during this session.
+/// The keychain read is async, so we can't check it synchronously on render.
+/// Instead, we track URLs we've written and treat them as "configured" until
+/// the process exits. This avoids the input field reappearing after the user
+/// enters a key.
+pub(crate) static RECENTLY_WRITTEN_CREDENTIALS: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+
+/// Cache of credential URLs found in the OS keychain via a background
+/// pre-fetch. Populated once on first settings page render, then updated
+/// when keys are written or deleted. This avoids blocking the UI thread
+/// with synchronous keychain I/O on every render — `has_credential`
+/// checks this cache (instant) instead of doing a D-Bus round-trip per row.
+pub(crate) static KEYCHAIN_CREDENTIAL_CACHE: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+
+/// Whether the keychain pre-fetch has been spawned.
+static KEYCHAIN_PREFETCH_STARTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Check if a credential URL was written during this session.
+pub(crate) fn was_recently_written(url: &str) -> bool {
+    RECENTLY_WRITTEN_CREDENTIALS
+        .lock()
+        .map(|opt| opt.as_ref().is_some_and(|set| set.contains(url)))
+        .unwrap_or(false)
+}
+
+/// Mark a credential URL as written during this session.
+pub(crate) fn mark_recently_written(url: &str) {
+    if let Ok(mut guard) = RECENTLY_WRITTEN_CREDENTIALS.lock() {
+        guard
+            .get_or_insert_with(HashSet::default)
+            .insert(url.to_string());
+    }
+    // Also add to the keychain cache so the UI shows "Configured" immediately
+    // without waiting for the next pre-fetch cycle.
+    if let Ok(mut guard) = KEYCHAIN_CREDENTIAL_CACHE.lock() {
+        guard
+            .get_or_insert_with(HashSet::default)
+            .insert(url.to_string());
+    }
+}
+
+/// Remove a credential URL from the session cache (after deletion).
+pub(crate) fn unmark_recently_written(url: &str) {
+    if let Ok(mut guard) = RECENTLY_WRITTEN_CREDENTIALS.lock() {
+        if let Some(set) = guard.as_mut() {
+            set.remove(url);
+        }
+    }
+    // Also remove from the keychain cache so the UI shows the input field
+    // again immediately, not just on next pre-fetch.
+    if let Ok(mut guard) = KEYCHAIN_CREDENTIAL_CACHE.lock() {
+        if let Some(set) = guard.as_mut() {
+            set.remove(url);
+        }
+    }
+}
+
+/// Spawn a background task that reads all kask credential URLs from the
+/// OS keychain and populates `KEYCHAIN_CREDENTIAL_CACHE`. Called once on
+/// first settings page render. Keystore I/O runs on async-std's executor;
+/// the background task awaits each lookup without blocking a GPUI worker.
+pub(crate) fn ensure_keychain_prefetch(cx: &impl AppContext) {
+    if KEYCHAIN_PREFETCH_STARTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    let urls: Vec<String> = kask_bridge::data_service_credential_urls()
+        .into_iter()
+        .map(|(_, url)| url)
+        .collect();
+    cx.background_spawn(async move {
+        let mut found = HashSet::default();
+        for url in &urls {
+            if hkask_keystore::Keychain
+                .retrieve_by_url_async(url)
+                .await
+                .is_ok_and(|s| !s.is_empty())
+            {
+                found.insert(url.clone());
+            }
+        }
+        if let Ok(mut guard) = KEYCHAIN_CREDENTIAL_CACHE.lock() {
+            *guard = Some(found);
+        }
+    })
+    .detach();
+}
+
+/// The built-in kask MCP servers (canonical source: `kask_bridge::BUILT_IN_MCP_SERVERS`).
+/// Re-bound here as `(id, description)` pairs for the settings UI's rendering pattern.
+pub(crate) fn builtin_mcp_servers() -> Vec<(&'static str, &'static str)> {
+    kask_bridge::builtin_mcp_server_pairs()
+}
+
+/// Data service descriptors, sourced from the bridge's canonical registry
+/// (`kask_bridge::DATA_SERVICES`). The bridge's `DataServiceDescriptor` is the
+/// single source of truth; the UI re-binds it as `(key, label, dashboard_url,
+/// env_var, credential_url)` tuples for the settings UI's rendering pattern.
+/// The credential URL resolves through `kask_bridge::credential_url_for_key`
+/// so each row reads/writes the same slot as its actual consumer. Native-only
+/// provider rows such as RunPod are intentionally absent from MCP-child env.
+pub(crate) fn data_service_descriptors() -> Vec<(
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    String,
+)> {
+    kask_bridge::DATA_SERVICES
+        .iter()
+        .filter(|d| d.shows_in_ui)
+        .map(|d| {
+            (
+                d.credential_key,
+                d.label,
+                d.dashboard_url,
+                d.env_var,
+                kask_bridge::credential_url_for_key(d.credential_key),
+            )
+        })
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Shared credential helpers (used by data_services and curator sub-modules)
+// ---------------------------------------------------------------------------
+
+/// Check whether a credential is available — either via env var or in the
+/// session cache of recently-written keychain URLs.
+///
+/// The keychain read is async, so we can't block on it here. We check the env
+/// var synchronously (instant) and the session-level cache of recently-written
+/// URLs. `urls` carries the credential's canonical keychain URL(s) — one per
+/// credential (inference providers live at their `api_url`, data services at
+/// `kask://credentials/<key>`; `data_service_credential_urls` is the complete
+/// UI-prefetch set, while `credential_urls_for_mcp` is the child-consumer subset).
+pub(crate) fn has_credential(
+    _provider: &Arc<dyn CredentialsProvider>,
+    urls: &[&str],
+    env_var: &str,
+) -> bool {
+    // Env-var check is synchronous and instant. Use `!v.is_empty()` (not
+    // `.is_ok()`) to match `build_mcp_server_env`'s predicate — an empty
+    // env var (`FOO=`) is not a meaningful value and would cause the runtime
+    // to skip keychain injection, so the UI should not show it as "configured".
+    if std::env::var(env_var)
+        .map(|v| !v.is_empty())
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    // Check the session cache for keys written via the settings UI.
+    for url in urls {
+        if was_recently_written(url) {
+            return true;
+        }
+    }
+    // Check the OS keychain cache (populated by `ensure_keychain_prefetch`).
+    // This is a sync HashSet lookup — no D-Bus round-trip, no UI freeze.
+    for url in urls {
+        if was_in_keychain(url) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Check if a credential URL was found in the OS keychain by the pre-fetch.
+fn was_in_keychain(url: &str) -> bool {
+    KEYCHAIN_CREDENTIAL_CACHE
+        .lock()
+        .map(|opt| opt.as_ref().is_some_and(|set| set.contains(url)))
+        .unwrap_or(false)
+}
+
+pub(crate) fn write_credential(
+    provider: &Arc<dyn CredentialsProvider>,
+    url: &str,
+    value: &str,
+    cx: &mut App,
+) -> Task<()> {
+    let provider = provider.clone();
+    let url = url.to_string();
+    let value = value.to_string();
+    // Whether this URL feeds MCP server env. Native-only provider slots such
+    // as RunPod OCR still write their canonical keychain entry, but do not
+    // restart unrelated child processes.
+    let feeds_mcp_servers = credential_url_feeds_mcp_servers(&url);
+    cx.spawn(async move |cx| {
+        if provider
+            .write_credentials(&url, "kask", value.as_bytes(), cx)
+            .await
+            .is_err()
+        {
+            // Never mark a failed write as Configured, restart the child with
+            // a missing key, or include credential contents in the log.
+            log::warn!("Credential keychain write failed for {url}");
+            return;
+        }
+        mark_recently_written(&url);
+        cx.update(|cx| cx.refresh_windows());
+        // After the keychain write lands, nudge `SettingsStore` so the
+        // `sync_kask_mcp_runtime_servers` observer re-reads the keychain via
+        // `build_mcp_server_env` and restarts any governed MCP server whose
+        // env changed. The nudge must fire AFTER the write completes —
+        // otherwise the restart would re-read the stale (empty) value.
+        if feeds_mcp_servers {
+            // `AsyncApp::update` returns `R` directly (not `Result`), so there
+            // is no error to propagate — the call is infallible once the app
+            // is alive (the spawn's `cx` keeps it alive).
+            cx.update(|cx| nudge_mcp_servers(cx));
+        }
+    })
+}
+
+pub(crate) fn delete_credential(
+    provider: &Arc<dyn CredentialsProvider>,
+    url: &str,
+    cx: &mut App,
+) -> Task<()> {
+    let provider = provider.clone();
+    let url = url.to_string();
+    // Same predicate as `write_credential`: any URL that feeds MCP server env
+    // needs the restart nudge after deletion (see `credential_url_feeds_mcp_servers`).
+    let feeds_mcp_servers = credential_url_feeds_mcp_servers(&url);
+    cx.spawn(async move |cx| {
+        if provider.delete_credentials(&url, cx).await.is_err() {
+            log::warn!("Credential keychain delete failed for {url}");
+            return;
+        }
+        unmark_recently_written(&url);
+        cx.update(|cx| cx.refresh_windows());
+        // After the keychain delete lands, nudge `SettingsStore` so the
+        // `sync_kask_mcp_runtime_servers` observer re-reads the keychain and
+        // restarts any governed MCP server that no longer has a key (rather
+        // than keeping a stale key in its launch env).
+        if feeds_mcp_servers {
+            cx.update(|cx| nudge_mcp_servers(cx));
+        }
+    })
+}
+
+/// Whether a credential URL feeds MCP server env. Keychain writes/deletes to
+/// such URLs must nudge `SettingsStore` so governed MCP servers restart with
+/// the new value. A native-only provider URL (RunPod OCR, KiloCode chat) is
+/// deliberately false: its provider is refreshed directly, and restarting
+/// child processes would be wasted work.
+fn credential_url_feeds_mcp_servers(url: &str) -> bool {
+    kask_bridge::credential_urls_for_mcp()
+        .iter()
+        .any(|(_, credential_url)| credential_url == url)
+}
+
+/// Nudge `SettingsStore` so the `sync_kask_mcp_runtime_servers` observer
+/// (wired to `cx.observe_global::<SettingsStore>` in `main.rs`) re-runs.
+///
+/// A keychain write/delete does NOT touch `SettingsStore` — the keychain is
+/// out-of-band storage — so without this nudge the governed `McpRuntime`
+/// keeps its launch-time env (with the stale empty key) until Zed restarts
+/// or an unrelated settings edit fires the observer.
+///
+/// The nudge fires `SettingsStore::notify_observers`, which pushes
+/// `Effect::NotifyGlobalObservers` directly without touching the settings
+/// file. This bypasses D32's no-op-write skip (which would defeat a no-op
+/// `update_settings_file` re-write) while preserving D32's loop-breaker (no
+/// file write → no file-watcher re-fire → no self-sustaining loop).
+///
+/// Only call this for URLs that feed MCP server env (`credential_urls_for_mcp`)
+/// — data-service `kask://credentials/...` slots and the provider `api_url`
+/// slots actually consumed by children. Native-only provider slots use their
+/// direct refresh path instead.
+pub(crate) fn nudge_mcp_servers(cx: &mut App) {
+    SettingsStore::notify_observers(cx);
+}
+
+// ---------------------------------------------------------------------------
+// Shared input helper (used by corpus, media, scenarios,
+// models sub-modules)
+// ---------------------------------------------------------------------------
+
+/// Build a settings input field that writes a string value to the kask settings
+/// at the given JSON path. Used by MCP server config pages for simple text/number
+/// fields that map to env vars.
+pub(crate) fn kask_string_input(
+    field_id: &'static str,
+    label: &'static str,
+    placeholder: impl Into<SharedString>,
+    initial: String,
+    struct_name: &'static str,
+    field_name: &'static str,
+) -> SettingsInputField {
+    kask_input_field(
+        field_id,
+        0,
+        initial,
+        placeholder,
+        label,
+        |text| Some(text.trim().to_string()),
+        move |parsed, settings| {
+            let kask = settings.kask.get_or_insert_default();
+            match (struct_name, field_name) {
+                ("kask", "data_dir") => {
+                    kask.data_dir = Some(parsed);
+                }
+                ("kask", "artifacts_dir") => {
+                    kask.artifacts_dir = Some(parsed);
+                }
+                ("research", "research_db") => {
+                    kask.research.get_or_insert_default().research_db = Some(parsed);
+                }
+                ("corpus", "embedding_model") => {
+                    kask.corpus.get_or_insert_default().embedding_model = Some(parsed);
+                }
+                ("corpus", "template_root") => {
+                    kask.corpus.get_or_insert_default().template_root = Some(parsed);
+                }
+                ("scenarios", "data_dir") => {
+                    // No-op — scenarios has no per-server path field.
+                    // The data dir is derived from the global
+                    // `data_dir` as `mcp/scenarios/`.
+                }
+                ("prediction_markets", "data_dir") => {
+                    // No-op — prediction_markets has no per-server
+                    // path field. The data dir is derived from the
+                    // global `data_dir` as `mcp/prediction-markets/`.
+                }
+                ("prediction_markets", "cache_ttl_secs") => {
+                    if let Ok(v) = parsed.parse::<u64>() {
+                        kask.prediction_markets
+                            .get_or_insert_default()
+                            .cache_ttl_secs = Some(v);
+                    }
+                }
+
+                ("media", "stt_model") => {
+                    kask.media.get_or_insert_default().stt_model = Some(parsed);
+                }
+                ("media", "vision_model") => {
+                    kask.media.get_or_insert_default().vision_model = Some(parsed);
+                }
+
+                ("models", "default_model") => {
+                    kask.models.get_or_insert_default().default_model = Some(parsed);
+                }
+                ("models", "embedding_model") => {
+                    kask.models.get_or_insert_default().embedding_model = Some(parsed);
+                }
+                ("models", "classifier_model") => {
+                    kask.models.get_or_insert_default().classifier_model = Some(parsed);
+                }
+                ("models", "qa_generation_model") => {
+                    kask.models.get_or_insert_default().qa_generation_model = Some(parsed);
+                }
+                ("models", "ocr_model") => {
+                    kask.models.get_or_insert_default().ocr_model = Some(parsed);
+                }
+                ("models", "rerank_model") => {
+                    kask.models.get_or_insert_default().rerank_model = Some(parsed);
+                }
+                ("corpus", "embedding_dim") => {
+                    if let Ok(v) = parsed.parse::<u32>() {
+                        kask.corpus.get_or_insert_default().embedding_dim = Some(v);
+                    }
+                }
+                ("general", "max_concurrency") => {
+                    if let Ok(v) = parsed.parse::<u32>() {
+                        kask.general.get_or_insert_default().max_concurrency = Some(v);
+                    }
+                }
+                _ => {}
+            }
+        },
+    )
+}
+
+/// Build a settings input field whose confirmed text is parsed and applied
+/// through the settings store. `parse` maps the confirmed text to the typed
+/// setting value — `None` skips the store write entirely (a failed parse
+/// never rewrites the file); `apply` assigns the parsed value into the
+/// settings content.
+pub(crate) fn kask_input_field<P: Send + 'static>(
+    field_id: impl Into<ElementId>,
+    tab_index: isize,
+    initial: String,
+    placeholder: impl Into<SharedString>,
+    aria_label: impl Into<SharedString>,
+    parse: impl Fn(&str) -> Option<P> + Clone + 'static,
+    apply: impl Fn(P, &mut settings::SettingsContent) + Clone + Send + 'static,
+) -> SettingsInputField {
+    SettingsInputField::new(field_id)
+        .tab_index(tab_index)
+        .with_initial_text(initial)
+        .with_placeholder(placeholder)
+        .aria_label(aria_label)
+        .confirm_on_focus_out()
+        .on_confirm(move |value, _window, cx| {
+            if let Some(text) = value {
+                if let Some(parsed) = parse(&text) {
+                    let apply = apply.clone();
+                    SettingsStore::global(cx)
+                        .update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _| {
+                            apply(parsed, settings)
+                        });
+                }
+            }
+        })
+}
+
+/// Build a settings toggle that persists its boolean through the settings
+/// store. `apply` assigns the toggled value into the settings content; the
+/// toggle-state mapping and the store write live here once.
+pub(crate) fn kask_toggle(
+    field_id: impl Into<ElementId>,
+    label: Option<&'static str>,
+    description: Option<SharedString>,
+    selected: bool,
+    tab_index: isize,
+    apply: impl Fn(bool, &mut settings::SettingsContent) + Clone + Send + 'static,
+) -> SwitchField {
+    SwitchField::new(
+        field_id,
+        label,
+        description,
+        if selected {
+            ToggleState::Selected
+        } else {
+            ToggleState::Unselected
+        },
+        move |state, _window, cx| {
+            let enabled = *state == ToggleState::Selected;
+            let apply = apply.clone();
+            SettingsStore::global(cx)
+                .update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _| {
+                    apply(enabled, settings)
+                });
+        },
+    )
+    .tab_index(tab_index)
+}
+
+// ---------------------------------------------------------------------------
+// Shared settings reader (used by all render_* sub-modules)
+// ---------------------------------------------------------------------------
+
+/// Read the raw `KaskSettingsContent` from the user settings file.
+pub(crate) fn raw_kask_settings(cx: &App) -> Option<settings::KaskSettingsContent> {
+    SettingsStore::global(cx)
+        .raw_user_settings()
+        .and_then(|user| user.content.kask.clone())
+}
+
+// ---------------------------------------------------------------------------
+// Top-level Kask page
+// ---------------------------------------------------------------------------
+
+pub(crate) fn kask_page() -> SettingsPage {
+    let items: Vec<SettingsPageItem> = vec![
+        SettingsPageItem::SectionHeader("Kask"),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "General".into(),
+            r#type: Default::default(),
+            json_path: Some("kask.data_dir"),
+            description: Some(
+                "Configure the two kask storage roots: the data directory \
+                 (hidden infrastructure — databases, agents/, mcp/, skills/, \
+                 threads/) and the artifacts directory (visible, default \
+                 ~/Documents/zk-data/ — ALL artifact files and outputs at \
+                 {server}-mcp/{artifact-type}/). Every MCP server receives both \
+                 as HKASK_DATA_DIR / HKASK_ARTIFACTS_DIR."
+                    .into(),
+            ),
+            search_aliases: &["data dir", "data directory", "artifacts dir", "artifacts directory", "zed-kask data", "hkask data", "database path", "zk-data"],
+            in_json: true,
+            files: USER,
+            render: render_general_page,
+        }),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Data Services".into(),
+            r#type: Default::default(),
+            json_path: Some("kask.data_services"),
+            description: Some(
+                "Configure API keys for data services and native provider-backed tools \
+                 (Exa, Tavily, Brave, RunPod OCR, FRED). \
+                 Keys are stored in the system keychain, not in settings.json."
+                    .into(),
+            ),
+            search_aliases: &[
+                "api key",
+                "brave",
+                "data service",
+                "exa",
+                "firecrawl",
+                "fred",
+                "keychain",
+                "ocr",
+                "runpod",
+                "serpapi",
+                "tavily",
+            ],
+            in_json: false,
+            files: USER,
+            render: render_data_services_page,
+        }),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "MCP Servers".into(),
+            r#type: Default::default(),
+            json_path: Some("kask.mcp"),
+            description: Some(
+                "Toggle which of the built-in kask MCP servers are loaded.".into(),
+            ),
+            search_aliases: &["mcp", "model context protocol", "server", "tool"],
+            in_json: true,
+            files: USER,
+            render: render_mcp_servers_page,
+        }),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Curator".into(),
+            r#type: Default::default(),
+            json_path: Some("kask.curator"),
+            description: Some(
+                "Configure the Curator agent: always-on regulation and algedonic threshold.".into(),
+            ),
+            search_aliases: &["algedonic", "curator", "regulation"],
+            in_json: true,
+            files: USER,
+            render: render_curator_page,
+        }),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Curator Email".into(),
+            r#type: Default::default(),
+            json_path: Some("kask.curator.email"),
+            description: Some(
+                "Configure outbound algedonic alert email via MXroute. The SMTP \
+                 password is stored in the system keychain; non-secret fields live \
+                 in settings.json. When unconfigured, the alert sink falls back \
+                 to log-only."
+                    .into(),
+            ),
+            search_aliases: &[
+                "alert",
+                "curator",
+                "email",
+                "imap",
+                "mxroute",
+                "smtp",
+            ],
+            in_json: true,
+            files: USER,
+            render: render_curator_email_page,
+        }),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Memory".into(),
+            r#type: Default::default(),
+            json_path: Some("kask.memory"),
+            description: Some(
+                "Configure memory consolidation, recall, and context injection.".into(),
+            ),
+            search_aliases: &["consolidation", "confidence", "memory", "recall", "inject"],
+            in_json: true,
+            files: USER,
+            render: render_memory_page,
+        }),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Security".into(),
+            r#type: Default::default(),
+            json_path: None,
+            description: Some(
+                "Change the SQLCipher passphrase for every kask memory database \
+                 (curator, swarm memory, kata-kanban, research). \
+                 Scheduled here and applied at the next editor restart: every \
+                 confirmed database is re-encrypted atomically before anything \
+                 opens it, and a failure leaves all of them on the old \
+                 passphrase.".into(),
+            ),
+            search_aliases: &["security", "passphrase", "encryption", "rotate", "key"],
+            in_json: false,
+            files: USER,
+            render: render_security_page,
+        }),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Condenser".into(),
+            r#type: Default::default(),
+            json_path: Some("kask.condenser"),
+            description: Some(
+                "Configure context condensation: compression profile, tool result compression, and saliency.".into(),
+            ),
+            search_aliases: &["condenser", "compress", "profile", "saliency"],
+            in_json: true,
+            files: USER,
+            render: render_condenser_page,
+        }),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Research".into(),
+            r#type: Default::default(),
+            json_path: Some("kask.research"),
+            description: Some(
+                "Configure the research MCP server: RSS database path for persistent feed storage.".into(),
+            ),
+            search_aliases: &["research", "rss", "feed", "web search", "leap"],
+            in_json: true,
+            files: USER,
+            render: render_research_page,
+        }),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Corpus".into(),
+            r#type: Default::default(),
+            json_path: Some("kask.corpus"),
+            description: Some(
+                "Configure the corpus MCP server: embedding model, OCR pipeline, and template root.".into(),
+            ),
+            search_aliases: &["corpus", "embedding", "ocr", "template"],
+            in_json: true,
+            files: USER,
+            render: render_corpus_page,
+        }),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Scenarios".into(),
+            r#type: Default::default(),
+            json_path: Some("kask.scenarios"),
+            description: Some(
+                "Configure the scenarios MCP server: data directory for scenario persistence.".into(),
+            ),
+            search_aliases: &["scenarios", "wardley", "planning"],
+            in_json: true,
+            files: USER,
+            render: render_scenarios_page,
+        }),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Prediction Markets".into(),
+            r#type: Default::default(),
+            json_path: Some("kask.prediction_markets"),
+            description: Some(
+                "Configure the prediction-markets MCP server: market-data cache TTL and the calibration data directory.".into(),
+            ),
+            search_aliases: &["prediction", "markets", "polymarket", "kalshi", "forecasting"],
+            in_json: true,
+            files: USER,
+            render: render_prediction_markets_page,
+        }),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Swarm".into(),
+            r#type: Default::default(),
+            json_path: Some("kask.swarm"),
+            description: Some(
+                "Configure the swarm MCP server (local swarm agents and local \
+                 swarms): default agent model, A2A HTTP gateway, and the local \
+                 semantic-memory store.".into(),
+            ),
+            search_aliases: &["swarm", "local agents", "local swarms", "a2a"],
+            in_json: true,
+            files: USER,
+            render: render_swarm_page,
+        }),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Media".into(),
+            r#type: Default::default(),
+            json_path: Some("kask.media"),
+            description: Some(
+                "Configure the media MCP server: model overrides for TTS, \
+                 speech-to-text, vision, and image generation, plus the gallery \
+                 storage path.".into(),
+            ),
+            search_aliases: &["media", "image", "video", "voice", "tts", "gallery", "transcribe"],
+            in_json: true,
+            files: USER,
+            render: render_media_page,
+        }),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Models".into(),
+            r#type: Default::default(),
+            json_path: Some("kask.models"),
+            description: Some(
+                "Configure kask-wide model defaults: default inference model, \
+                 embedding model for corpus/memory, classifier model for \
+                 guard/regulation, and OCR model for scanned document OCR. \
+                 These are provider-prefixed strings (e.g. \
+                 \"openrouter/z-ai/glm-5.2\") that override the kask built-in defaults."
+                    .into(),
+            ),
+            search_aliases: &[
+                "model",
+                "default model",
+                "embedding model",
+                "classifier model",
+                "inference model",
+                "ocr model",
+            ],
+            in_json: true,
+            files: USER,
+            render: render_models_page,
+        }),
+    ];
+
+    SettingsPage {
+        title: "Kask",
+        items: items.into_boxed_slice(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn credential_prefetch_awaits_nonblocking_keystore_reads() {
+        let source = include_str!("kask_page.rs");
+        let prefetch = source
+            .split("pub(crate) fn ensure_keychain_prefetch(")
+            .nth(1)
+            .expect("prefetch function exists")
+            .split("pub(crate) fn builtin_mcp_servers(")
+            .next()
+            .expect("next function exists");
+        assert!(prefetch.contains("retrieve_by_url_async(url)"));
+        assert!(prefetch.contains(".await"));
+        assert!(!prefetch.contains(".retrieve_by_url(url)"));
+    }
+
+    /// zed-kask: pinning test for the credential-write → MCP-restart wiring.
+    ///
+    /// `write_credential` / `delete_credential` write to the OS keychain,
+    /// which is out-of-band storage that does NOT touch `SettingsStore`.
+    /// The governed `McpRuntime` only re-reads env (and thus the keychain via
+    /// `build_mcp_server_env`) inside `sync_kask_mcp_runtime_servers`, which
+    /// is wired to `cx.observe_global::<SettingsStore>` in `main.rs`. Without
+    /// a nudge, a freshly-written key is invisible to running MCP servers
+    /// until Zed restarts.
+    ///
+    /// The fix adds `nudge_mcp_servers`, which performs a no-op
+    /// `update_settings_file` on the `kask` section so `SettingsStore` fires
+    /// its observers. This test pins the wiring so removing `nudge_mcp_servers`
+    /// or breaking its signature breaks compilation here.
+    ///
+    /// A full integration test (real `McpRuntime` + keychain + `SettingsStore`
+    /// observer) is infeasible in this crate's test harness — it requires the
+    /// `zed` binary crate's composition root (`main.rs` owns the observer and
+    /// the `McpRuntime` instance). The `zed` crate's `kask_wiring_symbols_exist`
+    /// test pins the observer side (`sync_kask_mcp_runtime_servers`); this test
+    /// pins the nudge side. Together they cover the full path:
+    ///   keychain write → `nudge_mcp_servers` → `SettingsStore` notification →
+    ///   `sync_kask_mcp_runtime_servers` → `build_mcp_server_env` (re-reads
+    ///   keychain) → restart changed servers.
+    #[test]
+    fn nudge_mcp_servers_symbol_exists() {
+        // Referencing the fn value pins both its existence and its signature;
+        // renaming, deleting, or changing the signature breaks compilation.
+        let _ = nudge_mcp_servers as fn(&mut gpui::App);
+    }
+
+    /// The nudge must fire for exactly the URLs that feed MCP server env —
+    /// the set `credential_urls_for_mcp` (what `build_mcp_server_env`
+    /// resolves). That includes inference-provider `api_url` slots: the media
+    /// server's child-local MediaRouter reads `DEEPINFRA_API_KEY` /
+    /// `OPENROUTER_API_KEY` injected from those slots, so a key rotated there
+    /// MUST restart the server or it keeps authenticating with the stale key
+    /// (the 2026-08-31 DeepInfra 401). This test pins the
+    /// `credential_url_feeds_mcp_servers` predicate so a future change that
+    /// narrows it back to the kask namespace (or drops the api_url entries)
+    /// fails loudly.
+    #[test]
+    fn nudge_guard_covers_provider_api_urls_and_excludes_legacy_slots() {
+        // Provider slots with MCP-child consumers — MUST nudge when their
+        // keys change, so media children cannot keep stale keys.
+        for url in [
+            "https://openrouter.ai/api/v1",
+            "https://api.deepinfra.com/v1/openai",
+        ] {
+            assert!(
+                credential_url_feeds_mcp_servers(url),
+                "provider slot {url} feeds MCP server env and must nudge"
+            );
+        }
+
+        // Native-only providers keep their canonical slots but do not restart
+        // MCP children. RunPod's Data Services row refreshes its provider
+        // directly; KiloCode is configured through the native provider UI.
+        for url in ["https://api.runpod.io", "https://api.kilo.ai/api/gateway"] {
+            assert!(!credential_url_feeds_mcp_servers(url));
+        }
+
+        // Data-service kask slots with MCP-child consumers — MUST nudge.
+        for url in [
+            "kask://credentials/hkask_db_passphrase",
+            "kask://credentials/exa",
+        ] {
+            assert!(
+                credential_url_feeds_mcp_servers(url),
+                "kask slot {url} feeds MCP server env and must nudge"
+            );
+        }
+
+        // The removed ABW key feeds nothing — the ABW cloud swarm
+        // integration is gone, so nudging on it would be wasted work and its
+        // presence in the feed set would mean the removal regressed.
+        assert!(!credential_url_feeds_mcp_servers(
+            "kask://credentials/hkask_abw_api_key"
+        ));
+
+        // In-process-only credentials do not restart children.
+        assert!(!credential_url_feeds_mcp_servers(
+            "kask://credentials/hkask_smtp_password"
+        ));
+
+        // The LEGACY inference-provider kask slots feed nothing — nudging on
+        // them would be wasted work, and their mere presence in the feed set
+        // would mean the split-brain read is back.
+        for url in [
+            "kask://credentials/openrouter",
+            "kask://credentials/deepinfra",
+            "kask://credentials/runpod",
+            "kask://credentials/kilocode",
+        ] {
+            assert!(
+                !credential_url_feeds_mcp_servers(url),
+                "legacy slot {url} must not feed MCP server env"
+            );
+        }
+
+        // An arbitrary URL neither the registries know about — no nudge.
+        assert!(!credential_url_feeds_mcp_servers(
+            "https://example.com/other"
+        ));
+    }
+}

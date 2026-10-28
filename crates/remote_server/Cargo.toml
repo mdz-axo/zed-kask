@@ -109,7 +109,7 @@ workspace = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
 
 [build-dependencies]
-toml_edit.workspace = true
+toml.workspace = true
 
 [package.metadata.cargo-shear]
 ignored = ["rust-embed"]

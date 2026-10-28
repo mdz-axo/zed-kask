@@ -279,7 +279,7 @@ impl LanguageModelClient for XAiLanguageModelProvider {
             Err(error) => return async move { Err(error) }.boxed(),
         };
         let request_limiter = self.request_limiters.for_model(&model.id);
-        let reasoning_effort = reasoning_effort_for_request(&request, &config);
+        let thinking_effort = reasoning_effort_for_request(&request, &config);
         let request = match crate::provider::open_ai::into_open_ai(
             request,
             config.id(),
@@ -287,7 +287,7 @@ impl LanguageModelClient for XAiLanguageModelProvider {
             config.supports_prompt_cache_key(),
             config.max_output_tokens(),
             crate::provider::open_ai::ChatCompletionMaxTokensParameter::MaxCompletionTokens,
-            reasoning_effort,
+            thinking_effort,
             false,
         ) {
             Ok(request) => request,
@@ -363,7 +363,7 @@ fn reasoning_effort_for_request(
     }
 }
 
-fn supported_thinking_effort_levels(model: &x_ai::Model) -> Vec<LanguageModelEffortLevel> {
+fn supported_reasoning_effort_levels(model: &x_ai::Model) -> Vec<LanguageModelEffortLevel> {
     let default_effort = default_thinking_reasoning_effort(model);
     x_ai_reasoning_efforts(model)
         .iter()
@@ -396,7 +396,7 @@ fn language_model(model: &x_ai::Model) -> LanguageModel {
         supports_streaming_tools: true,
         tool_choice_support: LanguageModelToolChoiceSupport::ALL,
         supports_thinking: model.supports_reasoning_effort(),
-        supported_effort_levels: supported_thinking_effort_levels(model).into(),
+        supported_effort_levels: supported_reasoning_effort_levels(model).into(),
         max_output_tokens: model.max_output_tokens(),
         supports_split_token_display: true,
         ..LanguageModel::new(
@@ -415,8 +415,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn grok_43_supports_selectable_thinking_effort_levels() {
-        let effort_levels = supported_thinking_effort_levels(&x_ai::Model::Grok43);
+    fn grok_43_supports_selectable_reasoning_effort_levels() {
+        let effort_levels = supported_reasoning_effort_levels(&x_ai::Model::Grok43);
         let values = effort_levels
             .iter()
             .map(|level| level.value.as_ref())

@@ -324,7 +324,7 @@ impl SuperGrokModel {
 }
 
 fn advertised_reasoning_efforts(model: &SuperGrokModel) -> &'static [ReasoningEffort] {
-    // xAI rejects `reasoning_effort: "none"` on grok-4.5 and newer. Compact and
+    // xAI rejects `thinking_effort: "none"` on grok-4.5 and newer. Compact and
     // title requests disable thinking, so we omit the field instead of sending none.
     match model.x_ai_model() {
         Some(x_ai::Model::Grok45) => &[
@@ -493,7 +493,7 @@ pub fn stream_completion(
     request: LanguageModelRequest,
     cx: &AsyncApp,
 ) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>> {
-    let reasoning_effort = reasoning_effort_for_request(&request, model);
+    let thinking_effort = reasoning_effort_for_request(&request, model);
     let request = match open_ai::completion::into_open_ai(
         request,
         model.id(),
@@ -501,7 +501,7 @@ pub fn stream_completion(
         false,
         model.max_output_tokens(),
         open_ai::completion::ChatCompletionMaxTokensParameter::MaxCompletionTokens,
-        reasoning_effort,
+        thinking_effort,
         false,
     ) {
         Ok(request) => request,

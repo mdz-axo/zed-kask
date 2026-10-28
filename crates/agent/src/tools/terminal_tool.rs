@@ -21,6 +21,7 @@ use crate::sandboxing::{
     sandboxing_enabled_for_project,
 };
 use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
+use hkask_types::maybe_string::deserialize_optional_u64_from_maybe_string;
 
 const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 
@@ -32,7 +33,7 @@ const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 ///
 /// Always set the working directory with the `cd` parameter, never with `cd` inside `command`; otherwise it will error.
 ///
-/// Do not generate terminal commands that use shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`. Resolve those values yourself before calling this tool, or ask the user for the literal value to use.
+/// Do not use shell substitutions or interpolations (`$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`) in unquoted positions where the shell would expand them; resolve those values yourself before calling this tool, or ask the user for the literal value to use. Inside single-quoted strings these characters are safe and should be left as-is — for example, a sed regex like `s/\1\${PATH:-\3}/g` legitimately contains `${...}` and `\1` capture-group references that must not be rewritten or expanded.
 ///
 /// Do not pipe output to `head`, `tail`, or similar output-filtering commands just to reduce what you receive. Instead, use `head_lines` and/or `tail_lines`; this keeps the terminal output visible to the user in real time while limiting only the final output sent back to you. When both are specified, the first `head_lines` lines are returned, then a blank line, then the last `tail_lines` lines. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
 ///
@@ -50,13 +51,20 @@ const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 /// - For other commands that may open a pager or editor, set `PAGER=cat` and/or `EDITOR=true` similarly.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalToolInput {
-    /// The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user for the literal value to use.
+    /// The one-liner command to execute. Do not include shell substitutions or interpolations (`$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`) in unquoted positions where the shell would expand them; resolve those values first or ask the user for the literal value to use. Inside single-quoted strings (e.g. a sed regex like `s/\1\${PATH:-\3}/g`) these characters are safe and must not be rewritten.
     ///
     /// REMINDER: read-only git commands (`git log`, `git diff`, `git show`, `git blame`) MUST include `--no-pager` (e.g. `git --no-pager log`). Prefer `git --no-optional-locks status` over `git status` to avoid optional metadata writes. Git commands that may open an editor (`git rebase`, `git commit`, `git merge`, `git tag`) MUST be prefixed with `GIT_EDITOR=true ` (e.g. `GIT_EDITOR=true git rebase origin/main`). Otherwise the terminal will hang.
     pub command: String,
     /// Working directory: a project root directory or any subdirectory of one, given by name or absolute path. E.g. `my-project/src`, `/home/user/my-project`, or on Windows `my-project\src` or `C:\Users\me\my-project`.
+    ///
+    /// Omit this field (or pass an empty string) to default to the single project root; this is only valid in single-root projects.
+    #[serde(default)]
     pub cd: String,
     /// Optional maximum runtime (in milliseconds). If exceeded, the running terminal task is killed.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_u64_from_maybe_string"
+    )]
     pub timeout_ms: Option<u64>,
     /// Return only the first N lines of terminal output to the model after the command finishes. Do not pipe output to `head`; use this parameter instead so the user can still see live output. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
     #[serde(default)]
@@ -74,7 +82,7 @@ pub struct TerminalToolInput {
 ///
 /// Always set the working directory with the `cd` parameter, never with `cd` inside `command`; otherwise it will error.
 ///
-/// Do not generate terminal commands that use shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`. Resolve those values first or ask the user for the literal value to use.
+/// Do not use shell substitutions or interpolations (`$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`) in unquoted positions where the shell would expand them; resolve those values yourself before calling this tool, or ask the user for the literal value to use. Inside single-quoted strings these characters are safe and should be left as-is — for example, a sed regex like `s/\1\${PATH:-\3}/g` legitimately contains `${...}` and `\1` capture-group references that must not be rewritten or expanded.
 ///
 /// Do not pipe output to `head`, `tail`, or similar output-filtering commands just to reduce what you receive. Instead, use `head_lines` and/or `tail_lines`; this keeps the terminal output visible to the user in real time while limiting only the final output sent back to you. When both are specified, the first `head_lines` lines are returned, then a blank line, then the last `tail_lines` lines. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
 ///
@@ -92,13 +100,20 @@ pub struct TerminalToolInput {
 /// - For other commands that may open a pager or editor, set `PAGER=cat` and/or `EDITOR=true` similarly.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SandboxedTerminalToolInput {
-    /// The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user for the literal value to use.
+    /// The one-liner command to execute. Do not include shell substitutions or interpolations (`$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`) in unquoted positions where the shell would expand them; resolve those values first or ask the user for the literal value to use. Inside single-quoted strings (e.g. a sed regex like `s/\1\${PATH:-\3}/g`) these characters are safe and must not be rewritten.
     ///
     /// REMINDER: read-only git commands (`git log`, `git diff`, `git show`, `git blame`) MUST include `--no-pager` (e.g. `git --no-pager log`). Prefer `git --no-optional-locks status` over `git status` to avoid optional metadata writes. Git commands that may open an editor (`git rebase`, `git commit`, `git merge`, `git tag`) MUST be prefixed with `GIT_EDITOR=true ` (e.g. `GIT_EDITOR=true git rebase origin/main`). Otherwise the terminal will hang.
     pub command: String,
     /// Working directory: a project root directory or any subdirectory of one, given by name or absolute path. E.g. `my-project/src`, `/home/user/my-project`, or on Windows `my-project\src` or `C:\Users\me\my-project`.
+    ///
+    /// Omit this field (or pass an empty string) to default to the single project root; this is only valid in single-root projects.
+    #[serde(default)]
     pub cd: String,
     /// Optional maximum runtime (in milliseconds). If exceeded, the running terminal task is killed.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_u64_from_maybe_string"
+    )]
     pub timeout_ms: Option<u64>,
     /// Return only the first N lines of terminal output to the model after the command finishes. Do not pipe output to `head`; use this parameter instead so the user can still see live output. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
     #[serde(default)]
@@ -1034,7 +1049,26 @@ async fn run_terminal_tool(
 
     let output = terminal.current_output(cx).map_err(|e| e.to_string())?;
 
-    let result = process_content(output, &input.command, timed_out, user_stopped, selection);
+    // When the terminal output was truncated by the COMMAND_OUTPUT_LIMIT, write
+    // the full output to a spillover file so the model can re-read it with the
+    // `read_file` tool. This follows Kilocode's ToolOutputStore pattern: the
+    // in-message content is a bounded preview, and the full content is
+    // recoverable by path. Without this, large command outputs (build logs,
+    // test runs) are silently lost.
+    let spillover_path = if output.truncated && !output.output.is_empty() {
+        write_output_spillover(&output.output, &project, cx).ok()
+    } else {
+        None
+    };
+
+    let result = process_content(
+        output,
+        &input.command,
+        timed_out,
+        user_stopped,
+        selection,
+        spillover_path.as_deref(),
+    );
     let notes = sandbox_note.into_iter().collect::<Vec<_>>();
     Ok(if notes.is_empty() {
         result
@@ -1199,6 +1233,34 @@ impl TerminalOutputSelection {
     }
 }
 
+/// Write the full terminal output to a spillover file so the model can re-read
+/// it with the `read_file` tool after the in-message preview was truncated.
+///
+/// The file is created in the system temp dir with a `zed-agent-output-` prefix
+/// and a unique suffix. The path is returned as a string for inclusion in the
+/// tool result message. The file is not cleaned up automatically — it lives
+/// until the OS cleans the temp dir, which is acceptable for a developer tool.
+/// A future iteration could tie cleanup to thread lifetime.
+fn write_output_spillover(
+    output: &str,
+    _project: &Entity<Project>,
+    _cx: &mut AsyncApp,
+) -> Result<String, String> {
+    let mut file = tempfile::Builder::new()
+        .prefix("zed-agent-output-")
+        .suffix(".txt")
+        .tempfile()
+        .map_err(|e| format!("failed to create spillover file: {e}"))?;
+    use std::io::Write;
+    file.write_all(output.as_bytes())
+        .map_err(|e| format!("failed to write spillover file: {e}"))?;
+    // Keep the file on disk (don't drop the tempfile handle which would delete it).
+    let (_file, path) = file
+        .keep()
+        .map_err(|e| format!("failed to persist spillover file: {e}"))?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
 fn select_terminal_output_lines(output: &str, selection: TerminalOutputSelection) -> String {
     match (selection.head_lines, selection.tail_lines) {
         (None, None) => output.to_string(),
@@ -1220,7 +1282,14 @@ fn select_terminal_output_lines(output: &str, selection: TerminalOutputSelection
                 .copied()
                 .collect::<Vec<_>>()
                 .join("\n");
-            let tail_start = lines.len().saturating_sub(tail_lines);
+            // Tail starts after the head to avoid duplicating overlapping
+            // lines when head + tail >= total lines. Clamp tail_start to
+            // at least head_lines so the tail begins where the head ends.
+            let tail_start = lines
+                .len()
+                .saturating_sub(tail_lines)
+                .max(head_lines)
+                .min(lines.len());
             let tail = lines[tail_start..].join("\n");
             format!("{head}\n\n{tail}")
         }
@@ -1251,6 +1320,7 @@ fn process_content(
     timed_out: bool,
     user_stopped: bool,
     selection: TerminalOutputSelection,
+    spillover_path: Option<&str>,
 ) -> String {
     let content = output.output.trim();
     let content = select_terminal_output_lines(content, selection);
@@ -1267,10 +1337,19 @@ fn process_content(
 
     let content = format!("```\n{content}\n```");
     let content = if output.truncated {
-        format!(
-            "Command output too long. The first {} bytes:\n\n{content}",
-            content.len(),
-        )
+        if let Some(path) = spillover_path {
+            format!(
+                "Command output too long. The first {} bytes are shown below. \
+                 \nThe full output was saved to: {path} \
+                 \nYou can re-read it with the `read_file` tool if you need more.\n\n{content}",
+                content.len(),
+            )
+        } else {
+            format!(
+                "Command output too long. The first {} bytes:\n\n{content}",
+                content.len(),
+            )
+        }
     } else {
         content
     };
@@ -1594,6 +1673,7 @@ mod tests {
             false,
             true,
             TerminalOutputSelection::default(),
+            None,
         );
 
         assert!(
@@ -1767,7 +1847,7 @@ mod tests {
             },
         );
 
-        assert_eq!(result, "one\ntwo\n\ntwo\nthree");
+        assert_eq!(result, "one\ntwo\n\nthree");
     }
 
     #[test]
@@ -1834,6 +1914,7 @@ mod tests {
                 head_lines: Some(1),
                 tail_lines: Some(1),
             },
+            None,
         );
 
         assert_eq!(result, "```\none\n\nfour\n```");
@@ -1853,6 +1934,7 @@ mod tests {
                 head_lines: None,
                 tail_lines: Some(1),
             },
+            None,
         );
 
         assert!(result.contains("failed with exit code 1"));
@@ -1874,6 +1956,7 @@ mod tests {
                 head_lines: Some(1),
                 tail_lines: None,
             },
+            None,
         );
 
         assert!(result.contains("timed out"));
@@ -1895,6 +1978,7 @@ mod tests {
                 head_lines: None,
                 tail_lines: Some(1),
             },
+            None,
         );
 
         assert!(result.contains("user stopped"));
@@ -1918,6 +2002,7 @@ mod tests {
                 head_lines: Some(1),
                 tail_lines: Some(1),
             },
+            None,
         );
 
         assert!(!result.contains("Showing"));
@@ -1935,6 +2020,7 @@ mod tests {
             false,
             true,
             TerminalOutputSelection::default(),
+            None,
         );
 
         assert!(
@@ -1959,6 +2045,7 @@ mod tests {
             true,
             false,
             TerminalOutputSelection::default(),
+            None,
         );
 
         assert!(
@@ -1983,6 +2070,7 @@ mod tests {
             true,
             false,
             TerminalOutputSelection::default(),
+            None,
         );
 
         assert!(
@@ -2008,6 +2096,7 @@ mod tests {
             false,
             false,
             TerminalOutputSelection::default(),
+            None,
         );
 
         assert!(
@@ -2023,6 +2112,70 @@ mod tests {
     }
 
     #[test]
+    fn test_process_content_truncated_with_spillover_path() {
+        // When the terminal output is truncated and a spillover path is
+        // provided, the message must include the path so the model can
+        // re-read the full output with `read_file`.
+        // zed-kask: upstream's `process_content` now takes `ProcessOutput`
+        // (the fork's test previously built an ACP v1 TerminalOutputResponse).
+        let output = ProcessOutput::new(
+            "line one\nline two\nline three".to_string(),
+            true, // truncated
+        );
+
+        let result = process_content(
+            output,
+            "cargo build",
+            false,
+            false,
+            TerminalOutputSelection::default(),
+            Some("/tmp/zed-agent-output-abc123.txt"),
+        );
+
+        assert!(
+            result.contains("Command output too long"),
+            "Expected truncation message, got: {result}"
+        );
+        assert!(
+            result.contains("/tmp/zed-agent-output-abc123.txt"),
+            "Expected spillover path in message, got: {result}"
+        );
+        assert!(
+            result.contains("read_file"),
+            "Expected read_file hint in message, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_process_content_truncated_without_spillover_path() {
+        // When truncated but no spillover path is provided (e.g. the spillover
+        // write failed), the message should still include the truncated output
+        // without a spillover path reference.
+        let output = ProcessOutput::new(
+            "line one\nline two".to_string(),
+            true, // truncated
+        );
+
+        let result = process_content(
+            output,
+            "cargo build",
+            false,
+            false,
+            TerminalOutputSelection::default(),
+            None,
+        );
+
+        assert!(
+            result.contains("Command output too long"),
+            "Expected truncation message, got: {result}"
+        );
+        assert!(
+            !result.contains("read_file"),
+            "Should not mention read_file when no spillover path, got: {result}"
+        );
+    }
+
+    #[test]
     fn test_process_content_with_success_empty_output() {
         let output = ProcessOutput::new("".to_string(), false)
             .exit_status(acp_v2::TerminalExitStatus::new().exit_code(0));
@@ -2033,6 +2186,7 @@ mod tests {
             false,
             false,
             TerminalOutputSelection::default(),
+            None,
         );
 
         assert!(
@@ -2053,6 +2207,7 @@ mod tests {
             false,
             false,
             TerminalOutputSelection::default(),
+            None,
         );
 
         assert!(
@@ -2078,6 +2233,7 @@ mod tests {
             false,
             false,
             TerminalOutputSelection::default(),
+            None,
         );
 
         assert!(
@@ -2097,6 +2253,7 @@ mod tests {
             false,
             false,
             TerminalOutputSelection::default(),
+            None,
         );
 
         assert!(
@@ -2121,6 +2278,7 @@ mod tests {
             false,
             false,
             TerminalOutputSelection::default(),
+            None,
         );
 
         assert!(

@@ -31,6 +31,58 @@ use serde::{Deserialize, Serialize};
 use crate::{Action, App, WindowId};
 use crate::{SharedString, TasksIncluded};
 
+// zed-kask: D84 follow-up — per-window draw counters for the reliability
+// monitor's frame-health line. The UI-lag diagnosis (2026-09-29/30) needed draw
+// rate and draw cost decomposed from the operational log instead of
+// user-operated profiling; with multiple editor windows open (the operator
+// runs several agent windows concurrently), process-wide aggregates cannot
+// attribute cost to a window, so the counters are keyed by `WindowId`.
+// Recorded from `Window::draw` (where the profiler feature already computes
+// the draw duration) and read with take semantics by the zed reliability
+// monitor every 30 s.
+#[cfg(feature = "profiler")]
+static DRAW_STATS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<crate::WindowId, DrawCounters>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+#[cfg(feature = "profiler")]
+#[derive(Default)]
+struct DrawCounters {
+    count: u64,
+    total_nanos: u64,
+    max_nanos: u64,
+}
+
+/// Record one completed window draw. Called from `Window::draw` under the
+/// profiler feature, which already measures the draw duration there.
+#[cfg(feature = "profiler")]
+pub fn record_draw_duration(window_id: crate::WindowId, duration: Duration) {
+    let mut stats = DRAW_STATS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let counters = stats.entry(window_id).or_default();
+    counters.count += 1;
+    let nanos = duration.as_nanos() as u64;
+    counters.total_nanos += nanos;
+    counters.max_nanos = counters.max_nanos.max(nanos);
+}
+
+/// Take the per-window draw counters accumulated since the last read, sorted
+/// by window id: `(window id, count, total nanos, max nanos)`. Reads reset the
+/// counters, so each report covers exactly the interval between reads.
+#[cfg(feature = "profiler")]
+pub fn take_draw_stats() -> Vec<(crate::WindowId, u64, u64, u64)> {
+    let mut stats = DRAW_STATS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut windows = stats.drain().collect::<Vec<_>>();
+    windows.sort_unstable_by_key(|(id, _)| *id);
+    windows
+        .into_iter()
+        .map(|(id, counters)| (id, counters.count, counters.total_nanos, counters.max_nanos))
+        .collect()
+}
+
 #[cfg(feature = "profiler")]
 #[doc(hidden)]
 pub fn get_all_timings(included: gpui::TasksIncluded) -> Vec<gpui::ThreadTaskTimings> {
@@ -762,6 +814,16 @@ impl Drop for TraceGuard {
         }
     }
 }
+
+/// Serializes tests that manipulate the process-global trace state
+/// (`TRACE_STATE`, `FRAME_TIMINGS`). A trace scope opened by a concurrently
+/// running test keeps `trace_enabled()` true process-wide, which masks
+/// `set_trace_enabled(false)` — the scope count survives the disable, so the
+/// buffers are never cleared and the disabling test observes stale events.
+/// The bench-context tests open such scopes (via `TraceScope::start` and
+/// `BenchAppContext`), so they take this lock alongside the profiler tests.
+#[cfg(all(test, feature = "profiler"))]
+pub(crate) static TRACE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Returns whether profiler trace collection is enabled.
 pub fn trace_enabled() -> bool {
@@ -1656,7 +1718,35 @@ impl FrameTimingCollector {
 #[cfg(all(test, feature = "profiler"))]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, MutexGuard};
+    use std::sync::MutexGuard;
+
+    /// zed-kask pin (D84 follow-up): draw counters accumulate per window and
+    /// reset on take, so each reliability report attributes cost to exactly
+    /// one window and one interval.
+    #[cfg(feature = "profiler")]
+    #[test]
+    fn draw_stats_accumulate_per_window_and_reset_on_take() {
+        let first = WindowId::from(0xD1A6_0001);
+        let second = WindowId::from(0xD1A6_0002);
+
+        record_draw_duration(first, Duration::from_millis(10));
+        record_draw_duration(first, Duration::from_millis(30));
+        record_draw_duration(second, Duration::from_millis(5));
+
+        let mut stats = take_draw_stats();
+        stats.sort_unstable_by_key(|(id, _, _, _)| *id);
+        assert_eq!(stats.len(), 2);
+        assert_eq!(stats[0].0, first);
+        assert_eq!(stats[0].1, 2, "first window draw count");
+        assert_eq!(stats[0].2, 40_000_000, "first window total nanos");
+        assert_eq!(stats[0].3, 30_000_000, "first window max nanos");
+        assert_eq!(stats[1].0, second);
+        assert_eq!(stats[1].1, 1, "second window draw count");
+        assert_eq!(stats[1].3, 5_000_000, "second window max nanos");
+
+        // Take semantics: the counters reset between reports.
+        assert!(take_draw_stats().is_empty());
+    }
 
     #[test]
     fn interruptions_drop_latency_samples_but_hiding_keeps_draw_work() {
@@ -2150,7 +2240,6 @@ mod tests {
     }
 
     const FRAME: Duration = Duration::from_millis(16);
-    static TRACE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     struct TraceTestGuard {
         was_enabled: bool,

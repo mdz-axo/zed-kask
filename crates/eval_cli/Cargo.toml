@@ -38,9 +38,42 @@ language_models.workspace = true
 languages = { workspace = true, features = ["load-grammars"] }
 node_runtime.workspace = true
 paths.workspace = true
+# Feature-propagation-only dep: not `use`d in source. Same E0004 class
+# as the `remote_connection` pairing below — `remote`'s `test-support`
+# compiles `RemoteConnectionOptions::Mock` (and `RemoteConnectionIdentity::
+# Mock`) into the enums, while the match arms for them are gated on each
+# consumer's OWN `test-support` (`project/src/trusted_worktrees.rs`,
+# `workspace/src/persistence.rs`, `recent_projects`' connection/servers
+# matches). Any graph that unifies `remote/test-support` on without the
+# consumers' own features (e.g. `cargo check --workspace`, once the
+# `remote_connection` pairing below turns `remote/test-support` on for this
+# crate's normal graph) fails E0004. `recent_projects`' `test-support`
+# feature forwards to `remote`/`remote_connection`/`project`/`workspace`,
+# so this one request pairs every affected consumer's arm (the D80
+# forwarding-hub pattern; the git_ui precedent).
+recent_projects = { workspace = true, features = ["test-support"] }
+# `title_bar` rides the same pairing (its project-title match at
+# `title_bar/src/title_bar.rs` is gated on its own `test-support`, not
+# covered by the `recent_projects` forwarding above).
+title_bar = { workspace = true, features = ["test-support"] }
+# A real dep (the bin's source imports `project`); its `test-support`
+# need not be requested here — the `recent_projects` forwarding above
+# already unifies `project/test-support` on for this graph, which is what
+# keeps the `From<RemoteConnectionOptions>` Mock arm in
+# `project/src/trusted_worktrees.rs` visible.
 project.workspace = true
 prompt_store.workspace = true
 release_channel.workspace = true
+# Feature-propagation-only dep: not `use`d in source. `agent_ui` (a normal
+# dep above) requests `remote_connection` with default features, while a
+# combined selection such as `cargo clippy -p remote_server -p eval_cli ...
+# --all-targets --all-features` turns `remote/test-support` on via
+# remote_server's dev closure — exposing `RemoteConnectionOptions::Mock`
+# to a `remote_connection` unit whose own `test-support` (and with it the
+# Mock match arm) is off: E0004. A dev-dep pairing does not reach this
+# normal-dependency unit (the swarm_panel precedent), so the request rides
+# a NORMAL dep.
+remote_connection = { workspace = true, features = ["test-support"] }
 reqwest_client.workspace = true
 serde.workspace = true
 serde_json.workspace = true

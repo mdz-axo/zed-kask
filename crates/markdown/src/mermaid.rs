@@ -426,30 +426,57 @@ fn parse_mermaid_info(info: &str) -> Option<u32> {
     )
 }
 
+/// The mermaid directives we render. Kept at module scope (rather than inside
+/// [`is_supported_diagram_type`]) so the drift test can assert the agent system
+/// prompt advertises exactly these — the prompt and this list are one contract,
+/// enforced by `test_system_prompt_advertises_every_supported_diagram_type`
+/// rather than by a comment asking for manual sync.
+const SUPPORTED_PREFIXES: &[&str] = &[
+    "flowchart",
+    "graph",
+    "sequenceDiagram",
+    "classDiagram",
+    "stateDiagram",
+    "stateDiagram-v2",
+    "erDiagram",
+    "gantt",
+    "pie",
+    "gitGraph",
+    "mindmap",
+    "timeline",
+    "quadrantChart",
+    "xychart-beta",
+    "journey",
+    "sankey-beta",
+    "kanban",
+    "architecture-beta",
+    "radar-beta",
+    "treemap-beta",
+    "block-beta",
+    "block",
+];
+
 /// We deliberately block rendering of some diagram types, even though `merman`
 /// supports them, because we have not yet written custom CSS to ensure text is
 /// readable.
 fn is_supported_diagram_type(source: &str) -> bool {
-    /// If updating this list, also update the system prompt!
-    const SUPPORTED_PREFIXES: &[&str] = &[
-        "flowchart",
-        "graph",
-        "sequenceDiagram",
-        "classDiagram",
-        "stateDiagram",
-        "stateDiagram-v2",
-        "erDiagram",
-        "gantt",
-        "pie",
-        "gitGraph",
-        "mindmap",
-        "timeline",
-        "quadrantChart",
-        "xychart-beta",
-        "journey",
-    ];
+    // Mermaid permits a YAML front-matter block (`---\n...\n---\n`) before the
+    // diagram directive (e.g. sankey-beta config). Merman strips it before
+    // detection; our matcher must too, otherwise the first token is `---` and
+    // every front-matter-bearing diagram is silently skipped.
+    let source = source.trim_start();
+    let source = source
+        .strip_prefix("---")
+        .and_then(|rest| {
+            // Find the closing `---` delimiter. If absent, fall through to the
+            // original source so the matcher still sees `---` (and correctly
+            // rejects it as unsupported).
+            let body = rest.trim_start_matches(['\r', '\n']);
+            body.find("\n---")
+                .map(|end| body[end + 4..].trim_start_matches(['\r', '\n']))
+        })
+        .unwrap_or(source);
     let first_token = source
-        .trim_start()
         .split(|c: char| c.is_whitespace() || c == '\n')
         .next()
         .unwrap_or("");
@@ -966,7 +993,8 @@ fn render_mermaid_code_view(contents: &SharedString) -> AnyElement {
 mod tests {
     use super::{
         CachedMermaidDiagram, MermaidDiagramCache, MermaidState, ParsedMarkdownMermaidDiagram,
-        ParsedMarkdownMermaidDiagramContents, extract_mermaid_diagrams, parse_mermaid_info,
+        ParsedMarkdownMermaidDiagramContents, SUPPORTED_PREFIXES, extract_mermaid_diagrams,
+        parse_mermaid_info,
     };
     use crate::{
         CodeBlockRenderer, CopyButtonVisibility, MERMAID_ZOOM_DEBOUNCE, Markdown, MarkdownElement,
@@ -1184,8 +1212,8 @@ mod tests {
     #[test]
     fn test_unsupported_diagram_types_are_skipped() {
         let markdown = concat!(
-            "```mermaid\nsankey-beta\n```\n\n",
-            "```mermaid\nblock-beta\n```\n\n",
+            "```mermaid\nrequirementDiagram\n```\n\n",
+            "```mermaid\npacket\n```\n\n",
             "```mermaid\nflowchart TD\n    A --> B\n```",
         );
         let events =
@@ -1194,12 +1222,109 @@ mod tests {
         assert_eq!(
             diagrams.len(),
             1,
-            "Only the flowchart should be extracted; sankey and block should be skipped"
+            "Only the flowchart should be extracted; requirementDiagram and packet should be skipped"
         );
         let diagram = diagrams.values().next().unwrap();
         assert!(
             diagram.contents.contents.contains("flowchart"),
             "The extracted diagram should be the flowchart"
+        );
+    }
+
+    #[test]
+    fn test_beta_suffixed_diagram_types_are_extracted() {
+        // Merman's detectors require the -beta suffix for architecture, radar,
+        // and treemap. The bare forms ("architecture", "radar", "treemap")
+        // are NOT valid mermaid directives for these types — only the -beta
+        // variants are. This test pins that the allowlist contains the correct
+        // forms so a future edit doesn't silently break rendering by adding
+        // the bare form without the -beta suffix.
+        //
+        // block and block-beta are both valid (merman accepts either); both
+        // are in the allowlist. sankey-beta and kanban are also valid as-is.
+        let beta_suffixed = [
+            "architecture-beta",
+            "radar-beta",
+            "treemap-beta",
+            "block-beta",
+            "block",
+            "sankey-beta",
+            "kanban",
+        ];
+        for prefix in beta_suffixed {
+            let markdown = format!("```mermaid\n{prefix}\n```\n\n");
+            let events =
+                crate::parser::parse_markdown_with_options(&markdown, false, false, false).events;
+            let diagrams = extract_mermaid_diagrams(&markdown, &events);
+            assert_eq!(
+                diagrams.len(),
+                1,
+                "{prefix} should be extracted as a supported diagram type"
+            );
+        }
+    }
+
+    // The `SUPPORTED_PREFIXES` doc comment instructs "also update the system
+    // prompt!", which is a manual sync that already drifted once: the prompt
+    // advertised bare `sankey`/`xychart` (merman needs the `-beta` forms) and
+    // denied `kanban` was a mermaid type at all. This test replaces that
+    // instruction with enforcement — every allowlisted directive must appear
+    // verbatim in the agent system prompt's renderer-support sentence.
+    #[test]
+    fn test_system_prompt_advertises_every_supported_diagram_type() {
+        let prompt = include_str!("../../agent/src/templates/system_prompt.hbs");
+        let sentence = prompt
+            .lines()
+            .find(|line| line.starts_with("The renderer supports the following diagram types:"))
+            .expect("system prompt must carry the renderer-support sentence");
+
+        for prefix in SUPPORTED_PREFIXES {
+            assert!(
+                sentence.contains(prefix),
+                "system prompt does not advertise supported diagram type `{prefix}`; \
+                 update the renderer-support sentence in \
+                 crates/agent/src/templates/system_prompt.hbs"
+            );
+        }
+    }
+
+    #[test]
+    fn test_front_matter_diagram_is_extracted() {
+        // Mermaid permits a YAML front-matter block before the diagram directive
+        // (e.g. sankey-beta config: showValues, width, height, linkColor).
+        // Merman strips front-matter before detection; our matcher must too,
+        // otherwise the first token is `---` and the diagram is silently
+        // skipped — shown as code instead of rendered. This pins the
+        // sankey-flow skill's primary output path.
+        let markdown = concat!(
+            "```mermaid\n",
+            "---\n",
+            "config:\n",
+            "  sankey:\n",
+            "    showValues: true\n",
+            "    width: 900\n",
+            "    height: 500\n",
+            "    linkColor: source\n",
+            "---\n",
+            "sankey-beta\n",
+            "%% source,target,value\n",
+            "Kafka Events,Enricher,1200\n",
+            "Postgres CDC,Enricher,300\n",
+            "Enricher,Snowflake,1500\n",
+            "```",
+        );
+        let events =
+            crate::parser::parse_markdown_with_options(markdown, false, false, false).events;
+        let diagrams = extract_mermaid_diagrams(markdown, &events);
+        assert_eq!(
+            diagrams.len(),
+            1,
+            "sankey-beta with front-matter config should be extracted, not skipped"
+        );
+        let diagram = diagrams.values().next().unwrap();
+        assert!(
+            diagram.contents.contents.contains("sankey-beta"),
+            "The extracted diagram should be the sankey-beta"
         );
     }
 

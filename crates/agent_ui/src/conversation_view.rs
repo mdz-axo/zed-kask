@@ -34,9 +34,7 @@ use gpui::{
     linear_gradient, list, pulsating_between,
 };
 use language::{Buffer, Language};
-use language_model::{
-    LanguageModelCompletionError, ProviderErrorCategory, ZED_CLOUD_PROVIDER_NAME,
-};
+use language_model::{LanguageModelCompletionError, ProviderErrorCategory};
 use markdown::{
     CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownFont, MarkdownStyle,
 };
@@ -95,12 +93,12 @@ use crate::ui::{AgentNotification, AgentNotificationEvent};
 use crate::{
     Agent, AgentDiffPane, AgentInitialContent, AgentPanel, AgentPanelEvent, AllowAlways, AllowOnce,
     AuthorizeToolCall, ClearMessageQueue, CycleFavoriteModels, CycleModeSelector,
-    CycleThinkingEffort, EditFirstQueuedMessage, ExpandMessageEditor, Follow, KeepAll, NewThread,
+    CycleReasoningEffort, EditFirstQueuedMessage, ExpandMessageEditor, Follow, KeepAll, NewThread,
     OpenAddContextMenu, OpenAgentDiff, RejectAll, RejectOnce, RemoveFirstQueuedMessage,
     ScrollOutputLineDown, ScrollOutputLineUp, ScrollOutputPageDown, ScrollOutputPageUp,
     ScrollOutputToBottom, ScrollOutputToNextMessage, ScrollOutputToPreviousMessage,
     ScrollOutputToTop, SendImmediately, SendNextQueuedMessage, ToggleFastMode,
-    ToggleProfileSelector, ToggleSteerFirstQueuedMessage, ToggleThinkingEffortMenu,
+    ToggleProfileSelector, ToggleReasoningEffortMenu, ToggleSteerFirstQueuedMessage,
     ToggleThinkingMode, UndoLastReject,
 };
 
@@ -125,7 +123,11 @@ enum ThreadFeedback {
 
 #[derive(Debug)]
 pub(crate) enum ThreadError {
-    ZedPaymentRequired,
+    // zed-kask: D39 — carries the provider so the UI can distinguish Zed plan
+    // billing from third-party credit exhaustion (e.g. an OpenRouter 402).
+    PaymentRequired {
+        provider: SharedString,
+    },
     DataRetentionConsentRequired,
     Refusal,
     AuthenticationRequired(SharedString),
@@ -200,11 +202,10 @@ impl From<&anyhow::Error> for ThreadError {
                         provider: provider.to_string().into(),
                     },
                     ProviderErrorCategory::PromptTooLarge { .. } => Self::PromptTooLarge,
-                    ProviderErrorCategory::PaymentRequired
-                        if provider == &ZED_CLOUD_PROVIDER_NAME =>
-                    {
-                        Self::ZedPaymentRequired
-                    }
+                    // zed-kask: D39 — preserve the rejecting provider's name.
+                    ProviderErrorCategory::PaymentRequired => Self::PaymentRequired {
+                        provider: provider.to_string().into(),
+                    },
                     ProviderErrorCategory::Authentication => Self::AuthenticationFailed {
                         provider: provider.to_string().into(),
                     },
@@ -217,7 +218,6 @@ impl From<&anyhow::Error> for ThreadError {
                     },
                     ProviderErrorCategory::InvalidEncryptedContent
                     | ProviderErrorCategory::ContentPolicy
-                    | ProviderErrorCategory::PaymentRequired
                     | ProviderErrorCategory::InvalidRequest
                     | ProviderErrorCategory::Conflict
                     | ProviderErrorCategory::Timeout
@@ -570,6 +570,11 @@ impl Conversation {
         cx: &mut Context<Self>,
     ) -> Option<()> {
         let (authorize_session_id, request) = self.pending_permission_request(session_id, cx)?;
+        // zed-kask: ActionChoice requires an explicit offered ID, never a
+        // permission-kind default (which could invent a human goal outcome).
+        if request.legacy_kind()? != acp_thread::AuthorizationKind::PermissionGrant {
+            return None;
+        }
         let option = permission_option_for_action(request.legacy_options()?, kind)?;
         self.authorize_permission_request(
             authorize_session_id,
@@ -588,6 +593,9 @@ impl Conversation {
         cx: &mut Context<Self>,
     ) -> Option<()> {
         let request = self.permission_request(&session_id, request_id, cx)?;
+        if request.legacy_kind()? != acp_thread::AuthorizationKind::PermissionGrant {
+            return None;
+        }
         let outcome = resolve_outcome_from_selection(
             request.legacy_options()?,
             self.permission_selections.get(&request_id),
@@ -811,6 +819,9 @@ pub struct ConversationView {
     thread_store: Option<Entity<ThreadStore>>,
     pub(crate) thread_id: ThreadId,
     pub(crate) root_session_id: Option<acp_v2::SessionId>,
+    // Retained only until native authority is installed. Connection retries
+    // must not discard a delegated prompt or recreate it without its ceiling.
+    pending_delegation: Option<(Vec<acp_v2::ContentBlock>, agent::DelegationAuthority)>,
     server_state: ServerState,
     recovery: Option<ThreadRecovery>,
     saved_submissions: Vec<SavedSubmission>,
@@ -1130,6 +1141,12 @@ impl ConversationView {
             thread_store,
             thread_id,
             root_session_id: resume_session_id.clone(),
+            pending_delegation: match &initial_content {
+                Some(AgentInitialContent::DelegatedSibling { blocks, authority }) => {
+                    Some((blocks.clone(), authority.clone()))
+                }
+                _ => None,
+            },
             server_state: Self::initial_state(
                 agent.clone(),
                 connection_store,
@@ -1293,7 +1310,12 @@ impl ConversationView {
             work_dirs,
             title,
             self.project.clone(),
-            None,
+            self.pending_delegation.as_ref().map(|(blocks, authority)| {
+                AgentInitialContent::DelegatedSibling {
+                    blocks: blocks.clone(),
+                    authority: authority.clone(),
+                }
+            }),
             AgentThreadSource::AgentPanel,
             window,
             cx,
@@ -1470,6 +1492,30 @@ impl ConversationView {
                         }
                         this.clear_resolved_request_elicitations_for_connection(&connection, cx);
                         let root_session_id = thread.read(cx).session_id().clone();
+
+                        if let Some(AgentInitialContent::DelegatedSibling { authority, .. }) =
+                            &initial_content
+                        {
+                            let native_thread = connection
+                                .clone()
+                                .downcast::<agent::NativeAgentConnection>()
+                                .and_then(|connection| connection.thread(&root_session_id, cx));
+                            let Some(native_thread) = native_thread else {
+                                this.handle_load_error(
+                                    LoadError::Other(
+                                        "Delegated siblings require a native thread to enforce tool authority."
+                                            .into(),
+                                    ),
+                                    window,
+                                    cx,
+                                );
+                                return;
+                            };
+                            native_thread.update(cx, |thread, cx| {
+                                thread.restrict_delegation(authority.clone(), cx);
+                            });
+                            this.pending_delegation = None;
+                        }
 
                         let conversation = cx.new(|cx| {
                             let mut conversation = Conversation::default();
@@ -4082,6 +4128,9 @@ fn render_agent_markdown(
             wrap_button_visibility: markdown::WrapButtonVisibility::VisibleOnHover,
             border: false,
         })
+        // zed-kask: D18 — render ```media and ```graph fenced blocks via the
+        // hkask-viz-core block-renderer registry (composes media + graph widgets).
+        .media_block_renderer(hkask_viz_core::block_renderer())
         .image_resolver(move |dest_url, _cx| resolve_agent_image(dest_url, &worktree_roots))
         .on_url_click(move |text, window, cx| {
             thread_view::open_link(text, &workspace, window, cx);
@@ -4327,6 +4376,9 @@ pub(crate) mod tests {
     use crate::thread_metadata_store::ThreadMetadataStore;
 
     use super::*;
+    // zed-kask: D39 — the provider-aware PaymentRequired pin below names the
+    // Zed-cloud provider; the import is test-scoped.
+    use language_model::ZED_CLOUD_PROVIDER_NAME;
 
     #[test]
     fn test_thread_error_protocol_codes_preserve_context_and_data() {
@@ -4482,44 +4534,16 @@ pub(crate) mod tests {
         ));
     }
 
+    // zed-kask: D39 — pins that a PaymentRequired rejection preserves the
+    // rejecting provider's name, so the UI can distinguish Zed plan billing
+    // from third-party credit exhaustion.
     #[test]
-    fn test_payment_required_preserves_non_zed_provider_message() {
-        for provider in [
-            language_model::LanguageModelProviderName::new("OpenRouter"),
-            language_model::OPEN_AI_PROVIDER_NAME,
-            language_model::ANTHROPIC_PROVIDER_NAME,
-        ] {
-            for status in [None, Some(http_client::StatusCode::PAYMENT_REQUIRED)] {
-                let provider_error = LanguageModelCompletionError::from_provider_response(
-                    provider.clone(),
-                    status,
-                    Some("402".to_string()),
-                    "Insufficient credits. Add credits to your account.".to_string(),
-                    None,
-                    ProviderErrorCategory::PaymentRequired,
-                );
-
-                let error = ThreadError::from(anyhow!(provider_error));
-
-                assert!(
-                    matches!(
-                        &error,
-                        ThreadError::ProviderRejection { message }
-                            if message == "Insufficient credits. Add credits to your account."
-                    ),
-                    "expected provider billing message for {provider}, got: {error:?}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_payment_required_from_zed_uses_upgrade_prompt() {
+    fn test_payment_required_preserves_provider() {
         let provider_error = LanguageModelCompletionError::from_provider_response(
-            ZED_CLOUD_PROVIDER_NAME,
-            Some(http_client::StatusCode::PAYMENT_REQUIRED),
+            language_model::LanguageModelProviderName::new("OpenRouter"),
             None,
-            "Payment required".to_string(),
+            Some("402".to_string()),
+            "Insufficient credits".to_string(),
             None,
             ProviderErrorCategory::PaymentRequired,
         );
@@ -4527,8 +4551,106 @@ pub(crate) mod tests {
         let error = ThreadError::from(anyhow!(provider_error));
 
         assert!(
-            matches!(error, ThreadError::ZedPaymentRequired),
-            "expected Zed upgrade prompt, got: {error:?}"
+            matches!(
+                error,
+                ThreadError::PaymentRequired { ref provider }
+                    if provider.as_ref() == "OpenRouter"
+            ),
+            "expected ThreadError::PaymentRequired with provider OpenRouter, got: {error:?}"
+        );
+    }
+
+    // expect: [P4] a delegated prompt cannot auto-submit through an external
+    // connection even if a caller bypasses sibling destination resolution.
+    // dcterms:identifier: ConversationView::initial_state
+    #[gpui::test]
+    async fn delegated_sibling_rejects_non_native_startup(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (view, cx) = setup_conversation_view_with_initial_content(
+            StubAgentServer::default_response(),
+            AgentInitialContent::DelegatedSibling {
+                blocks: vec![acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
+                    "Run task",
+                ))],
+                authority: agent::DelegationAuthority::from_mcp_tools(&[]),
+            },
+            cx,
+        )
+        .await;
+        view.read_with(cx, |view, _cx| {
+            assert!(view.root_thread_view().is_none());
+            assert!(view.pending_delegation.is_some());
+            assert!(matches!(
+                &view.server_state,
+                ServerState::LoadError { error: LoadError::Other(message) }
+                    if message.contains("native thread")
+            ));
+        });
+        view.update_in(cx, |view, window, cx| view.reset(window, cx));
+        cx.run_until_parked();
+        view.read_with(cx, |view, _cx| {
+            assert!(
+                view.root_thread_view().is_none(),
+                "retry must not silently drop authority"
+            );
+            assert!(view.pending_delegation.is_some());
+            assert!(matches!(&view.server_state, ServerState::LoadError { .. }));
+        });
+    }
+
+    // expect: [P4] the first delegated auto-submit advertises no ambient native
+    // tools when the inherited MCP authority is empty, while normal threads do.
+    // dcterms:identifier: ConversationView::initial_state
+    #[gpui::test]
+    async fn delegated_sibling_authority_precedes_first_completion(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        // zed-kask: bind the fake to the REGISTERED provider instance —
+        // dispatch goes through the registry, so a fresh
+        // `FakeLanguageModelProvider::default()` sees empty pending state.
+        let fake = cx.update(|cx| {
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+            language_model::LanguageModelRegistry::test(cx)
+        });
+        let model = fake.model("fake");
+        let server = cx.update(|cx| NativeAgentServer::new(fs, cx.new(|cx| ThreadStore::new(cx))));
+        let blocks = vec![acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
+            "Run task",
+        ))];
+        let (_restricted, cx) = setup_conversation_view_with_initial_content(
+            server.clone(),
+            AgentInitialContent::DelegatedSibling {
+                blocks: blocks.clone(),
+                authority: agent::DelegationAuthority::from_mcp_tools(&[]),
+            },
+            cx,
+        )
+        .await;
+        let first_requests = fake.pending_completions_for(&model);
+        let first = first_requests
+            .iter()
+            .find(|request| request.intent == Some(language_model::CompletionIntent::UserPrompt))
+            .expect("the sibling must actually auto-submit");
+        assert!(
+            first.tools.is_empty(),
+            "authority must precede the first request"
+        );
+
+        let (_ordinary, _cx) = setup_conversation_view_with_initial_content(
+            server,
+            AgentInitialContent::ContentBlock {
+                blocks,
+                auto_submit: true,
+            },
+            cx,
+        )
+        .await;
+        assert!(
+            fake.pending_completions_for(&model).iter().any(|request| {
+                request.intent == Some(language_model::CompletionIntent::UserPrompt)
+                    && !request.tools.is_empty()
+            }),
+            "ordinary user threads must retain their tools"
         );
     }
 
@@ -6370,6 +6492,70 @@ pub(crate) mod tests {
                     [submission_id],
                 );
             });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_native_command_submission_respects_declared_input(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        for (name, takes_input, prompt, expected_prompt, queued_count) in [
+            (
+                "trace",
+                true,
+                "/trace inspect this",
+                "/trace inspect this",
+                0,
+            ),
+            (
+                "trace",
+                true,
+                "/trace\ninspect this",
+                "/trace\ninspect this",
+                0,
+            ),
+            ("trace", true, "/trace", "/trace", 0),
+            ("inspect", true, "/inspect payload", "/inspect payload", 0),
+            ("compact", false, "/compact inspect this", "/compact", 1),
+        ] {
+            let connection = StubAgentConnection::new().with_receipt_submissions(true);
+            let (conversation_view, cx) =
+                setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+            add_to_workspace(conversation_view.clone(), cx);
+            let thread_view = active_thread(&conversation_view, cx);
+            let message_editor = message_editor(&conversation_view, cx);
+            let mut command = acp_v2::AvailableCommand::new(name, "").meta(
+                acp_thread::meta_with_command_category(acp_thread::CommandCategory::Native),
+            );
+            if takes_input {
+                command = command.input(acp_v2::AvailableCommandInput::Text(
+                    acp_v2::TextCommandInput::new("<prompt>"),
+                ));
+            }
+            thread_view.update(cx, |view, _cx| {
+                view.session_capabilities
+                    .write()
+                    .set_available_commands(vec![command]);
+            });
+            let finish = connection.defer_next_receipt_response();
+            message_editor.update_in(cx, |editor, window, cx| {
+                editor.set_text(prompt, window, cx);
+            });
+            thread_view.update_in(cx, |view, window, cx| view.send(window, cx));
+            cx.run_until_parked();
+
+            assert_eq!(
+                connection.take_receipt_prompt(),
+                Some(vec![expected_prompt.into()]),
+                "the first submission must preserve the declared input of {name}"
+            );
+            thread_view.read_with(cx, |view, _cx| {
+                assert_eq!(view.message_queue.len(), queued_count, "{prompt:?}");
+            });
+            finish
+                .send(Ok(acp_v2::PromptResponse::new("command-receipt")))
+                .expect("command receipt receiver remains active");
+            cx.run_until_parked();
         }
     }
 
@@ -16981,19 +17167,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn permission_option_for_action_prefers_explicit_sandbox_allow_always() {
-        let options = sandbox_permission_options();
-
-        let option = super::permission_option_for_action(
-            &options,
-            acp_v2::PermissionOptionKind::AllowAlways,
-        )
-        .unwrap();
-
-        assert_eq!(option.option_id.0.as_ref(), "allow_always");
-    }
-
-    #[test]
     fn permission_option_for_action_preserves_other_kind() {
         let kind = acp_v2::PermissionOptionKind::Other("custom_permission".into());
         let options = PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
@@ -17009,29 +17182,6 @@ pub(crate) mod tests {
         assert_eq!(outcome.option_id, acp_v2::PermissionOptionId::new("custom"));
         assert_eq!(outcome.option_kind, kind);
         assert!(super::resolve_outcome_from_selection(&options, None, true).is_none());
-    }
-
-    #[test]
-    fn resolve_outcome_from_selection_flat_allow_picks_allow_once() {
-        let options = flat_allow_deny_options();
-
-        let outcome = super::resolve_outcome_from_selection(&options, None, true).unwrap();
-
-        assert_eq!(outcome.option_id.0.as_ref(), "allow");
-        assert_eq!(outcome.option_kind, acp_v2::PermissionOptionKind::AllowOnce);
-    }
-
-    #[test]
-    fn resolve_outcome_from_selection_flat_deny_picks_reject_once() {
-        let options = flat_allow_deny_options();
-
-        let outcome = super::resolve_outcome_from_selection(&options, None, false).unwrap();
-
-        assert_eq!(outcome.option_id.0.as_ref(), "deny");
-        assert_eq!(
-            outcome.option_kind,
-            acp_v2::PermissionOptionKind::RejectOnce
-        );
     }
 
     #[test]
@@ -19037,6 +19187,218 @@ pub(crate) mod tests {
             acp_v2::RequestPermissionOutcome::Cancelled
         );
         drop(original_root);
+    }
+
+    #[gpui::test]
+    async fn test_action_choice_requires_an_explicit_offered_option(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let (thread, conversation) = thread_view.read_with(cx, |view, _| {
+            (view.thread.clone(), view.conversation.clone())
+        });
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+
+        // These are the actual native goal closure/correction choices. A third
+        // action pins that the boundary is about authority, not goal option IDs.
+        for (tool_call_id, options, selected, selected_kind) in [
+            (
+                "kanban_goal_close",
+                vec![
+                    ("accomplished_achieved", "AllowOnce"),
+                    ("accomplished_not_achieved", "AllowOnce"),
+                    ("accomplished_unknown", "AllowOnce"),
+                    ("stop_achieved", "AllowOnce"),
+                    ("stop_not_achieved", "AllowOnce"),
+                    ("stop_unknown", "AllowOnce"),
+                ],
+                "stop_unknown",
+                "AllowOnce",
+            ),
+            (
+                "kanban_goal_correct_outcome",
+                vec![
+                    ("correct_achieved", "AllowOnce"),
+                    ("correct_not_achieved", "AllowOnce"),
+                    ("correct_unknown", "AllowOnce"),
+                ],
+                "correct_not_achieved",
+                "AllowOnce",
+            ),
+            (
+                "other_action_choice",
+                vec![
+                    ("once", "AllowOnce"),
+                    ("always", "AllowAlways"),
+                    ("reject", "RejectOnce"),
+                    ("reject_always", "RejectAlways"),
+                ],
+                "reject",
+                "RejectOnce",
+            ),
+        ] {
+            let options = PermissionOptions::Flat(
+                options
+                    .into_iter()
+                    .map(|(id, kind)| {
+                        let kind = match kind {
+                            "AllowOnce" => acp_v2::PermissionOptionKind::AllowOnce,
+                            "AllowAlways" => acp_v2::PermissionOptionKind::AllowAlways,
+                            "RejectOnce" => acp_v2::PermissionOptionKind::RejectOnce,
+                            "RejectAlways" => acp_v2::PermissionOptionKind::RejectAlways,
+                            _ => unreachable!("literal fixture permission kind"),
+                        };
+                        acp_v2::PermissionOption::new(id, id, kind)
+                    })
+                    .collect(),
+            );
+            let (request_id, mut response) = thread.update(cx, |thread, cx| {
+                thread
+                    .request_tool_call_authorization_with_id(
+                        acp_v1::ToolCall::new(tool_call_id, tool_call_id).into(),
+                        options.clone(),
+                        acp_thread::AuthorizationKind::ActionChoice,
+                        cx,
+                    )
+                    .expect("native action choice request")
+            });
+            cx.run_until_parked();
+            cx.focus(&thread_view);
+            cx.dispatch_action(crate::AllowOnce);
+            cx.run_until_parked();
+            assert!(
+                futures::poll!(&mut response).is_pending(),
+                "{tool_call_id}: generic AllowOnce must not select a human outcome"
+            );
+            cx.dispatch_action(crate::AllowAlways);
+            cx.dispatch_action(crate::RejectOnce);
+            cx.run_until_parked();
+            for kind in [
+                acp_v2::PermissionOptionKind::AllowOnce,
+                acp_v2::PermissionOptionKind::AllowAlways,
+                acp_v2::PermissionOptionKind::RejectOnce,
+                acp_v2::PermissionOptionKind::RejectAlways,
+            ] {
+                thread_view.update_in(cx, |view, window, cx| {
+                    assert!(view.authorize_pending_tool_call(kind, window, cx).is_none());
+                });
+            }
+            assert!(futures::poll!(&mut response).is_pending());
+            assert!(thread.read_with(cx, |thread, _| {
+                thread.permission_request(request_id).is_some()
+            }));
+
+            // An ID that was never offered cannot resolve the waiting decision.
+            cx.dispatch_action(crate::AuthorizeToolCall {
+                tool_call_id: tool_call_id.into(),
+                request_id: Some(request_id),
+                session_id: Some(session_id.0.to_string()),
+                option_id: "not-offered".into(),
+                option_kind: "AllowOnce".into(),
+            });
+            cx.run_until_parked();
+            assert!(futures::poll!(&mut response).is_pending());
+            cx.dispatch_action(crate::AuthorizeToolCall {
+                tool_call_id: tool_call_id.into(),
+                request_id: Some(request_id),
+                session_id: Some(session_id.0.to_string()),
+                option_id: selected.into(),
+                option_kind: selected_kind.into(),
+            });
+            cx.run_until_parked();
+            let acp_thread::RequestPermissionOutcome::Selected(outcome) = response.await else {
+                panic!("explicit offered action must resolve the decision");
+            };
+            assert_eq!(outcome.option_id.0.as_ref(), selected);
+            assert!(thread.read_with(cx, |thread, _| {
+                thread.permission_request(request_id).is_none()
+            }));
+            conversation.read_with(cx, |conversation, cx| {
+                assert!(
+                    conversation
+                        .pending_permission_request(&session_id, cx)
+                        .is_none()
+                );
+            });
+
+            let (cancel_id, cancelled) = thread.update(cx, |thread, cx| {
+                let request = thread
+                    .request_tool_call_authorization_with_id(
+                        acp_v1::ToolCall::new(tool_call_id, tool_call_id).into(),
+                        options,
+                        acp_thread::AuthorizationKind::ActionChoice,
+                        cx,
+                    )
+                    .expect("fresh action choice can be cancelled");
+                thread.cancel_permission_request(request.0, cx);
+                request
+            });
+            assert!(matches!(
+                cancelled.await,
+                acp_thread::RequestPermissionOutcome::Cancelled
+            ));
+            assert!(thread.read_with(cx, |thread, _| {
+                thread.permission_request(cancel_id).is_none()
+            }));
+        }
+    }
+
+    #[gpui::test]
+    async fn test_permission_shortcuts_preserve_permission_grants(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        for direct in [false, true] {
+            for (kind, expected) in [
+                (acp_v2::PermissionOptionKind::AllowOnce, "allow"),
+                (acp_v2::PermissionOptionKind::AllowAlways, "allow_always"),
+                (acp_v2::PermissionOptionKind::RejectOnce, "deny"),
+            ] {
+                let (request_id, response) = request_test_tool_authorization_with_options(
+                    &thread,
+                    "ordinary-permission",
+                    sandbox_permission_options(),
+                    cx,
+                );
+                cx.run_until_parked();
+                cx.focus(&thread_view);
+                if direct {
+                    thread_view.update_in(cx, |view, window, cx| {
+                        assert!(
+                            view.authorize_pending_tool_call(kind.clone(), window, cx)
+                                .is_some()
+                        );
+                    });
+                } else {
+                    match kind {
+                        acp_v2::PermissionOptionKind::AllowOnce => {
+                            cx.dispatch_action(crate::AllowOnce)
+                        }
+                        acp_v2::PermissionOptionKind::AllowAlways => {
+                            cx.dispatch_action(crate::AllowAlways)
+                        }
+                        acp_v2::PermissionOptionKind::RejectOnce => {
+                            cx.dispatch_action(crate::RejectOnce)
+                        }
+                        _ => unreachable!("literal fixture shortcut kind"),
+                    }
+                }
+                cx.run_until_parked();
+                let acp_thread::RequestPermissionOutcome::Selected(outcome) = response.await else {
+                    panic!("ordinary permission shortcut must resolve its request");
+                };
+                assert_eq!(outcome.option_id.0.as_ref(), expected);
+                assert_eq!(outcome.option_kind, kind);
+                assert!(thread.read_with(cx, |thread, _| {
+                    thread.permission_request(request_id).is_none()
+                }));
+            }
+        }
     }
 
     #[gpui::test]

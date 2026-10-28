@@ -11,6 +11,8 @@ use crate::STARTUP_TIME;
 
 mod logging;
 mod task_traces;
+// zed-kask: D89 — durable hang-incident record (see incident_log.rs).
+mod incident_log;
 
 gpui::actions!(
     dev,
@@ -74,7 +76,15 @@ fn start_hang_detection(report_longer_then: Duration, client: Arc<Client>, cx: &
     // GPUI's final `Flush` poll runs during shutdown, concurrently with this
     // handler and within `SHUTDOWN_TIMEOUT`, so the last batch may miss this
     // flush.
-    match HangTelemetry::new(startup, telemetry::send_event).start(cx) {
+    match HangTelemetry::new(startup, telemetry::send_event)
+        // zed-kask: D89 — keep the durable, append-only hang-incident record
+        // beside the task traces; the telemetry event stream alone is
+        // truncated by every restart.
+        .with_incident_sink(|incidents, threshold_incidents, budget_incidents| {
+            incident_log::record(incidents, threshold_incidents, budget_incidents)
+        })
+        .start(cx)
+    {
         Ok(()) => cx
             .on_app_quit(move |_| client.telemetry().flush_events())
             .detach(),

@@ -15,7 +15,10 @@ pub const EDITORCONFIG_NAME: &str = ".editorconfig";
 /// and state directory paths.
 ///
 /// Forks should change this to avoid colliding with Zed's user data.
-pub const APP_NAME: &str = "Zed";
+pub const APP_NAME: &str = "Zed-Kask";
+
+/// URL scheme used for links that should open this application.
+pub const URL_SCHEME: &str = "zed-kask";
 
 /// Lowercased form of [`APP_NAME`], for use in XDG-style paths on
 /// Linux/FreeBSD and the macOS `~/.config` fallback.
@@ -68,15 +71,16 @@ static CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 /// Returns the relative path to the zed_server directory on the ssh host.
 pub fn remote_server_dir_relative() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::from_unix_str(".zed_server").unwrap());
+        LazyLock::new(|| RelPath::from_unix_str(".zed-kask_server").expect("static path literal"));
     *CACHED
 }
 
 // Remove this once 223 goes stable
 /// Returns the relative path to the zed_wsl_server directory on the wsl host.
 pub fn remote_wsl_server_dir_relative() -> &'static RelPath {
-    static CACHED: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::from_unix_str(".zed_wsl_server").unwrap());
+    static CACHED: LazyLock<&'static RelPath> = LazyLock::new(|| {
+        RelPath::from_unix_str(".zed-kask_wsl_server").expect("static path literal")
+    });
     *CACHED
 }
 
@@ -128,12 +132,12 @@ pub fn config_dir() -> &'static PathBuf {
                 .expect("failed to determine RoamingAppData directory")
                 .join(APP_NAME)
         } else if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-            if let Ok(flatpak_xdg_config) = std::env::var("FLATPAK_XDG_CONFIG_HOME") {
-                flatpak_xdg_config.into()
-            } else {
-                dirs::config_dir().expect("failed to determine XDG_CONFIG_HOME directory")
-            }
-            .join(APP_NAME_LOWERCASE)
+            // zed-kask: no flatpak XDG override (D7). zed-kask is not
+            // distributed as a flatpak; honoring upstream Zed's sandbox env
+            // vars would point zed-kask at upstream Zed's config directory.
+            dirs::config_dir()
+                .expect("failed to determine XDG_CONFIG_HOME directory")
+                .join(APP_NAME_LOWERCASE)
         } else {
             home_dir().join(".config").join(APP_NAME_LOWERCASE)
         }
@@ -145,17 +149,28 @@ pub fn data_dir() -> &'static PathBuf {
     CURRENT_DATA_DIR.get_or_init(|| {
         if let Some(custom_dir) = CUSTOM_DATA_DIR.get() {
             custom_dir.clone()
+        } else if cfg!(any(test, feature = "test-support")) {
+            // In test builds, derive from the pinned home_dir() so tests
+            // get a deterministic path. Without this, dirs::data_local_dir()
+            // reads the real XDG_DATA_HOME, making test paths non-deterministic.
+            if cfg!(target_os = "macos") {
+                home_dir()
+                    .join("Library/Application Support")
+                    .join(APP_NAME)
+            } else if cfg!(target_os = "windows") {
+                home_dir().join("AppData/Local").join(APP_NAME)
+            } else {
+                home_dir().join(".local/share").join(APP_NAME_LOWERCASE)
+            }
         } else if cfg!(target_os = "macos") {
             home_dir()
                 .join("Library/Application Support")
                 .join(APP_NAME)
         } else if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-            if let Ok(flatpak_xdg_data) = std::env::var("FLATPAK_XDG_DATA_HOME") {
-                flatpak_xdg_data.into()
-            } else {
-                dirs::data_local_dir().expect("failed to determine XDG_DATA_HOME directory")
-            }
-            .join(APP_NAME_LOWERCASE)
+            // zed-kask: no flatpak XDG override (D7) — see config_dir().
+            dirs::data_local_dir()
+                .expect("failed to determine XDG_DATA_HOME directory")
+                .join(APP_NAME_LOWERCASE)
         } else if cfg!(target_os = "windows") {
             dirs::data_local_dir()
                 .expect("failed to determine LocalAppData directory")
@@ -174,12 +189,10 @@ pub fn state_dir() -> &'static PathBuf {
         }
 
         if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-            return if let Ok(flatpak_xdg_state) = std::env::var("FLATPAK_XDG_STATE_HOME") {
-                flatpak_xdg_state.into()
-            } else {
-                dirs::state_dir().expect("failed to determine XDG_STATE_HOME directory")
-            }
-            .join(APP_NAME_LOWERCASE);
+            // zed-kask: no flatpak XDG override (D7) — see config_dir().
+            return dirs::state_dir()
+                .expect("failed to determine XDG_STATE_HOME directory")
+                .join(APP_NAME_LOWERCASE);
         } else {
             // Windows
             return dirs::data_local_dir()
@@ -206,12 +219,10 @@ pub fn temp_dir() -> &'static PathBuf {
         }
 
         if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-            return if let Ok(flatpak_xdg_cache) = std::env::var("FLATPAK_XDG_CACHE_HOME") {
-                flatpak_xdg_cache.into()
-            } else {
-                dirs::cache_dir().expect("failed to determine XDG_CACHE_HOME directory")
-            }
-            .join(APP_NAME_LOWERCASE);
+            // zed-kask: no flatpak XDG override (D7) — see config_dir().
+            return dirs::cache_dir()
+                .expect("failed to determine XDG_CACHE_HOME directory")
+                .join(APP_NAME_LOWERCASE);
         }
 
         home_dir().join(".cache").join(APP_NAME_LOWERCASE)
@@ -331,10 +342,9 @@ pub fn agents_file() -> &'static PathBuf {
 ///
 /// Windows doesn't recognize `~` as the home directory, so the env-var
 /// form (`%APPDATA%`) is used there instead. Note that this is the
-/// *typical* location: a user with `XDG_CONFIG_HOME` set or running in a
-/// Flatpak sandbox would see a different `agents_file()` at runtime than
-/// this displays. The display string trades that precision for
-/// readability in announcement copy.
+/// *typical* location: a user with `XDG_CONFIG_HOME` set would see a
+/// different `agents_file()` at runtime than this displays. The display
+/// string trades that precision for readability in announcement copy.
 #[cfg(target_os = "windows")]
 pub const GLOBAL_AGENTS_FILE_DISPLAY: &str =
     const_format::concatcp!("%APPDATA%\\", APP_NAME, "\\AGENTS.md");
@@ -634,4 +644,19 @@ pub fn global_gitignore_path() -> Option<PathBuf> {
     GLOBAL_GITIGNORE_PATH
         .get_or_init(::ignore::gitignore::gitconfig_excludes_path)
         .clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// D7: App identity constants must be zed-kask, not upstream Zed.
+    /// An upstream merge that reverts these produces a silently broken
+    /// app identity (wrong bundle ID, wrong data dirs, wrong URL scheme).
+    #[test]
+    fn app_identity_constants_are_kask() {
+        assert_eq!(APP_NAME, "Zed-Kask");
+        assert_eq!(URL_SCHEME, "zed-kask");
+        assert_eq!(APP_NAME_LOWERCASE, "zed-kask");
+    }
 }

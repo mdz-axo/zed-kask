@@ -132,7 +132,8 @@ mod constants {
     pub const BASELINE_DIR: &str = "crates/zed/test_fixtures/visual_tests";
 
     /// Embedded test image (Zed app icon) for visual tests.
-    pub const EMBEDDED_TEST_IMAGE: &[u8] = include_bytes!("../resources/app-icon.png");
+    pub const EMBEDDED_TEST_IMAGE: &[u8] =
+        include_bytes!("../../../kask/assets/icons/app-icon.png");
 
     /// Threshold for image comparison (0.0 to 1.0)
     /// Images must match at least this percentage to pass
@@ -2736,9 +2737,9 @@ fn run_multi_workspace_sidebar_visual_tests(
                             request_token_usage: Default::default(),
                             model: None,
                             profile: None,
+                            delegation_authority: None,
                             subagent_context: None,
                             speed: None,
-                            thinking_enabled: false,
                             thinking_effort: None,
                             ui_scroll_position: None,
                             draft_prompt: None,

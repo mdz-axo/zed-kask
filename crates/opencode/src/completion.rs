@@ -9,8 +9,7 @@ use google_ai::completion::{GoogleEventMapper, into_google};
 use http_client::{CustomHeaders, HttpClient};
 use language_model_core::{
     LanguageModelCompletionError, LanguageModelCompletionStream, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelRequest, ReasoningEffort,
-    chat_completion::ChatCompletionEventMapper,
+    LanguageModelProviderName, LanguageModelRequest, chat_completion::ChatCompletionEventMapper,
 };
 use open_ai::completion::{
     ChatCompletionMaxTokensParameter, OpenAiResponseEventMapper, into_open_ai,
@@ -53,7 +52,11 @@ pub async fn stream_completion(
                 request,
                 model.id().to_string(),
                 1.0,
-                model.max_output_tokens().unwrap_or(8192),
+                // zed-kask: D83 — truthful Option passthrough; `into_anthropic`
+                // resolves the unconfigured case with the documented
+                // `UNCONFIGURED_MAX_OUTPUT_TOKENS` wire fallback, never a
+                // fabricated small cap.
+                model.max_output_tokens(),
                 mode,
                 AnthropicPromptCacheMode::Automatic,
                 &config.provider_id,
@@ -113,9 +116,9 @@ pub async fn stream_completion(
                 .boxed())
         }
         ApiProtocol::OpenAiResponses => {
-            let supports_none = model
-                .supported_reasoning_effort_levels()
-                .is_some_and(|levels| levels.contains(&ReasoningEffort::None));
+            // zed-kask: D42 — the `supports_none_reasoning_effort` gate is not
+            // restored: an explicit user disable sends `effort: none` regardless
+            // of mandatory-reasoning metadata.
             let request = into_open_ai_response(
                 request,
                 model.id(),
@@ -123,7 +126,6 @@ pub async fn stream_completion(
                 false,
                 model.max_output_tokens(),
                 None,
-                supports_none,
                 &config.provider_id,
             )?;
             let stream = open_ai::responses::stream_response(

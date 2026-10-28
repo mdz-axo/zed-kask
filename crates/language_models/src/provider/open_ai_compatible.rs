@@ -1,7 +1,7 @@
 use anyhow::Result;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
-use gpui::{App, AppContext, AsyncApp, Entity, Task};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, Task};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::chat_completion::ChatCompletionEventMapper;
 use language_model::{
@@ -14,6 +14,7 @@ use language_model::{
 };
 use open_ai::{
     ResponseStreamEvent,
+    list_models::list_models,
     responses::{Request as ResponseRequest, StreamEvent as ResponsesStreamEvent, stream_response},
     stream_completion,
 };
@@ -36,6 +37,9 @@ pub struct OpenAiCompatibleSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
     pub custom_headers: CustomHeaders,
+    /// Whether to auto-discover models via the provider's `/v1/models` endpoint.
+    /// Defaults to `true` — API key presence is the effective opt-in.
+    pub auto_discover: bool,
 }
 
 impl ApiCompatibleProviderSettings for OpenAiCompatibleSettings {
@@ -46,11 +50,129 @@ impl ApiCompatibleProviderSettings for OpenAiCompatibleSettings {
 
 pub type State = ApiCompatibleProviderState<OpenAiCompatibleSettings>;
 
+/// Discovery state for auto-discovering models via the provider's `/v1/models`
+/// endpoint. Held alongside the shared `ApiCompatibleProviderState` so the
+/// generic state stays generic (Anthropic-compatible providers don't carry
+/// unused discovery fields).
+///
+/// Mirrors the OpenRouter `State` pattern: a `fetch_models_task` is spawned on
+/// authenticate / settings change, and `fetched_models` is merged into
+/// `provided_models` by the provider.
+pub struct DiscoveryState {
+    /// Models discovered via `/v1/models`. Empty until a successful fetch.
+    fetched_models: Vec<AvailableModel>,
+    /// In-flight fetch task. Replaced on re-authentication or settings change.
+    fetch_models_task: Option<Task<Result<()>>>,
+}
+
+impl DiscoveryState {
+    fn new() -> Self {
+        Self {
+            fetched_models: Vec::new(),
+            fetch_models_task: None,
+        }
+    }
+
+    /// Spawn (or replace) the fetch-models task. Reads the api_key and api_url
+    /// from the shared state. When `auto_discover` is false, this is a no-op.
+    fn restart_fetch_models_task(
+        &mut self,
+        state: Entity<State>,
+        http_client: Arc<dyn HttpClient>,
+        provider_name: LanguageModelProviderName,
+        cx: &mut Context<Self>,
+    ) {
+        let state_read = state.read(cx);
+        let auto_discover = state_read.settings.auto_discover;
+        let api_url = state_read.settings.api_url.clone();
+        let extra_headers = state_read.settings.custom_headers.clone();
+        let api_key = state_read
+            .api_key_state
+            .key(&api_url)
+            .map(|k| k.to_string());
+        // Release the borrow before spawning the task.
+        let _ = state_read;
+
+        if !auto_discover {
+            return;
+        }
+
+        let Some(api_key) = api_key else {
+            log::warn!(
+                "OpenAI-compatible provider {provider_name}: auto_discover is enabled but no API key is set — set the {provider_name} API key to discover models"
+            );
+            return;
+        };
+
+        let task = cx.spawn(async move |this, cx| {
+            let result = list_models(http_client.as_ref(), &api_url, &api_key, &extra_headers)
+                .await
+                .map(|models| {
+                    models
+                        .into_iter()
+                        .map(|m| {
+                            let supports_tools = m.supports_tools();
+                            let supports_images = m.supports_images();
+                            let display_name = {
+                                let name = m.name.clone().unwrap_or_default();
+                                if name.is_empty() { None } else { Some(name) }
+                            };
+                            AvailableModel {
+                                name: m.id,
+                                display_name,
+                                max_tokens: m.context_length.unwrap_or(128_000),
+                                max_output_tokens: m.max_output_tokens,
+                                max_completion_tokens: None,
+                                reasoning_effort: None,
+                                capabilities: ModelCapabilities {
+                                    tools: supports_tools,
+                                    images: supports_images,
+                                    parallel_tool_calls: supports_tools,
+                                    prompt_cache_key: false,
+                                    chat_completions: true,
+                                    interleaved_reasoning: false,
+                                    max_tokens_parameter: false,
+                                },
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                });
+            match result {
+                Ok(models) => {
+                    // The registry observes this entity directly (see
+                    // `subscribe`), so the shared state is left untouched:
+                    // notifying it re-triggered discovery (D76).
+                    this.update(cx, |this, cx| {
+                        this.fetched_models = models;
+                        cx.notify();
+                    })
+                    .ok();
+                }
+                Err(e) => {
+                    // zed-kask (D76): `{e:#}` (anyhow's alternate format)
+                    // includes the full source chain — connect vs DNS vs TLS
+                    // vs timeout. The top-level Display alone logged "error
+                    // sending request" with no cause, leaving transport
+                    // failures undiagnosable (observed 2026-09-04: DeepInfra
+                    // discovery failure whose root cause could not be
+                    // recovered from the log).
+                    log::warn!(
+                        "OpenAI-compatible provider {provider_name}: model discovery from {api_url} failed: {e:#}"
+                    );
+                }
+            }
+            Ok(())
+        });
+        self.fetch_models_task.replace(task);
+    }
+}
+
 pub struct OpenAiCompatibleLanguageModelProvider {
     id: LanguageModelProviderId,
     name: LanguageModelProviderName,
     http_client: Arc<dyn HttpClient>,
     state: Entity<State>,
+    discovery_state: Entity<DiscoveryState>,
     request_limiters: ModelRateLimiters,
 }
 
@@ -72,11 +194,43 @@ impl OpenAiCompatibleLanguageModelProvider {
             cx,
         );
 
+        let provider_name = LanguageModelProviderName::from(id.clone());
+        let http_client_for_discovery = http_client.clone();
+        let state_for_discovery = state.clone();
+        let discovery_state = cx.new(|cx| {
+            // Re-trigger discovery when the shared state notifies (settings or
+            // api-key change). The shared state calls cx.notify() in
+            // `update_settings` and after `authenticate`/`set_api_key`.
+            let observe_http = http_client_for_discovery.clone();
+            let observe_name = provider_name.clone();
+            cx.observe(
+                &state,
+                move |this: &mut DiscoveryState, observed_state, cx| {
+                    this.restart_fetch_models_task(
+                        observed_state,
+                        observe_http.clone(),
+                        observe_name.clone(),
+                        cx,
+                    );
+                },
+            )
+            .detach();
+            let mut discovery = DiscoveryState::new();
+            discovery.restart_fetch_models_task(
+                state_for_discovery.clone(),
+                http_client_for_discovery.clone(),
+                provider_name.clone(),
+                cx,
+            );
+            discovery
+        });
+
         Self {
             id: id.clone().into(),
             name: id.into(),
             http_client,
             state,
+            discovery_state,
             request_limiters: ModelRateLimiters::default(),
         }
     }
@@ -97,7 +251,7 @@ impl OpenAiCompatibleLanguageModelProvider {
             },
             supports_streaming_tools: true,
             supports_thinking: default_thinking_reasoning_effort(model).is_some(),
-            supported_effort_levels: supported_thinking_effort_levels(model).into(),
+            supported_effort_levels: supported_reasoning_effort_levels(model).into(),
             supports_split_token_display: true,
             max_output_tokens: model.max_output_tokens,
             ..LanguageModel::new(
@@ -227,6 +381,20 @@ impl LanguageModelProviderState for OpenAiCompatibleLanguageModelProvider {
     fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
         Some(self.state.clone())
     }
+
+    /// zed-kask (D76): observe discovered models as well as the shared state.
+    fn subscribe<T: 'static>(
+        &self,
+        cx: &mut Context<T>,
+        callback: impl Fn(&mut T, &mut Context<T>) + 'static,
+    ) -> Option<gpui::Subscription> {
+        let callback = std::rc::Rc::new(callback);
+        let on_state = callback.clone();
+        Some(gpui::Subscription::join(
+            cx.observe(&self.state, move |this, _, cx| on_state(this, cx)),
+            cx.observe(&self.discovery_state, move |this, _, cx| callback(this, cx)),
+        ))
+    }
 }
 
 impl LanguageModelProvider for OpenAiCompatibleLanguageModelProvider {
@@ -243,7 +411,14 @@ impl LanguageModelProvider for OpenAiCompatibleLanguageModelProvider {
     }
 
     fn default_model(&self, cx: &App) -> Option<LanguageModel> {
-        self.available_models(cx)
+        let settings_models = &self.state.read(cx).settings.available_models;
+        if let Some(model) = settings_models.first() {
+            return Some(self.language_model(model));
+        }
+        // Fall back to the first discovered model when no static models are configured.
+        self.discovery_state
+            .read(cx)
+            .fetched_models
             .first()
             .map(|model| self.language_model(model))
     }
@@ -253,9 +428,25 @@ impl LanguageModelProvider for OpenAiCompatibleLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &App) -> Vec<LanguageModel> {
-        self.available_models(cx)
-            .iter()
-            .map(|model| self.language_model(model))
+        let settings_models = &self.state.read(cx).settings.available_models;
+        let discovered_models = &self.discovery_state.read(cx).fetched_models;
+
+        // Merge: settings models first (user-configured takes precedence),
+        // then discovered models not already present by name.
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut models: Vec<AvailableModel> = Vec::new();
+        for model in settings_models {
+            seen.insert(model.name.clone());
+            models.push(model.clone());
+        }
+        for model in discovered_models {
+            if seen.insert(model.name.clone()) {
+                models.push(model.clone());
+            }
+        }
+        models
+            .into_iter()
+            .map(|model| self.language_model(&model))
             .collect()
     }
 
@@ -342,7 +533,6 @@ impl LanguageModelClient for OpenAiCompatibleLanguageModelProvider {
                 config.capabilities.prompt_cache_key,
                 config.max_output_tokens,
                 default_thinking_reasoning_effort(&config),
-                supports_none_reasoning_effort(&config),
                 &self.id,
             ) {
                 Ok(request) => request,
@@ -361,6 +551,21 @@ impl LanguageModelClient for OpenAiCompatibleLanguageModelProvider {
             .boxed()
         }
     }
+
+    // zed-kask: D24 — expose the registry-held credentials so edit prediction
+    // can talk to the provider's HTTP API directly, without a second
+    // inference router.
+    fn api_key(&self, _model: &LanguageModel, cx: &App) -> Option<String> {
+        self.state.read_with(cx, |state, _cx| {
+            let api_url = &state.settings.api_url;
+            state.api_key_state.key(api_url).map(|key| key.to_string())
+        })
+    }
+
+    fn api_url(&self, _model: &LanguageModel, cx: &App) -> Option<String> {
+        self.state
+            .read_with(cx, |state, _cx| Some(state.settings.api_url.clone()))
+    }
 }
 
 fn default_thinking_reasoning_effort(model: &AvailableModel) -> Option<open_ai::ReasoningEffort> {
@@ -369,7 +574,7 @@ fn default_thinking_reasoning_effort(model: &AvailableModel) -> Option<open_ai::
         .filter(|effort| *effort != open_ai::ReasoningEffort::None)
 }
 
-fn supported_thinking_effort_levels(model: &AvailableModel) -> Vec<LanguageModelEffortLevel> {
+fn supported_reasoning_effort_levels(model: &AvailableModel) -> Vec<LanguageModelEffortLevel> {
     let Some(default_effort) = default_thinking_reasoning_effort(model) else {
         return Vec::new();
     };
@@ -405,10 +610,6 @@ fn chat_completion_max_tokens_parameter(
     }
 }
 
-fn supports_none_reasoning_effort(model: &AvailableModel) -> bool {
-    model.reasoning_effort.is_some()
-}
-
 fn chat_completion_reasoning_effort(
     request: &LanguageModelRequest,
     model: &AvailableModel,
@@ -420,10 +621,8 @@ fn chat_completion_reasoning_effort(
     if request.thinking_allowed {
         selected_thinking_reasoning_effort(request)
             .or_else(|| default_thinking_reasoning_effort(model))
-    } else if supports_none_reasoning_effort(model) {
-        Some(open_ai::ReasoningEffort::None)
     } else {
-        None
+        Some(open_ai::ReasoningEffort::None)
     }
 }
 
@@ -483,8 +682,8 @@ mod tests {
     }
 
     #[test]
-    fn supported_thinking_effort_levels_use_configured_effort_as_default() {
-        let effort_levels = supported_thinking_effort_levels(&available_model(Some(
+    fn supported_reasoning_effort_levels_use_configured_effort_as_default() {
+        let effort_levels = supported_reasoning_effort_levels(&available_model(Some(
             open_ai::ReasoningEffort::High,
         )));
         let values = effort_levels
@@ -503,10 +702,10 @@ mod tests {
     }
 
     #[test]
-    fn supported_thinking_effort_levels_hide_missing_or_none_effort() {
-        assert!(supported_thinking_effort_levels(&available_model(None)).is_empty());
+    fn supported_reasoning_effort_levels_hide_missing_or_none_effort() {
+        assert!(supported_reasoning_effort_levels(&available_model(None)).is_empty());
         assert!(
-            supported_thinking_effort_levels(&available_model(Some(
+            supported_reasoning_effort_levels(&available_model(Some(
                 open_ai::ReasoningEffort::None
             )))
             .is_empty()
@@ -546,14 +745,19 @@ mod tests {
     }
 
     #[test]
-    fn chat_completion_reasoning_effort_omits_missing_effort() {
+    fn chat_completion_reasoning_effort_sends_none_when_thinking_disallowed() {
+        // Deliberate fork behavior (2026-08-23): when thinking is disallowed,
+        // always send `ReasoningEffort::None` rather than omitting the field.
         let model = available_model(None);
         let request = LanguageModelRequest {
             thinking_allowed: false,
             ..Default::default()
         };
 
-        assert_eq!(chat_completion_reasoning_effort(&request, &model), None);
+        assert_eq!(
+            chat_completion_reasoning_effort(&request, &model),
+            Some(open_ai::ReasoningEffort::None)
+        );
     }
 
     #[test]
@@ -607,7 +811,6 @@ mod tests {
             model.capabilities.prompt_cache_key,
             model.max_output_tokens,
             default_thinking_reasoning_effort(&model),
-            supports_none_reasoning_effort(&model),
             &LanguageModelProviderId::new("test-compatible-provider"),
         )
         .unwrap();
@@ -638,7 +841,6 @@ mod tests {
             model.capabilities.prompt_cache_key,
             model.max_output_tokens,
             default_thinking_reasoning_effort(&model),
-            supports_none_reasoning_effort(&model),
             &LanguageModelProviderId::new("test-compatible-provider"),
         )
         .unwrap();
@@ -676,18 +878,7 @@ mod tests {
     }
 
     #[test]
-    fn configured_reasoning_effort_supports_none_reasoning_effort() {
-        assert!(supports_none_reasoning_effort(&available_model(Some(
-            open_ai::ReasoningEffort::Medium
-        ))));
-        assert!(supports_none_reasoning_effort(&available_model(Some(
-            open_ai::ReasoningEffort::None
-        ))));
-        assert!(!supports_none_reasoning_effort(&available_model(None)));
-    }
-
-    #[test]
-    fn response_thinking_effort_preserves_explicit_none() {
+    fn response_reasoning_effort_preserves_explicit_none() {
         let model = available_model(Some(open_ai::ReasoningEffort::None));
         let mut request = LanguageModelRequest {
             thinking_allowed: true,
@@ -698,5 +889,175 @@ mod tests {
         disable_response_thinking_for_none_effort(&mut request, &model);
         assert!(!request.thinking_allowed);
         assert_eq!(request.thinking_effort, None);
+    }
+
+    struct NoCredentialsProvider;
+
+    impl CredentialsProvider for NoCredentialsProvider {
+        fn read_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<Option<(String, Vec<u8>)>>> + 'a>,
+        > {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn write_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _username: &'a str,
+            _password: &'a [u8],
+            _cx: &'a AsyncApp,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn delete_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    /// D76 pin: a successful discovery must not re-trigger discovery. The
+    /// fetch task notifies the shared provider state so the model registry
+    /// re-reads `provided_models`; discovery also observes that state, so
+    /// without a guard every success started the next fetch — a continuous
+    /// `/models` polling loop that kept the foreground thread and every model
+    /// picker busy (live 2026-09-24: ~12 discovery completions per 5 s and
+    /// ~1,000 model-picker notifies per 5 s while idle).
+    #[gpui::test]
+    async fn successful_discovery_does_not_restart_itself(cx: &mut gpui::TestAppContext) {
+        use gpui::UpdateGlobal as _;
+        use http_client::{AsyncBody, FakeHttpClient, Response};
+        use settings::SettingsStore;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let requests = Arc::new(AtomicUsize::new(0));
+        let http_client = FakeHttpClient::create({
+            let requests = requests.clone();
+            move |request| {
+                let requests = requests.clone();
+                async move {
+                    if request.uri().path().ends_with("/models") {
+                        requests.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Ok(Response::builder()
+                        .status(200)
+                        .body(AsyncBody::from(r#"{"data":[{"id":"discovered-model"}]}"#))?)
+                }
+            }
+        });
+
+        let provider = cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            crate::AllLanguageModelSettings::register(cx);
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .language_models
+                        .get_or_insert_default()
+                        .openai_compatible = Some(
+                        [(
+                            Arc::from("TestDiscovery"),
+                            settings::OpenAiCompatibleSettingsContent {
+                                api_url: "https://example.test/v1".to_string(),
+                                available_models: Vec::new(),
+                                custom_headers: None,
+                                auto_discover: true,
+                            },
+                        )]
+                        .into_iter()
+                        .collect(),
+                    );
+                });
+            });
+            OpenAiCompatibleLanguageModelProvider::new(
+                Arc::from("TestDiscovery"),
+                http_client,
+                Arc::new(NoCredentialsProvider),
+                cx,
+            )
+        });
+        let store = provider.state.update(cx, |state, cx| {
+            state.set_api_key(Some("key".to_string()), cx)
+        });
+        // Bounded ticks, not `run_until_parked`: a self-restarting discovery
+        // loop never parks, which would hang the test instead of failing it.
+        for _ in 0..500 {
+            if !cx.executor().tick() {
+                break;
+            }
+        }
+        store.await.unwrap();
+        for _ in 0..500 {
+            if !cx.executor().tick() {
+                break;
+            }
+        }
+
+        assert_eq!(
+            requests.load(Ordering::SeqCst),
+            1,
+            "storing a key must discover models exactly once, not poll /models"
+        );
+        cx.update(|cx| {
+            assert!(
+                provider
+                    .provided_models(cx)
+                    .iter()
+                    .any(|model| model.id().0.as_ref() == "discovered-model"),
+                "the discovered model must reach provided_models"
+            );
+        });
+
+        cx.run_until_parked();
+        assert_eq!(
+            requests.load(Ordering::SeqCst),
+            1,
+            "a completed discovery must not start another /models request"
+        );
+
+        // The registry learns about discovered models through `subscribe`,
+        // which must fire on discovery completion now that the shared state
+        // is no longer notified.
+        let notified = Arc::new(AtomicUsize::new(0));
+        let observer = cx.update(|cx| {
+            cx.new(|cx: &mut Context<()>| {
+                let notified = notified.clone();
+                provider
+                    .subscribe(cx, move |_, _| {
+                        notified.fetch_add(1, Ordering::SeqCst);
+                    })
+                    .expect("provider exposes a subscription")
+                    .detach();
+            })
+        });
+        provider.discovery_state.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        assert_eq!(notified.load(Ordering::SeqCst), 1);
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+        drop(observer);
+    }
+
+    /// D76 pin: the discovery-failure warn must format the error with
+    /// anyhow's alternate Display (`{e:#}`) so the source chain (connect
+    /// vs DNS vs TLS vs timeout) is logged. The plain `{e}` left transport
+    /// failures undiagnosable — "error sending request" with no cause
+    /// (observed 2026-09-04: the DeepInfra discovery failure).
+    #[test]
+    fn discovery_failure_warn_includes_error_source_chain() {
+        let source = include_str!("open_ai_compatible.rs");
+        // Split the needle so the test's own source cannot satisfy the search.
+        let needle = concat!("model discovery from {api_url} failed: ", "{e:#}");
+        assert!(
+            source.contains(needle),
+            "the discovery warn must use {{e:#}} (anyhow source chain), not plain {{e}}"
+        );
     }
 }

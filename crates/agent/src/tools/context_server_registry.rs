@@ -1,10 +1,11 @@
-use crate::{AgentToolOutput, AnyAgentTool, ToolCallEventStream, ToolInput};
+use crate::{AgentToolOutput, AnyAgentTool, ToolCallEventStream, ToolInput, ToolInputPayload};
 use agent_client_protocol::schema::v2 as acp;
 use anyhow::Result;
-use collections::{BTreeMap, HashMap};
+use collections::{BTreeMap, HashMap, HashSet};
 use context_server::{ContextServerId, client::NotificationSubscription};
 use futures::FutureExt as _;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
+use hkask_types::process_global::ProcessGlobal;
 use language_model::{LanguageModelImage, LanguageModelImageExt, LanguageModelToolResultContent};
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use std::sync::Arc;
@@ -14,11 +15,201 @@ use util::{ResultExt, markdown::MarkdownEscaped};
 /// collapsed tool-call header. Longer values are truncated with an ellipsis.
 const MAX_INLINE_ARG_LEN: usize = 120;
 
+/// zed-kask: D-seam — F2/P1b. Model-facing text for a managed MCP tool call
+/// cancelled while its request was in flight. Deliberately distinct from
+/// `crate::thread::TOOL_CANCELED_MESSAGE` (which means the call never
+/// started): here the request may have reached the server, so the effect
+/// is unknown — never rollback, never success, never eligible for automatic
+/// retry. The caller must re-read state rather than resend the same call.
+const TOOL_CANCELED_OUTCOME_UNKNOWN: &str = "Tool call cancelled while in flight — its effect on the server is unknown. \
+     Re-check state before retrying; resending the same call could duplicate work.";
+
 /// Generates a tool ID for an MCP tool that can be used in settings.
 ///
 /// The format is `mcp:<server_id>:<tool_name>` to avoid collisions with built-in tools.
 pub fn mcp_tool_id(server_id: &str, tool_name: &str) -> String {
     format!("mcp:{}:{}", server_id, tool_name)
+}
+
+// ── zed-kask: governed-runtime tool source (single spawn authority, I1) ────
+
+/// A kask MCP server tool descriptor, surfaced from the governed
+/// `McpRuntime` into the agent's tool list.
+#[derive(Clone)]
+pub struct KaskToolDescriptor {
+    pub server_id: String,
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+}
+
+/// Source for kask built-in MCP server tools — wired in `main.rs` to the
+/// governed `McpRuntime`. Kask servers are NOT registered with zed's
+/// per-project `ContextServerStore` (the single-spawn-authority invariant,
+/// 2026-08-29): their processes are owned exclusively by the runtime, their
+/// env composed exclusively by `build_mcp_server_env`, and their tools
+/// surface to the agent through this source. Dispatch through `invoke` is
+/// metered by the runtime's governance — the agent-side
+/// `record_mcp_tool_outcome` wrapper is intentionally absent from
+/// `KaskServerTool` to avoid double-recording.
+pub trait KaskToolSource: Send + Sync {
+    /// The current tool surface: one descriptor per tool across all
+    /// registered kask servers. Cache-backed and synchronous — the impl
+    /// owns the async refresh.
+    fn tools(&self) -> Vec<KaskToolDescriptor>;
+    /// Live connections at the time of the read. `None` means the runtime
+    /// could not be read without blocking the foreground thread; callers must
+    /// not treat that as a running server.
+    fn running_server_ids_now(&self) -> Option<Vec<String>>;
+    /// Dispatch a tool call to the governed runtime. `Ok(value)` is the
+    /// parsed tool result; `Err(text)` is the operator-facing error text
+    /// (kask errors carry the typed kind as a `[kind] message` prefix).
+    ///
+    /// `caller` (zed-kask: D-seam — F6/P2) is the host-derived initiating
+    /// actor — distinct per calling thread/subagent, never a model-supplied
+    /// value. It is a metering/attribution identity, not a capability: it
+    /// does not widen or narrow what the call may do (see P4.2). `None`
+    /// falls back to the pre-existing shared process-level identity.
+    fn invoke(
+        &self,
+        server_id: &str,
+        caller: Option<hkask_types::WebID>,
+        tool: &str,
+        args: serde_json::Value,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + Send>,
+    >;
+}
+
+static KASK_TOOL_SOURCE: ProcessGlobal<Arc<dyn KaskToolSource>> = ProcessGlobal::new();
+
+#[cfg(test)]
+thread_local! {
+    static TEST_KASK_TOOL_SOURCE: std::cell::RefCell<Option<Arc<dyn KaskToolSource>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Warn-once latch for the unwired kask tool source. Resets when the source
+/// is present, so the normal startup window (main.rs wires the source in its
+/// deferred task) produces at most one line, and a source that later goes
+/// away warns again. Without this, an unwired source is silent: kask tools
+/// just don't surface, and the operator cannot distinguish "not configured"
+/// from "configured but broken".
+static KASK_TOOL_SOURCE_UNWIRED_WARNED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Record that the kask tool source was consulted and found unwired.
+/// Returns whether this call is the first since the last wired observation
+/// (the caller warns only then, to avoid a line per store event).
+fn note_kask_tool_source_unwired() -> bool {
+    !KASK_TOOL_SOURCE_UNWIRED_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Record that the kask tool source is wired, re-arming the unwired warn.
+fn note_kask_tool_source_wired() {
+    KASK_TOOL_SOURCE_UNWIRED_WARNED.store(false, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Wire the governed `McpRuntime` as the agent's kask tool source. Called
+/// once from `main.rs` after the runtime is created.
+pub fn set_kask_tool_source(source: Arc<dyn KaskToolSource>) {
+    KASK_TOOL_SOURCE.set(Some(source));
+}
+
+#[cfg(test)]
+pub(crate) fn scoped_kask_tool_source_for_test(
+    source: Arc<dyn KaskToolSource>,
+) -> crate::ScopedTestOverride<Arc<dyn KaskToolSource>> {
+    crate::scoped_test_override(&TEST_KASK_TOOL_SOURCE, source)
+}
+
+/// The wired kask tool source, if any (absent in tests and lightweight
+/// embedders — kask tools then simply do not surface).
+pub fn kask_tool_source() -> Option<Arc<dyn KaskToolSource>> {
+    #[cfg(test)]
+    if let Some(source) = crate::test_override(&TEST_KASK_TOOL_SOURCE) {
+        return Some(source);
+    }
+
+    KASK_TOOL_SOURCE.get()
+}
+
+// ── zed-kask: kask tool-surface change signal ──────────────────────
+//
+// The process-global messenger that replaced the former 2s poll
+// (2026-09-22): discovery, connection loss, stop and shutdown on the
+// governed `McpRuntime` signal surface and liveness changes,
+// and events are forwarded instead of discarded. main.rs's source-refresh
+// loop fires this after every cache rebuild (and once at wiring); tests
+// fire it after mutating their scoped source. Every live
+// `ContextServerRegistry` reloads from `KaskToolSource` on receipt.
+// tokio::sync::watch (declared for this crate scoped to sync): broadcast to
+// every subscriber with natural coalescing, and executor-agnostic — no
+// timer-wheel registration, so awaiting it from GPUI foreground tasks is
+// safe (the .rules GPUI traps concern the timer wheel, not this family).
+// async-channel was evaluated and rejected: its Receiver clones COMPETE for
+// messages (one message reaches one clone) rather than broadcasting, which
+// surfaced as registry starvation in the parallel test suite.
+
+// The production global. Unused in test builds, where notifications are
+// thread-scoped (below) — gated to keep the test-cfg build free of dead code.
+#[cfg(not(test))]
+static KASK_TOOL_SURFACE_TX: std::sync::OnceLock<tokio::sync::watch::Sender<()>> =
+    std::sync::OnceLock::new();
+
+#[cfg(not(test))]
+fn kask_tool_surface_tx() -> &'static tokio::sync::watch::Sender<()> {
+    KASK_TOOL_SURFACE_TX.get_or_init(|| tokio::sync::watch::Sender::new(()))
+}
+
+// zed-kask: test-thread scoping. Tests run parallel schedulers, one per
+// thread, and GPUI's TestExecutor enforces same-thread wake determinism:
+// a notification fired on test B's thread waking a task subscribed by test
+// A aborts the process ("Your test is not deterministic" + a foreign-thread
+// task drop — observed live 2026-09-22). The same discipline as
+// `scoped_kask_tool_source_for_test`: a test's notifications stay on its own
+// thread. Production has one foreground executor by design and cross-thread
+// wakes are its normal operation, so the global sender is used there.
+#[cfg(test)]
+thread_local! {
+    static TEST_KASK_TOOL_SURFACE_TX: std::cell::RefCell<Option<
+        tokio::sync::watch::Sender<()>,
+    >> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn test_thread_surface_tx() -> tokio::sync::watch::Sender<()> {
+    TEST_KASK_TOOL_SURFACE_TX.with(|tx| {
+        tx.borrow_mut()
+            .get_or_insert_with(|| tokio::sync::watch::Sender::new(()))
+            .clone()
+    })
+}
+
+/// Subscribe to kask tool-surface change notifications. Subscribe before the
+/// event you must not miss — a receiver sees only sends after its creation.
+pub fn subscribe_to_kask_tool_surface_changes() -> tokio::sync::watch::Receiver<()> {
+    #[cfg(test)]
+    {
+        test_thread_surface_tx().subscribe()
+    }
+    #[cfg(not(test))]
+    {
+        kask_tool_surface_tx().subscribe()
+    }
+}
+
+/// Notify every live registry that the kask tool surface may have changed.
+/// Broadcast: every subscribed registry sees the notification.
+pub fn notify_kask_tool_surface_changed() {
+    #[cfg(test)]
+    {
+        test_thread_surface_tx().send_replace(());
+    }
+    #[cfg(not(test))]
+    {
+        kask_tool_surface_tx().send_replace(());
+    }
 }
 
 pub struct ContextServerPrompt {
@@ -36,6 +227,13 @@ impl EventEmitter<ContextServerRegistryEvent> for ContextServerRegistry {}
 pub struct ContextServerRegistry {
     server_store: Entity<ContextServerStore>,
     registered_servers: HashMap<ContextServerId, RegisteredContextServer>,
+    /// Server ids currently sourced from the kask tool source. Tracked so a
+    /// reload can REMOVE entries for servers the source no longer lists:
+    /// an unloaded kask server (`McpRuntime::stop_server` drops it from the
+    /// registered set, D45) must leave the agent surface — before this
+    /// tracking, the merge only ever inserted, so ghost tools lingered
+    /// forever after an unload.
+    kask_server_ids: HashSet<ContextServerId>,
     _subscription: gpui::Subscription,
 }
 
@@ -47,18 +245,150 @@ struct RegisteredContextServer {
     _tools_updated_subscription: Option<NotificationSubscription>,
 }
 
+// How the kask-tool startup window is covered is documented on the
+// surface-change signal above and the registry's subscription spawn.
+
 impl ContextServerRegistry {
     pub fn new(server_store: Entity<ContextServerStore>, cx: &mut Context<Self>) -> Self {
         let mut this = Self {
             server_store: server_store.clone(),
             registered_servers: HashMap::default(),
+            kask_server_ids: HashSet::default(),
             _subscription: cx.subscribe(&server_store, Self::handle_context_server_store_event),
         };
         for server in server_store.read(cx).running_servers() {
             this.reload_tools_for_server(server.id(), cx);
             this.reload_prompts_for_server(server.id(), cx);
         }
+        // zed-kask: kask tools surface from the governed runtime, not the
+        // per-project store (single spawn authority, I1).
+        this.reload_kask_tools(cx);
+        // zed-kask: the startup race. This registry is created during window
+        // restore, before the deferred MCP launch wires the kask tool source
+        // and registers kask servers — and because kask servers are not in
+        // the ContextServerStore, no store event ever announces any of that.
+        // The process-global surface-change signal is the messenger: main.rs
+        // fires it after every source-cache rebuild (and once at wiring),
+        // tests fire it after mutating their scoped source, and each live
+        // registry reloads on receipt. This replaced the former 2s poll
+        // (2026-09-22) — registration events exist and polling discarded
+        // them while re-cloning the whole surface every tick. Subscribing
+        // HERE (before the spawn) closes the construction race: a receiver
+        // sees only sends after its creation, so nothing between registry
+        // construction and the task's first poll is lost. The loop exits
+        // when this registry is dropped.
+        let mut surface_changes = subscribe_to_kask_tool_surface_changes();
+        cx.spawn(async move |this, cx| {
+            loop {
+                if surface_changes.changed().await.is_err() {
+                    break;
+                }
+                // watch coalesces bursts (a settings-change restart that
+                // stops and re-registers several servers) into one reload.
+                let Ok(()) = this.update(cx, |this, cx| this.reload_kask_tools(cx)) else {
+                    break;
+                };
+            }
+        })
+        .detach();
         this
+    }
+
+    /// Merge the kask tool surface (from the process-global
+    /// [`KaskToolSource`], wired to the governed `McpRuntime` in `main.rs`)
+    /// into the registry under each tool's server id. Cache-backed and
+    /// synchronous, so it is cheap enough to re-run on every store event and
+    /// on every surface-change notification. The signal is what catches
+    /// kask servers that registered after this registry was created — store
+    /// events cannot (kask servers are not in the ContextServerStore), so the
+    /// store-event path only re-inserts entries that a colliding raw
+    /// settings id removed.
+    fn reload_kask_tools(&mut self, cx: &mut Context<Self>) {
+        let Some(source) = kask_tool_source() else {
+            if note_kask_tool_source_unwired() {
+                log::warn!(
+                    "kask tool source is unwired — kask MCP server tools are not surfacing in the agent tool list. main.rs wires set_kask_tool_source in its deferred startup task: a single line during the first seconds after launch is startup ordering; a persistent absence means the wiring is broken"
+                );
+            }
+            return;
+        };
+        note_kask_tool_source_wired();
+        if Self::merge_kask_tool_descriptors(
+            source,
+            &mut self.registered_servers,
+            &mut self.kask_server_ids,
+        ) {
+            cx.emit(ContextServerRegistryEvent::ToolsChanged);
+        }
+    }
+
+    /// Merge the kask source's current descriptor set into the registry.
+    /// Insert/replace per-server entries for every server the source lists,
+    /// and REMOVE previously-kask-sourced servers the source no longer lists
+    /// (an unloaded kask server — D45 load toggle → `stop_server` → dropped
+    /// from the runtime's registered set → absent from the source within one
+    /// poll — must leave the agent surface; before this tracking the merge
+    /// only ever inserted, so ghost tools lingered forever). Returns whether
+    /// the visible tool surface changed.
+    ///
+    /// Re-merges every listed entry so the wrapped descriptors stay fresh
+    /// across kask server restarts (the source's cache is rebuilt on
+    /// reconnect), but reports `true` only when the visible surface changed:
+    /// the poll re-runs this every tick and store events re-run it on every
+    /// server status change, and notifying subscribers for a no-op would
+    /// churn every thread's tool list. A kask entry removed by a store event
+    /// for a colliding raw settings id counts as changed here and is
+    /// re-inserted on the next pass while the source lists it (the
+    /// documented collision behavior). Only ids the PREVIOUS pass sourced
+    /// from kask are eligible for removal — store-registered servers are
+    /// untouched.
+    fn merge_kask_tool_descriptors(
+        source: Arc<dyn KaskToolSource>,
+        registered_servers: &mut HashMap<ContextServerId, RegisteredContextServer>,
+        kask_server_ids: &mut HashSet<ContextServerId>,
+    ) -> bool {
+        let mut by_server: HashMap<String, BTreeMap<SharedString, Arc<dyn AnyAgentTool>>> =
+            HashMap::default();
+        for descriptor in source.tools() {
+            let server_id = descriptor.server_id.clone();
+            let name: SharedString = descriptor.name.clone().into();
+            let tool: Arc<dyn AnyAgentTool> = Arc::new(KaskServerTool {
+                source: source.clone(),
+                descriptor,
+            });
+            by_server.entry(server_id).or_default().insert(name, tool);
+        }
+        let mut surface_changed = false;
+        let mut current_kask_ids: HashSet<ContextServerId> = HashSet::default();
+        for (server_id, tools) in by_server {
+            let server_id = ContextServerId(std::sync::Arc::from(server_id.as_str()));
+            let tool_names_unchanged = registered_servers
+                .get(&server_id)
+                .is_some_and(|registered| registered.tools.keys().eq(tools.keys()));
+            if !tool_names_unchanged {
+                surface_changed = true;
+            }
+            current_kask_ids.insert(server_id.clone());
+            registered_servers.insert(
+                server_id,
+                RegisteredContextServer {
+                    tools,
+                    prompts: BTreeMap::default(),
+                    load_tools: Task::ready(Ok(())),
+                    load_prompts: Task::ready(Ok(())),
+                    _tools_updated_subscription: None,
+                },
+            );
+        }
+        for stale_id in std::mem::take(kask_server_ids) {
+            if !current_kask_ids.contains(&stale_id)
+                && registered_servers.remove(&stale_id).is_some()
+            {
+                surface_changed = true;
+            }
+        }
+        *kask_server_ids = current_kask_ids;
+        surface_changed
     }
 
     pub fn tools_for_server(
@@ -105,6 +435,19 @@ impl ContextServerRegistry {
                 .values()
                 .find_map(|server| server.prompts.get(name))
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn insert_test_prompt(
+        &mut self,
+        server_id: ContextServerId,
+        prompt: context_server::types::Prompt,
+        cx: &mut Context<Self>,
+    ) {
+        let name: SharedString = prompt.name.clone().into();
+        self.get_or_register_server(&server_id, cx)
+            .prompts
+            .insert(name, ContextServerPrompt { server_id, prompt });
     }
 
     pub fn server_store(&self) -> &Entity<ContextServerStore> {
@@ -278,6 +621,12 @@ impl ContextServerRegistry {
                 cx.notify();
             }
         };
+        // zed-kask: opportunistic kask-tool refresh. The governed runtime
+        // registers kask tools asynchronously (deferred launch, restarts,
+        // reconnects) with no store event to observe — re-reading the cache
+        // here catches late registrations, and re-inserts kask entries if a
+        // store event for a colliding raw settings id wrongly removed them.
+        self.reload_kask_tools(cx);
     }
 }
 
@@ -285,6 +634,240 @@ struct ContextServerTool {
     store: Entity<ContextServerStore>,
     server_id: ContextServerId,
     tool: context_server::types::Tool,
+}
+
+/// A kask built-in MCP server tool, dispatched through the governed
+/// `McpRuntime` via the process-global [`KaskToolSource`] — not through the
+/// per-project `ContextServerStore`. Same `AnyAgentTool` surface as
+/// `ContextServerTool` so the agent's tool list assembly is unchanged; the
+/// self-healing loop is absent because the runtime owns reconnection
+/// (keeper reaping, on-demand reconnect, health supervisor, circuit
+/// breaker), and outcome recording is absent because the runtime's
+/// governance meters every `invoke`.
+struct KaskServerTool {
+    source: Arc<dyn KaskToolSource>,
+    descriptor: KaskToolDescriptor,
+}
+
+impl AnyAgentTool for KaskServerTool {
+    fn delegation_identity(&self) -> crate::DelegatedToolIdentity {
+        crate::DelegatedToolIdentity::Mcp {
+            server: self.descriptor.server_id.clone(),
+            tool: self.descriptor.name.clone(),
+        }
+    }
+    fn name(&self) -> SharedString {
+        self.descriptor.name.clone().into()
+    }
+
+    fn description(&self) -> SharedString {
+        self.descriptor.description.clone().into()
+    }
+
+    fn kind(&self) -> acp::ToolKind {
+        acp::ToolKind::Other
+    }
+
+    fn initial_title(&self, input: serde_json::Value, _cx: &mut App) -> SharedString {
+        format_mcp_initial_title(&self.descriptor.name, &input).into()
+    }
+
+    fn input_schema(&self) -> serde_json::Value {
+        let mut schema = match self.descriptor.input_schema.clone() {
+            serde_json::Value::Null => serde_json::json!({ "type": "object" }),
+            serde_json::Value::Object(map) if map.is_empty() => {
+                serde_json::json!({ "type": "object" })
+            }
+            schema => schema,
+        };
+        // zed-kask: D44 — managed tools share the built-in schema normalization path.
+        language_model::tool_schema::normalize_tool_schema(&mut schema);
+        schema
+    }
+
+    fn run(
+        self: Arc<Self>,
+        input: ToolInput<serde_json::Value>,
+        event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<AgentToolOutput, AgentToolOutput>> {
+        let tool_id = mcp_tool_id(&self.descriptor.server_id, &self.descriptor.name);
+        let display_name = self.descriptor.name.clone();
+        let initial_title = self.initial_title(serde_json::Value::Null, cx);
+        let authorize =
+            event_stream.authorize_third_party_tool(initial_title, tool_id, display_name, cx);
+        let server_id = self.descriptor.server_id.clone();
+        let tool_name = self.descriptor.name.clone();
+        let source = self.source.clone();
+        // zed-kask: D-seam — F6/P2 (fix recorded as D68). Captured at stream
+        // construction from the owning thread's session id — reading it takes
+        // no entity lease (`run` executes inside `handle_completion_event`'s
+        // update, where the old on-demand `thread.read(cx)` double-leased the
+        // Thread and panicked the editor on prompt send, BH-001) — and the
+        // spawned future below outlives this call and cannot re-derive it.
+        let caller = event_stream.calling_actor();
+        cx.spawn(async move |_| {
+            let input = input
+                .recv()
+                .await
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+            authorize
+                .await
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+            // zed-kask: D-seam — F2/P1b. Race the managed dispatch against user
+            // cancellation so `Thread::cancel` can complete even when the child
+            // never replies. Cancellation here means "the request may or may not
+            // have applied its effect" — never a claim of rollback or success.
+            let dispatch = source.invoke(&server_id, caller, &tool_name, input);
+            let outcome = futures::select! {
+                result = dispatch.fuse() => result,
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    return Ok(AgentToolOutput {
+                        raw_output: serde_json::Value::String(TOOL_CANCELED_OUTCOME_UNKNOWN.into()),
+                        llm_output: vec![LanguageModelToolResultContent::Text(
+                            TOOL_CANCELED_OUTCOME_UNKNOWN.into(),
+                        )],
+                    });
+                }
+            };
+
+            match outcome {
+                Ok(value) => {
+                    let text = match &value {
+                        serde_json::Value::String(string) => string.clone(),
+                        value => value.to_string(),
+                    };
+                    // Structural display hints — same as the store
+                    // path: fenced media blocks render deterministically.
+                    let mut tool_call_content = Vec::new();
+                    for hint in hkask_types::tool_response::display_hints_from_output_text(&text) {
+                        tool_call_content.push(acp::ToolCallContent::Content(Box::new(
+                            acp::Content::new(acp::ContentBlock::Text(acp::TextContent::new(hint))),
+                        )));
+                    }
+                    if !tool_call_content.is_empty() {
+                        event_stream.update_fields(|update| update.content(tool_call_content));
+                    }
+                    Ok(AgentToolOutput {
+                        raw_output: value,
+                        llm_output: vec![LanguageModelToolResultContent::Text(text.into())],
+                    })
+                }
+                Err(error_text) => Err(AgentToolOutput {
+                    raw_output: serde_json::Value::String(error_text.clone()),
+                    llm_output: vec![LanguageModelToolResultContent::Text(error_text.into())],
+                }),
+            }
+        })
+    }
+
+    fn replay(
+        &self,
+        _input: serde_json::Value,
+        _output: serde_json::Value,
+        _event_stream: ToolCallEventStream,
+        _cx: &mut App,
+    ) -> Result<()> {
+        Ok(())
+    }
+}
+
+/// Map a completed `ContextServerTool` run to the regulation outcome tuple
+/// `(success, error_kind)`. The kind is read structurally from the error
+/// output's `raw_output` (the server's `structured_content`, set by the
+/// `is_error` branch in `run_inner`); when absent (non-kask servers, whose
+/// errors are plain text) the full text is the classification hint.
+fn mcp_run_outcome(result: &Result<AgentToolOutput, AgentToolOutput>) -> (bool, Option<String>) {
+    match result {
+        Ok(_) => (true, None),
+        Err(output) => {
+            let kind = hkask_types::tool_response::parse_tool_error_value(&output.raw_output)
+                .and_then(|envelope| envelope.kind)
+                .map(|kind| kind.to_string());
+            // Untyped errors route through `error_kind_from_display` so the
+            // rmcp deserialization-rejection signature classifies as
+            // `invalid_argument` (caller-caused, excluded from the
+            // reliability rate) instead of counting raw error text against
+            // the tool.
+            (
+                false,
+                Some(kind.unwrap_or_else(|| {
+                    hkask_types::tool_response::error_kind_from_display(&mcp_error_text(output))
+                })),
+            )
+        }
+    }
+}
+
+/// Build the error output for a model-caused invalid-JSON tool call — the
+/// typed `{"error", "kind": "invalid_argument"}` envelope so
+/// `mcp_run_outcome` classifies the failure structurally. The ledger then
+/// excludes it from the tool-reliability success rate
+/// (`hkask_types::tool_response::is_not_tool_fault_kind`) while keeping it
+/// in the per-kind breakdown: the tool never received usable input, so the
+/// failure is the caller's (the truncation signature — see `Thread::
+/// handle_tool_use_json_parse_error_event`), not the tool's. The
+/// `llm_output` keeps the parse-error message the model sees.
+fn invalid_json_tool_output(error_message: String) -> AgentToolOutput {
+    let llm_output = vec![LanguageModelToolResultContent::Text(
+        error_message.clone().into(),
+    )];
+    AgentToolOutput {
+        raw_output: serde_json::json!({
+            "error": error_message,
+            "kind": hkask_types::McpErrorKind::InvalidArgument.to_string(),
+        }),
+        llm_output,
+    }
+}
+
+/// zed-kask: D-seam — whether a failed context-server tool call is a
+/// request timeout (server alive but slow) rather than a transport death
+/// (connection reset, process death). Timeouts must NOT enter the
+/// restart-and-retry loop: restarting a live-but-slow server wastes 30s
+/// and does not fix the slowness. The timeout message is produced by
+/// `context_server::client` (`"Context server request timeout"`); it is
+/// matched on the string to avoid adding a public error variant to the
+/// `context_server` crate.
+fn is_context_server_timeout(error_text: &str) -> bool {
+    error_text.contains("Context server request timeout")
+}
+
+/// zed-kask: D-seam — F7/P2. `context_server::Client::request` (upstream)
+/// erases every failure into one `anyhow::Error`, so this string match is
+/// the only boundary available without editing upstream `client.rs`. The
+/// ONLY provable non-delivery case in that function's source is the
+/// `outbound_tx.try_send` failure, tagged with this exact context string —
+/// every other path (timeout, decode failure, server-reported error,
+/// "cancelled" bail after transport loss) means the request may already
+/// have reached the server, so none of them are safe to retry. This is
+/// deliberately a strict allowlist, not the previous "retry unless proven
+/// timeout" denylist that let unclassified errors (decode failures included)
+/// fall through to a retry.
+fn is_provably_not_delivered(error_text: &str) -> bool {
+    error_text.contains("failed to write to context server's stdin")
+}
+
+/// Extract the error text from a failed MCP tool run. The error message
+/// lives in the LLM-facing text parts of the output; an output with no text
+/// at all reports "unknown error" rather than an empty classification.
+fn mcp_error_text(output: &AgentToolOutput) -> String {
+    let text = output
+        .llm_output
+        .iter()
+        .filter_map(|part| match part {
+            LanguageModelToolResultContent::Text(text) => Some(text.as_ref()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    if text.trim().is_empty() {
+        "unknown error".to_string()
+    } else {
+        text
+    }
 }
 
 impl ContextServerTool {
@@ -302,6 +885,12 @@ impl ContextServerTool {
 }
 
 impl AnyAgentTool for ContextServerTool {
+    fn delegation_identity(&self) -> crate::DelegatedToolIdentity {
+        crate::DelegatedToolIdentity::Mcp {
+            server: self.server_id.0.to_string(),
+            tool: self.tool.name.clone(),
+        }
+    }
     fn name(&self) -> SharedString {
         self.tool.name.clone().into()
     }
@@ -339,25 +928,168 @@ impl AnyAgentTool for ContextServerTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<AgentToolOutput, AgentToolOutput>> {
-        let Some(server) = self.store.read(cx).get_running_server(&self.server_id) else {
+        // zed-kask: D-seam — regulation wiring. Agent-path MCP tool
+        // calls (zed's context-server client) were invisible to the
+        // regulation system: the McpRuntime dispatch path (skills/panel/IPC)
+        // records outcomes via `with_governance`, but this path had no
+        // `record_outcome` call, so the ToolReliabilitySensor and the
+        // curator never saw agent-initiated MCP failures. The wrapper
+        // records every outcome — including the early not-running error
+        // path inside `run_inner` — through the process-global hook wired
+        // in `main.rs`.
+        let server_name = self.server_id.0.clone();
+        let tool_name = self.tool.name.clone();
+        let inner = Self::run_inner(self, input, event_stream, cx);
+        cx.spawn(async move |_| {
+            let result = inner.await;
+            let (success, error_kind) = mcp_run_outcome(&result);
+            crate::record_mcp_tool_outcome(
+                &server_name,
+                &tool_name,
+                success,
+                error_kind.as_deref(),
+            );
+            result
+        })
+    }
+
+    fn replay(
+        &self,
+        _input: serde_json::Value,
+        _output: serde_json::Value,
+        _event_stream: ToolCallEventStream,
+        _cx: &mut App,
+    ) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl ContextServerTool {
+    /// Execute the MCP tool call — the original `run` body, extracted so the
+    /// `run` wrapper can record the outcome for regulation.
+    fn run_inner(
+        self: Arc<Self>,
+        input: ToolInput<serde_json::Value>,
+        event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<AgentToolOutput, AgentToolOutput>> {
+        // Check the server is running before spawning — gives an early error
+        // rather than entering the self-healing loop for a server that was
+        // never started. The closure re-fetches by id after auth.
+        if self
+            .store
+            .read(cx)
+            .get_running_server(&self.server_id)
+            .is_none()
+        {
             return Task::ready(Err(anyhow::anyhow!("Context server not found").into()));
-        };
+        }
         let tool_name = self.tool.name.clone();
         let tool_id = mcp_tool_id(&self.server_id.0, &self.tool.name);
         let display_name = self.tool.name.clone();
         let initial_title = self.initial_title(serde_json::Value::Null, cx);
         let authorize =
             event_stream.authorize_third_party_tool(initial_title, tool_id, display_name, cx);
+        // Capture the store and server_id for the self-healing path below —
+        // the closure needs to re-fetch the server after a transport death.
+        let store = self.store.clone();
+        let server_id = self.server_id.clone();
 
         cx.spawn(async move |cx| {
-            let input = input
-                .recv()
-                .await
-                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            // zed-kask: D-seam — classify model-caused input failures before
+            // dispatch. `ToolInput::recv` collapses the typed `InvalidJson`
+            // payload (the model's tool-call arguments were unparseable — the
+            // truncation signature) into an anyhow error, which
+            // `mcp_run_outcome` would classify as raw error text and the
+            // ledger would count against tool reliability. Consuming the
+            // payload stream directly lets the invalid-JSON case return a
+            // typed `invalid_argument` envelope instead: the tool never
+            // received usable input, so the failure is caller-caused —
+            // excluded from the success-rate math
+            // (`hkask_types::tool_response::is_not_tool_fault_kind`) but
+            // visible in the per-kind breakdown.
+            let mut input = input;
+            let input = loop {
+                match input.next().await {
+                    Ok(ToolInputPayload::Full(value)) => break value,
+                    Ok(ToolInputPayload::Partial(_)) => continue,
+                    Ok(ToolInputPayload::InvalidJson { error_message }) => {
+                        return Err(invalid_json_tool_output(error_message));
+                    }
+                    Err(error) => {
+                        // `ToolInput::recv` used to log this case with its
+                        // likely cause; consuming the payload stream directly
+                        // bypasses that, so warn here: a dropped sender means
+                        // the LLM stream ended (MaxTokens, error, or refusal)
+                        // before the tool_use input was complete — the same
+                        // stream-end family as the invalid-JSON truncation
+                        // signature above.
+                        log::warn!(
+                            "Tool '{}' input was not fully received — the LLM stream likely ended before the tool_use input was complete: {}",
+                            tool_name,
+                            error
+                        );
+                        return Err(anyhow::anyhow!(error.to_string()).into());
+                    }
+                }
+            };
 
             authorize
                 .await
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+            // zed-kask: D-seam — on-demand self-healing. When the server's
+            // client is None (transport died, server moved to Stopped by
+            // watch_transport_shutdown), trigger maintain_servers to restart
+            // it before failing. This mirrors McpRuntime::call_tool_inner's
+            // try_reconnect pattern.
+            let server = cx.update(|cx| store.read(cx).get_running_server(&server_id));
+            let server = match server {
+                Some(s) => s,
+                None => {
+                    // Server is not running — trigger a restart via
+                    // available_context_servers_changed, then wait for it.
+                    log::warn!(
+                        "Context server '{}' not running — triggering restart",
+                        server_id.0
+                    );
+                    cx.update(|cx| {
+                        store.update(cx, |store, cx| {
+                            store.trigger_server_maintenance(cx);
+                        });
+                    });
+                    // Wait for the server to come back (up to 30s). Selected
+                    // against cancellation (zed-kask: D-seam F2/P1b) so `Stop`
+                    // is not blocked on a restart wait that never started any
+                    // effect — this wait precedes dispatch, so cancelling it
+                    // is a genuine no-op, not an uncertain outcome.
+                    let mut elapsed = 0u64;
+                    let server = loop {
+                        if elapsed >= 30_000 {
+                            return Err(anyhow::anyhow!(
+                                "Context server '{}' failed to restart within 30s",
+                                server_id.0
+                            ).into());
+                        }
+                        futures::select! {
+                            _ = cx.background_executor()
+                                .timer(std::time::Duration::from_millis(500))
+                                .fuse() => {}
+                            _ = event_stream.cancelled_by_user().fuse() => {
+                                return Err(anyhow::anyhow!(
+                                    "Context server '{}' restart wait cancelled by user before dispatch",
+                                    server_id.0
+                                ).into());
+                            }
+                        }
+                        elapsed += 500;
+                        if let Some(s) = cx.update(|cx| store.read(cx).get_running_server(&server_id)) {
+                            break s;
+                        }
+                    };
+                    server
+                }
+            };
 
             let Some(protocol) = server.client() else {
                 return Err(anyhow::anyhow!("Context server not initialized").into());
@@ -377,14 +1109,102 @@ impl AnyAgentTool for ContextServerTool {
 
             let request = protocol.request::<context_server::types::requests::CallTool>(
                 context_server::types::CallToolParams {
-                    name: tool_name,
-                    arguments,
+                    name: tool_name.clone(),
+                    arguments: arguments.clone(),
                     meta: None,
                 },
             );
 
             let response = futures::select! {
-                response = request.fuse() => response?,
+                response = request.fuse() => match response {
+                    Ok(r) => r,
+                    Err(e) => {
+                        // zed-kask: D-seam — F7/P2. Retry ONLY a request proven to have
+                        // never reached the server (`is_provably_not_delivered`) — a
+                        // restart-and-retry is safe there because nothing was sent.
+                        // Every other outcome (timeout, decode failure, a
+                        // "cancelled"-after-transport-loss bail, a server-reported
+                        // error) means the request may have been delivered and
+                        // possibly applied, so it is reported as unknown rather than
+                        // silently repeated. This replaces the previous "retry unless
+                        // proven timeout" default, which let unclassified errors —
+                        // including decode failures on an already-successful
+                        // server-side call — fall through to a duplicate dispatch.
+                        let error_text = e.to_string();
+                        if !is_provably_not_delivered(&error_text) {
+                            let outcome_note = if is_context_server_timeout(&error_text) {
+                                "timed out"
+                            } else {
+                                "failed with an unclassified error"
+                            };
+                            log::warn!(
+                                "Context server '{}' tool '{}' {outcome_note} — not retrying; the \
+                                 request may have reached the server, so its effect is unknown: {e}",
+                                server_id.0, tool_name
+                            );
+                            return Err(e.into());
+                        }
+                        // Provably never sent — a restart-and-retry cannot duplicate
+                        // an effect that never happened.
+                        log::warn!(
+                            "Context server '{}' tool '{}' was never delivered: {} — attempting restart and retry",
+                            server_id.0, tool_name, e
+                        );
+                        cx.update(|cx| {
+                            store.update(cx, |store, cx| {
+                                store.trigger_server_maintenance(cx);
+                            });
+                        });
+                        // Wait for restart (up to 30s). The original request
+                        // already failed with a transport error at this point
+                        // (`DispatchError`-equivalent non-delivery, per the doc
+                        // above), so cancelling this wait is a no-op, not an
+                        // uncertain outcome (zed-kask: D-seam F2/P1b).
+                        let mut elapsed = 0u64;
+                        let retried_server = loop {
+                            if elapsed >= 30_000 {
+                                return Err(anyhow::anyhow!(
+                                    "Context server '{}' failed to restart after transport error: {}",
+                                    server_id.0, e
+                                ).into());
+                            }
+                            futures::select! {
+                                _ = cx.background_executor()
+                                    .timer(std::time::Duration::from_millis(500))
+                                    .fuse() => {}
+                                _ = event_stream.cancelled_by_user().fuse() => {
+                                    return Err(anyhow::anyhow!(
+                                        "Context server '{}' restart wait cancelled by user after a non-delivered request",
+                                        server_id.0
+                                    ).into());
+                                }
+                            }
+                            elapsed += 500;
+                            if let Some(s) = cx.update(|cx| store.read(cx).get_running_server(&server_id)) {
+                                break s;
+                            }
+                        };
+                        let Some(retried_protocol) = retried_server.client() else {
+                            return Err(anyhow::anyhow!(
+                                "Context server '{}' restarted but client not available",
+                                server_id.0
+                            ).into());
+                        };
+                        let retry_request = retried_protocol.request::<context_server::types::requests::CallTool>(
+                            context_server::types::CallToolParams {
+                                name: tool_name,
+                                arguments,
+                                meta: None,
+                            },
+                        );
+                        futures::select! {
+                            response = retry_request.fuse() => response?,
+                            _ = event_stream.cancelled_by_user().fuse() => {
+                                return Err(anyhow::anyhow!("MCP tool cancelled by user").into());
+                            }
+                        }
+                    }
+                },
                 _ = event_stream.cancelled_by_user().fuse() => {
                     return Err(anyhow::anyhow!("MCP tool cancelled by user").into());
                 }
@@ -393,7 +1213,19 @@ impl AnyAgentTool for ContextServerTool {
             if response.is_error == Some(true) {
                 let error_message: String =
                     response.content.iter().filter_map(|c| c.text()).collect();
-                return Err(anyhow::anyhow!(error_message).into());
+                // zed-kask: D-seam — carry the typed error kind structurally.
+                // kask servers set `is_error` natively (rmcp's Result handling
+                // + `McpToolError: IntoCallToolResult`) with the typed kind in
+                // `structured_content`. Putting that value in the error
+                // output's `raw_output` lets downstream consumers (regulation
+                // outcome recording, retry tracker) classify from the typed
+                // field instead of parsing error text.
+                return Err(AgentToolOutput {
+                    raw_output: response.structured_content.clone().unwrap_or_default(),
+                    llm_output: vec![LanguageModelToolResultContent::Text(
+                        error_message.into(),
+                    )],
+                });
             }
 
             let mut llm_output = Vec::new();
@@ -453,6 +1285,22 @@ impl AnyAgentTool for ContextServerTool {
                     }
                 }
             }
+            // zed-kask: D-seam — structural display_hint rendering.
+            // Media tool results carry `display_hint` / `display_hints`
+            // (fenced ```media blocks) as JSON fields inside the content
+            // envelope; previously they rendered only if the model
+            // voluntarily copied the fenced block into its reply — the
+            // entire media pipeline depended on model cooperation. Pushing
+            // the fenced blocks as additional text content makes the D18
+            // media_block_renderer render them deterministically in the
+            // tool card, in every conversation surface.
+            for hint in
+                hkask_types::tool_response::display_hints_from_output_text(&concatenated_text)
+            {
+                tool_call_content.push(acp::ToolCallContent::Content(Box::new(
+                    acp::Content::new(acp::ContentBlock::Text(acp::TextContent::new(hint))),
+                )));
+            }
             if !tool_call_content.is_empty() {
                 event_stream
                     .update_fields(|update| update.content(tool_call_content));
@@ -463,16 +1311,6 @@ impl AnyAgentTool for ContextServerTool {
                 llm_output,
             })
         })
-    }
-
-    fn replay(
-        &self,
-        _input: serde_json::Value,
-        _output: serde_json::Value,
-        _event_stream: ToolCallEventStream,
-        _cx: &mut App,
-    ) -> Result<()> {
-        Ok(())
     }
 }
 
@@ -652,5 +1490,615 @@ mod tests {
         // "no args at all".
         let input = serde_json::json!({ "q": "" });
         assert_eq!(single_string_arg(&input), Some(""));
+    }
+
+    #[test]
+    fn test_mcp_run_outcome_maps_success() {
+        let output = AgentToolOutput {
+            raw_output: serde_json::Value::String("ok".into()),
+            llm_output: vec![],
+        };
+        let (success, error_kind) = mcp_run_outcome(&Ok(output));
+        assert!(success);
+        assert_eq!(error_kind, None);
+    }
+
+    #[test]
+    fn test_mcp_run_outcome_maps_error_text() {
+        let output = AgentToolOutput {
+            raw_output: serde_json::Value::String(String::new()),
+            llm_output: vec![LanguageModelToolResultContent::Text(
+                "Context server not found".into(),
+            )],
+        };
+        let (success, error_kind) = mcp_run_outcome(&Err(output));
+        assert!(!success);
+        assert_eq!(error_kind.as_deref(), Some("Context server not found"));
+    }
+
+    #[test]
+    fn test_mcp_run_outcome_empty_error_text_falls_back() {
+        // An error output with no text parts must still carry a non-empty
+        // classification — an empty error_kind would be indistinguishable
+        // from "no error" on the wire.
+        let output = AgentToolOutput {
+            raw_output: serde_json::Value::Null,
+            llm_output: vec![],
+        };
+        let (success, error_kind) = mcp_run_outcome(&Err(output));
+        assert!(!success);
+        assert_eq!(error_kind.as_deref(), Some("unknown error"));
+    }
+
+    #[test]
+    fn test_mcp_run_outcome_extracts_typed_kind() {
+        // The typed kind rides in the error output's `raw_output` (the
+        // server's `structured_content`, set by the `is_error` branch in
+        // `run_inner`) — the regulation ledger classifies structurally,
+        // never by parsing error text.
+        let output = AgentToolOutput {
+            raw_output: serde_json::json!({
+                "error": "yt-dlp not found on system PATH",
+                "kind": "unavailable"
+            }),
+            llm_output: vec![LanguageModelToolResultContent::Text(
+                "yt-dlp not found on system PATH".into(),
+            )],
+        };
+        let (success, error_kind) = mcp_run_outcome(&Err(output));
+        assert!(!success);
+        assert_eq!(error_kind.as_deref(), Some("unavailable"));
+    }
+
+    /// Pins the invalid-JSON classification: a model-caused unparseable
+    /// tool-call (the truncation signature — arguments cut mid-JSON at
+    /// stream end) returns the typed `invalid_argument` envelope, so the
+    /// ledger excludes the failure from the tool-reliability success rate
+    /// while the per-kind breakdown keeps it visible. The LLM-visible text
+    /// keeps the parse-error message (pinned end-to-end by
+    /// `test_streaming_tool_json_parse_error_is_forwarded_to_running_tool`).
+    #[test]
+    fn test_invalid_json_input_classifies_as_invalid_argument() {
+        let parse_error =
+            "Error parsing input JSON: EOF while parsing a string at line 1 column 17";
+        let output = invalid_json_tool_output(parse_error.to_string());
+        assert!(
+            matches!(
+                output.llm_output.first(),
+                Some(LanguageModelToolResultContent::Text(text)) if text.contains(parse_error)
+            ),
+            "the model still sees the parse-error message: {:?}",
+            output.llm_output
+        );
+        let (success, error_kind) = mcp_run_outcome(&Err(output));
+        assert!(!success);
+        assert_eq!(
+            error_kind.as_deref(),
+            Some("invalid_argument"),
+            "a model-caused input failure must classify as caller-caused, \
+             not as raw error text counting against tool reliability"
+        );
+    }
+
+    /// Pins the untyped-fallback classification: an error output with no
+    /// typed envelope whose text carries rmcp's deserialization-rejection
+    /// signature classifies as `invalid_argument` (caller-caused) instead of
+    /// counting raw error text against tool reliability. Live-observed via
+    /// the curator_memory_recall missing-`entity` probe (2026-09-09).
+    #[test]
+    fn test_mcp_run_outcome_untyped_deserialization_rejection_classifies_invalid_argument() {
+        let output = AgentToolOutput {
+            raw_output: serde_json::Value::Null,
+            llm_output: vec![LanguageModelToolResultContent::Text(
+                "Tool invocation failed: failed to deserialize parameters: missing field `entity`"
+                    .into(),
+            )],
+        };
+        let (success, error_kind) = mcp_run_outcome(&Err(output));
+        assert!(!success);
+        assert_eq!(
+            error_kind.as_deref(),
+            Some("invalid_argument"),
+            "a schema-invalid call rejected below the server's typed error surface \
+             is caller-caused, not tool unreliability"
+        );
+    }
+
+    // ── zed-kask pinning tests (KaskToolSource D-seam, I1) ──────────────
+
+    /// A controllable `KaskToolSource` for pinning the hook surface and
+    /// the `KaskServerTool` dispatch. `invocations` records every dispatch
+    /// so tests can assert the agent's tool call reached the source with
+    /// the right server id, tool name, and arguments. `callers` records the
+    /// host-derived caller identity (zed-kask: D-seam — F6/P2) passed to
+    /// each `invoke`, in the same order, so tests can assert distinct
+    /// calling threads produce distinct attribution.
+    #[derive(Default)]
+    struct FakeKaskToolSource {
+        descriptors: Vec<KaskToolDescriptor>,
+        invocations: std::sync::Arc<std::sync::Mutex<Vec<(String, String, serde_json::Value)>>>,
+        callers: std::sync::Arc<std::sync::Mutex<Vec<Option<hkask_types::WebID>>>>,
+    }
+
+    impl FakeKaskToolSource {
+        /// A source exposing zero tools — wiring it is observationally inert
+        /// for any registry constructed in parallel tests.
+        fn empty() -> std::sync::Arc<dyn KaskToolSource> {
+            std::sync::Arc::new(Self::default())
+        }
+    }
+
+    impl KaskToolSource for FakeKaskToolSource {
+        fn tools(&self) -> Vec<KaskToolDescriptor> {
+            self.descriptors.clone()
+        }
+
+        fn running_server_ids_now(&self) -> Option<Vec<String>> {
+            Some(Vec::new())
+        }
+
+        fn invoke(
+            &self,
+            server_id: &str,
+            caller: Option<hkask_types::WebID>,
+            tool: &str,
+            args: serde_json::Value,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + Send>,
+        > {
+            let record = (server_id.to_string(), tool.to_string(), args);
+            self.invocations
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(record);
+            self.callers
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(caller);
+            let is_failing = tool == "failing_tool";
+            // zed-kask: D-seam — F2/P1b test fixture. A tool name that never
+            // resolves, so cancellation tests prove the race actually fires
+            // rather than passing because the fake happened to be fast.
+            let never_replies = tool == "never_replies_tool";
+            Box::pin(async move {
+                if never_replies {
+                    std::future::pending::<()>().await;
+                    unreachable!("pending future never resolves");
+                } else if is_failing {
+                    Err("[unavailable] upstream is down".to_string())
+                } else {
+                    Ok(serde_json::json!({"status": "ok"}))
+                }
+            })
+        }
+    }
+
+    /// Pin: the warn-once latch for the unwired kask tool source. The first
+    /// unwired observation reports true (the caller warns), subsequent ones
+    /// false (no storm); a wired observation re-arms it so a later regression
+    /// warns again. Without the latch, `reload_kask_tools` would either warn
+    /// on every store event or stay silent — neither lets the operator
+    /// distinguish "not configured" from "configured but broken".
+    #[test]
+    fn kask_tool_source_unwired_warn_latch_fires_once_and_rearms() {
+        // Reset to a known state, then simulate the startup window: the
+        // source is unwired before main.rs's deferred task runs.
+        note_kask_tool_source_wired();
+        assert!(
+            note_kask_tool_source_unwired(),
+            "first unwired observation must report warn"
+        );
+        assert!(
+            !note_kask_tool_source_unwired(),
+            "subsequent unwired observations must not warn again"
+        );
+        // The deferred task lands the source: the latch re-arms.
+        note_kask_tool_source_wired();
+        assert!(
+            note_kask_tool_source_unwired(),
+            "a wired observation must re-arm the warn latch"
+        );
+        // Leave the latch armed-but-unwarned for other tests.
+        note_kask_tool_source_wired();
+    }
+
+    /// Pin: test sources are scoped to their owner thread and restored during
+    /// panic unwinding. Production retains the re-settable `ProcessGlobal`
+    /// composition-root hook; `reload_kask_tools` surfaces an unwired source
+    /// through its warn-once latch and polls for late startup wiring.
+    /// expect: "Parallel registries observe only their test's kask tool source"
+    /// [P9] Motivating: Homeostatic Self-Regulation — test feedback remains causal
+    /// pre: one test installs a scoped kask tool source
+    /// post: a concurrent thread cannot observe it, and unwinding restores prior state
+    #[test]
+    fn scoped_kask_tool_source_is_thread_local_and_panic_safe() {
+        let source = FakeKaskToolSource::empty();
+        let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _override = scoped_kask_tool_source_for_test(source.clone());
+            assert!(Arc::ptr_eq(
+                &kask_tool_source().expect("owner thread source"),
+                &(source.clone() as Arc<dyn KaskToolSource>)
+            ));
+            let concurrent = std::thread::spawn(kask_tool_source)
+                .join()
+                .expect("concurrent source read");
+            assert!(concurrent.as_ref().is_none_or(|candidate| {
+                !Arc::ptr_eq(candidate, &(source.clone() as Arc<dyn KaskToolSource>))
+            }));
+            panic!("exercise scoped cleanup");
+        }));
+        assert!(unwind.is_err());
+        assert!(kask_tool_source().as_ref().is_none_or(|candidate| {
+            !Arc::ptr_eq(candidate, &(source as Arc<dyn KaskToolSource>))
+        }));
+    }
+
+    #[test]
+    fn kask_tool_source_hook_is_settable_replaceable_and_absent_when_unwired() {
+        let source_a = FakeKaskToolSource::empty();
+        let mut source_override = scoped_kask_tool_source_for_test(source_a.clone());
+        let wired = kask_tool_source().expect("source must be wired after set");
+        assert!(
+            std::sync::Arc::ptr_eq(&wired, &source_a),
+            "set_kask_tool_source must install the given source"
+        );
+
+        // The scoped test slot is replaceable; production replacement is the
+        // shared ProcessGlobal contract pinned in hkask-types.
+        let source_b = FakeKaskToolSource::empty();
+        source_override.replace(source_b.clone());
+        let wired = kask_tool_source().expect("source must remain wired after replace");
+        assert!(
+            std::sync::Arc::ptr_eq(&wired, &source_b),
+            "the slot must be replaceable, not one-shot"
+        );
+        assert!(!std::sync::Arc::ptr_eq(&wired, &source_a));
+
+        drop(source_override);
+        assert!(
+            kask_tool_source().is_none(),
+            "unwired source must read None — kask tools do not surface"
+        );
+    }
+
+    /// Pin: the kask merge REMOVES previously-kask-sourced servers the source
+    /// no longer lists. An unloaded kask server (D45 load toggle →
+    /// `McpRuntime::stop_server` → dropped from the runtime's registered set
+    /// → absent from the source within one poll) must leave the agent
+    /// surface — before the removal leg, the merge only ever inserted, so
+    /// ghost tools lingered forever. Also pins that store-registered servers
+    /// are untouched by a kask merge, and that a steady-state merge reports
+    /// no surface change (no subscriber churn).
+    #[test]
+    fn kask_merge_removes_servers_absent_from_the_source() {
+        let mut registered: HashMap<ContextServerId, RegisteredContextServer> = HashMap::default();
+        let mut kask_ids: HashSet<ContextServerId> = HashSet::default();
+
+        // A store-registered server that must survive every kask merge.
+        registered.insert(
+            ContextServerId(std::sync::Arc::from("store-server")),
+            RegisteredContextServer {
+                tools: BTreeMap::default(),
+                prompts: BTreeMap::default(),
+                load_tools: Task::ready(Ok(())),
+                load_prompts: Task::ready(Ok(())),
+                _tools_updated_subscription: None,
+            },
+        );
+
+        let invocations = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let descriptor = KaskToolDescriptor {
+            server_id: "kask-a".to_string(),
+            name: "tool_a".to_string(),
+            description: "A governed kask tool".to_string(),
+            input_schema: serde_json::json!({"type": "object", "properties": {}}),
+        };
+
+        // Pass 1: kask-a merges in — surface changed.
+        let source: std::sync::Arc<dyn KaskToolSource> = std::sync::Arc::new(FakeKaskToolSource {
+            descriptors: vec![descriptor],
+            invocations: invocations.clone(),
+            ..Default::default()
+        });
+        assert!(ContextServerRegistry::merge_kask_tool_descriptors(
+            source,
+            &mut registered,
+            &mut kask_ids
+        ));
+        assert!(registered.contains_key(&ContextServerId(std::sync::Arc::from("kask-a"))));
+        assert_eq!(registered.len(), 2, "store-server + kask-a");
+
+        // Pass 2: the source no longer lists kask-a (unloaded) — removed,
+        // surface changed, store-server untouched.
+        let empty: std::sync::Arc<dyn KaskToolSource> = std::sync::Arc::new(FakeKaskToolSource {
+            descriptors: Vec::new(),
+            invocations,
+            ..Default::default()
+        });
+        assert!(ContextServerRegistry::merge_kask_tool_descriptors(
+            empty.clone(),
+            &mut registered,
+            &mut kask_ids
+        ));
+        assert!(
+            !registered.contains_key(&ContextServerId(std::sync::Arc::from("kask-a"))),
+            "an unloaded kask server's ghost tools must leave the registry"
+        );
+        assert_eq!(
+            registered.len(),
+            1,
+            "only the store-registered server remains"
+        );
+        assert!(registered.contains_key(&ContextServerId(std::sync::Arc::from("store-server"))));
+
+        // Pass 3: steady state — nothing to insert, nothing to remove, no
+        // surface change (no ToolsChanged churn on every poll tick).
+        assert!(!ContextServerRegistry::merge_kask_tool_descriptors(
+            empty,
+            &mut registered,
+            &mut kask_ids
+        ));
+    }
+
+    /// expect: [P1] MCP identity retains the exact server and unsanitized tool name.
+    #[test]
+    fn delegation_managed_tool_identity_is_not_an_alias() {
+        let tool = KaskServerTool {
+            source: FakeKaskToolSource::empty(),
+            descriptor: KaskToolDescriptor {
+                server_id: "server-a".into(),
+                name: "read-file".into(),
+                description: String::new(),
+                input_schema: serde_json::Value::Null,
+            },
+        };
+        let authority = crate::DelegationAuthority::from_mcp_tools(&["server-a/read-file".into()]);
+        assert!(authority.allows(&tool.delegation_identity()));
+        for name in ["server-b/read-file", "server-a/read_file", "read-file"] {
+            assert!(
+                !crate::DelegationAuthority::from_mcp_tools(&[name.into()])
+                    .allows(&tool.delegation_identity())
+            );
+        }
+    }
+
+    #[test]
+    fn kask_server_tool_normalizes_schemas_without_losing_named_properties() {
+        let schema_for = |input_schema| {
+            KaskServerTool {
+                source: FakeKaskToolSource::empty(),
+                descriptor: KaskToolDescriptor {
+                    server_id: "kask-test".into(),
+                    name: "schema-tool".into(),
+                    description: "Schema normalization pin".into(),
+                    input_schema,
+                },
+            }
+            .input_schema()
+        };
+        for empty in [serde_json::Value::Null, serde_json::json!({})] {
+            assert_eq!(
+                schema_for(empty),
+                serde_json::json!({"type": "object", "properties": {}})
+            );
+        }
+        assert_eq!(
+            schema_for(serde_json::json!({
+                "type": "object",
+                "$defs": {"text": {"type": "string", "description": "Field help"}},
+                "properties": {"description": {"$ref": "#/$defs/text"}},
+                "required": ["description"]
+            })),
+            serde_json::json!({
+                "type": "object",
+                "properties": {"description": {"type": "string", "description": "Field help"}},
+                "required": ["description"]
+            })
+        );
+    }
+
+    /// Pin: `KaskServerTool` — the agent-visible surface of a kask MCP
+    /// server tool — passes the descriptor's name/description through and
+    /// dispatches `run` through `KaskToolSource::invoke` (the
+    /// single-spawn-authority path, I1: dispatch goes to the governed
+    /// runtime, never the per-project `ContextServerStore`). `Ok(value)`
+    /// surfaces as the tool's LLM text; `Err(text)` surfaces as the error
+    /// text verbatim. The source is passed directly (no process-global
+    /// wiring), so this test cannot perturb parallel tests.
+    #[gpui::test]
+    async fn kask_server_tool_dispatches_through_kask_tool_source(cx: &mut gpui::TestAppContext) {
+        // `run` authorizes via `authorize_third_party_tool`, which consults
+        // the tool-permission settings — default allow, like the MCP tests
+        // in `tests/mod.rs`.
+        cx.update(|cx| {
+            use settings::Settings as _;
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            let mut agent_settings = agent_settings::AgentSettings::get_global(cx).clone();
+            agent_settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            agent_settings::AgentSettings::override_global(agent_settings, cx);
+        });
+
+        let invocations = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let descriptors = vec![
+            KaskToolDescriptor {
+                server_id: "kask-test".to_string(),
+                name: "hello_tool".to_string(),
+                description: "A governed kask tool".to_string(),
+                input_schema: serde_json::json!({"type": "object", "properties": {}}),
+            },
+            KaskToolDescriptor {
+                server_id: "kask-test".to_string(),
+                name: "failing_tool".to_string(),
+                description: "A governed kask tool that fails".to_string(),
+                input_schema: serde_json::json!({"type": "object", "properties": {}}),
+            },
+        ];
+        let source = std::sync::Arc::new(FakeKaskToolSource {
+            descriptors: descriptors.clone(),
+            invocations: invocations.clone(),
+            ..Default::default()
+        });
+
+        // Descriptor passthrough: the surfaced tool keeps the descriptor's
+        // name and description (the merge in `reload_kask_tools` wraps
+        // exactly this tool shape).
+        let hello = std::sync::Arc::new(KaskServerTool {
+            source: source.clone(),
+            descriptor: descriptors[0].clone(),
+        });
+        assert_eq!(hello.name().as_ref(), "hello_tool");
+        assert_eq!(hello.description().as_ref(), "A governed kask tool");
+
+        // Success path: dispatch reaches the source with the right server
+        // id, tool name, and arguments; the source's value surfaces as the
+        // LLM-facing text.
+        let (mut sender, input) = ToolInput::<serde_json::Value>::test();
+        sender.send_full(serde_json::json!({"query": "hi"}));
+        let (event_stream, _rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| hello.run(input, event_stream, cx));
+        let output = match task.await {
+            Ok(output) => output,
+            Err(_) => panic!("successful invoke should return Ok"),
+        };
+        assert_eq!(
+            output.llm_output,
+            vec![LanguageModelToolResultContent::Text(
+                serde_json::json!({"status": "ok"}).to_string().into(),
+            )],
+            "the source's Ok(value) must surface as the tool's LLM text"
+        );
+        {
+            let recorded = invocations
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            assert_eq!(
+                recorded.as_slice(),
+                &[(
+                    "kask-test".to_string(),
+                    "hello_tool".to_string(),
+                    serde_json::json!({"query": "hi"}),
+                )],
+                "the dispatch must carry the descriptor's server id and tool name"
+            );
+        }
+
+        // Error path: the source's Err(text) surfaces verbatim as the
+        // tool's error text (kask errors carry the typed kind as a
+        // `[kind] message` prefix).
+        let failing = std::sync::Arc::new(KaskServerTool {
+            source,
+            descriptor: descriptors[1].clone(),
+        });
+        let (mut sender, input) = ToolInput::<serde_json::Value>::test();
+        sender.send_full(serde_json::json!({}));
+        let (event_stream, _rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| failing.run(input, event_stream, cx));
+        let error = match task.await {
+            Ok(_) => panic!("failing invoke should return Err"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error.llm_output,
+            vec![LanguageModelToolResultContent::Text(
+                "[unavailable] upstream is down".into(),
+            )],
+            "the source's Err(text) must surface verbatim as the error text"
+        );
+    }
+
+    /// F2/P1b: a managed kask tool call that never replies must not block
+    /// user cancellation forever. `KaskServerTool::run` races the dispatch
+    /// against `event_stream.cancelled_by_user()`; the never-resolving fake
+    /// proves the race actually fires (a real reply would make this pass
+    /// trivially even without the fix). The cancelled outcome must be
+    /// distinct model-facing text from an ordinary tool error, and must not
+    /// claim rollback or invite an automatic retry — the effect on the
+    /// (fake) server is genuinely unknown at cancellation time.
+    #[gpui::test]
+    async fn kask_server_tool_cancellation_does_not_block_forever(cx: &mut gpui::TestAppContext) {
+        // `run` authorizes via `authorize_third_party_tool`, which consults
+        // the tool-permission settings — default allow, matching the
+        // dispatch test above.
+        cx.update(|cx| {
+            use settings::Settings as _;
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            let mut agent_settings = agent_settings::AgentSettings::get_global(cx).clone();
+            agent_settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            agent_settings::AgentSettings::override_global(agent_settings, cx);
+        });
+        let descriptor = KaskToolDescriptor {
+            server_id: "kask-test".to_string(),
+            // FakeKaskToolSource::invoke keys on this exact name to select
+            // the never-resolving fixture path.
+            name: "never_replies_tool".to_string(),
+            description: "A governed kask tool that never replies".to_string(),
+            input_schema: serde_json::json!({"type": "object", "properties": {}}),
+        };
+        let source = std::sync::Arc::new(FakeKaskToolSource {
+            descriptors: vec![descriptor.clone()],
+            invocations: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            ..Default::default()
+        });
+        let tool = std::sync::Arc::new(KaskServerTool { source, descriptor });
+        let (mut sender, input) = ToolInput::<serde_json::Value>::test();
+        sender.send_full(serde_json::json!({}));
+        let (event_stream, _rx, mut cancellation_tx) =
+            crate::thread::ToolCallEventStream::test_with_cancellation();
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+        // Cancel promptly, then await the task directly. GPUI's test
+        // executor is deterministic (no real wall-clock wait needed): if
+        // the fix regresses, `run` never selects on `cancelled_by_user()`
+        // and this `.await` blocks forever on the pending fake dispatch,
+        // failing the test by hanging rather than by a wrong assertion.
+        cancellation_tx.send(true).expect("send cancellation");
+        let output = match task.await {
+            Ok(output) => output,
+            Err(_) => panic!("cancellation is reported as Ok, not a tool error"),
+        };
+        assert!(
+            output.llm_output.iter().any(|content| matches!(
+                content,
+                LanguageModelToolResultContent::Text(text)
+                    if text.contains("unknown") && !text.contains("upstream is down")
+            )),
+            "cancellation must report an unknown-effect outcome distinct from an ordinary \
+             tool failure, got: {:?}",
+            output.llm_output
+        );
+    }
+
+    /// Pin (D-seam, `run_inner` retry classification): a request timeout
+    /// ("server alive but slow") and a transport death produce DISTINCT
+    /// retry verdicts. Only the timeout text classifies as a timeout — the
+    /// verdict that makes `run_inner` bail immediately without the 30s
+    /// restart-and-retry loop. Transport-death errors classify as
+    /// retryable, entering the restart-then-retry-once path. The full-path
+    /// timeout half is pinned in `tests/mod.rs`
+    /// (`test_mcp_tool_timeout_does_not_retry`); the restart-then-retry
+    /// half needs a killable-and-restartable mock server and is pinned
+    /// only at this predicate.
+    #[test]
+    fn timeout_and_transport_death_classify_into_distinct_retry_verdicts() {
+        assert!(is_context_server_timeout("Context server request timeout"));
+        // The message may carry context after the canonical prefix.
+        assert!(is_context_server_timeout(
+            "error: Context server request timeout (after 60s)"
+        ));
+
+        // Transport-death errors must NOT classify as timeouts — they are
+        // the retryable kind, where a restart can actually help.
+        for transport_death in [
+            "connection reset by peer",
+            "broken pipe",
+            "child process exited unexpectedly",
+            "transport closed while awaiting response",
+        ] {
+            assert!(
+                !is_context_server_timeout(transport_death),
+                "{transport_death:?} is a transport death, not a timeout — it must classify as retryable"
+            );
+        }
     }
 }

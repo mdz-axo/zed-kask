@@ -1,4 +1,3 @@
-use collab_ui::collab_panel;
 use gpui::{App, Menu, MenuItem, OsAction};
 use project::DisableAiSettings;
 use release_channel::ReleaseChannel;
@@ -42,7 +41,6 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
         MenuItem::separator(),
         MenuItem::action("Project Panel", project_panel::ToggleFocus),
         MenuItem::action("Outline Panel", outline_panel::ToggleFocus),
-        MenuItem::action("Collab Panel", collab_panel::ToggleFocus),
         MenuItem::action("Terminal Panel", terminal_panel::Toggle),
         MenuItem::action("Debugger Panel", debug_panel::ToggleFocus),
     ];
@@ -53,6 +51,9 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
 
     view_items.extend([
         MenuItem::action("Git Panel", git_panel::ToggleFocus),
+        MenuItem::action("Agent Swarm", swarm_panel::Toggle),
+        MenuItem::action("Kanban Board", kanban_panel::Toggle),
+        MenuItem::action("Media", media_panel::Toggle),
         MenuItem::separator(),
         MenuItem::action("Diagnostics", diagnostics::Deploy),
         MenuItem::separator(),
@@ -68,11 +69,14 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
 
     vec![
         Menu {
-            name: "Zed".into(),
+            // zed-kask: D16 — leftmost app menu renamed from "Zed" to "z-k".
+            // On macOS the platform overrides this title with the app's bundle
+            // name ("Zed-Kask" via D7); the rename only takes effect on the
+            // cross-platform title-bar `ApplicationMenu` (Linux/Windows).
+            name: "z-k".into(),
             disabled: false,
             items: vec![
                 MenuItem::action("About Zed", zed_actions::About),
-                MenuItem::action("Check for Updates", auto_update::Check),
                 MenuItem::separator(),
                 MenuItem::submenu(Menu::new("Settings").items([
                     MenuItem::action("Open Settings", zed_actions::OpenSettings),
@@ -304,10 +308,6 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
             name: "Help".into(),
             disabled: false,
             items: vec![
-                MenuItem::action(
-                    "View Release Notes Locally",
-                    auto_update_ui::ViewReleaseNotesLocally,
-                ),
                 MenuItem::action("View Telemetry", zed_actions::OpenTelemetryLog),
                 MenuItem::action("View Dependency Licenses", zed_actions::OpenLicenses),
                 MenuItem::action("Show Welcome", onboarding::ShowWelcome),
@@ -338,4 +338,31 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
             ],
         },
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    // zed-kask: D16 — pins the leftmost app menu name is "z-k" so an upstream
+    // merge cannot silently revert it to "Zed".
+    #[test]
+    fn test_leftmost_menu_name_is_zk() {
+        let cx = TestAppContext::single();
+        // `app_menus` reads `DisableAiSettings` (upstream #63580's Agent Panel
+        // gate), so the store must exist before construction — the minimal
+        // setup panicked with "no state of type SettingsStore exists" after
+        // the 2026-09-10 merge carried that read into the menu chain.
+        cx.update(|cx| {
+            let mut store = settings::SettingsStore::new(cx, &settings::default_settings());
+            store.register_setting::<DisableAiSettings>();
+            cx.set_global(store);
+        });
+        let menus = cx.update(|cx| app_menus(cx));
+        let leftmost = menus
+            .first()
+            .expect("app_menus should return at least one menu");
+        assert_eq!(leftmost.name.as_ref(), "z-k");
+    }
 }

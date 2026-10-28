@@ -1,0 +1,72 @@
+//! Prediction-markets sub-page — cache TTL for the prediction-markets data
+//! service.
+
+use super::*;
+
+pub(crate) fn render_prediction_markets_page(
+    _settings_window: &SettingsWindow,
+    scroll_handle: &ScrollHandle,
+    _window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
+    let raw = raw_kask_settings(cx);
+    // Resolve via `From` so the UI shows the same defaults the runtime uses.
+    let prediction_markets: kask_bridge::KaskPredictionMarketsSettings = raw
+        .and_then(|c| c.prediction_markets)
+        .map(Into::into)
+        .unwrap_or_default();
+
+    let cache_ttl_input = kask_string_input(
+        "kask-prediction-markets-cache-ttl",
+        "Cache TTL (seconds)",
+        "60",
+        if prediction_markets.cache_ttl_secs > 0 {
+            prediction_markets.cache_ttl_secs.to_string()
+        } else {
+            String::new()
+        },
+        "prediction_markets",
+        "cache_ttl_secs",
+    );
+
+    v_flex()
+        .id("kask-prediction-markets-page")
+        .size_full()
+        .pt_2p5()
+        .px_8()
+        .pb_16()
+        .gap_4()
+        .overflow_y_scroll()
+        .track_scroll(scroll_handle)
+        .child(
+            v_flex()
+                .gap_1()
+                .child(SettingsSectionHeader::new("Prediction Markets"))
+                .child(
+                    Label::new(
+                        "The prediction-markets server is a read-only data service for \
+                         Polymarket and Kalshi market-implied probabilities, with calibration \
+                         and volatility analytics. No trading credentials are used or accepted. \
+                         Calibration data persists to mcp/prediction-markets/ under the shared \
+                         kask data directory (set on the General page). There are no \
+                         per-server path settings — all MCP servers share the single data \
+                         directory.",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                ),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
+                .child(Label::new("Cache TTL (seconds)"))
+                .child(
+                    Label::new("Market-data response cache lifetime. Empty = server default (60).")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+                .child(cache_ttl_input),
+        )
+        .into_any_element()
+}

@@ -1783,6 +1783,11 @@ pub struct MarkdownElement {
     on_checkbox_toggle: Option<CheckboxToggleCallback>,
     on_mermaid_zoom: Option<MermaidZoomCallback>,
     image_resolver: Option<Box<dyn Fn(&str, &App) -> Option<ImageSource>>>,
+    // zed-kask: D18 — media block renderer. If registered, called for every
+    // fenced code block. Returns Some(div) to intercept the block (e.g. for
+    // viz blocks), or None to fall through to the default renderer.
+    // The actual renderer implementation lives in crates/hkask-viz-core.
+    media_block_renderer: Option<MediaBlockRendererFn>,
     show_root_block_markers: bool,
     autoscroll: AutoscrollBehavior,
     /// Test-only hook to observe the laid-out text when this element is
@@ -1791,6 +1796,14 @@ pub struct MarkdownElement {
     #[cfg(test)]
     on_render: Option<Box<dyn Fn(RenderedText)>>,
 }
+
+/// zed-kask: D18 — callback type for the media block renderer.
+///
+/// Called with the body text of a fenced code block. If the body is a
+/// valid media reference (JSON with `kind` and `src`), returns `Some(element)`
+/// to render the media widget; otherwise returns `None` to fall through to
+/// the default code block renderer.
+pub type MediaBlockRendererFn = Box<dyn Fn(&str, &mut Window, &mut App) -> Option<AnyElement>>;
 
 impl MarkdownElement {
     pub fn new(markdown: Entity<Markdown>, style: MarkdownStyle) -> Self {
@@ -1810,6 +1823,8 @@ impl MarkdownElement {
             on_checkbox_toggle: None,
             on_mermaid_zoom: None,
             image_resolver: None,
+            // zed-kask: D18
+            media_block_renderer: None,
             show_root_block_markers: false,
             autoscroll: AutoscrollBehavior::Propagate,
             #[cfg(test)]
@@ -1909,6 +1924,12 @@ impl MarkdownElement {
         resolver: impl Fn(&str, &App) -> Option<ImageSource> + 'static,
     ) -> Self {
         self.image_resolver = Some(Box::new(resolver));
+        self
+    }
+
+    // zed-kask: D18 — register a media block renderer.
+    pub fn media_block_renderer(mut self, renderer: MediaBlockRendererFn) -> Self {
+        self.media_block_renderer = Some(renderer);
         self
     }
 
@@ -2692,6 +2713,10 @@ impl Element for MarkdownElement {
         let mut current_img_block_range: Option<Range<usize>> = None;
         let mut handled_html_block = false;
         let mut rendered_mermaid_block = false;
+        // zed-kask: D18 — tracks whether the media_block_renderer intercepted
+        // the current code block, so we skip its End event (which expects a
+        // div on the stack that push_sourced_element doesn't push).
+        let mut rendered_media_block = false;
         let mut rendered_metadata_block = false;
         for (index, (range, event)) in parsed_markdown.events.iter().enumerate() {
             let event_index = MarkdownEventIndex(index);
@@ -2713,6 +2738,14 @@ impl Element for MarkdownElement {
             if rendered_mermaid_block {
                 if matches!(event, MarkdownEvent::End(MarkdownTagEnd::CodeBlock)) {
                     rendered_mermaid_block = false;
+                }
+                continue;
+            }
+
+            // zed-kask: D18 — skip the End event for media-rendered blocks.
+            if rendered_media_block {
+                if matches!(event, MarkdownEvent::End(MarkdownTagEnd::CodeBlock)) {
+                    rendered_media_block = false;
                 }
                 continue;
             }
@@ -2846,6 +2879,41 @@ impl Element for MarkdownElement {
                                 continue;
                             }
 
+                            // zed-kask: D18 — viz block renderer.
+                            // Intercept fenced blocks whose language tag is one of
+                            // the viz fence languages the registry composes
+                            // (media, graph, kanban, scenarios). The
+                            // renderer self-selects on the body content, but we
+                            // gate on the fence language so that json blocks with
+                            // a kind/viz field are not misinterpreted as viz blocks.
+                            // The gate set MUST enumerate every viz fence language
+                            // the registry composes; widening the registry without
+                            // widening this gate makes the new branches ornamental.
+                            // Returns None for non-viz blocks (falls through to default).
+                            if let Some(renderer) = &self.media_block_renderer {
+                                let is_viz_block = matches!(
+                                    kind,
+                                    CodeBlockKind::FencedLang(lang)
+                                        if lang == "media" || lang == "graph" || lang == "kanban" || lang == "scenarios" || lang == "swarm_delegate_results" || lang == "media"
+                                );
+                                if is_viz_block {
+                                    let block_source = &parsed_markdown.source[range.clone()];
+                                    // Strip the fence language line (first line) and
+                                    // the closing fence to pass just the body content.
+                                    let body_start =
+                                        block_source.find('\n').map(|index| index + 1).unwrap_or(0);
+                                    let body_end = block_source[body_start..]
+                                        .rfind("```")
+                                        .map(|index| body_start + index)
+                                        .unwrap_or(block_source.len());
+                                    let block_body = block_source[body_start..body_end].trim();
+                                    if let Some(media_element) = renderer(block_body, window, cx) {
+                                        builder.push_sourced_element(range.clone(), media_element);
+                                        rendered_media_block = true;
+                                        continue;
+                                    }
+                                }
+                            }
                             current_code_block_text = match &self.code_block_renderer {
                                 CodeBlockRenderer::Default {
                                     copy_button_visibility,
@@ -7867,6 +7935,287 @@ mod tests {
                 px(24.0)
             );
         });
+    }
+
+    // zed-kask: D18 — pinning tests for the media_block_renderer seam.
+    // These tests assert that admitted viz-fence blocks are intercepted by
+    // the registered renderer and that non-viz code blocks fall through to
+    // the default code block renderer. (The `media` fence language was
+    // removed from the gate when the media MCP server was deferred; `graph`
+    // stands in as the admitted fence here.)
+
+    #[gpui::test]
+    fn test_media_block_renderer_intercepts_media_blocks(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown = cx.new(|cx| {
+            Markdown::new(
+                "```graph\n{\"kind\":\"image\",\"src\":\"/tmp/test.png\"}\n```".into(),
+                None,
+                None,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let (rendered, _) = cx.draw(
+            Default::default(),
+            size(px(600.0), px(600.0)),
+            |_window, _cx| {
+                MarkdownElement::new(markdown, MarkdownStyle::default())
+                    .code_block_renderer(CodeBlockRenderer::Default {
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
+                        border: false,
+                    })
+                    .media_block_renderer(Box::new(|body, _window, _cx| {
+                        if body.trim_start().starts_with('{') && body.contains("\"kind\"") {
+                            Some(div().child("MEDIA_WAS_HERE").into_any_element())
+                        } else {
+                            None
+                        }
+                    }))
+            },
+        );
+
+        let all_text: String = rendered
+            .text
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text())
+            .collect::<Vec<_>>()
+            .join("");
+
+        // The media block renderer intercepted the block, so the JSON body
+        // should NOT appear as code text. (The media element's own text is
+        // rendered as a child element, not as part of the text layout.)
+        assert!(
+            !all_text.contains("/tmp/test.png"),
+            "media block JSON body should not appear as code text when intercepted; got: {all_text:?}"
+        );
+        assert!(
+            !all_text.contains("kind"),
+            "media block JSON keys should not appear as code text when intercepted; got: {all_text:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn test_media_block_renderer_falls_through_for_non_media_blocks(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown =
+            cx.new(|cx| Markdown::new("```rust\nlet value = 1;\n```".into(), None, None, cx));
+        cx.run_until_parked();
+
+        let (rendered, _) = cx.draw(
+            Default::default(),
+            size(px(600.0), px(600.0)),
+            |_window, _cx| {
+                MarkdownElement::new(markdown, MarkdownStyle::default())
+                    .code_block_renderer(CodeBlockRenderer::Default {
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
+                        border: false,
+                    })
+                    .media_block_renderer(Box::new(|body, _window, _cx| {
+                        if body.trim_start().starts_with('{') && body.contains("\"kind\"") {
+                            Some(div().child("MEDIA_WAS_HERE").into_any_element())
+                        } else {
+                            None
+                        }
+                    }))
+            },
+        );
+
+        let all_text: String = rendered
+            .text
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text())
+            .collect::<Vec<_>>()
+            .join("");
+
+        assert!(
+            all_text.contains("let value = 1;"),
+            "non-media code block should render normally; got: {all_text:?}"
+        );
+        assert!(
+            !all_text.contains("MEDIA_WAS_HERE"),
+            "non-media code block should not trigger the media renderer; got: {all_text:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn test_media_block_renderer_none_when_not_registered(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown = cx.new(|cx| {
+            Markdown::new(
+                "```media\n{\"kind\":\"image\",\"src\":\"/tmp/test.png\"}\n```".into(),
+                None,
+                None,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        // No media_block_renderer registered — should fall through to default
+        // code block rendering.
+        let (rendered, _) = cx.draw(
+            Default::default(),
+            size(px(600.0), px(600.0)),
+            |_window, _cx| {
+                MarkdownElement::new(markdown, MarkdownStyle::default()).code_block_renderer(
+                    CodeBlockRenderer::Default {
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
+                        border: false,
+                    },
+                )
+            },
+        );
+
+        let all_text: String = rendered
+            .text
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text())
+            .collect::<Vec<_>>()
+            .join("");
+
+        assert!(
+            all_text.contains("kind"),
+            "without a renderer, media block should render as a normal code block; got: {all_text:?}"
+        );
+    }
+
+    // zed-kask: D18 — pins the fence-language gate. A ```json block whose
+    // body happens to contain a `kind` field must NOT be intercepted by the
+    // viz renderer — only the viz fence languages the registry composes
+    // (media, graph, kanban, scenarios) are eligible.
+    #[gpui::test]
+    fn test_media_block_renderer_does_not_intercept_json_blocks(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown = cx.new(|cx| {
+            Markdown::new(
+                "```json\n{\"kind\":\"image\",\"src\":\"/tmp/test.png\"}\n```".into(),
+                None,
+                None,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let (rendered, _) = cx.draw(
+            Default::default(),
+            size(px(600.0), px(600.0)),
+            |_window, _cx| {
+                MarkdownElement::new(markdown, MarkdownStyle::default())
+                    .code_block_renderer(CodeBlockRenderer::Default {
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
+                        border: false,
+                    })
+                    .media_block_renderer(Box::new(|body, _window, _cx| {
+                        if body.trim_start().starts_with('{') && body.contains("\"kind\"") {
+                            Some(div().child("MEDIA_WAS_HERE").into_any_element())
+                        } else {
+                            None
+                        }
+                    }))
+            },
+        );
+
+        let all_text: String = rendered
+            .text
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text())
+            .collect::<Vec<_>>()
+            .join("");
+
+        assert!(
+            all_text.contains("kind"),
+            "```json block with a kind field should render as normal code, not be intercepted; got: {all_text:?}"
+        );
+        assert!(
+            !all_text.contains("MEDIA_WAS_HERE"),
+            "```json block should not trigger the viz renderer; got: {all_text:?}"
+        );
+    }
+
+    // zed-kask: D18 - pins the FULL viz fence-language gate. Every fence
+    // language the registry composes (graph, kanban, scenarios;
+    // media is pinned by test_media_block_renderer_intercepts_media_blocks)
+    // must reach the renderer when a media_block_renderer is registered.
+    // Widening hkask_viz_core::block_renderer without widening the gate in
+    // request_layout makes the new branches ornamental - this test fails the
+    // moment a viz fence language is added to the registry but not the gate.
+    // See DIVERGENCE.md D18 and the .rules "Tests must pin deliberate
+    // zed-kask deviations from upstream".
+    #[gpui::test]
+    fn test_media_block_renderer_intercepts_all_viz_fence_languages(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown = cx.new(|cx| {
+            Markdown::new(
+                r#"```graph
+{"viz":"event_tree","marker":"GRAPH_WGT_MARKER"}
+```
+```kanban
+{"viz":"kanban","marker":"KANBAN_WGT_MARKER"}
+```
+```scenarios
+{"viz":"scenarios","marker":"SCENARIOS_WGT_MARKER"}
+```
+"#
+                .into(),
+                None,
+                None,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let (rendered, _) = cx.draw(
+            Default::default(),
+            size(px(600.0), px(600.0)),
+            |_window, _cx| {
+                MarkdownElement::new(markdown, MarkdownStyle::default())
+                    .code_block_renderer(CodeBlockRenderer::Default {
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
+                        border: false,
+                    })
+                    .media_block_renderer(Box::new(|body, _window, _cx| {
+                        if body.trim_start().starts_with('{') {
+                            Some(div().child("VIZ_WAS_HERE").into_any_element())
+                        } else {
+                            None
+                        }
+                    }))
+            },
+        );
+
+        let all_text: String = rendered
+            .text
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text())
+            .collect::<Vec<_>>()
+            .join("");
+
+        for marker in [
+            "GRAPH_WGT_MARKER",
+            "KANBAN_WGT_MARKER",
+            "SCENARIOS_WGT_MARKER",
+        ] {
+            assert!(
+                !all_text.contains(marker),
+                "viz block body marker {marker} should not appear as code text (block must be intercepted by the gate); got: {all_text:?}"
+            );
+        }
     }
 
     #[gpui::test]

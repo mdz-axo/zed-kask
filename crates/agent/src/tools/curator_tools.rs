@@ -1,0 +1,1134 @@
+//! Curator tools — regulatory surface tools for the Curator agent.
+//!
+//! The read-only status tool joins the canonical built-in toolset on every
+//! native session. Action tools remain restricted to Curator threads:
+//! - `curator_status`: the shared read-only view of the host's metacognition
+//!   provider (native and Curator sessions use this same built-in tool)
+//! - `curator_directive`: issue directives to the cybernetics regulation loop
+//!
+//! The tools use process-global hooks (`MetacognitionProvider`,
+//! `CuratorDirectiveSink`) that the composition root injects at startup.
+//! When a hook is not set, the tool returns "not available".
+
+use std::sync::Arc;
+
+use agent_client_protocol::schema::v2 as acp;
+use gpui::{App, Task};
+use hkask_types::process_global::ProcessGlobal;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use ui::SharedString;
+
+use crate::{AgentTool, ToolCallEventStream, ToolInput};
+
+// ── MetacognitionProvider trait ─────────────────────────────────────────────
+
+/// Provider for curator metacognition state.
+///
+/// Implemented by the composition root over `hkask_regulation::MetacognitionLoop`.
+/// When not set, curator tools return "not available".
+pub trait MetacognitionProvider: Send + Sync {
+    /// Get the last health snapshot as a JSON value.
+    fn health_snapshot_json(&self) -> Task<Option<serde_json::Value>>;
+}
+
+/// Global hook for the metacognition provider.
+static METACOGNITION_PROVIDER: ProcessGlobal<Arc<dyn MetacognitionProvider>> = ProcessGlobal::new();
+
+/// Set the global metacognition provider (composition root).
+///
+/// Re-settable — later calls replace the previous provider.
+pub fn set_metacognition_provider(provider: Option<Arc<dyn MetacognitionProvider>>) {
+    METACOGNITION_PROVIDER.set(provider);
+}
+
+pub(crate) fn metacognition_provider() -> Option<Arc<dyn MetacognitionProvider>> {
+    METACOGNITION_PROVIDER.get()
+}
+
+// ── Curator Status Tool ─────────────────────────────────────────────────────
+
+/// Check the Curator's regulatory system health.
+///
+/// Returns the current variety counters, regulation effectiveness, escalation
+/// count, and any critical alerts. When the regulation system is not wired,
+/// returns "not available".
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
+pub struct CuratorStatusTool;
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct CuratorStatusInput {
+    /// When true, include the per-domain variety deficit in the response.
+    #[serde(default)]
+    pub include_variety: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CuratorStatusOutput {
+    pub status: String,
+    /// Observed share of regulation outcomes accepted by the loop; not a
+    /// causal effectiveness measure. Unavailable when the source has no sample.
+    pub regulation_acceptance_rate: Option<f64>,
+    /// Alerts the metacognition loop raised in its most recent cycle only.
+    pub escalation_count: Option<usize>,
+    /// Cards on the Algedonic review board not yet Done. `None` when the
+    /// governed board reader cannot deliver a count — unknown, never 0.
+    #[serde(default)]
+    pub pending_escalations: Option<usize>,
+    pub critical_alerts: Option<usize>,
+    /// Per-domain variety deficit (gap from set-point, not a raw counter).
+    /// Renamed from `variety_counters` — the value is a deficit, and calling
+    /// it a "counter" misled operators into reading it as variety tracked.
+    pub variety_deficit: Option<Vec<(String, u64)>>,
+    /// `true` when the curator's unified memory store in
+    /// `agents/curator/curator.db` is down or partially down — the curator is
+    /// running without durable memory until the self-healing re-open
+    /// succeeds. `None` when the memory probe isn't wired (pre-login or
+    /// upstream Zed).
+    pub memory_degraded: Option<bool>,
+    /// Number of alerts currently in the in-memory algedonic log.
+    /// `None` when the metacognition provider isn't wired.
+    pub alert_log_count: Option<usize>,
+    /// The configured cap for the in-memory algedonic log.
+    /// `None` when the metacognition provider isn't wired.
+    pub alert_log_cap: Option<usize>,
+    /// `true` when the alert log is ≥ 80% of its cap. The operator may
+    /// review the backlog before older entries self-evict; this is not an
+    /// instruction to clear the in-memory log. `None` when the provider
+    /// isn't wired.
+    pub alert_log_approaching_cap: Option<bool>,
+    /// Trust/absence assembly verdict (Fermi `LoopView.reading`). Distinguishes
+    /// wiring-closed (wired but never ticked) from turning (running and
+    /// verified) from broken (running but failing) from unobserved (can't
+    /// tell). `None` when the metacognition provider isn't wired.
+    pub loop_reading: Option<String>,
+    /// Total regulation cycles the ledger has recorded this process — the
+    /// loop's own liveness evidence (one `record_cycle_outcome` per
+    /// cybernetics tick). Rendered as "Loop Cycles" so the operator can
+    /// see the loop turning behind an `unobserved` impact reading. `None`
+    /// when the metacognition provider isn't wired.
+    pub loop_cycles: Option<u64>,
+    /// Rolling native-first rate: the fraction of completed substantive
+    /// agent turns (user prompt ≥ 20 words) that used zero kask
+    /// instruments — no context-server tool call and none of `lisp_eval` /
+    /// `render_template` / `skill`. The drift reading the native-first-rate
+    /// sensor feeds the regulation loop. `None` when no substantive turn
+    /// has been recorded — no data, never a fabricated 0.0.
+    pub native_first_rate: Option<f64>,
+    /// Sample count behind `native_first_rate` — the rolling window's
+    /// substantive-turn count. `None` alongside a `None` rate.
+    pub native_first_samples: Option<u64>,
+    /// Declared human doors for `Manual`/`Prompted` regulation stages
+    /// (Fermi `STAGE_ACTIONS`). Each entry is a `(trigger, stage, tools)` tuple.
+    /// Empty when the metacognition provider isn't wired or no doors are
+    /// registered.
+    pub declared_doors: Vec<DeclaredDoor>,
+}
+
+/// A declared human door for a `Manual`/`Prompted` regulation stage.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeclaredDoor {
+    pub trigger: String,
+    pub stage: String,
+    pub tools: Vec<String>,
+}
+
+fn read_regulation_acceptance_rate(snapshot: &serde_json::Value) -> Option<f64> {
+    snapshot
+        .get("regulation_acceptance_rate")
+        .and_then(|value| value.as_f64())
+        .filter(|rate| (0.0..=1.0).contains(rate))
+}
+
+fn read_loop_cycles(snapshot: &serde_json::Value) -> Option<u64> {
+    snapshot
+        .get("total_cycles")
+        .and_then(|value| value.as_u64())
+}
+
+fn read_native_first_rate(snapshot: &serde_json::Value) -> Option<f64> {
+    snapshot
+        .get("native_first_rate")
+        .and_then(|value| value.as_f64())
+        .filter(|rate| (0.0..=1.0).contains(rate))
+}
+
+fn status_line(
+    memory_degraded: Option<bool>,
+    loop_reading: Option<&str>,
+    alert_log_approaching_cap: Option<bool>,
+) -> String {
+    if let Some(reading @ ("broken" | "wiring-closed")) = loop_reading {
+        return format!("degraded (regulation loop {reading})");
+    }
+    if memory_degraded == Some(true) {
+        "degraded (curator memory store down; self-healing re-open in progress)".to_string()
+    } else if loop_reading == Some("unobserved") {
+        // `Unobserved` implies liveness `Live` (`compute_reading` returns
+        // `WiringClosed` for `NeverRun` first): the loop IS turning and IS
+        // monitored (heartbeat, cycle count, deviations recorded in
+        // `reg.outcome.loop_quality`). What is absent is verified impact —
+        // the only production submitter of before/after rollout checks is
+        // the harness regression monitor, which fires on harness pass-rate
+        // regressions only, so an ordinary homeostatic session reads
+        // `unobserved` indefinitely. The former label ("loop or memory
+        // health not monitored") mislabeled every such session as
+        // unmonitored (observed live 2026-10-08: 720 cycles at zero
+        // deviations read as "not monitored").
+        "partial (loop turning; impact unverified)".to_string()
+    } else if loop_reading.is_none() || memory_degraded.is_none() {
+        "partial (loop or memory health not monitored)".to_string()
+    } else if alert_log_approaching_cap == Some(true) {
+        "snapshot available (in-memory alert log approaching cap; review durable backlog)"
+            .to_string()
+    } else {
+        "snapshot available (inspect health fields)".to_string()
+    }
+}
+
+#[cfg(test)]
+mod status_snapshot_tests {
+    use super::*;
+
+    #[test]
+    fn status_reads_the_providers_acceptance_rate_without_inventing_effectiveness() {
+        assert_eq!(
+            read_regulation_acceptance_rate(
+                &serde_json::json!({"regulation_acceptance_rate": 0.75})
+            ),
+            Some(0.75)
+        );
+        assert_eq!(
+            read_regulation_acceptance_rate(&serde_json::json!({"regulation_effectiveness": 0.75})),
+            None
+        );
+        assert_eq!(
+            read_regulation_acceptance_rate(
+                &serde_json::json!({"regulation_acceptance_rate": 1.5})
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn status_line_never_calls_a_broken_or_unobserved_loop_healthy() {
+        assert_eq!(
+            status_line(Some(false), Some("broken"), Some(false)),
+            "degraded (regulation loop broken)"
+        );
+        assert!(status_line(None, None, None).starts_with("partial"));
+        assert!(status_line(Some(false), Some("unobserved"), Some(false)).starts_with("partial"));
+        assert!(
+            status_line(Some(false), Some("turning"), Some(true))
+                .contains("alert log approaching cap")
+        );
+    }
+
+    /// The `unobserved` Fermi `LoopView` reading is "turning but impact
+    /// unverified", NOT "not monitored": `unobserved` implies liveness
+    /// `Live` (`compute_reading` returns `WiringClosed` for `NeverRun`
+    /// first), and the loop monitors itself (heartbeat, cycle count,
+    /// deviations in `reg.outcome.loop_quality`). What is absent is
+    /// verified impact — the only production submitter of before/after
+    /// rollout checks is the harness regression monitor, which fires on
+    /// harness pass-rate regressions only — so an ordinary homeostatic
+    /// session reads `unobserved` indefinitely. The former label ("loop
+    /// or memory health not monitored") mislabeled every such session as
+    /// unmonitored (observed live 2026-10-08: 720 cycles at zero
+    /// deviations read as "not monitored").
+    #[test]
+    fn status_line_labels_unobserved_as_turning_not_unmonitored() {
+        let line = status_line(Some(false), Some("unobserved"), Some(false));
+        assert!(line.starts_with("partial"), "never healthy (Goodhart)");
+        assert!(
+            line.contains("loop turning"),
+            "the unobserved reading means the loop is turning; got: {line}"
+        );
+        assert!(
+            line.contains("impact unverified"),
+            "the absent thing is verified impact, not monitoring; got: {line}"
+        );
+        assert!(
+            !line.contains("not monitored"),
+            "the loop IS monitored — heartbeat, cycles and deviations are \
+             recorded; got: {line}"
+        );
+    }
+
+    /// The status output carries the loop's own cycle count (the ledger's
+    /// `regulation_health.total_cycles` — one per cybernetics tick), so
+    /// the operator sees the loop turning behind an `unobserved` impact
+    /// reading, and never confuses the ledger's cycle counter with the
+    /// loop-quality telemetry's `tick_count`.
+    #[test]
+    fn status_output_carries_the_loops_cycle_count() {
+        assert_eq!(
+            read_loop_cycles(&serde_json::json!({"total_cycles": 720})),
+            Some(720)
+        );
+        assert_eq!(
+            read_loop_cycles(&serde_json::json!({"tick_count": 720})),
+            None,
+            "the ledger's regulation_health.total_cycles is the status source, \
+             not the loop-quality tick_count"
+        );
+        let output = CuratorStatusOutput {
+            status: status_line(Some(false), Some("unobserved"), Some(false)),
+            regulation_acceptance_rate: None,
+            escalation_count: Some(0),
+            pending_escalations: Some(6),
+            critical_alerts: Some(0),
+            variety_deficit: None,
+            memory_degraded: Some(false),
+            alert_log_count: Some(3),
+            alert_log_cap: Some(200),
+            alert_log_approaching_cap: Some(false),
+            loop_reading: Some("unobserved".to_string()),
+            loop_cycles: Some(720),
+            native_first_rate: None,
+            native_first_samples: None,
+            declared_doors: Vec::new(),
+        };
+        match language_model::LanguageModelToolResultContent::from(output) {
+            language_model::LanguageModelToolResultContent::Text(text) => {
+                let text = text.to_string();
+                assert!(text.contains("Loop Cycles: 720"), "got: {text}");
+                assert!(text.contains("Loop Reading: unobserved"));
+                assert!(text.contains("loop turning; impact unverified"));
+            }
+            other => panic!("expected text, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn status_serializes_only_the_measured_rate_name() {
+        let output = CuratorStatusOutput {
+            status: status_line(None, None, None),
+            regulation_acceptance_rate: Some(0.75),
+            escalation_count: None,
+            pending_escalations: None,
+            critical_alerts: None,
+            variety_deficit: None,
+            memory_degraded: None,
+            alert_log_count: None,
+            alert_log_cap: None,
+            alert_log_approaching_cap: None,
+            loop_reading: None,
+            loop_cycles: None,
+            native_first_rate: None,
+            native_first_samples: None,
+            declared_doors: Vec::new(),
+        };
+        let value = serde_json::to_value(output).expect("status output serializes");
+        assert_eq!(value["regulation_acceptance_rate"], serde_json::json!(0.75));
+        assert!(value.get("regulation_effectiveness").is_none());
+    }
+
+    fn rendered(escalation_count: Option<usize>, pending: Option<usize>) -> String {
+        let output = CuratorStatusOutput {
+            status: status_line(None, None, None),
+            regulation_acceptance_rate: None,
+            escalation_count,
+            pending_escalations: pending,
+            critical_alerts: None,
+            variety_deficit: None,
+            memory_degraded: None,
+            alert_log_count: None,
+            alert_log_cap: None,
+            alert_log_approaching_cap: None,
+            loop_reading: None,
+            loop_cycles: None,
+            native_first_rate: None,
+            native_first_samples: None,
+            declared_doors: Vec::new(),
+        };
+        match language_model::LanguageModelToolResultContent::from(output) {
+            language_model::LanguageModelToolResultContent::Text(text) => text.to_string(),
+            other => panic!("expected text, got {other:?}"),
+        }
+    }
+
+    /// The latest-cycle alert count is labelled as such, and the review
+    /// board backlog is shown separately; an unreadable board is unknown, never 0
+    /// (observed: "Escalations: 1" while 5 awaited review).
+    #[test]
+    fn status_labels_cycle_alerts_and_review_backlog_separately() {
+        let text = rendered(Some(1), Some(5));
+        assert!(text.contains("New Alerts (latest cycle): 1\n"));
+        assert!(text.contains("Algedonic Review Cards Not Done: 5\n"));
+        assert!(!text.contains("\nEscalations: "));
+
+        let unknown = rendered(Some(0), None);
+        assert!(unknown.contains("Algedonic Review Cards Not Done: unknown (board not readable)"));
+    }
+
+    /// The status output carries the native-first drift reading — the
+    /// fraction of completed substantive turns that used zero kask
+    /// instruments — with its sample count, so the operator can watch the
+    /// sensor's baseline without waiting for a board escalation.
+    #[test]
+    fn status_output_carries_native_first_rate_and_samples() {
+        assert_eq!(
+            read_native_first_rate(&serde_json::json!({"native_first_rate": 0.62})),
+            Some(0.62)
+        );
+        assert_eq!(
+            read_native_first_rate(&serde_json::json!({"native_first_rate": 1.5})),
+            None,
+            "out-of-range rates are dropped, not clamped"
+        );
+        let output = CuratorStatusOutput {
+            status: status_line(Some(false), Some("unobserved"), Some(false)),
+            regulation_acceptance_rate: None,
+            escalation_count: None,
+            pending_escalations: None,
+            critical_alerts: None,
+            variety_deficit: None,
+            memory_degraded: Some(false),
+            alert_log_count: None,
+            alert_log_cap: None,
+            alert_log_approaching_cap: None,
+            loop_reading: None,
+            loop_cycles: None,
+            native_first_rate: Some(0.62),
+            native_first_samples: Some(26),
+            declared_doors: Vec::new(),
+        };
+        match language_model::LanguageModelToolResultContent::from(output) {
+            language_model::LanguageModelToolResultContent::Text(text) => {
+                let text = text.to_string();
+                assert!(
+                    text.contains("Native First Rate: 62% of 26 substantive turns"),
+                    "got: {text}"
+                );
+            }
+            other => panic!("expected text, got {other:?}"),
+        }
+    }
+
+    /// An empty native-first window renders as "not available", never as a
+    /// measured "0%" — a fabricated zero would read an unmeasured window
+    /// as perfect instrument compliance (the `unwrap_or(0)` trap).
+    #[test]
+    fn status_renders_missing_native_first_as_not_available_never_zero() {
+        let text = rendered(None, None);
+        assert!(
+            text.contains("Native First Rate: not available"),
+            "got: {text}"
+        );
+        assert!(
+            !text.contains("Native First Rate: 0%"),
+            "no fabricated compliance; got: {text}"
+        );
+    }
+}
+
+impl AgentTool for CuratorStatusTool {
+    type Input = CuratorStatusInput;
+    type Output = CuratorStatusOutput;
+
+    const NAME: &'static str = "curator_status";
+
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Read
+    }
+
+    fn initial_title(
+        &self,
+        _input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
+        "Curator Status".into()
+    }
+
+    fn run(
+        self: Arc<Self>,
+        input: ToolInput<Self::Input>,
+        _event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<Self::Output, Self::Output>> {
+        let provider = metacognition_provider();
+        cx.background_executor().spawn(async move {
+            let input = input.recv().await.map_err(|_| CuratorStatusOutput {
+                status: "error: invalid input".to_string(),
+                regulation_acceptance_rate: None,
+                escalation_count: None,
+                pending_escalations: None,
+                critical_alerts: None,
+                variety_deficit: None,
+                memory_degraded: None,
+                alert_log_count: None,
+                alert_log_cap: None,
+                alert_log_approaching_cap: None,
+                loop_reading: None,
+                loop_cycles: None,
+                native_first_rate: None,
+                native_first_samples: None,
+                declared_doors: Vec::new(),
+            })?;
+
+            // Distinguish "provider not wired" from "provider wired but
+            // snapshot missing" — the two cases used to collapse to the same
+            // "not available" string, leaving operators unable to tell whether
+            // the regulation loop was unwired or just stale. Same class as the
+            // `.rules` "Process-global hooks need a startup-failure signal" trap.
+            let Some(provider) = provider else {
+                return Ok(CuratorStatusOutput {
+                    status: "provider not wired".to_string(),
+                    regulation_acceptance_rate: None,
+                    escalation_count: None,
+                    pending_escalations: None,
+                    critical_alerts: None,
+                    variety_deficit: None,
+                    memory_degraded: None,
+                    alert_log_count: None,
+                    alert_log_cap: None,
+                    alert_log_approaching_cap: None,
+                    loop_reading: None,
+                    loop_cycles: None,
+                    native_first_rate: None,
+                    native_first_samples: None,
+                    declared_doors: Vec::new(),
+                });
+            };
+            let Some(snapshot) = provider.health_snapshot_json().await else {
+                return Ok(CuratorStatusOutput {
+                    status: "snapshot unavailable".to_string(),
+                    regulation_acceptance_rate: None,
+                    escalation_count: None,
+                    pending_escalations: None,
+                    critical_alerts: None,
+                    variety_deficit: None,
+                    memory_degraded: None,
+                    alert_log_count: None,
+                    alert_log_cap: None,
+                    alert_log_approaching_cap: None,
+                    loop_reading: None,
+                    loop_cycles: None,
+                    native_first_rate: None,
+                    native_first_samples: None,
+                    declared_doors: Vec::new(),
+                });
+            };
+            let acceptance_rate = read_regulation_acceptance_rate(&snapshot);
+            let loop_cycles = read_loop_cycles(&snapshot);
+            let native_first_rate = read_native_first_rate(&snapshot);
+            let native_first_samples = snapshot
+                .get("native_first_samples")
+                .and_then(|value| value.as_u64());
+            let critical = snapshot
+                .get("critical_alerts")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize);
+            let deficit = snapshot.get("variety_deficit").and_then(|v| v.as_u64());
+            // New alerts from the metacognition loop's most recent cycle —
+            // not the review backlog, which is `pending_escalations`.
+            let escalation_count = snapshot
+                .get("escalation_count")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize);
+            let pending_escalations = snapshot
+                .get("pending_escalations")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize);
+            let memory_degraded = snapshot
+                .get("memory")
+                .and_then(|m| m.get("degraded"))
+                .and_then(|d| d.as_bool());
+            // In-memory log cap pressure prompts review of the durable
+            // escalation backlog, not an automatic log-clearing action.
+            let alert_log_count = snapshot
+                .get("alert_log_count")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize);
+            let alert_log_cap = snapshot
+                .get("alert_log_cap")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize);
+            let alert_log_approaching_cap = snapshot
+                .get("alert_log_approaching_cap")
+                .and_then(|d| d.as_bool());
+            // Trust/absence assembly verdict — the Fermi LoopView reading.
+            // Distinguishes wiring-closed from turning from working.
+            let loop_reading = snapshot
+                .get("loop_reading")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            // Declared human doors for Manual/Prompted stages (Fermi
+            // STAGE_ACTIONS). Each entry is (trigger, stage, [tool_names]).
+            let declared_doors = snapshot
+                .get("declared_doors")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|entry| {
+                            Some(DeclaredDoor {
+                                trigger: entry.get("trigger")?.as_str()?.to_string(),
+                                stage: entry.get("stage")?.as_str()?.to_string(),
+                                tools: entry
+                                    .get("tools")?
+                                    .as_array()?
+                                    .iter()
+                                    .filter_map(|t| t.as_str().map(|s| s.to_string()))
+                                    .collect(),
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            // The status line never promotes an available snapshot into a
+            // healthy loop reading; the named observations remain authoritative.
+            let status = status_line(
+                memory_degraded,
+                loop_reading.as_deref(),
+                alert_log_approaching_cap,
+            );
+            Ok(CuratorStatusOutput {
+                status,
+                regulation_acceptance_rate: acceptance_rate,
+                escalation_count,
+                pending_escalations,
+                critical_alerts: critical,
+                variety_deficit: if input.include_variety {
+                    deficit.map(|d| vec![("overall".to_string(), d)])
+                } else {
+                    None
+                },
+                memory_degraded,
+                alert_log_count,
+                alert_log_cap,
+                alert_log_approaching_cap,
+                loop_reading,
+                loop_cycles,
+                native_first_rate,
+                native_first_samples,
+                declared_doors,
+            })
+        })
+    }
+}
+
+impl From<CuratorStatusOutput> for language_model::LanguageModelToolResultContent {
+    fn from(output: CuratorStatusOutput) -> Self {
+        let text = format!(
+            "Curator Status: {}\n\
+             Regulation Acceptance Rate: {}\n\
+             New Alerts (latest cycle): {}\n\
+             Algedonic Review Cards Not Done: {}\n\
+             Critical Alerts: {}\n\
+             Variety Deficit: {}\n\
+             Memory: {}\n\
+             Algedonic Log: {}\n\
+             Loop Reading: {}\n\
+             Loop Cycles: {}\n\
+             Native First Rate: {}\n\
+             Declared Doors: {}",
+            output.status,
+            output
+                .regulation_acceptance_rate
+                .map(|v| format!("{:.1}%", v * 100.0))
+                .unwrap_or_else(|| "not available".to_string()),
+            output
+                .escalation_count
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "not available".to_string()),
+            output
+                .pending_escalations
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "unknown (board not readable)".to_string()),
+            output
+                .critical_alerts
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "not available".to_string()),
+            output
+                .variety_deficit
+                .map(|v| {
+                    v.iter()
+                        .map(|(k, c)| format!("{k}: {c}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_else(|| "not requested".to_string()),
+            match output.memory_degraded {
+                Some(true) => "DEGRADED — curator memory store down".to_string(),
+                Some(false) => "ok".to_string(),
+                None => "not monitored".to_string(),
+            },
+            match (output.alert_log_count, output.alert_log_cap) {
+                (Some(count), Some(cap)) => {
+                    let suffix = if output.alert_log_approaching_cap == Some(true) {
+                        " — APPROACHING CAP, run algedonic-review"
+                    } else {
+                        ""
+                    };
+                    format!("{}/{}{}", count, cap, suffix)
+                }
+                _ => "not available".to_string(),
+            },
+            output.loop_reading.as_deref().unwrap_or("not available"),
+            output
+                .loop_cycles
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "not available".to_string()),
+            match (output.native_first_rate, output.native_first_samples) {
+                (Some(rate), Some(samples)) => {
+                    format!("{:.0}% of {} substantive turns", rate * 100.0, samples)
+                }
+                _ => "not available".to_string(),
+            },
+            if output.declared_doors.is_empty() {
+                "none".to_string()
+            } else {
+                output
+                    .declared_doors
+                    .iter()
+                    .map(|d| format!("{}:{} -> [{}]", d.trigger, d.stage, d.tools.join(", ")))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            },
+        );
+        language_model::LanguageModelToolResultContent::Text(text.into())
+    }
+}
+
+// ── CuratorDirectiveSink trait ──────────────────────────────────────────────
+
+/// Sink for curator directives — the composition root implements this over
+/// the tokio channel that feeds `CyberneticsLoop::process_inbox`.
+///
+/// The trait lives here (not in `hkask-types`) so the `agent` crate can use it
+/// without depending on `hkask-types`. The composition root converts the
+/// tool-local `CuratorDirectiveRequest` into `hkask_types::CuratorDirective`
+/// before sending.
+pub trait CuratorDirectiveSink: Send + Sync {
+    /// Send a directive to the cybernetics regulation loop.
+    ///
+    /// Returns `Ok(accepted)` where `accepted` is `true` if the directive was
+    /// sent, `false` if it was dampened (duplicate within cooldown). Returns
+    /// `Err` if the channel is closed or the sink is unwired.
+    fn send_directive(&self, directive: CuratorDirectiveRequest) -> Result<bool, String>;
+}
+
+/// Global hook for the curator directive sink.
+static CURATOR_DIRECTIVE_SINK: ProcessGlobal<Arc<dyn CuratorDirectiveSink>> = ProcessGlobal::new();
+
+/// Set the global curator directive sink (composition root).
+///
+/// Re-settable — later calls replace the previous sink.
+pub fn set_curator_directive_sink(sink: Option<Arc<dyn CuratorDirectiveSink>>) {
+    CURATOR_DIRECTIVE_SINK.set(sink);
+}
+
+fn curator_directive_sink() -> Option<Arc<dyn CuratorDirectiveSink>> {
+    CURATOR_DIRECTIVE_SINK.get()
+}
+
+// ── AlgedonicLogSink trait ────────────────────────────────────────────────────
+
+/// Sink for clearing the in-memory algedonic alert log — the composition root
+/// implements this over the `RegulationLedger` (which holds the
+/// `AlgedonicManager`). The trait lives here (not in `hkask-types`) so the
+/// agent crate can use it without depending on `hkask-regulation`.
+///
+/// This is a separate, explicit log-maintenance operation, not a step in
+/// algedonic review. The in-memory log self-evicts; clearing it can discard
+/// diagnostic history and never verifies a board card.
+///
+/// Methods are async because the `RegulationLedger` is behind a
+/// `tokio::sync::RwLock` — the sink spawns the lock acquisition on the
+/// tokio runtime. The tool that calls this sink already runs in an async
+/// context (`background_executor().spawn`).
+#[async_trait::async_trait]
+pub trait AlgedonicLogSink: Send + Sync {
+    /// Clear reviewed alerts from the in-memory log. Retains unresolved
+    /// Critical alerts (those that have not been escalated yet) so the live
+    /// signal is not lost.
+    ///
+    /// Returns `Ok(cleared_count)` where `cleared_count` is the number of
+    /// alerts removed. Returns `Err` if the sink is unwired or the clear
+    /// failed.
+    async fn clear_reviewed_alerts(&self) -> Result<usize, String>;
+
+    /// Clear ALL alerts from the in-memory log, including unresolved Critical.
+    /// Use with caution — this loses live signals. The operator should only
+    /// call this only for a separately authorized log reset, not to complete
+    /// algedonic review.
+    ///
+    /// Returns `Ok(cleared_count)` where `cleared_count` is the number of
+    /// alerts removed.
+    async fn clear_all_alerts(&self) -> Result<usize, String>;
+
+    /// Number of alerts currently in the in-memory log.
+    /// Returns `None` if the sink is unwired.
+    async fn alert_log_count(&self) -> Option<usize>;
+
+    /// Whether the in-memory log is approaching its cap (≥ 80%).
+    /// Returns `None` if the sink is unwired.
+    async fn alert_log_approaching_cap(&self) -> Option<bool>;
+}
+
+/// Global hook for the algedonic log sink.
+static ALGEDONIC_LOG_SINK: ProcessGlobal<Arc<dyn AlgedonicLogSink>> = ProcessGlobal::new();
+
+/// Set the global algedonic log sink (composition root).
+///
+/// Re-settable — later calls replace the previous sink.
+pub fn set_algedonic_log_sink(sink: Option<Arc<dyn AlgedonicLogSink>>) {
+    ALGEDONIC_LOG_SINK.set(sink);
+}
+
+fn algedonic_log_sink() -> Option<Arc<dyn AlgedonicLogSink>> {
+    ALGEDONIC_LOG_SINK.get()
+}
+
+// ── Curator Clear Algedonic Log Tool ────────────────────────────────────────
+
+/// Clear reviewed alerts from the in-memory algedonic alert log.
+///
+/// Separate from the board review workflow. Retains unresolved Critical
+/// alerts when used without `clear_all`.
+pub struct CuratorClearAlgedonicLogTool;
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct CuratorClearAlgedonicLogInput {
+    /// When true, clear ALL alerts including unresolved Critical (use with
+    /// caution — loses live signals). Default false (retain unresolved).
+    #[serde(default)]
+    pub clear_all: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CuratorClearAlgedonicLogOutput {
+    pub cleared: usize,
+    pub remaining: usize,
+    pub message: String,
+}
+
+impl AgentTool for CuratorClearAlgedonicLogTool {
+    type Input = CuratorClearAlgedonicLogInput;
+    type Output = CuratorClearAlgedonicLogOutput;
+
+    const NAME: &'static str = "curator_clear_algedonic_log";
+
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Execute
+    }
+
+    fn initial_title(
+        &self,
+        _input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
+        "Clear Algedonic Log".into()
+    }
+
+    fn run(
+        self: Arc<Self>,
+        input: ToolInput<Self::Input>,
+        _event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<Self::Output, Self::Output>> {
+        let sink = algedonic_log_sink();
+        cx.background_executor().spawn(async move {
+            let input = input
+                .recv()
+                .await
+                .map_err(|_| CuratorClearAlgedonicLogOutput {
+                    cleared: 0,
+                    remaining: 0,
+                    message: "error: invalid input".to_string(),
+                })?;
+
+            let Some(sink) = sink else {
+                return Ok(CuratorClearAlgedonicLogOutput {
+                    cleared: 0,
+                    remaining: 0,
+                    message: "algedonic log sink not wired".to_string(),
+                });
+            };
+
+            // Route `clear_all`: when true, clear ALL alerts (including
+            // unresolved Critical) — the hard-reset path. When false (default),
+            // clear only reviewed alerts, retaining unresolved Critical.
+            let cleared = if input.clear_all {
+                sink.clear_all_alerts().await
+            } else {
+                sink.clear_reviewed_alerts().await
+            }
+            .map_err(|e| CuratorClearAlgedonicLogOutput {
+                cleared: 0,
+                remaining: 0,
+                message: format!("clear failed: {e}"),
+            })?;
+            let remaining = sink.alert_log_count().await.unwrap_or(0);
+            let message = if cleared == 0 {
+                if input.clear_all {
+                    "No alerts to clear (log is empty)".to_string()
+                } else {
+                    "No reviewed alerts to clear (log is empty or all alerts are unresolved Critical)"
+                        .to_string()
+                }
+            } else if input.clear_all {
+                format!("Cleared ALL {cleared} alerts (hard reset), {remaining} remaining")
+            } else {
+                format!("Cleared {cleared} reviewed alerts, {remaining} remaining")
+            };
+            Ok(CuratorClearAlgedonicLogOutput {
+                cleared,
+                remaining,
+                message,
+            })
+        })
+    }
+}
+
+impl From<CuratorClearAlgedonicLogOutput> for language_model::LanguageModelToolResultContent {
+    fn from(output: CuratorClearAlgedonicLogOutput) -> Self {
+        let text = format!(
+            "Algedonic Log Clear: {}\nCleared: {}\nRemaining: {}",
+            output.message, output.cleared, output.remaining,
+        );
+        language_model::LanguageModelToolResultContent::Text(text.into())
+    }
+}
+
+// ── Curator Directive Tool ───────────────────────────────────────────────────
+
+/// A directive the Curator model issues to the cybernetics regulation loop.
+///
+/// This is a tool-local representation — the composition root converts it to
+/// `hkask_types::CuratorDirective` before sending. Agent fields use names
+/// (e.g. `"curator"`, `"swarm-panel"`), not raw WebIDs, because the model
+/// knows agents by name.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CuratorDirectiveRequest {
+    /// Adjust a regulation threshold for a domain.
+    CalibrateThreshold {
+        /// Domain identifier (e.g., "inference", "storage", "variety").
+        domain: String,
+        /// New threshold value.
+        new_threshold: u64,
+    },
+    /// Add or remove capabilities for an agent.
+    UpdateCapabilities {
+        /// Agent name (e.g., "curator", "swarm-panel").
+        agent: String,
+        /// Capabilities to add.
+        #[serde(default)]
+        additions: Vec<String>,
+        /// Capabilities to remove.
+        #[serde(default)]
+        removals: Vec<String>,
+    },
+    /// Override an agent's energy budget beyond cybernetics set-points.
+    OverrideEnergyBudget {
+        /// Agent name.
+        agent: String,
+        /// New energy budget (call cap per tick).
+        new_budget: u64,
+    },
+    /// Request more evidence for a pending decision (confidence-gated).
+    SeekMoreEvidence {
+        /// The decision context requiring more evidence.
+        context: String,
+        /// Which evidence channel to verify (e.g., "llm_confidence", "validation_result").
+        channel: String,
+        /// Current confidence level (e.g., "0.45").
+        confidence: String,
+    },
+    /// Replenish an agent's energy budget by a specific amount.
+    ReplenishBudget {
+        /// Agent name.
+        agent: String,
+        /// Amount to replenish.
+        amount: u64,
+        /// Priority weight for replenishment scaling (0.0–1.0). Defaults to 1.0.
+        #[serde(default)]
+        priority: Option<f64>,
+    },
+    /// Clear a curation override on an agent's energy budget.
+    ClearOverride {
+        /// Agent name.
+        agent: String,
+    },
+    /// Escalate a domain-level concern to the user for human review.
+    EscalateDomain {
+        /// Domain identifier (e.g., "inference", "storage").
+        domain: String,
+        /// Severity level: "info", "warning", or "critical".
+        severity: String,
+        /// Human-readable evidence summary.
+        evidence: String,
+    },
+    /// Evolve an MCP tool's input schema based on skill-use feedback.
+    ///
+    /// This is the Phase 3 co-evolution directive. The Curator analyzes
+    /// skill-use reports and issues a directive to evolve a tool's schema.
+    /// The directive is recorded in the regulation ledger for a developer
+    /// or automated migration agent to act on — it does not directly modify
+    /// the compiled Rust struct.
+    EvolveMcpToolSchema {
+        /// MCP server name (e.g., "hkask-mcp-scenarios").
+        server_name: String,
+        /// Tool name on that server (e.g., "dcf_valuation").
+        tool_name: String,
+        /// Type of schema evolution requested.
+        evolution_type: SchemaEvolutionType,
+        /// Field name to add/remove/rename/change.
+        field_name: String,
+        /// New field type (for add_field/change_type), or new field name (for
+        /// rename_field). Omitted for remove_field.
+        #[serde(default)]
+        new_type: Option<String>,
+        /// Why this evolution is needed — grounded in skill-use reports.
+        rationale: String,
+        /// Evidence summary (which skill, which step, what failure).
+        evidence: String,
+    },
+}
+
+/// Type of MCP tool schema evolution requested by the Curator.
+/// Mirrors `hkask_types::curator::SchemaEvolutionType` — the agent crate
+/// does not depend on `hkask-types`, so the type is duplicated here and
+/// converted in the bridge.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SchemaEvolutionType {
+    /// Add a new input field to the tool's schema.
+    AddField,
+    /// Remove an existing input field.
+    RemoveField,
+    /// Rename an existing input field.
+    RenameField,
+    /// Change the type of an existing input field.
+    ChangeType,
+}
+
+/// Issue a CuratorDirective to the cybernetics regulation loop.
+///
+/// Directives adjust thresholds, capabilities, energy budgets, or escalate
+/// domain-level concerns. The cybernetics loop dampens repeated directives to
+/// prevent feedback oscillation — a dampened directive returns `accepted: false`.
+/// When the directive channel is not wired, returns an error.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
+pub struct CuratorDirectiveTool;
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct CuratorDirectiveInput {
+    /// The directive to issue.
+    pub directive: CuratorDirectiveRequest,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CuratorDirectiveOutput {
+    /// `true` if the directive was accepted; `false` if dampened (duplicate within cooldown).
+    pub accepted: bool,
+    /// Human-readable status message.
+    pub message: String,
+    /// The directive variant name that was issued (for logging).
+    pub directive_type: String,
+}
+
+impl AgentTool for CuratorDirectiveTool {
+    type Input = CuratorDirectiveInput;
+    type Output = CuratorDirectiveOutput;
+
+    const NAME: &'static str = "curator_directive";
+
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Other
+    }
+
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
+        let variant = input
+            .ok()
+            .map(|i| i.directive.variant_name())
+            .unwrap_or("directive");
+        format!("Curator Directive: {variant}").into()
+    }
+
+    fn run(
+        self: Arc<Self>,
+        input: ToolInput<Self::Input>,
+        _event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<Self::Output, Self::Output>> {
+        let sink = curator_directive_sink();
+        cx.background_executor().spawn(async move {
+            let input = input.recv().await.map_err(|_| CuratorDirectiveOutput {
+                accepted: false,
+                message: "error: invalid input".to_string(),
+                directive_type: "unknown".to_string(),
+            })?;
+
+            let directive_type = input.directive.variant_name().to_string();
+
+            let Some(sink) = sink else {
+                return Ok(CuratorDirectiveOutput {
+                    accepted: false,
+                    message: "directive sink not wired — the regulation loop is not running"
+                        .to_string(),
+                    directive_type,
+                });
+            };
+
+            match sink.send_directive(input.directive) {
+                Ok(true) => Ok(CuratorDirectiveOutput {
+                    accepted: true,
+                    message: format!("directive '{directive_type}' accepted by the regulation loop"),
+                    directive_type,
+                }),
+                Ok(false) => Ok(CuratorDirectiveOutput {
+                    accepted: false,
+                    message: format!(
+                        "directive '{directive_type}' dampened — a similar directive was issued recently (cooldown active)"
+                    ),
+                    directive_type,
+                }),
+                Err(channel_err) => Ok(CuratorDirectiveOutput {
+                    accepted: false,
+                    message: format!("directive '{directive_type}' failed: {channel_err}"),
+                    directive_type,
+                }),
+            }
+        })
+    }
+}
+
+impl CuratorDirectiveRequest {
+    pub fn variant_name(&self) -> &'static str {
+        match self {
+            Self::CalibrateThreshold { .. } => "calibrate_threshold",
+            Self::UpdateCapabilities { .. } => "update_capabilities",
+            Self::OverrideEnergyBudget { .. } => "override_energy_budget",
+            Self::SeekMoreEvidence { .. } => "seek_more_evidence",
+            Self::ReplenishBudget { .. } => "replenish_budget",
+            Self::ClearOverride { .. } => "clear_override",
+            Self::EscalateDomain { .. } => "escalate_domain",
+            Self::EvolveMcpToolSchema { .. } => "evolve_mcp_tool_schema",
+        }
+    }
+}
+
+impl From<CuratorDirectiveOutput> for language_model::LanguageModelToolResultContent {
+    fn from(output: CuratorDirectiveOutput) -> Self {
+        let status = if output.accepted {
+            "accepted"
+        } else {
+            "not accepted"
+        };
+        let text = format!(
+            "Curator Directive ({}): {}\n  {}",
+            output.directive_type, status, output.message,
+        );
+        language_model::LanguageModelToolResultContent::Text(text.into())
+    }
+}

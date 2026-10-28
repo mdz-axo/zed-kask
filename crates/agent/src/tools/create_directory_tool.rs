@@ -1,6 +1,6 @@
 use super::tool_permissions::{
     authorize_symlink_access, canonicalize_worktree_roots, detect_symlink_escape,
-    resolve_creatable_global_skill_path, sensitive_settings_kind,
+    resolve_creatable_global_skill_path, resolve_creatable_project_path, sensitive_settings_kind,
 };
 use agent_client_protocol::schema::v2 as acp;
 use agent_settings::AgentSettings;
@@ -30,11 +30,11 @@ use std::path::{Path, PathBuf};
     directory — so, rather than requesting write access to a broad existing parent (e.g. your \
     home directory) just to create something inside it, create the specific directory here \
     first and then write into it. The only other supported path outside the project is \
-    `~/.agents/skills` or a descendant, for global agent skills."
+    the global skills directory or a descendant, for global agent skills."
 )]
 #[cfg_attr(
     not(any(target_os = "linux", target_os = "macos")),
-    doc = "The only supported path outside the project is `~/.agents/skills` or a descendant, \
+    doc = "The only supported path outside the project is the global skills directory or a descendant, \
     for global agent skills."
 )]
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -51,7 +51,7 @@ pub struct CreateDirectoryToolInput {
     /// </example>
     ///
     /// <example>
-    /// To create a global agent skill directory, you may provide a path under `~/.agents/skills`, such as `~/.agents/skills/my-skill`.
+    /// To create a global agent skill directory, use the global skills directory path shown in the system prompt.
     /// </example>
     pub path: String,
 
@@ -120,7 +120,11 @@ impl AgentTool for CreateDirectoryTool {
             let global_skill_directory =
                 resolve_creatable_global_skill_path(Path::new(&input.path), fs.as_ref()).await;
             let in_project = project.read_with(cx, |project, cx| {
-                project.find_project_path(&input.path, cx).is_some()
+                // Creatable resolution: `find_project_path` resolves relative
+                // paths through existing snapshot entries only, which
+                // misclassified not-yet-existing in-project paths as outside
+                // the project (observed live 2026-10-24; card 6c88e56d).
+                resolve_creatable_project_path(project, &input.path, cx).is_some()
             });
 
             // A path outside the project (and not the global skills dir) can only
@@ -212,7 +216,7 @@ impl AgentTool for CreateDirectoryTool {
             }
 
             let create_entry = project.update(cx, |project, cx| {
-                match project.find_project_path(&input.path, cx) {
+                match resolve_creatable_project_path(project, &input.path, cx) {
                     Some(project_path) => Ok(project.create_entry(project_path, true, cx)),
                     None => Err("Path to create was outside the project".to_string()),
                 }
@@ -367,13 +371,8 @@ mod tests {
         cx.executor().run_until_parked();
 
         let tool = Arc::new(CreateDirectoryTool::new(project));
-        let input_path = PathBuf::from("~")
-            .join(".agents")
-            .join("skills")
-            .join("my-skill")
-            .to_string_lossy()
-            .into_owned();
         let created_path = agent_skills::global_skills_dir().join("my-skill");
+        let input_path = created_path.to_string_lossy().into_owned();
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
@@ -459,6 +458,50 @@ mod tests {
                 Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "Non-skill global path should not emit an agent-skills authorization prompt",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_create_directory_creates_nested_in_project_paths_that_do_not_exist_yet(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root/project"), json!({})).await;
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let tool = Arc::new(CreateDirectoryTool::new(project));
+        let (event_stream, _event_rx) = ToolCallEventStream::test();
+
+        // A relative, not-yet-existing in-project path — creation is this
+        // tool's purpose, but `find_project_path` resolves relative paths
+        // through existing snapshot entries only, which misclassified such
+        // paths as "outside the project" (observed live 2026-10-24; card
+        // 6c88e56d). The terminal `mkdir -p` fallback was the workaround.
+        let result = cx
+            .update(|cx| {
+                tool.run(
+                    ToolInput::resolved(CreateDirectoryToolInput {
+                        path: "agents/skills/new-skill".to_string(),
+                        reason: None,
+                    }),
+                    event_stream,
+                    cx,
+                )
+            })
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "nested in-project creation must succeed: {result:?}"
+        );
+        assert!(
+            fs.is_dir(std::path::Path::new(
+                "/root/project/agents/skills/new-skill"
+            ))
+            .await
         );
     }
 

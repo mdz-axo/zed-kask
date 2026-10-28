@@ -77,7 +77,8 @@ use workspace::Workspace;
 use crate::agent_configuration::ManageProfilesModal;
 pub use crate::agent_connection_store::{ActiveAcpConnection, AgentConnectionStore};
 pub use crate::agent_panel::{
-    AgentPanel, AgentPanelEvent, AgentPanelTerminalInfo, TerminalId, ThreadTitleRegenerationResult,
+    AgentPanel, AgentPanelEvent, AgentPanelSiblingHost, AgentPanelTerminalInfo,
+    MaxIdleRetainedThreads, TerminalId, ThreadTitleRegenerationResult,
 };
 use crate::agent_registry_ui::AgentRegistryPage;
 pub use crate::inline_assistant::InlineAssistant;
@@ -380,9 +381,9 @@ actions!(
         /// Toggles thinking mode for models that support extended thinking.
         ToggleThinkingMode,
         /// Cycles through available thinking effort levels for the current model.
-        CycleThinkingEffort,
+        CycleReasoningEffort,
         /// Toggles the thinking effort selector menu open or closed.
-        ToggleThinkingEffortMenu,
+        ToggleReasoningEffortMenu,
         /// Toggles fast mode for models that support it.
         ToggleFastMode,
         /// Scroll the output by one page up.
@@ -503,6 +504,7 @@ where
         AgentIdOrLegacyAgent::AgentId(agent_id) => Ok(agent_id),
         AgentIdOrLegacyAgent::LegacyAgent(Agent::Custom { id }) => Ok(id),
         AgentIdOrLegacyAgent::LegacyAgent(Agent::NativeAgent) => Ok(Agent::NativeAgent.id()),
+        AgentIdOrLegacyAgent::LegacyAgent(Agent::Curator) => Ok(Agent::Curator.id()),
         #[cfg(any(test, feature = "test-support"))]
         AgentIdOrLegacyAgent::LegacyAgent(Agent::Stub) => Ok(Agent::Stub.id()),
     }
@@ -522,6 +524,9 @@ pub enum Agent {
     #[default]
     #[serde(alias = "NativeAgent", alias = "TextThread")]
     NativeAgent,
+    /// hKask Curator — the cybernetic regulator agent (D2).
+    /// A native in-process agent backed by hKask's Curator + guarded inference.
+    Curator,
     #[serde(alias = "Custom")]
     Custom {
         #[serde(rename = "name")]
@@ -536,6 +541,9 @@ impl From<AgentId> for Agent {
         if id.as_ref() == agent::ZED_AGENT_ID.as_ref() {
             return Self::NativeAgent;
         }
+        if id.as_ref() == agent::CURATOR_AGENT_ID.as_ref() {
+            return Self::Curator;
+        }
         #[cfg(any(test, feature = "test-support"))]
         if id.as_ref() == "stub" {
             return Self::Stub;
@@ -548,6 +556,7 @@ impl Agent {
     pub fn id(&self) -> AgentId {
         match self {
             Self::NativeAgent => agent::ZED_AGENT_ID.clone(),
+            Self::Curator => agent::CURATOR_AGENT_ID.clone(),
             Self::Custom { id } => id.clone(),
             #[cfg(any(test, feature = "test-support"))]
             Self::Stub => "stub".into(),
@@ -555,12 +564,13 @@ impl Agent {
     }
 
     pub fn is_native(&self) -> bool {
-        matches!(self, Self::NativeAgent)
+        matches!(self, Self::NativeAgent | Self::Curator)
     }
 
     pub fn label(&self) -> SharedString {
         match self {
             Self::NativeAgent => "Zed Agent".into(),
+            Self::Curator => "Curator".into(),
             Self::Custom { id, .. } => id.0.clone(),
             #[cfg(any(test, feature = "test-support"))]
             Self::Stub => "Stub Agent".into(),
@@ -570,6 +580,7 @@ impl Agent {
     pub fn icon(&self) -> Option<IconName> {
         match self {
             Self::NativeAgent => None,
+            Self::Curator => Some(IconName::ZedAssistant),
             Self::Custom { .. } => Some(IconName::Sparkle),
             #[cfg(any(test, feature = "test-support"))]
             Self::Stub => None,
@@ -583,6 +594,10 @@ impl Agent {
     ) -> Rc<dyn agent_servers::AgentServer> {
         match self {
             Self::NativeAgent => Rc::new(agent::NativeAgentServer::new(fs, thread_store)),
+            // The Curator overlays curator context and tools on top of
+            // the Zed Agent — same system prompt, same coding tools, plus
+            // metacognition and regulatory surface.
+            Self::Curator => Rc::new(agent::CuratorAgentServer::new(fs, thread_store)),
             Self::Custom { id: name } => {
                 Rc::new(agent_servers::CustomAgentServer::new(name.clone()))
             }
@@ -601,6 +616,11 @@ pub enum AgentInitialContent {
     ContentBlock {
         blocks: Vec<acp_v2::ContentBlock>,
         auto_submit: bool,
+    },
+    /// Native sibling prompt whose authority must be applied before auto-submit.
+    DelegatedSibling {
+        blocks: Vec<acp_v2::ContentBlock>,
+        authority: agent::DelegationAuthority,
     },
     FromExternalSource(ExternalSourcePrompt),
 }
@@ -907,10 +927,7 @@ fn update_command_palette_filter(cx: &mut App) {
         ];
 
         let manage_skills_action = [TypeId::of::<zed_actions::assistant::ManageSkills>()];
-        let skill_creator_actions = [
-            TypeId::of::<zed_actions::assistant::OpenSkillCreator>(),
-            TypeId::of::<zed_actions::assistant::CreateSkillFromUrl>(),
-        ];
+        let skill_creator_actions = [TypeId::of::<zed_actions::assistant::OpenSkillCreator>()];
 
         if disable_ai {
             filter.hide_namespace("agent");
@@ -1137,10 +1154,6 @@ mod tests {
             assert!(
                 !filter.is_hidden(&zed_actions::assistant::OpenSkillCreator),
                 "OpenSkillCreator should be visible by default"
-            );
-            assert!(
-                !filter.is_hidden(&zed_actions::assistant::CreateSkillFromUrl),
-                "CreateSkillFromUrl should be visible by default"
             );
             assert!(
                 !filter.is_hidden(&zed_actions::assistant::OpenGlobalAgentsMdRules),

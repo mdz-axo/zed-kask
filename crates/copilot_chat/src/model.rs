@@ -26,7 +26,7 @@ use language_model::{
 };
 use util::debug_panic;
 
-use language_model::util::{fix_streamed_json, parse_tool_arguments};
+use language_model::util::{fix_streamed_json, parse_tool_arguments, tool_call_truncation_error};
 
 pub const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("copilot_chat");
 pub const PROVIDER_NAME: LanguageModelProviderName =
@@ -127,7 +127,7 @@ pub fn stream_completion(
                 request,
                 model.id().to_string(),
                 0.0,
-                max_output_tokens,
+                Some(max_output_tokens),
                 if model.supports_adaptive_thinking() {
                     AnthropicModelMode::Thinking {
                         budget_tokens: None,
@@ -387,6 +387,10 @@ pub fn map_to_language_model_completion_events(
                                     output_tokens: usage.completion_tokens,
                                     cache_creation_input_tokens: 0,
                                     cache_read_input_tokens: 0,
+                                    // zed-kask: D20 — Copilot Chat doesn't report USD cost in `usage`;
+                                    // `cost: None` keeps `TokenUsage` (which carries `cost: Option<f64>`
+                                    // for cost observability) constructible. See DIVERGENCE.md D20.
+                                    cost: None,
                                 },
                             )));
                         }
@@ -422,6 +426,23 @@ pub fn map_to_language_model_completion_events(
                                             serde_json::Value::Object(details),
                                         ),
                                     ));
+                                }
+
+                                // zed-kask: D36 — an EOF-classified parse failure on
+                                // any accumulated tool-call arguments is a
+                                // transport cut mid-tool-call: clear the whole
+                                // batch, surface the typed truncation error, and
+                                // end the turn without a clean Stop(ToolUse).
+                                // Syntax-classified failures keep the per-call
+                                // parse-error recovery below.
+                                if let Some(truncation) =
+                                    state.tool_calls_by_index.values().find_map(|call| {
+                                        tool_call_truncation_error(&call.name, &call.arguments)
+                                    })
+                                {
+                                    state.tool_calls_by_index.clear();
+                                    events.push(Err(truncation));
+                                    return Some((events, state));
                                 }
 
                                 events.extend(state.tool_calls_by_index.drain().map(
@@ -547,6 +568,16 @@ impl CopilotResponsesEventMapper {
                             },
                         ))),
                         Err(error) => {
+                            // zed-kask: D36 — an EOF-classified parse failure
+                            // means the arguments were cut mid-JSON: surface
+                            // the typed truncation error alone — no
+                            // parse-error recovery event, no pending stop
+                            // reason, no clean Stop(ToolUse).
+                            if let Some(truncation) =
+                                tool_call_truncation_error(name.as_str(), &arguments)
+                            {
+                                return vec![Err(truncation)];
+                            }
                             events.push(Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
                                 id: call_id.into(),
                                 tool_name: name.as_str().into(),
@@ -599,6 +630,8 @@ impl CopilotResponsesEventMapper {
                         output_tokens: usage.output_tokens.unwrap_or(0),
                         cache_creation_input_tokens: 0,
                         cache_read_input_tokens: 0,
+                        // zed-kask: D20 — Copilot Chat doesn't report USD cost; `cost: None`.
+                        cost: None,
                     })));
                 }
                 if self.pending_stop_reason.take() != Some(StopReason::ToolUse) {
@@ -630,6 +663,8 @@ impl CopilotResponsesEventMapper {
                         output_tokens: usage.output_tokens.unwrap_or(0),
                         cache_creation_input_tokens: 0,
                         cache_read_input_tokens: 0,
+                        // zed-kask: D20 — Copilot Chat doesn't report USD cost; `cost: None`.
+                        cost: None,
                     })));
                 }
                 events.push(Ok(LanguageModelCompletionEvent::Stop(stop_reason)));
@@ -1391,6 +1426,129 @@ mod tests {
         ));
     }
 
+    /// D20 pin: Copilot Chat's `TokenUsage` constructions must set `cost: None`.
+    /// Copilot doesn't report USD cost in its `usage` object, so the
+    /// `cost: Option<f64>` field (added by zed-kask D20 for cost observability)
+    /// must be `None` here — observed cost is only surfaced from providers
+    /// that report it (OpenRouter, OpenAI-compatible). If a future
+    /// Copilot `usage` schema adds a cost field, this test should be updated
+    /// to parse it (and the `cost: None` sites in `map_events` updated).
+    #[test]
+    fn responses_stream_usage_carries_no_cost() {
+        let events = vec![responses::StreamEvent::Completed {
+            response: responses::Response {
+                usage: Some(responses::ResponseUsage {
+                    input_tokens: Some(5),
+                    output_tokens: Some(3),
+                    total_tokens: Some(8),
+                }),
+                ..Default::default()
+            },
+        }];
+        let mapped = map_events(events);
+        let usage_event = mapped
+            .iter()
+            .find_map(|event| match event {
+                LanguageModelCompletionEvent::UsageUpdate(usage) => Some(usage),
+                _ => None,
+            })
+            .expect("a UsageUpdate event should be emitted");
+        assert_eq!(usage_event.input_tokens, 5);
+        assert_eq!(usage_event.output_tokens, 3);
+        assert_eq!(
+            usage_event.cost, None,
+            "Copilot Chat must not report USD cost (D20): cost must be None"
+        );
+    }
+
+    /// D20 pin for the chat-completions streaming path
+    /// (`map_to_language_model_completion_events`): the `TokenUsage`
+    /// constructed from the chat-completions `usage` object must carry
+    /// `cost: None` — Copilot doesn't report USD cost there either.
+    #[test]
+    fn chat_completion_usage_carries_no_cost() {
+        use crate::{ResponseChoice, ResponseDelta, ResponseEvent, Role, Usage};
+
+        let events = vec![ResponseEvent {
+            choices: vec![ResponseChoice {
+                index: Some(0),
+                finish_reason: Some("stop".to_string()),
+                delta: Some(ResponseDelta {
+                    content: Some("Hello".to_string()),
+                    role: Some(Role::Assistant),
+                    tool_calls: vec![],
+                    reasoning_opaque: None,
+                    reasoning_text: None,
+                }),
+                message: None,
+            }],
+            id: "chatcmpl-123".to_string(),
+            usage: Some(Usage {
+                completion_tokens: 3,
+                prompt_tokens: 5,
+                total_tokens: 8,
+            }),
+        }];
+
+        let mapped = futures::executor::block_on(async {
+            map_to_language_model_completion_events(
+                Box::pin(futures::stream::iter(events.into_iter().map(Ok))),
+                true,
+            )
+            .collect::<Vec<_>>()
+            .await
+        });
+
+        let usage_event = mapped
+            .iter()
+            .filter_map(|event| match event {
+                Ok(LanguageModelCompletionEvent::UsageUpdate(usage)) => Some(usage),
+                _ => None,
+            })
+            .next()
+            .expect("a UsageUpdate event should be emitted");
+        assert_eq!(usage_event.input_tokens, 5);
+        assert_eq!(usage_event.output_tokens, 3);
+        assert_eq!(
+            usage_event.cost, None,
+            "Copilot Chat must not report USD cost (D20): cost must be None"
+        );
+    }
+
+    /// D20 pin for the responses-stream `Incomplete` path: the `TokenUsage`
+    /// constructed when a response ends incomplete (e.g. max_output_tokens)
+    /// must also carry `cost: None`.
+    #[test]
+    fn incomplete_stream_usage_carries_no_cost() {
+        let events = vec![responses::StreamEvent::Incomplete {
+            response: responses::Response {
+                usage: Some(responses::ResponseUsage {
+                    input_tokens: Some(5),
+                    output_tokens: Some(3),
+                    total_tokens: Some(8),
+                }),
+                incomplete_details: Some(responses::IncompleteDetails {
+                    reason: Some(responses::IncompleteReason::MaxOutputTokens),
+                }),
+                ..Default::default()
+            },
+        }];
+        let mapped = map_events(events);
+        let usage_event = mapped
+            .iter()
+            .find_map(|event| match event {
+                LanguageModelCompletionEvent::UsageUpdate(usage) => Some(usage),
+                _ => None,
+            })
+            .expect("a UsageUpdate event should be emitted");
+        assert_eq!(usage_event.input_tokens, 5);
+        assert_eq!(usage_event.output_tokens, 3);
+        assert_eq!(
+            usage_event.cost, None,
+            "Copilot Chat must not report USD cost (D20): cost must be None"
+        );
+    }
+
     #[test]
     fn responses_stream_maps_tool_calls() {
         let events = vec![responses::StreamEvent::OutputItemDone {
@@ -1442,6 +1600,46 @@ mod tests {
             mapped[1],
             LanguageModelCompletionEvent::Stop(StopReason::ToolUse)
         ));
+    }
+
+    #[test]
+    fn responses_stream_truncated_tool_arguments_emit_error_not_stop() {
+        let events = vec![responses::StreamEvent::OutputItemDone {
+            output_index: 0,
+            sequence_number: None,
+            item: responses::ResponseOutputItem::FunctionCall {
+                id: Some("fn_1".into()),
+                call_id: "call_1".into(),
+                name: "do_it".into(),
+                arguments: "{\"query\":".into(),
+                status: None,
+                thought_signature: None,
+            },
+        }];
+
+        let mapped_results = futures::executor::block_on(async {
+            CopilotResponsesEventMapper::new()
+                .map_stream(Box::pin(futures::stream::iter(events.into_iter().map(Ok))))
+                .collect::<Vec<_>>()
+                .await
+        });
+
+        assert_eq!(
+            mapped_results.len(),
+            1,
+            "a truncated call must emit exactly one event (the typed error, no Stop)"
+        );
+        match &mapped_results[0] {
+            Err(LanguageModelCompletionError::ToolCallTruncated {
+                tool_name,
+                json_parse_error,
+                ..
+            }) => {
+                assert_eq!(tool_name, "do_it");
+                assert!(json_parse_error.contains("EOF while parsing"));
+            }
+            other => panic!("expected ToolCallTruncated, got {:?}", other),
+        }
     }
 
     #[test]
@@ -1861,6 +2059,91 @@ mod tests {
             reasoning_text_value,
             Some("Let me check the directory".to_string()),
             "Should capture reasoning_text"
+        );
+    }
+
+    #[test]
+    fn chat_completions_stream_truncated_tool_arguments_emit_error_not_stop() {
+        use crate::{
+            FunctionChunk, ResponseChoice, ResponseDelta, ResponseEvent, Role, ToolCallChunk,
+        };
+
+        let events = vec![
+            ResponseEvent {
+                choices: vec![ResponseChoice {
+                    index: Some(0),
+                    finish_reason: None,
+                    delta: Some(ResponseDelta {
+                        content: None,
+                        role: Some(Role::Assistant),
+                        tool_calls: vec![ToolCallChunk {
+                            index: Some(0),
+                            id: Some("call_1".to_string()),
+                            function: Some(FunctionChunk {
+                                name: Some("web_search".to_string()),
+                                arguments: Some("{\"query\":".to_string()),
+                                thought_signature: None,
+                            }),
+                        }],
+                        reasoning_opaque: None,
+                        reasoning_text: None,
+                    }),
+                    message: None,
+                }],
+                id: "chatcmpl-123".to_string(),
+                usage: None,
+            },
+            ResponseEvent {
+                choices: vec![ResponseChoice {
+                    index: Some(0),
+                    finish_reason: Some("tool_calls".to_string()),
+                    delta: Some(ResponseDelta {
+                        content: None,
+                        role: None,
+                        tool_calls: vec![],
+                        reasoning_opaque: None,
+                        reasoning_text: None,
+                    }),
+                    message: None,
+                }],
+                id: "chatcmpl-123".to_string(),
+                usage: None,
+            },
+        ];
+
+        let mapped = futures::executor::block_on(async {
+            map_to_language_model_completion_events(
+                Box::pin(futures::stream::iter(events.into_iter().map(Ok))),
+                true,
+            )
+            .collect::<Vec<_>>()
+            .await
+        });
+
+        assert!(
+            mapped.iter().any(|event| matches!(
+                event,
+                Err(LanguageModelCompletionError::ToolCallTruncated {
+                    tool_name,
+                    json_parse_error,
+                    ..
+                }) if tool_name == "web_search"
+                    && json_parse_error.contains("EOF while parsing")
+            )),
+            "EOF-cut tool arguments must surface the typed truncation error"
+        );
+        assert!(
+            !mapped
+                .iter()
+                .any(|event| matches!(event, Ok(LanguageModelCompletionEvent::Stop(_)))),
+            "a truncated batch must not end with a Stop event"
+        );
+        assert!(
+            !mapped.iter().any(|event| matches!(
+                event,
+                Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) if tool_use.is_input_complete
+            )),
+            "a truncated batch must not dispatch a complete ToolUse"
         );
     }
 }

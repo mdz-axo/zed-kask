@@ -19,15 +19,14 @@ use agent_ui::AgentPanel;
 use anyhow::{Context as _, Result};
 use clap::Parser;
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
-use client::{Client, ProxySettings, RefreshLlmTokenListener, UserStore, parse_zed_link};
-use collab_ui::channel_view::ChannelView;
+use client::{Client, ProxySettings, RefreshLlmTokenListener, UserStore, ZED_URL_SCHEME};
 use collections::HashMap;
 use crashes::InitCrashHandler;
 use db::kvp::{GlobalKeyValueStore, KeyValueStore};
 use editor::Editor;
 use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
-use futures::{FutureExt, StreamExt, channel::oneshot, future};
+use futures::{FutureExt, StreamExt, channel::oneshot};
 use git::GitHostingProviderRegistry;
 use git_ui::clone::clone_and_open;
 use gpui::{
@@ -64,13 +63,11 @@ use std::{
 };
 use theme::{ActiveTheme, GlobalTheme, ThemeRegistry};
 use theme_settings::load_user_theme;
-use util::{ResultExt, maybe};
+use util::ResultExt;
 use uuid::Uuid;
 use workspace::{
     AppState, MultiWorkspace, SerializedWorkspaceLocation, SessionWorkspace, Toast,
-    WorkspaceSettings, WorkspaceStore,
-    notifications::{NotificationId, NotifyResultExt},
-    restore_multiworkspace,
+    WorkspaceSettings, WorkspaceStore, notifications::NotificationId, restore_multiworkspace,
 };
 use zed::{
     OpenListener, OpenRequest, RawOpenRequest, app_menus, build_window_options,
@@ -198,7 +195,62 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
 }
 static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
 
+// zed-kask: D8 — the inference IPC socket path is managed by
+// `kask_bridge::inference_socket` (a re-settable `Mutex<String>`) instead of a
+// local `OnceLock<String>`. The `OnceLock` could not be updated when the IPC
+// server restarted (e.g. when the real model resolved after the no-op
+// fallback), leaving MCP servers with a stale socket path. `kask_bridge` owns
+// the state; `main.rs` calls `set_inference_socket_path` /
+// `get_inference_socket_path`.
+
+/// Per-tick call ceiling seeded for the `swarm-panel` persona (the kask panel's
+/// `ToolInvoker`).
+///
+/// This is a runaway-loop breaker and a usage meter, not an authority: one call
+/// is charged per tool invocation and the ceiling resets each regulation tick
+/// (10s), so normal activity never reaches it while a non-terminating delegated
+/// loop stays bounded to `ceiling` calls per tick.
+///
+/// Seeding is no longer load-bearing for correctness. `charge_call_metered`
+/// auto-registers an unseeded agent at
+/// `hkask_regulation::DEFAULT_RUNAWAY_CALL_CEILING` and logs the gap instead of
+/// refusing — the prior fail-closed behavior silently broke the two
+/// paths that mint *different* personas (`kask-panel` on the inference-IPC
+/// dispatch, the skill execution), since those derive
+/// different WebIDs than the one seeded here. This seed now only sets an
+/// explicit ceiling for the panel persona.
+const SWARM_PANEL_CALL_CAP: u32 = 10_000;
+
+/// Install a panic hook that logs the panic (location + payload + backtrace)
+/// via `log::error!` so it appears in `Zed.log`, then chains to the default
+/// hook (stderr). Without this, a main-thread GPUI panic aborts the process
+/// and leaves no trace in `Zed.log` — the default hook writes to stderr, which
+/// the log file does not capture, so a desktop-launched crash is invisible.
+/// `force_capture()` ignores `RUST_BACKTRACE` so the trace is always recorded
+/// on the crash path (the cost is fine for a rare, fatal panic).
+fn install_panic_hook() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "<unknown location>".to_string());
+        let payload = info.payload();
+        let msg = if let Some(s) = payload.downcast_ref::<&'static str>() {
+            (*s).to_string()
+        } else if let Some(s) = payload.downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "<non-string panic payload>".to_string()
+        };
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        log::error!("PANIC at {location}: {msg}\nbacktrace:\n{backtrace}");
+        default_hook(info);
+    }));
+}
+
 fn main() {
+    install_panic_hook();
     STARTUP_TIME.get_or_init(|| Instant::now());
 
     // If this process was re-executed as a Linux sandbox helper, run that mode
@@ -248,7 +300,7 @@ fn main() {
         }
     }
 
-    // `zed --printenv` Outputs environment variables as JSON to stdout
+    // `zed --printenv` Outputs environment variables as JSON to stdout.
     if args.printenv {
         util::shell_env::print_env();
         return;
@@ -288,16 +340,40 @@ fn main() {
 
     zlog::init();
 
+    // zed-kask: always write the log file; a PTY stdout is mirrored in
+    // addition, never substituted. Upstream logs to stdout only when run
+    // from a terminal, which leaves no on-disk record — the 2026-08-29
+    // settings-reactivity investigation was blocked because every warn
+    // went to a PTY that had scrolled away and no Zed-Kask.log existed.
+    // File logging must never silently fail: if the file cannot be opened,
+    // fall back to stdout so the failure is at least visible.
+    if let Err(err) = zlog::init_output_file(paths::log_file(), Some(paths::old_log_file())) {
+        eprintln!("Could not open log file: {err}... Defaulting to stdout");
+        zlog::init_output_stdout();
+    }
     if stdout_is_a_pty() {
         zlog::init_output_stdout();
-    } else {
-        let result = zlog::init_output_file(paths::log_file(), Some(paths::old_log_file()));
-        if let Err(err) = result {
-            eprintln!("Could not open log file: {}... Defaulting to stdout", err);
-            zlog::init_output_stdout();
-        };
     }
     ztracing::init();
+    // zed-kask: D8 — catalogue managed DB paths before any consumer opens.
+    if let Err(error) = kask_bridge::initialize_database_inventory() {
+        log::error!("Database inventory initialization failed: {error}");
+        return;
+    }
+
+    // zed-kask: D9 — apply a scheduled DB passphrase rotation before any
+    // consumer opens a database. A failure keeps every database and the
+    // keychain on the old passphrase; the pending intent stays surfaced on
+    // the Security page for cancellation or the next startup's retry.
+    if let Err(error) = kask_bridge::run_pending_db_passphrase_rotation() {
+        log::error!("Pending DB passphrase rotation failed: {error}");
+    }
+
+    // zed-kask: `.env` file loading has been removed. API keys must be
+    // configured via the settings UI (keychain) or shell environment
+    // variables. The keychain is the single source of truth — keys set
+    // via the settings UI are mirrored to each provider's `api_url` so
+    // the `ApiKeyState` keychain read finds them.
 
     #[cfg(unix)]
     util::increase_open_file_limit().log_err();
@@ -490,14 +566,818 @@ fn main() {
         zed_actions::init();
 
         release_channel::init(app_version, cx);
-        gpui_tokio::init(cx);
+
+        // zed-kask: D3/D8 — F2: kask tokio runtime (replaces upstream's gpui_tokio::init).
+        // Build the kask tokio runtime and register it as the GPUI-global tokio
+        // runtime via gpui_tokio. This eliminates the split-brain between a
+        // separate "kask_tokio_runtime" and gpui_tokio's own runtime — all
+        // kask async code (CyberneticsLoop, MetacognitionLoop, MCP server
+        // launches, embedding HTTP calls, inference IPC, skill manifest
+        // execution) now routes through Tokio::spawn(cx, ...) /
+        // Tokio::handle(cx), the same pattern zed's own code uses
+        // (extension_host).
+        //
+        // The runtime is multi-threaded with more workers than gpui_tokio's
+        // default 2, because kask drives MCP server I/O, embedding HTTP calls,
+        // and regulation loops concurrently.
+        let kask_tokio_runtime = tokio::runtime::Builder::new_multi_thread()
+            .thread_name("kask-tokio")
+            .worker_threads(4)
+            .enable_all()
+            .build()
+            .expect("failed to build kask tokio runtime — cannot start regulation loops");
+        let kask_runtime_handle = kask_tokio_runtime.handle().clone();
+        // The runtime is owned by GlobalTokio (registered below) for the
+        // lifetime of the app. Dropping GlobalTokio on app shutdown will
+        // shutdown_background the runtime.
+        gpui_tokio::init_from_handle(cx, kask_runtime_handle.clone());
+        std::mem::forget(kask_tokio_runtime);
+
+        // D1: The skill tool follows upstream Zed — it reads the SKILL.md body
+        // and returns it to the agent. No manifest cascade. The `lisp_eval`
+        // and `render_template` tools are available for skill composition.
+        //
+        // The built-in kask MCP servers come from the canonical registry in
+        // `kask_bridge::BUILT_IN_MCP_SERVERS` (single source of truth).
+
+        // D3: Construct the McpRuntime (manages MCP server child processes).
+        // The McpRuntime implements ToolPort — tool dispatch with a per-agent
+        // call meter (one call charged per invocation, runaway-loop breaker) and
+        // reg.tool.* span emission. It does NOT authorize. MCP servers
+        // are started as child processes (stdio).
+        //
+        // Server auto-launch happens after settings::init() (below) so we
+        // can read KaskSettings to determine which servers to load.
+        //
+        // The regulation system (CyberneticsLoop, RegulationLedger, call caps)
+        // is wired here so all tool invocations are governed. The CyberneticsLoop
+        // runs sense→compare→compute→act cycles on background tasks; the
+        // RegulationLedger tracks variety and algedonic alerts; the per-agent
+        // `CallCap` bounds governed tool calls per regulation tick.
+        //
+        // The event sink starts as `NoopEventSink` — the durable
+        // `RegulationArchive` (on the curator's curator.db, the same DB the
+        // curator MCP server's `reg_query`/`curator_algedonic_log` tools
+        // read) requires the DB passphrase, which only resolves after the
+        // Zed user logs in. The deferred task upgrades both sinks
+        // (cybernetics loop + MCP runtime governance) once provisioning
+        // completes. Spans emitted before the upgrade are dropped — the
+        // same degradation the previous LedgerSink had (it broadcast to a
+        // subscriber bus with zero subscribers).
+        // zed-kask: D3/D6/D8 — F3: alert channel + regulation ledger + event sink.
+        // The ledger is constructed after `set_points` is loaded (below) so that
+        // history caps (`max_skill_span_history`) are
+        // wired from YAML config. See `RegulationLedger::with_set_points`.
+        // Create the alert channel: CyberneticsLoop sends alerts →
+        // MetacognitionLoop receives them. This closes the feedback loop.
+        let (alert_tx, alert_rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let event_sink: std::sync::Arc<dyn hkask_types::RegulationSink> =
+            std::sync::Arc::new(hkask_regulation::NoopEventSink);
+
+        // Alert email sink — outbound algedonic alert emails via MXroute.
+        //
+        // At startup, env vars aren't set yet (they come from kask settings,
+        // loaded in the deferred task below), so `try_from_env()` returns
+        // `None` and the sink stays unwired. The deferred task re-wires it
+        // from `KaskSettings` at startup.
+        //
+        // When email is never configured, the sink stays `None` for the
+        // entire session — the cybernetics loop silently skips the email
+        // path. This is the zero-config default: no error, no warning. The
+        // "CRITICAL: Algedonic alert LOST" path in `cybernetics_loop.rs`
+        // only fires when ALL alert paths (live channel, archive, email) are
+        // unavailable, which is a genuine operator-visible error.
+        let alert_email_sink: Option<std::sync::Arc<dyn hkask_regulation::AlertEmailSink>> =
+            hkask_email::CuratorAlertEmailSink::try_from_env(kask_runtime_handle);
+
+        // zed-kask: install the SettingsStore global before any KaskSettings
+        // read. `KaskSettings::get_global(cx)` below reads from the
+        // SettingsStore (via the `Settings` trait), which `settings::init`
+        // installs via `cx.set_global`. Reading it before `settings::init`
+        // panics with "no state of type settings::settings_store::SettingsStore
+        // exists". The later settings setup (zlog_settings, watch_settings_files,
+        // handle_keymap_file_changes) stays in its original position because
+        // those depend on the `fs` global and the keymap watcher, which are
+        // wired further down.
+        settings::init(cx);
+
+        // Determine kask settings once for both the algedonic-threshold wiring
+        // below and the MCP-server auto-launch / curator-always-on gating further
+        // down. Defined here (before the algedonic block) so the threshold is in
+        // scope; the later reference at the MCP-launch block reuses this binding.
+        let kask_settings_for_mcp = kask_bridge::KaskSettings::get_global(cx).clone();
+
+        // zed-kask: D28 — Standardized Artifact Storage.
+        // Wire the canonical kask data-root threads DB path into the agent
+        // crate's threads database. The path is `{kask_data_dir}/threads/
+        // threads.db`, resolved by `resolve_under_data_dir`. This relocates
+        // archived chat threads from the upstream `paths::data_dir()/threads/`
+        // (`~/.local/share/zed-kask/threads/`) to the kask data root
+        // (`~/.local/share/zed-kask/threads/`) so all kask artifacts share one
+        // rooted tree. Pre-release: no back-compat — the kask path is always
+        // used. Wired early (user-independent) so the path is available
+        // before any thread is loaded.
+        let kask_threads_db_path =
+            hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(
+                "threads/threads.db",
+            ));
+        agent::set_threads_db_path_override(Some(kask_threads_db_path));
+
+        // zed-kask: D28 — Standardized Artifact Storage.
+        // Wire the canonical kask data-root skills directory into
+        // `agent_skills::global_skills_dir`. The path is
+        // `{kask_data_dir}/skills/`, resolved by `resolve_under_data_dir`.
+        // This relocates global skills from the upstream
+        // `paths::data_dir()/agents/skills/`
+        // (`~/.local/share/zed-kask/agents/skills/`) to the kask data root
+        // (`~/.local/share/zed-kask/skills/`) so all kask artifacts share one
+        // rooted tree. Pre-release: no back-compat. Wired early
+        // (user-independent) so the path is available before any skill is
+        // loaded.
+        let kask_skills_dir =
+            hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(
+                hkask_types::agent_paths::SKILLS_DIR,
+            ));
+        agent_skills::set_global_skills_dir_override(Some(kask_skills_dir));
+
+        // zed-kask: one root rule for the seeded template registry. The
+        // shared `KaskSettings::resolved_template_root()` — the same rule
+        // `mcp_env()` emits as `HKASK_TEMPLATE_ROOT` (operator `kask.data_dir`
+        // setting, else env, else platform default) — owns where the seeded
+        // copy lives; main.rs previously re-derived it with the env-only
+        // `resolve_under_data_dir` rule, so a custom `kask.data_dir` diverged
+        // the writer from the reader. The `render_template` tool additionally
+        // prefers the live source tree in dev (CWD = repo root) so template
+        // edits take effect without recompilation; in production both point
+        // at the seeded copy.
+        let template_registry_templates = kask_settings_for_mcp
+            .resolved_template_root()
+            .join("templates");
+        let dev_templates_dir = std::path::PathBuf::from("kask/registry/templates");
+        let is_dev = dev_templates_dir.is_dir();
+        let template_base_path = if is_dev {
+            dev_templates_dir
+        } else {
+            template_registry_templates.clone()
+        };
+        agent::set_template_base_path(template_base_path);
+
+        // Seed templates to the registry path so MCP servers (corpus and
+        // swarm) find them regardless of dev/prod. The `render_template`
+        // tool uses the live source tree in dev (via `template_base_path`
+        // above), so this seeding only affects MCP servers which read
+        // `HKASK_TEMPLATE_ROOT`. In dev, the seeded copy mirrors the
+        // compiled-in source tree; in production, it IS the only copy.
+        // Only changed, missing, or corrupted files are written — an
+        // unchanged registry does not churn writes on every startup.
+        let seed_dir = template_registry_templates;
+        let seed_fs = fs.clone();
+        cx.spawn(async move |_cx| {
+            agent_skills::seed_templates(seed_fs.as_ref(), &seed_dir).await;
+        }).detach();
+
+        // zed-kask: Load shipped skills from the checkout in development (or
+        // seed them for an installed build) and publish one global catalog
+        // so the Settings → AI → Skills page works before the agent panel.
+        // The lazy scan in `run_skills_scan` (triggered by agent-panel
+        // interaction) will refresh the SkillIndex with project skills when
+        // a project context is built; `NativeAgent::new` preserves an existing
+        // SkillIndex rather than overwriting it with an empty default. If the
+        // agent publishes first, the delayed startup result must not erase its
+        // project skills or replace its newer disk-loaded global catalog.
+        let skills_dir = agent_skills::global_skills_dir();
+        let skills_fs: Arc<dyn Fs> = fs.clone();
+        cx.spawn(async move |cx| {
+            agent_skills::seed_shipped_skills(skills_fs.as_ref(), &skills_dir).await;
+            let loaded = agent_skills::load_authoritative_global_skills(&skills_fs, &skills_dir).await;
+            let global_skills: Vec<agent_skills::Skill> =
+                loaded.into_iter().filter_map(|result| result.ok()).collect();
+            let verified_core =
+                agent_skills::verify_core_skill_contents(skills_fs.as_ref(), &global_skills).await;
+            let _ = cx.update(|cx| {
+                agent_skills::SkillIndex::publish_verified_globals(
+                    global_skills,
+                    &verified_core,
+                    cx,
+                );
+            });
+        }).detach();
+
+        // zed-kask: D8 — F4: algedonic threshold → variety_max_deficit (Guardrail).
+        // Wire `kask.curator.algedonic_threshold` (0.0–1.0, default 0.8) to
+        // scale `SetPoints.variety_max_deficit` (default 100.0). Higher
+        // threshold = more sensitive = lower deficit tolerance. Mapping:
+        //   variety_max_deficit = DEFAULT_VARIETY_MAX_DEFICIT * (1.0 - threshold)
+        // clamped to [1.0, DEFAULT_VARIETY_MAX_DEFICIT] so threshold=1.0
+        // doesn't produce 0.0 (which fails validation). This wires the
+        // previously-dead `algedonic_threshold` setting to a real enforcement
+        // point (the `.rules` "Advertised invariants need enforcement points"
+        // trap).
+        let mut set_points = hkask_regulation::load_set_points();
+        let algedonic_threshold = kask_settings_for_mcp.curator.algedonic_threshold;
+        let scaled = hkask_regulation::DEFAULT_VARIETY_MAX_DEFICIT * (1.0 - algedonic_threshold);
+        set_points.variety_max_deficit = scaled.max(1.0);
+        // zed-kask: D3/D6/D8 — F3: regulation ledger constructed with set_points
+        // so history caps (max_skill_span_history) are
+        // configurable via YAML. Previously constructed with `::default()` which
+        // used hardcoded caps.
+        let regulation_ledger = std::sync::Arc::new(tokio::sync::RwLock::new(
+            hkask_regulation::RegulationLedger::with_set_points(
+                hkask_regulation::DEFAULT_VARIETY_MAX_DEFICIT as u64,
+                &set_points,
+            ),
+        ));
+        // zed-kask: D3/D8 — CuratorDirective channel wiring.
+        // Create the channel: the Curator's `curator_directive` tool sends
+        // directives via the sink, and the CyberneticsLoop's `process_inbox`
+        // drains them. The sink converts the tool-local `CuratorDirectiveRequest`
+        // (agent-name strings) to `hkask_types::CuratorDirective` (WebIDs) before
+        // sending.
+        let (directive_tx, directive_rx) =
+            tokio::sync::mpsc::unbounded_channel::<hkask_types::CuratorDirective>();
+        let cybernetics_loop_inner =
+            hkask_regulation::CyberneticsLoop::with_set_points(
+                regulation_ledger.clone(),
+                set_points,
+            )
+            .with_alerts_channel(alert_tx)
+            .with_curator_directive_channel(directive_rx)
+            .with_event_sink(event_sink.clone());
+        // zed-kask: event-substrate phase 6 — wire the rollout event source
+        // so `verify_impact` can query the store for before/after metric
+        // values. The store path mirrors the swarm server's default
+        // (`mcp/swarm/events.db` under the kask data dir, overridable via
+        // `HKASK_SWARM_EVENTS_PATH`). A missing/unopenable store leaves the
+        // loop unwired (degraded, not broken — the re-sense fallback still
+        // verifies) with a warn naming the path, per the failure-signal rule.
+        //
+        // The same store handle is shared with the harness regression monitor
+        // background task (the producer side of the phase 6 seam): when the
+        // harness writes a `harness_summary` event and the pass rate drops
+        // materially below the previous run, the monitor calls
+        // `submit_rollout_impact_check` — the first live traffic through the
+        // seam.
+        let (cybernetics_loop_inner, harness_event_store) = {
+            // The path contract (HKASK_SWARM_EVENTS_PATH override, D28
+            // default) is shared by the swarm server and zed's harness
+            // regression monitor — single-sourced in swarm_events_db_path.
+            let events_path = hkask_types::agent_paths::swarm_events_db_path();
+            match kask_bridge::BridgeRolloutEventSource::open(&events_path) {
+                Ok(source) => {
+                    let store = source.store();
+                    let wired =
+                        cybernetics_loop_inner.with_rollout_event_source(std::sync::Arc::new(source));
+                    (wired, Some(store))
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        target: "hkask.regulation",
+                        path = %events_path,
+                        error = %error,
+                        "rollout event source not wired — verify_impact falls back to re-sensing"
+                    );
+                    (cybernetics_loop_inner, None)
+                }
+            }
+        };
+        let cybernetics_loop_inner = if let Some(sink) = alert_email_sink {
+            cybernetics_loop_inner.with_alert_email_sink(sink)
+        } else {
+            cybernetics_loop_inner
+        };
+        // zed-kask: D3/D8 — F5: swarm-panel gas budget persona (call cap seed).
+        // Seed a call cap for the `swarm-panel` persona (see
+        // `SWARM_PANEL_CALL_CAP` for the rationale — fail-closed gate, no other
+        // production cap-creation path). The McpRuntime's governance gate would
+        // otherwise refuse every governed tool call with `EnergyBudgetExceeded`,
+        // which includes the swarm IPC `tool_invoke` dispatch the local delegate
+        // loop depends on.
+        {
+            let panel_webid = hkask_types::WebID::from_persona(b"swarm-panel");
+            cx.foreground_executor()
+                .block_on(cybernetics_loop_inner.register_call_cap(panel_webid, SWARM_PANEL_CALL_CAP));
+            log::info!(
+                "seeded swarm-panel call cap (ceiling {SWARM_PANEL_CALL_CAP} calls/tick)"
+            );
+        }
+        // zed-kask: context-server health source for the cybernetics loop.
+        //
+        // Without this, the loop reports `signal_count=0` while every MCP
+        // context server is hung on `initialize` (the 600s timeout storm).
+        // The source is updated by a foreground poller in the reliability
+        // module (which already polls workspace/project state on a timer).
+        // The source is wired here via the `with_*` builder because the loop
+        // is about to be wrapped in `Arc<RwLock<...>>`; a clone is kept for
+        // the poller to update.
+        let context_server_health_source = std::sync::Arc::new(
+            kask_bridge::BridgeContextServerHealthSource::new(),
+        );
+        let context_server_health_source_for_poller = context_server_health_source.clone();
+        // zed-kask: OCR health source for the cybernetics loop.
+        //
+        // Without this, the loop reports `signal_count=0` during an OCR
+        // silent-failure storm (a dead-but-responsive OCR endpoint returning
+        // HTTP 200 with empty content on every Complex page) — the
+        // `reg.pipeline.ocr.silent_failure` warns live in the corpus
+        // subprocess's tracing, which the loop's ledger/DB sensors cannot
+        // see. The source reads the corpus server's cross-process health
+        // file (`mcp/corpus/ocr-health.json`, written by its
+        // `OcrHealthRecorder`); the `OcrHealthSensor` emits
+        // `SignalMetric::OcrSilentFailures`, and the policy escalates to
+        // Curation for operator attention.
+        let ocr_health_source =
+            std::sync::Arc::new(kask_bridge::BridgeOcrHealthSource::new());
+        let cybernetics_loop_inner = cybernetics_loop_inner
+            .with_context_server_health_source(context_server_health_source)
+            .with_ocr_health_source(ocr_health_source);
+        let cybernetics_loop = std::sync::Arc::new(tokio::sync::RwLock::new(
+            cybernetics_loop_inner,
+        ));
+        let cybernetics_loop_for_tick = cybernetics_loop.clone();
+        let cybernetics_loop_for_panel = cybernetics_loop.clone();
+        let cybernetics_loop_for_harness = cybernetics_loop.clone();
+        let mcp_runtime = std::sync::Arc::new(
+            hkask_mcp::McpRuntime::new()
+                .with_governance(cybernetics_loop, event_sink),
+        );
+        // The runtime's on-demand reconnect (`call_tool_inner → try_reconnect`)
+        // spawns a child process, which requires a tokio reactor. Callers on
+        // the tokio runtime carry one; a caller on a GPUI executor does not
+        // and used to panic with "there is no reactor running", crashing the
+        // editor (observed live 2026-08-31 on a scenarios transport loss).
+        // Wiring the GPUI-global tokio handle lets the reconnect hop onto it
+        // from any executor.
+        hkask_mcp::set_spawn_runtime(gpui_tokio::Tokio::handle(&*cx));
+        wire_kask_mcp_shutdown(mcp_runtime.clone(), cx);
+        log::info!("hKask regulation system wired — tool invocations are governed, regulation spans forwarded to ledger subscribers");
+
+        // zed-kask: agent-path MCP tool outcome recording. The
+        // `with_governance` wiring above covers the McpRuntime dispatch path
+        // (skills/panel/IPC); the agent path (zed's context-server client)
+        // had no regulation wiring, so agent-initiated MCP tool calls were
+        // invisible to the ToolReliabilitySensor and the curator. The hook
+        // is process-global in the agent crate
+        // (`agent::record_mcp_tool_outcome`, called from
+        // `ContextServerTool::run`); this closure forwards each outcome to
+        // the shared RegulationLedger. The spawn goes through the
+        // GPUI-global tokio runtime because `record_outcome` is a
+        // tokio-RwLock future — GPUI's background_spawn would panic ("no
+        // reactor running"), per the .rules GPUI traps. The domain is the
+        // MCP server name, matching `McpRuntime::invoke` so both paths
+        // aggregate into the same reliability domain.
+        {
+            let tokio_handle = gpui_tokio::Tokio::handle(&*cx);
+            let ledger_for_agent_outcomes = regulation_ledger.clone();
+            agent::set_mcp_tool_outcome_recorder(std::sync::Arc::new(
+                move |server_name, tool_name, success, error_kind| {
+                    tracing::trace!(
+                        target: "reg.tool.agent",
+                        server = %server_name,
+                        tool = %tool_name,
+                        success,
+                        "agent-path MCP tool outcome"
+                    );
+                    let server_name = server_name.to_string();
+                    let tool_name = tool_name.to_string();
+                    let error_kind = error_kind.map(str::to_string);
+                    // Clone per call — the closure is `Fn` (invoked for every
+                    // tool call), so it cannot move the captured ledger into
+                    // the spawned future.
+                    let ledger = ledger_for_agent_outcomes.clone();
+                    tokio_handle.spawn(async move {
+                        let ledger = ledger.read().await;
+                        ledger
+                            .record_outcome(&server_name, success, error_kind.as_deref())
+                            .await;
+                        // Variety feed — the dispatch twin: the tool name is
+                        // the observed state, sharing the outcome path's
+                        // server-name domain registry so the VarietySensor
+                        // sees agent-initiated calls too.
+                        ledger.increment_variety(&server_name, &tool_name).await;
+                    });
+                },
+            ));
+        }
+
+        // zed-kask: native-first-rate sensor wiring — the drift feedback
+        // loop's unsensed leg. Tool failures reach the ledger via the
+        // recorder above (and `McpRuntime::with_governance`); instrument
+        // ABSENCE had no sensor: a session completing every substantive
+        // turn from native generation alone read as healthy because no
+        // tool ever failed. The hook fires at turn completion
+        // (`Thread::run_turn`, via `agent::record_agent_turn_native_first`);
+        // this closure forwards each summary to the shared RegulationLedger
+        // on the GPUI-global tokio runtime (`record_agent_turn` is a
+        // tokio-RwLock future — GPUI's background_spawn would panic, per
+        // the .rules GPUI traps).
+        {
+            let tokio_handle = gpui_tokio::Tokio::handle(&*cx);
+            let ledger_for_turn_summaries = regulation_ledger.clone();
+            agent::set_native_first_turn_recorder(std::sync::Arc::new(
+                move |substantive, native_first| {
+                    tracing::trace!(
+                        target: "reg.agent",
+                        substantive,
+                        native_first,
+                        "agent turn instrument summary recorded"
+                    );
+                    let ledger = ledger_for_turn_summaries.clone();
+                    tokio_handle.spawn(async move {
+                        let ledger = ledger.read().await;
+                        ledger.record_agent_turn(substantive, native_first).await;
+                    });
+                },
+            ));
+        }
+
+        // zed-kask: D94 — spec B's observing gate (v1): the claim-gate
+        // recorder receives deterministic findings from completed
+        // substantive native-first turns (the drift population the
+        // native-first sensor counts). The v1 sink is the running log
+        // (target `reg.gate`) — the surface where the operator reads
+        // regulation output; the durable reg_query surface and the
+        // corrective re-prompt land with v2, armed once these observations
+        // calibrate the checker's precision (sense before act).
+        agent::set_claim_gate_recorder(std::sync::Arc::new(
+            |findings: &[agent::ClaimGateFinding]| {
+                let classes: Vec<&'static str> =
+                    findings.iter().map(|finding| finding.label()).collect();
+                let excerpts: Vec<&str> =
+                    findings.iter().map(|finding| finding.excerpt()).collect();
+                tracing::warn!(
+                    target: "reg.gate",
+                    classes = ?classes,
+                    excerpts = ?excerpts,
+                    "claim-gate: a substantive native-first turn delivered instrument-shaped claims (percentages without lisp_eval, citations without the research ledger)"
+                );
+            },
+        ));
+
+        // zed-kask: D59 — skill outcome recording, the observe stage of the
+        // skill learning loop (DIAG-ARCH-LEARNING-LOOP-001). One recorder for
+        // the whole process: every outcome feeds the RegulationLedger
+        // (`sense_feedback_drift`), and once the curator archive opens in the
+        // deferred task (`skill_outcome_archive` below) each outcome is also
+        // persisted as a durable `reg.skill.<id>.outcome` record that the
+        // algedonic review's gemba walk reads via `reg_query`.
+        let skill_outcome_archive: std::sync::Arc<
+            std::sync::OnceLock<kask_bridge::CuratorRegulationArchive>,
+        > = std::sync::Arc::default();
+        {
+            let tokio_handle = gpui_tokio::Tokio::handle(&*cx);
+            let ledger_for_skill_outcomes = regulation_ledger.clone();
+            let archive_for_outcomes = skill_outcome_archive.clone();
+            agent::set_skill_outcome_recorder(std::sync::Arc::new(
+                move |skill_id, invoker, success, error| {
+                    let mut payload = serde_json::json!({ "success": success, "invoker": invoker });
+                    if let Some(error) = error {
+                        payload["error"] = serde_json::json!(error);
+                    }
+                    if let Some(archive) = archive_for_outcomes.get()
+                        && let Err(error) =
+                            kask_bridge::persist_skill_outcome(archive.as_ref(), skill_id, payload.clone())
+                    {
+                        tracing::warn!(
+                            target: "reg.storage",
+                            skill_id,
+                            %error,
+                            "Failed to persist skill outcome; the gemba walk will not see it"
+                        );
+                    }
+                    let skill_id = skill_id.to_string();
+                    let ledger = ledger_for_skill_outcomes.clone();
+                    tokio_handle.spawn(async move {
+                        ledger
+                            .read()
+                            .await
+                            .record_skill_span(&skill_id, "outcome", payload)
+                            .await;
+                    });
+                },
+            ));
+        }
+
+
+        // zed-kask: single spawn authority (I1, 2026-08-29). The governed
+        // McpRuntime is the agent's kask tool source: kask servers are no
+        // longer registered with the per-project ContextServerStore (that
+        // path spawned per-project instances with settings-entry env — the
+        // keyless-server defect). Tools surface via this source and dispatch
+        // through the runtime, metered by `with_governance` above.
+        {
+            let source = std::sync::Arc::new(ZedKaskToolSource {
+                runtime: mcp_runtime.clone(),
+                cache: std::sync::Arc::new(std::sync::RwLock::new(Vec::new())),
+            });
+            // Event-driven refresh: the runtime signals tool membership and
+            // connection changes (discovery, unexpected
+            // disconnect, stop, shutdown). The settings view uses the same
+            // signal to redraw its liveness-backed status; the cache
+            // rebuilds on the signal instead of on a timer — and each rebuild
+            // notifies the agent's registries through the process-global
+            // surface-change signal. The first iteration runs before the
+            // first await, so wiring itself performs the initial cache build
+            // and announcement (the deferred launch may have registered
+            // servers before this task started).
+            let cache = source.cache.clone();
+            let runtime = source.runtime.clone();
+            let tokio_handle = gpui_tokio::Tokio::handle(&*cx);
+            // Install before the Tokio task can publish its first update: a
+            // registry cannot replay a notification received while unwired.
+            agent::set_kask_tool_source(source);
+            tokio_handle.spawn(async move {
+                let mut surface_changes = runtime.tool_surface_changes();
+                loop {
+                    let descriptors = runtime
+                        .registered_servers()
+                        .await
+                        .into_iter()
+                        .flat_map(|(server_id, tools)| {
+                            tools.into_iter().map(move |tool| agent::KaskToolDescriptor {
+                                server_id: server_id.clone(),
+                                name: tool.name,
+                                description: tool.description,
+                                input_schema: tool.input_schema,
+                            })
+                        })
+                        .collect();
+                    *cache.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = descriptors;
+                    agent::notify_kask_tool_surface_changed();
+                    if surface_changes.changed().await.is_err() {
+                        // The runtime was dropped — the editor is shutting down.
+                        break;
+                    }
+                }
+            });
+        }
+
+        // zed-kask: D3/D8 — F6: CyberneticsLoop + MetacognitionLoop tick cycles.
+        // Run the CyberneticsLoop's tick cycle and the MetacognitionLoop on
+        // the GPUI-global tokio runtime (registered above via
+        // gpui_tokio::init_from_handle). All kask async code that uses tokio
+        // APIs (timers, I/O, locks, process spawns) must route through
+        // Tokio::spawn(cx, ...) — GPUI's background_spawn uses its own
+        // thread-pool executor, not a tokio reactor, so spawning tokio code
+        // there panics with "there is no reactor running".
+        //
+        // CyberneticsLoop tick cycle (10s interval).
+        // Without this, the RegulationLedger stays empty — no variety
+        // counters, no regulation health, no algedonic alerts. The
+        // metacognition loop would be sensing a dead system.
+        //
+        // The spawn is gated on `kask.curator.always_on` (read after
+        // `settings::init` below) so an operator who disables the curator
+        // gets no background tick cycle. The loop is still constructed above
+        // because the McpRuntime governance gate (line ~727) needs it
+        // regardless — governed tool calls are charged against the call cap
+        // even when the tick cycle isn't running.
+        // (`cybernetics_loop_for_tick` was already cloned above, before the
+        // `with_governance` move, so it remains usable here.)
+
+        // Curator metacognition loop — runs sense→compare→compute→act cycles.
+        // Reads from RegulationLedger (populated by the CyberneticsLoop tick
+        // above) and receives alerts from the CyberneticsLoop via the alert
+        // channel.
+        //
+        // This is a self-contained implementation in hkask-regulation.
+        // It reads directly from RegulationLedger.
+        //
+        // A clone of the ledger is hoisted for the kask panel's regulation
+        // status bar (wired later in the deferred task's model-dependent
+        // wiring block).
+        let panel_regulation_ledger = regulation_ledger.clone();
+        let regulation_ledger_for_deferred = regulation_ledger.clone();
+        let operator_feedback_runtime = gpui_tokio::Tokio::handle(&*cx);
+        // The alert sink forwards critical alerts to a GPUI foreground task
+        // that dispatches them as toasts, so the user is notified even when
+        // the Kask panel is closed. The channel bridges the background tokio
+        // task (metacognition loop) to the single-threaded GPUI foreground —
+        // `AsyncApp` is not `Send`, so the sink holds only the `Sender`.
+        let (alert_sink_tx, alert_sink_rx) =
+            tokio::sync::mpsc::unbounded_channel::<hkask_regulation::AlertEvent>();
+        spawn_alert_toast_drainer(alert_sink_rx, cx);
+        let alert_sink = std::sync::Arc::new(ToastAlertSink::new(alert_sink_tx));
+        let metacognition_loop = std::sync::Arc::new(
+            hkask_regulation::MetacognitionLoop::new(regulation_ledger.clone())
+                .with_alert_receiver(alert_rx)
+                .with_alert_sink(alert_sink)
+                .with_stage_actions({
+                    let mut actions = hkask_regulation::StageActions::new();
+                    // The algedonic review is a Prompted stage: the
+                    // operator's decision is recorded on a board card, and
+                    // verified work reaches Done through kanban_task_verify.
+                    actions.register(
+                        hkask_regulation::TriggerOrigin::Prompted,
+                        "algedonic_review_act",
+                        vec![
+                            "kanban_task_comment".to_string(),
+                            "kanban_task_move".to_string(),
+                            "kanban_task_verify".to_string(),
+                        ],
+                    );
+                    actions
+                }),
+        );
+        let metacognition_loop_for_tick = metacognition_loop.clone();
+
+        // Hoisted for the deferred task: once the RealMemoryPort exists,
+        // the provider is re-set with the memory-health probe attached so
+        // the curator can see its own memory outage.
+        let metacognition_loop_for_deferred = metacognition_loop.clone();
+
+        // zed-kask: D8 — F7: metacognition provider hook (set_metacognition_provider).
+        // Wire the metacognition provider so the CuratorStatusTool can read
+        // health snapshots from the agent's tool surface.
+        let provider = std::sync::Arc::new(
+            kask_bridge::BridgeMetacognitionProvider::new(metacognition_loop),
+        );
+        agent::set_metacognition_provider(Some(provider));
+        log::info!("Curator metacognition provider wired to CuratorStatusTool");
+
+        // zed-kask: D3/D8 — CuratorDirective sink wiring.
+        // Wire the directive sink so the CuratorDirectiveTool can send
+        // directives to the CyberneticsLoop. The sink converts the tool-local
+        // `CuratorDirectiveRequest` (agent-name strings) to
+        // `hkask_types::CuratorDirective` (WebIDs) before sending via the
+        // tokio channel.
+        let directive_sink: std::sync::Arc<dyn agent::CuratorDirectiveSink> =
+            std::sync::Arc::new(kask_bridge::BridgeCuratorDirectiveSink::new(directive_tx));
+        agent::set_curator_directive_sink(Some(directive_sink));
+        log::info!("Curator directive sink wired to CuratorDirectiveTool");
+
+        // zed-kask: algedonic log sink wiring.
+        // Wire the algedonic log sink so the CuratorClearAlgedonicLogTool
+        // can clear reviewed alerts from the in-memory AlgedonicManager log
+        // and query the log cap status. The sink wraps the RegulationLedger.
+        let algedonic_log_sink: std::sync::Arc<dyn agent::AlgedonicLogSink> =
+            std::sync::Arc::new(kask_bridge::BridgeAlgedonicLogSink::new(
+                regulation_ledger,
+            ));
+        agent::set_algedonic_log_sink(Some(algedonic_log_sink));
+        log::info!("Algedonic log sink wired to CuratorClearAlgedonicLogTool");
+        let mcp_runtime_for_startup = mcp_runtime.clone();
+        let tool_port = mcp_runtime;
+        // No capability token is threaded through the bridge. `McpRuntime::invoke`
+        // performs no per-call authorization: its former capability-match gate
+        // compared a caller-supplied tool name against itself and could deny
+        // nothing. `invoke` takes an `agent: WebID` for call metering
+        // only. Delegated-dispatch authority is the per-request `tool_allowlist`
+        // in `kask_bridge::inference_ipc_server` (fail-closed), the swarm card
+        // `mcp_tools` allowlist, and the per-server MCP env allowlists.
+
+        // D5: Keystore uses `oo7` for all keychain reads/writes in the
+        // unified `kask://credentials/*` namespace (same as zed's
+        // CredentialsProvider). One keychain, one namespace.
+        //
+        // zed-kask: D5 (ABW removal) — the ABW cloud swarm integration is
+        // gone; purge its orphaned keychain entry once at startup so no
+        // dormant third-party secret survives without a management surface.
+        kask_bridge::purge_removed_abw_api_key(cx);
+        //
+        // zed-kask: D5/D9 (Reduct.cloud removal, 2026-10-22) — same posture:
+        // the media server's Reduct cloud connection is gone; purge its
+        // orphaned keychain entry once at startup.
+        kask_bridge::purge_removed_reduct_api_key(cx);
+        //
+        // D3: McpRuntime is constructed above so it's available for both the
+        // skill execution and the post-settings auto-launch. The
+        // model-dependent wiring (skill execution, guard, panel) is
+        // deferred to after language_model::init(). The memory port is wired
+        // in the deferred task (thread.rs no-ops
+        // when the hook is unset).
+
         if let Some(app_commit_sha) = app_commit_sha {
             AppCommitSha::set_global(app_commit_sha, cx);
         }
-        settings::init(cx);
+        // zed-kask: D8 — F8: global Fs registration (replaces upstream's set_global).
+        // Register the global Fs so `<dyn Fs>::global(cx)` works (used by
+        // kask_bridge credential injection and other callers).
+        // Upstream zed sets this in the same position; the kask fork was
+        // missing the call, causing a panic on startup.
+        <dyn fs::Fs>::set_global(fs.clone(), cx);
         zlog_settings::init(cx);
         zed::watch_settings_files(fs.clone(), cx);
         handle_keymap_file_changes(user_keymap_file_rx, user_keymap_watcher, cx);
+
+        // zed-kask: D3/D9 — F9: kask_settings_for_mcp + MCP server launch list.
+        // Determine which kask MCP servers to auto-launch based on KaskSettings.
+        // The actual launch is in the deferred task (see the
+        // deferred task below) so MCP servers can route inference through zed's
+        // LanguageModelRegistry via the IPC socket.
+        // (`kask_settings_for_mcp` was defined above, before the algedonic-threshold
+        // wiring, so it's in scope here.)
+
+        // zed-kask: D8 — F10: curator.always_on gating of tick cycles (Guardrail).
+        // Gate the regulation tick cycles on `kask.curator.always_on`.
+        // The loops were constructed above (the McpRuntime governance gate
+        // needs them regardless), but the tick cycles that drive sense→
+        // compare→act only run when the curator is enabled. Default `true`.
+        // This wires the previously-dead `always_on` setting to a real
+        // enforcement point (the `.rules` "Advertised invariants need
+        // enforcement points" trap).
+        let curator_always_on = kask_settings_for_mcp.curator.always_on;
+        if curator_always_on {
+            gpui_tokio::Tokio::spawn(cx, async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+                interval.tick().await; // skip the first immediate tick
+                loop {
+                    interval.tick().await;
+                    let loop_guard = cybernetics_loop_for_tick.read().await;
+                    loop_guard.tick().await;
+                }
+            })
+            .detach();
+            log::info!("CyberneticsLoop tick cycle started (10s interval)");
+
+            gpui_tokio::Tokio::spawn(cx, async move {
+                metacognition_loop_for_tick.run().await;
+            })
+            .detach();
+            log::info!("Curator metacognition loop started (30s tick interval)");
+
+            // zed-kask: event-substrate phase 6 — harness regression monitor.
+            // The producer side of the seam: periodically query the event store
+            // for new `harness_summary` events, detect pass-rate regressions,
+            // and submit each to `CyberneticsLoop::submit_rollout_impact_check`.
+            // This is the first live traffic through the phase 6 seam — the
+            // zed side observes harness results (via the shared event store)
+            // and closes the cybernetic feedback loop.
+            //
+            // Only runs when both the curator is on AND the event store opened
+            // successfully. A missing store leaves the monitor unwired
+            // (degraded, not broken — the re-sense fallback still verifies).
+            if let Some(store) = harness_event_store {
+                gpui_tokio::Tokio::spawn(cx, async move {
+                    let mut harness_monitor = kask_bridge::HarnessRegressionMonitor::default();
+                    let mut interval =
+                        tokio::time::interval(std::time::Duration::from_secs(60));
+                    interval.tick().await; // skip the first immediate tick
+                    loop {
+                        interval.tick().await;
+                        let loop_guard = cybernetics_loop_for_harness.read().await;
+                        match harness_monitor.poll_once(&store, &loop_guard).await {
+                            Ok(kask_bridge::HarnessMonitorPoll::Complete {
+                                accepted_checks,
+                                cursor,
+                            }) => {
+                                if accepted_checks > 0 {
+                                    tracing::info!(
+                                        target: "hkask.regulation",
+                                        accepted_checks,
+                                        ?cursor,
+                                        "harness regression impact checks accepted for assessment"
+                                    );
+                                }
+                            }
+                            Ok(kask_bridge::HarnessMonitorPoll::Backpressured {
+                                accepted_checks,
+                                blocked_event_position,
+                                capacity,
+                            }) => {
+                                tracing::warn!(
+                                    target: "hkask.regulation",
+                                    accepted_checks,
+                                    blocked_event_position,
+                                    capacity,
+                                    "harness regression monitor backpressured — blocked event will retry next tick"
+                                );
+                            }
+                            Err(error) => {
+                                tracing::warn!(
+                                    target: "hkask.regulation",
+                                    error = %error,
+                                    "harness regression monitor query failed — will retry next tick"
+                                );
+                            }
+                        }
+                    }
+                })
+                .detach();
+                log::info!("Harness regression monitor started (60s interval)");
+            } else {
+                log::info!(
+                    "Harness regression monitor not started — event store not wired"
+                );
+            }
+        } else {
+            log::info!(
+                "Curator always_on=false — regulation tick cycles not started \
+                 (McpRuntime governance gate remains active)"
+            );
+        }
+
+        let servers_to_start: Vec<String> = if kask_settings_for_mcp.mcp.load_default {
+            kask_bridge::BUILT_IN_MCP_SERVERS
+                .iter()
+                .filter(|s| {
+                    *kask_settings_for_mcp.mcp.overrides.get(s.id).unwrap_or(&true)
+                })
+                .map(|s| s.id.to_string())
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         let user_agent = format!(
             "Zed/{} ({}; {})",
@@ -588,6 +1468,58 @@ fn main() {
         #[cfg(target_os = "macos")]
         zed::move_to_applications::init(cx);
         project::Project::init(&client, cx);
+
+        // zed-kask: D3 — the kask namespace guard. Kask built-in servers are
+        // NOT registered with zed's per-project ContextServerStore (single
+        // spawn authority, 2026-08-29): the governed McpRuntime owns every
+        // kask server process and the agent's tool surface routes through
+        // `agent::set_kask_tool_source`. This call defensively unregisters
+        // any descriptor squatting a kask built-in ID — the extension proxy
+        // (context_server_store/extension.rs) registers descriptors under
+        // extension-supplied, unnamespaced IDs in this same process-global
+        // registry, so an extension can occupy a kask ID and open a second
+        // spawn path for it — and removes raw `context_servers` settings
+        // entries for kask IDs — a raw entry would spawn a keyless instance
+        // through the generic store path. Reactive: a SettingsStore
+        // observer re-runs it on every settings change.
+        sync_kask_mcp_servers(cx);
+        cx.observe_global::<SettingsStore>(sync_kask_mcp_servers).detach();
+
+        // The governed McpRuntime instances (kask panel + skill execution)
+        // are started once at login and keep their startup env. A settings
+        // change that alters a server's env (e.g.
+        // `kask.swarm.default_agent_model` → `HKASK_SWARM_DEFAULT_AGENT_MODEL`)
+        // restarts it; a `kask.mcp` load/unload toggle
+        // stops/starts it through the runtime's own primitives (D45). The
+        // restart baseline is recorded by the deferred launch task once
+        // servers actually start — an empty baseline means "not launched
+        // yet", and the observer's start path is additionally gated on the
+        // launch-pass-complete latch below so it never races the deferred
+        // launch with an env computed before the inference socket exists.
+        let kask_mcp_restart_env: std::sync::Arc<
+            std::sync::Mutex<std::collections::HashMap<String, hkask_types::ServerEnv>>,
+        > = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        // zed-kask: D45 — set at the end of the deferred launch loop. Before
+        // it, "no baseline" means the launch pass has not decided yet and
+        // the observer must not start anything; after it, a loaded server
+        // with no baseline is a genuine load transition (or a failed start
+        // being retried).
+        let kask_mcp_launch_pass_complete: std::sync::Arc<
+            std::sync::atomic::AtomicBool,
+        > = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mcp_runtime_for_restart = tool_port.clone();
+        let restart_env_for_observer = kask_mcp_restart_env.clone();
+        let launch_pass_for_observer = kask_mcp_launch_pass_complete.clone();
+        cx.observe_global::<SettingsStore>(move |cx| {
+            sync_kask_mcp_runtime_servers(
+                mcp_runtime_for_restart.clone(),
+                restart_env_for_observer.clone(),
+                launch_pass_for_observer.clone(),
+                cx,
+            );
+        })
+        .detach();
+
         debugger_ui::init(cx);
         debugger_tools::init(cx);
         client::init(&client, cx);
@@ -654,11 +1586,1447 @@ fn main() {
         });
         AppState::set_global(app_state.clone(), cx);
 
+        // D6/D11/MCP-launch (deferred task): Provision the kask agent,
+        // wire the memory port, context injector, and launch MCP servers.
+        //
+        // zed-kask: This task no longer blocks on the Zed user. The kask
+        // system has its own identity (curator WebID), its own DB passphrase
+        // (from the keychain), and its own DB paths. If the Zed user hasn't
+        // resolved, a fallback identity ("kask") is used. See the comment
+        // at the top of the spawn block for the full rationale.
+        //
+        // Clone `tool_port` for the model-dependent skill execution task
+        // (below) before it's moved into the deferred task. The model-dependent
+        // task fires on `LanguageModelRegistry` events, independent of user
+        // login — the skill execution only needs the model + tool_port, not
+        // the username.
+        let _tool_port_for_model_task: std::sync::Arc<dyn hkask_tool_port::ToolPort> =
+            tool_port.clone();
+        {
+            let user_store = app_state.user_store.clone();
+            let mcp_runtime_for_deferred = mcp_runtime_for_startup.clone();
+            let servers_to_start_clone = servers_to_start;
+            let kask_mcp_restart_env_for_deferred = kask_mcp_restart_env;
+            let kask_mcp_launch_pass_for_deferred = kask_mcp_launch_pass_complete;
+            // Captures for the model-dependent wiring block (moved here from
+            // the synchronous startup so it runs in the deferred task and
+            // the LanguageModelRegistry is populated). See the
+            // "Process-global hooks set at runtime need a startup-failure
+            // signal" trap in .rules — these OnceLock-based hooks must be
+            // wired from the deferred task, not from startup.
+            let tool_port_for_deferred = tool_port;
+            let cybernetics_loop_for_panel_deferred = cybernetics_loop_for_panel;
+            let _panel_regulation_ledger_deferred = panel_regulation_ledger;
+            let app_state_for_deferred = app_state.clone();
+            cx.spawn(async move |cx| {
+                // zed-kask: The kask system does NOT depend on the Zed user.
+                // The curator has its own identity (WebID::from_persona(b"curator")),
+                // the DB passphrase is username-independent (from the keychain),
+                // and the curator's DB path is resolved independently
+                // (curator_db_path, not the user's agent path).
+                //
+                // We use the Zed username if available (for log messages and
+                // the user's agent directory), but we do NOT block the kask
+                // wiring on it. If the Zed user hasn't resolved, we use a
+                // fallback identity ("kask") and proceed immediately.
+                let current_user = user_store.read_with(cx, |store, _| store.watch_current_user());
+                let (username, agent_name) = if let Some(user) = current_user.borrow().clone() {
+                    let username = user.username.to_string();
+                    match kask_bridge::agent_name_from_username(&username) {
+                        Some(name) => (username, name),
+                        None => {
+                            log::warn!("Zed username '{username}' sanitized to empty — using fallback 'kask'");
+                            ("kask".to_string(), "kask".to_string())
+                        }
+                    }
+                } else {
+                    // Zed user not yet resolved — proceed with fallback.
+                    // The kask system is fully functional without the Zed user.
+                    log::info!("Zed user not yet resolved — proceeding with fallback identity 'kask' for kask wiring");
+                    ("kask".to_string(), "kask".to_string())
+                };
+
+                log::info!("kask agent name: {agent_name}");
+
+                // zed-kask: D8 — the governed invoker is shared by the
+                // board sink, its status reader and the panel. Only native
+                // goal decisions use the in-process canonical service below.
+                let panel_tool_invoker = std::sync::Arc::new(PanelToolInvoker {
+                    tool_port: tool_port_for_deferred.clone(),
+                    executor: cx.background_executor().clone(),
+                    tokio_handle: gpui_tokio::Tokio::handle_async(&*cx),
+                });
+
+                // D6: Provision the agent's storage and wire the memory port.
+                // `provision_agent` handles first-run setup as lookups and
+                // directory creation — no interactive onboarding.
+                //
+                // The keystore writes to the unified `kask://credentials/*`
+                // namespace (same as zed's CredentialsProvider) — one keychain,
+                // one namespace. No mirror step needed.
+                let kask_settings = cx.update(|cx| kask_bridge::KaskSettings::get_global(cx).clone());
+                // The port binds the provider named by the SAME effective chain
+                // the MCP children receive (`effective_embedding_model`:
+                // models.embedding_model → corpus.embedding_model → code
+                // default). The former read — this process's own
+                // HKASK_EMBEDDING_MODEL env, else corpus.embedding_model — was a
+                // second resolution chain: after the 2026-09-28 migration to
+                // OpenRouter/qwen/qwen3-embedding-8b the children requested the
+                // new model while the port stayed bound to the old provider,
+                // and every embed failed with "cannot use the embedding port
+                // bound to …". One chain, one binding. The binding resolves
+                // once at startup — a mid-session embedding-provider change
+                // still requires a restart (documented in kask-settings.md).
+                let embedding_model = kask_settings.effective_embedding_model();
+                let embedding_dim = kask_settings.corpus.embedding_dim as usize;
+                let username_for_provision = username.clone();
+
+                let provision_result = cx
+                    .background_spawn(async move {
+                        kask_bridge::provision_agent(&username_for_provision)
+                    })
+                    .await;
+
+                // zed-kask: no separate swarm-memory passphrase provisioning —
+                // there is ONE passphrase (HKASK_DB_PASSPHRASE, provisioned
+                // above via `provision_agent`), and every managed SQLCipher DB
+                // (curator, swarm memory, kanban, research) opens with it.
+
+                // Hoisted to the outer scope so the IPC server (started later
+                // in the `cx.update` block) can access it. Set inside the
+                // `match provision_result` below.
+                let mut embedding_port_for_ipc: Option<kask_bridge::LanguageModelEmbeddingPort> = None;
+                let mut memory_for_status: Option<std::sync::Arc<kask_bridge::RealMemoryPort>> = None;
+
+                match provision_result {
+                    Ok(provisioned) => {
+                        // `db_path` and `webid` from `provision_agent` are not used —
+                        // the curator's DB path is resolved independently by
+                        // `curator_db_path()`, and the curator has its own WebID
+                        // (`WebID::from_persona(b"curator")`). Only `passphrase`
+                        // is needed (for opening the curator DB).
+                        let kask_bridge::ProvisionedAgent { db_path: _agent_db_path, passphrase, webid: _user_webid } = provisioned;
+
+                        // Upgrade the regulation event sinks to the durable
+                        // `RegulationArchive` on the curator's curator.db — the same
+                        // DB the curator MCP server's `reg_query` and
+                        // `curator_algedonic_log` tools read. Before this,
+                        // both sinks are `NoopEventSink` (spans dropped).
+                        //
+                        // zed-kask: This wiring is BEFORE the embedding credentials
+                        // check because regulation span persistence must not depend
+                        // on embedding availability. The regulation loop is a
+                        // safety-critical feedback path — dropping spans because the
+                        // embedding endpoint is down is a broken feedback loop.
+                        match kask_bridge::open_curator_regulation_archive(&passphrase) {
+                            Some(archive) => {
+                                let sink: std::sync::Arc<dyn hkask_types::RegulationSink> = archive.clone();
+                                mcp_runtime_for_deferred.set_event_sink(sink.clone());
+                                {
+                                    let mut loop_guard = cybernetics_loop_for_panel_deferred.write().await;
+                                    loop_guard.set_event_sink(sink);
+                                }
+
+                                // zed-kask: operator-feedback history is durable in the
+                                // RegulationArchive and rehydrates the bounded ledger view
+                                // before new ratings are accepted. The direct feedback tool
+                                // receives success only after `persist_operator_feedback`
+                                // commits its row; the live ledger update may follow
+                                // asynchronously because restart recovery reads the archive.
+                                {
+                                    let ledger = regulation_ledger_for_deferred.read().await;
+                                    match kask_bridge::hydrate_operator_feedback(&archive, &ledger)
+                                        .await
+                                    {
+                                        Ok(restored) => tracing::info!(
+                                            target: "reg.storage",
+                                            restored,
+                                            "Hydrated operator-feedback history from RegulationArchive"
+                                        ),
+                                        Err(error) => tracing::warn!(
+                                            target: "reg.storage",
+                                            %error,
+                                            "Failed to hydrate operator-feedback history from RegulationArchive"
+                                        ),
+                                    }
+                                }
+
+                                // zed-kask: D59 — make skill outcomes durable from here on
+                                // (the single recorder is wired at startup).
+                                if skill_outcome_archive.set(archive.clone()).is_err() {
+                                    tracing::warn!(
+                                        target: "reg.storage",
+                                        "skill outcome archive already set; keeping the first"
+                                    );
+                                }
+
+                                // zed-kask: D59 — always-on mechanical skill-use issue
+                                // capture: tool failures under an active skill are
+                                // durable `reg.skill.<id>.tool_failure` records.
+                                {
+                                    let archive_for_failures = archive.clone();
+                                    agent::set_skill_tool_failure_recorder(std::sync::Arc::new(
+                                        move |skill_id, invoker, tool, error| {
+                                            let payload = serde_json::json!({
+                                                "invoker": invoker,
+                                                "tool": tool,
+                                                "error": error,
+                                            });
+                                            if let Err(error) = kask_bridge::persist_skill_tool_failure(
+                                                &archive_for_failures,
+                                                skill_id,
+                                                payload,
+                                            ) {
+                                                tracing::warn!(
+                                                    target: "reg.storage",
+                                                    skill_id,
+                                                    %error,
+                                                    "Failed to persist skill tool failure; the gemba walk will not see it"
+                                                );
+                                            }
+                                        },
+                                    ));
+                                }
+
+                                let archive_for_feedback = archive.clone();
+                                let ledger_for_feedback = regulation_ledger_for_deferred.clone();
+                                let feedback_runtime = operator_feedback_runtime.clone();
+                                agent::set_operator_feedback_recorder(std::sync::Arc::new(
+                                    move |skill_id, accepted, note| {
+                                        let payload = hkask_regulation::OperatorFeedbackObservation::new(
+                                            accepted,
+                                            note.map(str::to_string),
+                                        )
+                                        .into_payload();
+                                        kask_bridge::persist_operator_feedback(
+                                            &archive_for_feedback,
+                                            skill_id,
+                                            payload.clone(),
+                                        )
+                                        .map_err(|error| {
+                                            format!(
+                                                "failed to persist operator feedback for {skill_id}: {error}"
+                                            )
+                                        })?;
+
+                                        let skill_id = skill_id.to_string();
+                                        let ledger = ledger_for_feedback.clone();
+                                        feedback_runtime.spawn(async move {
+                                            let ledger = ledger.read().await;
+                                            ledger
+                                                .record_skill_span(
+                                                    &skill_id,
+                                                    "operator_feedback",
+                                                    payload,
+                                                )
+                                                .await;
+                                        });
+                                        Ok(())
+                                    },
+                                ));
+
+                                // zed-kask: maintenance tick — run WAL checkpoint +
+                                // incremental_vacuum + reg_records retention on a slow
+                                // cadence. Prevents WAL checkpoint starvation under
+                                // long-lived readers and unbounded `reg_records`
+                                // growth (the table has no TTL; without this tick the
+                                // SQLite file bloats over days/weeks of continuous
+                                // running, slowing every regulation query).
+                                let archive_for_maintenance = archive.clone();
+                                gpui_tokio::Tokio::spawn(cx, async move {
+                                    // 5-minute checkpoint cadence; 24-hour retention cadence.
+                                    let mut checkpoint_interval =
+                                        tokio::time::interval(std::time::Duration::from_secs(300));
+                                    let mut retention_interval =
+                                        tokio::time::interval(std::time::Duration::from_secs(86400));
+                                    checkpoint_interval.tick().await; // skip immediate first tick
+                                    retention_interval.tick().await;
+                                    loop {
+                                        tokio::select! {
+                                            _ = checkpoint_interval.tick() => {
+                                                if let Err(e) = archive_for_maintenance.checkpoint() {
+                                                    tracing::warn!(
+                                                        target: "reg.storage",
+                                                        error = %e,
+                                                        "RegulationArchive maintenance checkpoint failed"
+                                                    );
+                                                }
+                                            }
+                                            _ = retention_interval.tick() => {
+                                                // Per-span retention: the reg.tool.completed
+                                                // per-call telemetry (98% the regulation
+                                                // loop's own 10s sensing polls, measured
+                                                // 2026-09-30) ages out at 7 days; every
+                                                // other span keeps the uniform 30-day
+                                                // cutoff below. Pinned by
+                                                // regulation_store::retention_tests.
+                                                let telemetry_cutoff = chrono::Utc::now()
+                                                    - chrono::Duration::days(7);
+                                                if let Err(e) = archive_for_maintenance.delete_older_than_in_span(
+                                                    telemetry_cutoff,
+                                                    "reg.tool.completed",
+                                                ) {
+                                                    tracing::warn!(
+                                                        target: "reg.storage",
+                                                        error = %e,
+                                                        "RegulationArchive span retention delete failed"
+                                                    );
+                                                }
+                                                // Retain 30 days of regulation records.
+                                                let cutoff = chrono::Utc::now()
+                                                    - chrono::Duration::days(30);
+                                                if let Err(e) = archive_for_maintenance.delete_older_than(cutoff) {
+                                                    tracing::warn!(
+                                                        target: "reg.storage",
+                                                        error = %e,
+                                                        "RegulationArchive retention delete failed"
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
+                                })
+                                .detach();
+                                log::info!("hKask regulation archive wired — regulation spans now persist to curator curator.db (maintenance tick: 5m checkpoint, 24h retention)");
+                            }
+                            None => {
+                                log::warn!(
+                                    "hKask regulation archive unavailable — regulation spans will be dropped. \n                                     Remediation: ensure the curator curator.db can be opened (HKASK_CURATOR_DB, DB passphrase)."
+                                );
+                            }
+                        }
+
+
+                        // zed-kask: D8 — F14: embedding credentials (deferred task).
+                        // Resolve embedding credentials by reading the API key
+                        // from the Zed keychain at the provider's `api_url`.
+                        //
+                        // When embedding credentials are unavailable, the memory
+                        // port is still wired — h_mem writes are pure SQL and
+                        // don't need embeddings. Semantic recall (KNN) degrades to
+                        // keyword-only, but the curator still has episodic memory
+                        // of every conversation. This is the correct degradation:
+                        // memory ingestion is safety-critical (the curator must
+                        // remember what happened), embeddings are an enhancement.
+                        let embedding_port_result = cx.update(|cx| {
+                            let http_client = app_state_for_deferred.client.http_client();
+                            let tokio_handle = gpui_tokio::Tokio::handle(cx);
+                            let embedding_model = embedding_model.clone();
+                            // The embedding-side bound on in-flight HTTP calls —
+                            // the same `kask.general.max_concurrency` setting that
+                            // bounds the chat port's dispatch (wire_kask_inference_stack).
+                            let embedding_max_concurrency =
+                                kask_settings.general.max_concurrency as usize;
+                            let credentials_provider =
+                                zed_credentials_provider::global(cx);
+                            cx.spawn(async move |cx| {
+                                kask_bridge::resolve_embedding_credentials(
+                                    &embedding_model,
+                                    credentials_provider.as_ref(),
+                                    &cx,
+                                )
+                                .await
+                                .map(|credentials| {
+                                    kask_bridge::LanguageModelEmbeddingPort::new(
+                                        credentials,
+                                        http_client,
+                                        tokio_handle,
+                                        embedding_max_concurrency,
+                                    )
+                                })
+                            })
+                        });
+
+                        let embedding_port = embedding_port_result.await;
+                        if embedding_port.is_some() {
+                            log::info!("hKask embedding port resolved — semantic recall enabled");
+                        } else {
+                            log::warn!(
+                                "hKask embedding port unavailable — memory will be wired WITHOUT embeddings. \
+                                 h_mem writes work (pure SQL); semantic recall degrades to keyword-only. \
+                                 Remediation: set the embedding provider's API key via Settings → Kask → Data Services."
+                            );
+                        }
+
+                        // Clone for the IPC server (the other copy goes to
+                        // RealMemoryPort below).
+                        embedding_port_for_ipc = embedding_port.clone();
+
+                        // The classifier model for write-time chunk
+                        // tagging. The saved Kask setting is authoritative for
+                        // this in-process consumer. `HKASK_CLASSIFIER_MODEL`
+                        // is the delivery mechanism for child/CLI processes;
+                        // reading an inherited value here let a stale startup
+                        // environment override a later Settings choice.
+                        // Empty/unset degrades tagging to structural-only —
+                        // surfaced here once at wiring time, not per turn.
+                        let classifier_model =
+                            kask_settings.models.classifier_model_for_host();
+                        if classifier_model.is_none() {
+                            log::warn!(
+                                "hKask classifier model not configured — memory chunk tagging degrades to structural-only. \
+                                 Remediation: set kask.models.classifier_model (Settings → Kask → Models)."
+                            );
+                        }
+
+                        // The host-deployed template registry root for
+                        // in-process chunk tagging (curator memory ingest).
+                        // Resolved by the same rule `mcp_env()` uses to
+                        // inject `HKASK_TEMPLATE_ROOT` into MCP server
+                        // children — the env var is never set in this
+                        // process, so the root is threaded, not read from
+                        // env.
+                        let template_root = kask_settings.resolved_template_root();
+
+                        // zed-kask: D94 — spec B: keep the embedding port and
+                        // model string alive past the RealMemoryPort move for
+                        // the affordance injector wiring below (same deferred
+                        // task, after the context injector).
+                        let (embedding_port_for_affordance, embedding_model_for_affordance) =
+                            (embedding_port.clone(), embedding_model.clone());
+
+                        match kask_bridge::RealMemoryPort::new(
+                            &passphrase,
+                            embedding_model,
+                            embedding_dim,
+                            embedding_port,
+                            classifier_model,
+                            template_root,
+                            kask_settings.memory.consolidation_cadence_secs,
+                            kask_settings.memory.confidence_floor,
+                            kask_settings.memory.memory_life_days,
+                            gpui_tokio::Tokio::handle_async(&*cx),
+                        ) {
+                            Ok(real) => {
+                                // Start the background consolidation timer before
+                                // moving the port into the Arc<dyn MemoryPort>.
+                                // The timer runs on the tokio runtime and fires
+                                // consolidation on the configured cadence,
+                                // decoupled from the ingestion path.
+                                //
+                                // The returned JoinHandle is dropped — in tokio,
+                                // dropping a JoinHandle detaches the task (it
+                                // continues running). We don't need to await it.
+                                if real.start_consolidation_timer().is_some() {
+                                    log::info!(
+                                        "hKask consolidation timer started \
+                                         (cadence: {}s)",
+                                        kask_settings.memory.consolidation_cadence_secs
+                                    );
+                                }
+                                // Keep a typed handle for the curator context
+                                // injector, which calls `recall_context_curator`
+                                // (an inherent method on `RealMemoryPort`, not on
+                                // the `MemoryPort` trait). The trait-object coercion
+                                // below would lose the concrete type.
+                                let real_memory_typed: std::sync::Arc<kask_bridge::RealMemoryPort> =
+                                    std::sync::Arc::new(real);
+                                memory_for_status = Some(real_memory_typed.clone());
+                                let real_memory: std::sync::Arc<dyn hkask_types::MemoryPort> =
+                                    real_memory_typed.clone();
+                                let bridge = std::sync::Arc::new(
+                                    kask_bridge::BridgeMemoryPort::new(real_memory.clone()),
+                                );
+                                agent::set_memory_port(Some(bridge));
+                                log::info!(
+                                    "hKask memory port upgraded to RealMemoryPort \
+                                     (agent: {agent_name})"
+                                );
+
+
+                                // Set env vars for the curator MCP server so it
+                                // reads from the same `agents/curator/curator.db` the
+                                // agent writes curator copies to. These are read
+                                // by `open_curator_stores` in the curator MCP
+                                // server and by `open_curator_semantic` in
+                                // `RealMemoryPort::new`.
+                                //
+                                // `HKASK_CURATOR_DB` — the curator's sovereign DB
+                                // path. `HKASK_CURATOR_WEBID` — the curator's
+                                // WebID, stashed in a non-global env var that
+                                // `mcp_env()` maps to `HKASK_WEBID` only for the
+                                // curator server (via the config_env allowlist).
+                                // We do NOT set `HKASK_WEBID` here — it's
+                                // process-global and would override the identity
+                                // of all other MCP servers (condenser,
+                                // etc.), which resolve their identity from it in
+                                // `transport.rs`.
+                                let curator_db = hkask_types::agent_paths::resolve_under_data_dir(
+                                    &hkask_types::agent_paths::agent_db("curator"),
+                                );
+                                let curator_webid = hkask_types::WebID::from_persona(b"curator");
+                                // SAFETY: Set during the deferred task (before
+                                // MCP servers read these). The curator MCP
+                                // server reads `HKASK_CURATOR_DB` at process start;
+                                // `HKASK_CURATOR_WEBID` is consumed by `mcp_env()`.
+                                // Neither var is read by other MCP servers.
+                                unsafe {
+                                    std::env::set_var(
+                                        "HKASK_CURATOR_DB",
+                                        curator_db.to_string_lossy().as_ref(),
+                                    );
+                                    std::env::set_var(
+                                        "HKASK_CURATOR_WEBID",
+                                        curator_webid.to_string().as_str(),
+                                    );
+                                }
+                                log::info!(
+                                    "Curator env injected — DB: {}, WebID: {}",
+                                    curator_db.display(),
+                                    curator_webid.redacted_display(),
+                                );
+                                // zed-kask: D3 — F15: MCP re-sync (curator server, deferred, Guardrail).
+                                // Re-sync MCP servers so the curator server picks
+                                // up the new env vars. The ContextServerStore
+                                // re-evaluates descriptors on notify.
+                                cx.update(|cx| sync_kask_mcp_servers(cx));
+
+                                // D11: Wire the context injector now that the real memory port exists.
+                                // The injector shares the same memory port as the ingestion path.
+                                //
+                                // Note: set_context_injector uses OnceLock, so this is a one-shot.
+                                // If the user logs out and back in as a different user, the
+                                // injector is not re-wired.
+                                //
+                                // zed-kask: D26 — the agent injector is wired
+                                // unconditionally for interface stability, but
+                                // recall is curator-scoped (2026-09-28):
+                                // `inject_context` returns empty for non-curator
+                                // threads, so this wiring performs no injection
+                                // for agent threads today. `auto_inject` still
+                                // gates the curator injector's recall; tool
+                                // warnings live in the system prompt template
+                                // (`system_prompt.hbs`).
+                                let auto_inject = kask_settings.memory.auto_inject;
+                                let injector = std::sync::Arc::new(
+                                    kask_bridge::BridgeContextInjector::new(
+                                        real_memory_typed.clone(),
+                                        kask_settings.memory.recall_limit,
+                                        kask_settings.memory.recall_min_confidence,
+                                        auto_inject,
+                                    ),
+                                );
+                                agent::set_context_injector(Some(injector));
+                                log::info!(
+                                    "hKask context injector wired (agent: {agent_name}, \
+                                     auto_inject={auto_inject})"
+                                );
+
+                                // zed-kask: D94 — spec B: wire the per-turn
+                                // instrument-affordance injector (task-matched
+                                // skill candidates at the request tail). The
+                                // `kask.affordance.enabled` gate is read per
+                                // turn at the call site, so this wiring is
+                                // unconditional — an off flag keeps the hook
+                                // inert and a settings flip applies without a
+                                // restart. OnceLock semantics: a re-run
+                                // deferred task drops the second wiring with
+                                // a warn.
+                                if let Some(embedding_port) = embedding_port_for_affordance {
+                                    log::info!(
+                                        "hKask affordance injector wired (gated by \
+                                         kask.affordance.enabled; embedding model: \
+                                         {embedding_model_for_affordance})"
+                                    );
+                                    agent::set_affordance_injector(Some(std::sync::Arc::new(
+                                        kask_bridge::AffordanceInjector::new(
+                                            std::sync::Arc::new(
+                                                kask_bridge::PortAffordanceEmbedding::new(
+                                                    embedding_port,
+                                                    embedding_model_for_affordance,
+                                                ),
+                                            ),
+                                        ),
+                                    )));
+                                } else {
+                                    log::warn!(
+                                        "hKask affordance injector not wired — embedding \
+                                         port unavailable, so task-matched skill suggestions \
+                                         cannot run (semantic memory recall is in the same \
+                                         degraded state; remediation is the embedding \
+                                         provider's API key)"
+                                    );
+                                }
+
+                                // Wire the memory health source into the cybernetics
+                                // loop so it can sense memory growth, low-confidence
+                                // accumulation, and memory-life configuration. Without
+                                // this, 4 memory regulation loops are blind — their
+                                // policy rules (`TripleCount`, `LowConfidenceCount`,
+                                // `ConsolidationCandidates`, `MemoryLife`) can never fire
+                                // because no signal is produced. This closes the
+                                // dead-policy gap.
+                                //
+                                // The health source is the `RealMemoryPort` itself —
+                                // it implements `MemoryHealthSource` by reading from
+                                // the curator's `MemoryStore` behind the self-healing
+                                // handle. `TripleCount` counts the sheddable tiers
+                                // (turn storage + goal events); the additive-by-design
+                                // knowledge layer is exempt (algedonic card 33b0eebb,
+                                // option (A), 2026-10-18).
+                                let memory_health_source: std::sync::Arc<
+                                    dyn hkask_regulation::MemoryHealthSource,
+                                > = real_memory_typed.clone();
+                                {
+                                    let loop_for_health =
+                                        cybernetics_loop_for_panel_deferred.clone();
+                                    gpui_tokio::Tokio::spawn(cx, async move {
+                                        let mut loop_guard = loop_for_health.write().await;
+                                        loop_guard.set_memory_health_source(memory_health_source);
+                                    })
+                                    .detach();
+                                }
+
+                                // zed-kask: D87 — wire the experimentation health
+                                // source into the cybernetics loop (§P8.9
+                                // step 1 — the Layer-A afferent pathway for
+                                // the experimentation program). Without this, the
+                                // loop is blind to stuck experiments: a
+                                // running experiment unresolved past the
+                                // stale set point (D-3: 7 days) or at its
+                                // declared budget ceiling with no verdict
+                                // produces no signal.
+                                match kask_bridge::BridgeExperimentationHealthSource::open(&passphrase) {
+                                    Ok(source) => {
+                                        let experimentation_source: std::sync::Arc<
+                                            dyn hkask_regulation::ExperimentationHealthSource,
+                                        > = std::sync::Arc::new(source);
+                                        let loop_for_experimentation =
+                                            cybernetics_loop_for_panel_deferred.clone();
+                                        gpui_tokio::Tokio::spawn(cx, async move {
+                                            let mut loop_guard =
+                                                loop_for_experimentation.write().await;
+                                            loop_guard
+                                                .set_experimentation_health_source(experimentation_source);
+                                        })
+                                        .detach();
+                                        log::info!(
+                                            "hKask experimentation health source wired — the regulation loop senses stuck experiments (stale set point: 7 days)"
+                                        );
+                                    }
+                                    Err(error) => {
+                                        // A broken source is not "no deviation"
+                                        // — warn so an unreadable registry is
+                                        // distinguishable from a healthy one
+                                        // (the `.rules` failure-signal rule).
+                                        log::warn!(
+                                            "hKask experimentation health source not wired: {error}"
+                                        );
+                                    }
+                                }
+
+                                // D11 curator mirror: wire the curator context
+                                // injector so the Curator recalls its own
+                                // sovereign memory from
+                                // `agents/curator/curator.db`). Without this, the
+                                // Curator has no automatic recall — it must
+                                // call `curator_memory_recall` /
+                                // `curator_semantic_search` as tools, which is
+                                // the asymmetry this block fixes.
+                                let curator_injector = std::sync::Arc::new(
+                                    kask_bridge::BridgeContextInjector::new_curator(
+                                        real_memory_typed,
+                                        kask_settings.memory.recall_limit,
+                                        kask_settings.memory.recall_min_confidence,
+                                        auto_inject,
+                                    )
+                                    .with_federated_sources(
+                                        kask_settings.memory.federated_auto_inject,
+                                        kask_settings.memory.federated_source_ids.clone(),
+                                        kask_settings.federated_sources_manifest_path(),
+                                    ),
+                                );
+                                agent::set_curator_context_injector(Some(curator_injector));
+                                log::info!(
+                                    "hKask curator context injector wired \
+                                     (agent: {agent_name}, auto_inject={auto_inject}) — \
+                                     curator will recall from its own sovereign DB; \
+                                     selected sealed external sources opt in separately; \
+                                     tool warnings always on"
+                                );
+
+                                if !auto_inject {
+                                    // auto_inject is off — the injectors are wired
+                                    // (so tool warnings still land) but memory recall
+                                    // is disabled. Per the .rules trap "Process-global
+                                    // hooks set at runtime need a startup-failure signal",
+                                    // the warn names both hooks and their actual state
+                                    // (wired-but-recall-disabled, not unwired) so the
+                                    // operator can remediate correctly.
+                                    log::warn!(
+                                        "kask.memory.auto_inject is false — \
+                                         both the user context injector and the \
+                                         curator context injector are wired with \
+                                         recall disabled. Tool warnings remain on. \
+                                         Set kask.memory.auto_inject true to enable \
+                                         memory recall for both agents."
+                                    );
+                                }
+
+                                // zed-kask: D44 — no tool router is wired. The
+                                // LazyToolRouter was removed (2026-08-30): the
+                                // full registered MCP surface is presented
+                                // every turn, the system-prompt visibility
+                                // marker names tools hidden by the remaining
+                                // filter layers (scope, profile, curator
+                                // gating), and the `list_mcp_tools` meta-tool
+                                // lets the model enumerate the surface on
+                                // demand.
+                            }
+                            Err(e) => {
+                                log::warn!(
+                                    "Failed to open memory DB for {agent_name}: {e}"
+                                );
+                            }
+                        }
+                        // zed-kask: trusted native goal ingress is independent of turn
+                        // ingestion, model readiness, and semantic-store availability.
+                        let projection_store = memory_for_status.as_ref().and_then(|memory| {
+                            match memory.goal_projection_store() {
+                                Ok(store) => Some(store),
+                                Err(error) => { log::warn!("Goal projection unavailable: {error}"); None }
+                            }
+                        });
+                        let goal_embedding = embedding_port_for_ipc.clone();
+                        // Managed kata-kanban excludes HKASK_WEBID from its child
+                        // env, so bootstrap uses this canonical process default.
+                        // Pinned by mcp_created_goal_closes_from_distinct_native_session.
+                        match kask_bridge::GoalHost::open(
+                            hkask_types::WebID::anonymous(),
+                            &passphrase, projection_store,
+                            |messages, model| Box::pin(async move {
+                                let port = kask_bridge::global_inference_port().ok_or_else(|| hkask_types::InferenceError::Generation("Goal assessor inference unavailable".into()))?;
+                                port.generate_with_messages(&messages, &hkask_types::template::LLMParameters::default(), Some(&model), None).await
+                            }),
+                            move |model, passage, dimensions| {
+                                let port = goal_embedding.clone();
+                                Box::pin(async move {
+                                    let port = port.ok_or_else(|| hkask_types::EmbeddingGenerationError::NotConfigured("goal recall embedding unavailable".into()))?;
+                                    port.embed_with_dimensions(&model, &[passage], Some(dimensions)).await
+                                })
+                            },
+                            kask_settings.models.classifier_model_for_host().unwrap_or_default(),
+                            kask_settings.effective_embedding_model(), embedding_dim as u32,
+                        ) {
+                            Ok(host) => {
+                                let host = std::sync::Arc::new(host);
+                                agent::set_native_goal_host(Some(host.clone()));
+                                if kask_settings.curator.always_on {
+                                    gpui_tokio::Tokio::spawn(cx, async move { host.run().await; }).detach();
+                                } else {
+                                    log::warn!("Goal drainer disabled by kask.curator.always_on=false; native closure remains available and pending work is retained");
+                                }
+                            }
+                            Err(error) => log::warn!("Native goal host not configured: {error}"),
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "Failed to provision agent storage for {agent_name}: {e}"
+                        );
+                    }
+                }
+
+                // D1/D3: Model-dependent kask wiring.
+                //
+                // This block was originally in the synchronous startup, but
+                // moved here because LanguageModelRegistry::default_model()
+                // returns None until the model registry has a default model. Running it at
+                // startup left all OnceLock-based hooks (skill execution,
+                // panel tool invoker, scoped inference, regulation status,
+                // thread condenser) unwired when no model was configured at
+                // startup — the "Process-global hooks set at runtime need a
+                // startup-failure signal" trap from .rules.
+                //
+                let kask_settings = cx.update(|cx| kask_bridge::KaskSettings::get_global(cx).clone());
+
+                // Lazily wire the alert email sink now that kask settings have
+                // loaded. The non-secret email fields are set as process env
+                // vars so `send_email()` (called from `tokio::spawn` inside
+                // `CuratorAlertEmailSink::send_alert_email`) can read them.
+                // The alert sink runs in the editor process, so its SMTP
+                // password is read from the keychain and set in that process's
+                // `HKASK_SMTP_PASSWORD` environment here. MCP server children
+                // do not receive this credential.
+                //
+                // When email is not configured (no `smtp_username`), the sink
+                // is `None` — the cybernetics loop silently skips the email
+                // path. This is the zero-config default: no error, no warning.
+                if !kask_settings.curator.email.smtp_username.is_empty() {
+                    // Set non-secret env vars for the main process.
+                    // `set_var` is unsafe in Rust 2024 (process-global mutation).
+                    unsafe {
+                        std::env::set_var(
+                            "HKASK_MXROUTE_SERVER",
+                            &kask_settings.curator.email.mxroute_server,
+                        );
+                        std::env::set_var(
+                            "HKASK_SMTP_USERNAME",
+                            &kask_settings.curator.email.smtp_username,
+                        );
+                        if !kask_settings.curator.email.curator_email.is_empty() {
+                            std::env::set_var(
+                                "HKASK_CURATOR_EMAIL",
+                                &kask_settings.curator.email.curator_email,
+                            );
+                        }
+                        if !kask_settings.curator.email.alert_email.is_empty() {
+                            std::env::set_var(
+                                "HKASK_ALERT_EMAIL",
+                                &kask_settings.curator.email.alert_email,
+                            );
+                        }
+                        if !kask_settings.curator.email.authorized_emails.is_empty() {
+                            std::env::set_var(
+                                "HKASK_AUTHORIZED_EMAILS",
+                                kask_settings.curator.email.authorized_emails.join(","),
+                            );
+                        }
+                    }
+
+                    // Read the SMTP password from the keychain and set it as
+                    // a process env var so `send_email()` can use it.
+                    let smtp_password_url = format!(
+                        "{}/hkask_smtp_password",
+                        kask_bridge::KASK_CREDENTIAL_NAMESPACE
+                    );
+                    let credentials_provider =
+                        cx.update(|cx| zed_credentials_provider::global(cx));
+                    let password_result = credentials_provider
+                        .read_credentials(&smtp_password_url, cx)
+                        .await;
+                    match password_result {
+                        Ok(Some((_user, password_bytes))) => {
+                            if let Ok(password_str) = std::str::from_utf8(&password_bytes) {
+                                unsafe {
+                                    std::env::set_var("HKASK_SMTP_PASSWORD", password_str);
+                                }
+                                log::info!("hKask SMTP password loaded from keychain");
+                            } else {
+                                log::warn!(
+                                    "hKask SMTP password in keychain is not valid UTF-8 — \
+                                     alert emails will fail to send"
+                                );
+                            }
+                        }
+                        Ok(None) => {
+                            log::warn!(
+                                "hKask SMTP password not found in keychain — alert emails \
+                                 will fail to send until the password is configured in \
+                                 Settings → Kask → Curator Email (smtp_username is set, \
+                                 indicating email was intended to be configured)"
+                            );
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "hKask SMTP password keychain read failed: {e} — alert \
+                                 emails will fail to send until the password is configured"
+                            );
+                        }
+                    }
+
+                    // Now wire the sink. The sink is wired even if the
+                    // password wasn't found — `send_alert_email` spawns the
+                    // send in a background task and logs a warning on failure,
+                    // so a missing password degrades gracefully (no panic, no
+                    // error propagation to the cybernetics loop).
+                    let sink = hkask_email::CuratorAlertEmailSink::try_from_settings(
+                        &kask_settings.curator.email.smtp_username,
+                        &kask_settings.curator.email.alert_email,
+                        gpui_tokio::Tokio::handle_async(&*cx),
+                    );
+                    let cybernetics_loop_for_email = cybernetics_loop_for_panel_deferred.clone();
+                    gpui_tokio::Tokio::spawn(cx, async move {
+                        let mut loop_guard = cybernetics_loop_for_email.write().await;
+                        loop_guard.set_alert_email_sink(sink);
+                    })
+                    .detach();
+                    log::info!("hKask alert email sink wired from kask settings");
+                } else {
+                    log::info!(
+                        "hKask alert email not configured — algedonic alerts rely \
+                         on the live channel and archive (zero-config default)"
+                    );
+                }
+
+                // zed-kask: Registry path resolution is now handled by the
+                // model-dependent skill execution task (below the deferred
+                // task block), which doesn't need the deferred task. The skill
+                // execution is the only consumer of the registry paths, and
+                // it's wired by that separate task. The IPC server and MCP
+                // server launch below don't need the registry paths.
+
+                // Sync model-dependent wiring (inside cx.update).
+                let inference_wiring = cx.update(|cx| {
+                    // ── Panel + curator wiring: unconditional ─────────────────
+                    //
+                    // The curator is always_on by default (KaskCuratorSettings::
+                    // default().always_on == true). The panel tool invoker and
+                    // regulation status don't need an inference model at all —
+                    // they only need the tool_port and the cybernetics loop /
+                    // ledger. The curator session factory uses the same
+                    // LazyInferencePort as the skill execution: when no model
+                    // is resolved, curator turns return a clear error with
+                    // remediation guidance; when the model resolves, the lazy
+                    // port is swapped in and curator turns route through it.
+                    // Status reads the board even when curator memory could not
+                    // open; memory health remains attached when available.
+                    let mut status_provider = kask_bridge::BridgeMetacognitionProvider::new(
+                        metacognition_loop_for_deferred.clone(),
+                    ).with_board(
+                        std::sync::Arc::new(kask_bridge::BoardAlertEscalationSink::new(
+                            panel_tool_invoker.clone(),
+                        )),
+                        cx.background_executor().clone(),
+                    );
+                    if let Some(memory) = memory_for_status.clone() {
+                        status_provider = status_provider.with_memory_port(memory);
+                    }
+                    agent::set_metacognition_provider(Some(std::sync::Arc::new(status_provider)));
+
+                    // zed-kask: D8 — algedonic alerts land on the "Algedonic
+                    // review" kanban board through the same governed channel
+                    // the panels use, handed in here rather than read from a
+                    // global.
+                    let board_sink: std::sync::Arc<dyn hkask_regulation::AlertEscalationSink> =
+                        std::sync::Arc::new(kask_bridge::BoardAlertEscalationSink::new(
+                            panel_tool_invoker.clone(),
+                        ));
+                    let cybernetics_loop_for_board = cybernetics_loop_for_panel_deferred.clone();
+                    gpui_tokio::Tokio::spawn(cx, async move {
+                        cybernetics_loop_for_board
+                            .write()
+                            .await
+                            .set_alert_escalation_sink(Some(board_sink));
+                    })
+                    .detach();
+                    log::info!("hKask algedonic alerts wired to the Algedonic review kanban board");
+                    swarm_panel::set_tool_invoker(Some(panel_tool_invoker));
+                    log::info!(
+                        "Swarm panel tool invoker wired \
+                         (swarm panel calls route through the governed MCP runtime)"
+                    );
+
+                    // D8: the condenser serves ingestion-time tool-result
+                    // compression only. Compaction planning runs its own
+                    // deterministic pre-shrink in-process (`kask_compaction`)
+                    // and does not consult this hook.
+                    let condenser_settings = &kask_settings.condenser;
+                    let condenser = std::sync::Arc::new(kask_bridge::BridgeThreadCondenser::new(
+                        &condenser_settings.profile,
+                        condenser_settings.auto_compress_tool_results,
+                    ));
+                    agent::set_thread_condenser(Some(condenser));
+                    log::info!(
+                        "hKask tool-result ingestion compression wired (profile: {}, automatic: {})",
+                        condenser_settings.profile,
+                        condenser_settings.auto_compress_tool_results
+                    );
+
+                    if kask_settings.memory.auto_inject {
+                        log::info!("hKask context injection enabled — injector will be wired after agent resolves");
+                    } else {
+                        log::info!("hKask context injection disabled (kask.memory.auto_inject = false)");
+                    }
+
+                    // ── Inference stack wiring: model-gated, retried on
+                    // registry events ──
+                    //
+                    // `wire_kask_inference_stack` returns `NotWired` when the
+                    // registry has no default model yet (provider
+                    // credentials still loading at deferred-task time). The
+                    // no-op fallback below holds the socket, and the
+                    // model-resolved re-wire subscription (armed after this
+                    // update block) wires the real stack mid-session —
+                    // previously this wiring was one-shot, so a model that
+                    // resolved after startup left the no-op server in place
+                    // for the whole session. The wiring also reports
+                    // `WiredToZedDefault` when it wired to the fallback
+                    // because `kask.models.default_model` had not resolved
+                    // yet; the same re-wire retries the configured model on
+                    // later registry events so the fallback does not
+                    // outlive a late-resolving provider credential.
+                    let inference_wiring = wire_kask_inference_stack(
+                        &kask_settings,
+                        &cybernetics_loop_for_panel_deferred,
+                        embedding_port_for_ipc.clone(),
+                        mcp_runtime_for_deferred.clone(),
+                        kask_mcp_restart_env_for_deferred.clone(),
+                        kask_mcp_launch_pass_for_deferred.clone(),
+                        cx,
+                    );
+                    if matches!(inference_wiring, InferenceStackWiring::NotWired) {
+
+
+
+                        // No default model in the registry at this point in
+                        // the deferred task. Only the inference stack is
+                        // gated on the model — the panel invoker, condenser,
+                        // and curator wiring above are unconditional, so
+                        // they are not listed here.
+                        //
+                        // The inference IPC server is still started (with a
+                        // `NoModelInferencePort`) so MCP server child processes
+                        // receive `HKASK_INFERENCE_SOCKET` and route inference
+                        // through this bridge rather than falling back to
+                        // `MediaRouter::from_env()`. That fallback reads from
+                        // the `kask://credentials/*` keychain namespace, which
+                        // may not have the key if the operator hasn't configured
+                        // it via the settings UI. Without the IPC server, MCP
+                        // servers silently failed with "API key not configured" —
+                        // an error operators could not trace to the missing socket.
+                        // The `NoModelInferencePort` returns a clear diagnostic so
+                        // the failure mode is visible and actionable.
+                        log::warn!(
+                            "No default LanguageModel configured at deferred-task time — the kask \
+                             inference stack (real inference port, inference IPC server, regulation \
+                             health source) is not wired by this task. A no-op IPC server holds the \
+                             socket so MCP servers route through the bridge and get a diagnostic \
+                             error instead of falling back to an empty keychain. The model-resolved \
+                             re-wire task armed below will wire the real stack as soon as the \
+                             registry reports a default model. Remediation: configure a default \
+                             LanguageModel in Settings → or sign in to your model provider."
+                        );
+
+                        // Start the IPC server with a no-op inference port so
+                        // `INFERENCE_SOCKET_PATH` is set and MCP servers connect
+                        // to the bridge. The embedding port IS passed here —
+                        // embeddings use a separate provider (Ollama) with
+                        // separate credentials, so they work even when no chat
+                        // model is configured. Without this, corpus embedding
+                        // calls fail with "embedding port not configured" when
+                        // the no-model fallback path runs.
+                        //
+                        // zed-kask: P7h — publish the same establishment deadline
+                        // the real wiring publishes (`wire_kask_inference_stack`
+                        // sets it from the same setting), so
+                        // `HKASK_INFERENCE_TIMEOUT_SECS` is identical across
+                        // the no-op→real port swap. Without this the re-wire's
+                        // timeout set changed the env map a second time and the
+                        // env-diff restart logic restarted every child even
+                        // with the socket path stable.
+                        kask_bridge::set_inference_timeout_secs(
+                            kask_settings.general.inference_timeout_secs,
+                        );
+                        let no_model_port: std::sync::Arc<dyn hkask_types::InferencePort> =
+                            std::sync::Arc::new(kask_bridge::NoModelInferencePort);
+                        // No tool port here: the no-op port means no chat model
+                        // is configured yet, so delegated agents have nothing to
+                        // dispatch against. The governed IPC server (started after
+                        // the model resolves) carries the McpRuntime tool port.
+                        match kask_bridge::InferenceIpcServer::start(
+                            no_model_port,
+                            embedding_port_for_ipc.clone(),
+                            None,
+                            cx,
+                        ) {
+                            Ok(ipc_server) => {
+                                let socket_path =
+                                    ipc_server.socket_path().to_string_lossy().to_string();
+                                kask_bridge::set_inference_socket_path(&socket_path);
+                                log::info!(
+                                    "hKask inference IPC server started (no-op port) at {socket_path} — \
+                                     MCP servers will route through the bridge and receive a \
+                                     diagnostic error until a default model is configured"
+                                );
+                                // See the matching binding site above: the server is kept
+                                // alive by its detached task, and the socket is
+                                // intentionally leaked (no `Drop` impl).
+                                let _ipc_server = ipc_server;
+                                sync_kask_mcp_servers(cx);
+                                sync_kask_mcp_runtime_servers(
+                                    mcp_runtime_for_deferred.clone(),
+                                    kask_mcp_restart_env_for_deferred.clone(),
+                                    kask_mcp_launch_pass_for_deferred.clone(),
+                                    cx,
+                                );
+                            }
+                            Err(e) => {
+                                log::warn!(
+                                    "Failed to start inference IPC server (no-op port): {e} — \
+                                     MCP servers will fall back to MediaRouter (media-only)"
+                                );
+                            }
+                        }
+                    }
+
+                    inference_wiring
+                });
+
+                // ── Model-resolved inference-stack re-wire ──────────────────
+                //
+                // The attempt above is one-shot: when the registry had no
+                // default model at deferred-task time, the real inference
+                // stack stayed unwired for the whole session and the
+                // regulation loop's `InferenceModelAvailable` sensor
+                // reported a model outage (correctly) until the next
+                // restart — live-observed 2026-08-30. This subscription
+                // closes the gap: it retries the wiring on model-registry
+                // events and latches on SUCCESS, not on attempt — an event
+                // can fire while provider credentials are still loading,
+                // and latching on a failed attempt would reproduce the
+                // one-shot gap one level up. On success the new IPC server
+                // takes over the socket path (D8:
+                // `set_inference_socket_path` is re-settable for exactly
+                // this scenario) and both MCP server paths are re-synced
+                // inside the wiring function.
+                //
+                // The re-wire is armed for BOTH `NotWired` (the stack is
+                // not wired at all — the no-op server holds the socket) and
+                // `WiredToZedDefault` (the stack runs the fallback — the
+                // configured model may resolve seconds later, and the
+                // re-wire must swap to it).
+                if !matches!(inference_wiring, InferenceStackWiring::WiredToConfigured) {
+                    let registry =
+                        cx.update(|cx| language_model::LanguageModelRegistry::global(cx));
+                    let rewire_wired =
+                        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    let stack_on_fallback = std::sync::Arc::new(
+                        std::sync::atomic::AtomicBool::new(matches!(
+                            inference_wiring,
+                            InferenceStackWiring::WiredToZedDefault
+                        )),
+                    );
+                    let kask_settings_for_rewire = kask_settings.clone();
+                    let cybernetics_loop_for_rewire = cybernetics_loop_for_panel_deferred.clone();
+                    let embedding_port_for_rewire = embedding_port_for_ipc.clone();
+                    let mcp_runtime_for_rewire = mcp_runtime_for_deferred.clone();
+                    let restart_env_for_rewire = kask_mcp_restart_env_for_deferred.clone();
+                    let launch_pass_for_rewire = kask_mcp_launch_pass_for_deferred.clone();
+                    cx.subscribe(
+                        &registry,
+                        move |_, event: &language_model::Event, cx| {
+                            if !matches!(
+                                event,
+                                language_model::Event::DefaultModelChanged
+                                    | language_model::Event::ProviderStateChanged(_)
+                                    | language_model::Event::AddedProvider(_)
+                                    | language_model::Event::ProvidersChanged
+                            ) {
+                                return;
+                            }
+                            // The latch check, the wiring, and the latch
+                            // store all run synchronously on the main
+                            // thread (this handler has no awaits), so they
+                            // are atomic against later events — no second
+                            // server can race a first success.
+                            if rewire_wired.load(std::sync::atomic::Ordering::SeqCst) {
+                                return;
+                            }
+                            if stack_on_fallback.load(std::sync::atomic::Ordering::SeqCst) {
+                                // Wired, but on the zed-default fallback: only
+                                // re-wire when the configured model now
+                                // resolves — one registry lookup per event,
+                                // no port churn on the ones where it doesn't.
+                                let kask_default =
+                                    kask_settings_for_rewire.models.default_model.trim();
+                                if kask_default.is_empty() {
+                                    // The operator cleared the configured
+                                    // default mid-session — the zed default IS
+                                    // the intended model now; latch.
+                                    rewire_wired.store(
+                                        true,
+                                        std::sync::atomic::Ordering::SeqCst,
+                                    );
+                                    return;
+                                }
+                                let resolves = {
+                                    let registry =
+                                        language_model::LanguageModelRegistry::read_global(cx);
+                                    !kask_bridge::resolve_model_names(
+                                        registry,
+                                        &[kask_default.to_string()],
+                                        cx,
+                                    )
+                                    .0
+                                    .is_empty()
+                                };
+                                if !resolves {
+                                    log::debug!(
+                                        "kask.models.default_model '{kask_default}' still \
+                                         unresolved — the inference stack stays on the \
+                                         zed default; the re-wire retries on the next \
+                                         registry event"
+                                    );
+                                    return;
+                                }
+                                match wire_kask_inference_stack(
+                                    &kask_settings_for_rewire,
+                                    &cybernetics_loop_for_rewire,
+                                    embedding_port_for_rewire.clone(),
+                                    mcp_runtime_for_rewire.clone(),
+                                    restart_env_for_rewire.clone(),
+                                    launch_pass_for_rewire.clone(),
+                                    cx,
+                                ) {
+                                    InferenceStackWiring::WiredToConfigured => {
+                                        rewire_wired.store(
+                                            true,
+                                            std::sync::atomic::Ordering::SeqCst,
+                                        );
+                                        log::info!(
+                                            "hKask inference stack re-wired from the \
+                                             zed-default fallback to \
+                                             kask.models.default_model: {kask_default}"
+                                        );
+                                    }
+                                    _ => {
+                                        // The model vanished again between the
+                                        // resolve-check and the wiring — stay
+                                        // armed on the fallback and retry on
+                                        // the next event.
+                                    }
+                                }
+                                return;
+                            }
+                            match wire_kask_inference_stack(
+                                &kask_settings_for_rewire,
+                                &cybernetics_loop_for_rewire,
+                                embedding_port_for_rewire.clone(),
+                                mcp_runtime_for_rewire.clone(),
+                                restart_env_for_rewire.clone(),
+                                launch_pass_for_rewire.clone(),
+                                cx,
+                            ) {
+                                InferenceStackWiring::WiredToConfigured => {
+                                    rewire_wired.store(true, std::sync::atomic::Ordering::SeqCst);
+                                    log::info!(
+                                        "hKask inference stack wired by the model-resolved \
+                                         re-wire task — the no-op IPC fallback has been \
+                                         replaced"
+                                    );
+                                }
+                                InferenceStackWiring::WiredToZedDefault => {
+                                    // Wired to the fallback: stay armed and
+                                    // retry the configured model on later
+                                    // events (the wiring's fallback warn
+                                    // already named the condition).
+                                    stack_on_fallback
+                                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                                }
+                                InferenceStackWiring::NotWired => {}
+                            }
+                        },
+                    )
+                    .detach();
+                    log::info!(
+                        "hKask inference-stack re-wire task armed — waiting for \
+                         LanguageModelRegistry to report a default model"
+                    );
+                }
+
+                // The actuator for the wedged-portal class (cards 810bf6af /
+                // fec4e7c7): when the startup credential sweep hit a transient
+                // keychain failure, no registry event ever re-reads on its
+                // own. This sweep probes the portal on a bounded backoff and
+                // re-fires the credential loads once it answers again.
+                cx.update(|cx| arm_startup_credential_recovery(cx));
+
+                // Launch MCP servers via McpRuntime for app-global metered
+                // dispatch (call metering + regulation spans). These instances
+                // serve the skill execution, the kask panel, AND the agent's
+                // tool surface.
+                //
+                // zed-kask (2026-08-29): the per-project ContextServerStore no
+                // longer launches kask servers — the runtime is the single
+                // spawn authority (invariant I1). The prior dual-instance
+                // design (store instances for the agent + runtime instances
+                // for the panel) shipped keyless per-project duplicates and
+                // crash-looping churn; the agent's tools now route through
+                // `agent::set_kask_tool_source`.
+                if !servers_to_start_clone.is_empty() {
+                    // Build env + record baseline on the foreground
+                    // (`kask_server_env` needs `AsyncApp`, not `Send`). The
+                    // tokio-dependent `start_server_with_env` is dispatched
+                    // through `Tokio::spawn` below — the reactor
+                    // is entered on the worker thread, so no foreground `enter()`
+                    // guard is held across awaits. The earlier `let _tokio_guard
+                    // = ...enter()` held-across-awaits form was the `.rules`
+                    // "background_spawn of tokio-dependent futures" trap: a
+                    // second overlapping `cx.spawn` (e.g. the settings-change
+                    // restart observer) would acquire a second `EnterGuard`,
+                    // interleave at await points, and panic with "EnterGuard
+                    // values dropped out of order". Do NOT move this loop to
+                    // `cx.background_spawn` — GPUI's background executor has no
+                    // tokio reactor (see .rules).
+                    for server_id in &servers_to_start_clone {
+                        let binary = format!("hkask-mcp-{server_id}");
+                        let mcp_env = kask_server_env(server_id, cx).await;
+                        // Record the env baseline BEFORE starting so the
+                        // settings-change restart observer can diff against it
+                        // (an empty baseline = not yet launched = no-op). On
+                        // start failure the baseline is dropped (inside the
+                        // `Tokio::spawn` below) so a later settings change retries.
+                        kask_mcp_restart_env_for_deferred
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .insert(server_id.clone(), mcp_env.clone());
+                        let runtime = mcp_runtime_for_deferred.clone();
+                        let restart_env = kask_mcp_restart_env_for_deferred.clone();
+                        let server_id_owned = server_id.to_string();
+                        gpui_tokio::Tokio::spawn(cx, async move {
+
+                            match runtime
+                                .start_server_with_env(&server_id_owned, &binary, mcp_env)
+                                .await
+                            {
+                                Ok(()) => log::info!(
+                                    "Kask MCP server '{server_id_owned}' started (McpRuntime)"
+                                ),
+                                Err(e) => {
+                                    log::warn!(
+                                        "Kask MCP server '{server_id_owned}' failed to start: {e} \n                                         — set HKASK_MCP_{}_BIN to the binary path",
+                                        server_id_owned.to_uppercase()
+                                    );
+                                    restart_env
+                                        .lock()
+                                        .unwrap_or_else(|e| e.into_inner())
+                                        .remove(&server_id_owned);
+                                }
+                            }
+                        })
+                        .detach();
+                    }
+                }
+                // zed-kask: D45 — the launch-pass-complete latch. The
+                // settings-change observer's load path (start a loaded server
+                // with no baseline) is gated on this: before the latch, "no
+                // baseline" means the launch pass has not decided yet, and an
+                // observer-side start could race the launch loop with an env
+                // computed before the inference socket exists (the
+                // socketless-server defect class). After the latch, a loaded
+                // no-baseline server is a genuine load transition or a failed
+                // start being retried. Set unconditionally — an empty
+                // `servers_to_start` (everything toggled off) is still a
+                // completed pass, and later toggle-ons must work.
+                kask_mcp_launch_pass_for_deferred
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+            }).detach();
+        }
+
+        // zed-kask: D1 — Model-dependent skill execution wiring.
+        //
+        // This task wires the edit-prediction port (D24), which needs the
+        // cascade) as soon as `LanguageModelRegistry::default_model()` returns
+        // `Some`, independent of Zed user login. The model registry is
+        // populated from settings.json (`agent.default_model`), not from
+        // cloud auth, so gating the skill execution on user login was a
+        // bug: users with a configured default model but no cloud login had
+        // skills silently disabled (the `skill` tool returned a no-op
+        // envelope instead of the skill body).
+        //
+        // The task subscribes to `LanguageModelRegistry` events
+        // (`DefaultModelChanged`, `ProviderStateChanged`, `AddedProvider`,
+        // `ProvidersChanged`) and fires the wiring on each event until it
+        // succeeds. The `AtomicBool` guard latches on success only (see
+        // `try_wire_edit_prediction_port`) — events that fire while provider
+        // credentials are still loading are retried on the next event, and a
+        // call after success is dropped before reaching the set-once hook.
+        //
+        // The registry path resolution (dev source vs seeded) is duplicated
+        // from the deferred task because it doesn't need the user and must
+        // run here for the skill execution. The `tool_port` is the same
+        // `McpRuntime` Arc used by the deferred task. The inference port
+        // is constructed independently from the resolved model — this is a
+        // second port (the deferred task's IPC server constructs its own),
+        // but they wrap the same underlying model, so the duplication is
+        // harmless.
+        //
+        // What stays in the deferred task:
+        // - Memory port, context injector, curator injector (use fallback
+        //   identity if Zed user hasn't resolved)
+        // - Regulation archive (needs passphrase), board sink (governed tool invoker)
+        // - IPC server (needs embedding port from provisioning)
+        // - MCP server launch, email sink
+        {
+            let app_state_for_model_task = app_state.clone();
+            cx.spawn(async move |cx| {
+                // Check immediately and subscribe to registry events.
+                let registry = cx.update(|cx| language_model::LanguageModelRegistry::global(cx));
+
+                // Initial check — the model may already be available.
+                let initial = registry.read_with(cx, |r, _| r.default_model().is_some());
+                // zed-kask: D24 — one latch pair shared by the initial check and
+                // the registry-event subscription: `ep_wired` latches on success
+                // (see `try_wire_edit_prediction_port`), `ep_warned` latches on
+                // the first failure so the startup event burst logs one WARN,
+                // not one per retry.
+                let ep_wired = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let ep_warned = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let http_client = app_state_for_model_task.client.http_client();
+                if initial {
+                    if let Err(e) = try_wire_edit_prediction_port(
+                        &ep_wired,
+                        &ep_warned,
+                        &registry,
+                        http_client.clone(),
+                        cx,
+                    )
+                    .await
+                    {
+                        log::warn!("hKask edit-prediction port initial wiring failed: {e}");
+                    }
+                }
+
+                // Subscribe to registry events for the async case.
+                let registry_for_sub = registry.clone();
+                let http_client_for_sub = http_client;
+                cx.subscribe(
+                    &registry,
+                    move |_, event: &language_model::Event, cx| {
+                        match event {
+                            language_model::Event::DefaultModelChanged
+                            | language_model::Event::ProviderStateChanged(_)
+                            | language_model::Event::AddedProvider(_)
+                            | language_model::Event::ProvidersChanged => {
+                                let registry = registry_for_sub.clone();
+                                let ep_wired = ep_wired.clone();
+                                let ep_warned = ep_warned.clone();
+                                let http_client = http_client_for_sub.clone();
+                                cx.spawn(async move |cx| {
+                                    // zed-kask: D24
+                                    if let Err(e) = try_wire_edit_prediction_port(
+                                        &ep_wired,
+                                        &ep_warned,
+                                        &registry,
+                                        http_client,
+                                        cx,
+                                    )
+                                    .await
+                                    {
+                                        log::warn!(
+                                            "hKask edit-prediction port wiring failed on registry event: {e}"
+                                        );
+                                    }
+                                })
+                                .detach();
+                            }
+                            _ => {}
+                        }
+                    },
+                )
+                .detach();
+
+                log::info!(
+                    "hKask model-dependent skill execution task started — \
+                     waiting for LanguageModelRegistry to report a default model"
+                );
+            })
+            .detach();
+        }
+
+        // zed-kask does not initialize upstream Zed's in-app updater. Its Linux
+        // installer writes `zed*.app` bundles into `~/.local` and can replace
+        // the user's real Zed installation. Updates are CLI-installer-only.
         watcher_debug::init(app_state.clone(), cx);
-        auto_update::init(client.clone(), cx);
         dap_adapters::init(cx);
-        auto_update_ui::init(cx);
-        reliability::init(client.clone(), app_state.workspace_store.clone(), cx);
+        reliability::init(
+            client.clone(),
+            app_state.workspace_store.clone(),
+            context_server_health_source_for_poller,
+            mcp_runtime_for_startup,
+            cx,
+        );
         extension_host::init(
             extension_host_proxy.clone(),
             app_state.fs.clone(),
@@ -718,7 +3086,67 @@ fn main() {
             false,
             cx,
         );
+        // zed-kask: raise the agent panel's idle-thread retention cap (upstream
+        // default 5) via upstream's GPUI-global override point. Kask workflows
+        // switch between many long-lived agent threads; every switch past the
+        // cap re-loads the thread from the DB and replays every entry on the
+        // foreground (measured 635 ms for a 963-entry thread), which the user
+        // experiences as a UI freeze on thread switch. Running threads are
+        // retained regardless of this cap; it only bounds idle eviction.
+        cx.set_global(agent_ui::MaxIdleRetainedThreads(16));
+        // Wire the worktree spawner when an AgentPanel is created. The
+        // spawner is process-global (Mutex-based, re-settable) so the IPC
+        // server's GPUI-side task can read it when a `CreateWorktreeThread`
+        // request arrives. When the panel is dropped (workspace closed), the
+        // spawner is cleared so the MCP server falls back to in-memory spawn.
+        cx.observe_new(|_panel: &mut AgentPanel, window, cx| {
+            let Some(window) = window else {
+                log::warn!(
+                    "AgentPanel created without a window — worktree spawner not wired"
+                );
+                return;
+            };
+            let window_handle = window.window_handle();
+            let spawner: Arc<dyn kask_bridge::WorktreeSpawner> = Arc::new(
+                AgentPanelWorktreeSpawner {
+                    panel: cx.entity().downgrade(),
+                    window: window_handle,
+                },
+            );
+            kask_bridge::set_worktree_spawner(Some(spawner));
+            // Clear the spawner when the panel is dropped.
+            let weak_panel = cx.entity().downgrade();
+            cx.spawn(async move |_this, cx| {
+                while weak_panel.upgrade().is_some() {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_secs(1))
+                        .await;
+                }
+                kask_bridge::set_worktree_spawner(None);
+            }).detach();
+        })
+        .detach();
+        swarm_panel::init(cx);
+        kanban_panel::init(cx);
+        media_panel::init(cx);
         zed::watch_user_agents_md(app_state.fs.clone(), cx);
+
+        // D1/D3: Model-dependent kask wiring is split across two tasks:
+        //
+        // 1. The skill execution (D1) is wired by the model-dependent task
+        //    (above), which fires as soon as `LanguageModelRegistry::
+        //    default_model()` returns `Some` — independent of Zed user login.
+        //    The model registry is populated from settings.json, not cloud auth.
+        //
+        // 2. The remaining model-dependent hooks (IPC server, condenser, panel
+        //    tool invoker) and all kask hooks (memory port, context injector,
+        //    regulation archive) are wired by the deferred task (above).
+        //    The deferred task no longer blocks on the Zed user — it proceeds
+        //    immediately with a fallback identity if needed.
+        //
+        // zed-kask: D1/D3/D6/D8 — F20: deferred task (kask hooks:
+        // memory_port, thread_condenser, tool_invoker, context_injector,
+        // curator_context_injector) + model-dependent task (edit_prediction_port).
 
         repl::init(app_state.fs.clone(), cx);
         recent_projects::init(cx);
@@ -747,7 +3175,6 @@ fn main() {
         outline_panel::init(cx);
         tasks_ui::init(cx);
         snippets_ui::init(cx);
-        channel::init(&app_state.client.clone(), app_state.user_store.clone(), cx);
         search::init(cx);
         lsp_locations::init(cx);
         cx.set_global(workspace::PaneSearchBarCallbacks {
@@ -770,9 +3197,11 @@ fn main() {
         theme_selector::init(cx);
         settings_profile_selector::init(cx);
         language_tools::init(cx);
-        call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
-        collab_ui::init(&app_state, cx);
+        // zed-kask: D90 — upstream chained this inside the deleted collab_ui
+        // crate's init; without it no TitleBar mounts and the workspace renders
+        // without a title bar or the application (File/App) menus.
+        title_bar::init(cx);
         git_ui::init(cx);
         feedback::init(cx);
         markdown_preview::init(cx);
@@ -845,7 +3274,6 @@ fn main() {
         );
         telemetry.flush_events().detach();
 
-        let fs = app_state.fs.clone();
         load_user_themes_in_background(fs.clone(), cx);
         watch_themes(fs.clone(), cx);
         #[cfg(debug_assertions)]
@@ -885,7 +3313,7 @@ fn main() {
         let urls: Vec<_> = args
             .paths_or_urls
             .iter()
-            .map(|arg| parse_url_arg(arg, cx))
+            .map(|arg| parse_url_arg(arg))
             .collect();
 
         // Check if any diff paths are directories to determine diff_all mode
@@ -963,7 +3391,6 @@ fn main() {
 
         cx.spawn({
             let db = workspace::WorkspaceDb::global(cx);
-            let fs = app_state.fs.clone();
             let restore_finished = restore_finished.clone();
             async move |_cx| {
                 restore_finished.await;
@@ -1001,6 +3428,1098 @@ fn main() {
         })
         .detach();
     });
+}
+
+// ── Kask MCP single-spawn authority ────────────────────────────────────────
+//
+// zed-kask: D3 — the governed McpRuntime owns kask child processes and
+// supplies their tools to the agent through set_kask_tool_source. The
+// ContextServerStore must not launch duplicate, keyless per-project children.
+
+/// zed-kask: D24 — wire the kask edit-prediction port.
+///
+/// Resolves the VISIBLE default chain — `kask.models.default_model` when
+/// set, else the zed default model — from the `LanguageModelRegistry` (never
+/// a code constant, per the operator's no-hidden-models spec), constructs a
+/// `BridgeEditPredictionPort` that makes raw `/completions` calls through
+/// the model's `api_url()`/`api_key()`, and injects it into the
+/// edit-prediction store via
+/// `edit_prediction::open_ai_compatible::set_kask_completion_port`.
+///
+/// Called from the same model-dependent task as the edit-prediction port wiring
+/// — fires once the registry has a model. `Mutex`-based hook (re-settable),
+/// so there is no need for an `AtomicBool` guard, but we use one anyway to
+/// avoid redundant `resolve_model_names` + HTTP-client construction on every
+/// registry event.
+async fn try_wire_edit_prediction_port(
+    wired: &std::sync::atomic::AtomicBool,
+    warned: &std::sync::atomic::AtomicBool,
+    registry: &gpui::Entity<language_model::LanguageModelRegistry>,
+    http_client: std::sync::Arc<dyn http_client::HttpClient>,
+    cx: &mut gpui::AsyncApp,
+) -> anyhow::Result<()> {
+    // Latch on SUCCESS, not on attempt: an event can fire while provider
+    // credentials are still loading, and latching on a failed attempt left
+    // the port permanently unwired for the session (live-observed
+    // 2026-08-30: the 18:07 "no api_url/api_key" failure latched the guard
+    // and no later event retried). The load/store pair needs no CAS —
+    // handlers run on the GPUI main thread and this closure has no awaits.
+    if wired.load(std::sync::atomic::Ordering::SeqCst) {
+        return Ok(());
+    }
+
+    cx.update(|cx| {
+        let tokio_handle = gpui_tokio::Tokio::handle(cx);
+        // `kask.models.default_model` — which carries the code default
+        // (operator ruling 2026-09-04: defaults in code, settings override)
+        // — else the zed default.
+        let kask_default_model = kask_bridge::KaskSettings::get_global(cx)
+            .models
+            .default_model
+            .trim()
+            .to_string();
+        let kask_default_model = (!kask_default_model.is_empty()).then_some(kask_default_model);
+        let port = kask_bridge::BridgeEditPredictionPort::from_registry(
+            registry.read(cx),
+            http_client,
+            tokio_handle,
+            kask_default_model.as_deref(),
+            cx,
+        );
+        if let Some(port) = port {
+            edit_prediction::open_ai_compatible::set_kask_completion_port(Some(
+                std::sync::Arc::new(port)
+                    as std::sync::Arc<dyn edit_prediction::open_ai_compatible::KaskCompletionPort>,
+            ));
+            wired.store(true, std::sync::atomic::Ordering::SeqCst);
+            log::info!(
+                "hKask edit-prediction port wired — routing FIM completions \
+                 through LanguageModelRegistry ({})",
+                kask_default_model.as_deref().unwrap_or("zed default model")
+            );
+        } else {
+            // The registry fires a burst of events at startup while provider
+            // credentials load asynchronously; each event retries this
+            // wiring. Warn once, then log repeats at debug — a normal
+            // startup previously emitted 100+ identical WARN lines before
+            // the keychain read landed and the port wired.
+            if !warned.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                log::warn!(
+                    "hKask edit-prediction port not wired — could not resolve {} \
+                     from LanguageModelRegistry (no api_url/api_key). Edit \
+                     predictions will fall back to the configured provider. \
+                     Retries until the key resolves log at debug.",
+                    kask_default_model.as_deref().unwrap_or("zed default model")
+                );
+            } else {
+                log::debug!(
+                    "hKask edit-prediction port retry: {} still unresolved \
+                     (no api_url/api_key)",
+                    kask_default_model.as_deref().unwrap_or("zed default model")
+                );
+            }
+        }
+        Ok(())
+    })
+}
+
+/// Which model the inference stack was wired to — the re-wire's latch input.
+enum InferenceStackWiring {
+    /// The registry has no default model yet; nothing was wired.
+    NotWired,
+    /// The stack runs the operator's configured `kask.models.default_model`
+    /// (or the zed default when no kask default is configured — there is no
+    /// separate intended model in that case).
+    WiredToConfigured,
+    /// The stack runs the zed default because the configured
+    /// `kask.models.default_model` could not be resolved — the designed
+    /// 2026-09-04 fallback. The re-wire stays armed and retries the
+    /// configured model on registry events.
+    WiredToZedDefault,
+}
+
+/// Wire the kask inference stack from the resolved default model: the real
+/// `LanguageModelInferencePort`, the inference IPC server (replacing any
+/// no-op fallback server started earlier), and the regulation health source.
+///
+/// Returns `InferenceStackWiring::NotWired` when
+/// `LanguageModelRegistry::default_model()` is still `None` — nothing is
+/// wired in that case — and `InferenceStackWiring::WiredToZedDefault` when
+/// `kask.models.default_model` could not be resolved and the stack was wired
+/// to the zed default instead (the designed 2026-09-04 fallback). The
+/// deferred task arms the model-resolved re-wire subscription for both of
+/// those outcomes. The re-wire latches only on `WiredToConfigured`: while
+/// the stack runs on the fallback it re-checks the configured model on each
+/// registry event and swaps the serving ports in place when it resolves
+/// (P7h — no MCP child restarts; the resilience source is replaced, not
+/// duplicated), so the fallback never silently outlives a late-resolving
+/// provider credential (live 2026-10-26: the stack latched on the fallback
+/// at 11:07:35 while the configured model resolved at 11:09:18).
+fn wire_kask_inference_stack(
+    kask_settings: &kask_bridge::KaskSettings,
+    cybernetics_loop: &std::sync::Arc<tokio::sync::RwLock<hkask_regulation::CyberneticsLoop>>,
+    embedding_port: Option<kask_bridge::LanguageModelEmbeddingPort>,
+    mcp_runtime: std::sync::Arc<hkask_mcp::McpRuntime>,
+    restart_env: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<String, hkask_types::ServerEnv>>,
+    >,
+    launch_pass_complete: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    cx: &mut gpui::App,
+) -> InferenceStackWiring {
+    let model_registry = language_model::LanguageModelRegistry::read_global(cx);
+    let Some(configured) = model_registry.default_model() else {
+        return InferenceStackWiring::NotWired;
+    };
+    let async_cx = cx.to_async();
+    // The wiring reports which arm won: "credentials still loading" must
+    // not latch the zed-default fallback for the whole session, so the
+    // re-wire retries the configured model on later registry events while
+    // the stack runs the fallback.
+    let (inference_model, wiring): (
+        std::sync::Arc<language_model::LanguageModel>,
+        InferenceStackWiring,
+    ) = {
+        // `kask.models.default_model` — its `Default` carries the code
+        // default (operator ruling 2026-09-04: defaults in code so the
+        // code works; the settings UI overrides). When no kask default is
+        // configured, the zed default IS the intended model.
+        let kask_default = kask_settings.models.default_model.trim();
+        if kask_default.is_empty() {
+            (
+                std::sync::Arc::new(configured),
+                InferenceStackWiring::WiredToConfigured,
+            )
+        } else {
+            match kask_bridge::resolve_model_names(model_registry, &[kask_default.to_string()], cx)
+                .0
+                .into_values()
+                .next()
+            {
+                Some(model) => {
+                    log::info!(
+                        "hKask inference using kask.models.default_model: {}",
+                        kask_default
+                    );
+                    (model, InferenceStackWiring::WiredToConfigured)
+                }
+                None => {
+                    log::warn!(
+                        "kask.models.default_model '{}' could not be resolved \
+                         from LanguageModelRegistry — falling back to zed default",
+                        kask_default
+                    );
+                    (
+                        std::sync::Arc::new(configured),
+                        InferenceStackWiring::WiredToZedDefault,
+                    )
+                }
+            }
+        }
+    };
+
+    let inference_timeout =
+        std::time::Duration::from_secs(kask_settings.general.inference_timeout_secs);
+    // Publish the server's establishment deadline so IPC clients (child MCP
+    // server processes) can align their read timeout with it. Without this,
+    // the client's independent 120s read deadline fires before the server's
+    // 300s establishment deadline, closing the socket mid-flight; the
+    // server's later response write then hits `BrokenPipe`, producing a warn
+    // storm that blames the IPC layer for what was a self-inflicted
+    // cancellation. See `INFERENCE_TIMEOUT_ENV`.
+    kask_bridge::set_inference_timeout_secs(kask_settings.general.inference_timeout_secs);
+    let (inference_port, inference_task) = kask_bridge::LanguageModelInferencePort::new(
+        inference_model,
+        inference_timeout,
+        kask_settings.general.max_concurrency as usize,
+        kask_bridge::InferenceResilienceConfig {
+            transient_failure_threshold: kask_settings.general.inference_circuit_failure_threshold,
+            open_duration: std::time::Duration::from_secs(
+                kask_settings.general.inference_circuit_open_secs,
+            ),
+        },
+        async_cx,
+    );
+    inference_task.detach();
+
+    // Wire the atomic resilience observation source after the model-bearing
+    // inference port exists. Rewiring replaces the previous source and resets
+    // its receipt cursor, so stale model health cannot produce duplicate
+    // deviations. The bridge retains enforcement; Regulation observes circuit
+    // transitions and later recovery without depending on Zed types.
+    let inference_resilience_source: std::sync::Arc<
+        dyn hkask_regulation::InferenceResilienceSource,
+    > = std::sync::Arc::new(inference_port.clone());
+    {
+        let loop_for_resilience = cybernetics_loop.clone();
+        gpui_tokio::Tokio::spawn(cx, async move {
+            let mut loop_guard = loop_for_resilience.write().await;
+            loop_guard.set_inference_resilience_source(inference_resilience_source);
+        })
+        .detach();
+    }
+
+    let inference_port: std::sync::Arc<dyn hkask_types::InferencePort> =
+        std::sync::Arc::new(inference_port);
+
+    // Publish the app-wide port for consumers that wired before the inference
+    // stack existed — the memory ingest path reads it lazily per turn for
+    // write-time chunk tagging. The mutex global (not a OnceLock) survives the
+    // model-resolved re-wire, which replaces the port.
+    kask_bridge::set_global_inference_port(inference_port.clone());
+
+    // Start the inference IPC server so MCP server child processes can route
+    // inference through zed's LanguageModelRegistry (with zed's configured
+    // API keys) instead of constructing their own MediaRouter with separate
+    // keys.
+    //
+    // The governed McpRuntime backs `tool_invoke` requests (delegated swarm
+    // agents calling MCP tools). The IPC server mints the panel token — the
+    // child process never holds token material.
+    let tool_port_for_ipc: Option<std::sync::Arc<dyn hkask_tool_port::ToolPort>> =
+        Some(mcp_runtime.clone());
+    // zed-kask: P7h — swap-first. When the no-op server from the deferred
+    // task is holding the socket, replace its serving ports in place: the
+    // socket path (and every MCP child's `HKASK_INFERENCE_SOCKET` /
+    // `HKASK_INFERENCE_TIMEOUT_SECS`) is unchanged, so the env-diff restart
+    // logic in `sync_kask_mcp_runtime_servers` sees no change and no child
+    // restarts. The pre-P7h behavior started a SECOND server at a new
+    // nonce path, turning the model-resolved re-wire into an env change
+    // that killed and respawned the whole first launch wave (measured
+    // 2026-10-02: 30 restart events, portfolio 4× in 13 s, ~2.5 min to
+    // fleet stability). Fresh-start remains the fallback for the no-server
+    // case: the no-op start failed, or the model was already configured at
+    // deferred-task time so this call starts the first server.
+    let mut ipc_established = false;
+    if kask_bridge::swap_inference_ipc_ports(
+        inference_port.clone(),
+        embedding_port.clone(),
+        tool_port_for_ipc.clone(),
+    ) {
+        log::info!(
+            "hKask inference IPC ports swapped in place (no-op → real) — socket path \
+             unchanged, no MCP child restarts"
+        );
+        ipc_established = true;
+    } else {
+        match kask_bridge::InferenceIpcServer::start(
+            inference_port,
+            embedding_port,
+            tool_port_for_ipc,
+            cx,
+        ) {
+            Ok(ipc_server) => {
+                let socket_path = ipc_server.socket_path().to_string_lossy().to_string();
+                kask_bridge::set_inference_socket_path(&socket_path);
+                log::info!(
+                    "hKask inference IPC server started at {socket_path} — \
+                     MCP servers will route inference through zed"
+                );
+                // The server's tasks are detached inside `start` and run for the
+                // process lifetime: the tokio listener (detach-on-drop) and the
+                // GPUI-side channel tasks (explicit `.detach()` — a GPUI `Task`
+                // is CANCELLED on handle drop, so storing the handles here would
+                // kill the credential/list_models/worktree channels when this
+                // closure's scope ends). Dropping this value is therefore
+                // harmless; the binding exists only to acknowledge the result.
+                let _ipc_server = ipc_server;
+                ipc_established = true;
+            }
+            Err(e) => {
+                log::warn!(
+                    "Failed to start inference IPC server: {e} — \
+                     MCP servers will fall back to MediaRouter (media-only)"
+                );
+            }
+        }
+    }
+    if ipc_established {
+        // zed-kask: D3/D8 — refresh the single managed path after the
+        // inference socket is available. First remove stale per-project
+        // descriptors and raw shadow entries, then restart governed
+        // McpRuntime children whose environment changed. With the stable
+        // socket + in-place port swap (P7h) there is no diff to restart on
+        // the re-wire — these syncs are the socketless→socket transition
+        // for the fresh-start path and a no-op for the swap path.
+        sync_kask_mcp_servers(cx);
+        sync_kask_mcp_runtime_servers(mcp_runtime, restart_env, launch_pass_complete, cx);
+    }
+
+    // The skill execution and edit-prediction wiring live in the separate
+    // model-dependent task, which fires on registry events — the inference
+    // port constructed here is a second port, but they wrap the same
+    // underlying model, so the duplication is harmless.
+    wiring
+}
+
+/// Arm the startup credential-recovery sweep — the actuator for the
+/// wedged-portal class (the 2026-10-04, 2026-10-25 and 2026-10-26
+/// incidents; cards 810bf6af / fec4e7c7).
+///
+/// One canary probe of the OS keychain (the DB-passphrase slot) runs
+/// `FIRST_PROBE_DELAY` after startup — past the healthy credential-loading
+/// race, so a healthy portal disarms having fired nothing. A transient
+/// failure (Timeout/Platform — "temporarily unreachable", which the
+/// credentials-provider boundary reports the same as "absent") arms a
+/// bounded backoff sweep; when a later probe shows the portal answering
+/// again, the sweep re-fires `SettingsStore::notify_observers` once — the
+/// same push the credential-write settings-UI path uses — which
+/// re-triggers the provider credential loads (`ApiKeyState` retries from
+/// `NotPresent`), the MCP env rebuild (its diff restarts affected
+/// children), and the registry events the inference-stack and
+/// edit-prediction retry loops wait for. Observed live 2026-10-26: those
+/// loads re-fired through *incidental* observer fires and the session
+/// recovered; live 2026-10-25 no fire happened and the session stayed
+/// degraded until an operator restart — this sweep arms the recovery
+/// deterministically.
+///
+/// Honest-failure contract preserved: no signal is suppressed. Arming
+/// logs at info, retries at debug, and budget exhaustion logs one final
+/// warn naming the env-var bypass; every startup warning stands.
+fn arm_startup_credential_recovery(cx: &mut gpui::App) {
+    use kask_bridge::credential_recovery::{
+        CredentialRecoverySweep, FIRST_PROBE_DELAY, RecoveryAction,
+    };
+
+    cx.spawn(async move |cx| {
+        let mut sweep = CredentialRecoverySweep::new();
+        cx.background_executor().timer(FIRST_PROBE_DELAY).await;
+        loop {
+            let outcome = kask_bridge::credential_recovery::probe_canary_outcome().await;
+            let was_transient = sweep.saw_transient();
+            match sweep.observe(outcome) {
+                RecoveryAction::Disarm => return,
+                RecoveryAction::FireNotify => {
+                    log::info!(
+                        "hKask credential recovery: the secret portal is answering again — \
+                         re-firing credential loads so providers and MCP env re-read the \
+                         keychain"
+                    );
+                    // This fork's AsyncApp::update returns the value
+                    // directly (no AppDropped Result) — the same idiom the
+                    // deferred task's own cx.update bindings use.
+                    cx.update(|cx| settings::SettingsStore::notify_observers(cx));
+                    return;
+                }
+                RecoveryAction::ProbeAgain(None) => {
+                    log::warn!(
+                        "hKask credential recovery: the secret portal is still unreachable \
+                         after the bounded retry sweep — credential reads that failed at \
+                         startup stay failed until a restart. Credentials can be set via \
+                         their env vars to bypass the keychain; the per-credential warnings \
+                         above name each affected key"
+                    );
+                    return;
+                }
+                RecoveryAction::ProbeAgain(Some(delay)) => {
+                    if was_transient {
+                        log::debug!(
+                            "hKask credential recovery: portal still wedged — next probe \
+                             in {delay:?}"
+                        );
+                    } else {
+                        log::info!(
+                            "hKask credential recovery sweep armed — the startup keychain \
+                             probe failed transiently; probing for portal recovery, next \
+                             probe in {delay:?}"
+                        );
+                    }
+                    cx.background_executor().timer(delay).await;
+                }
+            }
+        }
+    })
+    .detach();
+}
+
+/// Reconcile the app-level `ContextServerDescriptorRegistry` with the
+/// current kask MCP settings.
+///
+// zed-kask: D3 — reject stale per-project registrations.
+/// Unregisters kask descriptors and removes raw settings entries that could
+/// spawn duplicate, keyless children through `ContextServerStore`. The
+/// governed `McpRuntime` alone starts and restarts kask server processes.
+/// Called at startup, on settings changes, and after inference IPC startup.
+fn sync_kask_mcp_servers(cx: &mut gpui::App) {
+    // zed-kask: diagnostic for the settings-reactivity defect (2026-08-29):
+    // live probes showed this function's effects on settings CHANGES never
+    // happen (no shadowing removal, no override re-sync) while the startup
+    // direct calls demonstrably run. This line makes every invocation
+    // observable in Zed-Kask.log — paired with the watcher-reload line in
+    // settings_store.rs, one settings change pins whether the observer fires.
+    log::info!("Kask MCP sync fired (startup call or settings change)");
+    // zed-kask: single spawn authority (I1, 2026-08-29). Kask built-in
+    // servers are NOT registered with zed's per-project ContextServerStore:
+    // that path spawned per-project instances whose env came from settings
+    // entries — the keyless-server defect. The governed McpRuntime owns
+    // every kask server process; the agent's tools surface via
+    // `agent::set_kask_tool_source`. This function now only (a) defensively
+    // unregisters any descriptor squatting a kask built-in ID — the
+    // extension proxy (context_server_store/extension.rs), the one
+    // non-test register site besides kask itself, registers descriptors
+    // under extension-supplied, unnamespaced IDs in this process-global
+    // registry, so a kask ID can be occupied from outside (an "older
+    // build" cannot reach an in-process registry; the former rationale
+    // was impossible) — and (b) removes raw `context_servers` entries for
+    // kask IDs — the namespace guard: a raw entry would still spawn a
+    // keyless instance through the generic store path.
+    let registry =
+        project::context_server_store::registry::ContextServerDescriptorRegistry::default_global(
+            cx,
+        );
+    registry.update(cx, |registry, cx| {
+        for server in kask_bridge::BUILT_IN_MCP_SERVERS {
+            if registry.context_server_descriptor(server.id).is_some() {
+                registry.unregister_context_server_descriptor_by_id(server.id, cx);
+                log::info!(
+                    "Unregistered a descriptor squatting kask MCP server ID '{}' from zed context servers",
+                    server.id
+                );
+                cx.notify();
+            }
+        }
+    });
+
+    // zed-kask: raw `context_servers` entries for built-in kask IDs can
+    // independently spawn keyless per-project children through the generic
+    // store path. Remove them so the governed runtime remains the only
+    // spawn authority, summarized in
+    // one warn (count + IDs) so the operator sees the correction without a
+    // wall of near-identical lines. The write is self-
+    // terminating: the next observer pass finds nothing to remove, and
+    // D32's no-op-write skip covers the boundary. Removal logic pinned by
+    // `remove_shadowing_context_server_entries_*` tests in kask_bridge.
+    let shadowed: Vec<std::sync::Arc<str>> = cx
+        .global::<SettingsStore>()
+        .raw_user_settings()
+        .map(|user| kask_bridge::shadowed_context_server_entry_ids(&user.content))
+        .unwrap_or_default();
+    if !shadowed.is_empty() {
+        // zed-kask: one summary warn, not one per entry — a dozen kask
+        // servers made every startup emit a wall of near-identical lines,
+        // burying which IDs were corrected in repetition.
+        let ids = shadowed
+            .iter()
+            .map(|id| id.as_ref())
+            .collect::<Vec<_>>()
+            .join(", ");
+        log::warn!(
+            "Removing {count} raw context_servers {noun} ({ids}) — each shadows the \
+             kask-managed registration and silently drops its credentials/inference env. \
+             Configure kask servers via the kask.mcp settings (or \
+             HKASK_MCP_<SERVER_ID>_BIN — uppercase, dashes as underscores — for a \
+             custom binary).",
+            count = shadowed.len(),
+            noun = if shadowed.len() == 1 {
+                "entry"
+            } else {
+                "entries"
+            },
+            ids = ids,
+        );
+        settings::update_settings_file(<dyn Fs>::global(cx), cx, |content, _| {
+            kask_bridge::remove_shadowing_context_server_entries(content);
+        });
+    }
+}
+
+/// Build the env map for a kask MCP server child process via the single
+/// canonical path (`build_mcp_server_env`).
+///
+/// Extracted so the deferred launch loop and the settings-change restart
+/// observer construct env identically — a divergence would restart servers
+/// with different env than the launch, or miss that the env changed. The
+/// per-project `ContextServerStore` path no longer composes env at all
+/// (single spawn authority, 2026-08-29) — the governed `McpRuntime` is the
+/// only spawn path and the only env consumer.
+/// The agent's kask tool source: the governed `McpRuntime` behind a
+/// synchronous cache. `tools()` is sync (the agent registry reads it on the
+/// foreground); a background tokio task refreshes the cache from the
+/// runtime's registered surface. Dispatch goes through the runtime's
+/// governed `invoke` — metered, self-healing, circuit-broken.
+struct ZedKaskToolSource {
+    runtime: std::sync::Arc<hkask_mcp::McpRuntime>,
+    cache: std::sync::Arc<std::sync::RwLock<Vec<agent::KaskToolDescriptor>>>,
+}
+
+impl agent::KaskToolSource for ZedKaskToolSource {
+    fn tools(&self) -> Vec<agent::KaskToolDescriptor> {
+        self.cache
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    fn running_server_ids_now(&self) -> Option<Vec<String>> {
+        self.runtime.try_running_server_ids()
+    }
+
+    fn invoke(
+        &self,
+        server_id: &str,
+        caller: Option<hkask_types::WebID>,
+        tool: &str,
+        args: serde_json::Value,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + Send>,
+    > {
+        let runtime = self.runtime.clone();
+        let server_id = server_id.to_string();
+        let tool = tool.to_string();
+        Box::pin(async move {
+            // zed-kask: D-seam — F6/P2. Attribute metering/regulation spans
+            // to the actual calling thread when the host supplied one;
+            // fall back to the pre-existing shared constant only when it
+            // did not (non-thread-tied dispatch — tests, or a future
+            // caller that has no `Thread` to derive from). This is a
+            // metering/attribution identity, not a capability grant.
+            let agent_id =
+                caller.unwrap_or_else(|| hkask_types::WebID::for_agent_name("zed-agent"));
+            hkask_tool_port::ToolPort::invoke(&*runtime, &server_id, &tool, args, agent_id)
+                .await
+                .map_err(|error| error.to_string())
+        })
+    }
+}
+
+async fn kask_server_env(server_id: &str, cx: &mut gpui::AsyncApp) -> hkask_types::ServerEnv {
+    let settings = cx.update(|cx| kask_bridge::KaskSettings::get_global(cx).clone());
+    let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
+    kask_bridge::build_mcp_server_env(
+        server_id,
+        &settings,
+        credentials_provider.as_ref(),
+        kask_bridge::get_inference_socket_path().as_deref(),
+        kask_bridge::get_inference_timeout_secs(),
+        cx,
+    )
+    .await
+}
+
+/// The env keys whose presence or value differs between two server env maps.
+///
+/// Keys only — several values are credentials and must not reach the log.
+fn changed_env_keys(
+    previous: &hkask_types::ServerEnv,
+    current: &hkask_types::ServerEnv,
+) -> Vec<String> {
+    let mut keys: Vec<String> = previous
+        .iter()
+        .filter(|(key, value)| current.get(key) != Some(value.as_str()))
+        .map(|(key, _)| key.clone())
+        .chain(
+            current
+                .iter()
+                .map(|(key, _)| key.clone())
+                .filter(|key| previous.get(key).is_none()),
+        )
+        .collect();
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
+// zed-kask: D51 — process exit skips destructors, so explicitly stop the
+// session's MCP runtime while its tokio reactor is still available.
+fn wire_kask_mcp_shutdown(runtime: std::sync::Arc<hkask_mcp::McpRuntime>, cx: &mut gpui::App) {
+    let handle = gpui_tokio::Tokio::handle(cx);
+    cx.on_app_quit(move |_| {
+        let runtime = runtime.clone();
+        let handle = handle.clone();
+        async move {
+            // Quit-only: this future uses tokio locks, never GPUI re-entry.
+            handle.block_on(runtime.shutdown_all());
+            log::info!("hKask MCP runtime shut down for session exit");
+        }
+    })
+    .detach();
+}
+
+// zed-kask: D3/D8 — F25: sync_kask_mcp_runtime_servers (governed McpRuntime restart).
+/// Re-sync the governed `McpRuntime` server processes when kask settings
+/// change (e.g. `kask.swarm.mode`, credit ceilings, provider toggles).
+///
+/// `sync_kask_mcp_servers` (above) only removes stale per-project entries.
+/// The governed McpRuntime instances — which the
+/// kask panel's `ToolInvoker` and the skill execution route through — are
+/// started once at login and would otherwise keep their startup env forever
+/// (a `kask.swarm.mode` toggle would never re-route the panel's own tool
+/// calls). This restarts exactly the servers whose computed env actually
+/// changed; servers not yet tracked by the deferred launch (empty baseline)
+/// are left alone. The baseline is recorded by the launch loop, so this
+/// observer is a no-op until the governed servers are actually running.
+///
+/// zed-kask: D45 — load/unload support. The env diff alone cannot see a
+/// `kask.mcp` load toggle: `kask_server_env` does not include the override,
+/// so a server toggled OFF keeps its old env (the diff sees no change and the
+/// server keeps running), and a server toggled ON that was never launched has
+/// no baseline to diff against (nothing starts it). This observer therefore
+/// also computes the load set — the same expression the deferred launch loop
+/// uses — and stops/starts explicitly through the runtime's own primitives,
+/// so the existing self-healing semantics apply: `stop_server` drops the
+/// launch spec (a deliberately unloaded server is not resurrected by the
+/// health supervisor or the on-demand reconnect), and `start_server_with_env`
+/// carries the startup retry/backoff, launch-spec recording, and health
+/// supervisor wiring. The start path is gated on the launch-pass-complete
+/// latch (set at the end of the deferred launch loop): before it, "no
+/// baseline" means the launch pass has not decided yet, and an observer-side
+/// start could race the launch loop with an env computed before the
+/// inference socket exists (the socketless-server defect class). The latch
+/// also makes the launch loop's "on start failure the baseline is dropped so
+/// a later settings change retries" contract real: a failed start leaves no
+/// baseline, and the next observer pass retries it.
+fn sync_kask_mcp_runtime_servers(
+    mcp_runtime: std::sync::Arc<hkask_mcp::McpRuntime>,
+    last_env: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<String, hkask_types::ServerEnv>>,
+    >,
+    launch_pass_complete: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    cx: &mut gpui::App,
+) {
+    let server_ids: Vec<&'static str> = kask_bridge::builtin_mcp_server_ids();
+    // The load set, resolved from the same settings source the deferred
+    // launch loop reads (`KaskSettings::get_global`), with the same
+    // expression: `load_default && overrides.get(id).unwrap_or(true)`.
+    let kask_mcp = kask_bridge::KaskSettings::get_global(cx).mcp.clone();
+    let load_states: Vec<(&'static str, bool)> = server_ids
+        .iter()
+        .map(|server_id| {
+            (
+                *server_id,
+                kask_mcp.load_default && *kask_mcp.overrides.get(*server_id).unwrap_or(&true),
+            )
+        })
+        .collect();
+    cx.spawn(async move |cx| {
+        // Build the changed-server list on the foreground — `kask_server_env`
+        // needs `AsyncApp` (not `Send`). Do NOT hold a tokio `enter()` guard
+        // across these `.await`s: when this observer fires twice (e.g. a mode
+        // toggle plus a window-close registry churn), two `cx.spawn` tasks each
+        // acquired a guard and interleaved at await points, panicking with
+        // "EnterGuard values dropped out of order" (tokio runtime/context/
+        // current.rs). The tokio-dependent stop/start is dispatched into
+        // `Tokio::spawn` below, which enters the reactor on the worker thread
+        // — no foreground guard held across awaits (the `.rules` "background_
+        // spawn of tokio-dependent futures" pattern).
+        let mut to_stop: Vec<&'static str> = Vec::new();
+        let mut to_start: Vec<(&'static str, String, hkask_types::ServerEnv)> = Vec::new();
+        let mut to_restart: Vec<(&'static str, String, hkask_types::ServerEnv)> = Vec::new();
+        for (server_id, loaded) in load_states {
+            let env = kask_server_env(server_id, cx).await;
+            let previous = last_env
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(server_id)
+                .cloned();
+            match previous {
+                Some(previous) => {
+                    if !loaded {
+                        // Unload: the server was launched (baseline exists) and
+                        // the settings no longer load it. `stop_server` is
+                        // idempotent and drops the launch spec, so neither the
+                        // health supervisor nor the on-demand reconnect
+                        // resurrects it.
+                        to_stop.push(server_id);
+                    } else if previous != env {
+                        // Name the keys that changed. A restart tears down live
+                        // connections and fails every in-flight panel call, so
+                        // "env changed" alone is not enough to tell a deliberate
+                        // settings toggle from an ordering artifact (e.g. a
+                        // credential that only resolved after launch). Values are
+                        // never logged — several are credentials.
+                        log::info!(
+                            "Kask MCP server '{server_id}' env changed — restarting (McpRuntime); \
+                             changed keys: {}",
+                            changed_env_keys(&previous, &env).join(", ")
+                        );
+                        // zed-kask: P7h — record the new baseline AT RESTART
+                        // INITIATION, on the same synchronous stretch as the
+                        // diff decision, so a sync that fires while the async
+                        // stop/start is still in flight sees the new env as
+                        // the baseline and restarts nothing. Recording only
+                        // after the async start completed let the 2026-10-02
+                        // startup's overlapping syncs (socket-set re-sync +
+                        // settings observer + wiring re-sync) each re-restart
+                        // the same server — portfolio 4× in 13 s. The deferred
+                        // launch loop already records before starting; this
+                        // is the same discipline.
+                        last_env
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .insert(server_id.to_string(), env.clone());
+                        to_restart.push((server_id, format!("hkask-mcp-{server_id}"), env));
+                    }
+                }
+                None => {
+                    // No baseline: either the deferred launch pass has not run
+                    // for this server yet (do NOT start it here — the launch
+                    // pass owns startup ordering, and an env computed before
+                    // the inference socket exists would ship a socketless
+                    // server), or the server was unloaded / failed to start
+                    // and its baseline was removed. The launch-pass-complete
+                    // latch distinguishes them: once the pass has run, a loaded
+                    // server with no baseline is a genuine load transition or
+                    // a retry of a failed start.
+                    if loaded && launch_pass_complete.load(std::sync::atomic::Ordering::SeqCst) {
+                        // zed-kask: P7h — record at initiation (the same
+                        // discipline as the restart arm and the deferred
+                        // launch loop); removed again on start failure so the
+                        // next pass retries.
+                        last_env
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .insert(server_id.to_string(), env.clone());
+                        to_start.push((server_id, format!("hkask-mcp-{server_id}"), env));
+                    }
+                }
+            }
+        }
+        if to_stop.is_empty() && to_start.is_empty() && to_restart.is_empty() {
+            return;
+        }
+        // `stop_server` / `start_server_with_env` drive tokio primitives
+        // (process, rmcp). `McpRuntime: Send + Sync` (its `governance` field is
+        // `Option<ToolGovernance>`, all-Send-Sync; `RegulationSink: Send +
+        // Sync`), so this future is `Send` and `Tokio::spawn` accepts it.
+        let runtime = mcp_runtime.clone();
+        let last_env = last_env.clone();
+        gpui_tokio::Tokio::spawn(cx, async move {
+            for server_id in to_stop {
+                kask_bridge::revoke_delegation_grant(server_id);
+                runtime.stop_server(server_id).await;
+                last_env
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(server_id);
+                log::info!(
+                    "Kask MCP server '{server_id}' unloaded by settings — stopped (McpRuntime)"
+                );
+            }
+            for (server_id, binary, env) in to_start {
+                // Discovery publishes metadata. Starting an already-live server
+                // is a no-op; concurrent starts converge on one connection.
+
+                match runtime
+                    .start_server_with_env(server_id, &binary, env.clone())
+                    .await
+                {
+                    Ok(()) => {
+                        // The baseline was recorded at initiation (the decision
+                        // loop); nothing to record here.
+                        log::info!(
+                            "Kask MCP server '{server_id}' loaded by settings — started \
+                             (McpRuntime)"
+                        );
+                    }
+                    Err(e) => {
+                        // Drop the initiation-recorded baseline so the next
+                        // observer pass retries through the start path (no
+                        // baseline + loaded + latch). The failed start still
+                        // recorded a launch spec, so a tool call also
+                        // reconnects on demand.
+                        last_env
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .remove(server_id);
+                        log::warn!(
+                            "Kask MCP server '{server_id}' failed to start: {e} — set \
+                             HKASK_MCP_{}_BIN to the binary path",
+                            server_id.to_uppercase()
+                        );
+                    }
+                }
+            }
+            for (server_id, binary, env) in to_restart {
+                runtime.stop_server(server_id).await;
+                match runtime
+                    .start_server_with_env(server_id, &binary, env.clone())
+                    .await
+                {
+                    Ok(()) => {
+                        // The baseline was recorded at initiation (the decision
+                        // loop) — the insert-vs-expect concern is moot there
+                        // because the decision loop writes the entry it just
+                        // read, on the same synchronous stretch.
+                    }
+                    Err(e) => {
+                        // Drop the initiation-recorded baseline so the next
+                        // observer pass retries through the start path (no
+                        // baseline + loaded + latch → to_start). The
+                        // initiation record already prevented duplicate
+                        // restarts while this attempt was in flight; keeping
+                        // it after a failure would suppress the retry.
+                        //
+                        // `stop_server` already dropped the connection, so the
+                        // runtime has no live server for `server_id` right now.
+                        // `McpRuntime::call_tool_inner` reconnects on demand from
+                        // the recorded launch spec, so panel calls recover without
+                        // another settings change — but the failure is still an
+                        // operator-visible warning, since a broken binary will not
+                        // heal on its own.
+                        last_env
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .remove(server_id);
+                        log::warn!(
+                            "Kask MCP server '{server_id}' restart failed: {e} — the runtime \
+                             will retry the connection on the next tool call"
+                        );
+                    }
+                }
+            }
+        })
+        .detach();
+    })
+    .detach();
+}
+
+// ── Swarm panel tool-invoker adapter ───────────────────────────────────────
+//
+// This adapter implements swarm_panel's ToolInvoker trait by delegating to
+// the McpRuntime (which implements ToolPort directly). It's defined here (in
+// the zed binary crate) because the composition root is the natural place for
+// adapter construction.
+
+/// Adapter implementing `swarm_panel::ToolInvoker` via the `McpRuntime`.
+///
+/// The dispatch future MUST run on the Tokio runtime, not on the GPUI
+/// background executor. `McpRuntime::invoke` → `call_tool_inner` →
+/// `try_reconnect` → `start_server_with_env` spawns a child process via
+/// `TokioChildProcess`, which requires a Tokio reactor context. The GPUI
+/// background executor has no reactor, so a transport-loss-triggered
+/// reconnect from a panel tool call would panic with "there is no reactor
+/// running" (the `.rules` "background_spawn of tokio-dependent futures"
+/// trap). The initial server start avoids this by going through
+/// `gpui_tokio::Tokio::spawn`; this adapter must do the same for the
+/// on-demand reconnect path. The `ToolPort::invoke` future is `Send`
+/// (`ToolFuture` is `Pin<Box<dyn Future + Send>>`), so `handle.spawn` is
+/// sound. The `JoinHandle` is bridged back to a GPUI `Task` via the
+/// background executor (the same pattern `gpui_tokio::Tokio::spawn` uses
+/// internally).
+struct PanelToolInvoker {
+    tool_port: std::sync::Arc<hkask_mcp::McpRuntime>,
+    executor: gpui::BackgroundExecutor,
+    tokio_handle: tokio::runtime::Handle,
+}
+
+// zed-kask: D23 — WorktreeSpawner impl for InferenceIpcServer.
+/// Creates a worktree-backed agent thread via `AgentPanelSiblingHost::create_sibling_thread`.
+/// Holds a `WeakEntity<AgentPanel>` + `AnyWindowHandle` (both `Send + Sync`) so it can
+/// be `Arc`-cloned into the GPUI-side task. The `spawn` method runs inside the
+/// GPUI task (which has `&mut AsyncApp`) and calls `create_sibling_thread` with
+/// `use_new_worktree: true`.
+struct AgentPanelWorktreeSpawner {
+    panel: gpui::WeakEntity<AgentPanel>,
+    window: gpui::AnyWindowHandle,
+}
+
+impl kask_bridge::WorktreeSpawner for AgentPanelWorktreeSpawner {
+    fn spawn(
+        &self,
+        prompt: String,
+        title: String,
+        worktree_name: Option<String>,
+        base_ref: Option<String>,
+        allowed_tools: Vec<String>,
+        cx: &mut gpui::AsyncApp,
+    ) -> gpui::Task<Result<hkask_types::inference_ipc::WorktreeThreadInfo, String>> {
+        use agent::SiblingThreadHost;
+        let panel = self.panel.clone();
+        let window = self.window;
+        cx.spawn(async move |cx| {
+            let panel = panel
+                .upgrade()
+                .ok_or_else(|| "agent panel no longer available".to_string())?;
+            let host = agent_ui::AgentPanelSiblingHost::new(panel.downgrade(), window);
+            let request = agent::SiblingThreadRequest {
+                title: title.into(),
+                prompt,
+                delegation_authority: Some(agent::DelegationAuthority::from_mcp_tools(
+                    &allowed_tools,
+                )),
+                agent_id: None,
+                model: None,
+                use_new_worktree: true,
+                worktree_name,
+                base_ref,
+            };
+            let info = host
+                .create_sibling_thread(request, cx)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(hkask_types::inference_ipc::WorktreeThreadInfo {
+                message: format!(
+                    "Worktree thread queued: {} ({}); native session establishment and auto-submit pending",
+                    info.title, info.agent_id
+                ),
+            })
+        })
+    }
+}
+
+impl swarm_panel::ToolInvoker for PanelToolInvoker {
+    fn invoke_tool(
+        &self,
+        server: &str,
+        tool: &str,
+        args: serde_json::Value,
+    ) -> gpui::Task<Result<String, swarm_panel::InvokeError>> {
+        use hkask_tool_port::ToolPort;
+        use hkask_types::WebID;
+        use swarm_panel::InvokeError;
+
+        // Accounting identity for the call meter — not a credential.
+        let webid = WebID::from_persona(b"swarm-panel");
+
+        let tool_port = self.tool_port.clone();
+        let server = server.to_string();
+        let tool = tool.to_string();
+        let tokio_handle = self.tokio_handle.clone();
+
+        // Spawn on the Tokio runtime so `try_reconnect` → `start_server_with_env`
+        // → `TokioChildProcess::spawn` finds a reactor. See the struct doc for
+        // why this cannot be `self.executor.spawn`.
+        let join_handle = tokio_handle.spawn(async move {
+            // Preserve the retry-safety classification across the seam. A blanket
+            // `e.to_string()` erased it and forced panels to treat a restarting
+            // MCP server as a permanent failure. `Interrupted` is kept separate
+            // from both: its outcome is unknown, so a panel must re-read state
+            // rather than retry (which could duplicate a side effect).
+            let result = ToolPort::invoke(&*tool_port, &server, &tool, args, webid)
+                .await
+                .map_err(|error| {
+                    let message = error.to_string();
+                    match error {
+                        hkask_tool_port::ToolPortError::Unavailable(_) => {
+                            InvokeError::Unavailable(message)
+                        }
+                        hkask_tool_port::ToolPortError::Interrupted(_) => {
+                            InvokeError::Interrupted(message)
+                        }
+                        // The tool's typed kind crosses the seam (SP-03):
+                        // panels classify structurally, never by message
+                        // text. Pre-dispatch refusals carry no tool kind.
+                        hkask_tool_port::ToolPortError::EnergyBudgetExceeded(_)
+                        | hkask_tool_port::ToolPortError::NotFound(_) => InvokeError::Failed {
+                            message,
+                            kind: None,
+                        },
+                        hkask_tool_port::ToolPortError::InvocationFailed { kind, .. } => {
+                            InvokeError::Failed { message, kind }
+                        }
+                    }
+                })?;
+            Ok(serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string()))
+        });
+        // Bridge the Tokio `JoinHandle` to a GPUI `Task` so the panel can
+        // `.await` it on the GPUI side. Cancelling the GPUI task aborts the
+        // underlying Tokio task (mirrors `gpui_tokio::Tokio::spawn`).
+        let abort_handle = join_handle.abort_handle();
+        let cancel = gpui_util::defer(move || {
+            abort_handle.abort();
+        });
+        self.executor.spawn(async move {
+            let result = join_handle.await;
+            drop(cancel);
+            result.map_err(|join_error| {
+                use swarm_panel::InvokeError;
+                if join_error.is_cancelled() {
+                    InvokeError::Interrupted("panel tool call cancelled".to_string())
+                } else {
+                    // `is_panic()` is true for panics; `tokio::task::JoinError`
+                    // stringifies to the panic message in that case.
+                    InvokeError::Failed {
+                        message: format!("tokio task failed: {join_error}"),
+                        kind: None,
+                    }
+                }
+            })?
+        })
+    }
+}
+
+/// Adapter implementing `hkask_regulation::AlertSink` by forwarding critical
+/// regulation alerts to a GPUI foreground task that dispatches them as toasts.
+///
+/// The metacognition loop calls `on_alert` from a background tokio task when a
+/// critical threshold is breached (well exhaustion, variety deficit, low
+/// effectiveness). `AsyncApp` is not `Send` (GPUI is single-threaded), so the
+/// sink holds a `tokio::sync::mpsc::UnboundedSender` (which is `Send + Sync`)
+/// and a GPUI foreground task drains the receiver and dispatches toasts. This
+/// closes the algedonic escalation path from S1 (sensor) to S5 (user-facing
+/// policy) so the user is notified even when the Kask panel is closed.
+///
+/// Toast delivery is best-effort: if no window is open (headless, startup),
+/// the toast is silently dropped and the alert remains in the logs + ledger.
+struct ToastAlertSink {
+    tx: tokio::sync::mpsc::UnboundedSender<hkask_regulation::AlertEvent>,
+}
+
+impl ToastAlertSink {
+    fn new(tx: tokio::sync::mpsc::UnboundedSender<hkask_regulation::AlertEvent>) -> Self {
+        Self { tx }
+    }
+}
+
+impl hkask_regulation::AlertSink for ToastAlertSink {
+    fn on_alert(&self, event: &hkask_regulation::AlertEvent) {
+        // Only critical alerts warrant a toast — warnings are surfaced via
+        // the Kask panel status bar and the `curator_status` tool.
+        if !event.critical {
+            return;
+        }
+        // `try_send` is non-blocking; if the channel is full or the receiver
+        // was dropped (app shutting down), the alert is logged and swallowed —
+        // alert delivery is best-effort, never a correctness path.
+        if let Err(e) = self.tx.send(event.clone()) {
+            log::warn!(
+                "hKask critical alert dropped (toast channel closed/full): {e} — alert: {}",
+                event.message
+            );
+        }
+    }
+}
+
+struct KaskCriticalAlertToast;
+
+/// Spawn a GPUI foreground task that drains the alert receiver and dispatches
+/// a toast for each critical alert. Returns when the sender is dropped (app
+/// shutdown). Must be called from the GPUI foreground thread.
+fn spawn_alert_toast_drainer(
+    mut rx: tokio::sync::mpsc::UnboundedReceiver<hkask_regulation::AlertEvent>,
+    cx: &mut gpui::App,
+) {
+    cx.spawn(async move |cx| {
+        while let Some(event) = rx.recv().await {
+            // Only critical alerts reach this point (the sink filters), but
+            // double-check in case the sender contract changes.
+            if !event.critical {
+                continue;
+            }
+            let message = event.message.clone();
+            cx.update(|cx| {
+                // Find any active MultiWorkspace and show the toast on its
+                // inner workspace. If no window is open, the toast is dropped —
+                // the alert still lives in the logs and the regulation ledger.
+                if let Some(window) = cx.active_window()
+                    && let Some(multi_workspace) = window.downcast::<MultiWorkspace>()
+                {
+                    let _ = multi_workspace.update(cx, |multi_workspace, _, cx| {
+                        let workspace = multi_workspace.workspace();
+                        let _ = workspace.update(cx, |workspace, cx| {
+                            workspace.show_toast(
+                                Toast::new(
+                                    NotificationId::unique::<KaskCriticalAlertToast>(),
+                                    format!("hKask regulation alert: {message}"),
+                                ),
+                                cx,
+                            );
+                        });
+                    });
+                }
+            });
+        }
+    })
+    .detach();
 }
 
 fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut App) {
@@ -1063,26 +4582,11 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                                 });
                             } else {
                                 log::warn!(
-                                    "zed://agent received but the AgentPanel is not registered \
-                                     (is `disable_ai` enabled?)"
+                                    "{ZED_URL_SCHEME}://agent received but the AgentPanel is not \
+                                     registered (is `disable_ai` enabled?)"
                                 );
                             }
                         });
-                    })
-                })
-                .detach_and_log_err(cx);
-            }
-            OpenRequestKind::InstallSkill { content } => {
-                cx.spawn(async move |cx| {
-                    let multi_workspace =
-                        workspace::get_any_active_multi_workspace(app_state, cx.clone()).await?;
-
-                    multi_workspace.update(cx, |_multi_workspace, _window, cx| {
-                        settings_ui::open_skill_creator(
-                            settings_ui::pages::SkillCreatorOpenMode::Install { content },
-                            Some(multi_workspace),
-                            cx,
-                        );
                     })
                 })
                 .detach_and_log_err(cx);
@@ -1149,8 +4653,8 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 });
             }
             OpenRequestKind::Setting { setting_path } => {
-                // zed://settings/languages/$(language)/tab_size  - DONT SUPPORT
-                // zed://settings/languages/Rust/tab_size  - SUPPORT
+                // <app-scheme>://settings/languages/$(language)/tab_size  - DONT SUPPORT
+                // <app-scheme>://settings/languages/Rust/tab_size  - SUPPORT
                 // languages.$(language).tab_size
                 // [ languages $(language) tab_size]
                 cx.spawn(async move |cx| {
@@ -1305,60 +4809,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
         }));
     }
 
-    if !request.open_channel_notes.is_empty() || request.join_channel.is_some() {
-        cx.spawn(async move |cx| {
-            let result = maybe!(async {
-                if let Some(task) = task {
-                    task.await?;
-                }
-                let client = app_state.client.clone();
-                // we continue even if connection fails as join_channel/ open channel notes will
-                // show a visible error message.
-                client.connect(true, cx).await.into_response().log_err();
-
-                if let Some(channel_id) = request.join_channel {
-                    cx.update(|cx| {
-                        workspace::join_channel(
-                            client::ChannelId(channel_id),
-                            app_state.clone(),
-                            None,
-                            None,
-                            cx,
-                        )
-                    })
-                    .await?;
-                }
-
-                let workspace_window =
-                    workspace::get_any_active_multi_workspace(app_state, cx.clone()).await?;
-
-                let workspace = workspace_window.read_with(cx, |mw, _| mw.workspace().clone())?;
-                let weak_workspace = workspace.downgrade();
-
-                let mut promises = Vec::new();
-                for (channel_id, heading) in request.open_channel_notes {
-                    promises.push(cx.update_window(workspace_window.into(), |_, window, cx| {
-                        ChannelView::open(
-                            client::ChannelId(channel_id),
-                            heading,
-                            workspace.clone(),
-                            window,
-                            cx,
-                        )
-                    })?)
-                }
-                for result in future::join_all(promises).await {
-                    result.notify_workspace_async_err(weak_workspace.clone(), cx);
-                }
-                anyhow::Ok(())
-            })
-            .await;
-            if let Err(err) = result {
-                fail_to_open_window_async(err, cx);
-            }
-        })
-        .detach()
-    } else if let Some(task) = task {
+    if let Some(task) = task {
         cx.spawn(async move |cx| {
             if let Err(err) = task.await {
                 fail_to_open_window_async(err, cx);
@@ -1695,7 +5146,7 @@ struct Args {
     /// Use `path:line:row` syntax to open a file at a specific location.
     /// Non-existing paths and directories will ignore `:line:row` suffix.
     ///
-    /// URLs can either be `file://` or `zed://` scheme, or relative to <https://zed.dev>.
+    /// URLs can use the `file://` or application URL scheme, or be relative to the server URL.
     paths_or_urls: Vec<String>,
 
     /// Pairs of file paths to diff. Can be specified multiple times.
@@ -1805,15 +5256,14 @@ impl ToString for IdType {
     }
 }
 
-fn parse_url_arg(arg: &str, cx: &App) -> String {
+fn parse_url_arg(arg: &str) -> String {
     match std::fs::canonicalize(Path::new(&arg)) {
         Ok(path) => format!("file://{}", path.display()),
         Err(_) => {
             if arg.starts_with("file://")
-                || arg.starts_with("zed://")
+                || arg.starts_with(&format!("{ZED_URL_SCHEME}://"))
                 || arg.starts_with("zed-cli://")
                 || arg.starts_with("ssh://")
-                || parse_zed_link(arg, cx).is_some()
             {
                 arg.into()
             } else {
@@ -2070,5 +5520,259 @@ fn check_for_conpty_dll() {
         }
     } else {
         log::warn!("Failed to load conpty.dll. Terminal will work with reduced functionality.");
+    }
+}
+
+#[cfg(all(test, feature = "test-support"))]
+mod tests {
+    use super::*;
+    use hkask_regulation::AlertSink;
+
+    /// The `ToastAlertSink` → `spawn_alert_toast_drainer` channel bridge is
+    /// the only integration point between the background tokio metacognition
+    /// loop and the GPUI foreground toast dispatcher. This test pins the
+    /// channel contract: a critical `AlertEvent` sent via the sink's
+    /// `try_send` must be receivable by the drainer's `recv`. If the channel
+    /// is closed, full, or the wrong type is sent, the alert would be
+    /// silently dropped — the user would never see a critical regulation
+    /// alert.
+    ///
+    /// This test does NOT exercise the GPUI toast dispatch (that requires a
+    /// full `Workspace` fixture); it only verifies the channel hop that
+    /// bridges the `Send + Sync` boundary.
+    #[test]
+    fn toast_alert_sink_channel_delivers_critical_events() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<hkask_regulation::AlertEvent>();
+        let sink = ToastAlertSink::new(tx);
+
+        // Non-critical alerts must be filtered by the sink — the drainer
+        // should never see them.
+        sink.on_alert(&hkask_regulation::AlertEvent {
+            message: "warning".into(),
+            critical: false,
+        });
+        assert!(
+            rx.try_recv().is_err(),
+            "non-critical alerts must not reach the channel"
+        );
+
+        // Critical alerts must be delivered.
+        sink.on_alert(&hkask_regulation::AlertEvent {
+            message: "well exhausted".into(),
+            critical: true,
+        });
+        let event = rx
+            .try_recv()
+            .expect("critical alert should be receivable on the drainer side");
+        assert_eq!(event.message, "well exhausted");
+        assert!(event.critical);
+    }
+
+    /// When the drainer is dropped (app shutdown), the sink must not panic —
+    /// `try_send` returns an error which the sink logs and swallows. This
+    /// pins the best-effort contract: a shutting-down app must not crash on
+    /// a late critical alert.
+    #[test]
+    fn toast_alert_sink_does_not_panic_when_channel_closed() {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<hkask_regulation::AlertEvent>();
+        let sink = ToastAlertSink::new(tx);
+        drop(rx); // simulate app shutdown
+
+        // This must not panic — the error is logged and swallowed.
+        sink.on_alert(&hkask_regulation::AlertEvent {
+            message: "late alert".into(),
+            critical: true,
+        });
+    }
+
+    /// zed-kask: pinning test for the kask wiring functional units in `main.rs`.
+    ///
+    /// The kask wirings (F2–F25, see `kask/docs/reference/upstream-rebase-process.md` §4)
+    /// are process-global hooks set during `main()`. Most cannot be exercised
+    /// in a unit test without a full app init (they need `cx`, `app_state`,
+    /// a resolved user, etc.). This test is a **compile-time + symbol-existence
+    /// pin**: it asserts that the key wiring functions and types are accessible
+    /// from the test module, so that removing any wiring (e.g., deleting
+    /// `resolve_mcp_binary` or `sync_kask_mcp_servers`) breaks this test.
+    ///
+    /// Per the `.rules` trap "Tests must pin deliberate zed-kask deviations":
+    /// every `// zed-kask:` marker must have a corresponding test. This test
+    /// pins the functional units in `main.rs` whose symbols are reachable
+    /// from a unit test. F8 (`<dyn fs::Fs>::set_global`) is a trait method
+    /// call on an external value and cannot be pinned via `TypeId`; it is
+    /// covered by the F2–F25 compile-time reachability of the `fs` value.
+    // Pin the startup order at the composition root: an initial background
+    // notification is useless if registries have no source to read yet.
+    #[test]
+    fn kask_tool_source_is_installed_before_initial_refresh() {
+        let (_, wiring) = include_str!("main.rs")
+            .split_once("let source = std::sync::Arc::new(ZedKaskToolSource {")
+            .expect("managed tool source construction");
+        let install = wiring
+            .find("agent::set_kask_tool_source(source);")
+            .expect("source installation");
+        let start_refresh = wiring
+            .find("tokio_handle.spawn(async move {")
+            .expect("initial tool-surface refresh");
+        assert!(
+            install < start_refresh,
+            "tool source must exist before its refresh task can notify registries"
+        );
+    }
+
+    // zed-kask: in-process memory tagging must obey the saved
+    // Settings → Kask → Models classifier. `HKASK_CLASSIFIER_MODEL` is the
+    // child/CLI delivery seam; reading it here let stale inherited startup
+    // state override a later operator choice. This source pin complements the
+    // behavioral resolver tests in kask_bridge.
+    #[test]
+    fn kask_host_classifier_uses_the_saved_setting_not_process_env() {
+        let source = include_str!("main.rs");
+        let helper_needle = concat!("classifier_model_", "for_host()");
+        assert!(
+            source.contains(helper_needle),
+            "the in-process memory port must resolve its classifier from Kask settings"
+        );
+        let env_override_needle = concat!("std::env::var(\"HKASK_", "CLASSIFIER_MODEL\")");
+        assert!(
+            !source.contains(env_override_needle),
+            "the host process must not let inherited HKASK_CLASSIFIER_MODEL override the saved setting"
+        );
+    }
+
+    // zed-kask: MaxIdleRetainedThreads override — the idle-thread retention
+    // cap must be raised after agent_ui::init installs the panel machinery, so
+    // switching between recent threads stays in-memory instead of re-loading
+    // from the DB and replaying every entry on the foreground.
+    #[test]
+    fn kask_idle_thread_retention_override_is_set_after_agent_ui_init() {
+        let source = include_str!("main.rs");
+        let init = source.find("agent_ui::init(").expect("agent_ui::init call");
+        let retention = source
+            .find("MaxIdleRetainedThreads(")
+            .expect("idle-thread retention override");
+        assert!(
+            init < retention,
+            "retention override must be set after agent_ui::init"
+        );
+    }
+
+    // zed-kask: P7h — the restart baseline must be recorded at restart
+    // INITIATION (in the decision loop, before the async stop/start is
+    // spawned), not after the async start completes; recording only on
+    // completion let the 2026-10-02 startup's overlapping syncs each
+    // re-restart the same server (portfolio 4× in 13 s). Source-structure
+    // pin: the baseline insert sits between the env-changed branch and the
+    // to_restart push. Needles are split via concat! so this test's own
+    // source cannot satisfy them (the D43 source-pin pattern).
+    #[test]
+    fn kask_restart_baseline_is_recorded_at_initiation() {
+        let source = include_str!("main.rs");
+        let branch_needle = concat!("} else if previous != e", "nv {");
+        let insert_needle = concat!(".insert(server_id.to_string(), env", ".clone())");
+        let push_needle = concat!(
+            "to_restart.push((server_id, format!(\"hkask-mcp-{server",
+            "_id}\"), env))"
+        );
+        let branch = source
+            .find(branch_needle)
+            .expect("env-changed restart branch");
+        let insert = source[branch..]
+            .find(insert_needle)
+            .expect("baseline insert in the restart branch");
+        let push = source[branch..].find(push_needle).expect("to_restart push");
+        assert!(
+            insert < push,
+            "the baseline must be recorded before the restart is queued"
+        );
+    }
+
+    #[test]
+    fn kask_wiring_symbols_exist() {
+        let _ = wire_kask_mcp_shutdown as fn(std::sync::Arc<hkask_mcp::McpRuntime>, &mut gpui::App);
+        // F22: binary resolution now lives in the runtime's own
+        // `resolve_mcp_binary` (spawn time) — the per-project descriptor path
+        // that used main.rs's copy was deleted with the single-authority
+        // migration (2026-08-29). Pinned by the runtime's tests.
+
+        // F23: kask_server_env — must be accessible. Referencing the fn
+        // name forces the compiler to resolve it; renaming or deleting it
+        // breaks compilation here. The fn is async so we can't call it
+        // without an AsyncApp, but the name reference pins its existence.
+        let _ = kask_server_env;
+
+        // F2: the kask tokio runtime is built via tokio::runtime::Builder —
+        // assert the builder type is accessible (the runtime is built in main()).
+        let _ = std::any::TypeId::of::<tokio::runtime::Builder>();
+
+        // F3: AlertEvent and Alert Sink must be accessible (alert channel wiring).
+        let _ = std::any::TypeId::of::<hkask_regulation::AlertEvent>();
+
+        // F4: algedonic threshold → variety_max_deficit mapping. The constant
+        // DEFAULT_VARIETY_MAX_DEFICIT is the scaling base; removing it breaks
+        // the F4 wiring in main(). Reading the const value pins it (a const
+        // is not a type — `TypeId::of::<CONST>()` does not compile).
+        let _ = hkask_regulation::DEFAULT_VARIETY_MAX_DEFICIT;
+
+        // F5: swarm-panel gas budget persona. SWARM_PANEL_CALL_CAP is the
+        // call cap seeded for the swarm-panel persona; removing it breaks
+        // the F5 wiring in main(). Reading the const value pins it.
+        let _ = SWARM_PANEL_CALL_CAP;
+
+        // F6: CyberneticsLoop and MetacognitionLoop must be accessible.
+        let _ = std::any::TypeId::of::<hkask_regulation::CyberneticsLoop>();
+        let _ = std::any::TypeId::of::<hkask_regulation::MetacognitionLoop>();
+
+        // F7: BridgeMetacognitionProvider — the metacognition provider hook.
+        let _ = std::any::TypeId::of::<kask_bridge::BridgeMetacognitionProvider>();
+
+        // F9: KaskSettings must be accessible.
+        let _ = std::any::TypeId::of::<kask_bridge::KaskSettings>();
+
+        // F10: curator.always_on gating field — the setting that gates tick cycles.
+        // Pinning the field type via KaskCuratorSettings ensures the struct
+        // and its always_on field exist; removing the field breaks compilation.
+        let _ = std::any::TypeId::of::<kask_bridge::KaskCuratorSettings>();
+
+        // F6: McpRuntime must be accessible.
+        let _ = std::any::TypeId::of::<hkask_mcp::McpRuntime>();
+
+        // F25: sync_kask_mcp_runtime_servers — must be accessible as a fn
+        // item (not just a function pointer type). Referencing the fn value
+        // pins both its existence and its name; renaming or deleting it
+        // breaks compilation here. The `Arc<AtomicBool>` parameter is the
+        // D45 launch-pass-complete latch (load/unload gating).
+        let _ = sync_kask_mcp_runtime_servers
+            as fn(
+                std::sync::Arc<hkask_mcp::McpRuntime>,
+                std::sync::Arc<
+                    std::sync::Mutex<std::collections::HashMap<String, hkask_types::ServerEnv>>,
+                >,
+                std::sync::Arc<std::sync::atomic::AtomicBool>,
+                &mut gpui::App,
+            );
+
+        // D8: wire_kask_inference_stack — the inference-stack wiring helper
+        // called by both the deferred task and the model-resolved re-wire
+        // subscription. Pinning the fn pointer pins its existence, name, and
+        // signature; renaming or deleting it breaks compilation here. The
+        // `Arc<AtomicBool>` parameter is the D45 launch-pass-complete latch;
+        // the return type is the re-wire's latch input — which model the
+        // stack was wired to (the fallback retry, 2026-10-26).
+        let _ = wire_kask_inference_stack
+            as fn(
+                &kask_bridge::KaskSettings,
+                &std::sync::Arc<tokio::sync::RwLock<hkask_regulation::CyberneticsLoop>>,
+                Option<kask_bridge::LanguageModelEmbeddingPort>,
+                std::sync::Arc<hkask_mcp::McpRuntime>,
+                std::sync::Arc<
+                    std::sync::Mutex<std::collections::HashMap<String, hkask_types::ServerEnv>>,
+                >,
+                std::sync::Arc<std::sync::atomic::AtomicBool>,
+                &mut gpui::App,
+            ) -> InferenceStackWiring;
+
+        // If this test compiles, the functional units' key symbols are
+        // present. Removing any wiring function/type breaks compilation here.
     }
 }

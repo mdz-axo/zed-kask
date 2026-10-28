@@ -70,7 +70,7 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
             .unwrap_or_else(|| available.name.clone()),
         id: available.name.clone(),
         max_input_tokens: available.max_tokens,
-        max_output_tokens: available.max_output_tokens.unwrap_or(4_096),
+        max_output_tokens: available.max_output_tokens,
         default_temperature: available.default_temperature.unwrap_or(1.0),
         mode,
         supports_thinking,
@@ -161,6 +161,29 @@ mod tests {
         assert!(!model.supports_adaptive_thinking);
         assert!(model.supported_effort_levels.is_empty());
     }
+
+    #[test]
+    fn unset_max_output_tokens_is_not_fabricated() {
+        // zed-kask: D83 — the model metadata must carry the settings value
+        // truthfully: an unset `max_output_tokens` is `None` (unknown), not a
+        // silent 4096 cap that cuts agent streams mid-tool-call. The one
+        // documented fallback for the mandatory wire parameter lives in
+        // `into_anthropic` (`UNCONFIGURED_MAX_OUTPUT_TOKENS`).
+        let unset =
+            parse_available_model(r#"{"name": "custom-anthropic-model", "max_tokens": 200000}"#);
+        assert_eq!(
+            available_model_to_anthropic_model(&unset).max_output_tokens,
+            None
+        );
+
+        let configured = parse_available_model(
+            r#"{"name": "custom-anthropic-model", "max_tokens": 200000, "max_output_tokens": 128000}"#,
+        );
+        assert_eq!(
+            available_model_to_anthropic_model(&configured).max_output_tokens,
+            Some(128_000)
+        );
+    }
 }
 
 impl AnthropicCompatibleLanguageModelProvider {
@@ -228,7 +251,7 @@ impl AnthropicCompatibleLanguageModelProvider {
                     }
                 })
                 .collect(),
-            max_output_tokens: Some(model.max_output_tokens),
+            max_output_tokens: model.max_output_tokens,
             ..LanguageModel::new(
                 LanguageModelId::from(model.id.clone()),
                 LanguageModelName::from(model.display_name.clone()),

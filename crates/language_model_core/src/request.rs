@@ -482,6 +482,9 @@ pub struct LanguageModelRequest {
     pub stop: Vec<String>,
     pub temperature: Option<f32>,
     pub thinking_allowed: bool,
+    // zed-kask: D42 — upstream's field name (thinking_effort) is retained as
+    // of the 2026-10-27 minimization ruling; the substance (uncapped thinking,
+    // explicit-disable passthrough, no hidden budgets) is unchanged.
     pub thinking_effort: Option<String>,
     pub speed: Option<Speed>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

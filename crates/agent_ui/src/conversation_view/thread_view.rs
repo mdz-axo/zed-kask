@@ -15,7 +15,7 @@ use acp_thread::{
 };
 use agent::{
     SandboxStatusKey, SandboxStatusRefresh, SkillLoadingIssue, SkillLoadingIssueKind,
-    SkillLoadingIssuesUpdated, ThreadSandbox, VerifiedSandboxStatus,
+    SkillLoadingIssuesUpdated, ThreadSandbox, ThreadSaveFailed, VerifiedSandboxStatus,
 };
 use agent_settings::UserAgentsMd;
 use agent_skills::MAX_SKILL_DESCRIPTION_LEN;
@@ -40,6 +40,7 @@ use itertools::Itertools;
 use language_model::{
     FastModeConfirmation, LanguageModel, LanguageModelEffortLevel, LanguageModelId,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, Speed,
+    ZED_CLOUD_PROVIDER_NAME,
 };
 use notifications::status_toast::StatusToast;
 use project::ResolvedPath;
@@ -101,6 +102,48 @@ pub(super) fn subagent_label(thread: &AcpThread) -> SharedString {
 }
 
 const DATA_RETENTION_LEARN_MORE_URL: &str = "https://support.claude.com/en/articles/15425996-data-retention-practices-for-mythos-class-models";
+
+// zed-kask: D39 — provider-aware PaymentRequired copy. Only Zed's own
+// backend bills against the user's Zed plan; every other provider returning
+// 402/billing codes is reporting that its own account is out of credit, so
+// the message must name that provider instead of offering a Zed upgrade.
+fn payment_required_message(provider: &SharedString) -> String {
+    if provider.as_ref() == ZED_CLOUD_PROVIDER_NAME.0.as_ref() {
+        "You reached your free usage limit. Upgrade to Zed Pro for more prompts.".to_string()
+    } else {
+        format!(
+            "{provider} rejected the request because your {provider} account is out of credit \
+             or over its spend limit. Add credit to your {provider} account to continue."
+        )
+    }
+}
+
+// zed-kask: D39 — pins the provider-aware PaymentRequired copy.
+#[cfg(test)]
+mod payment_required_message_tests {
+    use super::*;
+
+    #[test]
+    fn zed_cloud_provider_keeps_upgrade_copy() {
+        let message = payment_required_message(&ZED_CLOUD_PROVIDER_NAME.0);
+        assert_eq!(
+            message,
+            "You reached your free usage limit. Upgrade to Zed Pro for more prompts."
+        );
+    }
+
+    #[test]
+    fn third_party_provider_names_its_credit_balance() {
+        let provider: SharedString = "OpenRouter".into();
+        let message = payment_required_message(&provider);
+        assert!(message.contains("OpenRouter"), "{message}");
+        assert!(message.contains("out of credit"), "{message}");
+        assert!(
+            !message.contains("Zed Pro"),
+            "third-party billing failure must not offer a Zed upgrade: {message}"
+        );
+    }
+}
 
 pub(super) struct ThreadRecovery {
     pub session_id: acp_v2::SessionId,
@@ -814,7 +857,7 @@ pub struct ThreadView {
     pub _subscriptions: Vec<Subscription>,
     pub message_editor: Entity<MessageEditor>,
     pub add_context_menu_handle: PopoverMenuHandle<ContextMenu>,
-    pub thinking_effort_menu_handle: PopoverMenuHandle<ContextMenu>,
+    pub reasoning_effort_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub fast_mode_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub project: WeakEntity<Project>,
     /// Cache + worktree snapshot for resolving paths in markdown code spans.
@@ -1105,6 +1148,11 @@ impl ThreadView {
                         should_auto_submit = auto_submit;
                         Some(blocks)
                     }
+                    AgentInitialContent::DelegatedSibling { blocks, .. } => {
+                        // ConversationView applies authority before constructing this view.
+                        should_auto_submit = true;
+                        Some(blocks)
+                    }
                     AgentInitialContent::FromExternalSource(prompt) => {
                         show_external_source_prompt_warning = true;
                         // SECURITY: Be explicit about not auto submitting prompt from external source.
@@ -1222,6 +1270,26 @@ impl ThreadView {
                 },
             ));
 
+            // A failed thread-content save is surfaced as a thread error so
+            // the operator learns immediately (a readonly/corrupt threads.db
+            // otherwise loses content silently until restart).
+            subscriptions.push(cx.subscribe(
+                &native_connection.0,
+                move |this: &mut Self, _agent, event: &ThreadSaveFailed, cx| {
+                    let session_id = this.thread.read(cx).session_id();
+                    if event.session_id != *session_id {
+                        return;
+                    }
+                    this.handle_thread_error(
+                        anyhow::anyhow!(
+                            "Failed to save this conversation: {:#}\n\nYour messages are still visible here, but they were not written to disk — restarting the app would lose them. Check the threads database (disk space, permissions, integrity).",
+                            event.error
+                        ),
+                        cx,
+                    );
+                },
+            ));
+
             // A "no model selected" error is stale as soon as the thread has a
             // usable model
             if let Some(native_thread) = native_connection.thread(thread.read(cx).session_id(), cx)
@@ -1325,7 +1393,7 @@ impl ThreadView {
             current_submission,
             message_editor,
             add_context_menu_handle: PopoverMenuHandle::default(),
-            thinking_effort_menu_handle: PopoverMenuHandle::default(),
+            reasoning_effort_menu_handle: PopoverMenuHandle::default(),
             fast_mode_menu_handle: PopoverMenuHandle::default(),
             project,
             code_span_resolver,
@@ -2188,9 +2256,9 @@ impl ThreadView {
             }
         }
 
-        // A built-in command (e.g. `/compact`): run the bare command without
-        // echoing it as a user message, and queue any trailing text the user
-        // typed so it isn't silently dropped.
+        // A native command with no declared input (e.g. `/compact`) runs alone,
+        // with trailing text queued as a follow-up. Input-taking native commands
+        // (e.g. `/trace`) must receive the complete prompt in the same turn.
         let native_command =
             leading_native_command(text, self.session_capabilities.read().available_commands());
         if let Some(command_name) = native_command {
@@ -2542,11 +2610,11 @@ impl ThreadView {
     fn emit_thread_error_telemetry(&self, error: &ThreadError, cx: &mut Context<Self>) {
         let (error_kind, acp_error_code, message): (&str, Option<SharedString>, SharedString) =
             match error {
-                ThreadError::ZedPaymentRequired => (
+                // zed-kask: D39 — telemetry carries the provider-aware message.
+                ThreadError::PaymentRequired { provider } => (
                     "payment_required",
                     None,
-                    "You reached your free usage limit. Upgrade to Zed Pro for more prompts."
-                        .into(),
+                    payment_required_message(provider).into(),
                 ),
                 ThreadError::Refusal => {
                     let model_or_agent_name = self.current_model_name(cx);
@@ -5487,7 +5555,8 @@ impl ThreadView {
                                     .child(self.render_add_context_button(cx))
                                     .child(self.render_follow_toggle(cx))
                                     .children(self.render_fast_mode_control(cx))
-                                    .children(self.render_thinking_control(cx)),
+                                    .children(self.render_thinking_control(cx))
+                                    .children(self.render_compact_control(cx)),
                             )
                             .child(
                                 h_flex()
@@ -6216,6 +6285,49 @@ impl ThreadView {
         Some((provider_id, model_id, confirmation))
     }
 
+    fn compact_control_enabled(&self, cx: &App) -> Option<bool> {
+        self.as_native_thread(cx)?;
+        leading_native_command(
+            &format!("/{}", agent::COMPACT_COMMAND_NAME),
+            self.session_capabilities.read().available_commands(),
+        )?;
+        let thread = self.thread.read(cx);
+        Some(
+            !self.is_loading_contents
+                && thread.status() == ThreadStatus::Idle
+                && !thread.entries().is_empty(),
+        )
+    }
+
+    fn render_compact_control(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let enabled = self.compact_control_enabled(cx)?;
+        Some(
+            IconButton::new("compact-context", IconName::Compact)
+                .icon_size(IconSize::Small)
+                .aria_label("Compact context")
+                .tooltip(Tooltip::text("Compact context"))
+                .disabled(!enabled)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    if this.compact_control_enabled(cx) != Some(true) {
+                        return;
+                    }
+                    cx.emit(AcpThreadViewEvent::Interacted);
+                    this.thread_error.take();
+                    this.thread_feedback.clear();
+                    // Use the native command turn, preserving the unsent editor draft.
+                    let command =
+                        acp_v2::ContentBlock::from(format!("/{}", agent::COMPACT_COMMAND_NAME));
+                    this.send_content(
+                        Task::ready(Ok(Some((vec![command], Vec::new())))),
+                        true,
+                        window,
+                        cx,
+                    );
+                }))
+                .into_any_element(),
+        )
+    }
+
     fn render_thinking_control(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let thread = self.as_native_thread(cx)?.read(cx);
         let model = thread.model()?;
@@ -6289,8 +6401,11 @@ impl ThreadView {
             thinking_toggle.on_click(cx.listener(move |this, _, _window, cx| {
                 if let Some(thread) = this.as_native_thread(cx) {
                     thread.update(cx, |thread, cx| {
-                        let enable_thinking = !thread.thinking_enabled();
-                        thread.set_thinking_enabled(enable_thinking, cx);
+                        let enable_thinking = thread.thinking_effort().is_none();
+                        thread.set_reasoning_effort(
+                            enable_thinking.then(|| "default".to_string()),
+                            cx,
+                        );
 
                         let favorite_key = thread
                             .model()
@@ -6361,7 +6476,7 @@ impl ThreadView {
             .or(default_effort_level)
             .map_or("Select Effort".into(), |effort| effort.name);
 
-        let (label_color, icon) = if self.thinking_effort_menu_handle.is_deployed() {
+        let (label_color, icon) = if self.reasoning_effort_menu_handle.is_deployed() {
             (Color::Accent, IconName::ChevronUp)
         } else {
             (Color::Muted, IconName::ChevronDown)
@@ -6378,7 +6493,7 @@ impl ThreadView {
                         .justify_between()
                         .child(Label::new("Change Thinking Effort"))
                         .child(KeyBinding::for_action_in(
-                            &ToggleThinkingEffortMenu,
+                            &ToggleReasoningEffortMenu,
                             &focus_handle,
                             cx,
                         )),
@@ -6394,7 +6509,7 @@ impl ThreadView {
                             .border_color(cx.theme().colors().border_variant)
                             .child(Label::new("Cycle Thinking Effort"))
                             .child(KeyBinding::for_action_in(
-                                &CycleThinkingEffort,
+                                &CycleReasoningEffort,
                                 &focus_handle,
                                 cx,
                             )),
@@ -6448,7 +6563,7 @@ impl ThreadView {
                                     .update(cx, |this, cx| {
                                         if let Some(thread) = this.as_native_thread(cx) {
                                             thread.update(cx, |thread, cx| {
-                                                thread.set_thinking_effort(
+                                                thread.set_reasoning_effort(
                                                     Some(effort.to_string()),
                                                     cx,
                                                 );
@@ -6493,7 +6608,7 @@ impl ThreadView {
                     menu
                 }))
             })
-            .with_handle(self.thinking_effort_menu_handle.clone())
+            .with_handle(self.reasoning_effort_menu_handle.clone())
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(-2.0),
@@ -9908,6 +10023,25 @@ impl ThreadView {
                     )
                 }
             })
+            // Render the live thinking trace from the skill execution (if any).
+            // This is the accumulating reasoning the user sees while the
+            // cascade runs — not just a one-line title.
+            .when_some(tool_call.thoughts.clone(), |this, thoughts| {
+                this.child(
+                    div()
+                        .id(("tool-call-thinking", entry_ix))
+                        .px_2()
+                        .py_1()
+                        .text_xs()
+                        .child(
+                            self.render_markdown(
+                                thoughts,
+                                MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                                cx,
+                            )
+                        ),
+                )
+            })
             .children(tool_output_display);
 
         v_flex()
@@ -12434,7 +12568,10 @@ impl ThreadView {
             ThreadError::AuthenticationRequired(error) => {
                 self.render_authentication_required_error(error.clone(), cx)
             }
-            ThreadError::ZedPaymentRequired => self.render_zed_payment_required_error(cx),
+            // zed-kask: D39 — pass the provider through to the renderer.
+            ThreadError::PaymentRequired { provider } => {
+                self.render_payment_required_error(provider.clone(), cx)
+            }
             ThreadError::RateLimitExceeded { provider } => self.render_error_callout(
                 "Rate Limit Reached",
                 format!(
@@ -12567,20 +12704,32 @@ impl ThreadView {
             .dismiss_action(self.dismiss_error_button(cx))
     }
 
-    fn render_zed_payment_required_error(&self, cx: &mut Context<Self>) -> Callout {
-        const ERROR_MESSAGE: &str =
-            "You reached your free usage limit. Upgrade to Zed Pro for more prompts.";
+    // zed-kask: D39 — render PaymentRequired with provider-aware copy. The
+    // upgrade button only makes sense when Zed's own backend rejected the
+    // request; a third-party 402 (OpenRouter credits, Anthropic billing, …)
+    // must not be presented as a Zed free-tier cap.
+    fn render_payment_required_error(
+        &self,
+        provider: SharedString,
+        cx: &mut Context<Self>,
+    ) -> Callout {
+        let is_zed_cloud = provider.as_ref() == ZED_CLOUD_PROVIDER_NAME.0.as_ref();
+        let message: SharedString = payment_required_message(&provider).into();
 
         Callout::new()
             .severity(Severity::Error)
             .icon(IconName::XCircle)
-            .title("Free Usage Exceeded")
-            .description(ERROR_MESSAGE)
+            .title(if is_zed_cloud {
+                "Free Usage Exceeded"
+            } else {
+                "Payment Required"
+            })
+            .description(message.clone())
             .actions_slot(
                 h_flex()
                     .gap_0p5()
-                    .child(self.upgrade_button(cx))
-                    .child(self.create_copy_button(ERROR_MESSAGE)),
+                    .when(is_zed_cloud, |this| this.child(self.upgrade_button(cx)))
+                    .child(self.create_copy_button(message)),
             )
             .dismiss_action(self.dismiss_error_button(cx))
     }
@@ -12710,19 +12859,18 @@ impl ThreadView {
     }
 
     fn render_prompt_too_large_error(&self, cx: &mut Context<Self>) -> Callout {
-        const MESSAGE: &str = "This conversation is too long for the model's context window. \
-            Start a new thread or remove some attached files to continue.";
+        let message = prompt_too_large_message(self.compact_control_enabled(cx).is_some());
 
         Callout::new()
             .severity(Severity::Error)
             .icon(IconName::XCircle)
             .title("Context Too Large")
-            .description(MESSAGE)
+            .description(message)
             .actions_slot(
                 h_flex()
                     .gap_0p5()
                     .child(self.new_thread_button(cx))
-                    .child(self.create_copy_button(MESSAGE)),
+                    .child(self.create_copy_button(message)),
             )
             .dismiss_action(self.dismiss_error_button(cx))
     }
@@ -13537,7 +13685,7 @@ impl ThreadView {
         });
     }
 
-    fn cycle_native_agent_thinking_effort(&mut self, cx: &mut Context<Self>) {
+    fn cycle_native_agent_reasoning_effort(&mut self, cx: &mut Context<Self>) {
         let Some(thread) = self.as_native_thread(cx) else {
             return;
         };
@@ -13574,7 +13722,7 @@ impl ThreadView {
         let next_effort = effort_levels[next_index].value.to_string();
 
         thread.update(cx, |thread, cx| {
-            thread.set_thinking_effort(Some(next_effort.clone()), cx);
+            thread.set_reasoning_effort(Some(next_effort.clone()), cx);
 
             let favorite_key = thread
                 .model()
@@ -13762,7 +13910,7 @@ impl Render for ThreadView {
                     });
                 }
             }))
-            .on_action(cx.listener(|this, _: &CycleThinkingEffort, _window, cx| {
+            .on_action(cx.listener(|this, _: &CycleReasoningEffort, _window, cx| {
                 if this.thread.read(cx).status() != ThreadStatus::Idle {
                     return;
                 }
@@ -13778,10 +13926,10 @@ impl Render for ThreadView {
                         return;
                     }
                 }
-                this.cycle_native_agent_thinking_effort(cx);
+                this.cycle_native_agent_reasoning_effort(cx);
             }))
             .on_action(
-                cx.listener(|this, _: &ToggleThinkingEffortMenu, window, cx| {
+                cx.listener(|this, _: &ToggleReasoningEffortMenu, window, cx| {
                     if this.thread.read(cx).status() != ThreadStatus::Idle {
                         return;
                     }
@@ -13797,7 +13945,7 @@ impl Render for ThreadView {
                             return;
                         }
                     }
-                    let menu_handle = this.thinking_effort_menu_handle.clone();
+                    let menu_handle = this.reasoning_effort_menu_handle.clone();
                     window.defer(cx, move |window, cx| {
                         menu_handle.toggle(window, cx);
                     });
@@ -14283,16 +14431,11 @@ fn file_link_candidates(
     candidates
 }
 
-/// Returns the name of the leading built-in (native-category) slash command —
-/// e.g. `compact` for `/compact` or `/compact summarize the API work` — whether
-/// or not the user typed any trailing text after it. Built-in commands ignore
-/// trailing arguments, so the caller sends the bare command and queues any
-/// remainder rather than discarding it. Commands from MCP servers and ACP
-/// agents are excluded: their trailing text is a real argument the agent
-/// consumes.
-///
-/// Native commands run a turn that produces its own thread entry, so the typed
-/// command is never echoed as a user message (see `send_command_queueing_remainder`).
+/// Returns the leading native command only when it declares no input.
+/// Such commands (e.g. `/compact`) run alone and queue trailing text as a
+/// follow-up without echoing the command. Input-taking native commands (e.g.
+/// `/trace`), MCP prompts and external ACP commands consume their own arguments
+/// and must travel through the normal, complete-prompt submission path.
 fn leading_native_command(
     text: &str,
     available_commands: &[acp_v2::AvailableCommand],
@@ -14302,6 +14445,7 @@ fn leading_native_command(
     let name = &rest[..name_end];
     let is_native = available_commands.iter().any(|command| {
         command.name == name
+            && command.input.is_none()
             && acp_thread::command_category_from_meta(&command.meta)
                 == Some(acp_thread::CommandCategory::Native)
     });
@@ -14317,6 +14461,14 @@ fn strip_leading_command(text: &str, command_name: &str) -> String {
         .and_then(|rest| rest.strip_prefix(command_name))
         .map(|rest| rest.trim_start().to_string())
         .unwrap_or_else(|| trimmed.to_string())
+}
+
+fn prompt_too_large_message(can_compact: bool) -> &'static str {
+    if can_compact {
+        "The provider rejected this request because its input and reserved output exceed its context window. Try Compact context below to summarize earlier conversation. If that fails, remove attached files or start a new thread. Retrying unchanged is unlikely to help."
+    } else {
+        "The provider rejected this request because its input and reserved output exceed its context window. Remove attached files or start a new thread. Retrying unchanged is unlikely to help."
+    }
 }
 
 #[cfg(test)]
@@ -14393,6 +14545,36 @@ mod tests {
         acp_v2::AvailableCommand::new(name, "").meta(acp_thread::meta_with_command_category(
             acp_thread::CommandCategory::Mcp,
         ))
+    }
+
+    #[test]
+    fn context_overflow_message_names_available_recovery_without_promising_retry() {
+        let with_compact = prompt_too_large_message(true);
+        assert!(with_compact.contains("Compact context"));
+        assert!(with_compact.contains("summarize earlier conversation"));
+        assert!(with_compact.contains("If that fails"));
+        assert!(with_compact.contains("Retrying unchanged is unlikely to help"));
+        let without_compact = prompt_too_large_message(false);
+        assert!(!without_compact.contains("Compact context"));
+        assert!(without_compact.contains("start a new thread"));
+    }
+
+    #[test]
+    fn test_compact_command_gate_requires_native_category() {
+        let name = agent::COMPACT_COMMAND_NAME;
+        let command = format!("/{name}");
+        assert_eq!(
+            leading_native_command(&command, &[native_command(name)]),
+            Some(name.to_string()),
+        );
+        for commands in [
+            vec![],
+            vec![mcp_command(name)],
+            vec![acp_v2::AvailableCommand::new(name, "")],
+            vec![native_command("other")],
+        ] {
+            assert_eq!(leading_native_command(&command, &commands), None);
+        }
     }
 
     #[test]

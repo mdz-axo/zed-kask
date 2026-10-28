@@ -181,12 +181,20 @@ pub fn granted_write_path_to_location(
 /// Rebuild a grant for enforcement, or log and drop it (fail-closed) if it
 /// can't be verified.
 ///
-/// A failure here is frequently the symlink-TOCTOU defense firing: the grant's
-/// canonical was redirected or replaced by a symlink since approval, so
-/// [`sandbox::HostFilesystemLocation::reopen`] refuses it. That is a
-/// security-relevant event, so it must be logged rather than silently
-/// swallowed. The grant is dropped (the command runs without it) rather than
-/// bound unverified.
+/// A failure here is one of two cases:
+///
+/// * **ENOENT** — the granted directory was simply removed (a stale-settings
+///   condition). This is logged at `info` so a stale grant doesn't flood the
+///   log on every terminal spawn; the user should prune the entry from
+///   settings or recreate the directory.
+/// * **Anything else** — frequently the symlink-TOCTOU defense firing: the
+///   grant's canonical was redirected or replaced by a symlink since approval,
+///   so [`sandbox::HostFilesystemLocation::reopen`] refuses it. That is a
+///   security-relevant event, so it is logged at `warn` rather than silently
+///   swallowed.
+///
+/// In both cases the grant is dropped (the command runs without it) rather
+/// than bound unverified.
 ///
 /// Only for **display** policies (the sandbox-status UI), where a stale grant
 /// should simply not be shown. Enforcement must not drop grants silently — a
@@ -198,10 +206,18 @@ pub fn granted_write_path_to_location_or_log(
 ) -> Option<sandbox::HostFilesystemLocation> {
     granted_write_path_to_location(granted)
         .inspect_err(|error| {
-            log::warn!(
-                "dropping sandbox write grant {}: {error}",
-                granted.requested.display()
-            );
+            if error.kind() == std::io::ErrorKind::NotFound {
+                log::info!(
+                    "sandbox write grant {} no longer exists on disk; remove the \
+                     grant from settings or recreate the directory",
+                    granted.requested.display()
+                );
+            } else {
+                log::warn!(
+                    "dropping sandbox write grant {}: {error}",
+                    granted.requested.display()
+                );
+            }
         })
         .ok()
 }
@@ -1076,5 +1092,55 @@ mod linux_tests {
 
         wrap.to_policy()
             .expect("uncapturable protected paths must be dropped, not fail the policy");
+    }
+
+    /// `granted_write_path_to_location_or_log` drops a grant (returns `None`)
+    /// in both the ENOENT and non-ENOENT cases — fail-closed — but branches
+    /// the log level on `error.kind() == NotFound`: `info` for a stale grant
+    /// (not security-relevant), `warn` for anything else (possibly the
+    /// symlink-TOCTOU defense firing). This test pins the error-kind
+    /// distinction that drives that branch so a future swap is caught.
+    #[test]
+    fn grant_drop_error_kind_distinguishes_stale_from_security() {
+        // ENOENT: a non-existent absolute path fails with NotFound. The
+        // `or_log` variant logs this at `info` (stale settings, not a
+        // security event).
+        let missing = settings::GrantedWritePath::resolved(
+            PathBuf::from("/nonexistent/absolute/path/that/does/not/exist"),
+            PathBuf::from("/nonexistent/absolute/path/that/does/not/exist"),
+        );
+        let error = granted_write_path_to_location(&missing)
+            .err()
+            .expect("missing path should fail capture");
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::NotFound,
+            "a removed directory must fail with NotFound (drives info-level log)"
+        );
+        assert!(
+            granted_write_path_to_location_or_log(&missing).is_none(),
+            "or_log variant must drop the grant (fail-closed)"
+        );
+
+        // Non-ENOENT: a relative path is rejected by `require_absolute` with
+        // `InvalidInput` — not `NotFound`, so the `or_log` variant logs this
+        // at `warn` (potentially security-relevant).
+        let relative = settings::GrantedWritePath {
+            requested: PathBuf::from("relative/path"),
+            resolved: None,
+            on_windows_fs: false,
+        };
+        let error = granted_write_path_to_location(&relative)
+            .err()
+            .expect("relative path should fail capture");
+        assert_ne!(
+            error.kind(),
+            std::io::ErrorKind::NotFound,
+            "a non-ENOENT error must not be NotFound (drives warn-level log)"
+        );
+        assert!(
+            granted_write_path_to_location_or_log(&relative).is_none(),
+            "or_log variant must drop the grant (fail-closed)"
+        );
     }
 }

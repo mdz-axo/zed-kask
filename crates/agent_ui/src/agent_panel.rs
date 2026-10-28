@@ -37,7 +37,7 @@ use zed_actions::{
 
 use crate::ExpandMessageEditor;
 use crate::ManageProfiles;
-use crate::agent_connection_store::AgentConnectionStore;
+use crate::agent_connection_store::{AgentConnectionEntry, AgentConnectionStore};
 use crate::completion_provider::{AgentContextSelection, AgentContextSource};
 use crate::terminal_thread_metadata_store::{
     TerminalThreadMetadata, TerminalThreadMetadataStore, compose_terminal_thread_title,
@@ -148,6 +148,17 @@ fn terminal_program_to_report(
         };
     *last_observed_program = current_program;
     program_to_report
+}
+
+/// Maximum number of idle threads kept in the agent panel's retained list.
+/// Set as a GPUI global to override; otherwise defaults to 5.
+pub struct MaxIdleRetainedThreads(pub usize);
+impl gpui::Global for MaxIdleRetainedThreads {}
+
+impl MaxIdleRetainedThreads {
+    pub fn global(cx: &App) -> usize {
+        cx.try_global::<Self>().map_or(5, |g| g.0)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -2962,6 +2973,11 @@ impl AgentPanel {
 
         let fs = self.fs.clone();
         let thread_store = self.thread_store.clone();
+        let already_connecting = self
+            .connection_store
+            .read(cx)
+            .entry(&Agent::NativeAgent)
+            .is_some_and(|entry| matches!(entry.read(cx), AgentConnectionEntry::Connecting { .. }));
         self.connection_store.update(cx, |store, cx| {
             store.request_connection(
                 Agent::NativeAgent,
@@ -2969,6 +2985,35 @@ impl AgentPanel {
                 cx,
             );
         });
+
+        // Eagerly populate the global `SkillIndex` so the Skills settings
+        // page shows skills before the user opens an agent conversation.
+        // `maintain_project_context` (which calls `publish_skill_index`)
+        // otherwise only runs when a session is created or a thread is
+        // loaded, leaving the index empty on a fresh startup.
+        if !already_connecting {
+            let connect_task = self.connection_store.update(cx, |store, cx| {
+                store
+                    .entry(&Agent::NativeAgent)
+                    .map(|entry| entry.read(cx).wait_for_connection())
+            });
+            if let Some(connect_task) = connect_task {
+                let project = self.project.clone();
+                cx.spawn(async move |_this, cx| -> Result<()> {
+                    let connected = connect_task.await?;
+                    if let Some(native_connection) = connected
+                        .connection
+                        .downcast::<agent::NativeAgentConnection>()
+                    {
+                        cx.update(|cx| {
+                            native_connection.refresh_skills_for_project(project, cx);
+                        });
+                    }
+                    Ok(())
+                })
+                .detach_and_log_err(cx);
+            }
+        }
     }
 
     pub fn activate_draft(
@@ -3230,13 +3275,21 @@ impl AgentPanel {
     /// switching the active view to it. Used by the `create_thread` agent tool,
     /// which passes an initial prompt, and optionally an agent and model
     /// override.
+    ///
+    /// Returns the new thread id and the `Agent` actually used to back it. The
+    /// used agent may differ from `options.agent` — for example, collaboration
+    /// workspaces clamp every request to `Agent::NativeAgent`. Callers that
+    /// report the spawned thread's identity to a model (e.g. `create_thread`)
+    /// must use this returned agent rather than the requested one, otherwise
+    /// the model is told a fiction (e.g. "Curator") about a thread that is
+    /// actually backed by a different agent.
     pub fn create_thread_with_options(
         &mut self,
         options: CreateThreadOptions,
         source: AgentThreadSource,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> ThreadId {
+    ) -> (ThreadId, Agent) {
         let (agent, override_used) = if self.project.read(cx).is_via_collab() {
             (Agent::NativeAgent, false)
         } else if let Some(override_agent) = options.agent {
@@ -3250,7 +3303,7 @@ impl AgentPanel {
         // last-used-agent preference. Snapshot and restore both.
         let saved_selected_agent = override_used.then(|| self.selected_agent.clone());
         let thread = self.create_agent_thread_with_server(
-            agent,
+            agent.clone(),
             None,
             None,
             options.work_dirs,
@@ -3266,7 +3319,7 @@ impl AgentPanel {
         }
         let thread_id = thread.conversation_view.read(cx).thread_id;
         self.insert_retained_thread(thread_id, thread.conversation_view, cx);
-        thread_id
+        (thread_id, agent)
     }
 
     pub fn activate_retained_thread(
@@ -3572,10 +3625,23 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Default to the Project scope so the user sees their project skills
+        // (typically the larger set) rather than the User/global scope.
+        // Falls back to `None` (preserve existing selection) when no
+        // visible worktree is open.
+        let target = self
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .map(|worktree| {
+                let worktree_id = worktree.read(cx).id().to_usize();
+                zed_actions::OpenSettingsAtTarget::Project { worktree_id }
+            });
         window.dispatch_action(
             Box::new(zed_actions::OpenSettingsAt {
                 path: zed_actions::AGENT_SKILLS_SETTINGS_PATH.to_string(),
-                target: None,
+                target,
             }),
             cx,
         );
@@ -4823,14 +4889,28 @@ fn parse_provider_slash_model(input: &str) -> Option<language_model::SelectedMod
 /// Bridges agent-side `SiblingThreadHost` calls to `AgentPanel`. Constructed
 /// and installed on a `NativeAgent` by the agent panel when a native-agent
 /// thread is created.
-pub(crate) struct AgentPanelSiblingHost {
+pub struct AgentPanelSiblingHost {
     panel: WeakEntity<AgentPanel>,
     window: gpui::AnyWindowHandle,
 }
 
 impl AgentPanelSiblingHost {
-    pub(crate) fn new(panel: WeakEntity<AgentPanel>, window: gpui::AnyWindowHandle) -> Self {
+    pub fn new(panel: WeakEntity<AgentPanel>, window: gpui::AnyWindowHandle) -> Self {
         Self { panel, window }
+    }
+
+    fn resolve_agent(agent_id: Option<&str>, restricted: bool) -> Result<Option<Agent>> {
+        match agent_id {
+            // Do not inherit a selected external agent: it cannot enforce native authority.
+            None if restricted => Ok(Some(Agent::NativeAgent)),
+            None => Err(anyhow!("Sibling creation requires inherited authority")),
+            Some(_) if !restricted => Err(anyhow!("Sibling creation requires inherited authority")),
+            Some(id) if id == agent::ZED_AGENT_ID.as_ref() => Ok(Some(Agent::NativeAgent)),
+            Some(id) if id == agent::CURATOR_AGENT_ID.as_ref() => Ok(Some(Agent::Curator)),
+            Some(_) => Err(anyhow!(
+                "Delegated siblings require a native Zed or Curator agent to enforce tool authority."
+            )),
+        }
     }
 }
 
@@ -4843,40 +4923,32 @@ impl agent::SiblingThreadHost for AgentPanelSiblingHost {
         let panel = self.panel.clone();
         let window = self.window;
         cx.spawn(async move |cx| {
-            let agent_choice = match request.agent_id.as_deref() {
-                None => None,
-                Some(id) if id == agent::ZED_AGENT_ID.as_ref() => Some(Agent::NativeAgent),
-                Some(id) => {
-                    // Reject unknown agent ids up front so the model gets a
-                    // structured error pointing at `list_agents_and_models`,
-                    // rather than a thread that silently fails to launch in
-                    // the user's sidebar.
-                    let known = panel
-                        .read_with(cx, |panel, cx| {
-                            let store = panel.project.read(cx).agent_server_store().clone();
-                            store
-                                .read(cx)
-                                .external_agents()
-                                .any(|known_id| known_id.0.as_ref() == id)
-                        })
-                        .unwrap_or(false);
-                    if !known {
-                        return Err(anyhow!(
-                            "Unknown agent id {id:?}. Call `list_agents_and_models` \
-                             to see the agents available for `create_thread`."
-                        ));
-                    }
-                    Some(Agent::Custom {
-                        id: project::AgentId(id.to_string().into()),
-                    })
-                }
-            };
+            // zed-kask: D23/D90 — delegated siblings must run as a native Zed
+            // or Curator agent: only those enforce the inherited tool ceiling.
+            // External agents are rejected up front with a structured error.
+            let agent_choice = Self::resolve_agent(
+                request.agent_id.as_deref(),
+                request.delegation_authority.is_some(),
+            )?;
 
-            let initial_content = AgentInitialContent::ContentBlock {
-                blocks: vec![acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
-                    request.prompt.clone(),
-                ))],
-                auto_submit: true,
+            // zed-kask: D23 — a delegated sibling (one carrying inherited
+            // authority) is created as a DelegatedSibling so the child
+            // receives the parent's tool ceiling; a plain sibling gets
+            // upstream's auto-submitted content block.
+            let initial_content = if let Some(authority) = request.delegation_authority {
+                AgentInitialContent::DelegatedSibling {
+                    blocks: vec![acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
+                        request.prompt.clone(),
+                    ))],
+                    authority,
+                }
+            } else {
+                AgentInitialContent::ContentBlock {
+                    blocks: vec![acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
+                        request.prompt.clone(),
+                    ))],
+                    auto_submit: true,
+                }
             };
 
             let title: SharedString = request.title.clone();
@@ -4962,18 +5034,24 @@ impl agent::SiblingThreadHost for AgentPanelSiblingHost {
             // become available here: there are currently no agent tools that
             // operate on sibling threads by session ID, so requiring one would
             // just introduce a race for no benefit.
+            //
+            // `create_thread_with_options` returns the agent that actually
+            // backs the new thread. In collaboration workspaces every request
+            // is clamped to `Agent::NativeAgent`, so reporting the requested
+            // agent (e.g. `Curator`) here would tell the calling model a
+            // fiction about a thread that is actually backed by the Zed Agent.
+            // Reporting the post-clamp agent keeps `SiblingThreadInfo`
+            // truthful and prevents the model from issuing agent-specific
+            // tool calls against a thread that does not register them.
             let resolved_agent_id = target_window.update(cx, |_root, window, cx| {
                 target_panel.update(cx, |panel, cx| {
-                    panel.create_thread_with_options(
+                    let (_thread_id, used_agent) = panel.create_thread_with_options(
                         options,
                         AgentThreadSource::AgentPanel,
                         window,
                         cx,
                     );
-                    let resolved_agent = agent_choice
-                        .clone()
-                        .unwrap_or_else(|| panel.selected_agent.clone());
-                    resolved_agent.id()
+                    used_agent.id()
                 })
             })??;
 
@@ -4992,7 +5070,57 @@ impl agent::SiblingThreadHost for AgentPanelSiblingHost {
             .upgrade()
             .ok_or_else(|| anyhow!("Agent panel is no longer available"))?;
 
-        let mut agents = vec![agent::available_native_agent(cx)];
+        let mut agents = Vec::new();
+
+        // Native Zed agent — always available, and we can enumerate models
+        // directly from the language model registry.
+        let native_models = {
+            let registry = LanguageModelRegistry::read_global(cx);
+            let default = registry.default_model();
+            let mut models = Vec::new();
+            for provider in registry.providers() {
+                if !provider.is_authenticated(cx) {
+                    continue;
+                }
+                let provider_id = provider.id();
+                for model in provider.provided_models(cx) {
+                    let id = format!("{}/{}", provider_id.0, model.id.0);
+                    let is_default = default
+                        .as_ref()
+                        .map(|cm| cm.provider_id == provider_id && cm.id == model.id)
+                        .unwrap_or(false);
+                    models.push(agent::AvailableModel {
+                        id,
+                        name: model.name.0,
+                        is_default,
+                    });
+                }
+            }
+            models
+        };
+        agents.push(agent::AvailableAgent {
+            id: agent::ZED_AGENT_ID.to_string(),
+            name: Agent::NativeAgent.label(),
+            is_native: true,
+            models: native_models.clone(),
+        });
+        // The Curator is a native in-process agent, but collaboration
+        // workspaces clamp every `create_thread` request to `NativeAgent`
+        // (see `create_thread_with_options`). Advertising Curator to a
+        // sibling model in collab would let it request an agent it cannot
+        // get — the response would truthfully report `NativeAgent` (post-
+        // clamp), but the model wasted a round-trip on a capability the
+        // workspace doesn't offer. Gate the advertisement on `!is_via_collab`
+        // so the catalog only lists agents the workspace can actually back.
+        let is_via_collab = panel.read(cx).project.read(cx).is_via_collab();
+        if !is_via_collab {
+            agents.push(agent::AvailableAgent {
+                id: agent::CURATOR_AGENT_ID.to_string(),
+                name: Agent::Curator.label(),
+                is_native: true,
+                models: native_models,
+            });
+        }
 
         let project = panel.read(cx).project.clone();
         let agent_server_store = project.read(cx).agent_server_store().clone();
@@ -5939,6 +6067,38 @@ impl AgentPanel {
                                                 {
                                                     panel.update(cx, |panel, cx| {
                                                         panel.selected_agent = Agent::NativeAgent;
+                                                        panel.activate_new_thread(
+                                                            true,
+                                                            AgentThreadSource::AgentPanel,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    });
+                                                }
+                                            });
+                                        }
+                                    }
+                                }),
+                        )
+                        .item(
+                            ContextMenuEntry::new("Curator")
+                                .when(
+                                    !showing_terminal && is_agent_selected(Agent::Curator),
+                                    |this| this.action(Box::new(NewThread)),
+                                )
+                                .icon(IconName::ZedAssistant)
+                                .icon_color(Color::Muted)
+                                .disabled(is_via_collab)
+                                .handler({
+                                    let workspace = workspace.clone();
+                                    move |window, cx| {
+                                        if let Some(workspace) = workspace.upgrade() {
+                                            workspace.update(cx, |workspace, cx| {
+                                                if let Some(panel) =
+                                                    workspace.panel::<AgentPanel>(cx)
+                                                {
+                                                    panel.update(cx, |panel, cx| {
+                                                        panel.selected_agent = Agent::Curator;
                                                         panel.activate_new_thread(
                                                             true,
                                                             AgentThreadSource::AgentPanel,
@@ -7441,6 +7601,56 @@ mod tests {
                 "focus should stay within the agent panel after resubmitting"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_active_conversation_notification_persists_panel_once(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({ "file.txt": "" })).await;
+        let project = Project::test(fs, [Path::new("/project")], cx).await;
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .expect("workspace exists");
+        workspace.update(cx, |workspace, _cx| workspace.set_random_database_id());
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            cx.new(|cx| AgentPanel::new(workspace, window, cx))
+        });
+        panel.update_in(cx, |panel, window, cx| {
+            panel.open_external_thread_with_server(
+                Rc::new(StubAgentServer::default_response()),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let kvp = cx.update(|_, cx| KeyValueStore::global(cx));
+        let changes = || {
+            kvp.select_row::<i64>("SELECT total_changes()")
+                .expect("prepare total_changes query")()
+            .expect("read total_changes")
+            .expect("total_changes returns a row")
+        };
+        let before = changes();
+        let conversation_view = panel
+            .read_with(cx, |panel, _cx| panel.active_conversation_view().cloned())
+            .expect("active conversation exists");
+        conversation_view.update(cx, |_view, cx| cx.notify());
+        cx.run_until_parked();
+        assert_eq!(
+            changes() - before,
+            1,
+            "one active view update needs one panel write"
+        );
     }
 
     #[gpui::test]
@@ -11724,10 +11934,11 @@ mod tests {
             request_token_usage: HashMap::default(),
             model: None,
             profile: None,
+            delegation_authority: None,
             subagent_context: None,
             speed: None,
-            thinking_enabled: false,
             thinking_effort: None,
+            thinking_enabled: false,
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
@@ -14739,6 +14950,35 @@ mod tests {
         });
     }
 
+    // expect: [P4] delegated siblings never resolve to an external destination,
+    // including an omitted destination that would otherwise use the panel selection.
+    // dcterms:identifier: AgentPanelSiblingHost::resolve_agent
+    #[test]
+    fn restricted_sibling_destinations_are_native_only() {
+        assert_eq!(
+            AgentPanelSiblingHost::resolve_agent(None, true).expect("native default"),
+            Some(Agent::NativeAgent)
+        );
+        for agent in [Agent::NativeAgent, Agent::Curator] {
+            assert_eq!(
+                AgentPanelSiblingHost::resolve_agent(Some(agent.id().as_ref()), true)
+                    .expect("native destination"),
+                Some(agent)
+            );
+        }
+        let error = AgentPanelSiblingHost::resolve_agent(Some("external"), true)
+            .expect_err("external destinations cannot enforce delegated authority");
+        assert!(error.to_string().contains("native"));
+    }
+
+    // expect: [P4] omission of inherited authority cannot recreate the ambient route.
+    #[test]
+    fn sibling_missing_authority_is_denied() {
+        for id in [None, Some("external"), Some(agent::ZED_AGENT_ID.as_ref())] {
+            assert!(AgentPanelSiblingHost::resolve_agent(id, false).is_err());
+        }
+    }
+
     #[gpui::test]
     async fn test_create_thread_with_options_retains_thread_and_restores_agent(
         cx: &mut TestAppContext,
@@ -14753,20 +14993,30 @@ mod tests {
         });
 
         // Case 1: no agent override. The new thread should land in
-        // `retained_threads` and `selected_agent` should be unchanged.
-        let no_override_id = panel.update_in(&mut cx, |panel, window, cx| {
-            panel.create_thread_with_options(
-                CreateThreadOptions::default(),
-                AgentThreadSource::AgentPanel,
-                window,
-                cx,
-            )
-        });
+        // `retained_threads` and `selected_agent` should be unchanged. The
+        // returned agent must reflect the agent that actually backs the
+        // thread (here, the panel's selected agent), not a stale or
+        // default value — callers like `create_thread` report this agent
+        // id to the model and must not be told a fiction.
+        let (no_override_id, no_override_used_agent) =
+            panel.update_in(&mut cx, |panel, window, cx| {
+                panel.create_thread_with_options(
+                    CreateThreadOptions::default(),
+                    AgentThreadSource::AgentPanel,
+                    window,
+                    cx,
+                )
+            });
 
         panel.read_with(&cx, |panel, _cx| {
             assert!(
                 panel.retained_threads.contains_key(&no_override_id),
                 "thread created via create_thread_with_options should be retained"
+            );
+            assert_eq!(
+                no_override_used_agent,
+                Agent::Stub,
+                "returned agent should match the panel's selected agent when no override is requested"
             );
             assert_eq!(
                 panel.selected_agent,
@@ -14783,7 +15033,7 @@ mod tests {
         let override_agent = Agent::Custom {
             id: "override-agent".into(),
         };
-        let override_id = panel.update_in(&mut cx, |panel, window, cx| {
+        let (override_id, override_used_agent) = panel.update_in(&mut cx, |panel, window, cx| {
             panel.create_thread_with_options(
                 CreateThreadOptions {
                     agent: Some(override_agent.clone()),
@@ -14803,6 +15053,10 @@ mod tests {
             assert_ne!(
                 no_override_id, override_id,
                 "each call should produce a distinct ThreadId"
+            );
+            assert_eq!(
+                override_used_agent, override_agent,
+                "returned agent should match the requested override agent when no clamp applies"
             );
             assert_eq!(
                 panel.selected_agent,

@@ -10,7 +10,15 @@ fi
 
 function finalize {
   # after packages install (curl, etc), get the rust toolchain
-  which rustup > /dev/null 2>&1 || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+  if ! which rustup > /dev/null 2>&1; then
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    # rustup installs cargo/rustc shims into ~/.cargo/bin. Source the env
+    # file so this script's caller (and any subsequent command in the same
+    # shell invocation) can find cargo. Without this, `./script/linux &&
+    # cargo build` fails with `cargo: command not found` on fresh systems.
+    # shellcheck disable=SC1091
+    source "$HOME/.cargo/env" 2>/dev/null || true
+  fi
   cat <<EOF
 Finished installing Linux dependencies with script/linux
 EOF
@@ -23,6 +31,7 @@ if [[ -n $apt ]]; then
     gcc
     g++
     libasound2-dev
+    libdbus-1-dev
     libfontconfig-dev
     libgit2-dev
     libglib2.0-dev
@@ -38,6 +47,7 @@ if [[ -n $apt ]]; then
     clang
     lld
     llvm
+    pkg-config
     jq
     git
     curl
@@ -49,6 +59,9 @@ if [[ -n $apt ]]; then
     build-essential
     pipewire
     xdg-desktop-portal
+    # nasm: required by ffmpeg-sys-next when the `vendored` cargo feature
+    # (enabled by --all-features in ./script/clippy) builds FFmpeg from source.
+    nasm
   )
   if (grep -qP 'PRETTY_NAME="(Debian|Raspbian).+13' /etc/os-release); then
       # libstdc++-14-dev is in build-essential
@@ -122,6 +135,8 @@ if [[ -n $dnf ]] || [[ -n $yum ]]; then
     jq
     git
     tar
+    # nasm: required by ffmpeg-sys-next vendored FFmpeg build (./script/clippy --all-features).
+    nasm
   )
   # perl used for building openssl-sys crate. See: https://docs.rs/openssl/latest/openssl/
   if grep -qP '^ID="?(fedora)' /etc/os-release; then
@@ -195,6 +210,8 @@ if [[ -n $zyp ]]; then
     xcb-util-devel
     pipewire
     xdg-desktop-portal
+    # nasm: required by ffmpeg-sys-next vendored FFmpeg build (./script/clippy --all-features).
+    nasm
   )
   $maysudo "$zyp" install -y "${deps[@]}"
   finalize
@@ -228,6 +245,8 @@ if [[ -n $pacman ]]; then
     xdg-desktop-portal
     jq
     git
+    # nasm: required by ffmpeg-sys-next vendored FFmpeg build (./script/clippy --all-features).
+    nasm
   )
   $maysudo "$pacman" -Syu --needed --noconfirm "${deps[@]}"
   finalize
@@ -259,6 +278,8 @@ if [[ -n $xbps ]]; then
     sqlite-devel
     pipewire
     xdg-desktop-portal
+    # nasm: required by ffmpeg-sys-next vendored FFmpeg build (./script/clippy --all-features).
+    nasm
   )
   $maysudo "$xbps" -Syu "${deps[@]}"
   finalize
@@ -286,6 +307,8 @@ if [[ -n $emerge ]]; then
     dev-db/sqlite
     media-video/pipewire
     sys-apps/xdg-desktop-portal
+    # nasm: required by ffmpeg-sys-next vendored FFmpeg build (./script/clippy --all-features).
+    dev-lang/nasm
   )
   $maysudo "$emerge" -u "${deps[@]}"
   finalize

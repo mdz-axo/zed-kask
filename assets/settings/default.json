@@ -257,8 +257,6 @@
   // ${appName}, ${branch}, and ${separator}.
   // ${separator} is omitted when adjacent variables are empty,
   // but literal text is preserved.
-  // The collaboration indicator, when present, is appended after the
-  // rendered template.
   // If the template renders to nothing, the default template is used instead.
   //
   // Default: "${projectName}${separator}${fileName}"
@@ -586,13 +584,6 @@
     "space": "•",
     "tab": "→",
   },
-  // Settings related to calls in Zed
-  "calls": {
-    // Join calls with the microphone live by default
-    "mute_on_join": false,
-    // Share your project when you are the first to join a channel
-    "share_on_join": false,
-  },
   // Toolbar related settings
   "toolbar": {
     // Whether to show breadcrumbs.
@@ -646,10 +637,6 @@
     // `null` means use system default.
     // Any unrecognized output device will fall back to system default.
     "experimental.output_audio_device": null,
-    // Select specific input audio device.
-    // `null` means use system default.
-    // Any unrecognized input device will fall back to system default.
-    "experimental.input_audio_device": null,
   },
   // Scrollbar related settings
   "scrollbar": {
@@ -1075,14 +1062,6 @@
     // Does not affect single-file views.
     "multi_buffer_hide_symbols": false,
   },
-  "collaboration_panel": {
-    // Whether to show the collaboration panel button in the status bar.
-    "button": true,
-    // Where to dock the collaboration panel. Can be 'left' or 'right'.
-    "dock": "right",
-    // Default width of the collaboration panel.
-    "default_width": 240,
-  },
   "git_panel": {
     // Whether to show the git panel button in the status bar.
     "button": true,
@@ -1322,13 +1301,26 @@
           "grep": true,
           "list_agents_and_models": true,
           "list_directory": true,
+          "list_mcp_tools": true,
           "move_path": true,
           "read_file": true,
+          "record_skill_feedback": true,
+          "curator_status": true,
+          "curator_directive": true,
+          "curator_clear_algedonic_log": true,
+          "grep": true,
           "rename_symbol": true,
-          "search_web": true,
           "skill": true,
+          "skill_bundle": true,
           "spawn_agent": true,
           "terminal": true,
+          "search_web": true,
+          "lisp_eval": true,
+          "lean_check": true,
+          "onto_anchor": true,
+          "render_template": true,
+          "kanban_goal_close": true,
+          "kanban_goal_correct_outcome": true,
           "write_file": true,
         },
       },
@@ -1341,17 +1333,31 @@
           "create_thread": true,
           "diagnostics": true,
           "fetch": true,
+          "list_agents_and_models": true,
+          "list_directory": true,
+          "list_mcp_tools": true,
           "find_path": true,
           "find_references": true,
           "get_code_actions": true,
           "go_to_definition": true,
+          "read_file": true,
+          "record_skill_feedback": true,
+          "curator_status": true,
+          "curator_directive": true,
+          "curator_clear_algedonic_log": true,
           "grep": true,
           "list_agents_and_models": true,
           "list_directory": true,
           "read_file": true,
           "search_web": true,
           "skill": true,
+          "skill_bundle": true,
           "spawn_agent": true,
+          "search_web": true,
+          "lisp_eval": true,
+          "lean_check": false,
+          "onto_anchor": true,
+          "render_template": true,
         },
       },
       "minimal": {
@@ -1421,8 +1427,6 @@
     // Default: true
     "show_merge_conflict_indicator": true,
   },
-  // Whether the screen sharing icon is shown in the os status bar.
-  "show_call_status_icon": true,
   // Whether to use language servers to provide code intelligence.
   "enable_language_server": true,
   // Whether to perform linked edits of associated ranges, if the language server supports it.
@@ -1604,8 +1608,6 @@
     //   * "indexed": Use only the files Zed had indexed
     //   * "smart": Be smart and search for ignored when called from a gitignored worktree
     "include_ignored": "smart",
-    // Whether to include text channels in file finder results.
-    "include_channels": false,
     // Whether to pre-fill the file finder's query with the text selected in the
     // focused item (e.g. an editor or a terminal) when it is opened.
     //
@@ -1715,11 +1717,15 @@
   // Default: true
   "word_diff_enabled": true,
   // Control what info is collected by Zed.
+  // zed-kask: disabled by default. A fork sending events to Zed's
+  // telemetry pipeline is noise on Zed's dashboards and a minor
+  // information leak for the user. Re-enable if you want to contribute
+  // diagnostics/metrics to Zed.
   "telemetry": {
     // Send debug info like crash reports.
-    "diagnostics": true,
+    "diagnostics": false,
     // Send anonymized usage data like what languages you're using Zed with.
-    "metrics": true,
+    "metrics": false,
     // Allow sending requests to Anthropic models that cannot be offered with
     // Zero Data Retention
     "anthropic_retention": false,
@@ -1730,7 +1736,10 @@
   "disable_ai": false,
   // Automatically update Zed. This setting may be ignored on Linux if
   // installed through a package manager.
-  "auto_update": true,
+  // zed-kask: disabled by default. Auto-update from Zed's release feed
+  // would replace the zed-kask binary with upstream Zed, losing the fork.
+  // zed-kask is built from source; re-run the install script to update.
+  "auto_update": false,
   // How to render LSP `textDocument/documentColor` colors in the editor.
   //
   // Possible values:
@@ -1925,21 +1934,16 @@
   "load_direnv": "direct",
   "edit_predictions": {
     // Which edit prediction provider to use.
-    "provider": "zed",
-    // Disable edit predictions for files matching these glob patterns.
-    //
-    // Use `"..."` to add patterns without repeating Zed's defaults. In project
-    // settings, it extends the user or parent configuration value. Omit
-    // `"..."` to replace the inherited list.
-    //
-    // Inherited patterns are inserted at `"..."`, and duplicates keep their first
-    // occurrence.
-    //
-    // Set `[]` to clear the inherited list. Omit this setting to inherit it unchanged.
-    //
-    // Relative patterns are matched against paths relative to the worktree root.
-    // Absolute patterns are matched against absolute paths.
-    // A leading `~` is expanded to your home folder.
+    // zed-kask: D24 — default is `open_ai_compatible_api` so the kask
+    // edit-prediction port (wired from LanguageModelRegistry in main.rs)
+    // can intercept the FIM completion path. The `api_url`/`model` below are
+    // fallbacks used only before the port is wired.
+    "provider": "open_ai_compatible_api",
+    // A list of globs representing files that edit predictions should be disabled for.
+    // There's a sensible default list of globs already included.
+    // Any addition to this list will be merged with the default list.
+    // Globs are matched relative to the worktree root,
+    // except when starting with a slash (/) or equivalent in Windows.
     "disabled_globs": [
       "**/.env*",
       "**/*.pem",
@@ -1988,9 +1992,9 @@
       "prediction_debounce": 0,
     },
     "open_ai_compatible_api": {
-      "api_url": "",
-      "model": "",
-      "prompt_format": "infer",
+      "api_url": "https://openrouter.ai/api/v1",
+      "model": "z-ai/glm-5.2",
+      "prompt_format": "glm",
       "max_output_tokens": 64,
       "prediction_debounce": 0,
     },
@@ -2692,7 +2696,18 @@
     "openai": {
       "api_url": "https://api.openai.com/v1",
     },
-    "openai_compatible": {},
+    "openai_compatible": {
+      "DeepInfra": {
+        "api_url": "https://api.deepinfra.com/v1/openai",
+        "available_models": [],
+        "auto_discover": true,
+      },
+      "KiloCode": {
+        "api_url": "https://api.kilo.ai/api/gateway",
+        "available_models": [],
+        "auto_discover": true,
+      },
+    },
     "opencode": {
       "api_url": "https://opencode.ai/zen",
     },
@@ -2708,6 +2723,7 @@
     "mistral": {
       "api_url": "https://api.mistral.ai/v1",
     },
+    "runpod": {},
     "vercel_ai_gateway": {
       "api_url": "https://ai-gateway.vercel.sh/v1",
     },
@@ -2886,6 +2902,11 @@
   // The server to connect to. If the environment variable
   // ZED_SERVER_URL is set, it will override this setting.
   "server_url": "https://zed.dev",
+  // Key used to store sign-in credentials in the system keychain.
+  // Isolated from upstream Zed so the two apps don't overwrite each
+  // other's keychain entries. Cloud services still use `server_url`.
+  // Note: changing this after signing in requires signing in again.
+  "credentials_url": "zed-kask://credentials",
   // Settings overrides to use when using Zed Preview.
   // Mostly useful for developers who are managing multiple instances of Zed.
   "preview": {

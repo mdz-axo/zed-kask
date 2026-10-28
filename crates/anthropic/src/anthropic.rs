@@ -132,7 +132,11 @@ pub struct Model {
     pub id: String,
     pub display_name: String,
     pub max_input_tokens: u64,
-    pub max_output_tokens: u64,
+    /// zed-kask: D83 — the model's output cap as discovered/configured.
+    /// `None` means unknown — never a fabricated default; the mandatory
+    /// wire parameter is resolved by `into_anthropic`'s documented
+    /// fallback (`UNCONFIGURED_MAX_OUTPUT_TOKENS`).
+    pub max_output_tokens: Option<u64>,
     pub default_temperature: f32,
     pub mode: AnthropicModelMode,
     pub supports_thinking: bool,
@@ -190,7 +194,12 @@ impl Model {
             AnthropicModelMode::AdaptiveThinking
         } else if supports_thinking {
             AnthropicModelMode::Thinking {
-                budget_tokens: Some(4_096),
+                // zed-kask: uncapped. The 4096 hardcode silently killed
+                // reasoning-heavy turns (stream ended finish_reason
+                // "length", mapped to a silent MaxTokens stop). Budgets
+                // are deprecated (operator ruling 2026-09-04); reasoning
+                // depth is the model's business. See DIVERGENCE.md D49.
+                budget_tokens: None,
             }
         } else {
             AnthropicModelMode::Default
@@ -232,7 +241,7 @@ impl Model {
             display_name: entry.display_name,
             id: entry.id,
             max_input_tokens: entry.max_input_tokens,
-            max_output_tokens: entry.max_tokens,
+            max_output_tokens: Some(entry.max_tokens),
             default_temperature: 1.0,
             mode,
             supports_thinking,
@@ -1836,7 +1845,14 @@ mod tests {
         let model = Model::from_listed(entry);
         assert!(model.supports_thinking);
         assert!(!model.supports_adaptive_thinking);
-        assert!(matches!(model.mode, AnthropicModelMode::Thinking { .. }));
+        // zed-kask (D49): the thinking mode must be uncapped — the 4096
+        // hardcode silently killed reasoning-heavy turns.
+        assert!(matches!(
+            model.mode,
+            AnthropicModelMode::Thinking {
+                budget_tokens: None
+            }
+        ));
     }
 
     #[test]

@@ -225,9 +225,6 @@ pub struct SettingsContent {
     /// Default: VSCode
     pub base_keymap: Option<BaseKeymapContent>,
 
-    /// Configuration for the collab panel visual settings.
-    pub collaboration_panel: Option<PanelSettingsContent>,
-
     pub debugger: Option<DebuggerSettingsContent>,
 
     /// Configuration for Diagnostics-related features.
@@ -313,9 +310,6 @@ pub struct SettingsContent {
     /// Default: false
     pub vim_mode: Option<bool>,
 
-    // Settings related to calls in Zed
-    pub calls: Option<CallSettingsContent>,
-
     /// Settings for the which-key popup.
     pub which_key: Option<WhichKeySettingsContent>,
 
@@ -335,6 +329,11 @@ pub struct SettingsContent {
     /// Settings for developer-oriented instrumentation tools (profilers,
     /// tracers, etc.) that can be toggled at runtime.
     pub instrumentation: Option<InstrumentationSettingsContent>,
+
+    /// hKask-specific settings (D9a). Non-secret config for kask features:
+    /// MCP server load set, data-service toggles, curator/guard/memory settings.
+    /// API keys are stored in the keychain via CredentialsProvider (D9b).
+    pub kask: Option<KaskSettingsContent>,
 }
 
 /// Configuration for developer-oriented instrumentation tools that collect
@@ -406,13 +405,13 @@ fallible_options::flattened_deserialize!(SettingsContent {
     sections: { project, theme, extension, workspace, editor, remote },
     options: {
         call_hierarchy, command_palette, file_finder, git_panel, tabs, tab_bar, tab_switcher, status_bar, preview_tabs, agent,
-        agent_servers, audio, auto_update, base_keymap, collaboration_panel, debugger, diagnostics,
+        agent_servers, audio, auto_update, base_keymap, debugger, diagnostics,
         git,
         global_lsp_settings, image_viewer, markdown_preview, repl, helix_mode, hide_mouse,
         journal, log, line_indicator_format, language_models, copilot, outline_panel, project_panel,
         node, proxy, reduce_motion, server_url, credentials_url, session, telemetry, terminal,
-        title_bar, vim_mode, calls, which_key, vim, modeline_lines, feature_flags,
-        instrumentation,
+        title_bar, vim_mode, which_key, vim, modeline_lines, feature_flags,
+        instrumentation, kask,
     },
     defaults: {},
 });
@@ -567,30 +566,11 @@ pub struct AudioSettingsContent {
     /// Select specific output audio device.
     #[serde(rename = "experimental.output_audio_device")]
     pub output_audio_device: Option<AudioOutputDeviceName>,
-    /// Select specific input audio device.
-    #[serde(rename = "experimental.input_audio_device")]
-    pub input_audio_device: Option<AudioInputDeviceName>,
 }
 
 #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 #[serde(transparent)]
 pub struct AudioOutputDeviceName(pub Option<String>);
-
-impl AsRef<Option<String>> for AudioInputDeviceName {
-    fn as_ref(&self) -> &Option<String> {
-        &self.0
-    }
-}
-
-impl From<Option<String>> for AudioInputDeviceName {
-    fn from(value: Option<String>) -> Self {
-        Self(value)
-    }
-}
-
-#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
-#[serde(transparent)]
-pub struct AudioInputDeviceName(pub Option<String>);
 
 impl AsRef<Option<String>> for AudioOutputDeviceName {
     fn as_ref(&self) -> &Option<String> {
@@ -711,21 +691,6 @@ pub enum DockPosition {
     Left,
     Bottom,
     Right,
-}
-
-/// Configuration of voice calls in Zed.
-#[with_fallible_options]
-#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
-pub struct CallSettingsContent {
-    /// Whether the microphone should be muted when joining a channel or a call.
-    ///
-    /// Default: false
-    pub mute_on_join: Option<bool>,
-
-    /// Whether your current project should be shared when joining an empty channel.
-    ///
-    /// Default: false
-    pub share_on_join: Option<bool>,
 }
 
 #[with_fallible_options]
@@ -943,23 +908,6 @@ pub struct ScrollbarSettings {
 
 #[with_fallible_options]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
-pub struct PanelSettingsContent {
-    /// Whether to show the panel button in the status bar.
-    ///
-    /// Default: true
-    pub button: Option<bool>,
-    /// Where to dock the panel.
-    ///
-    /// Default: right (Agentic layout), left (Classic layout)
-    pub dock: Option<DockPosition>,
-    /// Default width of the panel in pixels.
-    ///
-    /// Default: 240
-    pub default_width: Option<PixelSetting>,
-}
-
-#[with_fallible_options]
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct CommandPaletteSettingsContent {
     /// Whether to use command history ranking for sorting in the command palette.
     ///
@@ -987,10 +935,6 @@ pub struct FileFinderSettingsContent {
     ///
     /// Default: Smart
     pub include_ignored: Option<IncludeIgnoredContent>,
-    /// Whether to include text channels in file finder results.
-    ///
-    /// Default: false
-    pub include_channels: Option<bool>,
     /// Whether to pre-fill the file finder's query with the text selected in the
     /// focused item (e.g. an editor or a terminal) when it is opened.
     ///
@@ -1688,4 +1632,303 @@ impl std::str::FromStr for DelayMs {
             .map(DelayMs)
             .with_context(|| format!("failed to parse delay duration: {s}"))
     }
+}
+
+/// hKask settings content (the `"kask"` section in settings.json).
+///
+/// This is the settings-content representation (deserialized from JSON).
+/// The actual settings struct is `kask_bridge::KaskSettings` (D9a).
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskSettingsContent {
+    /// Kask data directory — root for all kask databases and agent state
+    /// (the hidden infrastructure tree). When empty, the runtime resolves a
+    /// platform default (~/.local/share/zed-kask on Linux).
+    #[serde(default)]
+    pub data_dir: Option<String>,
+
+    /// Kask artifacts directory — the visible root for ALL artifact files
+    /// and outputs of the MCP servers (reports, screens, transactions,
+    /// generated media, corpus cache) at `{server}-mcp/{artifact-type}/`.
+    /// When empty, the runtime resolves a platform default
+    /// (~/Documents/zk-data/).
+    #[serde(default)]
+    pub artifacts_dir: Option<String>,
+
+    /// Kask-wide general configuration: global inference concurrency + batching.
+    #[serde(default)]
+    pub general: Option<KaskGeneralSettingsContent>,
+
+    /// MCP server configuration.
+    #[serde(default)]
+    pub mcp: Option<KaskMcpSettingsContent>,
+
+    /// Curator configuration.
+    #[serde(default)]
+    pub curator: Option<KaskCuratorSettingsContent>,
+
+    /// Per-turn instrument-affordance injection (spec B): surfaces the
+    /// task-matched skill candidates and the exact instrument handles at
+    /// the request tail for substantive prompts. Default false — flip
+    /// after reading the native-first-rate baseline so the pre/post
+    /// comparison stays clean.
+    #[serde(default)]
+    pub affordance: Option<KaskAffordanceSettingsContent>,
+
+    /// Memory consolidation and recall configuration.
+    #[serde(default)]
+    pub memory: Option<KaskMemorySettingsContent>,
+
+    /// Condenser configuration for context management.
+    #[serde(default)]
+    pub condenser: Option<KaskCondenserSettingsContent>,
+
+    /// Research MCP server configuration.
+    #[serde(default)]
+    pub research: Option<KaskResearchSettingsContent>,
+
+    /// Corpus MCP server configuration.
+    #[serde(default)]
+    pub corpus: Option<KaskCorpusSettingsContent>,
+
+    /// Scenarios MCP server configuration.
+    #[serde(default)]
+    pub scenarios: Option<KaskScenariosSettingsContent>,
+
+    /// Prediction-markets MCP server configuration.
+    #[serde(default)]
+    pub prediction_markets: Option<KaskPredictionMarketsSettingsContent>,
+
+    /// Swarm MCP server configuration (local swarm agents and local swarms).
+    #[serde(default)]
+    pub swarm: Option<KaskSwarmSettingsContent>,
+
+    /// Media MCP server configuration: research transcription and vision models.
+    #[serde(default)]
+    pub media: Option<KaskMediaSettingsContent>,
+
+    /// Kask-wide model configuration: default inference model, embedding model,
+    /// and classifier model. These are provider-prefixed strings (e.g.
+    /// `"openrouter/z-ai/glm-5.2"`) that override the kask defaults.
+    #[serde(default)]
+    pub models: Option<KaskModelsSettingsContent>,
+}
+
+/// Per-turn instrument-affordance injection (D94, spec B). Surfaces the
+/// task-matched skill candidates and the exact instrument handles in a
+/// bounded block at the request tail — converting skill discovery from
+/// recall into perception (the measured failure: 100% activation when the
+/// operator names a skill, 0/3 primary-contract discovery otherwise).
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskAffordanceSettingsContent {
+    /// Inject the per-turn affordance block. Default `false`: the operator
+    /// enables it after reading the native-first-rate baseline
+    /// (`kask/docs/research/instrument-affordance-experiment.md`), keeping
+    /// the pre/post comparison clean. Flips apply to the next turn
+    /// without a restart (read per turn at the call site).
+    pub enabled: Option<bool>,
+}
+
+/// Kask-wide general configuration for inference admission, deadlines, and
+/// local circuit-breaker resilience.
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskGeneralSettingsContent {
+    /// Maximum concurrent cloud inference provider calls across the whole
+    /// process — skills, corpus OCR, MCP tool calls, any consumer of the
+    /// global concurrency service. Default 96. Providers throttle at
+    /// different levels; OpenRouter scales to this ceiling.
+    pub max_concurrency: Option<u32>,
+
+    /// Wall-clock timeout for a single inference call. 0 disables (legacy
+    /// behavior). Default 300 (5 minutes).
+    pub inference_timeout_secs: Option<u64>,
+
+    /// Consecutive transient failures required to open the inference circuit.
+    /// Default 3.
+    pub inference_circuit_failure_threshold: Option<u32>,
+
+    /// Seconds an open inference circuit rejects work before one half-open
+    /// recovery probe is admitted. Default 30.
+    pub inference_circuit_open_secs: Option<u64>,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskMcpSettingsContent {
+    /// Parent-owned tool grants by child server ID. Missing entries deny delegated tools.
+    pub delegated_tools: Option<HashMap<String, Vec<String>>>,
+    pub load_default: Option<bool>,
+    #[serde(default)]
+    pub overrides: HashMap<String, bool>,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskCuratorSettingsContent {
+    pub always_on: Option<bool>,
+    pub algedonic_threshold: Option<f64>,
+    /// How the user works with the Curator (the user–Curator dyad level).
+    /// Set only by the user. Default: `collaboration` (Level 2).
+    pub interaction_mode: Option<CuratorInteractionMode>,
+    /// Curator email configuration (outbound algedonic alerts via MXroute).
+    /// When `None`, the alert email sink falls back to the log-only sink.
+    #[serde(default)]
+    pub email: Option<KaskCuratorEmailSettingsContent>,
+}
+
+/// The level the user–Curator dyad works at, chosen by the user
+/// (`kask/docs/architecture/functional-interaction-spec.md` §9). Level 4 (trust, protected
+/// expectations, mutual delegation) is a future release and has no variant.
+#[derive(
+    Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CuratorInteractionMode {
+    /// Level 1 — the user is controller and regulator; the Curator proposes.
+    Control,
+    /// Level 2 — the user and the Curator collaborate toward shared
+    /// understanding and shared solutions.
+    #[default]
+    Collaboration,
+    /// Level 3 — collaboration plus bidirectional learning: the user and the
+    /// Curator challenge and learn from each other.
+    LearningCollaboration,
+}
+
+/// Curator email configuration (non-secret fields).
+///
+/// The SMTP password is stored in the OS keychain under
+/// `kask://credentials/hkask_smtp_password`, not here. The composition root
+/// reads it from the keychain and injects it as `HKASK_SMTP_PASSWORD` into
+/// MCP server child processes.
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskCuratorEmailSettingsContent {
+    /// MXroute server hostname (e.g. "tuesday.mxrouting.net").
+    pub mxroute_server: Option<String>,
+    /// Full email address used for SMTP auth and the `From` header.
+    pub smtp_username: Option<String>,
+    /// From address (defaults to `smtp_username` when unset).
+    pub curator_email: Option<String>,
+    /// Alert recipient (defaults to `smtp_username` when unset).
+    pub alert_email: Option<String>,
+    /// Comma-separated list of senders authorized to reply with curator
+    /// commands (P12 allowlist). Empty means inbound replies are rejected.
+    pub authorized_emails: Option<Vec<String>>,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskMemorySettingsContent {
+    pub consolidation_cadence_secs: Option<u64>,
+    pub confidence_floor: Option<f64>,
+    pub recall_limit: Option<u32>,
+    pub recall_min_confidence: Option<f64>,
+    pub auto_inject: Option<bool>,
+    /// Opt in to injecting selected federated sources into curator chat.
+    pub federated_auto_inject: Option<bool>,
+    /// IDs selected from the curator federated sources manifest.
+    pub federated_source_ids: Option<Vec<String>>,
+    /// Memory life S in days (Wozniak-Gorzelanczyk 1995 forgetting curve:
+    /// R(t) = exp(-t/S)). After S days without recall, confidence decays to
+    /// exp(-1) ≈ 36.8%; the half-life is S·ln(2). Recalling a memory resets
+    /// its decay clock. Overridden by the `HKASK_MEMORY_LIFE_DAYS` env var.
+    pub memory_life_days: Option<f64>,
+    /// ALWAYS-mode distillation cadence in seconds (0 = disabled). The
+    /// curator server's background pass distills finished threads into
+    /// candidate lesson h_mems on this cadence.
+    pub distillation_cadence_secs: Option<u64>,
+    /// A thread counts as finished when its newest turn is at least this
+    /// many seconds old — the distillation pass skips younger threads.
+    pub distillation_idle_secs: Option<u64>,
+    /// Distillation-gated forgetting age in days (0 = disabled). The
+    /// curator server's background pass forgets (expires) the
+    /// shared-copy turns of threads whose distillation watermark is
+    /// older than this — the goldfish principle's automatic leg.
+    pub forgetting_days: Option<u64>,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskCondenserSettingsContent {
+    pub profile: Option<String>,
+    pub auto_compress_tool_results: Option<bool>,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskResearchSettingsContent {
+    /// Research database path (feed substrate + research-run ledger). When
+    /// empty, the server resolves a default path under the hKask data
+    /// directory.
+    pub research_db: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskCorpusSettingsContent {
+    pub embedding_dim: Option<u32>,
+    pub embedding_model: Option<String>,
+    pub template_root: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskScenariosSettingsContent {}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskPredictionMarketsSettingsContent {
+    /// Cache TTL in seconds for market-data responses.
+    pub cache_ttl_secs: Option<u64>,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskSwarmSettingsContent {
+    /// Operator-selected model for new local agents without an explicit
+    /// model and for unpinned local agents at execution time. When empty,
+    /// local agents use the host session model.
+    pub default_agent_model: Option<String>,
+    /// Whether to start the A2A HTTP gateway (loopback JSON-RPC server that
+    /// exposes local agents to external A2A clients). Default `false`
+    /// (opt-in — it opens a loopback port). Security-relevant: only enable
+    /// when you need external A2A clients to reach your local agents.
+    pub a2a_http_enabled: Option<bool>,
+    /// Embedding vector dimension for the semantic-memory embedding store.
+    /// Default 1024. Only relevant if the embedding-search path is used.
+    pub embedding_dim: Option<usize>,
+}
+
+/// Media MCP server configuration (the `"kask.media"` section in settings.json).
+///
+/// Provider-prefixed transcription and vision model overrides. Absent fields
+/// use settings-layer defaults; an explicitly empty value disables that
+/// pipeline with a visible configuration error, never a server-side fallback.
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskMediaSettingsContent {
+    pub stt_model: Option<String>,
+    pub vision_model: Option<String>,
+}
+
+/// Kask-wide model configuration (the `"kask.models"` section in settings.json).
+///
+/// These fields let the user override the kask defaults for the primary
+/// inference model, the embedding model used by the corpus/memory subsystems,
+/// and the classifier model used for guard/regulation classification tasks.
+/// All are provider-prefixed strings (e.g. `"openrouter/z-ai/glm-5.2"`).
+/// Defaults are resolved by KaskModelsSettings; QA generation and verification
+/// have no default models.
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskModelsSettingsContent {
+    /// Default inference model for kask subsystems (provider-prefixed).
+    /// When set, overrides the kask default for the Curator, skill execution,
+    /// and kask panel inference.
+    pub default_model: Option<String>,
+    /// Embedding model for corpus indexing and memory semantic recall
+    /// (provider-prefixed). When empty, falls back to the corpus MCP server's
+    /// `embedding_model` setting, then to the kask default.
+    pub embedding_model: Option<String>,
+    /// Classifier model for guard/regulation classification tasks
+    /// (provider-prefixed). When empty, falls back to the kask default.
+    pub classifier_model: Option<String>,
+    /// Dedicated QA generator (provider-prefixed). Empty means unconfigured;
+    /// never falls back to the active chat model.
+    pub qa_generation_model: Option<String>,
+    /// OCR vision model for scanned document OCR (provider-prefixed).
+    /// When empty, falls back to the kask default (`RunPod/kask-ocr`).
+    pub ocr_model: Option<String>,
+    /// Rerank model for the research server's deep-search rerank stage
+    /// (provider-prefixed). When empty, falls back to the kask default
+    /// (`deepinfra/Qwen/Qwen3-Reranker-8B`).
+    pub rerank_model: Option<String>,
 }

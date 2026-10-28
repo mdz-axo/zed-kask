@@ -56,7 +56,7 @@ pub async fn stream_completion(
     }
 
     let inference_config = InferenceConfiguration::builder()
-        .max_tokens(request.max_tokens as i32)
+        .set_max_tokens(request.max_tokens.map(|tokens| tokens as i32))
         .set_temperature(request.temperature)
         .set_top_p(request.top_p)
         .build();
@@ -188,12 +188,12 @@ pub enum Thinking {
         budget_tokens: Option<u64>,
     },
     Adaptive {
-        effort: BedrockAdaptiveThinkingEffort,
+        effort: BedrockAdaptiveReasoningEffort,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         binding_controls_beta: Option<String>,
     },
     Reasoning {
-        effort: BedrockAdaptiveThinkingEffort,
+        effort: BedrockAdaptiveReasoningEffort,
     },
     /// Explicitly turns thinking off. Required by Claude Opus 5, where
     /// adaptive thinking runs by default when the `thinking` field is
@@ -285,7 +285,10 @@ fn thinking_request_fields(thinking: &Thinking) -> HashMap<String, Document> {
 #[derive(Debug)]
 pub struct Request {
     pub model: String,
-    pub max_tokens: u64,
+    /// zed-kask: D83 — None omits `maxTokens` from the inference config so
+    /// Bedrock's own model default binds; it is never a fabricated
+    /// client-side cap.
+    pub max_tokens: Option<u64>,
     pub messages: Vec<BedrockMessage>,
     pub tools: Option<BedrockToolConfig>,
     pub thinking: Option<Thinking>,
@@ -341,7 +344,7 @@ mod tests {
     #[test]
     fn test_adaptive_thinking_serializes_effort_in_output_config() {
         let fields = thinking_request_fields(&Thinking::Adaptive {
-            effort: BedrockAdaptiveThinkingEffort::XHigh,
+            effort: BedrockAdaptiveReasoningEffort::XHigh,
             binding_controls_beta: None,
         });
 
@@ -389,7 +392,7 @@ mod tests {
     #[test]
     fn test_gpt_6_astra_uses_openai_reasoning_fields() {
         let fields = thinking_request_fields(&Thinking::Reasoning {
-            effort: BedrockAdaptiveThinkingEffort::High,
+            effort: BedrockAdaptiveReasoningEffort::High,
         });
         assert_eq!(
             aws_document_to_value(&Document::Object(fields)),
@@ -400,7 +403,7 @@ mod tests {
     #[test]
     fn test_adaptive_thinking_binding_controls() {
         let fields = thinking_request_fields(&Thinking::Adaptive {
-            effort: BedrockAdaptiveThinkingEffort::High,
+            effort: BedrockAdaptiveReasoningEffort::High,
             binding_controls_beta: Some("thinking-binding-controls-2026-08-01".into()),
         });
         assert_eq!(

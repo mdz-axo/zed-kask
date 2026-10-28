@@ -1,0 +1,169 @@
+use crate::{AgentTool, ToolCallEventStream, ToolInput};
+use agent_client_protocol::schema::v2 as acp;
+use gpui::{App, Task};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
+/// Record the operator's evaluation of a skill's output during the algedonic
+/// review with the Curator — acceptance or rejection with the evidence-backed
+/// reason. Registered only in Curator sessions: evaluation is separated from
+/// execution, so the session that ran a skill never rates it (Goodhart).
+///
+/// The rating is persisted as a `reg.skill.<id>.operator_feedback` record in
+/// the curator's `RegulationArchive`, then added to the shared
+/// `RegulationLedger` working view, which the metacognition loop's drift
+/// sensing trends ("declining operator acceptance" — outputs that are
+/// technically successful but increasingly useless; the outcome channel alone
+/// cannot catch that). This is the operator's only channel for rating a
+/// skill: rejection reasons and correction directions reach the skill through
+/// gemba-walk proposals that change its SKILL.md, never by the skill reading
+/// its own verdicts at run time.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct RecordSkillFeedbackInput {
+    /// The skill whose output is being rated (e.g., "code-review").
+    pub skill_id: String,
+    /// The operator's disposition: true = accepted, false = rejected.
+    pub accepted: bool,
+    /// Optional reason — the rejection reason or correction direction.
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+pub struct RecordSkillFeedbackTool;
+
+impl RecordSkillFeedbackTool {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl AgentTool for RecordSkillFeedbackTool {
+    type Input = RecordSkillFeedbackInput;
+    type Output = String;
+
+    const NAME: &'static str = "record_skill_feedback";
+
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Fetch
+    }
+
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> ui::SharedString {
+        match input {
+            Ok(input) => {
+                let disposition = if input.accepted {
+                    "Accepted"
+                } else {
+                    "Rejected"
+                };
+                format!("{disposition} output of {}", input.skill_id).into()
+            }
+            Err(_) => "Record skill feedback".into(),
+        }
+    }
+
+    fn run(
+        self: Arc<Self>,
+        input: ToolInput<Self::Input>,
+        _event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<Self::Output, Self::Output>> {
+        cx.spawn(async move |_| {
+            let input = input.recv().await.map_err(|error| error.to_string())?;
+            crate::record_operator_feedback(
+                &input.skill_id,
+                input.accepted,
+                input.note.as_deref(),
+            )?;
+            let disposition = if input.accepted {
+                "accepted"
+            } else {
+                "rejected"
+            };
+            Ok(format!(
+                "Recorded operator feedback: {} output of {} ({disposition}).",
+                disposition, input.skill_id
+            ))
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    /// The review's rating tool fires the operator-feedback hook
+    /// with the operator's disposition and reason — the explicit rating
+    /// reaches the durable archive writer before the live ledger view.
+    #[gpui::test]
+    async fn records_the_operators_disposition(cx: &mut gpui::TestAppContext) {
+        let recorded: Arc<Mutex<Vec<(String, bool, Option<String>)>>> =
+            Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&recorded);
+        let mut recorder_override = crate::OPERATOR_FEEDBACK_RECORDER.scoped_for_test(Arc::new(
+            move |skill_id, accepted, note| {
+                sink.lock().unwrap_or_else(|e| e.into_inner()).push((
+                    skill_id.to_string(),
+                    accepted,
+                    note.map(str::to_string),
+                ));
+                Ok(())
+            },
+        ));
+
+        let (event_stream, _event_rx) = ToolCallEventStream::test();
+        let tool = Arc::new(RecordSkillFeedbackTool::new());
+        let task = cx.update(|cx: &mut App| {
+            tool.run(
+                ToolInput::resolved(RecordSkillFeedbackInput {
+                    skill_id: "code-review".to_string(),
+                    accepted: false,
+                    note: Some("rank 16 too small for the dataset".to_string()),
+                }),
+                event_stream,
+                cx,
+            )
+        });
+        let output = task.await.expect("tool runs");
+
+        assert!(
+            output.contains("code-review"),
+            "the tool confirms: {output}"
+        );
+        {
+            let recorded = recorded.lock().unwrap_or_else(|e| e.into_inner());
+            assert_eq!(
+                *recorded,
+                vec![(
+                    "code-review".to_string(),
+                    false,
+                    Some("rank 16 too small for the dataset".to_string())
+                )],
+                "the hook must receive the skill, disposition, and reason"
+            );
+        }
+
+        recorder_override.replace(Arc::new(|_, _, _| Err("archive unavailable".to_string())));
+        let (event_stream, _event_rx) = ToolCallEventStream::test();
+        let failed = cx
+            .update(|cx: &mut App| {
+                Arc::new(RecordSkillFeedbackTool::new()).run(
+                    ToolInput::resolved(RecordSkillFeedbackInput {
+                        skill_id: "code-review".to_string(),
+                        accepted: true,
+                        note: None,
+                    }),
+                    event_stream,
+                    cx,
+                )
+            })
+            .await
+            .expect_err("durability failure must prevent a success receipt");
+        assert!(failed.contains("archive unavailable"));
+    }
+}

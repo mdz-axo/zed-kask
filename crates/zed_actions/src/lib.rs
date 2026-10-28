@@ -20,14 +20,6 @@ pub struct OpenBrowser {
     pub url: Arc<str>,
 }
 
-/// Opens a zed:// URL within the application.
-#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
-#[action(namespace = zed)]
-#[serde(deny_unknown_fields)]
-pub struct OpenZedUrl {
-    pub url: Arc<str>,
-}
-
 /// Opens the keymap to either add a keybinding or change an existing one
 #[derive(PartialEq, Clone, Default, Action, JsonSchema, Serialize, Deserialize)]
 #[action(namespace = zed, no_json, no_register)]
@@ -670,8 +662,6 @@ pub mod assistant {
             FocusAgent,
             /// Opens the skill creator window for creating a new skill.
             OpenSkillCreator,
-            /// Opens the skill creator window to import a skill from a GitHub URL.
-            CreateSkillFromUrl,
             /// Opens the user-global AGENTS.md rules file.
             #[action(name = "OpenGlobalAGENTS.mdRules")]
             OpenGlobalAgentsMdRules,

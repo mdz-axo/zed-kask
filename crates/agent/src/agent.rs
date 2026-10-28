@@ -1,4 +1,8 @@
+mod curator_agent_server;
 mod db;
+mod delegation_authority;
+mod kask_compaction;
+mod kask_thread_state;
 mod legacy_thread;
 mod native_agent_server;
 pub mod outline;
@@ -7,13 +11,18 @@ mod sandboxing;
 mod templates;
 #[cfg(test)]
 mod tests;
+mod tool_trace;
+pub use delegation_authority::{DelegatedToolIdentity, DelegationAuthority};
 mod thread;
 mod thread_store;
-mod tool_permissions;
+pub mod tool_permissions;
+pub mod tool_retry_tracker;
 mod tools;
 
 use context_server::ContextServerId;
+pub use curator_agent_server::{CURATOR_STATIC_CONTEXT, CuratorAgentServer};
 pub use db::*;
+use hkask_types::process_global::ProcessGlobal;
 use itertools::Itertools;
 pub use native_agent_server::NativeAgentServer;
 use parking_lot::Mutex;
@@ -34,12 +43,12 @@ use acp_thread::{
     AgentSessionListRequest, AgentSessionListResponse, ClientUserMessageId, ProcessOutput,
     TokenUsageRatio,
 };
+use agent_client_protocol::schema::v1 as acp_v1;
 use agent_client_protocol::schema::v2 as acp_v2;
 use agent_skills::{
-    AGENTS_DIR_NAME, MAX_SKILL_DESCRIPTIONS_SIZE, MAX_SKILL_FILE_SIZE, ProjectSkillGroup,
-    SKILL_FILE_NAME, Skill, SkillIndex, SkillLoadError, SkillLoadWarning, SkillScopeId,
-    SkillSource, SkillSummary, builtin_skills, global_skills_dir, load_skills_from_directory,
-    parse_skill_frontmatter, project_skills_relative_path, read_skill_body_from_content,
+    AGENTS_DIR_NAME, MAX_SKILL_DESCRIPTIONS_SIZE, ProjectSkillGroup, SKILL_FILE_NAME, Skill,
+    SkillIndex, SkillLoadError, SkillLoadWarning, SkillScopeId, SkillSource, SkillSummary,
+    global_skills_dir, parse_skill_frontmatter, project_skills_relative_path, seed_shipped_skills,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -55,13 +64,15 @@ use gpui::{
 };
 use language_model::{
     IconOrSvg, LanguageModel, LanguageModelId, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelRegistry,
+    LanguageModelRegistry, LanguageModelToolResult, LanguageModelToolResultContent,
+    LanguageModelToolUseId,
 };
 use project::{
-    AgentId, Project, ProjectItem, ProjectPath, Worktree, WorktreeId,
-    trusted_worktrees::TrustedWorktrees,
+    AgentId, Project, ProjectItem, ProjectPath, Worktree, trusted_worktrees::TrustedWorktrees,
 };
-use prompt_store::{ProjectContext, RULES_FILE_NAMES, RulesFileContext, WorktreeContext};
+use prompt_store::{
+    ProjectContext, RULES_FILE_NAMES, RuleFrontmatter, RulesFileContext, WorktreeContext,
+};
 use rand::Rng as _;
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, Settings as _, update_settings_file};
@@ -140,14 +151,6 @@ impl SkillLoadingIssueData {
             kind,
         }
     }
-
-    fn catalog_budget_exceeded(path: PathBuf, message: String) -> Self {
-        Self {
-            path,
-            message,
-            kind: SkillLoadingIssueKind::CatalogBudgetExceeded,
-        }
-    }
 }
 
 /// Emitted whenever the set of skill loading issues for a project changes.
@@ -158,6 +161,17 @@ impl SkillLoadingIssueData {
 pub struct SkillLoadingIssuesUpdated {
     pub project_id: EntityId,
     pub issues: Vec<SkillLoadingIssue>,
+}
+
+/// Emitted when persisting a thread's content to the threads database
+/// fails. Without this, a readonly or corrupted `threads.db` silently
+/// drops saves (the worker only logged) — the operator sees "no thread
+/// found with ID" only after a restart, by which point the content is
+/// unrecoverable.
+#[derive(Clone, Debug)]
+pub struct ThreadSaveFailed {
+    pub session_id: acp_v2::SessionId,
+    pub error: Arc<anyhow::Error>,
 }
 
 #[derive(Clone, Debug)]
@@ -185,6 +199,7 @@ impl From<&Skill> for NativeAvailableSkill {
 }
 
 pub const COMPACT_COMMAND_NAME: &str = "compact";
+const TRACE_COMMAND_NAME: &str = "trace";
 
 /// Returns the set of MCP prompt names that must be server-qualified
 /// (`/<server>.<name>`) to stay unambiguous in the slash-command popup: names
@@ -273,6 +288,11 @@ enum NativeRetryAction {
         skill: Skill,
         content: Vec<acp_v2::ContentBlock>,
     },
+    // zed-kask: D70 — the on-demand `/trace` command: a private single-turn
+    // capture whose stripped prompt is sent through the normal turn.
+    Trace {
+        content: Vec<acp_v2::ContentBlock>,
+    },
     Compact,
 }
 
@@ -281,10 +301,18 @@ impl NativeRetryAction {
         content: Vec<acp_v2::ContentBlock>,
         project_state: &ProjectState,
         cx: &App,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         if let Some(parsed_command) = Command::parse(&content) {
             if parsed_command.is_unqualified(COMPACT_COMMAND_NAME) {
-                return Self::Compact;
+                return Ok(Self::Compact);
+            }
+
+            // zed-kask: D70 — `/trace` classifies before the skill arms so a
+            // user skill or MCP prompt named "trace" cannot hijack the command
+            // (the D44 stale-list lesson: a rename must not degrade to a
+            // silently different invocation).
+            if parsed_command.is_unqualified(TRACE_COMMAND_NAME) {
+                return Ok(Self::Trace { content });
             }
 
             // Skill scope qualifiers (`/:<name>` and
@@ -293,15 +321,22 @@ impl NativeRetryAction {
             // inserts a qualified form for every skill so picking the
             // global row unambiguously runs the global skill even when
             // a same-named project-local one exists.
-            if let Some(scope) = parsed_command.skill_scope
-                && let Some(skill) = project_state.skills.iter().find(|skill| {
+            // zed-kask: D1 — a missing scoped skill is an error, not an
+            // unqualified MCP prompt or chat turn (pin:
+            // missing_scoped_skill_does_not_fall_through_to_other_prompts).
+            if let Some(scope) = parsed_command.skill_scope {
+                let Some(skill) = project_state.skills.iter().find(|skill| {
                     skill.name == parsed_command.prompt_name && skill.source.matches_scope(scope)
-                })
-            {
-                return Self::Skill {
+                }) else {
+                    return Err(anyhow!(
+                        "Skill '/{scope}:{}' not found in the requested scope",
+                        parsed_command.prompt_name
+                    ));
+                };
+                return Ok(Self::Skill {
                     skill: skill.clone(),
                     content,
-                };
+                });
             }
 
             // MCP prompts and skills both register slash commands. MCP
@@ -328,12 +363,12 @@ impl NativeRetryAction {
                 } else {
                     Default::default()
                 };
-                return Self::Mcp {
+                return Ok(Self::Mcp {
                     prompt_name: prompt.prompt.name.clone(),
                     server_id: prompt.server_id.clone(),
                     arguments,
                     content,
-                };
+                });
             }
 
             // Unqualified skill match (`/skill-name` with no scope
@@ -343,41 +378,27 @@ impl NativeRetryAction {
             // The user explicitly typed the name, so they get to invoke
             // it.
             //
-            // Inlined rather than calling `apply_skill_overrides` so
-            // we don't clone the entire skill list on every prompt
-            // (including prompts like `/help` that aren't skills at
-            // all). The resolution rule matches the override-applied
-            // view: among skills with the matching name, pick the one
-            // with the highest source precedence, so the slash command
-            // picks the same entry the model sees in its catalog.
-            // Ties (e.g. two project-local skills from different
-            // worktrees) resolve to the first in iteration order to
-            // match `apply_skill_overrides`.
+            // zed-kask: D1 — resolve only the typed name using the same
+            // core-aware winner rule as the model catalog
+            // (select_unqualified_skill / candidate_overrides_skill):
+            // a project-local non-core collision must not shadow the
+            // unshadowable global core entry, so the slash command picks
+            // the same entry the model sees in its catalog.
             if parsed_command.explicit_server_id.is_none()
                 && parsed_command.skill_scope.is_none()
                 && !project_state.skills.is_empty()
             {
                 let prompt_name = parsed_command.prompt_name;
-                let resolved = project_state
-                    .skills
-                    .iter()
-                    .filter(|skill| skill.name == prompt_name)
-                    .reduce(|best, candidate| {
-                        if candidate.source.precedence() > best.source.precedence() {
-                            candidate
-                        } else {
-                            best
-                        }
-                    });
+                let resolved = select_unqualified_skill(&project_state.skills, prompt_name);
                 if let Some(skill) = resolved {
-                    return Self::Skill {
+                    return Ok(Self::Skill {
                         skill: skill.clone(),
                         content,
-                    };
+                    });
                 }
             }
         }
-        Self::Prompt(content)
+        Ok(Self::Prompt(content))
     }
 }
 
@@ -438,8 +459,9 @@ impl LanguageModels {
     }
 
     fn refresh_list(&mut self, cx: &App) {
-        let providers = LanguageModelRegistry::global(cx)
-            .read(cx)
+        let registry = LanguageModelRegistry::global(cx);
+        let registry = registry.read(cx);
+        let providers = registry
             .visible_providers()
             .into_iter()
             .filter(|provider| provider.is_authenticated(cx))
@@ -554,13 +576,17 @@ pub struct NativeAgent {
     fs: Arc<dyn Fs>,
     _subscriptions: Vec<Subscription>,
     /// Tracks the lifecycle of global skills directory observation. We
-    /// don't eagerly watch (or even check for) `~/.agents/skills/` at
+    /// don't eagerly watch (or even check for) the global skills dir at
     /// startup; users who never engage with the agent panel pay zero
     /// filesystem cost. The watch is kicked off lazily by
     /// [`Self::ensure_skills_scan_started`], which is called from the
     /// three agent-panel interaction points: input box focus, slash
     /// autocomplete, and conversation submit.
     skills_state: SkillsState,
+    /// When set, all new threads get this static context appended to the
+    /// system prompt (NOT an override — the Zed Agent prompt stays).
+    /// Used by the Curator overlay to inject regulatory context.
+    curator_static_context: Option<SharedString>,
 }
 
 #[derive(Default)]
@@ -570,15 +596,16 @@ enum SkillsState {
     #[default]
     Idle,
     /// A one-shot scan task is in flight. It checks whether
-    /// `~/.agents/skills/` exists; if so, transitions to `Watching`,
+    /// the global skills dir exists; if so, transitions to `Watching`,
     /// otherwise back to `Idle`.
     Scanning,
-    /// A watch task is observing `~/.agents/skills/`. It transitions
+    /// A watch task is observing the global skills dir. It transitions
     /// back to `Idle` if the watched directory itself is removed.
     Watching,
 }
 
 impl gpui::EventEmitter<SkillLoadingIssuesUpdated> for NativeAgent {}
+impl gpui::EventEmitter<ThreadSaveFailed> for NativeAgent {}
 
 static RULES_FILE_REL_PATHS: LazyLock<Vec<Arc<RelPath>>> = LazyLock::new(|| {
     RULES_FILE_NAMES
@@ -590,6 +617,57 @@ static RULES_FILE_REL_PATHS: LazyLock<Vec<Arc<RelPath>>> = LazyLock::new(|| {
         })
         .collect()
 });
+
+/// Parse YAML frontmatter from a rules file. Returns the body text (with
+/// frontmatter stripped) and the parsed frontmatter (or `None` if no
+/// frontmatter is present).
+///
+/// Frontmatter format (Cline-compatible):
+/// ```yaml
+/// ---
+/// globs:
+///   - "**/*.rs"
+/// alwaysApply: false
+/// ---
+/// Rule body text...
+/// ```
+///
+/// When frontmatter is absent, returns the trimmed text and `None` (I2 —
+/// upstream Zed compatibility, `always_apply` defaults to `true`).
+fn parse_rules_frontmatter(raw_text: String) -> (String, Option<RuleFrontmatter>) {
+    let trimmed = raw_text.trim();
+    if !trimmed.starts_with("---") {
+        return (trimmed.to_string(), None);
+    }
+
+    // Find the closing `---` fence.
+    let after_open = &trimmed[3..];
+    let after_open = after_open.strip_prefix('\n').unwrap_or(after_open);
+
+    // Handle empty frontmatter: `---\n---` (no YAML between fences).
+    if let Some(after_close) = after_open.strip_prefix("---") {
+        let body = after_close.strip_prefix('\n').unwrap_or(after_close).trim();
+        return (body.to_string(), Some(RuleFrontmatter::default()));
+    }
+
+    let Some(end_pos) = after_open.find("\n---") else {
+        // No closing fence — not valid frontmatter, treat as body.
+        return (trimmed.to_string(), None);
+    };
+
+    let yaml_block = &after_open[..end_pos];
+    let body_start = end_pos + 4; // skip "\n---"
+    let body = after_open[body_start..].trim().to_string();
+
+    match serde_yaml::from_str::<RuleFrontmatter>(yaml_block) {
+        Ok(frontmatter) => (body, Some(frontmatter)),
+        Err(error) => {
+            log::warn!("Failed to parse rules frontmatter: {error}");
+            // On parse failure, treat the whole text as body with no frontmatter.
+            (trimmed.to_string(), None)
+        }
+    }
+}
 
 static AGENTS_PREFIX: LazyLock<Option<Arc<RelPath>>> = LazyLock::new(|| {
     RelPath::from_unix_str(AGENTS_DIR_NAME)
@@ -606,6 +684,7 @@ static SKILLS_PREFIX: LazyLock<Option<Arc<RelPath>>> = LazyLock::new(|| {
 struct ProjectSkillFile {
     relative_path: Arc<RelPath>,
     display_path: PathBuf,
+    #[allow(dead_code)]
     size: u64,
 }
 
@@ -710,6 +789,7 @@ impl NativeAgent {
                 // Flush thread content on quit so an in-flight async save
                 // can't leave a thread orphaned ("no thread found with ID").
                 cx.on_app_quit(Self::flush_threads_on_quit),
+                cx.observe_global::<SkillIndex>(Self::refresh_projects_after_startup_skills),
             ];
 
             if !cx.has_global::<SkillIndex>() {
@@ -727,10 +807,33 @@ impl NativeAgent {
                 fs,
                 _subscriptions: subscriptions,
                 skills_state: SkillsState::default(),
+                curator_static_context: None,
             }
         })
     }
 
+    /// Build a `NativeAgent` connection — the shared spawn sequence used by
+    /// both `NativeAgentServer` and `CuratorAgentServer`. Each server clones
+    /// its `fs` + `thread_store` into the spawned task; this helper does the
+    /// `Templates::new()` -> `NativeAgent::new()` -> `NativeAgentConnection`
+    /// sequence so the two servers cannot drift. Callers may apply their
+    /// overlay (e.g. `set_curator_static_context`) on the returned agent
+    /// before wrapping it, but for the common case where no overlay is needed
+    /// this returns the connection ready to hand back to the agent picker.
+    pub fn build_connection(
+        thread_store: Entity<ThreadStore>,
+        fs: Arc<dyn Fs>,
+        cx: &mut App,
+    ) -> Task<Result<Rc<dyn acp_thread::AgentConnection>>> {
+        cx.spawn(async move |cx| {
+            let templates = Templates::new();
+            let agent = cx.update(|cx| NativeAgent::new(thread_store, templates, fs, cx));
+            Ok(Rc::new(NativeAgentConnection(agent, ZED_AGENT_ID.clone()))
+                as Rc<dyn acp_thread::AgentConnection>)
+        })
+    }
+
+    /// Enable the Curator overlay on this agent.
     /// Kicks off a one-time scan of the global skills directory if one
     /// isn't already in progress and a watch isn't already active.
     ///
@@ -741,7 +844,7 @@ impl NativeAgent {
     /// repeat.
     ///
     /// The scan itself runs detached on the foreground executor. If
-    /// `~/.agents/skills/` exists it transitions state to
+    /// the global skills dir exists it transitions state to
     /// [`SkillsState::Watching`] and starts a recursive watch;
     /// otherwise it transitions back to [`SkillsState::Idle`] so the
     /// next trigger retries (covering the case where the user creates
@@ -756,8 +859,30 @@ impl NativeAgent {
             .detach();
     }
 
+    fn refresh_projects_after_startup_skills(&mut self, cx: &mut Context<Self>) {
+        if !cx.global::<SkillIndex>().is_startup_publication() {
+            return;
+        }
+        for state in self.projects.values_mut() {
+            state.project_context_needs_refresh.send(()).ok();
+        }
+    }
+
     async fn run_skills_scan(this: WeakEntity<Self>, fs: Arc<dyn Fs>, cx: &mut AsyncApp) {
         let skills_dir = global_skills_dir();
+
+        // zed-kask: D28 — ensure the kask data-root skills directory exists.
+        // Pre-release: no migration from legacy paths.
+        let _ = fs.create_dir(&skills_dir).await;
+
+        // zed-kask: Remove copied shipped global skills in a development
+        // checkout; discovery reads their authored files directly. Installed
+        // builds without the checkout seed the bundled payload to disk. The
+        // Settings startup publisher uses the same serialized seed operation.
+        if !fs.is_fake() {
+            seed_shipped_skills(fs.as_ref(), &skills_dir).await;
+        }
+
         if !fs.is_dir(&skills_dir).await {
             // Skills directory doesn't exist; revert state so the next
             // user trigger retries.
@@ -854,6 +979,19 @@ impl NativeAgent {
         self.sibling_thread_host = Some(host);
     }
 
+    /// Enable the Curator overlay on this agent.
+    ///
+    /// This does NOT override the system prompt. Instead, it appends
+    /// `curator_static_context` to the system prompt and registers the
+    /// Curator's action tools. The read-only `CuratorStatusTool` is shared
+    /// by all native agent sessions.
+    ///
+    /// The Zed Agent's coding instructions remain intact. The Curator
+    /// gets all coding capabilities PLUS regulatory context and tools.
+    pub fn set_curator_static_context(&mut self, context: SharedString) {
+        self.curator_static_context = Some(context);
+    }
+
     pub fn sibling_thread_host(&self) -> Option<Rc<dyn SiblingThreadHost>> {
         self.sibling_thread_host.clone()
     }
@@ -885,7 +1023,119 @@ impl NativeAgent {
             )
         });
 
+        self.apply_session_surface(&thread, cx);
+
         self.register_session(thread, project_id, cx)
+    }
+
+    /// Apply the per-session surface every native agent session carries: the
+    /// read-only `CuratorStatusTool`, and — when this agent carries the
+    /// Curator overlay (`CuratorAgentServer::connect`) — the overlay static
+    /// context with the user's dyad level, the Curator agent ID (D6), and
+    /// the curator action tools.
+    ///
+    /// Called from BOTH session paths: `new_session` (fresh threads) and
+    /// `open_thread` (threads re-loaded from the store). `Thread::from_db`
+    /// restores neither the session tools nor the kask thread state
+    /// (`KaskThreadState::new()` defaults), so without this a Curator thread
+    /// resumed across a restart renders without `CURATOR_STATIC_CONTEXT`,
+    /// misroutes its turns to user memory (D6), and loses the curator tools
+    /// — while `register_session` still tags it `CURATOR_AGENT_ID`, so the
+    /// UI keeps saying Curator. Subagent threads bypass this
+    /// (`create_subagent_thread` registers directly) and never receive the
+    /// curator action tools (D59).
+    fn apply_session_surface(&self, thread: &Entity<Thread>, cx: &mut Context<Self>) {
+        // One read-only system-status tool for every native agent session.
+        // Curator-specific action tools remain behind the Curator overlay.
+        thread.update(cx, |thread, _| thread.add_tool(CuratorStatusTool));
+
+        // Apply the Curator overlay: static context + curator action tools.
+        // This is NOT a system prompt override — the Zed Agent prompt stays.
+        // The curator context is appended via `static_context`.
+        // zed-kask: D2 — Curator agent wiring. See DIVERGENCE.md D2.
+        if let Some(ref curator_context) = self.curator_static_context {
+            // The user's dyad level is read per Curator thread (fresh or
+            // resumed), so a changed setting applies to the next thread
+            // without reconnecting.
+            let interaction_mode = cx
+                .global::<settings::SettingsStore>()
+                .merged_settings()
+                .kask
+                .as_ref()
+                .and_then(|kask| kask.curator.as_ref())
+                .and_then(|curator| curator.interaction_mode)
+                .unwrap_or_default();
+            let curator_context = SharedString::from(format!(
+                "{curator_context}\n\n{}",
+                curator_agent_server::interaction_mode_context(interaction_mode)
+            ));
+            thread.update(cx, |thread, cx| {
+                thread.set_static_context(curator_context, cx);
+                // Tag the thread with the Curator agent ID so the memory
+                // ingestion path (D6) routes Curator turns to the curator's
+                // sovereign DB, and the context injector dispatch (D8)
+                // selects the curator's recall store. Without this, Curator
+                // turns would be ingested as user-perspective records and the
+                // curator would have no automatic recall.
+                thread.set_agent_id(CURATOR_AGENT_ID.clone(), cx);
+                thread.add_tool(CuratorDirectiveTool);
+                thread.add_tool(CuratorClearAlgedonicLogTool);
+                // zed-kask: D59 — skill evaluation is separated from skill
+                // execution (Goodhart): the operator's rating is recorded
+                // during the algedonic review with the Curator, never by the
+                // session that executed the skill.
+                thread.add_tool(RecordSkillFeedbackTool::new());
+            });
+
+            // zed-kask: D2/S6 — fetch the health snapshot per Curator session,
+            // not once per connection. A connect-time fetch baked the
+            // app-start state before the metacognition loop's first tick
+            // (~30s after launch — `MetacognitionLoop::run` skips the first
+            // immediate tick), and the cached connection served every
+            // Curator thread that empty block for the whole session. This
+            // breaks the naive-realist trap (Dunning, Self-Insight 2005):
+            // without live state, the static prompt says "monitor system
+            // health" but provides no state. The label tells the model this
+            // is a snapshot — pull `curator_status` for live updates.
+            if let Some(provider) = crate::metacognition_provider() {
+                let thread_for_state = thread.clone();
+                cx.spawn(async move |_agent, cx| {
+                    let mut snapshot = provider.health_snapshot_json().await;
+                    // A session created before the loop's first tick waits
+                    // (bounded) for the first snapshot instead of baking the
+                    // block empty for the thread's lifetime.
+                    let mut remaining_waits = 12u32;
+                    while snapshot.is_none() && remaining_waits > 0 {
+                        remaining_waits -= 1;
+                        cx.background_executor()
+                            .timer(std::time::Duration::from_secs(5))
+                            .await;
+                        snapshot = provider.health_snapshot_json().await;
+                    }
+                    let Some(snapshot) = snapshot else {
+                        log::warn!(
+                            "Curator state block not delivered — the metacognition \
+                             loop has no snapshot; the session prompt renders \
+                             without it"
+                        );
+                        return;
+                    };
+                    let state_block = curator_agent_server::format_state_block(&snapshot);
+                    if state_block.is_empty() {
+                        return;
+                    }
+                    thread_for_state.update(cx, |thread, cx| {
+                        if let Some(context) = thread.agent_static_context().cloned() {
+                            thread.set_static_context(
+                                SharedString::from(format!("{context}\n\n{state_block}")),
+                                cx,
+                            );
+                        }
+                    });
+                })
+                .detach();
+            }
+        }
     }
 
     fn register_session(
@@ -894,7 +1144,12 @@ impl NativeAgent {
         project_id: EntityId,
         cx: &mut Context<Self>,
     ) -> Entity<AcpThread> {
-        let connection = Rc::new(NativeAgentConnection(cx.entity()));
+        let agent_id = if self.curator_static_context.is_some() {
+            CURATOR_AGENT_ID.clone()
+        } else {
+            ZED_AGENT_ID.clone()
+        };
+        let connection = Rc::new(NativeAgentConnection(cx.entity(), agent_id));
 
         let thread = thread_handle.read(cx);
         let session_id = thread.id().clone();
@@ -942,12 +1197,27 @@ impl NativeAgent {
             // The resolver closure reads `state.skills` at invocation
             // time, so skills added or removed by the SKILL.md watcher
             // after the thread is constructed are still visible to the
-            // model — without this, the catalog and tool would drift out
-            // of sync until the session was reopened.
-            thread.add_tool(SkillTool::with_body_resolver(
-                skills_resolver_for_project(weak.clone(), project_id),
-                skill_body_resolver_for_project(project.clone(), self.fs.clone()),
-            ));
+            // model — without this, the catalog and tool would drift out of
+            // sync until the session was reopened.
+            // The invoker is single-sourced from the thread's own agent
+            // identity (`Thread::skill_invoker`) — the same source
+            // `run_tool`'s failure-recording path reads — so the SkillTool
+            // stamp and skill-failure attribution can never diverge
+            // (subagent inheritance included).
+            // zed-kask: D1 — use upstream's project-aware body resolver while
+            // retaining the skill outcome hook. The operator's evaluation tool
+            // is Curator-only (see `new_session`).
+            thread.add_tool(
+                SkillTool::with_body_resolver(
+                    skills_resolver_for_project(weak.clone(), project_id),
+                    skill_body_resolver_for_project(project.clone(), self.fs.clone()),
+                )
+                .with_invoker(thread.skill_invoker()),
+            );
+            // `lisp_eval` and `render_template` are already registered via
+            // `add_default_tools` — they are stateless tools available to all
+            // threads. Only `SkillTool` needs per-session registration because
+            // it holds a per-project skills resolver closure.
         });
 
         let subscriptions = vec![
@@ -991,8 +1261,9 @@ impl NativeAgent {
         let save_worker = cx.spawn({
             let pending_save = pending_save.clone();
             let session_id = session_id.clone();
-            async move |_this, cx| {
+            async move |this, cx| {
                 Self::run_save_worker(
+                    this,
                     session_id,
                     save_wake_rx,
                     pending_save,
@@ -1231,15 +1502,17 @@ impl NativeAgent {
             })
             .collect::<Vec<_>>();
 
-        // Load global skills
+        // In development, shipped skills come straight from this checkout;
+        // global-only user skills come from disk. Installed builds without a
+        // checkout read their seeded bodies. The loader excludes stale
+        // shipped copies so each name has one runtime body.
         let global_skills_task = {
             let global_skills_dir = global_skills_dir();
             let global_skills_fs = fs.clone();
             cx.background_spawn(async move {
-                load_skills_from_directory(
+                agent_skills::load_authoritative_global_skills(
                     &global_skills_fs,
                     &global_skills_dir,
-                    SkillSource::Global,
                 )
                 .await
             })
@@ -1309,16 +1582,19 @@ impl NativeAgent {
 
                     let mut worktree_results = Vec::new();
                     for skill_file in skill_files {
-                        if skill_file.size > MAX_SKILL_FILE_SIZE as u64 {
-                            worktree_results.push(Err(SkillLoadError {
-                                path: skill_file.display_path.clone(),
-                                message: format!(
-                                    "SKILL.md file exceeds maximum size of {}KB",
-                                    MAX_SKILL_FILE_SIZE / 1024
-                                ),
-                            }));
+                        // The checkout's shipped skills are already exposed by the
+                        // global directory as links to these very files. Loading them
+                        // again as project skills creates a second catalog entry.
+                        if agent_skills::is_development_shipped_skill(&skill_file.display_path) {
                             continue;
                         }
+                        // SKILL.md files contain frontmatter (name, description)
+                        // plus the body (methodology instructions). The body is
+                        // injected on demand via the `skill` tool — the
+                        // frontmatter is parsed here for the system prompt
+                        // catalog.
+                        // oversized files before they reach this loop — so this
+                        // call site no longer repeats the check.)
 
                         let buffer = match project
                             .update(cx, |project, cx| {
@@ -1490,9 +1766,12 @@ impl NativeAgent {
             // Build a string from the rope on a background thread.
             cx.background_spawn(async move {
                 let (project_entry_id, rope) = rope_task.await?;
+                let raw_text = rope.to_string();
+                let (text, frontmatter) = parse_rules_frontmatter(raw_text);
                 anyhow::Ok(RulesFileContext {
                     path_in_worktree,
-                    text: rope.to_string().trim().to_string(),
+                    text,
+                    frontmatter,
                     project_entry_id: project_entry_id.to_usize(),
                 })
             })
@@ -1651,7 +1930,6 @@ impl NativeAgent {
         for state in self.projects.values() {
             for skill in state.skills.iter() {
                 match &skill.source {
-                    SkillSource::BuiltIn => {}
                     SkillSource::Global => {
                         if !seen_global {
                             global_skills.push(skill.clone());
@@ -1681,10 +1959,7 @@ impl NativeAgent {
             }
         }
 
-        cx.set_global(SkillIndex {
-            global_skills,
-            project_skills: project_groups,
-        });
+        cx.set_global(SkillIndex::from_agent(global_skills, project_groups));
     }
 
     fn update_available_commands_for_project(&self, project_id: EntityId, cx: &mut Context<Self>) {
@@ -1717,6 +1992,16 @@ impl NativeAgent {
         .meta(acp_thread::meta_with_command_category(
             acp_thread::CommandCategory::Native,
         ));
+        let trace_command = acp_v2::AvailableCommand::new(
+            TRACE_COMMAND_NAME,
+            "Run one prompt with an on-demand private tool trace",
+        )
+        .input(acp_v2::AvailableCommandInput::Text(
+            acp_v2::TextCommandInput::new("<prompt>"),
+        ))
+        .meta(acp_thread::meta_with_command_category(
+            acp_thread::CommandCategory::Native,
+        ));
 
         let registry = state.context_server_registry.read(cx);
 
@@ -1724,7 +2009,7 @@ impl NativeAgent {
         // force-prefixed (`/<server>.compact`) and stays reachable: an
         // unqualified `/compact` always routes to the native command.
         let ambiguous_prompt_names = ambiguous_mcp_prompt_names(
-            [COMPACT_COMMAND_NAME],
+            [COMPACT_COMMAND_NAME, TRACE_COMMAND_NAME],
             registry.prompts().map(|p| p.prompt.name.as_str()),
         );
 
@@ -1763,7 +2048,8 @@ impl NativeAgent {
             Some(command)
         });
 
-        std::iter::once(compact_command)
+        [compact_command, trace_command]
+            .into_iter()
             .chain(mcp_commands)
             .collect()
     }
@@ -1847,6 +2133,11 @@ impl NativeAgent {
                         .update(cx, |this, cx| {
                             let project_id = this.get_or_create_project_state(&project, cx);
                             this.pending_sessions.remove(&id);
+                            // zed-kask: D2 — a resumed thread re-loads through
+                            // `Thread::from_db`, which starts from default
+                            // kask state with no session tools; re-apply the
+                            // per-session surface the thread had at creation.
+                            this.apply_session_surface(&thread, cx);
                             this.register_session(thread.clone(), project_id, cx)
                         })
                         .map_err(Arc::new)?;
@@ -1971,7 +2262,10 @@ impl NativeAgent {
         session.save_wake.send(()).log_err();
     }
 
+    // zed-kask: D28 — keep failure delivery weak so detached final saves
+    // do not retain the agent/session lifecycle they are flushing.
     async fn run_save_worker(
+        this: WeakEntity<Self>,
         id: acp_v2::SessionId,
         mut wake: watch::Receiver<()>,
         pending_save: Arc<Mutex<Option<PendingThreadSave>>>,
@@ -1986,18 +2280,37 @@ impl NativeAgent {
                 folder_paths,
                 db_thread,
             }) = payload
-                && let Some(database) = database_future
-                    .clone()
-                    .await
-                    .map_err(|err| anyhow!(err))
-                    .log_err()
             {
-                let db_thread = db_thread.await;
-                database
-                    .save_thread(id.clone(), db_thread, folder_paths)
-                    .await
-                    .log_err();
-                thread_store.update(cx, |store, cx| store.reload(cx));
+                match database_future.clone().await {
+                    Err(err) => {
+                        let error = Arc::new(anyhow!(err));
+                        log::error!("failed to connect threads database: {error:#}");
+                        this.update(cx, |_, cx| {
+                            cx.emit(ThreadSaveFailed {
+                                session_id: id.clone(),
+                                error,
+                            });
+                        })
+                        .log_err();
+                    }
+                    Ok(database) => {
+                        let db_thread = db_thread.await;
+                        if let Err(error) = database
+                            .save_thread(id.clone(), db_thread, folder_paths)
+                            .await
+                        {
+                            log::error!("failed to save thread {id}: {error:#}");
+                            this.update(cx, |_, cx| {
+                                cx.emit(ThreadSaveFailed {
+                                    session_id: id.clone(),
+                                    error: Arc::new(error),
+                                });
+                            })
+                            .log_err();
+                        }
+                        thread_store.update(cx, |store, cx| store.reload(cx));
+                    }
+                }
             }
             if closed {
                 break;
@@ -2251,8 +2564,8 @@ impl NativeAgent {
     /// skill body is wrapped in the same `<skill_content>` envelope the
     /// model-driven `skill` tool uses, so the conversation looks the same
     /// regardless of who initiated the load. Any text the user typed after
-    /// the command on the same line — plus any additional content blocks
-    /// they attached (file mentions, etc.) — is appended to the same user
+    /// the command on the same line — plus any additional content blocks they
+    /// attached (file mentions, etc.) — is appended to the same user
     /// message after the skill envelope, so the model sees the skill
     /// instructions followed by the user's request.
     fn send_skill_invocation(
@@ -2288,26 +2601,14 @@ impl NativeAgent {
                 anyhow::Ok((session.acp_thread.clone(), session.thread.clone()))
             })??;
 
-            // Build the model-context message: skill envelope first, then
-            // anything the user wrote after the slash command. The first
-            // text block has its leading `/cmd` stripped so the literal
-            // command name isn't echoed into the model's context, but any
-            // text the user typed after it on the same line is preserved
-            // verbatim and appended after the envelope.
-            //
-            // Read the body on demand here — bodies live on disk between
-            // materializations to keep memory cost O(total frontmatter)
-            // rather than O(total file size).
-            let body = if let Some(embedded) = skill.embedded_body {
-                embedded.to_string()
-            } else {
-                read_skill_body(skill.clone(), cx).await.with_context(|| {
-                    format!(
-                        "Failed to read skill body from {}",
-                        skill.skill_file_path.display()
-                    )
-                })?
-            };
+            // zed-kask: D1 — slash and tool activation share the project-aware
+            // resolver so remote workspaces and unsaved buffer edits agree.
+            let body = read_skill_body(skill.clone(), cx).await.with_context(|| {
+                format!(
+                    "Failed to read skill body from {}",
+                    skill.skill_file_path.display()
+                )
+            })?;
             let envelope = crate::tools::render_skill_envelope(&skill, &body);
             let envelope_block = acp_v2::ContentBlock::Text(acp_v2::TextContent::new(envelope));
 
@@ -2367,7 +2668,7 @@ impl NativeAgent {
 
 /// Wrapper struct that implements the AgentConnection trait
 #[derive(Clone)]
-pub struct NativeAgentConnection(pub Entity<NativeAgent>);
+pub struct NativeAgentConnection(pub Entity<NativeAgent>, pub AgentId);
 
 impl NativeAgentConnection {
     pub fn thread(&self, session_id: &acp_v2::SessionId, cx: &App) -> Option<Entity<Thread>> {
@@ -2531,11 +2832,7 @@ impl NativeAgentConnection {
                             let project_state = agent
                                 .session_project_state(&session_id)
                                 .context("Project state not found for session")?;
-                            anyhow::Ok(NativeRetryAction::for_prompt(
-                                content.clone(),
-                                project_state,
-                                cx,
-                            ))
+                            NativeRetryAction::for_prompt(content.clone(), project_state, cx)
                         })??;
                         let source = if matches!(retry_action, NativeRetryAction::Compact) {
                             Vec::new()
@@ -2638,9 +2935,18 @@ impl NativeAgentConnection {
                 let agent = agent.clone();
                 async move |cx| {
                     let task = cx.update(|cx| -> Result<_> {
-                        let connection = NativeAgentConnection(
-                            agent.upgrade().context("Native agent was released")?,
-                        );
+                        // zed-kask: D2 — carry the agent's identity (Curator or
+                        // Zed) on the wrapper, chosen by the same rule as
+                        // register_session.
+                        let agent_entity =
+                            agent.upgrade().context("Native agent was released")?;
+                        let agent_id = agent_entity
+                            .read(cx)
+                            .curator_static_context
+                            .is_some()
+                            .then(|| CURATOR_AGENT_ID.clone())
+                            .unwrap_or_else(|| ZED_AGENT_ID.clone());
+                        let connection = NativeAgentConnection(agent_entity, agent_id);
                         Ok(connection.execute_retry_action(session_id, message_id, retry_action, cx))
                     })?;
                     task.await
@@ -2864,6 +3170,11 @@ impl NativeAgentConnection {
                                     thread.update_tool_call(update, cx)
                                 })??;
                             }
+                            ThreadEvent::ToolCallThinking { tool_call_id, text } => {
+                                acp_thread.update(cx, |thread, cx| {
+                                    thread.append_tool_call_thinking(&tool_call_id, &text, cx);
+                                })?;
+                            }
                             ThreadEvent::Retry(status) => {
                                 if acp_thread::refusal_fallback_model_from_meta(&status.meta)
                                     .is_some()
@@ -3057,8 +3368,10 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
 
         thread.update(cx, |thread, cx| {
             thread.set_model(model.clone(), cx);
-            thread.set_thinking_effort(effort.clone(), cx);
-            thread.set_thinking_enabled(enable_thinking, cx);
+            thread.set_reasoning_effort(
+                enable_thinking.then(|| effort.clone().unwrap_or_else(|| "default".to_string())),
+                cx,
+            );
             if let Some(speed) = speed {
                 thread.set_speed(speed, cx);
             }
@@ -3070,7 +3383,7 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
             move |settings, cx| {
                 let provider = model.provider_id().0.to_string();
                 let model = model.id().0.to_string();
-                let enable_thinking = thread.read(cx).thinking_enabled();
+                let enable_thinking = thread.read(cx).thinking_effort().is_some();
                 let speed = thread.read(cx).speed();
                 settings
                     .agent
@@ -3225,6 +3538,491 @@ pub fn available_native_agent(cx: &App) -> AvailableAgent {
     }
 }
 
+/// The hKask Curator agent ID (D2). The Curator is a native in-process agent
+/// backed by hKask's regulation + metacognition loops.
+pub static CURATOR_AGENT_ID: LazyLock<AgentId> = LazyLock::new(|| AgentId::new("Curator"));
+
+// ── D6: Thread → memory ingestion hook ─────────────────────────────────────
+
+/// A completed thread turn offered to the memory system for ingestion.
+///
+/// This is the `agent` crate's local mirror of `hkask_types::TurnRecord`.
+/// The bridge adapts between the two.
+pub struct ThreadTurnRecord {
+    pub thread_id: String,
+    pub user_input: String,
+    pub agent_response: String,
+    pub model: String,
+    pub thread_title: Option<String>,
+    /// The agent ID that produced this turn (`CURATOR_AGENT_ID` or
+    /// `ZED_AGENT_ID`). The zed side always sets it — thread identity is by
+    /// construction (`kask_thread_state::KaskThreadState::new`), so a turn
+    /// can never be silently classified. `None` remains valid only for port
+    /// implementors constructing records outside a live thread.
+    /// The memory port uses this to route ingestion to the correct
+    /// perspective-scoped store — Curator turns go to the curator's sovereign DB.
+    pub agent_id: Option<AgentId>,
+}
+
+/// Port for ingesting completed thread turns into memory (D6).
+///
+/// This is the `agent` crate's local trait — the bridge provides the
+/// implementation. When no implementation is injected, ingestion is a no-op.
+pub trait ThreadMemoryPort: Send + Sync {
+    /// Ingest a completed turn into memory. Fire-and-forget from the caller's
+    /// perspective — the memory system handles classification and consolidation.
+    ///
+    fn ingest_turn(
+        &self,
+        record: ThreadTurnRecord,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>>;
+}
+
+/// Global hook for the thread memory port (D6).
+///
+/// Set by the zed-kask composition root at startup. When set, thread turn
+/// completion triggers memory ingestion. When `None` (upstream zed, or before
+/// the composition root runs), turn completion is a no-op for memory.
+///
+/// Re-settable (`ProcessGlobal`) so the port can be replaced after startup —
+/// the composition root installs a logging port immediately, then upgrades
+/// to a real port once the agent identity is known.
+static MEMORY_PORT: ProcessGlobal<Arc<dyn ThreadMemoryPort>> = ProcessGlobal::new();
+
+/// Set the global thread memory port (D6 composition root).
+///
+/// Called by zed-kask's app startup to wire the `kask_bridge::BridgeMemoryPort`
+/// into the thread completion path. Can be called more than once — later calls
+/// replace the earlier port (e.g., upgrading from a logging port to a real
+/// memory port once the agent identity is known).
+pub fn set_memory_port(port: Option<Arc<dyn ThreadMemoryPort>>) {
+    MEMORY_PORT.set(port);
+}
+
+/// Get the global thread memory port, if set.
+///
+/// Returns an owned `Arc` clone so the caller doesn't hold the lock across
+/// an await point (the ingestion is fire-and-forget on a background task).
+pub(crate) fn memory_port() -> Option<Arc<dyn ThreadMemoryPort>> {
+    MEMORY_PORT.get()
+}
+
+#[cfg(test)]
+pub(crate) struct ScopedTestOverride<T: 'static> {
+    slot: &'static std::thread::LocalKey<std::cell::RefCell<Option<T>>>,
+    previous: Option<T>,
+    _owner_thread: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+#[cfg(test)]
+impl<T> ScopedTestOverride<T> {
+    pub(crate) fn replace(&mut self, value: T) {
+        self.slot.with(|slot| {
+            slot.replace(Some(value));
+        });
+    }
+}
+
+#[cfg(test)]
+impl<T> Drop for ScopedTestOverride<T> {
+    fn drop(&mut self) {
+        self.slot.with(|slot| {
+            slot.replace(self.previous.take());
+        });
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn scoped_test_override<T>(
+    slot: &'static std::thread::LocalKey<std::cell::RefCell<Option<T>>>,
+    value: T,
+) -> ScopedTestOverride<T> {
+    let previous = slot.with(|slot| slot.replace(Some(value)));
+    ScopedTestOverride {
+        slot,
+        previous,
+        _owner_thread: std::marker::PhantomData,
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn test_override<T: Clone>(
+    slot: &'static std::thread::LocalKey<std::cell::RefCell<Option<T>>>,
+) -> Option<T> {
+    slot.with(|slot| slot.borrow().clone())
+}
+
+/// Global override for the archived threads DB path (D28 — Standardized
+/// Artifact Storage).
+///
+/// When set, `ThreadsDatabase::new` resolves the threads SQLite DB at this
+/// path instead of the upstream `paths::data_dir()/threads/threads.db`.
+/// The canonical kask path is `{kask_data_dir}/threads/threads.db`, resolved
+/// by `hkask_types::agent_paths::resolve_under_data_dir`. Wired by the
+/// zed-kask composition root at startup.
+///
+/// Re-settable (`ProcessGlobal`) so the path can be replaced after startup
+/// — e.g. if the operator changes the kask data directory via settings and
+/// the composition root re-wires. Per `.rules`, re-settable hooks do not
+/// need the `Err`-branch warn.
+static THREADS_DB_PATH_OVERRIDE: ProcessGlobal<std::path::PathBuf> = ProcessGlobal::new();
+
+#[cfg(test)]
+thread_local! {
+    static TEST_THREADS_DB_PATH_OVERRIDE: std::cell::RefCell<Option<std::path::PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Set the global archived-threads DB path override (D28 composition root).
+///
+/// Called by zed-kask's app startup to wire the canonical kask data-root
+/// threads path into the threads database. When `None`, the threads DB falls
+/// back to the legacy upstream path so the editor remains functional
+/// pre-wiring.
+pub fn set_threads_db_path_override(path: Option<std::path::PathBuf>) {
+    THREADS_DB_PATH_OVERRIDE.set(path);
+}
+
+/// Install an archived-threads path override for the current test thread.
+#[cfg(test)]
+pub(crate) fn scoped_threads_db_path_override_for_test(
+    path: std::path::PathBuf,
+) -> ScopedTestOverride<std::path::PathBuf> {
+    scoped_test_override(&TEST_THREADS_DB_PATH_OVERRIDE, path)
+}
+
+/// Get the archived-threads DB path override, if set.
+pub(crate) fn threads_db_path_override() -> Option<std::path::PathBuf> {
+    #[cfg(test)]
+    if let Some(path) = test_override(&TEST_THREADS_DB_PATH_OVERRIDE) {
+        return Some(path);
+    }
+
+    THREADS_DB_PATH_OVERRIDE.get()
+}
+
+/// Context injector — enriches prompts with retrieved context (D8).
+///
+/// Called from `build_request_messages_until` after the system prompt and
+/// before the conversation history. Returns additional messages to insert
+/// (e.g., retrieved memories, enriched context).
+///
+/// Only called for `UserPrompt` and `Subagent` intents — never for
+/// `ThreadSummarization` or `ThreadContextSummarization` (would cause
+/// infinite recursion).
+pub trait ContextInjector: Send + Sync {
+    /// Retrieve context relevant to the user's prompt and return it as
+    /// additional request messages to insert into the prompt.
+    fn inject_context(
+        &self,
+        thread_id: &str,
+        user_prompt: &str,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Vec<language_model::LanguageModelRequestMessage>>
+                + Send
+                + '_,
+        >,
+    >;
+}
+
+/// Global hook for the context injector (D8).
+///
+/// Set by the zed-kask composition root at startup. When set, prompts are
+/// enriched with retrieved memories before inference. When `None`
+/// (upstream zed, or before the composition root runs), no context injection.
+static CONTEXT_INJECTOR: std::sync::OnceLock<Option<Arc<dyn ContextInjector>>> =
+    std::sync::OnceLock::new();
+
+/// Global hook for the **Curator's** context injector (D8 — curator mirror).
+///
+/// Set by the zed-kask composition root alongside `set_context_injector`.
+/// When set, Curator threads get their prompts enriched with memories
+/// recalled from the curator's sovereign DB (`agents/curator/curator.db`),
+/// mirroring the user agent's recall loop. When `None`, Curator threads
+/// fall back to the user injector (if any) — graceful degradation that
+/// gives the curator user-scoped recall instead of curator-scoped recall.
+static CURATOR_CONTEXT_INJECTOR: std::sync::OnceLock<Option<Arc<dyn ContextInjector>>> =
+    std::sync::OnceLock::new();
+
+/// Set the global context injector (D8 composition root).
+///
+/// Uses `OnceLock` — a second call (e.g. deferred task re-firing after a
+/// model change) is silently dropped. The warn names the hook so operators
+/// reading the log can distinguish "not configured" from "configured but
+/// the second wiring was dropped".
+pub fn set_context_injector(injector: Option<Arc<dyn ContextInjector>>) {
+    if let Err(prev) = CONTEXT_INJECTOR.set(injector) {
+        log::warn!(
+            "set_context_injector: hook already set — second wiring attempt dropped. \
+             This usually means the deferred post-login task re-ran (re-login, multi-window, \
+             or retry). The previously-wired injector remains active. \
+             Remediation: restart the app to re-wire from a clean process."
+        );
+        let _ = prev;
+    }
+}
+
+/// Set the Curator's context injector (D8 composition root — curator mirror).
+///
+/// Called by the composition root alongside `set_context_injector`. The
+/// curator injector recalls from the curator's sovereign DB so the Curator
+/// builds its own semantic + episodic memory and recalls it automatically —
+/// a parallel of the user agent's memory loop.
+pub fn set_curator_context_injector(injector: Option<Arc<dyn ContextInjector>>) {
+    if let Err(prev) = CURATOR_CONTEXT_INJECTOR.set(injector) {
+        log::warn!(
+            "set_curator_context_injector: hook already set — second wiring attempt dropped. \
+             The previously-wired curator injector remains active. \
+             Remediation: restart the app to re-wire from a clean process."
+        );
+        let _ = prev;
+    }
+}
+
+/// Get the global context injector, if set.
+pub(crate) fn context_injector() -> Option<&'static Arc<dyn ContextInjector>> {
+    CONTEXT_INJECTOR.get().and_then(|opt| opt.as_ref())
+}
+
+/// Get the context injector for a given agent ID (D8 per-agent dispatch).
+///
+/// Returns the Curator's injector when `agent_id` is `CURATOR_AGENT_ID`,
+/// falling back to the user injector when the curator injector is not set
+/// (graceful degradation — gives the curator user-scoped recall instead of
+/// none). Returns the user injector for any other agent ID (including
+/// `None` — the default Zed Agent).
+pub(crate) fn context_injector_for(
+    agent_id: Option<&AgentId>,
+) -> Option<&'static Arc<dyn ContextInjector>> {
+    if agent_id == Some(&CURATOR_AGENT_ID) {
+        if let Some(curator_injector) = CURATOR_CONTEXT_INJECTOR.get().and_then(|opt| opt.as_ref())
+        {
+            return Some(curator_injector);
+        }
+        // Fall back to the user injector so the curator still gets *some*
+        // recall when the curator injector isn't wired. Logged at composition
+        // root so the operator knows the curator is running on user-scoped
+        // memory instead of its own.
+    }
+    context_injector()
+}
+
+/// Per-turn instrument-affordance injector (D94 — spec B).
+///
+/// Called from `run_turn_internal` for `UserPrompt`/`Subagent` intents with
+/// the turn's user prompt and the model-invocable skill catalog (read fresh
+/// from the published `SkillIndex`). Returns a bounded block naming the
+/// task-matched skill candidates and the exact instrument handles, appended
+/// at the END of the request — the highest-attention position, immediately
+/// before generation. This converts skill discovery from recall (the
+/// measured 0/3 primary-contract match rate in
+/// `kask/docs/research/native-first-denominator-sample.md`) into
+/// perception, without touching the digest-cached system prompt (the
+/// prefix-cache contract).
+pub trait AffordanceInjector: Send + Sync {
+    /// Match the user prompt against the catalog and return the affordance
+    /// block as request messages for the tail (empty when nothing applies).
+    fn inject_affordance<'a>(
+        &'a self,
+        catalog: &'a [(String, String)],
+        user_prompt: &'a str,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Vec<language_model::LanguageModelRequestMessage>>
+                + Send
+                + 'a,
+        >,
+    >;
+}
+
+/// Global hook for the affordance injector (D94). OnceLock — the same
+/// set-once semantics as the context injector hooks.
+static AFFORDANCE_INJECTOR: std::sync::OnceLock<Option<Arc<dyn AffordanceInjector>>> =
+    std::sync::OnceLock::new();
+
+/// Set the global affordance injector (D94 composition root).
+///
+/// OnceLock — a second wiring attempt (deferred-task re-run) is dropped
+/// with a warn, matching `set_context_injector`.
+pub fn set_affordance_injector(injector: Option<Arc<dyn AffordanceInjector>>) {
+    if let Err(prev) = AFFORDANCE_INJECTOR.set(injector) {
+        log::warn!(
+            "set_affordance_injector: hook already set — second wiring attempt dropped. \
+             The previously-wired injector remains active. \
+             Remediation: restart the app to re-wire from a clean process."
+        );
+        let _ = prev;
+    }
+}
+
+/// Get the global affordance injector, if set.
+pub(crate) fn affordance_injector() -> Option<&'static Arc<dyn AffordanceInjector>> {
+    AFFORDANCE_INJECTOR.get().and_then(|opt| opt.as_ref())
+}
+
+/// The model-invocable skill catalog as fresh `(name, description)` pairs,
+/// read from the published `SkillIndex` at the turn's injection point so
+/// mid-session skill edits take effect without a restart. Skills with
+/// `disable_model_invocation` are excluded — they are user-only and must
+/// not be surfaced to the model.
+pub fn affordance_catalog(cx: &gpui::App) -> Vec<(String, String)> {
+    cx.try_global::<agent_skills::SkillIndex>()
+        .map(|index| {
+            index
+                .global_skills
+                .iter()
+                .chain(
+                    index
+                        .project_skills
+                        .iter()
+                        .flat_map(|group| group.skills.iter()),
+                )
+                .filter(|skill| !skill.disable_model_invocation)
+                .map(|skill| (skill.name.clone(), skill.description.clone()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Thread condenser — compresses incoming tool results at ingestion time (D8).
+///
+/// Called from the tool-result handling path in `run_turn_internal`.
+/// When set, tool output text is compressed before being stored in the
+/// `AgentMessage.tool_results`. When `None`, tool results are stored verbatim.
+///
+/// Code-reading tools (read_file, grep, list_directory, etc.) are bypassed at
+/// the call site — see `NO_COMPRESS_TOOLS` in `thread.rs`. The condenser is
+/// intended for verbose terminal/build/test output, not source code.
+/// Compaction planning does not use this hook: the deterministic pre-shrink
+/// is owned by `kask_compaction` and runs on the summarizer's request copy.
+pub trait ThreadCondenser: Send + Sync {
+    /// Compress a tool result's text output at ingestion time.
+    ///
+    /// Returns the compressed text. If compression is disabled or the output
+    /// is already within budget, returns the original text unchanged.
+    ///
+    /// This is the ingestion policy only. Compaction planning applies its
+    /// own deterministic pre-shrink to the summarizer's request copy
+    /// (`kask_compaction`), with no tool-name exemptions.
+    fn compress_tool_result(&self, tool_name: &str, output: &str) -> String;
+}
+
+/// Global hook for the thread condenser (D8).
+///
+/// Re-settable (`ProcessGlobal`) so the condenser can be replaced after
+/// startup — the composition root installs an early condenser before the
+/// model resolves, then the deferred post-login task may upgrade it.
+static THREAD_CONDENSER: ProcessGlobal<Arc<dyn ThreadCondenser>> = ProcessGlobal::new();
+
+/// Set the global thread condenser (D8 composition root).
+///
+/// Re-settable — later calls replace the earlier condenser (e.g., upgrading
+/// from an early condenser to one constructed after the model resolves).
+pub fn set_thread_condenser(condenser: Option<Arc<dyn ThreadCondenser>>) {
+    THREAD_CONDENSER.set(condenser);
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_THREAD_CONDENSER: std::cell::RefCell<Option<Arc<dyn ThreadCondenser>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) struct ScopedThreadCondenserOverride {
+    previous: Option<Arc<dyn ThreadCondenser>>,
+    _owner_thread: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+#[cfg(test)]
+impl Drop for ScopedThreadCondenserOverride {
+    fn drop(&mut self) {
+        TEST_THREAD_CONDENSER.with(|slot| {
+            slot.replace(self.previous.take());
+        });
+    }
+}
+
+/// Install a fake condenser for the current test thread only.
+///
+/// expect: "Agent tests do not inherit another test's fake condenser"
+/// [P9] Motivating: Homeostatic Self-Regulation — test feedback remains causal
+/// pre: `condenser` is a test double used by the current test
+/// post: the override is visible only on this thread and restored when the guard drops
+#[cfg(test)]
+pub(crate) fn scoped_thread_condenser_for_test(
+    condenser: Arc<dyn ThreadCondenser>,
+) -> ScopedThreadCondenserOverride {
+    let previous = TEST_THREAD_CONDENSER.with(|slot| slot.replace(Some(condenser)));
+    ScopedThreadCondenserOverride {
+        previous,
+        _owner_thread: std::marker::PhantomData,
+    }
+}
+
+/// Get a cloned handle to the thread condenser, if set.
+///
+/// Tests first consult their thread-local scoped override. Production callers
+/// read the process-global composition-root hook. The returned `Arc` is owned,
+/// so callers do not hold either slot across an await point.
+pub(crate) fn thread_condenser() -> Option<Arc<dyn ThreadCondenser>> {
+    #[cfg(test)]
+    if let Some(condenser) = TEST_THREAD_CONDENSER.with(|slot| slot.borrow().clone()) {
+        return Some(condenser);
+    }
+
+    THREAD_CONDENSER.get()
+}
+
+#[cfg(test)]
+mod thread_condenser_test_isolation {
+    use super::*;
+
+    struct MarkerCondenser;
+
+    impl ThreadCondenser for MarkerCondenser {
+        fn compress_tool_result(&self, _tool_name: &str, output: &str) -> String {
+            format!("{output} [COMPRESSED]")
+        }
+    }
+
+    /// expect: "Agent tests do not inherit another test's fake condenser"
+    /// [P9] Motivating: Homeostatic Self-Regulation — test feedback remains causal
+    /// pre: a test installs a scoped fake condenser
+    /// post: only the owner thread sees it, and unwinding restores prior state
+    #[test]
+    fn scoped_override_is_thread_local_and_panic_safe() {
+        let baseline = thread_condenser();
+        let marker: Arc<dyn ThreadCondenser> = Arc::new(MarkerCondenser);
+
+        let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _override = scoped_thread_condenser_for_test(marker.clone());
+            assert!(Arc::ptr_eq(
+                &thread_condenser().expect("owner thread sees override"),
+                &marker
+            ));
+
+            let concurrent = std::thread::spawn(thread_condenser)
+                .join()
+                .expect("concurrent reader");
+            assert!(
+                concurrent
+                    .as_ref()
+                    .is_none_or(|condenser| { !Arc::ptr_eq(condenser, &marker) })
+            );
+            panic!("exercise scoped cleanup");
+        }));
+
+        assert!(unwind.is_err());
+        match (thread_condenser(), baseline) {
+            (Some(actual), Some(expected)) => assert!(Arc::ptr_eq(&actual, &expected)),
+            (None, None) => {}
+            _ => panic!("scoped override did not restore prior condenser state"),
+        }
+    }
+}
+
 struct NativeSessionSubmissions {
     connection: NativeAgentConnection,
     session_id: acp_v2::SessionId,
@@ -3256,7 +4054,7 @@ impl acp_thread::ReceiptSessionSubmissions for NativeSessionSubmissions {
 
 impl acp_thread::AgentConnection for NativeAgentConnection {
     fn agent_id(&self) -> AgentId {
-        ZED_AGENT_ID.clone()
+        self.1.clone()
     }
 
     fn telemetry_id(&self) -> SharedString {
@@ -3315,6 +4113,14 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             connection: self.clone(),
             session_id: session_id.clone(),
         }))
+    }
+
+    fn client_user_message_ids(
+        &self,
+        _cx: &App,
+    ) -> Option<Rc<dyn acp_thread::AgentSessionClientUserMessageIds>> {
+        let prompt: Rc<dyn acp_thread::AgentSessionClientUserMessageIds> = Rc::new(self.clone());
+        Some(prompt)
     }
 
     fn validate_prompt_content(&self, content: &[acp_v2::ContentBlock]) -> Result<()> {
@@ -3378,6 +4184,67 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
     }
 }
 
+// zed-kask: the v1 completion-based prompt path, retained for ACP v1
+// clients and the agent tests. Command dispatch is shared with the
+// receipt path: classify through `NativeRetryAction::for_prompt`
+// (D70 `/trace`, the D1 scoped-skill error and core-aware unqualified
+// resolution) and execute through `execute_retry_action`.
+impl acp_thread::AgentSessionClientUserMessageIds for NativeAgentConnection {
+    fn prompt(
+        &self,
+        _client_user_message_id: acp_thread::ClientUserMessageId,
+        params: acp_v2::PromptRequest,
+        cx: &mut App,
+    ) -> Task<Result<acp_v1::PromptResponse>> {
+        let session_id = params.session_id.clone();
+        log::info!("Received prompt request for session: {}", session_id);
+        log::debug!("Prompt blocks count: {}", params.prompt.len());
+
+        if self.0.read(cx).session_project_state(&session_id).is_none() {
+            log::error!("Session not found in prompt: {}", session_id);
+            if self.0.read(cx).sessions.contains_key(&session_id) {
+                log::error!(
+                    "Session found in sessions map, but not in project state: {}",
+                    session_id
+                );
+            }
+            return Task::ready(Err(anyhow::anyhow!("Session not found")));
+        };
+
+        if let Err(error) =
+            acp_thread::AgentConnection::validate_prompt_content(self, &params.prompt)
+        {
+            return Task::ready(Err(error));
+        }
+
+        // Route through the receipt transport so the session's execution
+        // bookkeeping (retry actions, cancellation, completion channel) is
+        // set up exactly as the v2 path does. `for_prompt` classification
+        // (D70 `/trace`, the D1 scoped-skill error and core-aware
+        // unqualified resolution) runs inside submit_native; the completion
+        // channel restores the v1 completion-based response.
+        let (task, completion) = self.submit_native(session_id, Some(params.prompt), cx);
+        cx.spawn(async move |_cx| {
+            task.await?;
+            let stop_reason = match completion.await {
+                Ok(Ok(stop_reason)) => stop_reason,
+                Ok(Err(error)) => return Err(anyhow!("{error:#}")),
+                Err(_) => return Err(anyhow!("native execution was released")),
+            };
+            Ok(acp_v1::PromptResponse::new(match stop_reason {
+                acp_v2::StopReason::EndTurn => acp_v1::StopReason::EndTurn,
+                acp_v2::StopReason::MaxTokens => acp_v1::StopReason::MaxTokens,
+                acp_v2::StopReason::MaxTurnRequests => acp_v1::StopReason::MaxTurnRequests,
+                acp_v2::StopReason::Refusal => acp_v1::StopReason::Refusal,
+                acp_v2::StopReason::Cancelled => acp_v1::StopReason::Cancelled,
+                // v1 has no error stop reason; the v2 enum is non-exhaustive,
+                // so every remaining variant maps to EndTurn.
+                _ => acp_v1::StopReason::EndTurn,
+            }))
+        })
+    }
+}
+
 impl NativeAgentConnection {
     fn execute_retry_action(
         &self,
@@ -3414,6 +4281,73 @@ impl NativeAgentConnection {
             Some(NativeRetryAction::Compact) => self.0.update(cx, |agent, cx| {
                 agent.send_compact_command(message_id, session_id, cx)
             }),
+            // zed-kask: D70 — the on-demand trace command: strip the command
+            // prefix, run one traced turn, then export the trace and report
+            // its path in the conversation.
+            Some(NativeRetryAction::Trace { content }) => {
+                let Some(thread) = self.thread(&session_id, cx) else {
+                    return Task::ready(Err(anyhow!("Trace session not found")));
+                };
+                let Some(acp_thread) = self
+                    .0
+                    .read(cx)
+                    .sessions
+                    .get(&session_id)
+                    .map(|session| session.acp_thread.clone())
+                else {
+                    return Task::ready(Err(anyhow!("Trace session was released")));
+                };
+                let mut blocks = content;
+                if let Some(acp_v2::ContentBlock::Text(first)) = blocks.first_mut() {
+                    let text = strip_slash_command_prefix(&first.text);
+                    if text.trim().is_empty() {
+                        blocks.remove(0);
+                    } else {
+                        first.text = text;
+                    }
+                }
+                if blocks.is_empty() {
+                    return Task::ready(Err(anyhow!("/trace requires a prompt or attachment")));
+                }
+                let path_style = thread.read(cx).project().read(cx).path_style(cx);
+                let task = self.run_turn(session_id, cx, {
+                    let thread = thread.clone();
+                    move |_thread, cx| {
+                        thread.update(cx, |thread, cx| {
+                            thread.start_on_demand_trace()?;
+                            let content = blocks
+                                .into_iter()
+                                .map(|block| {
+                                    UserMessageContent::from_content_block(block, path_style)
+                                })
+                                .collect::<Result<Vec<_>>>()?;
+                            thread.send(message_id, content, cx)
+                        })
+                    }
+                });
+                cx.spawn(async move |cx| {
+                    let result = task.await;
+                    let error = result.as_ref().err().map(ToString::to_string);
+                    let trace = thread
+                        .update(cx, |thread, _| thread.finish_on_demand_trace(error))
+                        .context("No trace was active for the completed turn")?;
+                    let directory = crate::tool_trace::trace_directory();
+                    let path = cx
+                        .background_spawn(async move {
+                            crate::tool_trace::write_trace(&trace, &directory)
+                        })
+                        .await
+                        .context("On-demand trace export failed")?;
+                    acp_thread.update(cx, |thread, cx| {
+                        thread.push_assistant_content_block(
+                            format!("On-demand tool trace saved to {}", path.display()).into(),
+                            false,
+                            cx,
+                        );
+                    })?;
+                    result
+                })
+            }
             None => self.run_turn(session_id, cx, |thread, cx| {
                 thread.update(cx, |thread, cx| thread.resume(cx))
             }),
@@ -3691,11 +4625,21 @@ impl NativeThreadEnvironment {
         session_id: acp_v2::SessionId,
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
-        let (subagent_thread, acp_thread) = self.agent.update(cx, |agent, _cx| {
+        let parent = self
+            .thread
+            .upgrade()
+            .context("Parent thread no longer exists")?;
+        let parent_id = parent.read(cx).id().clone();
+        let authority = parent.read(cx).delegation_for_child(cx);
+        let (subagent_thread, acp_thread) = self.agent.update(cx, |agent, cx| {
             let session = agent
                 .sessions
                 .get(&session_id)
                 .ok_or_else(|| anyhow!("No subagent session found with id {session_id}"))?;
+            anyhow::ensure!(
+                session.thread.read(cx).parent_thread_id().as_ref() == Some(&parent_id),
+                "Cannot resume a root thread or another parent's subagent"
+            );
             let acp_thread = session
                 .acp_thread
                 .upgrade()
@@ -3703,6 +4647,7 @@ impl NativeThreadEnvironment {
             anyhow::Ok((session.thread.clone(), acp_thread))
         })??;
 
+        subagent_thread.update(cx, |thread, cx| thread.restrict_delegation(authority, cx));
         let depth = subagent_thread.read(cx).depth();
 
         if let Some(parent_thread_entity) = self.thread.upgrade() {
@@ -3860,9 +4805,16 @@ impl ThreadEnvironment for NativeThreadEnvironment {
 
     fn create_sibling_thread(
         &self,
-        request: SiblingThreadRequest,
+        mut request: SiblingThreadRequest,
         cx: &mut AsyncApp,
     ) -> Task<Result<SiblingThreadInfo>> {
+        request.delegation_authority = match self
+            .thread
+            .read_with(cx, |thread, cx| thread.delegation_for_child(cx))
+        {
+            Ok(authority) => Some(authority),
+            Err(error) => return Task::ready(Err(error)),
+        };
         let host = match self
             .agent
             .read_with(cx, |agent, _| agent.sibling_thread_host())
@@ -3891,6 +4843,14 @@ impl ThreadEnvironment for NativeThreadEnvironment {
             })
         }
     }
+}
+
+#[derive(Debug, Clone)]
+enum SubagentPromptResult {
+    Completed,
+    Cancelled,
+    ContextWindowWarning,
+    Error(String),
 }
 
 pub struct NativeSubagentHandle {
@@ -4042,6 +5002,149 @@ impl SubagentHandle for NativeSubagentHandle {
             }
         })
     }
+
+    fn send_streaming(
+        &self,
+        message: String,
+        tool_use_id: LanguageModelToolUseId,
+        cx: &AsyncApp,
+    ) -> oneshot::Receiver<Result<LanguageModelToolResult>> {
+        let (result_tx, result_rx) = oneshot::channel();
+        let thread = self.subagent_thread.clone();
+        let acp_thread = self.acp_thread.clone();
+        let subagent_session_id = self.session_id.clone();
+        let parent_thread = self.parent_thread.clone();
+        let tool_use_id_for_task = tool_use_id;
+
+        cx.spawn(async move |cx| {
+            // Reuse the same turn-execution logic as `send`, but deliver the
+            // result via the oneshot channel instead of returning it.
+            let task = cx.update(|cx| {
+                let ratio_before_prompt = thread
+                    .read(cx)
+                    .latest_token_usage()
+                    .map(|usage| usage.ratio());
+
+                parent_thread
+                    .update(cx, |parent_thread, _cx| {
+                        parent_thread.register_running_subagent(thread.downgrade())
+                    })
+                    .ok();
+
+                let task = acp_thread.update(cx, |acp_thread, cx| {
+                    acp_thread.send(vec![message.into()], cx)
+                });
+
+                let (token_limit_tx, token_limit_rx) = oneshot::channel::<()>();
+                let mut token_limit_tx = Some(token_limit_tx);
+
+                let subscription = cx.subscribe(
+                    &thread,
+                    move |_thread, event: &TokenUsageUpdated, _cx| {
+                        if let Some(usage) = &event.0 {
+                            let old_ratio = ratio_before_prompt
+                                .clone()
+                                .unwrap_or(TokenUsageRatio::Normal);
+                            let new_ratio = usage.ratio();
+                            if old_ratio == TokenUsageRatio::Normal
+                                && new_ratio == TokenUsageRatio::Warning
+                            {
+                                if let Some(tx) = token_limit_tx.take() {
+                                    tx.send(()).ok();
+                                }
+                            }
+                        }
+                    },
+                );
+
+                let wait_for_prompt = cx
+                    .background_spawn(async move {
+                        futures::select! {
+                            response = task.fuse() => match response {
+                                Ok(Some(acp_thread::SubmissionResponse::LegacyCompleted(response))) => {
+                                    match response.stop_reason {
+                                        acp_v1::StopReason::Cancelled => SubagentPromptResult::Cancelled,
+                                        acp_v1::StopReason::MaxTokens => SubagentPromptResult::Error("The agent reached the maximum number of tokens.".into()),
+                                        acp_v1::StopReason::MaxTurnRequests => SubagentPromptResult::Error("The agent reached the maximum number of allowed requests between user turns. Try prompting again.".into()),
+                                        acp_v1::StopReason::Refusal => SubagentPromptResult::Error("The agent refused to process that prompt. Try again.".into()),
+                                        acp_v1::StopReason::EndTurn | _ => SubagentPromptResult::Completed,
+                                    }
+                                }
+                                Ok(Some(acp_thread::SubmissionResponse::Accepted(_))) => {
+                                    SubagentPromptResult::Error("Native subagent returned acceptance instead of turn completion".into())
+                                }
+                                Ok(None) => SubagentPromptResult::Error("No response from the agent. You can try messaging again.".into()),
+                                Err(error) => SubagentPromptResult::Error(error.to_string()),
+                            },
+                            _ = token_limit_rx.fuse() => SubagentPromptResult::ContextWindowWarning,
+                        }
+                    });
+
+                (wait_for_prompt, subscription)
+            });
+
+            let (wait_for_prompt, _subscription) = task;
+
+            let result = match wait_for_prompt.await {
+                SubagentPromptResult::Completed => thread.read_with(cx, |thread, _cx| {
+                    thread
+                        .last_message()
+                        .and_then(|message| {
+                            let content = message.as_agent_message()?
+                                .content
+                                .iter()
+                                .filter_map(|c| match c {
+                                    AgentMessageContent::Text(text) => Some(text.as_str()),
+                                    _ => None,
+                                })
+                                .join("\n\n");
+                            if content.is_empty() { None } else { Some(content) }
+                        })
+                        .context("No response from subagent")
+                }),
+                SubagentPromptResult::Cancelled => Err(anyhow!("User canceled")),
+                SubagentPromptResult::Error(message) => Err(anyhow!("{message}")),
+                SubagentPromptResult::ContextWindowWarning => {
+                    thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+                    Err(anyhow!(
+                        "The agent is nearing the end of its context window and has been \
+                         stopped. You can prompt the thread again to have the agent wrap up \
+                         or hand off its work."
+                    ))
+                }
+            };
+
+            parent_thread
+                .update(cx, |parent_thread, cx| {
+                    parent_thread.unregister_running_subagent(&subagent_session_id, cx)
+                })
+                .ok();
+
+            let tool_result = match result {
+                Ok(output) => LanguageModelToolResult {
+                    tool_use_id: tool_use_id_for_task,
+                    tool_name: Arc::from("spawn_agent"),
+                    is_error: false,
+                    content: vec![LanguageModelToolResultContent::Text(Arc::from(output))],
+                    output: None,
+                },
+                Err(error) => LanguageModelToolResult {
+                    tool_use_id: tool_use_id_for_task,
+                    tool_name: Arc::from("spawn_agent"),
+                    is_error: true,
+                    content: vec![LanguageModelToolResultContent::Text(Arc::from(
+                        error.to_string(),
+                    ))],
+                    output: None,
+                },
+            };
+
+            let _ = result_tx.send(Ok(tool_result));
+        })
+        .detach();
+
+        result_rx
+    }
 }
 
 pub struct AcpTerminalHandle {
@@ -4090,7 +5193,7 @@ impl TerminalHandle for AcpTerminalHandle {
 /// `ProjectContext::new`, which only needs the summary fields.
 fn select_catalog_skills(skills: &[Skill]) -> (Vec<SkillSummary>, Vec<SkillLoadingIssueData>) {
     let mut kept = Vec::new();
-    let mut issues = Vec::new();
+    let mut errors = Vec::new();
     let mut dropped: Vec<&Skill> = Vec::new();
     let mut total_size = 0usize;
     let mut budget_exceeded = false;
@@ -4106,10 +5209,6 @@ fn select_catalog_skills(skills: &[Skill]) -> (Vec<SkillSummary>, Vec<SkillLoadi
             total_size += entry_size;
             kept.push(SkillSummary::from(skill));
         } else {
-            // Once any model-invocable skill overflows the budget, stop
-            // packing entirely so the cutoff is deterministic by sort order
-            // rather than dependent on which skills happen to be small
-            // enough to fit in the remaining space.
             budget_exceeded = true;
             dropped.push(skill);
         }
@@ -4143,13 +5242,14 @@ fn select_catalog_skills(skills: &[Skill]) -> (Vec<SkillSummary>, Vec<SkillLoadi
             }
             message
         };
-        issues.push(SkillLoadingIssueData::catalog_budget_exceeded(
-            first.skill_file_path.clone(),
+        errors.push(SkillLoadingIssueData {
+            path: first.skill_file_path.clone(),
             message,
-        ));
+            kind: SkillLoadingIssueKind::CatalogBudgetExceeded,
+        });
     }
 
-    (kept, issues)
+    (kept, errors)
 }
 
 /// Build a closure that, when called, reads the latest `state.skills`
@@ -4180,6 +5280,8 @@ pub fn skill_body_resolver_for_project(
     project: Entity<Project>,
     fs: Arc<dyn Fs>,
 ) -> impl Fn(Skill, &mut AsyncApp) -> Task<Result<String>> + Send + Sync + 'static {
+    use agent_skills::read_skill_body_from_content;
+    use project::WorktreeId;
     move |skill, cx| match skill.source.clone() {
         SkillSource::ProjectLocal { worktree_id, .. } => {
             let project = project.clone();
@@ -4222,7 +5324,7 @@ pub fn skill_body_resolver_for_project(
                 read_skill_body_from_content(&skill.skill_file_path, &content).map_err(Into::into)
             })
         }
-        SkillSource::BuiltIn | SkillSource::Global => {
+        SkillSource::Global => {
             let fs = fs.clone();
             cx.background_spawn(async move {
                 agent_skills::read_skill_body(fs.as_ref(), &skill.skill_file_path)
@@ -4231,6 +5333,252 @@ pub fn skill_body_resolver_for_project(
             })
         }
     }
+}
+
+/// Activate a skill for a delegated (local swarm) agent: the app-published
+/// catalog (`SkillIndex`, the same global and project skills sessions see),
+/// resolved and rendered exactly as `SkillTool` does. Bodies are read from disk.
+pub fn activate_delegated_skill(name: String, cx: &mut AsyncApp) -> Task<Result<String, String>> {
+    let resolved = cx.update(|cx| {
+        let index = cx.try_global::<SkillIndex>().cloned().unwrap_or_default();
+        let all: Vec<Skill> = index
+            .global_skills
+            .iter()
+            .chain(index.project_skills.iter().flat_map(|group| &group.skills))
+            .cloned()
+            .collect();
+        resolve_invocable_skill(&apply_skill_overrides(&all), &name, DELEGATED_SKILL_INVOKER)
+            .map(|skill| (skill, <dyn Fs>::global(cx)))
+    });
+    let (skill, fs) = match resolved {
+        Ok(resolved) => resolved,
+        Err(error) => return Task::ready(Err(error)),
+    };
+    cx.background_spawn(async move {
+        let body = agent_skills::read_skill_body(fs.as_ref(), &skill.skill_file_path)
+            .await
+            .map_err(Into::into);
+        activate_skill(&skill, body, DELEGATED_SKILL_INVOKER)
+    })
+}
+
+/// Invoker stamped on skill outcomes activated over inference IPC
+/// (`host/skill`) by delegated swarm agents.
+pub const DELEGATED_SKILL_INVOKER: &str = "delegated";
+
+/// Global hook for the kask registry templates directory (D1).
+/// Wired in `main.rs` at startup. The `render_template` tool reads this
+/// to resolve Jinja2 template refs (e.g., `essentialist/essentialist-flow`).
+static TEMPLATE_BASE_PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// Set the global template base path for the `render_template` tool.
+/// Called once at startup from `main.rs`.
+pub fn set_template_base_path(path: std::path::PathBuf) {
+    if let Err(_) = TEMPLATE_BASE_PATH.set(path) {
+        log::warn!("set_template_base_path: hook already set — second wiring attempt dropped.");
+    }
+}
+
+/// Get the global template base path, if set.
+pub(crate) fn template_base_path() -> Option<&'static std::path::Path> {
+    TEMPLATE_BASE_PATH.get().map(|p| p.as_path())
+}
+
+/// A re-settable process-global recorder slot with a per-thread test
+/// override. The four regulation recorders below share this one mechanism:
+/// production wires each once from `main.rs`; tests scope a double to their
+/// own thread so parallel tests cannot observe each other's calls.
+/// `get` clones out of the lock, so the callback runs unlocked (wired
+/// closures spawn tokio tasks and must not run under the slot's mutex).
+pub struct RecorderHook<T: Clone + 'static> {
+    slot: ProcessGlobal<T>,
+    #[cfg(test)]
+    test_slot: &'static std::thread::LocalKey<std::cell::RefCell<Option<T>>>,
+}
+
+impl<T: Clone + 'static> RecorderHook<T> {
+    pub fn set(&self, recorder: T) {
+        self.slot.set(Some(recorder));
+    }
+
+    fn get(&self) -> Option<T> {
+        #[cfg(test)]
+        if let Some(recorder) = test_override(self.test_slot) {
+            return Some(recorder);
+        }
+        self.slot.get()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn scoped_for_test(&'static self, recorder: T) -> ScopedTestOverride<T> {
+        scoped_test_override(self.test_slot, recorder)
+    }
+}
+
+macro_rules! recorder_hook {
+    ($name:ident, $ty:ty) => {
+        pub static $name: RecorderHook<$ty> = {
+            #[cfg(test)]
+            thread_local! {
+                static TEST_SLOT: std::cell::RefCell<Option<$ty>> =
+                    const { std::cell::RefCell::new(None) };
+            }
+            RecorderHook {
+                slot: ProcessGlobal::new(),
+                #[cfg(test)]
+                test_slot: &TEST_SLOT,
+            }
+        };
+    };
+}
+
+/// Agent-path MCP tool outcome: (server_name, tool_name, success,
+/// error_kind) — the same tuple `McpRuntime::invoke` records for governed
+/// dispatch. Wired in `main.rs` to the app's `RegulationLedger`, which
+/// `ToolReliabilitySensor` reads; closes the gap where zed's context-server
+/// client calls were invisible to regulation.
+pub type McpToolOutcomeRecorder = Arc<dyn Fn(&str, &str, bool, Option<&str>) + Send + Sync>;
+recorder_hook!(MCP_TOOL_OUTCOME_RECORDER, McpToolOutcomeRecorder);
+
+/// Skill activation outcome — the observe stage of the skill learning loop
+/// (`DIAG-ARCH-LEARNING-LOOP-001`, `kask/docs/diagrams/architecture.md`):
+/// (skill id, invoker, success, error). `invoker` is the session agent id —
+/// `Curator` or `Zed Agent` — or [`DELEGATED_SKILL_INVOKER`]. Production
+/// persists `reg.skill.<id>.outcome` (read by the algedonic review's gemba
+/// walk via `reg_query`) and feeds `RegulationLedger::record_skill_span` for
+/// `sense_feedback_drift`. Fired by `SkillTool::run` and
+/// `activate_delegated_skill` for skills found and attempted; not-found and
+/// authorization denial are request errors and are not recorded.
+pub type SkillOutcomeRecorder = Arc<dyn Fn(&str, &str, bool, Option<&str>) + Send + Sync>;
+recorder_hook!(SKILL_OUTCOME_RECORDER, SkillOutcomeRecorder);
+
+/// Tool failure while a skill is active in a thread: (skill id, invoker,
+/// tool name, error text). The mechanical, always-on half of skill-use issue
+/// capture; `curator_report_skill_use_issue` is the classified half.
+/// Production persists `reg.skill.<id>.tool_failure`, unclassified evidence
+/// for the gemba walk.
+pub type SkillToolFailureRecorder = Arc<dyn Fn(&str, &str, &str, &str) + Send + Sync>;
+recorder_hook!(SKILL_TOOL_FAILURE_RECORDER, SkillToolFailureRecorder);
+
+/// The operator's skill evaluation: (skill id, accepted, note). Evaluation
+/// is separated from execution (Goodhart): the only writer is the
+/// Curator-only `record_skill_feedback` tool used in the algedonic review.
+/// Production persists `reg.skill.<id>.operator_feedback` to the curator's
+/// `RegulationArchive` before acknowledging, then feeds the ledger for
+/// "declining operator acceptance" drift sensing. Unlike the telemetry
+/// hooks, a missing recorder is an error: a verdict must never be dropped.
+pub type OperatorFeedbackRecorder =
+    Arc<dyn Fn(&str, bool, Option<&str>) -> Result<(), String> + Send + Sync>;
+recorder_hook!(OPERATOR_FEEDBACK_RECORDER, OperatorFeedbackRecorder);
+
+/// Agent-turn native-first summary: (substantive, native_first) — whether a
+/// completed turn was substantive work (the caller's documented heuristic:
+/// a user prompt of at least
+/// `kask_thread_state::SUBSTANTIVE_MIN_WORDS` words), and if so, whether it
+/// used zero kask instruments (no context-server tool call and none of the
+/// host default instruments). Fired by `Thread::run_turn` at turn
+/// completion; wired in `main.rs` to the app's `RegulationLedger`, which
+/// the `NativeFirstRateSensor` reads. Closes the drift feedback loop's
+/// unsensed leg: tool failures were sensed (`record_mcp_tool_outcome`),
+/// instrument absence was not.
+pub type NativeFirstTurnRecorder = Arc<dyn Fn(bool, bool) + Send + Sync>;
+recorder_hook!(NATIVE_FIRST_TURN_RECORDER, NativeFirstTurnRecorder);
+
+pub fn set_mcp_tool_outcome_recorder(recorder: McpToolOutcomeRecorder) {
+    MCP_TOOL_OUTCOME_RECORDER.set(recorder);
+}
+
+pub fn set_native_first_turn_recorder(recorder: NativeFirstTurnRecorder) {
+    NATIVE_FIRST_TURN_RECORDER.set(recorder);
+}
+
+pub fn set_skill_outcome_recorder(recorder: SkillOutcomeRecorder) {
+    SKILL_OUTCOME_RECORDER.set(recorder);
+}
+
+pub fn set_skill_tool_failure_recorder(recorder: SkillToolFailureRecorder) {
+    SKILL_TOOL_FAILURE_RECORDER.set(recorder);
+}
+
+pub fn set_operator_feedback_recorder(recorder: OperatorFeedbackRecorder) {
+    OPERATOR_FEEDBACK_RECORDER.set(recorder);
+}
+
+/// Telemetry recorders are best-effort: an unwired hook (tests, non-kask
+/// embedders) drops the record with a debug log, never failing the tool call.
+pub fn record_mcp_tool_outcome(
+    server_name: &str,
+    tool_name: &str,
+    success: bool,
+    error_kind: Option<&str>,
+) {
+    match MCP_TOOL_OUTCOME_RECORDER.get() {
+        Some(record) => record(server_name, tool_name, success, error_kind),
+        None => log::debug!("MCP outcome for {server_name}/{tool_name} not recorded: unwired"),
+    }
+}
+
+/// Telemetry recorders are best-effort: an unwired hook (tests, non-kask
+/// embedders) drops the record with a debug log, never failing the turn.
+pub fn record_agent_turn_native_first(substantive: bool, native_first: bool) {
+    match NATIVE_FIRST_TURN_RECORDER.get() {
+        Some(record) => record(substantive, native_first),
+        None => log::debug!("agent turn summary (substantive={substantive}) not recorded: unwired"),
+    }
+}
+
+// The claim-gate finding type crosses the crate boundary (the zed-side sink
+// labels and excerpts its records), so it rides the agent surface.
+pub use crate::kask_thread_state::ClaimGateFinding;
+
+/// Claim-gate findings recorder (D94 — spec B's observing gate, v1). Fired
+/// at turn completion for substantive native-first turns whose delivered
+/// text carries instrument-shaped claims without instruments behind them
+/// (percentages without `lisp_eval`, citations without the research
+/// ledger). The pure classifier is
+/// `kask_thread_state::claim_gate_findings`; v1's sink is the running log
+/// (`reg.gate`), and the corrective re-prompt (v2) is armed once the
+/// observations calibrate the checker's precision.
+pub type ClaimGateRecorder = Arc<dyn Fn(&[ClaimGateFinding]) + Send + Sync>;
+recorder_hook!(CLAIM_GATE_RECORDER, ClaimGateRecorder);
+
+pub fn set_claim_gate_recorder(recorder: ClaimGateRecorder) {
+    CLAIM_GATE_RECORDER.set(recorder);
+}
+
+pub fn record_claim_gate_findings(findings: &[ClaimGateFinding]) {
+    match CLAIM_GATE_RECORDER.get() {
+        Some(record) => record(findings),
+        None => log::debug!(
+            "claim-gate findings ({} findings) not recorded: unwired",
+            findings.len()
+        ),
+    }
+}
+
+pub fn record_skill_outcome(skill_id: &str, invoker: &str, success: bool, error: Option<&str>) {
+    match SKILL_OUTCOME_RECORDER.get() {
+        Some(record) => record(skill_id, invoker, success, error),
+        None => log::debug!("skill outcome for {skill_id} not recorded: unwired"),
+    }
+}
+
+pub fn record_skill_tool_failure(skill_id: &str, invoker: &str, tool_name: &str, error: &str) {
+    match SKILL_TOOL_FAILURE_RECORDER.get() {
+        Some(record) => record(skill_id, invoker, tool_name, error),
+        None => log::debug!("{tool_name} failure under {skill_id} not recorded: unwired"),
+    }
+}
+
+pub fn record_operator_feedback(
+    skill_id: &str,
+    accepted: bool,
+    note: Option<&str>,
+) -> Result<(), String> {
+    let recorder = OPERATOR_FEEDBACK_RECORDER.get().ok_or_else(|| {
+        format!("operator feedback persistence is not available for skill {skill_id}")
+    })?;
+    recorder(skill_id, accepted, note)
 }
 
 /// Collect successfully-loaded global and project-local skills into a
@@ -4247,13 +5595,13 @@ fn combine_skills(
     global: Vec<Result<Skill, SkillLoadError>>,
     project: impl Iterator<Item = Result<Skill, SkillLoadError>>,
 ) -> (Vec<Skill>, Vec<SkillLoadError>) {
-    // Built-in skills go first (lowest priority) so that global and
-    // project-local skills with the same name shadow them.
-    let mut skills = builtin_skills();
+    let mut skills = Vec::new();
     let mut errors = Vec::new();
     for result in global.into_iter().chain(project) {
         match result {
-            Ok(skill) => skills.push(skill),
+            Ok(skill) => {
+                skills.push(skill);
+            }
             Err(e) => errors.push(e),
         }
     }
@@ -4261,16 +5609,22 @@ fn combine_skills(
     (skills, errors)
 }
 
-/// Emit a warning for each name collision between skills. Called once
+/// Emit a log line for each name collision between skills. Called once
 /// per skill load (not per query), so the log isn't spammed by repeated
 /// catalog rebuilds.
+///
+/// Project-local shadowing non-core global is by design; core wins all
+/// collisions (see [`combine_skills`] and [`apply_skill_overrides`]).
+/// Logging it at `warn` trains operators to ignore warnings for expected
+/// behavior. `debug` keeps the information available for diagnosis
+/// without crying wolf.
 fn log_skill_conflicts(skills: &[Skill]) {
     let mut by_name: HashMap<&str, &Skill> = HashMap::default();
     for skill in skills {
         match by_name.get(skill.name.as_str()) {
             Some(existing) => {
-                if skill.source.precedence() > existing.source.precedence() {
-                    log::warn!(
+                if candidate_overrides_skill(existing, skill) {
+                    log::debug!(
                         "Skill '{}' at '{}' overrides skill at '{}' for the model; both appear in the slash-command popup with their source",
                         skill.name,
                         skill.skill_file_path.display(),
@@ -4278,8 +5632,8 @@ fn log_skill_conflicts(skills: &[Skill]) {
                     );
                     by_name.insert(skill.name.as_str(), skill);
                 } else {
-                    log::warn!(
-                        "Skill '{}' at '{}' conflicts with skill at '{}'; the model will see the first one, but both appear in the slash-command popup with their source",
+                    log::debug!(
+                        "Skill '{}' at '{}' conflicts with the selected skill at '{}'; the model keeps the selected skill, but both appear in the slash-command popup with their source",
                         skill.name,
                         skill.skill_file_path.display(),
                         existing.skill_file_path.display(),
@@ -4293,16 +5647,38 @@ fn log_skill_conflicts(skills: &[Skill]) {
     }
 }
 
-/// Project-local skills override same-named global skills. Returns a
-/// new list with at most one entry per name. Two skills of the same
-/// source colliding (e.g. two globals or two project-locals) keep the
-/// first one to match the historical behavior.
-///
-/// This is the projection of `state.skills` used by everything the
-/// model interacts with: the system-prompt catalog, the `SkillTool`'s
-/// name resolver, and slash-command invocation. The autocomplete popup
-/// deliberately does *not* go through this — it shows the full list so
-/// users can see what's shadowed.
+/// One winner rule for unqualified slash invocation and the model-facing
+/// catalog. Core wins regardless of order; otherwise higher source precedence
+/// wins, and equal-precedence collisions retain the first entry.
+fn candidate_overrides_skill(current: &Skill, candidate: &Skill) -> bool {
+    if current.core != candidate.core {
+        candidate.core
+    } else {
+        candidate.source.precedence() > current.source.precedence()
+    }
+}
+
+/// Resolve only the typed name; do not clone the entire catalog on each slash
+/// command (including non-skill commands). Explicitly scoped commands select
+/// their named source instead and do not use this winner rule.
+fn select_unqualified_skill<'a>(skills: &'a [Skill], name: &str) -> Option<&'a Skill> {
+    skills
+        .iter()
+        .filter(|skill| skill.name == name)
+        .reduce(|best, candidate| {
+            if candidate_overrides_skill(best, candidate) {
+                candidate
+            } else {
+                best
+            }
+        })
+}
+
+/// Project-local skills override same-named non-core global skills. Returns
+/// at most one entry per name; equal-priority collisions retain the first.
+/// Core skills cannot be shadowed by project-local skills in the model catalog
+/// or in unqualified slash commands. The popup retains all entries so users
+/// can explicitly select a source-qualified skill.
 fn apply_skill_overrides(skills: &[Skill]) -> Vec<Skill> {
     let mut result: Vec<Skill> = Vec::new();
     // Borrow names from the input slice so the dedup index doesn't
@@ -4312,7 +5688,7 @@ fn apply_skill_overrides(skills: &[Skill]) -> Vec<Skill> {
     for skill in skills {
         match indices.get(skill.name.as_str()).copied() {
             Some(idx) => {
-                if skill.source.precedence() > result[idx].source.precedence() {
+                if candidate_overrides_skill(&result[idx], skill) {
                     result[idx] = skill.clone();
                 }
             }
@@ -4332,7 +5708,9 @@ mod internal_tests {
     use super::*;
     use crate::tests::release_dropped_entities;
     use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelInfo, MentionUri};
+    use agent_servers::AgentServer;
     use agent_settings::COMPACTION_PROMPT;
+    use agent_skills::{MAX_SKILL_DESCRIPTIONS_SIZE, MAX_SKILL_FILE_SIZE};
     use fs::FakeFs;
     use gpui::TestAppContext;
     use indoc::formatdoc;
@@ -4341,6 +5719,7 @@ mod internal_tests {
         CompletionIntent, LanguageModelCompletionError, LanguageModelCompletionEvent,
         LanguageModelName, LanguageModelProviderId, LanguageModelProviderName, Speed,
     };
+    use project::WorktreeId;
     use serde_json::json;
     use settings::{LanguageModelProviderSetting, SettingsStore};
     use util::{path, rel_path::rel_path};
@@ -4370,7 +5749,7 @@ mod internal_tests {
         let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent = cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs, cx));
-        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
         let provider = Arc::new(FakeLanguageModelProvider::new(
             LanguageModelProviderId::from("fake-corp".to_string()),
             LanguageModelProviderName::from("Fake Corp".to_string()),
@@ -4424,7 +5803,7 @@ mod internal_tests {
         });
         subagent_thread.read_with(cx, |thread, _| {
             assert_eq!(thread.model().map(|model| model.id()), Some(model.id()));
-            assert!(thread.thinking_enabled());
+            assert!(thread.thinking_effort().is_some());
             assert_eq!(thread.thinking_effort(), Some(&"high".to_string()));
             // The fake model does not support fast mode, so the configured speed is
             // intentionally filtered while the model selection is applied.
@@ -4453,7 +5832,7 @@ mod internal_tests {
         let project = Project::test(fs.clone(), [temp_dir.path()], cx).await;
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent = cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs, cx));
-        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
         let acp_thread = cx
             .update(|cx| {
                 connection.new_session(project.clone(), PathList::new(&[temp_dir.path()]), cx)
@@ -4539,16 +5918,766 @@ mod internal_tests {
     }
 
     fn make_global_skill(name: &str, description: &str) -> Skill {
+        let dir = global_skills_dir().join(name);
         Skill {
             name: name.to_string(),
             description: description.to_string(),
             source: SkillSource::Global,
-            directory_path: PathBuf::from(format!("/home/user/.agents/skills/{name}")),
-            skill_file_path: PathBuf::from(format!("/home/user/.agents/skills/{name}/SKILL.md")),
+            directory_path: dir.clone(),
+            skill_file_path: dir.join("SKILL.md"),
             load_warnings: Vec::new(),
             disable_model_invocation: false,
-            embedded_body: None,
+            dependencies: Vec::new(),
+            core: false,
         }
+    }
+
+    #[test]
+    fn mcp_outcome_recorder_records_and_is_replaceable() {
+        // The test double is scoped to this test thread. Production still uses
+        // the re-settable ProcessGlobal composition-root hook.
+        let recorded = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = recorded.clone();
+        let mut recorder_override = MCP_TOOL_OUTCOME_RECORDER.scoped_for_test(std::sync::Arc::new(
+            move |server, tool, success, error_kind| {
+                captured.lock().expect("captured lock").push((
+                    server.to_string(),
+                    tool.to_string(),
+                    success,
+                    error_kind.map(str::to_string),
+                ));
+            },
+        ));
+        record_mcp_tool_outcome("media", "generate_image", true, None);
+        record_mcp_tool_outcome("media", "video_fetch", false, Some("unavailable"));
+        {
+            let recorded = recorded.lock().expect("recorded lock");
+            assert_eq!(recorded.len(), 2);
+            assert_eq!(
+                recorded[0],
+                (
+                    "media".to_string(),
+                    "generate_image".to_string(),
+                    true,
+                    None
+                )
+            );
+            assert_eq!(
+                recorded[1],
+                (
+                    "media".to_string(),
+                    "video_fetch".to_string(),
+                    false,
+                    Some("unavailable".to_string())
+                )
+            );
+        }
+
+        // Replaceable (Mutex, not OnceLock): a second wiring replaces the
+        // first — the re-settable pattern tests and deferred re-wiring
+        // depend on.
+        let replaced_called = std::sync::Arc::new(std::sync::Mutex::new(false));
+        let flag = replaced_called.clone();
+        recorder_override.replace(std::sync::Arc::new(move |_, _, _, _| {
+            *flag.lock().expect("flag lock") = true;
+        }));
+        record_mcp_tool_outcome("media", "model_list", true, None);
+        assert!(*replaced_called.lock().expect("replaced lock"));
+        assert_eq!(
+            recorded.lock().expect("recorded lock").len(),
+            2,
+            "the replaced recorder must no longer receive calls"
+        );
+    }
+
+    /// expect: "Parallel agent tests observe only their own recorder doubles"
+    /// [P9] Motivating: Homeostatic Self-Regulation — test feedback remains causal
+    /// pre: one test installs a scoped skill-outcome recorder
+    /// post: a concurrent thread cannot call it, and panic unwinding removes it
+    #[test]
+    fn scoped_skill_outcome_recorder_is_thread_local_and_panic_safe() {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let captured = calls.clone();
+        let recorder: SkillOutcomeRecorder = Arc::new(move |_, _, _, _| {
+            captured.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        });
+
+        let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _override = SKILL_OUTCOME_RECORDER.scoped_for_test(recorder);
+            record_skill_outcome("owner", "Zed Agent", true, None);
+            std::thread::spawn(|| record_skill_outcome("concurrent", "Zed Agent", true, None))
+                .join()
+                .expect("concurrent recorder call");
+            assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+            panic!("exercise scoped cleanup");
+        }));
+
+        assert!(unwind.is_err());
+        record_skill_outcome("after-unwind", "Zed Agent", true, None);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn native_first_turn_recorder_records_and_is_replaceable() {
+        let recorded = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = recorded.clone();
+        let mut recorder_override = NATIVE_FIRST_TURN_RECORDER.scoped_for_test(
+            std::sync::Arc::new(move |substantive, native_first| {
+                if let Ok(mut entries) = captured.lock() {
+                    entries.push((substantive, native_first));
+                }
+            }),
+        );
+        record_agent_turn_native_first(true, true);
+        record_agent_turn_native_first(true, false);
+        record_agent_turn_native_first(false, true);
+        let entries: Vec<(bool, bool)> = recorded.lock().expect("recorded lock").clone();
+        assert_eq!(
+            entries,
+            vec![(true, true), (true, false), (false, true)],
+            "all three summaries recorded in order"
+        );
+
+        // Re-settable: a second set replaces the first.
+        let replaced_called = std::sync::Arc::new(std::sync::Mutex::new(false));
+        let flag = replaced_called.clone();
+        recorder_override.replace(std::sync::Arc::new(move |_, _| {
+            if let Ok(mut called) = flag.lock() {
+                *called = true;
+            }
+        }));
+        record_agent_turn_native_first(true, true);
+        drop(recorder_override);
+        assert!(*replaced_called.lock().expect("replaced lock"));
+        let entries: Vec<(bool, bool)> = recorded.lock().expect("recorded lock").clone();
+        assert_eq!(
+            entries,
+            vec![(true, true), (true, false), (false, true)],
+            "the original recorder saw no call after replacement"
+        );
+    }
+
+    #[test]
+    fn skill_outcome_recorder_records_and_is_replaceable() {
+        let recorded = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = recorded.clone();
+        let mut recorder_override = SKILL_OUTCOME_RECORDER.scoped_for_test(std::sync::Arc::new(
+            move |skill_id, invoker, success, error| {
+                if let Ok(mut entries) = captured.lock() {
+                    entries.push((
+                        skill_id.to_string(),
+                        invoker.to_string(),
+                        success,
+                        error.map(str::to_string),
+                    ));
+                }
+            },
+        ));
+        record_skill_outcome("bug-hunt", "Zed Agent", true, None);
+        record_skill_outcome(
+            "tdd",
+            "Curator",
+            false,
+            Some("declared dependencies not installed"),
+        );
+        let relevant: Vec<(String, String, bool, Option<String>)> = {
+            let recorded = recorded.lock().expect("recorded lock");
+            recorded
+                .iter()
+                .filter(|(id, _, _, _)| id == "bug-hunt" || id == "tdd")
+                .cloned()
+                .collect()
+        };
+        assert_eq!(
+            relevant,
+            vec![
+                ("bug-hunt".to_string(), "Zed Agent".to_string(), true, None),
+                (
+                    "tdd".to_string(),
+                    "Curator".to_string(),
+                    false,
+                    Some("declared dependencies not installed".to_string())
+                )
+            ],
+            "both calls are recorded in order with the agent that ran them"
+        );
+
+        // Re-settable: a second set replaces the first.
+        let replaced_called = std::sync::Arc::new(std::sync::Mutex::new(false));
+        let flag = replaced_called.clone();
+        recorder_override.replace(std::sync::Arc::new(move |_, _, _, _| {
+            if let Ok(mut called) = flag.lock() {
+                *called = true;
+            }
+        }));
+        record_skill_outcome("media-workflow", "Zed Agent", true, None);
+        assert!(*replaced_called.lock().unwrap_or_else(|e| e.into_inner()));
+        let relevant_after: Vec<_> = {
+            let recorded = recorded.lock().expect("recorded lock");
+            recorded
+                .iter()
+                .filter(|(id, _, _, _)| id == "bug-hunt" || id == "tdd" || id == "media-workflow")
+                .cloned()
+                .collect()
+        };
+        assert_eq!(
+            relevant_after.len(),
+            2,
+            "the replaced recorder must no longer receive calls"
+        );
+    }
+
+    /// The operator-feedback recorder records, returns an acceptance
+    /// receipt, and is replaceable. Same process-global slot discipline as the
+    /// outcome recorder test above.
+    #[test]
+    fn operator_feedback_recorder_records_and_is_replaceable() {
+        let recorded = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = recorded.clone();
+        let mut recorder_override = OPERATOR_FEEDBACK_RECORDER.scoped_for_test(
+            std::sync::Arc::new(move |skill_id, accepted, note| {
+                if let Ok(mut entries) = captured.lock() {
+                    entries.push((skill_id.to_string(), accepted, note.map(str::to_string)));
+                }
+                Ok(())
+            }),
+        );
+        record_operator_feedback("code-review", true, None).expect("feedback accepted");
+        record_operator_feedback(
+            "task-breakdown",
+            false,
+            Some("overridden: slice 3 too coarse"),
+        )
+        .expect("feedback accepted");
+        let relevant: Vec<(String, bool, Option<String>)> = {
+            let recorded = recorded.lock().expect("recorded lock");
+            recorded
+                .iter()
+                .filter(|(id, _, _)| id == "code-review" || id == "task-breakdown")
+                .cloned()
+                .collect()
+        };
+        assert_eq!(
+            relevant,
+            vec![
+                ("code-review".to_string(), true, None),
+                (
+                    "task-breakdown".to_string(),
+                    false,
+                    Some("overridden: slice 3 too coarse".to_string())
+                )
+            ],
+            "both channels' dispositions reach the recorder in order"
+        );
+
+        // Re-settable: a second set replaces the first.
+        let replaced_called = std::sync::Arc::new(std::sync::Mutex::new(false));
+        let flag = replaced_called.clone();
+        recorder_override.replace(std::sync::Arc::new(move |_, _, _| {
+            if let Ok(mut called) = flag.lock() {
+                *called = true;
+            }
+            Ok(())
+        }));
+        record_operator_feedback("media-workflow", false, Some("wrong codec"))
+            .expect("replacement accepted feedback");
+        assert!(*replaced_called.lock().unwrap_or_else(|e| e.into_inner()));
+        let relevant_after: Vec<_> = {
+            let recorded = recorded.lock().expect("recorded lock");
+            recorded
+                .iter()
+                .filter(|(id, _, _)| {
+                    id == "code-review" || id == "task-breakdown" || id == "media-workflow"
+                })
+                .cloned()
+                .collect()
+        };
+        assert_eq!(
+            relevant_after.len(),
+            2,
+            "the replaced recorder must no longer receive calls"
+        );
+    }
+
+    /// D94 — the claim-gate recorder hook: records findings, and is
+    /// replaceable (the `RecorderHook` family contract).
+    #[test]
+    fn claim_gate_recorder_records_and_is_replaceable() {
+        let recorded = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = recorded.clone();
+        let recorder_override = CLAIM_GATE_RECORDER.scoped_for_test(std::sync::Arc::new(
+            move |findings: &[ClaimGateFinding]| {
+                if let Ok(mut entries) = captured.lock() {
+                    entries.extend(findings.iter().cloned());
+                }
+            },
+        ));
+        record_claim_gate_findings(
+            &[ClaimGateFinding::PercentWithoutDeterministicVerification {
+                excerpt: "62% of the window".to_string(),
+            }],
+        );
+        record_claim_gate_findings(&[]);
+        let entries: Vec<ClaimGateFinding> = recorded.lock().expect("recorded lock").clone();
+        assert_eq!(entries.len(), 1, "one finding recorded, empty call skipped");
+        assert_eq!(
+            entries[0].label(),
+            "percent-without-deterministic-verification"
+        );
+        drop(recorder_override);
+
+        let replaced = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let captured = replaced.clone();
+        let _guard = CLAIM_GATE_RECORDER.scoped_for_test(std::sync::Arc::new(
+            move |_findings: &[ClaimGateFinding]| {
+                captured.store(true, std::sync::atomic::Ordering::SeqCst);
+            },
+        ));
+        record_claim_gate_findings(&[ClaimGateFinding::CitationWithoutResearchLedger {
+            excerpt: "https://example.com".to_string(),
+        }]);
+        assert!(
+            replaced.load(std::sync::atomic::Ordering::SeqCst),
+            "a second wiring must take over the hook"
+        );
+    }
+
+    /// D94 — the affordance injector's process-global hook: unwired reads
+    /// None; wiring returns the exact instance. OnceLock, so all wiring
+    /// assertions stay in ONE test (the InertInjector precedent). The
+    /// inert impl keeps the permanent wiring observationally inert for
+    /// parallel tests — and the call site additionally gates on
+    /// `kask.affordance.enabled` (default false), so no other test can
+    /// observe an injection.
+    struct InertAffordanceInjector;
+
+    impl AffordanceInjector for InertAffordanceInjector {
+        fn inject_affordance<'a>(
+            &'a self,
+            _catalog: &'a [(String, String)],
+            _user_prompt: &'a str,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Vec<language_model::LanguageModelRequestMessage>>
+                    + Send
+                    + 'a,
+            >,
+        > {
+            Box::pin(std::future::ready(Vec::new()))
+        }
+    }
+
+    #[test]
+    fn affordance_injector_dispatch_returns_the_wired_instance() {
+        assert!(
+            affordance_injector().is_none(),
+            "unwired hook must read None"
+        );
+        let injector: Arc<dyn AffordanceInjector> = Arc::new(InertAffordanceInjector);
+        set_affordance_injector(Some(injector.clone()));
+        let dispatched = affordance_injector().expect("wired hook must dispatch");
+        assert!(Arc::ptr_eq(dispatched, &injector));
+    }
+
+    /// D94 — the catalog read is fresh from the published `SkillIndex` and
+    /// excludes `disable_model_invocation` skills (user-only skills must
+    /// not be surfaced to the model).
+    #[gpui::test]
+    async fn affordance_catalog_reads_published_skills_and_excludes_user_only(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let invocable = agent_skills::parse_skill_frontmatter(
+                std::path::Path::new("/skills/invocable/SKILL.md"),
+                "---\nname: invocable\ndescription: surfaced\n---\n",
+                agent_skills::SkillSource::Global,
+            )
+            .expect("invocable skill parses");
+            let user_only = agent_skills::parse_skill_frontmatter(
+                std::path::Path::new("/skills/user-only/SKILL.md"),
+                "---\nname: user-only\ndescription: hidden\ndisable-model-invocation: true\n---\n",
+                agent_skills::SkillSource::Global,
+            )
+            .expect("user-only skill parses");
+            cx.set_global(agent_skills::SkillIndex::from_agent(
+                vec![invocable, user_only],
+                Vec::new(),
+            ));
+            let catalog = affordance_catalog(cx);
+            assert_eq!(
+                catalog,
+                vec![("invocable".to_string(), "surfaced".to_string())],
+                "user-only skills must not be surfaced"
+            );
+        });
+    }
+
+    /// An injector that recalls nothing. Wiring it must be observationally
+    /// inert for the turn loop — `inject_context` returns no messages, so the
+    /// `!injected.is_empty()` guard in `run_turn_internal` splices nothing.
+    /// This lets the dispatch test below wire the process-global OnceLock
+    /// hooks without perturbing parallel tests in this binary.
+    struct InertInjector;
+
+    impl ContextInjector for InertInjector {
+        fn inject_context(
+            &self,
+            _thread_id: &str,
+            _user_prompt: &str,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Vec<language_model::LanguageModelRequestMessage>>
+                    + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(std::future::ready(Vec::new()))
+        }
+    }
+
+    /// Pin D6: `context_injector_for` dispatches by agent id — the Curator
+    /// agent's threads get the curator injector, every other thread
+    /// (including the default Zed agent, `agent_id == None`) gets the user
+    /// injector, and the curator falls back to the user injector while the
+    /// curator injector is unwired (graceful degradation — curator-scoped
+    /// recall degrades to user-scoped recall, not to none). The unwired
+    /// state reads `None` for every thread. The hooks are OnceLocks, so all
+    /// wiring assertions stay in ONE test; the injectors are inert so the
+    /// permanent wiring cannot change any other test's behavior.
+    ///
+    /// NOT covered: the turn-loop injection site (`thread.rs`
+    /// `run_turn_internal` — splicing the injected messages into the
+    /// request after the system prompt) is not pinned here; this pins the
+    /// dispatch function the site calls.
+    #[test]
+    fn context_injector_dispatches_by_agent_id() {
+        // Unwired degradation: no injector for any thread.
+        assert!(
+            context_injector_for(None).is_none(),
+            "unwired hooks must read None when identity is unavailable"
+        );
+        assert!(
+            context_injector_for(Some(&CURATOR_AGENT_ID)).is_none(),
+            "unwired hooks must read None for curator threads too"
+        );
+        assert!(
+            context_injector_for(Some(&AgentId::new("other"))).is_none(),
+            "unwired hooks must read None for any agent"
+        );
+
+        // Wire the user injector only: the curator falls back to it.
+        let user_injector: Arc<dyn ContextInjector> = Arc::new(InertInjector);
+        set_context_injector(Some(user_injector.clone()));
+        let dispatched = context_injector_for(Some(&CURATOR_AGENT_ID)).expect(
+            "curator must fall back to the user injector while the curator injector is unwired",
+        );
+        assert!(
+            Arc::ptr_eq(dispatched, &user_injector),
+            "unwired curator injector must degrade to the user injector, not to none"
+        );
+        let dispatched = context_injector_for(None)
+            .expect("identity-unavailable (None) must get the user injector");
+        assert!(Arc::ptr_eq(dispatched, &user_injector));
+        let dispatched = context_injector_for(Some(&AgentId::new("other")))
+            .expect("non-curator agent must get the user injector");
+        assert!(Arc::ptr_eq(dispatched, &user_injector));
+
+        // Wire the curator injector: the curator now gets its own recall;
+        // every other thread still gets the user injector.
+        let curator_injector: Arc<dyn ContextInjector> = Arc::new(InertInjector);
+        set_curator_context_injector(Some(curator_injector.clone()));
+        let dispatched = context_injector_for(Some(&CURATOR_AGENT_ID))
+            .expect("curator thread must get the curator injector once wired");
+        assert!(
+            Arc::ptr_eq(dispatched, &curator_injector),
+            "a wired curator thread must get curator-scoped recall, not user-scoped"
+        );
+        let dispatched = context_injector_for(None)
+            .expect("identity-unavailable (None) must still get the user injector");
+        assert!(Arc::ptr_eq(dispatched, &user_injector));
+    }
+
+    #[test]
+    fn test_ambiguous_mcp_prompt_names() {
+        // Reserving the built-in `/compact` forces a same-named MCP prompt to be
+        // server-qualified so it stays reachable; unique names stay bare.
+        let ambiguous = ambiguous_mcp_prompt_names([COMPACT_COMMAND_NAME], ["compact", "deploy"]);
+        assert!(ambiguous.contains("compact"));
+        assert!(!ambiguous.contains("deploy"));
+
+        // Without the reservation, a unique MCP prompt is left bare.
+        let ambiguous = ambiguous_mcp_prompt_names([], ["compact", "deploy"]);
+        assert!(ambiguous.is_empty());
+
+        // Two MCP prompts sharing a name are both qualified regardless of
+        // reservation.
+        let ambiguous = ambiguous_mcp_prompt_names([], ["dup", "dup", "unique"]);
+        assert!(ambiguous.contains("dup"));
+        assert!(!ambiguous.contains("unique"));
+    }
+
+    #[test]
+    fn test_qualified_compact_commands_are_not_native_compact() {
+        let unqualified_blocks = [acp_v2::ContentBlock::from("/compact")];
+        let unqualified = Command::parse(&unqualified_blocks).unwrap();
+        assert!(unqualified.is_unqualified("compact"));
+
+        let mcp_blocks = [acp_v2::ContentBlock::from("/server.compact")];
+        let mcp_qualified = Command::parse(&mcp_blocks).unwrap();
+        assert_eq!(mcp_qualified.prompt_name, "compact");
+        assert_eq!(mcp_qualified.explicit_server_id, Some("server"));
+        assert!(!mcp_qualified.is_unqualified("compact"));
+
+        let skill_blocks = [acp_v2::ContentBlock::from("/:compact")];
+        let skill_qualified = Command::parse(&skill_blocks).unwrap();
+        assert_eq!(skill_qualified.prompt_name, "compact");
+        assert_eq!(skill_qualified.skill_scope, Some(""));
+        assert!(!skill_qualified.is_unqualified("compact"));
+    }
+
+    fn make_project_skill(name: &str, description: &str, worktree: &str) -> Skill {
+        Skill {
+            name: name.to_string(),
+            description: description.to_string(),
+            source: SkillSource::ProjectLocal {
+                worktree_id: SkillScopeId(1),
+                worktree_root_name: worktree.into(),
+            },
+            directory_path: PathBuf::from(format!("/{worktree}/.agents/skills/{name}")),
+            skill_file_path: PathBuf::from(format!("/{worktree}/.agents/skills/{name}/SKILL.md")),
+            load_warnings: Vec::new(),
+            disable_model_invocation: false,
+            dependencies: Vec::new(),
+            core: false,
+        }
+    }
+
+    /// Filter to only user-defined (non-core) skills for test assertions.
+    fn non_core_skills(skills: &[Skill]) -> Vec<&Skill> {
+        skills.iter().filter(|s| !s.core).collect()
+    }
+
+    #[test]
+    fn test_combine_skills_keeps_every_entry_for_autocomplete() {
+        // The autocomplete popup needs both same-named entries so the
+        // source label can disambiguate them. `combine_skills` must not
+        // drop the global when a project-local shares its name.
+        let global = make_global_skill("review", "Global review");
+        let project = make_project_skill("review", "Project review", "project");
+
+        let (skills, errors) = combine_skills(vec![Ok(global)], vec![Ok(project)].into_iter());
+
+        assert!(errors.is_empty());
+        let user = non_core_skills(&skills);
+        assert_eq!(user.len(), 2);
+        assert!(matches!(user[0].source, SkillSource::Global));
+        assert!(matches!(user[1].source, SkillSource::ProjectLocal { .. }));
+    }
+
+    // expect: An unqualified skill slash command selects the same core skill
+    // as the model catalog, regardless of skill load order.
+    // [P2] Motivating: a project cannot shadow system-critical instructions.
+    // pre: global core and project skills share a name.
+    // post: the core skill wins; non-core ties keep the first entry.
+    #[test]
+    fn unqualified_skill_winner_matches_core_aware_catalog() {
+        let mut core = make_global_skill("metacognition", "Core instructions");
+        core.core = true;
+        let project = make_project_skill("metacognition", "Project instructions", "project");
+        for skills in [vec![core.clone(), project.clone()], vec![project, core]] {
+            let slash = select_unqualified_skill(&skills, "metacognition")
+                .expect("skill available for slash command");
+            let catalog = apply_skill_overrides(&skills);
+            assert_eq!(slash.description, "Core instructions");
+            assert_eq!(slash.skill_file_path, catalog[0].skill_file_path);
+        }
+
+        let first = make_project_skill("review", "First", "first-project");
+        let second = make_project_skill("review", "Second", "second-project");
+        let skills = [first, second];
+        assert_eq!(
+            select_unqualified_skill(&skills, "review").map(|skill| skill.description.as_str()),
+            Some("First")
+        );
+        assert_eq!(
+            select_unqualified_skill(&skills, "missing").map(|skill| skill.name.as_str()),
+            None
+        );
+
+        let mut slash_only = make_global_skill("slash-only", "Explicitly invoked");
+        slash_only.disable_model_invocation = true;
+        let skills = [slash_only];
+        assert_eq!(
+            select_unqualified_skill(&skills, "slash-only").map(|skill| skill.name.as_str()),
+            Some("slash-only")
+        );
+    }
+
+    #[test]
+    fn test_apply_skill_overrides_project_wins_over_global() {
+        // The model-facing projection collapses the same name to a
+        // single entry, with the project-local winning. This is what
+        // `select_catalog_skills`, `SkillTool`, and the slash-command
+        // resolver all see.
+        let global = make_global_skill("review", "Global review");
+        let project = make_project_skill("review", "Project review", "project");
+
+        let resolved = apply_skill_overrides(&[global, project]);
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].description, "Project review");
+        assert!(matches!(
+            resolved[0].source,
+            SkillSource::ProjectLocal { .. }
+        ));
+    }
+
+    #[test]
+    fn test_apply_skill_overrides_same_source_collision_keeps_first() {
+        // Two globals (or two project-locals from different worktrees)
+        // colliding don't have a clear winner; preserve the historical
+        // "first one wins" behavior.
+        let first = make_global_skill("review", "First");
+        let second = make_global_skill("review", "Second");
+
+        let resolved = apply_skill_overrides(&[first, second]);
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].description, "First");
+    }
+
+    #[test]
+    fn test_apply_skill_overrides_core_skill_unshadowable_by_project_local() {
+        // A core skill cannot be shadowed by a project-local skill of the
+        // same name — core skills are unshadowable to prevent a compromised
+        // project from bypassing consent/trust/quality controls.
+        let mut core = make_global_skill("metacognition", "Core version");
+        core.core = true;
+        let project = make_project_skill("metacognition", "Project override", "my-project");
+
+        let resolved = apply_skill_overrides(&[core, project]);
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].description, "Core version");
+        assert!(resolved[0].core);
+    }
+
+    #[test]
+    fn test_apply_skill_overrides_core_skill_unshadowable_by_user_global() {
+        // A core skill cannot be shadowed by a user (non-core) global skill
+        // of the same name.
+        let mut core = make_global_skill("metacognition", "Core version");
+        core.core = true;
+        let user_global = make_global_skill("metacognition", "User override");
+
+        let resolved = apply_skill_overrides(&[core, user_global]);
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].description, "Core version");
+        assert!(resolved[0].core);
+    }
+
+    #[test]
+    fn test_apply_skill_overrides_core_skill_wins_when_iterated_after_user_skill() {
+        // The unshadowable guarantee must hold regardless of iteration
+        // order. If a non-core project-local skill (precedence 3) is
+        // iterated BEFORE a core global skill (precedence 2) of the same
+        // name, the core skill must still win — a naive precedence-only
+        // comparison would let the project skill shadow the core skill
+        // (3 > 2), defeating the guarantee. This is the reverse-order
+        // counterpart of `..._unshadowable_by_project_local`.
+        let project = make_project_skill("metacognition", "Project override", "my-project");
+        let mut core = make_global_skill("metacognition", "Core version");
+        core.core = true;
+
+        let resolved = apply_skill_overrides(&[project, core]);
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].description, "Core version");
+        assert!(resolved[0].core);
+    }
+
+    #[test]
+    fn test_apply_skill_overrides_core_skill_wins_when_iterated_after_user_global() {
+        // Same as above but with a user global skill first — the core
+        // global skill arriving second must replace it despite equal
+        // precedence (both Global).
+        let user_global = make_global_skill("metacognition", "User override");
+        let mut core = make_global_skill("metacognition", "Core version");
+        core.core = true;
+
+        let resolved = apply_skill_overrides(&[user_global, core]);
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].description, "Core version");
+        assert!(resolved[0].core);
+    }
+
+    #[test]
+    fn test_apply_skill_overrides_project_wins_over_user_global() {
+        // Project-local still wins over user (non-core) global — the
+        // normal precedence order applies when no core skill is involved.
+        let global = make_global_skill("metacognition", "Global");
+        let project = make_project_skill("metacognition", "Project", "my-project");
+
+        let resolved = apply_skill_overrides(&[global, project]);
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].description, "Project");
+    }
+
+    #[test]
+    fn test_apply_skill_overrides_preserves_unique_skills() {
+        let global_a = make_global_skill("alpha", "a");
+        let global_b = make_global_skill("beta", "b");
+        let project_c = make_project_skill("gamma", "c", "project");
+
+        let resolved = apply_skill_overrides(&[global_a, global_b, project_c]);
+
+        assert_eq!(resolved.len(), 3);
+        let names: Vec<&str> = resolved.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["alpha", "beta", "gamma"]);
+    }
+
+    #[test]
+    fn test_skill_source_scope_prefix_and_matches_scope() {
+        // The popup inserts `/<prefix>:<name>` using `scope_prefix`,
+        // and the resolver routes via `matches_scope`. This test pins
+        // the contract that the two stay in sync.
+        let global = SkillSource::Global;
+        // Globals use an empty prefix, so the popup inserts `/:<name>`.
+        assert_eq!(global.scope_prefix(), "");
+        assert!(global.matches_scope(""));
+        // Hand-typed `/global:<name>` is not aliased to the global
+        // source; it looks for a worktree literally named `global`.
+        assert!(!global.matches_scope("global"));
+        assert!(!global.matches_scope("zed"));
+
+        let project = SkillSource::ProjectLocal {
+            worktree_id: SkillScopeId(1),
+            worktree_root_name: "zed".into(),
+        };
+        // Project-local skills are scoped by their worktree root name
+        // so multiple open worktrees with same-named skills can each
+        // be addressed unambiguously.
+        assert_eq!(project.scope_prefix(), "zed");
+        assert!(project.matches_scope("zed"));
+        // The empty scope is reserved for globals.
+        assert!(!project.matches_scope(""));
+        // An unrelated worktree name (or MCP server name) must not
+        // match a project skill from a different worktree.
+        assert!(!project.matches_scope("extensions"));
+
+        // A worktree literally named `global` is no longer ambiguous
+        // with the global source: its skills are invoked as
+        // `/global:<name>` while globals are invoked as `/:<name>`.
+        let project_named_global = SkillSource::ProjectLocal {
+            worktree_id: SkillScopeId(2),
+            worktree_root_name: "global".into(),
+        };
+        assert_eq!(project_named_global.scope_prefix(), "global");
+        assert!(project_named_global.matches_scope("global"));
+        assert!(!project_named_global.matches_scope(""));
     }
 
     async fn setup_native_agent_session(
@@ -4558,13 +6687,15 @@ mod internal_tests {
         Entity<NativeAgent>,
         Entity<Project>,
         Entity<AcpThread>,
+        Arc<FakeFs>,
     ) {
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree("/", json!({ "a": {} })).await;
         let project = Project::test(fs.clone(), [Path::new("/a")], cx).await;
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let agent = cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs, cx));
-        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
+        let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
         let acp_thread = cx
             .update(|cx| {
                 connection.clone().new_session(
@@ -4576,7 +6707,7 @@ mod internal_tests {
             .await
             .unwrap();
 
-        (connection, agent, project, acp_thread)
+        (connection, agent, project, acp_thread, fs)
     }
 
     fn native_thread_for_session(
@@ -4597,6 +6728,297 @@ mod internal_tests {
             .skip(1)
             .map(language_model::LanguageModelRequestMessage::string_contents)
             .collect()
+    }
+
+    // expect: A qualified skill request never falls through to another slash namespace.
+    // [P2] Motivating: explicit skill scope selects only that skill or reports a miss.
+    // pre: no global skill matches the typed qualified name.
+    // post: no model request or MCP prompt dispatch occurs.
+    #[gpui::test]
+    async fn missing_scoped_skill_does_not_fall_through_to_other_prompts(cx: &mut TestAppContext) {
+        let fake = init_test(cx);
+        let (connection, agent, project, acp_thread, _fs) = setup_native_agent_session(cx).await;
+        cx.run_until_parked();
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let model = fake.model("fake");
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+            let registry = agent
+                .read(cx)
+                .projects
+                .get(&project.entity_id())
+                .expect("project registry")
+                .context_server_registry
+                .clone();
+            registry.update(cx, |registry, cx| {
+                registry.insert_test_prompt(
+                    ContextServerId("colliding-server".into()),
+                    context_server::types::Prompt {
+                        name: "missing-skill".to_string(),
+                        title: None,
+                        description: Some("Colliding MCP prompt".to_string()),
+                        arguments: None,
+                    },
+                    cx,
+                );
+            });
+            assert!(
+                registry
+                    .read(cx)
+                    .find_prompt(None, "missing-skill")
+                    .is_some()
+            );
+        });
+        let prompt_task = cx.update(|cx| {
+            acp_thread::AgentSessionClientUserMessageIds::prompt(
+                connection.as_ref(),
+                ClientUserMessageId::new(),
+                acp_v2::PromptRequest::new(session_id, vec!["/:missing-skill".into()]),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        assert!(
+            fake.pending_completions_for(&model).is_empty(),
+            "scoped miss must not reach model"
+        );
+        let error = prompt_task
+            .await
+            .expect_err("scoped skill must report a miss");
+        assert!(error.to_string().contains("/:missing-skill"), "{error}");
+    }
+
+    // expect: Typing an unqualified core skill sends its shipped instructions,
+    // never a same-named project skill's instructions, to the model.
+    // [P2] Motivating: project content cannot masquerade as a core skill.
+    // pre: the project entry precedes the global core entry in the catalog.
+    // post: the request contains only the core envelope and the user's text.
+    #[gpui::test]
+    async fn unqualified_core_slash_invokes_global_body(cx: &mut TestAppContext) {
+        let fake = init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({ "a": {} })).await;
+        let core_dir = global_skills_dir().join("metacognition");
+        fs.create_dir(&core_dir)
+            .await
+            .expect("core skill directory");
+        fs.insert_file(
+            &core_dir.join("SKILL.md"),
+            b"---\nname: metacognition\ndescription: Canonical\ncore: true\n---\n\nCANONICAL_CORE_BODY".to_vec(),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [Path::new("/a")], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs, cx));
+        let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
+        let acp_thread = cx
+            .update(|cx| {
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
+            })
+            .await
+            .expect("session");
+        cx.run_until_parked();
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let model = fake.model("fake");
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+            agent.update(cx, |agent, _cx| {
+                if let Some(state) = agent.projects.get_mut(&project.entity_id()) {
+                    let mut core = make_global_skill("metacognition", "Canonical");
+                    core.core = true;
+                    state.skills = Arc::new(vec![
+                        make_project_skill("metacognition", "Project override", "a"),
+                        core,
+                    ]);
+                }
+            });
+        });
+
+        let prompt_task = cx.update(|cx| {
+            acp_thread::AgentSessionClientUserMessageIds::prompt(
+                connection.as_ref(),
+                ClientUserMessageId::new(),
+                acp_v2::PromptRequest::new(
+                    session_id,
+                    vec!["/metacognition inline request".into()],
+                ),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("model request");
+        let text = request_texts_after_system(&request.messages).join("\n");
+        assert!(
+            text.contains("CANONICAL_CORE_BODY"),
+            "core body missing: {text}"
+        );
+        assert!(
+            text.contains("inline request"),
+            "user input missing: {text}"
+        );
+        assert!(
+            !text.contains("Project override"),
+            "project skill selected: {text}"
+        );
+        fake.send_text(&model, &request, "ok");
+        fake.end_stream(&model, &request);
+        cx.run_until_parked();
+        prompt_task.await.expect("prompt completes");
+    }
+
+    #[gpui::test]
+    async fn trace_prompt_starts_capture_and_sends_only_the_prompt(cx: &mut TestAppContext) {
+        let fake = init_test(cx);
+        let (connection, agent, _project, acp_thread, _fs) = setup_native_agent_session(cx).await;
+        cx.run_until_parked();
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let model = fake.model("fake");
+        cx.update(|cx| thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx)));
+
+        let prompt_task = cx.update(|cx| {
+            acp_thread::AgentSessionClientUserMessageIds::prompt(
+                connection.as_ref(),
+                ClientUserMessageId::new(),
+                acp_v2::PromptRequest::new(session_id.clone(), vec!["/trace inspect this".into()]),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("model request");
+        assert_eq!(
+            request_texts_after_system(&request.messages),
+            vec!["inspect this"]
+        );
+        let trace =
+            cx.update(|cx| thread.update(cx, |thread, _| thread.finish_on_demand_trace(None)));
+        let trace = trace.expect("trace capture active during model request");
+        assert_eq!(trace.session_id, session_id.to_string());
+        drop(prompt_task);
+    }
+
+    #[gpui::test]
+    async fn traced_turn_exports_final_answer_and_normal_turn_does_not_export(
+        cx: &mut TestAppContext,
+    ) {
+        let run = async {
+            let fake = init_test(cx);
+            let temp = tempfile::tempdir()?;
+            let directory = temp.path().join("agent-traces");
+            let _override = crate::tool_trace::TestTraceDirectoryGuard::scoped(directory.clone());
+            let (connection, agent, _project, acp_thread, _fs) =
+                setup_native_agent_session(cx).await;
+            cx.run_until_parked();
+            let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+            let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+            let model = fake.model("fake");
+            cx.update(|cx| thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx)));
+            let prompt_task = cx.update(|cx| {
+                acp_thread::AgentSessionClientUserMessageIds::prompt(
+                    connection.as_ref(),
+                    ClientUserMessageId::new(),
+                    acp_v2::PromptRequest::new(
+                        session_id.clone(),
+                        vec!["/trace check sustainable growth rate to net margin".into()],
+                    ),
+                    cx,
+                )
+            });
+            cx.run_until_parked();
+            let request = fake
+                .pending_completions_for(&model)
+                .pop()
+                .expect("traced model request");
+            let tool_use = language_model::LanguageModelToolUse {
+                id: "trace-tool-1".into(),
+                name: OntoAnchorTool::NAME.into(),
+                raw_input: json!({"term":"sustainable growth rate","relation_query":{"to":"net margin","max_hops":2}}).to_string(),
+                input: language_model::LanguageModelToolUseInput::Json(json!({
+                    "term":"sustainable growth rate","relation_query":{"to":"net margin","max_hops":2}
+                })),
+                is_input_complete: true,
+                thought_signature: None,
+            };
+            fake.send_event(
+                &model,
+                &request,
+                LanguageModelCompletionEvent::ToolUse(tool_use),
+            );
+            fake.end_stream(&model, &request);
+            cx.run_until_parked();
+            // The mid-turn title generation (thread.rs: the turn loop fires
+            // `generate_title` once `title.is_none()`) races this follow-up on
+            // the same registered fake — select by intent, not by list
+            // position, so the answer lands on the turn's request.
+            let followup = fake
+                .pending_completions_for(&model)
+                .into_iter()
+                .find(|request| request.intent == Some(CompletionIntent::ToolResults))
+                .expect("tool-result followup");
+            fake.send_text(&model, &followup, "traced answer");
+            fake.end_stream(&model, &followup);
+            cx.run_until_parked();
+            prompt_task.await?;
+            let paths = std::fs::read_dir(&directory)?.collect::<std::io::Result<Vec<_>>>()?;
+            assert_eq!(paths.len(), 1);
+            let trace: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(paths[0].path())?)?;
+            assert_eq!(trace["final_answer"], "traced answer");
+            assert_eq!(trace["session_id"], session_id.to_string());
+            assert_eq!(trace["calls"].as_array().map(Vec::len), Some(1));
+            assert_eq!(trace["calls"][0]["name"], "onto_anchor");
+            assert_eq!(
+                trace["calls"][0]["input"]["relation_query"]["to"],
+                "net margin"
+            );
+            assert_eq!(trace["calls"][0]["outcome"], "completed");
+            assert!(trace["calls"][0]["elapsed_ms"].is_number());
+            let result: serde_json::Value = serde_json::from_str(
+                trace["calls"][0]["result_text"]
+                    .as_str()
+                    .expect("tool output text"),
+            )?;
+            assert_eq!(result["traversal"]["status"], "path_found");
+            assert_eq!(result["traversal"]["edges"][1]["to"], "net_margin");
+
+            let normal_task = cx.update(|cx| {
+                acp_thread::AgentSessionClientUserMessageIds::prompt(
+                    connection.as_ref(),
+                    ClientUserMessageId::new(),
+                    acp_v2::PromptRequest::new(session_id, vec!["ordinary response".into()]),
+                    cx,
+                )
+            });
+            cx.run_until_parked();
+            let request = fake
+                .pending_completions_for(&model)
+                .pop()
+                .expect("ordinary model request");
+            fake.send_text(&model, &request, "normal answer");
+            fake.end_stream(&model, &request);
+            cx.run_until_parked();
+            normal_task.await?;
+            assert_eq!(
+                std::fs::read_dir(&directory)?.count(),
+                1,
+                "ordinary turns must not create traces"
+            );
+            Ok::<(), anyhow::Error>(())
+        };
+        run.await.expect("native trace export and opt-in boundary");
     }
 
     #[gpui::test]
@@ -4621,7 +7043,8 @@ mod internal_tests {
                 })
         };
         for rewind in [false, true] {
-            let (connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+            let (connection, agent, _project, acp_thread, _fs) =
+                setup_native_agent_session(cx).await;
             let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
             let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
             let model = fake.model("fake");
@@ -4791,7 +7214,7 @@ mod internal_tests {
     #[gpui::test]
     async fn test_native_cancel_withdraws_pending_acceptance(cx: &mut TestAppContext) {
         let fake = init_test(cx);
-        let (connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+        let (connection, agent, _project, acp_thread, _fs) = setup_native_agent_session(cx).await;
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
         let model = fake.model("fake");
@@ -4893,7 +7316,7 @@ mod internal_tests {
         use agent_servers::e2e_tests::send_and_wait_for_turn;
 
         let fake = init_test(cx);
-        let (_connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+        let (_connection, agent, _project, acp_thread, _fs) = setup_native_agent_session(cx).await;
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
         let model = fake.model("fake");
@@ -4930,7 +7353,7 @@ mod internal_tests {
     #[gpui::test]
     async fn test_native_receipt_outlives_completion_observer(cx: &mut TestAppContext) {
         let fake = init_test(cx);
-        let (connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+        let (connection, agent, _project, acp_thread, _fs) = setup_native_agent_session(cx).await;
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
         let model = fake.model("fake");
@@ -4991,7 +7414,7 @@ mod internal_tests {
     #[gpui::test]
     async fn test_native_follow_up_serializes_and_retry_reuses_message(cx: &mut TestAppContext) {
         let fake = init_test(cx);
-        let (connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+        let (connection, agent, _project, acp_thread, _fs) = setup_native_agent_session(cx).await;
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
         let model = fake.model("fake");
@@ -5065,7 +7488,7 @@ mod internal_tests {
     #[gpui::test]
     async fn test_native_compact_empty_and_repeated_markers_are_noops(cx: &mut TestAppContext) {
         let fake = init_test(cx);
-        let (connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+        let (connection, agent, _project, acp_thread, _fs) = setup_native_agent_session(cx).await;
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
         thread.update(cx, |thread, cx| thread.set_model(fake.model("fake"), cx));
@@ -5172,7 +7595,7 @@ mod internal_tests {
         cx: &mut TestAppContext,
     ) {
         let fake = init_test(cx);
-        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let (connection, agent, project, acp_thread, _fs) = setup_native_agent_session(cx).await;
         let mut requests = setup_native_prompt_server(&project, cx);
         agent.update(cx, |agent, _| {
             agent
@@ -5302,7 +7725,7 @@ mod internal_tests {
     #[gpui::test]
     async fn test_native_rewind_cancels_pending_mcp_prompt(cx: &mut TestAppContext) {
         let fake = init_test(cx);
-        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let (connection, agent, project, acp_thread, _fs) = setup_native_agent_session(cx).await;
         let mut requests = setup_native_prompt_server(&project, cx);
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
@@ -5357,7 +7780,7 @@ mod internal_tests {
     #[gpui::test]
     async fn test_native_mcp_retry_and_display_rows_use_retained_ids(cx: &mut TestAppContext) {
         let fake = init_test(cx);
-        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let (connection, agent, project, acp_thread, _fs) = setup_native_agent_session(cx).await;
         let mut requests = setup_native_prompt_server(&project, cx);
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
@@ -5550,7 +7973,7 @@ mod internal_tests {
         cx: &mut TestAppContext,
     ) {
         let fake = init_test(cx);
-        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let (connection, agent, project, acp_thread, _fs) = setup_native_agent_session(cx).await;
         cx.run_until_parked();
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
@@ -5672,7 +8095,7 @@ mod internal_tests {
         cx: &mut TestAppContext,
     ) {
         let fake = init_test(cx);
-        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let (connection, agent, project, acp_thread, _fs) = setup_native_agent_session(cx).await;
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
         let model = fake.model("fake");
@@ -5797,11 +8220,10 @@ mod internal_tests {
         use language_model::{LanguageModelToolUse, LanguageModelToolUseInput};
 
         let fake = init_test(cx);
-        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let (connection, agent, project, acp_thread, fs) = setup_native_agent_session(cx).await;
         cx.run_until_parked();
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
-        let fs = project.read_with(cx, |project, _| project.fs().clone());
         fs.write(Path::new("/a/file.txt"), b"retained")
             .await
             .expect("test file");
@@ -5813,8 +8235,17 @@ mod internal_tests {
             agent_settings::AgentSettings::override_global(settings, cx);
         });
         thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
-        let mut skill = make_global_skill("release-skill", "Release skill");
-        skill.embedded_body = Some("Do the requested work");
+        let skill = make_global_skill("release-skill", "Release skill");
+        // zed-kask: the fork's `Skill` has no `embedded_body" (upstream's
+        // compile-time-embedded built-in bodies); global-skill bodies are
+        // read from disk through the agent's fs, so write the body there.
+        fs.create_dir(&skill.directory_path).await.unwrap();
+        fs.insert_file(
+            skill.skill_file_path.clone(),
+            b"---\nname: release-skill\ndescription: Release skill\n---\n\nDo the requested work"
+                .to_vec(),
+        )
+        .await;
         agent.update(cx, |agent, _| {
             agent
                 .projects
@@ -5868,7 +8299,7 @@ mod internal_tests {
     #[gpui::test]
     async fn test_native_prompt_rejects_unknown_content_before_dispatch(cx: &mut TestAppContext) {
         let fake = init_test(cx);
-        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let (connection, agent, project, acp_thread, _fs) = setup_native_agent_session(cx).await;
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
         let unknown = acp_v2::ContentBlock::Other(acp_v2::OtherContentBlock::new(
@@ -5908,14 +8339,22 @@ mod internal_tests {
     #[gpui::test]
     async fn test_native_skill_prompt_preserves_v2_attachment_source(cx: &mut TestAppContext) {
         let fake = init_test(cx);
-        let (_connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let (_connection, agent, project, acp_thread, fs) = setup_native_agent_session(cx).await;
         cx.run_until_parked();
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
         let model = fake.model("fake");
         thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
-        let mut skill = make_global_skill("test-skill", "Test skill");
-        skill.embedded_body = Some("skill instructions");
+        let skill = make_global_skill("test-skill", "Test skill");
+        // zed-kask: the fork's `Skill` has no `embedded_body` (upstream's
+        // compile-time-embedded built-in bodies); global-skill bodies are read
+        // from disk through the agent's fs, so write the body there.
+        fs.create_dir(&skill.directory_path).await.unwrap();
+        fs.insert_file(
+            skill.skill_file_path.clone(),
+            b"---\nname: test-skill\ndescription: Test skill\n---\n\nskill instructions".to_vec(),
+        )
+        .await;
         agent.update(cx, |agent, _| {
             agent
                 .projects
@@ -5987,7 +8426,7 @@ mod internal_tests {
         let agent =
             cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
 
-        let connection = NativeAgentConnection(agent.clone());
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
         let acp_thread = cx
             .update(|cx| {
                 Rc::new(connection.clone()).new_session(
@@ -6003,15 +8442,14 @@ mod internal_tests {
         cx.update(|cx| {
             let commands = acp_thread.read(cx).available_commands();
 
+            // zed-kask: find, not full-list equality — the fork also registers
+            // the native `/trace` command (D6), so the command list is a superset
+            // of upstream's.
+            let compact = commands.iter().find(|command| command.name == "compact");
+            let compact = compact.expect("compact command should be available");
             assert_eq!(
-                commands,
-                &[acp_v2::AvailableCommand::new(
-                    COMPACT_COMMAND_NAME,
-                    "Summarize the conversation so far to free up context",
-                )
-                .meta(acp_thread::meta_with_command_category(
-                    acp_thread::CommandCategory::Native,
-                ))],
+                acp_thread::command_category_from_meta(&compact.meta),
+                Some(acp_thread::CommandCategory::Native),
             );
         });
     }
@@ -6019,7 +8457,7 @@ mod internal_tests {
     #[gpui::test]
     async fn test_compact_prompt_routes_to_manual_compaction(cx: &mut TestAppContext) {
         let fake = init_test(cx);
-        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let (connection, agent, project, acp_thread, _fs) = setup_native_agent_session(cx).await;
         let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
         let model = fake.model("fake");
@@ -6176,7 +8614,7 @@ mod internal_tests {
     #[gpui::test]
     async fn test_load_session_replays_provider_native_compaction(cx: &mut TestAppContext) {
         init_test(cx);
-        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let (connection, agent, project, acp_thread, _fs) = setup_native_agent_session(cx).await;
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
         let mut saved_thread = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
@@ -6231,7 +8669,7 @@ mod internal_tests {
     #[gpui::test]
     async fn test_retried_auto_compaction_terminalizes_each_attempt(cx: &mut TestAppContext) {
         let fake = init_test(cx);
-        let (connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+        let (connection, agent, _project, acp_thread, _fs) = setup_native_agent_session(cx).await;
         let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
         let model = fake.model("fake");
@@ -6381,7 +8819,8 @@ mod internal_tests {
                 Some("retained partial summary"),
             ),
         ] {
-            let (_connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+            let (_connection, agent, project, acp_thread, _fs) =
+                setup_native_agent_session(cx).await;
             let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
             let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
             let model = fake.model("fake");
@@ -6514,7 +8953,7 @@ mod internal_tests {
         use language_model::{LanguageModelToolUse, LanguageModelToolUseInput};
 
         let fake = init_test(cx);
-        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let (connection, agent, project, acp_thread, _fs) = setup_native_agent_session(cx).await;
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
         let model = fake.model("thread");
@@ -6630,7 +9069,7 @@ mod internal_tests {
     async fn test_threads_flushed_to_database_on_app_quit(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let (connection, agent, project, acp_thread, _fs) = setup_native_agent_session(cx).await;
         let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
 
@@ -6714,42 +9153,15 @@ mod internal_tests {
         );
     }
 
-    #[test]
-    fn test_ambiguous_mcp_prompt_names() {
-        // Reserving the built-in `/compact` forces a same-named MCP prompt to be
-        // server-qualified so it stays reachable; unique names stay bare.
-        let ambiguous = ambiguous_mcp_prompt_names([COMPACT_COMMAND_NAME], ["compact", "deploy"]);
-        assert!(ambiguous.contains("compact"));
-        assert!(!ambiguous.contains("deploy"));
-
-        // Without the reservation, a unique MCP prompt is left bare.
-        let ambiguous = ambiguous_mcp_prompt_names([], ["compact", "deploy"]);
-        assert!(ambiguous.is_empty());
-
-        // Two MCP prompts sharing a name are both qualified regardless of
-        // reservation.
-        let ambiguous = ambiguous_mcp_prompt_names([], ["dup", "dup", "unique"]);
-        assert!(ambiguous.contains("dup"));
-        assert!(!ambiguous.contains("unique"));
-    }
-
-    #[test]
-    fn test_qualified_compact_commands_are_not_native_compact() {
-        let unqualified_blocks = [acp_v2::ContentBlock::from("/compact")];
-        let unqualified = Command::parse(&unqualified_blocks).unwrap();
-        assert!(unqualified.is_unqualified("compact"));
-
-        let mcp_blocks = [acp_v2::ContentBlock::from("/server.compact")];
-        let mcp_qualified = Command::parse(&mcp_blocks).unwrap();
-        assert_eq!(mcp_qualified.prompt_name, "compact");
-        assert_eq!(mcp_qualified.explicit_server_id, Some("server"));
-        assert!(!mcp_qualified.is_unqualified("compact"));
-
-        let skill_blocks = [acp_v2::ContentBlock::from("/:compact")];
-        let skill_qualified = Command::parse(&skill_blocks).unwrap();
-        assert_eq!(skill_qualified.prompt_name, "compact");
-        assert_eq!(skill_qualified.skill_scope, Some(""));
-        assert!(!skill_qualified.is_unqualified("compact"));
+    /// Filter to only disk-loaded global skills (from the global skills dir).
+    /// Tests that create skills on disk and assert counts use this to ignore
+    /// built-in and project-local skills.
+    #[allow(dead_code)]
+    fn disk_global_skills(skills: &[Skill]) -> Vec<&Skill> {
+        skills
+            .iter()
+            .filter(|s| matches!(s.source, SkillSource::Global))
+            .collect()
     }
 
     #[test]
@@ -6774,190 +9186,64 @@ mod internal_tests {
         );
     }
 
-    fn make_project_skill(name: &str, description: &str, worktree: &str) -> Skill {
-        Skill {
-            name: name.to_string(),
-            description: description.to_string(),
-            source: SkillSource::ProjectLocal {
-                worktree_id: SkillScopeId(1),
-                worktree_root_name: worktree.into(),
-            },
-            directory_path: PathBuf::from(format!("/{worktree}/.agents/skills/{name}")),
-            skill_file_path: PathBuf::from(format!("/{worktree}/.agents/skills/{name}/SKILL.md")),
-            load_warnings: Vec::new(),
-            disable_model_invocation: false,
-            embedded_body: None,
-        }
-    }
-
-    fn make_builtin_skill(name: &str, description: &str) -> Skill {
-        Skill {
-            name: name.to_string(),
-            description: description.to_string(),
-            source: SkillSource::BuiltIn,
-            directory_path: PathBuf::from(format!("/builtin/{name}")),
-            skill_file_path: PathBuf::from(format!("/builtin/{name}/SKILL.md")),
-            load_warnings: Vec::new(),
-            disable_model_invocation: false,
-            embedded_body: Some("built-in body"),
-        }
-    }
-
-    /// Filter to only user-defined (non-built-in) skills for test assertions.
-    fn user_skills(skills: &[Skill]) -> Vec<&Skill> {
-        skills
-            .iter()
-            .filter(|s| !matches!(s.source, SkillSource::BuiltIn))
-            .collect()
+    #[test]
+    fn test_parse_rules_frontmatter_parses_globs_and_always_apply() {
+        let input = "---\nglobs:\n  - \"**/*.rs\"\n  - \"src/**/*.ts\"\nalwaysApply: false\n---\nUse TypeScript strict mode.\n";
+        let (text, frontmatter) = parse_rules_frontmatter(input.to_string());
+        let frontmatter = frontmatter.expect("should parse frontmatter");
+        assert_eq!(frontmatter.globs, vec!["**/*.rs", "src/**/*.ts"]);
+        assert!(!frontmatter.always_apply);
+        assert_eq!(text, "Use TypeScript strict mode.");
     }
 
     #[test]
-    fn test_combine_skills_keeps_every_entry_for_autocomplete() {
-        // The autocomplete popup needs both same-named entries so the
-        // source label can disambiguate them. `combine_skills` must not
-        // drop the global when a project-local shares its name.
-        let global = make_global_skill("review", "Global review");
-        let project = make_project_skill("review", "Project review", "project");
-
-        let (skills, errors) = combine_skills(vec![Ok(global)], vec![Ok(project)].into_iter());
-
-        assert!(errors.is_empty());
-        let user = user_skills(&skills);
-        assert_eq!(user.len(), 2);
-        assert!(matches!(user[0].source, SkillSource::Global));
-        assert!(matches!(user[1].source, SkillSource::ProjectLocal { .. }));
+    fn test_parse_rules_frontmatter_defaults_always_apply_true_when_absent() {
+        let input = "Just some rules without frontmatter.\n";
+        let (text, frontmatter) = parse_rules_frontmatter(input.to_string());
+        assert!(frontmatter.is_none(), "no frontmatter should be None");
+        assert_eq!(text, "Just some rules without frontmatter.");
     }
 
     #[test]
-    fn test_apply_skill_overrides_project_wins_over_global() {
-        // The model-facing projection collapses the same name to a
-        // single entry, with the project-local winning. This is what
-        // `select_catalog_skills`, `SkillTool`, and the slash-command
-        // resolver all see.
-        let global = make_global_skill("review", "Global review");
-        let project = make_project_skill("review", "Project review", "project");
-
-        let resolved = apply_skill_overrides(&[global, project]);
-
-        assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].description, "Project review");
-        assert!(matches!(
-            resolved[0].source,
-            SkillSource::ProjectLocal { .. }
-        ));
+    fn test_parse_rules_frontmatter_handles_always_apply_true() {
+        let input = "---\nalwaysApply: true\n---\nAlways apply these rules.\n";
+        let (text, frontmatter) = parse_rules_frontmatter(input.to_string());
+        let frontmatter = frontmatter.expect("should parse frontmatter");
+        assert!(frontmatter.always_apply);
+        assert!(frontmatter.globs.is_empty());
+        assert_eq!(text, "Always apply these rules.");
     }
 
     #[test]
-    fn test_apply_skill_overrides_same_source_collision_keeps_first() {
-        // Two globals (or two project-locals from different worktrees)
-        // colliding don't have a clear winner; preserve the historical
-        // "first one wins" behavior.
-        let first = make_global_skill("review", "First");
-        let second = make_global_skill("review", "Second");
-
-        let resolved = apply_skill_overrides(&[first, second]);
-
-        assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].description, "First");
+    fn test_parse_rules_frontmatter_handles_no_closing_fence() {
+        let input = "---\nglobs: [\"**/*.rs\"]\nThis is not valid frontmatter.\n";
+        let (text, frontmatter) = parse_rules_frontmatter(input.to_string());
+        assert!(frontmatter.is_none(), "invalid frontmatter should be None");
+        assert!(!text.is_empty());
     }
 
     #[test]
-    fn test_apply_skill_overrides_global_wins_over_builtin() {
-        // A global skill with the same name as a built-in must shadow
-        // the built-in in the model-facing projection, regardless of
-        // iteration order.
-        let built_in = make_builtin_skill("create-skill", "Built-in version");
-        let global = make_global_skill("create-skill", "User override");
-
-        let resolved = apply_skill_overrides(&[built_in, global]);
-
-        assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].description, "User override");
-        assert!(matches!(resolved[0].source, SkillSource::Global));
+    fn test_parse_rules_frontmatter_handles_empty_frontmatter() {
+        // Empty frontmatter: `---\n---\nbody` — no YAML between fences.
+        let input = "---\n---\nUse strict mode.\n";
+        let (text, frontmatter) = parse_rules_frontmatter(input.to_string());
+        let frontmatter = frontmatter.expect("empty frontmatter should parse");
+        assert!(
+            frontmatter.always_apply,
+            "empty frontmatter defaults to always_apply: true"
+        );
+        assert!(frontmatter.globs.is_empty());
+        assert_eq!(text, "Use strict mode.");
     }
 
     #[test]
-    fn test_apply_skill_overrides_project_wins_over_builtin() {
-        let built_in = make_builtin_skill("create-skill", "Built-in version");
-        let project = make_project_skill("create-skill", "Project override", "my-project");
-
-        let resolved = apply_skill_overrides(&[built_in, project]);
-
-        assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].description, "Project override");
-        assert!(matches!(
-            resolved[0].source,
-            SkillSource::ProjectLocal { .. }
-        ));
-    }
-
-    #[test]
-    fn test_apply_skill_overrides_project_wins_over_builtin_and_global() {
-        // All three sources present — the project-local must win and
-        // both lower-precedence entries must be dropped from the
-        // model-facing projection.
-        let built_in = make_builtin_skill("create-skill", "Built-in");
-        let global = make_global_skill("create-skill", "Global");
-        let project = make_project_skill("create-skill", "Project", "my-project");
-
-        let resolved = apply_skill_overrides(&[built_in, global, project]);
-
-        assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].description, "Project");
-    }
-
-    #[test]
-    fn test_apply_skill_overrides_preserves_unique_skills() {
-        let global_a = make_global_skill("alpha", "a");
-        let global_b = make_global_skill("beta", "b");
-        let project_c = make_project_skill("gamma", "c", "project");
-
-        let resolved = apply_skill_overrides(&[global_a, global_b, project_c]);
-
-        assert_eq!(resolved.len(), 3);
-        let names: Vec<&str> = resolved.iter().map(|s| s.name.as_str()).collect();
-        assert_eq!(names, vec!["alpha", "beta", "gamma"]);
-    }
-
-    #[test]
-    fn test_skill_source_scope_prefix_and_matches_scope() {
-        // The popup inserts `/<prefix>:<name>` using `scope_prefix`,
-        // and the resolver routes via `matches_scope`. This test pins
-        // the contract that the two stay in sync.
-        let global = SkillSource::Global;
-        // Globals use an empty prefix, so the popup inserts `/:<name>`.
-        assert_eq!(global.scope_prefix(), "");
-        assert!(global.matches_scope(""));
-        // Hand-typed `/global:<name>` is not aliased to the global
-        // source; it looks for a worktree literally named `global`.
-        assert!(!global.matches_scope("global"));
-        assert!(!global.matches_scope("zed"));
-
-        let project = SkillSource::ProjectLocal {
-            worktree_id: SkillScopeId(1),
-            worktree_root_name: "zed".into(),
-        };
-        // Project-local skills are scoped by their worktree root name
-        // so multiple open worktrees with same-named skills can each
-        // be addressed unambiguously.
-        assert_eq!(project.scope_prefix(), "zed");
-        assert!(project.matches_scope("zed"));
-        // The empty scope is reserved for globals.
-        assert!(!project.matches_scope(""));
-        // An unrelated worktree name (or MCP server name) must not
-        // match a project skill from a different worktree.
-        assert!(!project.matches_scope("extensions"));
-
-        // A worktree literally named `global` is no longer ambiguous
-        // with the global source: its skills are invoked as
-        // `/global:<name>` while globals are invoked as `/:<name>`.
-        let project_named_global = SkillSource::ProjectLocal {
-            worktree_id: SkillScopeId(2),
-            worktree_root_name: "global".into(),
-        };
-        assert_eq!(project_named_global.scope_prefix(), "global");
-        assert!(project_named_global.matches_scope("global"));
-        assert!(!project_named_global.matches_scope(""));
+    fn test_parse_rules_frontmatter_handles_empty_frontmatter_no_body() {
+        // Empty frontmatter with no body: `---\n---`
+        let input = "---\n---";
+        let (text, frontmatter) = parse_rules_frontmatter(input.to_string());
+        let frontmatter = frontmatter.expect("empty frontmatter should parse");
+        assert!(frontmatter.always_apply);
+        assert!(text.is_empty(), "body should be empty");
     }
 
     #[test]
@@ -6978,7 +9264,8 @@ mod internal_tests {
                 skill_file_path: PathBuf::from(format!("/skills/{name}/SKILL.md")),
                 load_warnings: Vec::new(),
                 disable_model_invocation: false,
-                embedded_body: None,
+                dependencies: Vec::new(),
+                core: false,
             });
         }
 
@@ -7055,7 +9342,8 @@ mod internal_tests {
             skill_file_path: PathBuf::from("/skills/skill-01-first/SKILL.md"),
             load_warnings: Vec::new(),
             disable_model_invocation: false,
-            embedded_body: None,
+            dependencies: Vec::new(),
+            core: false,
         };
         let second = Skill {
             name: "skill-02-overflows".to_string(),
@@ -7065,7 +9353,8 @@ mod internal_tests {
             skill_file_path: PathBuf::from("/skills/skill-02-overflows/SKILL.md"),
             load_warnings: Vec::new(),
             disable_model_invocation: false,
-            embedded_body: None,
+            dependencies: Vec::new(),
+            core: false,
         };
         let third = Skill {
             name: "skill-03-would-fit".to_string(),
@@ -7075,7 +9364,8 @@ mod internal_tests {
             skill_file_path: PathBuf::from("/skills/skill-03-would-fit/SKILL.md"),
             load_warnings: Vec::new(),
             disable_model_invocation: false,
-            embedded_body: None,
+            dependencies: Vec::new(),
+            core: false,
         };
 
         // Sanity-check the test setup: the third skill is small enough
@@ -7133,7 +9423,8 @@ mod internal_tests {
             skill_file_path: PathBuf::from("/skills/hidden-huge/SKILL.md"),
             load_warnings: Vec::new(),
             disable_model_invocation: true,
-            embedded_body: None,
+            dependencies: Vec::new(),
+            core: false,
         };
         let visible = Skill {
             name: "visible".to_string(),
@@ -7143,7 +9434,8 @@ mod internal_tests {
             skill_file_path: PathBuf::from("/skills/visible/SKILL.md"),
             load_warnings: Vec::new(),
             disable_model_invocation: false,
-            embedded_body: None,
+            dependencies: Vec::new(),
+            core: false,
         };
 
         let (kept, issues) = select_catalog_skills(&[hidden, visible]);
@@ -7170,7 +9462,7 @@ mod internal_tests {
             cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
 
         // Creating a session registers the project and triggers context building.
-        let connection = NativeAgentConnection(agent.clone());
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
         let _acp_thread = cx
             .update(|cx| {
                 Rc::new(connection).new_session(
@@ -7230,6 +9522,7 @@ mod internal_tests {
                 rules_file: Some(RulesFileContext {
                     path_in_worktree: rel_path(".rules").into(),
                     text: "".into(),
+                    frontmatter: None,
                     project_entry_id: rules_entry.id.to_usize(),
                 }),
             }];
@@ -7238,6 +9531,61 @@ mod internal_tests {
                 thread.read(cx).project_context().read(cx).worktrees,
                 expected_worktrees
             );
+        });
+    }
+
+    // expect: A late startup seed cannot erase project skills published by
+    // NativeAgent, or replace a newer global skill with its earlier snapshot.
+    // [P5] Motivating: one observable disk-backed skill catalog in Settings.
+    // pre: the agent publishes while the startup task is still loading.
+    // post: Settings still sees the agent's project and global skills.
+    #[gpui::test]
+    async fn test_late_startup_seed_keeps_agent_published_skills(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs, cx));
+
+        let global = |name: &str| Skill {
+            name: name.into(),
+            description: "Global skill".into(),
+            source: SkillSource::Global,
+            directory_path: PathBuf::from(format!("/skills/{name}")),
+            skill_file_path: PathBuf::from(format!("/skills/{name}/SKILL.md")),
+            load_warnings: Vec::new(),
+            disable_model_invocation: false,
+            dependencies: Vec::new(),
+            core: false,
+        };
+        let project_skill = Skill {
+            name: "project-skill".into(),
+            description: "Project skill".into(),
+            source: SkillSource::ProjectLocal {
+                worktree_id: SkillScopeId(7),
+                worktree_root_name: "project".into(),
+            },
+            directory_path: PathBuf::from("/project/.agents/skills/project-skill"),
+            skill_file_path: PathBuf::from("/project/.agents/skills/project-skill/SKILL.md"),
+            load_warnings: Vec::new(),
+            disable_model_invocation: false,
+            dependencies: Vec::new(),
+            core: false,
+        };
+
+        cx.update(|cx| {
+            agent.update(cx, |agent, cx| {
+                let id = agent.get_or_create_project_state(&project, cx);
+                if let Some(state) = agent.projects.get_mut(&id) {
+                    state.skills = Arc::new(vec![global("fresh"), project_skill]);
+                }
+                agent.publish_skill_index(cx);
+            });
+            agent_skills::SkillIndex::publish_seeded_globals(vec![global("stale")], cx);
+            let index = cx.global::<SkillIndex>();
+            assert_eq!(index.global_skills[0].name, "fresh");
+            assert_eq!(index.project_skills.len(), 1);
+            assert_eq!(index.project_skills[0].skills[0].name, "project-skill");
         });
     }
 
@@ -7260,14 +9608,11 @@ mod internal_tests {
         let agent =
             cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
 
-        // Simulate the user-interaction trigger that the agent panel
-        // fires (input focus, slash autocomplete, or submit). In tests
-        // we call it directly because there's no panel.
         cx.update(|cx| {
             agent.update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
         });
 
-        let connection = NativeAgentConnection(agent.clone());
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
         let _acp_thread = cx
             .update(|cx| {
                 Rc::new(connection).new_session(
@@ -7280,16 +9625,14 @@ mod internal_tests {
             .unwrap();
         cx.run_until_parked();
 
-        // The pre-existing skill should be loaded into the project state.
         agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project.entity_id()).unwrap();
-            let user = user_skills(&state.skills);
-            assert_eq!(user.len(), 1);
-            assert_eq!(user[0].name, "my-skill");
-            assert_eq!(user[0].description, "First version");
+            let disk = disk_global_skills(&state.skills);
+            assert_eq!(disk.len(), 1);
+            assert_eq!(disk[0].name, "my-skill");
+            assert_eq!(disk[0].description, "First version");
         });
 
-        // Modify the SKILL.md and verify the project context refreshes.
         fs.write(
             &initial_skill_path,
             b"---\nname: my-skill\ndescription: Second version\n---\n\nbody-v2",
@@ -7300,9 +9643,116 @@ mod internal_tests {
 
         agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project.entity_id()).unwrap();
-            let user = user_skills(&state.skills);
-            assert_eq!(user.len(), 1);
-            assert_eq!(user[0].description, "Second version");
+            let disk = disk_global_skills(&state.skills);
+            assert_eq!(disk.len(), 1);
+            assert_eq!(disk[0].description, "Second version");
+        });
+    }
+
+    // expect: A shipped skill discovered after a project is open reaches its active model catalog.
+    // [P5] Motivating: Settings listing a skill must not leave an existing project unable to use it.
+    // pre: the project scan has completed; filesystem events are paused.
+    // post: startup publication alone refreshes the project's loaded skill list.
+    #[gpui::test]
+    async fn startup_publication_refreshes_active_project_without_filesystem_event(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let dir = global_skills_dir();
+        fs.create_dir(&dir).await.expect("global dir");
+        let user_dir = dir.join("user-skill");
+        fs.create_dir(&user_dir).await.expect("user skill dir");
+        fs.insert_file(
+            user_dir.join("SKILL.md"),
+            b"---\nname: user-skill\ndescription: Newer user edit\n---\nbody".to_vec(),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
+        cx.update(|cx| agent.update(cx, |agent, cx| agent.ensure_skills_scan_started(cx)));
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
+        let _session = cx
+            .update(|cx| {
+                Rc::new(connection).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/")]),
+                    cx,
+                )
+            })
+            .await
+            .expect("session");
+        cx.run_until_parked();
+        let skill_dir = dir.join("hypothesis-testing");
+        fs.pause_events();
+        fs.create_dir(&skill_dir).await.expect("new skill dir");
+        let content = "---\nname: hypothesis-testing\ndescription: Later shipped skill\n---\nbody";
+        fs.insert_file(skill_dir.join("SKILL.md"), content.as_bytes().to_vec())
+            .await;
+        let skill = agent_skills::parse_skill_frontmatter(
+            &skill_dir.join("SKILL.md"),
+            content,
+            SkillSource::Global,
+        )
+        .expect("loaded skill");
+        cx.update(|cx| agent_skills::SkillIndex::publish_seeded_globals(vec![skill], cx));
+        cx.run_until_parked();
+        agent.read_with(cx, |agent, _| {
+            let state = agent
+                .projects
+                .get(&project.entity_id())
+                .expect("active project");
+            assert!(
+                state
+                    .skills
+                    .iter()
+                    .any(|skill| skill.name == "hypothesis-testing")
+            );
+            assert!(state.skills.iter().any(|skill| skill.name == "user-skill"));
+        });
+    }
+
+    // expect: A failed installed core overwrite cannot become an active model skill merely because its old file parses.
+    // [P2] Motivating: the model must not execute a stale file as an authoritative core skill.
+    // pre: disk contains a syntactically valid but noncanonical core body.
+    // post: the active project's skill catalog excludes that core entry.
+    #[gpui::test]
+    async fn stale_installed_core_is_excluded_from_active_project(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let core_dir = global_skills_dir().join("metacognition");
+        fs.create_dir(&core_dir).await.expect("core dir");
+        fs.insert_file(
+            core_dir.join("SKILL.md"),
+            b"---\nname: metacognition\ndescription: Stale core\ncore: true\n---\nstale body"
+                .to_vec(),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [], cx).await;
+        let store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx.update(|cx| NativeAgent::new(store, Templates::new(), fs, cx));
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
+        let _session = cx
+            .update(|cx| {
+                Rc::new(connection).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/")]),
+                    cx,
+                )
+            })
+            .await
+            .expect("session");
+        cx.run_until_parked();
+        agent.read_with(cx, |agent, _| {
+            let state = agent.projects.get(&project.entity_id()).expect("project");
+            assert!(
+                state
+                    .skills
+                    .iter()
+                    .all(|skill| skill.name != "metacognition")
+            );
         });
     }
 
@@ -7332,7 +9782,7 @@ mod internal_tests {
             agent.update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
         });
 
-        let connection = NativeAgentConnection(agent.clone());
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
         let acp_thread = cx
             .update(|cx| {
                 Rc::new(connection.clone()).new_session(
@@ -7347,10 +9797,10 @@ mod internal_tests {
 
         let loaded_skill = agent.read_with(cx, |agent, cx| {
             let state = agent.projects.get(&project_id).unwrap();
-            let user = user_skills(&state.skills);
-            assert_eq!(user.len(), 1);
-            assert_eq!(user[0].name, "long-description");
-            assert_eq!(user[0].description, long_description);
+            let disk = disk_global_skills(&state.skills);
+            assert_eq!(disk.len(), 1);
+            assert_eq!(disk[0].name, "long-description");
+            assert_eq!(disk[0].description, long_description);
 
             let catalog_names: Vec<&str> = state
                 .project_context
@@ -7374,7 +9824,7 @@ mod internal_tests {
                 state.skill_loading_issues
             );
 
-            (*user[0]).clone()
+            (*disk[0]).clone()
         });
 
         let session_id = acp_thread.read_with(cx, |thread, _cx| thread.session_id().clone());
@@ -7397,7 +9847,7 @@ mod internal_tests {
 
         let body = agent_skills::read_skill_body(fs.as_ref(), &loaded_skill.skill_file_path)
             .await
-            .expect("body should load despite description-length warning");
+            .expect("body should load cleanly");
         assert_eq!(body, "body");
     }
 
@@ -7432,7 +9882,7 @@ mod internal_tests {
             agent.update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
         });
 
-        let connection = NativeAgentConnection(agent.clone());
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
         let _acp_thread = cx
             .update(|cx| {
                 Rc::new(connection).new_session(
@@ -7447,12 +9897,12 @@ mod internal_tests {
 
         let loaded_skill = agent.read_with(cx, |agent, cx| {
             let state = agent.projects.get(&project_id).unwrap();
-            let user = user_skills(&state.skills);
-            assert_eq!(user.len(), 1);
-            assert_eq!(user[0].name, "my-skill");
-            assert_eq!(user[0].description, "First symlinked version");
-            assert_eq!(user[0].source, SkillSource::Global);
-            assert_eq!(user[0].skill_file_path, skill_link_path);
+            let disk = disk_global_skills(&state.skills);
+            assert_eq!(disk.len(), 1);
+            assert_eq!(disk[0].name, "my-skill");
+            assert_eq!(disk[0].description, "First symlinked version");
+            assert_eq!(disk[0].source, SkillSource::Global);
+            assert_eq!(disk[0].skill_file_path, skill_link_path);
 
             let catalog_skills = state.project_context.read(cx).skills();
             let catalog_skill = catalog_skills
@@ -7465,7 +9915,7 @@ mod internal_tests {
                 skill_link_path.to_string_lossy().as_ref()
             );
 
-            (*user[0]).clone()
+            (*disk[0]).clone()
         });
         let body = agent_skills::read_skill_body(fs.as_ref(), &loaded_skill.skill_file_path)
             .await
@@ -7482,12 +9932,12 @@ mod internal_tests {
 
         let reloaded_skill = agent.read_with(cx, |agent, cx| {
             let state = agent.projects.get(&project_id).unwrap();
-            let user = user_skills(&state.skills);
-            assert_eq!(user.len(), 1);
-            assert_eq!(user[0].name, "my-skill");
-            assert_eq!(user[0].description, "Second symlinked version");
-            assert_eq!(user[0].source, SkillSource::Global);
-            assert_eq!(user[0].skill_file_path, skill_link_path);
+            let disk = disk_global_skills(&state.skills);
+            assert_eq!(disk.len(), 1);
+            assert_eq!(disk[0].name, "my-skill");
+            assert_eq!(disk[0].description, "Second symlinked version");
+            assert_eq!(disk[0].source, SkillSource::Global);
+            assert_eq!(disk[0].skill_file_path, skill_link_path);
 
             let catalog_skills = state.project_context.read(cx).skills();
             let catalog_skill = catalog_skills
@@ -7500,7 +9950,7 @@ mod internal_tests {
                 skill_link_path.to_string_lossy().as_ref()
             );
 
-            (*user[0]).clone()
+            (*disk[0]).clone()
         });
         let body = agent_skills::read_skill_body(fs.as_ref(), &reloaded_skill.skill_file_path)
             .await
@@ -7514,23 +9964,16 @@ mod internal_tests {
         let fs = FakeFs::new(cx.executor());
         let skills_dir = global_skills_dir();
 
-        // Intentionally do NOT pre-create `skills_dir`. The first scan
-        // trigger should find no directory and leave the watch state
-        // idle; a later trigger after the directory is created should
-        // attach to the deepest existing ancestor and react when the
-        // directory is created later.
-
         let project = Project::test(fs.clone(), [], cx).await;
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent =
             cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
 
-        // First scan trigger: nothing on disk yet, state stays idle.
         cx.update(|cx| {
             agent.update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
         });
 
-        let connection = NativeAgentConnection(agent.clone());
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
         let _acp_thread = cx
             .update(|cx| {
                 Rc::new(connection).new_session(
@@ -7543,17 +9986,16 @@ mod internal_tests {
             .unwrap();
         cx.run_until_parked();
 
-        // No skills directory exists yet, so no skills should be loaded.
+        // No disk globals yet — only the embedded globals are present.
         agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project.entity_id()).unwrap();
             assert!(
-                user_skills(&state.skills).is_empty(),
-                "expected no user skills before the global skills dir exists, got {:?}",
-                state.skills
+                disk_global_skills(&state.skills).is_empty(),
+                "expected no disk globals before the global skills dir exists, got {:?}",
+                disk_global_skills(&state.skills)
             );
         });
 
-        // Create the global skills directory and a skill within it.
         let new_skill_dir = skills_dir.join("late-skill");
         fs.create_dir(&new_skill_dir).await.unwrap();
         fs.insert_file(
@@ -7562,10 +10004,6 @@ mod internal_tests {
         )
         .await;
 
-        // Fire the trigger again, simulating the user interacting with
-        // the agent panel after creating the skills directory. The
-        // second scan should find the directory and start the watch,
-        // which refreshes project context.
         cx.update(|cx| {
             agent.update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
         });
@@ -7573,10 +10011,10 @@ mod internal_tests {
 
         agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project.entity_id()).unwrap();
-            let user = user_skills(&state.skills);
-            assert_eq!(user.len(), 1);
-            assert_eq!(user[0].name, "late-skill");
-            assert_eq!(user[0].description, "Created after startup");
+            let disk = disk_global_skills(&state.skills);
+            assert_eq!(disk.len(), 1);
+            assert_eq!(disk[0].name, "late-skill");
+            assert_eq!(disk[0].description, "Created after startup");
         });
     }
 
@@ -7595,19 +10033,16 @@ mod internal_tests {
         let fs = FakeFs::new(cx.executor());
         let skills_dir = global_skills_dir();
 
-        // No skills directory exists at startup; the watcher should
-        // create one and pick up SKILL.md when it's added later.
         let project = Project::test(fs.clone(), [], cx).await;
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent =
             cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
 
-        // First scan trigger: nothing on disk yet.
         cx.update(|cx| {
             agent.update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
         });
 
-        let connection = NativeAgentConnection(agent.clone());
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
         let _acp_thread = cx
             .update(|cx| {
                 Rc::new(connection).new_session(
@@ -7624,36 +10059,24 @@ mod internal_tests {
         agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project_id).unwrap();
             assert!(
-                user_skills(&state.skills).is_empty(),
-                "expected no user skills before the global skills dir exists, got {:?}",
-                state.skills
+                disk_global_skills(&state.skills).is_empty(),
+                "expected no disk globals before the global skills dir exists, got {:?}",
+                disk_global_skills(&state.skills)
             );
         });
 
-        // Build the same resolver closure that `register_session` uses.
-        // This is the production resolver factored into a helper so the
-        // test can verify resolution behavior directly without setting
-        // up the full tool-call plumbing (`ToolInput`,
-        // `ToolCallEventStream`, authorization channel, ...).
         let resolve =
             cx.update(|_cx| super::skills_resolver_for_project(agent.downgrade(), project_id));
 
-        // Sanity check: before any skills exist, the resolver returns an
-        // empty list — NOT the snapshot that `Thread::new` would have
-        // captured.
         cx.update(|cx| {
             let all = resolve(cx);
-            let user: Vec<_> = all
+            let disk: Vec<_> = all
                 .iter()
-                .filter(|s| !matches!(s.source, SkillSource::BuiltIn))
+                .filter(|s| matches!(s.source, SkillSource::Global))
                 .collect();
-            assert!(user.is_empty());
+            assert!(disk.is_empty());
         });
 
-        // Now create a SKILL.md AFTER the session was registered. With
-        // the old code this would be invisible to the `SkillTool`
-        // because the tool held an `Arc<Vec<Skill>>` snapshot taken at
-        // thread construction time.
         let new_skill_dir = skills_dir.join("my-skill");
         fs.create_dir(&new_skill_dir).await.unwrap();
         fs.insert_file(
@@ -7662,42 +10085,33 @@ mod internal_tests {
         )
         .await;
 
-        // Second scan trigger: now the directory exists, so the scan
-        // starts the watch and refreshes project context.
         cx.update(|cx| {
             agent.update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
         });
         cx.run_until_parked();
 
-        // `state.skills` reflects the new skill (the watcher ran).
         agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project_id).unwrap();
-            let user = user_skills(&state.skills);
-            assert_eq!(user.len(), 1);
-            assert_eq!(user[0].name, "my-skill");
+            let disk = disk_global_skills(&state.skills);
+            assert_eq!(disk.len(), 1);
+            assert_eq!(disk[0].name, "my-skill");
         });
 
-        // The resolver the `SkillTool` uses must see it too. This is the
-        // crux of the regression test: the tool's view of skills is
-        // resolved at invocation time, not at thread-construction time.
         cx.update(|cx| {
             let all = resolve(cx);
-            let snapshot: Vec<_> = all
+            let disk: Vec<_> = all
                 .iter()
-                .filter(|s| !matches!(s.source, SkillSource::BuiltIn))
+                .filter(|s| matches!(s.source, SkillSource::Global))
                 .collect();
             assert_eq!(
-                snapshot.len(),
+                disk.len(),
                 1,
-                "dynamic resolver should see the new skill"
+                "dynamic resolver should see the new disk skill"
             );
-            assert_eq!(snapshot[0].name, "my-skill");
-            assert_eq!(snapshot[0].description, "Created after session");
+            assert_eq!(disk[0].name, "my-skill");
+            assert_eq!(disk[0].description, "Created after session");
         });
 
-        // And rendering the envelope through the same path the tool uses
-        // produces a `<skill_content name="my-skill">` block, confirming
-        // the model would see the new skill if it invoked the tool.
         let skill_for_render = cx.update(|cx| {
             let snapshot = resolve(cx);
             snapshot
@@ -7723,13 +10137,6 @@ mod internal_tests {
     /// using a resolver closure keyed on `project_id`. Because the
     /// subagent shares its parent's `project_id`, both threads end up
     /// resolving skills against the same `state.skills`.
-    ///
-    /// This test exercises that production path directly: it creates a
-    /// parent session via the agent connection, builds a subagent thread
-    /// the same way `create_subagent_thread` does, and runs it through
-    /// `register_session`. It then asserts that the `SkillTool` is
-    /// registered on the subagent thread and that resolving against the
-    /// same `project_id` produces the same skill set the parent sees.
     #[gpui::test]
     async fn test_subagent_skills_lookup_matches_parent(cx: &mut TestAppContext) {
         init_test(cx);
@@ -7748,10 +10155,7 @@ mod internal_tests {
         let agent =
             cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
 
-        // Open a parent session through the connection, the same way
-        // production does. This triggers project-context refresh which
-        // populates `state.skills` for the project.
-        let connection = NativeAgentConnection(agent.clone());
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
         let _parent_acp = cx
             .update(|cx| {
                 Rc::new(connection).new_session(
@@ -7766,23 +10170,18 @@ mod internal_tests {
 
         let project_id = project.entity_id();
 
-        // Sanity check: resolving against the parent's project sees the skill.
         let parent_resolve =
             cx.update(|_cx| super::skills_resolver_for_project(agent.downgrade(), project_id));
         cx.update(|cx| {
             let all = parent_resolve(cx);
-            let parent_skills: Vec<_> = all
+            let disk: Vec<_> = all
                 .iter()
-                .filter(|s| !matches!(s.source, SkillSource::BuiltIn))
+                .filter(|s| matches!(s.source, SkillSource::Global))
                 .collect();
-            assert_eq!(parent_skills.len(), 1);
-            assert_eq!(parent_skills[0].name, "shared-skill");
+            assert_eq!(disk.len(), 1);
+            assert_eq!(disk[0].name, "shared-skill");
         });
 
-        // Grab the parent thread out of the agent's session map. This
-        // mirrors what `create_subagent_thread` does internally — it
-        // looks up the parent session by `parent_session_id` and reads
-        // its `project_id` to forward to `register_session`.
         let (parent_thread, parent_project_id) = agent.read_with(cx, |agent, _cx| {
             let session = agent
                 .sessions
@@ -7793,19 +10192,13 @@ mod internal_tests {
         });
         assert_eq!(parent_project_id, project_id);
 
-        // Build the subagent thread the same way
-        // `NativeThreadEnvironment::create_subagent_thread` does.
         let subagent_thread =
             cx.update(|cx| cx.new(|cx| Thread::new_subagent(&parent_thread, None, cx)));
 
-        // Run the subagent through the production registration path.
-        // This is what installs the `SkillTool` on the thread.
         let _subagent_acp = agent.update(cx, |agent, cx| {
             agent.register_session(subagent_thread.clone(), parent_project_id, cx)
         });
 
-        // Verify the subagent thread has the `SkillTool` installed —
-        // without `register_session`, it would not.
         subagent_thread.read_with(cx, |thread, _cx| {
             assert!(thread.is_subagent());
             assert!(
@@ -7814,20 +10207,336 @@ mod internal_tests {
             );
         });
 
-        // The subagent's `SkillTool` is wired to a resolver closure keyed
-        // on the same `project_id` the parent used, so it sees the same
-        // skill set. We check this by constructing an equivalent resolver
-        // against the same project_id and asserting it matches.
         let subagent_resolve = cx
             .update(|_cx| super::skills_resolver_for_project(agent.downgrade(), parent_project_id));
         cx.update(|cx| {
             let all = subagent_resolve(cx);
-            let subagent_skills: Vec<_> = all
+            let disk: Vec<_> = all
                 .iter()
-                .filter(|s| !matches!(s.source, SkillSource::BuiltIn))
+                .filter(|s| matches!(s.source, SkillSource::Global))
                 .collect();
-            assert_eq!(subagent_skills.len(), 1);
-            assert_eq!(subagent_skills[0].name, "shared-skill");
+            assert_eq!(disk.len(), 1);
+            assert_eq!(disk[0].name, "shared-skill");
+        });
+    }
+
+    /// The SkillTool that `register_session` wires onto a session must stamp
+    /// its outcomes with the thread's own agent identity — the same source
+    /// `run_tool`'s failure-recording path reads — so skill attribution can
+    /// never split between the tool stamp and the failure record. Runs the
+    /// REGISTERED tool instance (not a hand-constructed one) and observes the
+    /// invoker through the outcome recorder; a re-derived invoker that
+    /// diverges from the thread's identity fails here.
+    #[gpui::test]
+    async fn test_skill_tool_invoker_is_thread_agent_identity(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let skills_dir = global_skills_dir();
+        let skill_dir = skills_dir.join("invoker-skill");
+        fs.create_dir(&skill_dir).await.unwrap();
+        fs.insert_file(
+            &skill_dir.join("SKILL.md"),
+            b"---\nname: invoker-skill\ndescription: Invoker probe\n---\n\nbody".to_vec(),
+        )
+        .await;
+
+        // The registered SkillTool authorizes non-core skills through the
+        // settings-driven permission flow; `invoker-skill` is not a core
+        // skill, and with no matching rule the authorization loop waits on
+        // a prompt that never arrives in a standalone run (observed: the
+        // test spun at 100% CPU awaiting the authorization response).
+        // Allow this skill by rule so the run reaches the load → body →
+        // activate → record path the invoker stamp lives on.
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.tools.insert(
+                crate::SkillTool::NAME.into(),
+                agent_settings::ToolRules {
+                    default: Some(settings::ToolPermissionMode::Confirm),
+                    always_allow: vec![
+                        agent_settings::CompiledRegex::new(r"invoker-skill", false).unwrap(),
+                    ],
+                    always_deny: vec![],
+                    always_confirm: vec![],
+                    invalid_patterns: vec![],
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        let project = Project::test(fs.clone(), [], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
+
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
+        let _acp = cx
+            .update(|cx| {
+                Rc::new(connection).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let recorded = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = recorded.clone();
+        let _recorder = crate::SKILL_OUTCOME_RECORDER.scoped_for_test(std::sync::Arc::new(
+            move |skill_id, invoker, success, error| {
+                if let Ok(mut entries) = captured.lock() {
+                    entries.push((
+                        skill_id.to_string(),
+                        invoker.to_string(),
+                        success,
+                        error.map(str::to_string),
+                    ));
+                }
+            },
+        ));
+
+        let thread = agent.read_with(cx, |agent, _cx| {
+            agent
+                .sessions
+                .values()
+                .next()
+                .expect("session should exist")
+                .thread
+                .clone()
+        });
+        let expected_invoker = thread.read_with(cx, |thread, _| thread.skill_invoker());
+
+        // Run the REGISTERED SkillTool — the instance register_session
+        // wired — and observe the invoker it stamps on the outcome.
+        let tool = thread.read_with(cx, |thread, _| {
+            thread
+                .tools
+                .get(crate::SkillTool::NAME)
+                .expect("SkillTool registered by register_session")
+                .clone()
+        });
+        let (mut sender, input) = crate::ToolInput::<serde_json::Value>::test();
+        sender.send_full(json!({ "name": "invoker-skill" }));
+        let (event_stream, _rx) = crate::ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+        let _ = task.await;
+        cx.run_until_parked();
+
+        let entries = recorded.lock().expect("lock").clone();
+        assert_eq!(
+            entries,
+            vec![(
+                "invoker-skill".to_string(),
+                expected_invoker.to_string(),
+                true,
+                None
+            )],
+            "the registered SkillTool stamps the thread's own agent identity"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_project_skills_require_worktree_trust(cx: &mut TestAppContext) {
+        use collections::{HashMap, HashSet};
+        use project::trusted_worktrees::{self, PathTrust, TrustedWorktrees};
+
+        init_test(cx);
+        cx.update(|cx| {
+            trusted_worktrees::init(HashMap::default(), cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".agents": {
+                    "skills": {
+                        "my-skill": {
+                            "SKILL.md": "---\nname: my-skill\ndescription: A project skill\n---\n\nbody"
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+
+        let project =
+            Project::test_with_worktree_trust(fs.clone(), [Path::new("/project")], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
+
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
+        let acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection.clone()).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/project")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let project_id = project.entity_id();
+        let session_id = acp_thread.read_with(cx, |thread, _cx| thread.session_id().clone());
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        // Untrusted: project skills are excluded. Only embedded globals
+        // (which don't require trust) should be present.
+        agent.read_with(cx, |agent, cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            let project_local: Vec<_> = state
+                .skills
+                .iter()
+                .filter(|s| matches!(s.source, SkillSource::ProjectLocal { .. }))
+                .collect();
+            assert!(
+                project_local.is_empty(),
+                "untrusted worktree skills should not load: {:?}",
+                project_local
+            );
+            let commands = NativeAgent::build_available_commands_for_project(Some(state), cx);
+            let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
+            assert!(
+                !names.contains(&"my-skill"),
+                "untrusted skill leaked into slash commands: {names:?}"
+            );
+        });
+
+        cx.update(|cx| {
+            let trusted_worktrees = TrustedWorktrees::try_get_global(cx)
+                .expect("trusted worktrees global initialized by test_with_worktree_trust");
+            trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                trusted_worktrees.trust(
+                    &project.read(cx).worktree_store(),
+                    HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+
+        agent.read_with(cx, |agent, _cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            let project_local: Vec<_> = state
+                .skills
+                .iter()
+                .filter(|s| matches!(s.source, SkillSource::ProjectLocal { .. }))
+                .collect();
+            assert_eq!(project_local.len(), 1);
+            assert_eq!(project_local[0].name, "my-skill");
+        });
+
+        cx.update(|cx| {
+            let skills = connection.available_skills(&session_id, cx);
+            let skill_names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
+            assert!(
+                skill_names.contains(&"my-skill"),
+                "trusted skill should appear in available skills: {skill_names:?}"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_oversized_project_skill_reports_error(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let oversized = format!(
+            "---\nname: huge-skill\ndescription: Too big\n---\n\n{}",
+            "a".repeat(MAX_SKILL_FILE_SIZE + 1)
+        );
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".agents": { "skills": { "huge-skill": { "SKILL.md": oversized } } }
+            }),
+        )
+        .await;
+
+        let (agent, project, _worktree_id, _acp_thread) =
+            open_trusted_project_skills(cx, fs.clone(), "/project").await;
+        let project_id = project.entity_id();
+
+        agent.read_with(cx, |agent, _cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            let project_local: Vec<_> = state
+                .skills
+                .iter()
+                .filter(|s| matches!(s.source, SkillSource::ProjectLocal { .. }))
+                .collect();
+            assert!(
+                project_local.is_empty(),
+                "oversized skill must not load: {:?}",
+                project_local
+                    .iter()
+                    .map(|s| s.name.as_str())
+                    .collect::<Vec<_>>()
+            );
+            assert!(
+                state
+                    .skill_loading_issues
+                    .iter()
+                    .any(|issue| issue.kind == SkillLoadingIssueKind::LoadFailed
+                        && issue.message.to_string().contains("maximum size")),
+                "expected a size-limit error, got {:?}",
+                state.skill_loading_issues
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_malformed_project_skill_reports_error(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".agents": {
+                    "skills": {
+                        "good": {
+                            "SKILL.md": "---\nname: good\ndescription: Fine\n---\n\nbody"
+                        },
+                        "bad": {
+                            "SKILL.md": "this file has no frontmatter"
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+
+        let (agent, project, _worktree_id, _acp_thread) =
+            open_trusted_project_skills(cx, fs.clone(), "/project").await;
+        let project_id = project.entity_id();
+
+        agent.read_with(cx, |agent, _cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            let project_local: Vec<&str> = state
+                .skills
+                .iter()
+                .filter(|s| matches!(s.source, SkillSource::ProjectLocal { .. }))
+                .map(|s| s.name.as_str())
+                .collect();
+            assert_eq!(
+                project_local,
+                vec!["good"],
+                "only the valid skill should load"
+            );
+            assert!(
+                state
+                    .skill_loading_issues
+                    .iter()
+                    .any(|issue| issue.kind == SkillLoadingIssueKind::LoadFailed
+                        && issue.path.ends_with("bad/SKILL.md")),
+                "expected an error for the malformed skill, got {:?}",
+                state.skill_loading_issues
+            );
         });
     }
 
@@ -7862,7 +10571,7 @@ mod internal_tests {
         let agent =
             cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
 
-        let connection = NativeAgentConnection(agent.clone());
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
         let acp_thread = cx
             .update(|cx| {
                 Rc::new(connection.clone()).new_session(
@@ -7926,116 +10635,6 @@ mod internal_tests {
         });
     }
 
-    #[gpui::test]
-    async fn test_project_skills_require_worktree_trust(cx: &mut TestAppContext) {
-        use collections::{HashMap, HashSet};
-        use project::trusted_worktrees::{self, PathTrust, TrustedWorktrees};
-
-        init_test(cx);
-        cx.update(|cx| {
-            // The trust global isn't created by `init_test`. We need it
-            // for `Project::test_with_worktree_trust` to actually wire up
-            // trust tracking and for our subscription in
-            // `register_project_with_initial_context` to fire.
-            trusted_worktrees::init(HashMap::default(), cx);
-        });
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            "/project",
-            json!({
-                ".agents": {
-                    "skills": {
-                        "my-skill": {
-                            "SKILL.md": "---\nname: my-skill\ndescription: A project skill\n---\n\nbody"
-                        }
-                    }
-                }
-            }),
-        )
-        .await;
-
-        // `test_with_worktree_trust` initializes the trust system and
-        // starts every worktree as restricted, mirroring production
-        // behavior on a freshly opened folder.
-        let project =
-            Project::test_with_worktree_trust(fs.clone(), [Path::new("/project")], cx).await;
-        let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let agent =
-            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
-
-        let connection = NativeAgentConnection(agent.clone());
-        let acp_thread = cx
-            .update(|cx| {
-                Rc::new(connection.clone()).new_session(
-                    project.clone(),
-                    PathList::new(&[Path::new("/project")]),
-                    cx,
-                )
-            })
-            .await
-            .unwrap();
-        cx.run_until_parked();
-
-        let project_id = project.entity_id();
-        let session_id = acp_thread.read_with(cx, |thread, _cx| thread.session_id().clone());
-        let worktree_id = project.read_with(cx, |project, cx| {
-            project.worktrees(cx).next().unwrap().read(cx).id()
-        });
-
-        // Untrusted: project skills are excluded from the loaded list and
-        // never make it into the catalog or slash commands.
-        agent.read_with(cx, |agent, cx| {
-            let state = agent.projects.get(&project_id).unwrap();
-            assert!(
-                user_skills(&state.skills).is_empty(),
-                "untrusted worktree skills should not load: {:?}",
-                state
-                    .skills
-                    .iter()
-                    .map(|s| s.name.as_str())
-                    .collect::<Vec<_>>()
-            );
-            let commands = acp_thread.read(cx).available_commands();
-            let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
-            assert!(
-                !names.contains(&"my-skill"),
-                "untrusted skill leaked into slash commands: {names:?}"
-            );
-        });
-
-        // Granting trust should trigger a context refresh; the skill then
-        // appears in both the catalog and the slash-command list.
-        cx.update(|cx| {
-            let trusted_worktrees = TrustedWorktrees::try_get_global(cx)
-                .expect("trusted worktrees global initialized by test_with_worktree_trust");
-            trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                trusted_worktrees.trust(
-                    &project.read(cx).worktree_store(),
-                    HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
-                    cx,
-                );
-            });
-        });
-        cx.run_until_parked();
-
-        agent.read_with(cx, |agent, _cx| {
-            let state = agent.projects.get(&project_id).unwrap();
-            let user = user_skills(&state.skills);
-            let names: Vec<&str> = user.iter().map(|s| s.name.as_str()).collect();
-            assert_eq!(names, vec!["my-skill"]);
-        });
-
-        cx.update(|cx| {
-            let skills = connection.available_skills(&session_id, cx);
-            let skill_names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
-            assert!(
-                skill_names.contains(&"my-skill"),
-                "trusted skill should appear in available skills: {skill_names:?}"
-            );
-        });
-    }
-
     /// Open a session against a freshly created project and trust its only
     /// worktree, so project-local skills load. Returns the agent, the
     /// project, and the worktree id of the project root.
@@ -8061,7 +10660,7 @@ mod internal_tests {
         let agent =
             cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
 
-        let connection = NativeAgentConnection(agent.clone());
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
         let acp_thread = cx
             .update(|cx| {
                 Rc::new(connection).new_session(
@@ -8124,7 +10723,7 @@ mod internal_tests {
 
         let skill = agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project_id).unwrap();
-            user_skills(&state.skills)
+            non_core_skills(&state.skills)
                 .into_iter()
                 .find(|s| s.name == "my-skill")
                 .cloned()
@@ -8183,98 +10782,6 @@ mod internal_tests {
         assert!(error.to_string().contains("restricted"));
     }
 
-    /// A project SKILL.md whose on-disk size exceeds the cap must be
-    /// rejected with a size-limit error and excluded from the loaded
-    /// skills, exercising the size guard in `load_project_skills`.
-    #[gpui::test]
-    async fn test_oversized_project_skill_reports_error(cx: &mut TestAppContext) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-        let oversized = format!(
-            "---\nname: huge-skill\ndescription: Too big\n---\n\n{}",
-            "a".repeat(MAX_SKILL_FILE_SIZE + 1)
-        );
-        fs.insert_tree(
-            "/project",
-            json!({
-                ".agents": { "skills": { "huge-skill": { "SKILL.md": oversized } } }
-            }),
-        )
-        .await;
-
-        let (agent, project, _worktree_id, _acp_thread) =
-            open_trusted_project_skills(cx, fs.clone(), "/project").await;
-        let project_id = project.entity_id();
-
-        agent.read_with(cx, |agent, _cx| {
-            let state = agent.projects.get(&project_id).unwrap();
-            assert!(
-                user_skills(&state.skills).is_empty(),
-                "oversized skill must not load: {:?}",
-                user_skills(&state.skills)
-                    .iter()
-                    .map(|s| s.name.as_str())
-                    .collect::<Vec<_>>()
-            );
-            assert!(
-                state
-                    .skill_loading_issues
-                    .iter()
-                    .any(|issue| issue.kind == SkillLoadingIssueKind::LoadFailed
-                        && issue.message.to_string().contains("maximum size")),
-                "expected a size-limit error, got {:?}",
-                state.skill_loading_issues
-            );
-        });
-    }
-
-    /// A malformed project SKILL.md must surface a per-skill load error
-    /// without preventing sibling skills in the same worktree from
-    /// loading.
-    #[gpui::test]
-    async fn test_malformed_project_skill_reports_error(cx: &mut TestAppContext) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            "/project",
-            json!({
-                ".agents": {
-                    "skills": {
-                        "good": {
-                            "SKILL.md": "---\nname: good\ndescription: Fine\n---\n\nbody"
-                        },
-                        "bad": {
-                            "SKILL.md": "this file has no frontmatter"
-                        }
-                    }
-                }
-            }),
-        )
-        .await;
-
-        let (agent, project, _worktree_id, _acp_thread) =
-            open_trusted_project_skills(cx, fs.clone(), "/project").await;
-        let project_id = project.entity_id();
-
-        agent.read_with(cx, |agent, _cx| {
-            let state = agent.projects.get(&project_id).unwrap();
-            let names: Vec<&str> = user_skills(&state.skills)
-                .iter()
-                .map(|s| s.name.as_str())
-                .collect();
-            assert_eq!(names, vec!["good"], "only the valid skill should load");
-            assert!(
-                state
-                    .skill_loading_issues
-                    .iter()
-                    .any(|issue| issue.kind == SkillLoadingIssueKind::LoadFailed
-                        && issue.path.ends_with("bad/SKILL.md")),
-                "expected an error for the malformed skill, got {:?}",
-                state.skill_loading_issues
-            );
-        });
-    }
-
     /// The skill catalog (metadata) is also loaded through project
     /// buffers, and the broadened `.agents` refresh trigger must rebuild
     /// it when files under `.agents` change. We edit the SKILL.md buffer
@@ -8306,7 +10813,7 @@ mod internal_tests {
 
         agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project_id).unwrap();
-            let skill = user_skills(&state.skills)
+            let skill = non_core_skills(&state.skills)
                 .into_iter()
                 .find(|s| s.name == "my-skill")
                 .expect("skill should be loaded");
@@ -8335,7 +10842,7 @@ mod internal_tests {
 
         agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project_id).unwrap();
-            let skill = user_skills(&state.skills)
+            let skill = non_core_skills(&state.skills)
                 .into_iter()
                 .find(|s| s.name == "my-skill")
                 .expect("skill should still be loaded");
@@ -8355,6 +10862,7 @@ mod internal_tests {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let connection = NativeAgentConnection(
             cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx)),
+            ZED_AGENT_ID.clone(),
         );
 
         // Create a thread/session
@@ -8431,7 +10939,7 @@ mod internal_tests {
         // Create the agent and connection
         let agent =
             cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
-        let connection = NativeAgentConnection(agent.clone());
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
 
         // Create a thread/session
         let acp_thread = cx
@@ -8523,7 +11031,7 @@ mod internal_tests {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent =
             cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
-        let connection = NativeAgentConnection(agent.clone());
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
 
         let acp_thread = cx
             .update(|cx| {
@@ -8558,7 +11066,10 @@ mod internal_tests {
         agent.read_with(cx, |agent, _| {
             let session = agent.sessions.get(&session_id).unwrap();
             session.thread.read_with(cx, |thread, _| {
-                assert!(!thread.thinking_enabled(), "thinking defaults to false");
+                assert!(
+                    !thread.thinking_effort().is_some(),
+                    "thinking defaults to false"
+                );
             });
         });
 
@@ -8573,7 +11084,7 @@ mod internal_tests {
             let session = agent.sessions.get(&session_id).unwrap();
             session.thread.read_with(cx, |thread, _| {
                 assert!(
-                    thread.thinking_enabled(),
+                    thread.thinking_effort().is_some(),
                     "select_model should enable thinking when model supports it"
                 );
             });
@@ -8590,7 +11101,7 @@ mod internal_tests {
             let session = agent.sessions.get(&session_id).unwrap();
             session.thread.read_with(cx, |thread, _| {
                 assert!(
-                    !thread.thinking_enabled(),
+                    !thread.thinking_effort().is_some(),
                     "select_model should disable thinking when model does not support it"
                 );
             });
@@ -8609,7 +11120,7 @@ mod internal_tests {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent =
             cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
-        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
         let acp_thread = cx
             .update(|cx| {
@@ -8661,7 +11172,7 @@ mod internal_tests {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent = cx
             .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
         // Register a thinking model.
         let thinking_provider = Arc::new(FakeLanguageModelProvider::new(
@@ -8703,7 +11214,7 @@ mod internal_tests {
         });
         thread.read_with(cx, |thread, _| {
             assert!(
-                thread.thinking_enabled(),
+                thread.thinking_effort().is_some(),
                 "thinking should be enabled after selecting thinking model"
             );
         });
@@ -8739,7 +11250,7 @@ mod internal_tests {
         });
         reloaded_thread.read_with(cx, |thread, _| {
             assert!(
-                thread.thinking_enabled(),
+                thread.thinking_effort().is_some(),
                 "thinking_enabled should be preserved when reloading a thread with a thinking model"
             );
         });
@@ -8756,7 +11267,7 @@ mod internal_tests {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent = cx
             .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
         // Register a model where id() != name(), like real Anthropic models
         // (e.g. id="claude-sonnet-4-5-thinking-latest", name="Claude Sonnet 4.5 Thinking").
@@ -8861,7 +11372,7 @@ mod internal_tests {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent = cx
             .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
         let provider = Arc::new(FakeLanguageModelProvider::new(
             LanguageModelProviderId::from("fake-corp".to_string()),
@@ -9055,7 +11566,7 @@ mod internal_tests {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent = cx
             .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
         let acp_thread = cx
             .update(|cx| {
@@ -9257,7 +11768,7 @@ mod internal_tests {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent = cx
             .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
         let acp_thread = cx
             .update(|cx| {
@@ -9338,7 +11849,7 @@ mod internal_tests {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent = cx
             .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
         let warmup_project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
         drop(warmup_project);
         release_dropped_entities(cx);
@@ -9405,6 +11916,62 @@ mod internal_tests {
     }
 
     #[gpui::test]
+    async fn test_save_worker_reports_database_failure_after_sender_closes(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (_connection, agent, _project, acp_thread, _fs) = setup_native_agent_session(cx).await;
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let db_thread = thread.update(cx, |thread, cx| thread.to_db(cx));
+        let failures = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            let failures = failures.clone();
+            cx.subscribe(&agent, move |_, event: &ThreadSaveFailed, _| {
+                failures
+                    .borrow_mut()
+                    .push((event.session_id.clone(), event.error.to_string()));
+            })
+        });
+
+        let (wake, receiver) = watch::channel(());
+        let pending_save = Arc::new(Mutex::new(Some(PendingThreadSave {
+            folder_paths: PathList::new(&[Path::new("/a")]),
+            db_thread,
+        })));
+        let database_future =
+            Task::ready(Err(Arc::new(anyhow!("test database unavailable")))).shared();
+        // Session release closes the sender; the last payload must still be
+        // drained and a failed save must reach the UI's event subscription.
+        drop(wake);
+        let worker = agent.update(cx, |agent, cx| {
+            let thread_store = agent.thread_store.clone();
+            let session_id = session_id.clone();
+            let pending_save = pending_save.clone();
+            cx.spawn(async move |agent, cx| {
+                NativeAgent::run_save_worker(
+                    agent,
+                    session_id,
+                    receiver,
+                    pending_save,
+                    database_future,
+                    thread_store,
+                    cx,
+                )
+                .await
+            })
+        });
+        worker.await.expect("save worker drains a closed channel");
+        cx.run_until_parked();
+
+        assert!(pending_save.lock().is_none());
+        assert_eq!(
+            *failures.borrow(),
+            vec![(session_id, "test database unavailable".to_string())]
+        );
+    }
+
+    #[gpui::test]
     async fn test_only_created_subagents_are_registered_with_the_parent(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
@@ -9412,7 +11979,7 @@ mod internal_tests {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent = cx
             .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
         let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
         let new_session = |cx: &mut TestAppContext| {
             cx.update(|cx| {
@@ -9438,12 +12005,21 @@ mod internal_tests {
             .unwrap();
         cx.update(|cx| environment.resume_subagent_thread(child.id(), cx))
             .expect("resume the child");
-        // Resuming a session the parent did not create, including itself, must not make
-        // the parent own it: that would be a reference cycle or a self-update.
-        cx.update(|cx| environment.resume_subagent_thread(unrelated_session_id, cx))
-            .expect("resume an unrelated live session");
-        cx.update(|cx| environment.resume_subagent_thread(parent_session_id, cx))
-            .expect("resume the parent's own session");
+        // zed-kask: D23/P1a — resume rejects roots and another parent's
+        // children (the fork's native-delegation security rule), so the
+        // upstream expectations (both succeed) invert: both now refuse,
+        // and neither makes the parent own the session.
+        let unrelated =
+            cx.update(|cx| environment.resume_subagent_thread(unrelated_session_id, cx));
+        assert!(
+            unrelated.is_err(),
+            "unrelated sessions must not be resumable"
+        );
+        let own_root = cx.update(|cx| environment.resume_subagent_thread(parent_session_id, cx));
+        assert!(
+            own_root.is_err(),
+            "the parent's own root must not be resumable"
+        );
 
         parent.read_with(cx, |parent, cx| {
             assert_eq!(
@@ -9473,7 +12049,7 @@ mod internal_tests {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent = cx
             .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
         let acp_thread = cx
             .update(|cx| {
@@ -9632,7 +12208,7 @@ mod internal_tests {
         cx.run_until_parked();
 
         turn.thread.update(cx, |thread, cx| {
-            thread.set_thinking_effort(Some("high".into()), cx);
+            thread.set_reasoning_effort(Some("high".into()), cx);
         });
         cx.run_until_parked();
         assert_eq!(
@@ -9770,7 +12346,8 @@ mod internal_tests {
             cx: &mut TestAppContext,
         ) -> (Self, Task<Result<Option<acp_thread::SubmissionResponse>>>) {
             let fake = init_test(cx);
-            let (_connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+            let (_connection, agent, _project, acp_thread, _fs) =
+                setup_native_agent_session(cx).await;
             let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
             let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
             let model = fake.model("fake");
@@ -9839,7 +12416,7 @@ mod internal_tests {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent = cx
             .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
         let acp_thread = cx
             .update(|cx| {
@@ -9919,7 +12496,7 @@ mod internal_tests {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent = cx
             .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
         let acp_thread = cx
             .update(|cx| {
@@ -10049,7 +12626,7 @@ mod internal_tests {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent = cx
             .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
-        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
         let acp_thread = cx
             .update(|cx| {
@@ -10111,6 +12688,681 @@ mod internal_tests {
                 .map(|entry| (entry.id.clone(), entry.title.to_string()))
                 .collect::<Vec<_>>()
         })
+    }
+
+    /// Panel workflow prompts are appended to the Curator context without
+    /// narrowing the conversation's cross-domain MCP tool surface.
+    #[gpui::test]
+    async fn test_curator_sessions_carry_panel_prompt_with_full_tool_surface(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({ "a": {} })).await;
+        let project = Project::test(fs.clone(), [Path::new("/a")], cx).await;
+
+        for (server, expected_fragment) in [("scenarios", "scenarios"), ("curator", "curator")] {
+            let thread_store = cx.new(|cx| ThreadStore::new(cx));
+            let server_struct = CuratorAgentServer::new(fs.clone(), thread_store)
+                .with_extra_static_context(format!("workflow for {server}").into());
+            let connection = cx
+                .update(|cx| {
+                    server_struct.connect(
+                        agent_servers::AgentServerDelegate::new(
+                            project.read(cx).agent_server_store().clone(),
+                            None,
+                            None,
+                        ),
+                        project.clone(),
+                        cx,
+                    )
+                })
+                .await
+                .expect("connect");
+            let acp_thread = cx
+                .update(|cx| {
+                    connection.clone().new_session(
+                        project.clone(),
+                        PathList::new(&[Path::new("/a")]),
+                        cx,
+                    )
+                })
+                .await
+                .expect("new_session");
+
+            let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+            let agent = connection
+                .downcast::<NativeAgentConnection>()
+                .expect("curator connection is NativeAgentConnection");
+            let thread = cx.update(|cx| native_thread_for_session(&agent.0, &session_id, cx));
+
+            cx.update(|cx| {
+                thread.read_with(cx, |thread, _cx| {
+                    // The static context carries the per-panel workflow prompt
+                    // (appended to the curator base context).
+                    let static_context = thread
+                        .agent_static_context()
+                        .expect("curator static context set");
+                    assert!(
+                        static_context.contains(expected_fragment),
+                        "static context must mention the tab's server, got: {static_context}"
+                    );
+                    assert!(
+                        static_context.contains("Curator Role"),
+                        "curator base context must be present"
+                    );
+                });
+            });
+        }
+    }
+
+    /// The user's dyad level (`kask.curator.interaction_mode`) reaches the
+    /// Curator: the default is Level 2, and a changed setting applies to the
+    /// next Curator thread on the same connection.
+    #[gpui::test]
+    async fn test_curator_session_carries_the_users_interaction_mode(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({ "a": {} })).await;
+        let project = Project::test(fs.clone(), [Path::new("/a")], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let server = CuratorAgentServer::new(fs.clone(), thread_store);
+        let connection = cx
+            .update(|cx| {
+                server.connect(
+                    agent_servers::AgentServerDelegate::new(
+                        project.read(cx).agent_server_store().clone(),
+                        None,
+                        None,
+                    ),
+                    project.clone(),
+                    cx,
+                )
+            })
+            .await
+            .expect("connect");
+        let agent = connection
+            .clone()
+            .downcast::<NativeAgentConnection>()
+            .expect("curator connection is NativeAgentConnection");
+
+        let static_context_of_new_session = async |cx: &mut TestAppContext| {
+            let acp_thread = cx
+                .update(|cx| {
+                    connection.clone().new_session(
+                        project.clone(),
+                        PathList::new(&[Path::new("/a")]),
+                        cx,
+                    )
+                })
+                .await
+                .expect("new_session");
+            let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+            let thread = cx.update(|cx| native_thread_for_session(&agent.0, &session_id, cx));
+            cx.update(|cx| {
+                thread.read_with(cx, |thread, _cx| {
+                    thread
+                        .agent_static_context()
+                        .expect("curator static context set")
+                        .to_string()
+                })
+            })
+        };
+
+        let default_context = static_context_of_new_session(cx).await;
+        assert!(default_context.contains("Curator Role"));
+        assert!(
+            default_context.contains("Level 2 — collaboration"),
+            "default mode must be Level 2, got: {default_context}"
+        );
+
+        cx.update(|cx| {
+            use gpui::UpdateGlobal as _;
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .kask
+                        .get_or_insert_default()
+                        .curator
+                        .get_or_insert_default()
+                        .interaction_mode = Some(settings::CuratorInteractionMode::Control);
+                });
+            });
+        });
+        let control_context = static_context_of_new_session(cx).await;
+        assert!(control_context.contains("Level 1 — control"));
+        assert!(!control_context.contains("Level 2 — collaboration"));
+    }
+
+    /// A Curator thread resumed across a restart re-renders with the Curator
+    /// overlay. `Thread::from_db` starts from default `KaskThreadState` with
+    /// no session tools, so the resume path (`open_thread`) must re-apply
+    /// the session surface `new_session` applied at creation — otherwise
+    /// the thread keeps its `CURATOR_AGENT_ID` tag (from `register_session`)
+    /// but renders without `CURATOR_STATIC_CONTEXT`, misroutes its turns
+    /// (D6), and loses the curator action tools.
+    #[gpui::test]
+    async fn test_resumed_curator_thread_reapplies_the_overlay(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({ "a": {} })).await;
+        let project = Project::test(fs.clone(), [Path::new("/a")], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let server = CuratorAgentServer::new(fs.clone(), thread_store);
+        let first_connection = cx
+            .update(|cx| {
+                server.connect(
+                    agent_servers::AgentServerDelegate::new(
+                        project.read(cx).agent_server_store().clone(),
+                        None,
+                        None,
+                    ),
+                    project.clone(),
+                    cx,
+                )
+            })
+            .await
+            .expect("connect");
+        let acp_thread = cx
+            .update(|cx| {
+                first_connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
+            })
+            .await
+            .expect("new_session");
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+        let first_agent = first_connection
+            .downcast::<NativeAgentConnection>()
+            .expect("curator connection is NativeAgentConnection");
+        let thread = cx.update(|cx| native_thread_for_session(&first_agent.0, &session_id, cx));
+        cx.update(|cx| {
+            thread.read_with(cx, |thread, _| {
+                assert!(
+                    thread
+                        .agent_static_context()
+                        .expect("fresh curator thread carries the overlay")
+                        .contains("## Curator Role")
+                );
+            })
+        });
+
+        // Persist the thread, then simulate the restart: a second `connect`
+        // builds a fresh serving agent (empty session map) whose only source
+        // for the thread is the store — the cross-restart resume path.
+        let db_thread = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        let database = cx
+            .update(|cx| ThreadsDatabase::connect(cx))
+            .await
+            .expect("thread database should connect");
+        database
+            .save_thread(
+                session_id.clone(),
+                db_thread,
+                PathList::new(&[Path::new("/a")]),
+            )
+            .await
+            .expect("curator thread should save");
+
+        let second_connection = cx
+            .update(|cx| {
+                server.connect(
+                    agent_servers::AgentServerDelegate::new(
+                        project.read(cx).agent_server_store().clone(),
+                        None,
+                        None,
+                    ),
+                    project.clone(),
+                    cx,
+                )
+            })
+            .await
+            .expect("reconnect");
+        let resumed = cx
+            .update(|cx| {
+                second_connection.clone().load_session(
+                    session_id.clone(),
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    None,
+                    cx,
+                )
+            })
+            .await
+            .expect("curator thread should resume");
+        cx.run_until_parked();
+        let resumed_session_id = cx.update(|cx| resumed.read(cx).session_id().clone());
+        assert_eq!(resumed_session_id, session_id);
+        let second_agent = second_connection
+            .downcast::<NativeAgentConnection>()
+            .expect("curator connection is NativeAgentConnection");
+        let resumed_thread =
+            cx.update(|cx| native_thread_for_session(&second_agent.0, &session_id, cx));
+        cx.update(|cx| {
+            resumed_thread.read_with(cx, |thread, _| {
+                let static_context = thread
+                    .agent_static_context()
+                    .expect("resumed curator thread must re-carry the overlay");
+                assert!(static_context.contains("## Curator Role"));
+                assert!(static_context.contains("### Learning loop"));
+                assert_eq!(thread.agent_id(), &*CURATOR_AGENT_ID);
+                assert!(thread.has_registered_tool("curator_status"));
+                assert!(thread.has_registered_tool("curator_directive"));
+                assert!(thread.has_registered_tool("curator_clear_algedonic_log"));
+                assert!(
+                    thread.has_registered_tool("record_skill_feedback"),
+                    "the resumed Curator session keeps its evaluation-recording surface (D59)"
+                );
+            })
+        });
+    }
+
+    /// A resumed native thread regains the shared read-only status tool but
+    /// never the curator action tools — the D59 boundary holds on the resume
+    /// path, not only at creation.
+    #[gpui::test]
+    async fn test_resumed_native_thread_keeps_curator_tools_out(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_connection, agent, project, acp_thread, _fs) = setup_native_agent_session(cx).await;
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let db_thread = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        let database = cx
+            .update(|cx| ThreadsDatabase::connect(cx))
+            .await
+            .expect("thread database should connect");
+        database
+            .save_thread(
+                session_id.clone(),
+                db_thread,
+                PathList::new(&[Path::new("/a")]),
+            )
+            .await
+            .expect("native thread should save");
+
+        // A second connection is a fresh serving agent — the restart shape.
+        let fs = FakeFs::new(cx.executor());
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let resumed_agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs, cx));
+        let resumed_connection = Rc::new(NativeAgentConnection(
+            resumed_agent.clone(),
+            ZED_AGENT_ID.clone(),
+        ));
+        let resumed = cx
+            .update(|cx| {
+                resumed_connection.clone().load_session(
+                    session_id.clone(),
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    None,
+                    cx,
+                )
+            })
+            .await
+            .expect("native thread should resume");
+        cx.run_until_parked();
+        let resumed_session_id = cx.update(|cx| resumed.read(cx).session_id().clone());
+        assert_eq!(resumed_session_id, session_id);
+        let resumed_thread =
+            cx.update(|cx| native_thread_for_session(&resumed_agent, &session_id, cx));
+        cx.update(|cx| {
+            resumed_thread.read_with(cx, |thread, _| {
+                assert!(
+                    thread.has_registered_tool("curator_status"),
+                    "the shared read-only status tool is restored on resume"
+                );
+                assert!(!thread.has_registered_tool("curator_directive"));
+                assert!(!thread.has_registered_tool("curator_clear_algedonic_log"));
+                assert!(
+                    !thread.has_registered_tool("record_skill_feedback"),
+                    "an executing session must not evaluate skills (Goodhart, D59)"
+                );
+            })
+        });
+    }
+
+    /// A Curator session fetches the Current System State block per session,
+    /// not once per connection. The connect-time fetch baked the app-start
+    /// state before the metacognition loop's first tick (~30s after launch —
+    /// `MetacognitionLoop::run` skips the first immediate tick), and the
+    /// cached connection served every Curator thread that empty block for
+    /// the whole session. The per-session fetch also waits (bounded) for the
+    /// loop's first snapshot when the session is created inside that window.
+    #[gpui::test]
+    async fn test_curator_session_fetches_the_state_block_per_session(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        /// Models the loop's timeline: before the first tick there is no
+        /// snapshot (disarmed); after it, there is one (armed). The test
+        /// arms the provider between connect and session creation — the
+        /// window the connect-time fetch got wrong.
+        struct ArmedProvider {
+            armed: std::sync::atomic::AtomicBool,
+        }
+        impl crate::MetacognitionProvider for ArmedProvider {
+            fn health_snapshot_json(&self) -> Task<Option<serde_json::Value>> {
+                if self.armed.load(std::sync::atomic::Ordering::SeqCst) {
+                    Task::ready(Some(json!({
+                        "regulation_acceptance_rate": 0.75,
+                        "escalation_count": 1,
+                        "critical_alerts": 0,
+                    })))
+                } else {
+                    Task::ready(None)
+                }
+            }
+        }
+
+        // The provider hook is a process global shared by concurrently
+        // running tests; restore the previous value on exit, even on panic.
+        let previous_provider = crate::metacognition_provider();
+        struct RestoreProvider(Option<std::sync::Arc<dyn crate::MetacognitionProvider>>);
+        impl Drop for RestoreProvider {
+            fn drop(&mut self) {
+                crate::set_metacognition_provider(self.0.clone());
+            }
+        }
+        let _restore = RestoreProvider(previous_provider);
+        let provider = std::sync::Arc::new(ArmedProvider {
+            armed: std::sync::atomic::AtomicBool::new(false),
+        });
+        crate::set_metacognition_provider(Some(provider.clone()));
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({ "a": {} })).await;
+        let project = Project::test(fs.clone(), [Path::new("/a")], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let server = CuratorAgentServer::new(fs.clone(), thread_store);
+        let connection = cx
+            .update(|cx| {
+                server.connect(
+                    agent_servers::AgentServerDelegate::new(
+                        project.read(cx).agent_server_store().clone(),
+                        None,
+                        None,
+                    ),
+                    project.clone(),
+                    cx,
+                )
+            })
+            .await
+            .expect("connect");
+
+        // The loop ticks between connection establishment and session
+        // creation — the connect-time fetch already missed it.
+        provider
+            .armed
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+
+        let acp_thread = cx
+            .update(|cx| {
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
+            })
+            .await
+            .expect("new_session");
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+        let agent = connection
+            .downcast::<NativeAgentConnection>()
+            .expect("curator connection is NativeAgentConnection");
+        let thread = cx.update(|cx| native_thread_for_session(&agent.0, &session_id, cx));
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _| {
+            let static_context = thread
+                .agent_static_context()
+                .expect("curator static context set");
+            assert!(
+                static_context.contains("## Current System State"),
+                "the state block must be fetched per session, not baked at \
+                 connect time; got: {static_context}"
+            );
+            assert!(static_context.contains("Regulation acceptance rate: 75%"));
+        });
+    }
+
+    /// Native sessions share the one read-only Curator status tool, while
+    /// directive issuance and log mutation stay scoped to Curator sessions.
+    #[gpui::test]
+    async fn test_native_session_reads_curator_status_without_curator_mutations(
+        cx: &mut TestAppContext,
+    ) {
+        let fake = init_test(cx);
+        let (connection, agent, _project, acp_thread, _fs) = setup_native_agent_session(cx).await;
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let model = fake.model("fake");
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                assert!(thread.has_registered_tool("curator_status"));
+                assert!(!thread.has_registered_tool("curator_directive"));
+                assert!(!thread.has_registered_tool("curator_clear_algedonic_log"));
+                assert!(
+                    !thread.has_registered_tool("record_skill_feedback"),
+                    "an executing session must not evaluate skills (Goodhart)"
+                );
+            });
+        });
+        let prompt_task = cx.update(|cx| {
+            acp_thread::AgentSessionClientUserMessageIds::prompt(
+                connection.as_ref(),
+                ClientUserMessageId::new(),
+                acp_v2::PromptRequest::new(session_id, vec!["Check system status".into()]),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("model request");
+        assert_eq!(
+            request
+                .tools
+                .iter()
+                .filter(|tool| tool.name == "curator_status")
+                .count(),
+            1,
+            "the model receives exactly one canonical status tool"
+        );
+        assert!(
+            !request
+                .tools
+                .iter()
+                .any(|tool| tool.name == "curator_directive")
+        );
+        assert!(
+            !request
+                .tools
+                .iter()
+                .any(|tool| tool.name == "curator_clear_algedonic_log")
+        );
+        assert!(
+            !request
+                .tools
+                .iter()
+                .any(|tool| tool.name == "record_skill_feedback"),
+            "skill evaluation is separated from execution"
+        );
+        drop(prompt_task);
+    }
+
+    /// Pin that Curator sessions register both the `curator_status` and
+    /// `curator_directive` tools. The directive tool is the enforcement
+    /// point for the CuratorDirective channel — without it, the
+    /// `CURATOR_STATIC_CONTEXT` prompt advertising directive issuance is
+    /// theater (the `.rules` "Advertised invariants need enforcement
+    /// points" trap).
+    #[gpui::test]
+    async fn test_curator_session_registers_directive_tool(cx: &mut TestAppContext) {
+        let fake = init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({ "a": {} })).await;
+        let project = Project::test(fs.clone(), [Path::new("/a")], cx).await;
+
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let server_struct = CuratorAgentServer::new(fs.clone(), thread_store);
+        let connection = cx
+            .update(|cx| {
+                server_struct.connect(
+                    agent_servers::AgentServerDelegate::new(
+                        project.read(cx).agent_server_store().clone(),
+                        None,
+                        None,
+                    ),
+                    project.clone(),
+                    cx,
+                )
+            })
+            .await
+            .expect("connect");
+        let acp_thread = cx
+            .update(|cx| {
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
+            })
+            .await
+            .expect("new_session");
+
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+        let agent = connection
+            .downcast::<NativeAgentConnection>()
+            .expect("curator connection is NativeAgentConnection");
+        let thread = cx.update(|cx| native_thread_for_session(&agent.0, &session_id, cx));
+
+        cx.update(|cx| {
+            thread.read_with(cx, |thread, _cx| {
+                assert!(
+                    thread.has_registered_tool("curator_status"),
+                    "curator sessions must register curator_status"
+                );
+                assert!(
+                    thread.has_registered_tool("curator_directive"),
+                    "curator sessions must register curator_directive — \
+                     without it the CURATOR_STATIC_CONTEXT prompt advertises \
+                     directive issuance with no enforcement point"
+                );
+                assert!(
+                    thread.has_registered_tool("curator_clear_algedonic_log"),
+                    "curator sessions retain the curator-only log-mutation tool"
+                );
+            });
+        });
+        let model = fake.model("fake");
+        cx.update(|cx| thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx)));
+        let prompt_task = cx.update(|cx| {
+            acp_thread::AgentSessionClientUserMessageIds::prompt(
+                agent.as_ref(),
+                ClientUserMessageId::new(),
+                acp_v2::PromptRequest::new(session_id, vec!["Check system status".into()]),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("model request");
+        assert_eq!(
+            request
+                .tools
+                .iter()
+                .filter(|tool| tool.name == "curator_status")
+                .count(),
+            1,
+            "Curator must see the same status tool exactly once"
+        );
+        // Registered Curator tools must reach the model, not merely register.
+        for name in ["curator_directive", "curator_clear_algedonic_log"] {
+            assert!(
+                request.tools.iter().any(|tool| tool.name == name),
+                "{name} is registered for the Curator but dropped before the model"
+            );
+        }
+        // Skill evaluation belongs to the algedonic review with the Curator:
+        // the rating tool must reach the Curator model, not merely register.
+        assert!(
+            request
+                .tools
+                .iter()
+                .any(|tool| tool.name == "record_skill_feedback"),
+            "the Curator review must be able to record the operator's skill evaluation"
+        );
+        drop(prompt_task);
+    }
+
+    /// Pin that `NativeAgentConnection::agent_id()` reports the correct
+    /// identity for Curator vs native connections. Before the fix, the
+    /// method hardcoded `ZED_AGENT_ID` unconditionally, causing Curator
+    /// threads to persist as Zed Agent threads (D2). The thread metadata
+    /// store reads `connection().agent_id()` to stamp the `agent_id` column,
+    /// so a wrong identity here propagates through serialize → reload →
+    /// `restore_new_draft` → `set_selected_agent_and_persist`, reverting
+    /// the panel to `Agent::NativeAgent` on every restart.
+    #[gpui::test]
+    async fn test_curator_connection_reports_curator_agent_id(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({ "a": {} })).await;
+        let project = Project::test(fs.clone(), [Path::new("/a")], cx).await;
+
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+
+        // Curator connection → CURATOR_AGENT_ID
+        let curator_server = CuratorAgentServer::new(fs.clone(), thread_store.clone());
+        let curator_connection = cx
+            .update(|cx| {
+                curator_server.connect(
+                    agent_servers::AgentServerDelegate::new(
+                        project.read(cx).agent_server_store().clone(),
+                        None,
+                        None,
+                    ),
+                    project.clone(),
+                    cx,
+                )
+            })
+            .await
+            .expect("curator connect");
+        assert_eq!(
+            curator_connection.agent_id().as_ref(),
+            CURATOR_AGENT_ID.as_ref(),
+            "CuratorAgentServer connections must report CURATOR_AGENT_ID, \
+             not ZED_AGENT_ID — otherwise Curator threads persist as Zed Agent \
+             threads and the panel reverts to NativeAgent on reload"
+        );
+
+        // Native connection → ZED_AGENT_ID
+        let native_server = NativeAgentServer::new(fs.clone(), thread_store);
+        let native_connection = cx
+            .update(|cx| {
+                native_server.connect(
+                    agent_servers::AgentServerDelegate::new(
+                        project.read(cx).agent_server_store().clone(),
+                        None,
+                        None,
+                    ),
+                    project.clone(),
+                    cx,
+                )
+            })
+            .await
+            .expect("native connect");
+        assert_eq!(
+            native_connection.agent_id().as_ref(),
+            ZED_AGENT_ID.as_ref(),
+            "NativeAgentServer connections must report ZED_AGENT_ID"
+        );
     }
 
     /// Returns the fake provider that serves the registry's default model.

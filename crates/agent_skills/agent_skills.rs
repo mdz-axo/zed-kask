@@ -1,32 +1,68 @@
 use anyhow::{Context as _, Result};
-use const_format::{concatcp, formatcp};
-use fs::Fs;
-use futures::StreamExt;
+use const_format::formatcp;
+use fs::{Fs, RemoveOptions};
+use futures::{StreamExt, lock::Mutex};
 use gpui::{App, Global, SharedString};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Arc;
-use url::Url;
+use std::sync::{Arc, OnceLock};
 use util::paths::component_matches_ignore_ascii_case;
 
-/// First segment of the skills directory path: `.agents`.
+/// First segment of the project-local skills directory path: `.agents`.
+/// Used only for project-local skills (`.agents/skills/` inside a worktree).
+/// Global skills use `{kask_data_dir}/skills/` (D28 — Standardized Artifact Storage).
 pub const AGENTS_DIR_NAME: &str = ".agents";
 
 /// Second segment of the skills directory path: `skills`.
 pub const SKILLS_DIR_NAME: &str = "skills";
 
-/// User-facing display form of the global skills directory path — i.e.
-/// what a human should see in messages and prompts, with the platform's
-/// native path separator and home-directory shorthand.
+/// Returns `true` if the given skill name is a core skill.
 ///
-/// Windows doesn't recognize `~` as the home directory, so the env-var
-/// form is used there instead.
+/// The canonical list ([`CORE_SKILL_NAMES`]) is generated at build time by
+/// `build.rs` from the shipped SKILL.md frontmatter (`core: true`) — the
+/// frontmatter is the single source of truth; the constant is derived, not
+/// hand-maintained. Core skills are always-on, re-seeded on every startup
+/// (overwriting user edits), locked against editing, and undisableable;
+/// they cannot be shadowed by project-local skills of the same name.
+///
+/// Consumed by:
+/// - `seed_shipped_skills` — to decide whether to overwrite or seed-once.
+/// - `apply_skill_overrides` — to enforce unshadowability.
+/// - `skill_tool` — to skip the authorization prompt.
+/// - `settings_ui::skills_setup` — to render core skills with a distinct
+///   visual treatment and hide edit/delete controls.
+///
+/// A skill is core if it meets ALL of:
+/// 1. System-critical: the skill system, agent loop, curator, or an MCP
+///    server/panel depends on it being present and unmodified.
+/// 2. Called autonomously by code, or hard-delegated to by another core
+///    skill, or named in the Curator's static context as an anchored
+///    methodology.
+/// 3. All delegation targets (hard or optional) of a core skill must also
+///    be core — an editable delegate is a backdoor around consent/trust.
+pub fn is_core_skill(name: &str) -> bool {
+    CORE_SKILL_NAMES.contains(&name)
+}
+
+/// Returns `true` if the name belongs to a shipped core skill. The skill
+/// creator refuses such names on save. A project file with that name and
+/// `core: true` is rejected at load time; one without core status may still
+/// be explicitly invoked by its project scope, but cannot win the model
+/// catalog or an unqualified slash command over the shipped core skill.
+pub fn is_reserved_skill_name(name: &str) -> bool {
+    is_core_skill(name)
+}
+
+/// User-facing display form of the global skills directory path.
+///
+/// zed-kask: D28 — global skills live under the kask data root
+/// (`~/.local/share/zed-kask/skills/`), not the app data root.
 #[cfg(target_os = "windows")]
-pub const GLOBAL_SKILLS_DIR_DISPLAY: &str =
-    concatcp!("%USERPROFILE%\\", AGENTS_DIR_NAME, "\\", SKILLS_DIR_NAME);
+pub const GLOBAL_SKILLS_DIR_DISPLAY: &str = r"%LOCALAPPDATA%\zed-kask\skills";
 #[cfg(not(target_os = "windows"))]
-pub const GLOBAL_SKILLS_DIR_DISPLAY: &str = concatcp!("~/", AGENTS_DIR_NAME, "/", SKILLS_DIR_NAME);
+pub const GLOBAL_SKILLS_DIR_DISPLAY: &str = "~/.local/share/zed-kask/skills";
 
 /// Opaque identifier for the project scope a skill was loaded from.
 ///
@@ -86,20 +122,20 @@ pub struct Skill {
     /// `skill` tool refuses to load it. The user can still invoke it as a
     /// slash command.
     pub disable_model_invocation: bool,
-    /// For built-in skills whose content is compiled into the binary,
-    /// this holds the full SKILL.md body so the skill tool can serve it
-    /// without a filesystem read.
-    pub embedded_body: Option<&'static str>,
+    /// Skill names this skill depends on. Checked at invocation time so the
+    /// user gets a clear error before tokens are spent on a cascade that
+    /// will fail mid-execution.
+    pub dependencies: Vec<String>,
+    /// When `true`, this skill is a core skill: always-on, re-seeded on every
+    /// startup, locked against editing, undisableable, and unshadowable.
+    /// See `SkillMetadata::core` for the full contract.
+    pub core: bool,
 }
 
 /// Indicates where a skill was loaded from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SkillSource {
-    /// Compiled into the Zed binary. These are always available and have
-    /// the lowest override priority (global and project-local skills can
-    /// shadow them).
-    BuiltIn,
-    /// From ~/.agents/skills/
+    /// From the global skills directory (zed-kask D28: `{kask_data_dir}/skills/`).
     Global,
     /// From {project}/.agents/skills/
     ProjectLocal {
@@ -110,19 +146,18 @@ pub enum SkillSource {
 
 impl SkillSource {
     /// Precedence for resolving same-named skills. Higher values shadow
-    /// lower ones: `ProjectLocal` > `Global` > `BuiltIn`. Two sources
-    /// returning equal precedence (e.g. two project-local skills from
-    /// different worktrees) leave the winner up to the caller, which by
-    /// convention keeps the first one in iteration order.
+    /// lower ones: `ProjectLocal` > `Global`. Two sources returning equal
+    /// precedence (e.g. two project-local skills from different worktrees)
+    /// leave the winner up to the caller, which by convention keeps the
+    /// first one in iteration order.
     ///
     /// Adding a new `SkillSource` variant should be a one-line change
     /// here — every consumer routes through this method so the hierarchy
     /// stays in sync.
     pub fn precedence(&self) -> u8 {
         match self {
-            Self::BuiltIn => 0,
-            Self::Global => 1,
-            Self::ProjectLocal { .. } => 2,
+            Self::Global => 2,
+            Self::ProjectLocal { .. } => 3,
         }
     }
 
@@ -130,7 +165,7 @@ impl SkillSource {
     /// syntax that the autocomplete popup inserts. Global skills use
     /// an empty prefix (so the inserted text is `/:<name>`), and
     /// project-local skills use their worktree root name (so the
-    /// inserted text is `/<worktree>:<name>`).
+    /// inserted text is `/<worktree>:<name>`.
     ///
     /// Using an empty prefix for globals rather than a literal
     /// `global` means a worktree literally named `global` is no
@@ -142,7 +177,6 @@ impl SkillSource {
     /// distinguish skills from different origins.
     pub fn display_label(&self) -> &str {
         match self {
-            Self::BuiltIn => "built-in",
             Self::Global => "global",
             Self::ProjectLocal {
                 worktree_root_name, ..
@@ -152,7 +186,7 @@ impl SkillSource {
 
     pub fn scope_prefix(&self) -> &str {
         match self {
-            Self::BuiltIn | Self::Global => "",
+            Self::Global => "",
             Self::ProjectLocal {
                 worktree_root_name, ..
             } => worktree_root_name.as_ref(),
@@ -171,7 +205,7 @@ impl SkillSource {
     /// strictness only affects users typing by memory.
     pub fn matches_scope(&self, scope: &str) -> bool {
         match self {
-            Self::BuiltIn | Self::Global => scope.is_empty(),
+            Self::Global => scope.is_empty(),
             Self::ProjectLocal {
                 worktree_root_name, ..
             } => !scope.is_empty() && worktree_root_name.as_ref() == scope,
@@ -179,12 +213,103 @@ impl SkillSource {
     }
 }
 
-/// App-wide index of loaded skills, published by NativeAgent and read
+/// App-wide index of loaded skills, populated by NativeAgent and read
 /// by any UI that needs to display the skill list (e.g. Settings UI).
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct SkillIndex {
     pub global_skills: Vec<Skill>,
     pub project_skills: Vec<ProjectSkillGroup>,
+    agent_published: bool,
+    startup_published: bool,
+}
+
+impl SkillIndex {
+    /// The agent's disk refresh is authoritative over an older startup snapshot.
+    pub fn from_agent(global_skills: Vec<Skill>, project_skills: Vec<ProjectSkillGroup>) -> Self {
+        Self {
+            global_skills,
+            project_skills,
+            agent_published: true,
+            startup_published: false,
+        }
+    }
+
+    /// Whether the latest publication came from startup rather than a project scan.
+    pub fn is_startup_publication(&self) -> bool {
+        self.startup_published
+    }
+
+    /// expect: Startup may publish shipped globals for Settings without erasing
+    /// skills the agent has already discovered for a project.
+    /// [P5] Motivating: one disk-backed catalog wins over an older startup snapshot.
+    /// pre: startup has finished loading the seeded global directory.
+    /// post: an agent-published catalog retains its entries and project groups
+    /// and gains missing shipped non-core skills. Core entries require verified
+    /// reseed provenance before they can replace or extend a partial catalog.
+    /// None means no publication is needed.
+    fn with_startup_globals(
+        mut self,
+        global_skills: Vec<Skill>,
+        verified_core: &HashSet<String>,
+    ) -> Option<Self> {
+        if self.agent_published && !self.global_skills.is_empty() {
+            let mut changed = false;
+            for skill in global_skills {
+                if verified_core.contains(&skill.name) && skill.core {
+                    if let Some(existing) = self
+                        .global_skills
+                        .iter_mut()
+                        .find(|present| present.name == skill.name)
+                    {
+                        *existing = skill;
+                    } else {
+                        self.global_skills.push(skill);
+                    }
+                    changed = true;
+                } else if !is_core_skill(&skill.name)
+                    && is_shipped_skill(&skill.name)
+                    && !self
+                        .global_skills
+                        .iter()
+                        .any(|present| present.name == skill.name)
+                {
+                    self.global_skills.push(skill);
+                    changed = true;
+                }
+            }
+            if !changed {
+                return None;
+            }
+            self.global_skills
+                .sort_by(|left, right| left.skill_file_path.cmp(&right.skill_file_path));
+        } else {
+            self.global_skills = global_skills;
+        }
+        self.startup_published = true;
+        Some(self)
+    }
+
+    /// Publish startup globals against the index current after disk I/O.
+    /// Only cores whose source bytes were verified may extend an agent catalog.
+    pub fn publish_verified_globals(
+        global_skills: Vec<Skill>,
+        verified_core: &HashSet<String>,
+        cx: &mut App,
+    ) {
+        let current = cx.try_global::<Self>().cloned().unwrap_or_default();
+        let trusted_globals = global_skills
+            .into_iter()
+            .filter(|skill| !skill.core || verified_core.contains(&skill.name))
+            .collect();
+        if let Some(index) = current.with_startup_globals(trusted_globals, verified_core) {
+            cx.set_global(index);
+        }
+    }
+
+    /// Publish without a provenance receipt (e.g. caller tests without disk I/O).
+    pub fn publish_seeded_globals(global_skills: Vec<Skill>, cx: &mut App) {
+        Self::publish_verified_globals(global_skills, &HashSet::new(), cx);
+    }
 }
 
 #[derive(Clone)]
@@ -208,6 +333,21 @@ pub struct SkillMetadata {
     pub description: String,
     #[serde(default, rename = "disable-model-invocation")]
     pub disable_model_invocation: bool,
+    /// Skill names this skill depends on. At invocation time, the skill tool
+    /// checks that all dependencies are installed and returns a clear error
+    /// before running the cascade (saves tokens by failing fast).
+    /// Dependencies are skill names (not IDs) — e.g. `deep-module`, not
+    /// `alice/deep-module`. Any installed skill of that name satisfies the
+    /// dependency, regardless of source.
+    #[serde(default)]
+    pub dependencies: Vec<String>,
+    /// When `true`, this skill is a core skill: always-on, re-seeded on every
+    /// startup (overwriting user edits), locked against editing, and
+    /// undisableable. Only global skills with a registered core name may
+    /// declare this status; project-local claims fail during loading. Core
+    /// skills cannot be shadowed by project-local skills of the same name.
+    #[serde(default)]
+    pub core: bool,
 }
 
 /// Minimal skill info for system prompt.
@@ -269,6 +409,12 @@ pub fn parse_skill_frontmatter(
     source: SkillSource,
 ) -> Result<Skill> {
     let (metadata, _body, load_warnings) = parse_skill_file_content_for_loading(content)?;
+    if metadata.core && matches!(source, SkillSource::ProjectLocal { .. }) {
+        anyhow::bail!(
+            "project-local skill '{}' cannot declare `core: true`; core status is reserved for shipped global skills",
+            metadata.name
+        );
+    }
 
     let directory_path = skill_file_path
         .parent()
@@ -283,7 +429,8 @@ pub fn parse_skill_frontmatter(
         skill_file_path: skill_file_path.to_path_buf(),
         load_warnings,
         disable_model_invocation: metadata.disable_model_invocation,
-        embedded_body: None,
+        dependencies: metadata.dependencies,
+        core: metadata.core,
     })
 }
 
@@ -318,6 +465,24 @@ fn parse_skill_file_content_for_loading(
     validate_name(&metadata.name).map_err(anyhow::Error::msg)?;
     let load_warnings =
         validate_description_for_loading(&metadata.description).map_err(anyhow::Error::msg)?;
+
+    // zed-kask: enforce that `core: true` frontmatter is honored only for
+    // skills whose name is in `CORE_SKILL_NAMES`. A hand-edited skill
+    // declaring `core: true` with a non-reserved name would
+    // otherwise be treated as core (sovereign, not overwritten on seed, hidden
+    // edit/delete controls) — a backdoor around the core-skill
+    // contract. The skill-creator UI refuses reserved names on save, and
+    // `parse_skill_frontmatter` separately rejects project-local core claims.
+    // Pinned by
+    // `test_parse_refuses_core_true_on_non_reserved_name`.
+    if metadata.core && !is_core_skill(&metadata.name) {
+        anyhow::bail!(
+            "skill '{}' declares `core: true` but is not a registered core skill \
+             (not in CORE_SKILL_NAMES). The `core` frontmatter field is reserved \
+             for shipped system-critical skills; remove it or rename the skill.",
+            metadata.name
+        );
+    }
 
     Ok((metadata, body, load_warnings))
 }
@@ -524,7 +689,7 @@ pub fn validate_name(name: &str) -> Result<(), &'static str> {
 }
 
 /// Validate a skill description against the strict rules enforced by the
-/// create-skill UI and imported/shared skill parsing.
+/// create-skill UI and skill file parsing.
 pub fn validate_description(description: &str) -> Result<(), &'static str> {
     if description.trim().is_empty() {
         return Err("Skill description cannot be empty");
@@ -575,13 +740,16 @@ pub async fn load_skills_from_directory(
     results
 }
 
-/// Find every `<skills_root>/<name>/SKILL.md` directly under `directory`.
 ///
 /// Discovery is intentionally one level deep: a skill is the immediate
 /// child directory of the skills root, and `SKILL.md` is the file that
 /// names it. See `crates/agent_skills/README.md` for why we don't recurse.
 async fn find_skill_files(fs: &Arc<dyn Fs>, directory: &Path) -> Vec<PathBuf> {
     let Ok(mut entries) = fs.read_dir(directory).await else {
+        log::warn!(
+            "Failed to read skill directory: {} — returning empty",
+            directory.display()
+        );
         return Vec::new();
     };
 
@@ -597,6 +765,10 @@ async fn find_skill_files(fs: &Arc<dyn Fs>, directory: &Path) -> Vec<PathBuf> {
             let fs = fs.clone();
             async move {
                 let Ok(Some(metadata)) = fs.metadata(&entry_path).await else {
+                    log::warn!(
+                        "Failed to stat skill entry: {} — skipping",
+                        entry_path.display()
+                    );
                     return None;
                 };
                 if !metadata.is_dir {
@@ -691,66 +863,604 @@ pub fn read_skill_body_from_content(
     Ok(body.trim().to_string())
 }
 
-/// Content of the built-in `create-skill` SKILL.md, embedded at compile time.
-const CREATE_SKILL_CONTENT: &str = include_str!("builtin/create-skill/SKILL.md");
+// Auto-generated by build.rs — the kask SKILL.md files authored in this
+// repo's `.agents/skills/` directory, compiled as an installed-build seed.
+// In development, discovery reads those authored files directly and removes
+// copied global bodies; only an installed build without the checkout seeds
+// the global directory. Neither route reads the compiled bodies at invocation.
+//
+// The SKILL.md files are the *interface* (frontmatter parsed for discovery);
+// .j2 templates are companion *resources* seeded to disk alongside them.
+//
+// The same generated file carries `CORE_SKILL_NAMES`, derived from the
+// shipped `core: true` frontmatter — the single source of truth for which
+// skills are core (see `is_core_skill`).
+include!(concat!(env!("OUT_DIR"), "/embedded_global_skills.rs"));
+include!(concat!(env!("OUT_DIR"), "/embedded_templates.rs"));
 
-/// Returns the set of skills that are compiled into the Zed binary.
-pub fn builtin_skills() -> Vec<Skill> {
-    let mut skills = Vec::new();
-    if let Ok(skill) = parse_builtin_skill("create-skill", CREATE_SKILL_CONTENT) {
-        skills.push(skill);
+/// Returns the `(name, raw_content)` pairs for the kask skills shipped with
+/// this binary, exactly as authored in `.agents/skills/`. Used to identify
+/// shipped names and seed installed builds without the source checkout; the
+/// development catalog reads the authored files directly.
+fn shipped_skill_seed() -> &'static [(&'static str, &'static str)] {
+    SHIPPED_SKILL_SEED_ENTRIES
+}
+
+/// In a development checkout, shipped skills have one body: the authored file.
+/// Installed binaries without the source checkout retain the disk seed path.
+pub fn development_skills_dir() -> Option<PathBuf> {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.agents/skills");
+    source.canonicalize().ok().filter(|path| path.is_dir())
+}
+
+pub fn is_shipped_skill(name: &str) -> bool {
+    shipped_skill_seed()
+        .iter()
+        .any(|(shipped, _)| *shipped == name)
+}
+
+/// Skills that shipped in a past payload and were later removed from the
+/// authored tree. Installed binaries seed every shipped name into the
+/// global skills directory, and the seeder visits only shipped names —
+/// without [`remove_retired_skill_copies`] a retired skill's copied
+/// directory lingers loadable forever. The retirement change that removes
+/// a skill from `.agents/skills/` appends its name here in the same
+/// commit. Derived 2026-09-28 from git history: every name whose
+/// `.agents/skills/<name>/SKILL.md` was deleted, existed without
+/// `shipped: false` in at least one revision (so some payload carried it),
+/// and is absent from HEAD.
+const RETIRED_SKILL_NAMES: &[&str] = &[
+    "adapter-lifecycle",
+    "adversarial-red-team",
+    "attack-taxonomy-mapper",
+    "calibration-stewardship",
+    "capabilities-reasoner",
+    "caveman",
+    "codegraph",
+    "co-scientist",
+    "coherence-review",
+    "company-research-deep",
+    "company-research-flash",
+    "cmp-term-structure",
+    "constraint-forces-recast",
+    "constraints-review",
+    "eqm-improvement",
+    "gemba-walk",
+    "goal-analysis",
+    "gpa-evolution",
+    "gpui-test",
+    "gradient-seeded-recombination",
+    "graph-audit",
+    "handoff",
+    "harness-optimize",
+    "idiomatic-lisp",
+    "improve-codebase-architecture",
+    "kali-audit",
+    "kanban-board-builder",
+    "kanban-task-decomposition",
+    "kanban-task-delegation",
+    "kata-coaching",
+    "kata-starter",
+    "lint-creator",
+    "lisp-scaffold-reasoning",
+    "listening",
+    "logo-builder",
+    "lora-training",
+    "magna-carta-verifier",
+    "media-workflow",
+    "pragmatic-laziness",
+    "portfolio-review",
+    "principle-constraints",
+    "proptest",
+    "qa-script-builder",
+    "refactor-service-layer",
+    "runtime-posture-monitor",
+    "scenario-builder",
+    "self-critique-revision",
+    "semantic-graph-audit",
+    "sequential-inquiry",
+    "skill-logic-audit",
+    "skill-router",
+    "strangler-fig",
+    "supply-chain-sentinel",
+    "swarm-compose-guide",
+    "swarm-steering",
+    "ui-layout-discipline",
+    "zed-cherry-pick",
+    "zoom-out",
+];
+
+/// Discover shipped skills from the authoring checkout, not a copied global
+/// body. Keep global-only user skills under their existing names.
+pub async fn load_authoritative_global_skills(
+    fs: &Arc<dyn Fs>,
+    global_dir: &Path,
+) -> Vec<Result<Skill, SkillLoadError>> {
+    let source = if fs.is_fake() {
+        None
+    } else {
+        development_skills_dir()
+    };
+    let loaded = load_global_skills_from_source(fs, global_dir, source.as_deref()).await;
+    let skills = loaded
+        .iter()
+        .filter_map(|result| result.as_ref().ok().cloned())
+        .collect::<Vec<_>>();
+    let verified_core = verify_core_skill_contents(fs.as_ref(), &skills).await;
+    loaded
+        .into_iter()
+        .map(|result| match result {
+            Ok(skill) if skill.core && !verified_core.contains(&skill.name) => {
+                Err(SkillLoadError {
+                    path: skill.skill_file_path,
+                    message: format!(
+                        "unverified core skill '{}': on-disk content does not match the shipped source",
+                        skill.name
+                    ),
+                })
+            }
+            other => other,
+        })
+        .collect()
+}
+
+/// Check the actual loaded core bytes before startup promotes a disk entry over
+/// an agent-published catalog. A readable file alone is not a seed receipt.
+/// The development checkout is the authored source; installed builds require
+/// byte equality with the compiled seed even if an attempted write failed.
+pub async fn verify_core_skill_contents(fs: &dyn Fs, skills: &[Skill]) -> HashSet<String> {
+    let source = if fs.is_fake() {
+        None
+    } else {
+        development_skills_dir()
+    };
+    let mut verified = HashSet::new();
+    for skill in skills.iter().filter(|skill| skill.core) {
+        let is_authored = source
+            .as_ref()
+            .is_some_and(|source| skill.skill_file_path.starts_with(source));
+        let expected = if is_authored {
+            None
+        } else {
+            shipped_skill_seed()
+                .iter()
+                .find(|(name, _)| *name == skill.name)
+                .map(|(_, content)| *content)
+        };
+        match fs.load(&skill.skill_file_path).await {
+            Ok(content) if is_authored || expected == Some(content.as_str()) => {
+                verified.insert(skill.name.clone());
+            }
+            Ok(_) | Err(_) => {
+                log::warn!(
+                    "Core skill '{}' has no verified startup content; not promoting it",
+                    skill.name
+                );
+            }
+        }
     }
-    skills
+    verified
 }
 
-/// Parse a built-in skill from its embedded SKILL.md content. The skill
-/// gets a synthetic `<built-in>` path since it doesn't live on disk.
-fn parse_builtin_skill(name: &str, content: &'static str) -> Result<Skill> {
-    let (metadata, body) = extract_frontmatter(content)?;
-    validate_name(&metadata.name).map_err(anyhow::Error::msg)?;
-    validate_description(&metadata.description).map_err(anyhow::Error::msg)?;
+async fn load_global_skills_from_source(
+    fs: &Arc<dyn Fs>,
+    global_dir: &Path,
+    source: Option<&Path>,
+) -> Vec<Result<Skill, SkillLoadError>> {
+    let mut loaded = if let Some(source) = source {
+        load_skills_from_directory(fs, source, SkillSource::Global).await
+    } else {
+        Vec::new()
+    };
+    let source_names: HashSet<String> = loaded
+        .iter()
+        .filter_map(|result| {
+            let path = match result {
+                Ok(skill) => &skill.skill_file_path,
+                Err(error) => &error.path,
+            };
+            path.parent()?.file_name()?.to_str().map(str::to_owned)
+        })
+        .collect();
+    loaded.extend(
+        load_skills_from_directory(fs, global_dir, SkillSource::Global)
+            .await
+            .into_iter()
+            .filter(|result| {
+                if source.is_none() {
+                    return true;
+                }
+                let path = match result {
+                    Ok(skill) => &skill.skill_file_path,
+                    Err(error) => &error.path,
+                };
+                !path
+                    .parent()
+                    .and_then(|parent| parent.file_name())
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| is_shipped_skill(name) || source_names.contains(name))
+            }),
+    );
+    loaded
+}
 
-    let synthetic_dir = PathBuf::from(format!("<built-in>/{}", name));
-    let synthetic_path = synthetic_dir.join(SKILL_FILE_NAME);
-
-    Ok(Skill {
-        name: metadata.name,
-        description: metadata.description,
-        source: SkillSource::BuiltIn,
-        directory_path: synthetic_dir,
-        skill_file_path: synthetic_path,
-        load_warnings: Vec::new(),
-        disable_model_invocation: metadata.disable_model_invocation,
-        embedded_body: Some(body.trim()),
+/// The development catalog must not load a second project-scoped entry for
+/// a shipped skill already loaded from this source as the global entry.
+pub fn is_development_shipped_skill(path: &Path) -> bool {
+    let Some(source) = development_skills_dir() else {
+        return false;
+    };
+    path.canonicalize().ok().is_some_and(|resolved| {
+        resolved
+            .file_name()
+            .is_some_and(|name| name == SKILL_FILE_NAME)
+            && resolved.parent().and_then(Path::parent) == Some(source.as_path())
     })
 }
 
-/// All built-in skills as `(name, raw_content)` pairs. Used by
-/// `builtin_skill_content` to serve the full SKILL.md without disk I/O.
-const BUILTIN_SKILL_ENTRIES: &[(&str, &str)] = &[("create-skill", CREATE_SKILL_CONTENT)];
-
-/// Look up the full embedded content of a built-in skill by its
-/// synthetic file path. Returns `None` if the path doesn't match any
-/// built-in skill.
-pub fn builtin_skill_content(skill_file_path: &Path) -> Option<&'static str> {
-    BUILTIN_SKILL_ENTRIES.iter().find_map(|(name, content)| {
-        let expected = PathBuf::from(format!("<built-in>/{}", name)).join(SKILL_FILE_NAME);
-        (expected == skill_file_path).then_some(*content)
-    })
+/// In a development checkout, remove redundant shipped global copies and
+/// load the authored `.agents/skills/<name>/` files directly. Do not create
+/// a symlink: a previous editor binary could write stale seed bytes through
+/// it into the source. Installed binaries without a source checkout still
+/// materialise the bundled payload so shipped skills remain available.
+pub async fn seed_shipped_skills(fs: &dyn Fs, skills_dir: &Path) {
+    // The agent scanner and startup Settings publisher can call this together.
+    if fs.is_fake() {
+        // Independent FakeFs instances in parallel GPUI tests do not share a
+        // disk, and waiting on a process-wide lock parks the test scheduler.
+        seed_shipped_skills_from_source(fs, skills_dir, None).await;
+        return;
+    }
+    static SEED_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let _guard = SEED_LOCK.get_or_init(|| Mutex::new(())).lock().await;
+    let dev_source = development_skills_dir();
+    seed_shipped_skills_from_source(fs, skills_dir, dev_source.as_deref()).await;
 }
 
-/// Returns the global skills directory: `~/.agents/skills`.
+/// Remove copied global directories for skills retired from the shipped
+/// payload (see [`RETIRED_SKILL_NAMES`]). The seeder visits only shipped
+/// names, so without this sweep a retired skill's stale copy stays
+/// loadable in an installed binary forever — stale methodology whose
+/// templates may no longer even resolve. Refuses anything the seeder did
+/// not plainly write: symlinks, directories with extra files, and
+/// non-directories are left in place with a warning, so a user-adopted
+/// directory is never destroyed.
+async fn remove_retired_skill_copies(fs: &dyn Fs, skills_dir: &Path) {
+    for name in RETIRED_SKILL_NAMES {
+        let skill_dir = skills_dir.join(name);
+        let skill_file = skill_dir.join(SKILL_FILE_NAME);
+        if !fs.path_exists(&skill_dir) {
+            continue;
+        }
+        match fs.metadata(&skill_dir).await {
+            Ok(Some(metadata)) if metadata.is_symlink => {
+                log::warn!("Retired skill '{name}' is a symlink; refusing to remove it");
+                continue;
+            }
+            Ok(Some(metadata)) if metadata.is_dir => {}
+            Ok(_) => {
+                log::warn!(
+                    "Retired skill '{name}' has an unexpected disk entry; refusing to remove it"
+                );
+                continue;
+            }
+            Err(error) => {
+                log::warn!("Cannot inspect retired skill '{name}': {error}");
+                continue;
+            }
+        }
+        let entries = match fs.read_dir(&skill_dir).await {
+            Ok(entries) => entries.collect::<Vec<_>>().await,
+            Err(error) => {
+                log::warn!("Cannot inspect retired skill '{name}': {error}");
+                continue;
+            }
+        };
+        if entries
+            .iter()
+            .any(|entry| !matches!(entry, Ok(path) if path == &skill_file))
+        {
+            log::warn!("Retired skill '{name}' has extra files; refusing to remove the directory");
+            continue;
+        }
+        if fs.is_file(&skill_file).await {
+            if let Err(error) = fs.remove_file(&skill_file, RemoveOptions::default()).await {
+                log::warn!("Cannot remove retired skill '{name}': {error}");
+                continue;
+            }
+        }
+        if let Err(error) = fs.remove_dir(&skill_dir, RemoveOptions::default()).await {
+            log::warn!("Cannot remove retired skill directory '{name}': {error}");
+        }
+    }
+}
+
+async fn seed_shipped_skills_from_source(
+    fs: &dyn Fs,
+    skills_dir: &Path,
+    dev_source: Option<&Path>,
+) {
+    remove_retired_skill_copies(fs, skills_dir).await;
+    let mut names: Vec<(String, String)> = shipped_skill_seed()
+        .iter()
+        .map(|(name, content)| (name.to_string(), content.to_string()))
+        .collect();
+    if let Some(source) = dev_source {
+        let paths = match fs.read_dir(source).await {
+            Ok(paths) => paths.collect::<Vec<_>>().await,
+            Err(error) => {
+                log::warn!("Cannot discover authored skills: {error}");
+                return;
+            }
+        };
+        for path in paths {
+            let Ok(path) = path else {
+                log::warn!("Cannot enumerate authored skills");
+                return;
+            };
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if fs.is_file(&path.join(SKILL_FILE_NAME)).await
+                && !names.iter().any(|(present, _)| present == name)
+            {
+                names.push((name.to_string(), String::new()));
+            }
+        }
+    }
+    for (name, content) in names {
+        let skill_dir = skills_dir.join(&name);
+        let skill_file = skill_dir.join(SKILL_FILE_NAME);
+        if let Some(source) = dev_source {
+            let source_dir = source.join(&name);
+            if fs.path_exists(&skill_dir) {
+                match fs.metadata(&skill_dir).await {
+                    Ok(Some(metadata)) if metadata.is_symlink => {
+                        if fs.canonicalize(&skill_dir).await.ok().as_deref()
+                            != Some(source_dir.as_path())
+                        {
+                            log::warn!(
+                                "Shipped skill '{name}' links to another source; refusing to remove it"
+                            );
+                            continue;
+                        }
+                        if let Err(error) =
+                            fs.remove_file(&skill_dir, RemoveOptions::default()).await
+                        {
+                            log::warn!(
+                                "Cannot remove redundant shipped skill link '{name}': {error}"
+                            );
+                        }
+                        continue;
+                    }
+                    Ok(Some(metadata)) if metadata.is_dir => {
+                        let entries = match fs.read_dir(&skill_dir).await {
+                            Ok(entries) => entries.collect::<Vec<_>>().await,
+                            Err(error) => {
+                                log::warn!("Cannot inspect shipped skill '{name}': {error}");
+                                continue;
+                            }
+                        };
+                        if entries
+                            .iter()
+                            .any(|entry| !matches!(entry, Ok(path) if path == &skill_file))
+                        {
+                            log::warn!(
+                                "Shipped skill '{name}' has extra files; refusing to replace the directory"
+                            );
+                            continue;
+                        }
+                        if fs.is_file(&skill_file).await {
+                            if let Err(error) =
+                                fs.remove_file(&skill_file, RemoveOptions::default()).await
+                            {
+                                log::warn!("Cannot remove copied skill '{name}': {error}");
+                                continue;
+                            }
+                        }
+                        if let Err(error) =
+                            fs.remove_dir(&skill_dir, RemoveOptions::default()).await
+                        {
+                            log::warn!("Cannot remove copied skill directory '{name}': {error}");
+                            continue;
+                        }
+                    }
+                    Ok(_) => {
+                        log::warn!("Shipped skill '{name}' has an unexpected disk entry");
+                        continue;
+                    }
+                    Err(error) => {
+                        log::warn!("Cannot inspect shipped skill '{name}': {error}");
+                        continue;
+                    }
+                }
+            }
+            // The catalog reads this source directly. Do not create a global
+            // link: an older process could write stale bytes through it.
+            continue;
+        }
+        if fs.is_file(&skill_file).await && !is_core_skill(&name) {
+            continue;
+        }
+        if let Err(error) = fs.create_dir(&skill_dir).await {
+            log::warn!(
+                "Failed to create shipped skill directory '{}': {error}",
+                skill_dir.display()
+            );
+            continue;
+        }
+        if let Err(error) = fs.write(&skill_file, content.as_bytes()).await {
+            log::warn!("Failed to seed shipped skill '{}': {error}", name);
+        }
+    }
+}
+
+/// Whether the on-disk template needs (re-)seeding: missing, unreadable, or
+/// different from the shipped copy. An identical file is left untouched —
+/// an unchanged registry does not churn writes on every startup, and a
+/// corrupted or stale file is still replaced.
+fn template_needs_seed(existing: Option<&str>, shipped: &str) -> bool {
+    existing != Some(shipped)
+}
+
+/// Seed shipped prompt templates to the registry templates directory.
+/// The seeded copy is what MCP servers read via `HKASK_TEMPLATE_ROOT` (in
+/// dev the `render_template` tool reads the live source tree instead); in
+/// production it is the only copy. Only changed, missing, or corrupted
+/// files are written; seeded-category files no longer shipped are removed so
+/// a retired template cannot be rendered from the stale copy.
+pub async fn seed_templates(fs: &dyn Fs, templates_dir: &Path) {
+    let shipped: HashSet<PathBuf> = shipped_template_seed()
+        .iter()
+        .map(|(rel_path, _)| templates_dir.join(rel_path))
+        .collect();
+    remove_unshipped_templates(fs, templates_dir, &shipped).await;
+    for (rel_path, content) in shipped_template_seed() {
+        let target = templates_dir.join(rel_path);
+        if let Some(parent) = target.parent() {
+            if let Err(error) = fs.create_dir(parent).await {
+                log::warn!(
+                    "Failed to create template directory '{}' for seeding: {error}",
+                    parent.display()
+                );
+                continue;
+            }
+        }
+        let existing = fs.load(&target).await.ok();
+        if !template_needs_seed(existing.as_deref(), content) {
+            continue;
+        }
+        if let Err(error) = fs.write(&target, content.as_bytes()).await {
+            log::warn!("Failed to seed template '{}': {error}", rel_path);
+        }
+    }
+}
+
+/// Remove seeded-category files under `dir` that are not in `shipped`, then
+/// any directory left empty. Returns whether `dir` is now empty.
+fn remove_unshipped_templates<'a>(
+    fs: &'a dyn Fs,
+    dir: &'a Path,
+    shipped: &'a HashSet<PathBuf>,
+) -> futures::future::BoxFuture<'a, bool> {
+    use futures::FutureExt as _;
+    async move {
+        let mut entries = match fs.read_dir(dir).await {
+            Ok(entries) => entries,
+            Err(_) => return false,
+        };
+        let mut empty = true;
+        while let Some(entry) = entries.next().await {
+            let Ok(path) = entry else {
+                empty = false;
+                continue;
+            };
+            if fs.is_dir(&path).await {
+                if remove_unshipped_templates(fs, &path, shipped).await {
+                    let options = RemoveOptions {
+                        recursive: false,
+                        ignore_if_not_exists: true,
+                    };
+                    if let Err(error) = fs.remove_dir(&path, options).await {
+                        log::warn!(
+                            "Failed to remove empty template directory '{}': {error}",
+                            path.display()
+                        );
+                        empty = false;
+                    }
+                } else {
+                    empty = false;
+                }
+                continue;
+            }
+            // `.jinja` is no longer a shipped category, but remains a retired
+            // category here so startup removes chat templates seeded by the
+            // removed training capability from existing installations.
+            let seeded_category = path
+                .extension()
+                .is_some_and(|ext| ext == "j2" || ext == "jinja" || ext == "yaml");
+            if !seeded_category || shipped.contains(&path) {
+                empty = false;
+                continue;
+            }
+            let options = RemoveOptions {
+                recursive: false,
+                ignore_if_not_exists: true,
+            };
+            if let Err(error) = fs.remove_file(&path, options).await {
+                log::warn!(
+                    "Failed to remove retired template '{}': {error}",
+                    path.display()
+                );
+                empty = false;
+            }
+        }
+        empty
+    }
+    .boxed()
+}
+
+/// Returns the compiled-in template seed entries generated by `build.rs`.
+fn shipped_template_seed() -> &'static [(&'static str, &'static str)] {
+    SHIPPED_TEMPLATE_SEED_ENTRIES
+}
+
+/// Returns the global skills directory.
 ///
-/// Other agents (e.g. Claude Code) already write skill files into this
-/// location, so a Zed installation may have skills here even before the
-/// rest of Zed's skills support ships.
+/// zed-kask: D28 — Standardized Artifact Storage. Global skills live
+/// under the kask data root (`{kask_data_dir}/skills/`), resolved via the
+/// `global_skills_dir_override` hook (set by `kask_bridge` at startup), NOT
+/// `paths::data_dir()/agents/skills/` (the zed-kask app data root). This
+/// keeps all kask artifacts under one rooted tree per the standardized
+/// storage layout (`kask/docs/architecture/standardized-artifact-storage.md`).
+///
+/// zed-kask skills use body injection (SKILL.md body read by the agent
+/// via the `skill` tool) with optional prompt templates rendered via
+/// the `render_template` tool.
+///
+/// When the override is set (production, wired early in `main.rs`), returns
+/// the kask data-root skills path. When unset (tests, or pre-wiring), falls
+/// back to `paths::data_dir()/agents/skills/` so tests and the editor remain
+/// functional.
 ///
 /// Tests see the real home directory here, so they should resolve this path
 /// against their own `FakeFs` instance rather than the real filesystem.
 pub fn global_skills_dir() -> PathBuf {
-    paths::home_dir()
-        .join(AGENTS_DIR_NAME)
-        .join(SKILLS_DIR_NAME)
+    // zed-kask: D28 — check the override first.
+    if let Some(path) = global_skills_dir_override() {
+        return path;
+    }
+    paths::data_dir().join("agents").join(SKILLS_DIR_NAME)
+}
+
+// zed-kask: D28 — Standardized Artifact Storage.
+// Global hook for the kask data-root skills directory path. Mirrors the
+// `THREADS_DB_PATH_OVERRIDE` pattern (D28 in `agent.rs`). `agent_skills`
+// does NOT depend on `hkask-types` (preserving the §13.1 invariant); the
+// path is passed through this hook from `main.rs`.
+//
+// Uses a `Mutex` (not `OnceLock`) so the path can be replaced after startup
+// (e.g. if the operator changes the kask data directory). Per `.rules`,
+// `Mutex` hooks are re-settable and do not need the `Err`-branch warn.
+static GLOBAL_SKILLS_DIR_OVERRIDE: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+/// Set the global skills directory override (D28 composition root).
+///
+/// Called by zed-kask's app startup to wire the canonical kask data-root
+/// skills path. When `None`, `global_skills_dir()` falls back to the
+/// upstream `paths::data_dir()/agents/skills/` path.
+pub fn set_global_skills_dir_override(path: Option<PathBuf>) {
+    *GLOBAL_SKILLS_DIR_OVERRIDE
+        .lock()
+        .expect("GLOBAL_SKILLS_DIR_OVERRIDE poisoned") = path;
+}
+
+/// Get the global skills directory override, if set.
+pub(crate) fn global_skills_dir_override() -> Option<PathBuf> {
+    GLOBAL_SKILLS_DIR_OVERRIDE
+        .lock()
+        .expect("GLOBAL_SKILLS_DIR_OVERRIDE poisoned")
+        .clone()
 }
 
 /// Project-local skills live at this path relative to a worktree root,
@@ -794,70 +1504,354 @@ pub fn is_agents_skills_path(path: &Path) -> bool {
     false
 }
 
-/// The `zed://` scheme used by share links.
-const SKILL_SHARE_LINK_SCHEME: &str = "zed";
-/// The host (the part after `zed://`) that identifies a skill share link.
-const SKILL_SHARE_LINK_HOST: &str = "skill";
-/// The query parameter that carries the embedded `SKILL.md` payload.
-const SKILL_SHARE_LINK_DATA_PARAM: &str = "data";
-
-/// The `zed://` deep-link prefix for a shared skill. Opening a link with this
-/// prefix prompts the recipient to review and install the embedded skill.
-pub const SKILL_SHARE_LINK_PREFIX: &str =
-    concatcp!(SKILL_SHARE_LINK_SCHEME, "://", SKILL_SHARE_LINK_HOST);
-
-/// Build a shareable `zed://skill?data=…` link that fully embeds the given
-/// `SKILL.md` file contents.
-///
-/// The contents are base64url-encoded (no padding) so the link is
-/// self-contained and URL-safe: the recipient doesn't need the skill to be
-/// hosted anywhere. Recover the contents with [`decode_skill_share_link`].
-pub fn encode_skill_share_link(skill_file_content: &str) -> String {
-    use base64::Engine as _;
-    let data =
-        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(skill_file_content.as_bytes());
-    let mut url = Url::parse(SKILL_SHARE_LINK_PREFIX).expect("skill share link prefix is valid");
-    url.query_pairs_mut()
-        .append_pair(SKILL_SHARE_LINK_DATA_PARAM, &data);
-    url.into()
-}
-
-/// Recover the `SKILL.md` contents embedded in a `zed://skill?data=…` link
-/// produced by [`encode_skill_share_link`].
-pub fn decode_skill_share_link(link: &str) -> Result<String> {
-    use base64::Engine as _;
-    let url = Url::parse(link).context("skill share link is not a valid URL")?;
-    anyhow::ensure!(
-        url.scheme() == SKILL_SHARE_LINK_SCHEME && url.host_str() == Some(SKILL_SHARE_LINK_HOST),
-        "not a skill share link"
-    );
-    let data = url
-        .query_pairs()
-        .find_map(|(key, value)| (key == SKILL_SHARE_LINK_DATA_PARAM).then_some(value))
-        .context("skill share link is missing the `data` parameter")?;
-    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(data.as_bytes())
-        .context("skill share link `data` is not valid base64")?;
-    anyhow::ensure!(
-        bytes.len() <= MAX_SKILL_FILE_SIZE,
-        "shared skill exceeds the maximum size of {MAX_SKILL_FILE_SIZE} bytes"
-    );
-    let content = String::from_utf8(bytes).context("skill share link `data` is not valid UTF-8")?;
-    Ok(content)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use fs::FakeFs;
     use gpui::TestAppContext;
 
+    // expect: Settings keeps project skills and the newest global catalog regardless
+    // of whether the detached startup seed finishes before or after the agent scan.
+    // [P5] Motivating: one disk-backed skill catalog, with no stale startup overwrite.
+    // pre: the two publishers may complete in either order.
+    // post: agent publication wins; startup supplies globals if the agent had none.
+    #[gpui::test]
+    async fn startup_skill_publication_respects_agent_refresh_order(cx: &mut TestAppContext) {
+        let global = |name: &str| {
+            parse_skill_frontmatter(
+                Path::new(&format!("/skills/{name}/SKILL.md")),
+                &format!("---\nname: {name}\ndescription: Global skill\n---\n"),
+                SkillSource::Global,
+            )
+            .expect("valid global skill")
+        };
+        let project_skill = parse_skill_frontmatter(
+            Path::new("/project/.agents/skills/local/SKILL.md"),
+            "---\nname: local\ndescription: Project skill\n---\n",
+            SkillSource::ProjectLocal {
+                worktree_id: SkillScopeId(7),
+                worktree_root_name: "project".into(),
+            },
+        )
+        .expect("valid project skill");
+        let project = ProjectSkillGroup {
+            worktree_id: SkillScopeId(7),
+            worktree_root_name: "project".into(),
+            skills: vec![project_skill],
+        };
+
+        cx.update(|cx| SkillIndex::publish_seeded_globals(vec![global("seeded")], cx));
+        cx.update(|cx| {
+            assert_eq!(cx.global::<SkillIndex>().global_skills[0].name, "seeded");
+            cx.set_global(SkillIndex::from_agent(
+                vec![global("fresh")],
+                vec![project.clone()],
+            ));
+            assert_eq!(cx.global::<SkillIndex>().global_skills[0].name, "fresh");
+        });
+
+        // The detached startup task finishes after the agent's disk refresh.
+        cx.update(|cx| SkillIndex::publish_seeded_globals(vec![global("stale")], cx));
+        cx.update(|cx| {
+            let index = cx.global::<SkillIndex>();
+            assert_eq!(index.global_skills[0].name, "fresh");
+            assert_eq!(index.project_skills.len(), 1);
+            assert_eq!(index.project_skills[0].skills[0].name, "local");
+        });
+
+        // A refresh with no globals must not suppress the startup seed, but
+        // the seed must not erase the project's skill groups.
+        cx.update(|cx| cx.set_global(SkillIndex::from_agent(Vec::new(), vec![project])));
+        cx.update(|cx| SkillIndex::publish_seeded_globals(vec![global("seeded")], cx));
+        cx.update(|cx| {
+            let index = cx.global::<SkillIndex>();
+            assert_eq!(index.global_skills[0].name, "seeded");
+            assert_eq!(index.project_skills.len(), 1);
+            assert_eq!(index.project_skills[0].skills[0].name, "local");
+            assert!(index.agent_published);
+        });
+    }
+
+    // expect: Startup fills shipped skills missing from a partial agent scan
+    // without resurrecting unrelated globals or replacing newer descriptions.
+    // [P5] Motivating: the disk-backed catalog stays complete and user edits win.
+    // pre: the agent published before startup finished seeding shipped skills.
+    // post: missing shipped entries appear; project groups and newer edits survive.
+    #[gpui::test]
+    async fn partial_agent_catalog_receives_missing_shipped_startup_skills(
+        cx: &mut TestAppContext,
+    ) {
+        let shipped_name = shipped_skill_seed()
+            .iter()
+            .map(|(name, _)| *name)
+            .find(|name| !is_core_skill(name))
+            .expect("shipped non-core skill");
+        let global = |name: &str, description: &str| {
+            parse_skill_frontmatter(
+                Path::new(&format!("/skills/{name}/SKILL.md")),
+                &format!("---\nname: {name}\ndescription: {description}\n---\n"),
+                SkillSource::Global,
+            )
+            .expect("valid global skill")
+        };
+        let project = ProjectSkillGroup {
+            worktree_id: SkillScopeId(7),
+            worktree_root_name: "project".into(),
+            skills: Vec::new(),
+        };
+        cx.update(|cx| {
+            cx.set_global(SkillIndex::from_agent(
+                vec![global("user-skill", "Newer edit")],
+                vec![project],
+            ));
+            SkillIndex::publish_seeded_globals(
+                vec![
+                    global("user-skill", "Stale startup copy"),
+                    global(shipped_name, "Seeded copy"),
+                    global("deleted-user-skill", "Stale only"),
+                ],
+                cx,
+            );
+            let index = cx.global::<SkillIndex>();
+            assert_eq!(index.global_skills.len(), 2);
+            assert!(
+                index
+                    .global_skills
+                    .iter()
+                    .any(|skill| skill.name == shipped_name)
+            );
+            assert!(
+                index.global_skills.iter().any(|skill| {
+                    skill.name == "user-skill" && skill.description == "Newer edit"
+                })
+            );
+            assert_eq!(index.project_skills.len(), 1);
+        });
+    }
+
+    #[gpui::test]
+    async fn startup_does_not_promote_unverified_core_over_agent_edits(cx: &mut TestAppContext) {
+        let core_name = shipped_skill_seed()
+            .iter()
+            .map(|(name, _)| *name)
+            .find(|name| is_core_skill(name))
+            .expect("shipped core skill");
+        let user_name = shipped_skill_seed()
+            .iter()
+            .map(|(name, _)| *name)
+            .find(|name| !is_core_skill(name))
+            .expect("shipped non-core skill");
+        let global = |name: &str, description: &str, core: bool| {
+            parse_skill_frontmatter(
+                Path::new(&format!("/skills/{name}/SKILL.md")),
+                &format!("---\nname: {name}\ndescription: {description}\ncore: {core}\n---\n"),
+                SkillSource::Global,
+            )
+            .expect("valid global skill")
+        };
+        cx.update(|cx| {
+            cx.set_global(SkillIndex::from_agent(
+                vec![
+                    global(core_name, "Pre-seed core", true),
+                    global(user_name, "Newer user edit", false),
+                ],
+                Vec::new(),
+            ));
+            SkillIndex::publish_seeded_globals(
+                vec![
+                    global(core_name, "Canonical core", true),
+                    global(user_name, "Stale user edit", false),
+                ],
+                cx,
+            );
+            let globals = &cx.global::<SkillIndex>().global_skills;
+            assert!(
+                globals.iter().any(|skill| {
+                    skill.name == core_name && skill.description == "Pre-seed core"
+                })
+            );
+            assert!(globals.iter().any(|skill| {
+                skill.name == user_name && skill.description == "Newer user edit"
+            }));
+            cx.set_global(SkillIndex::from_agent(
+                vec![global(user_name, "Newer user edit", false)],
+                Vec::new(),
+            ));
+            SkillIndex::publish_seeded_globals(
+                vec![global(core_name, "Unverified core", true)],
+                cx,
+            );
+            assert!(
+                cx.global::<SkillIndex>()
+                    .global_skills
+                    .iter()
+                    .all(|skill| skill.name != core_name)
+            );
+        });
+    }
+
+    // expect: A failed core overwrite never turns readable old disk bytes into a canonical Settings entry.
+    // [P5] Motivating: Settings must not advertise an unverified core body.
+    // pre: an installed core file remains readable but is not writable.
+    // post: verification rejects the stale file and startup preserves the agent's catalog.
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn failed_core_seed_write_does_not_promote_readable_stale_content(
+        cx: &mut TestAppContext,
+    ) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (name, canonical) = shipped_skill_seed()
+            .iter()
+            .find(|(name, _)| is_core_skill(name))
+            .expect("shipped core skill");
+        let root = std::env::temp_dir().join(format!(
+            "kask-core-seed-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let file = root.join(name).join(SKILL_FILE_NAME);
+        std::fs::create_dir_all(file.parent().expect("core directory")).expect("create fixture");
+        let stale = format!("---\nname: {name}\ndescription: Stale core\ncore: true\n---\n");
+        std::fs::write(&file, &stale).expect("write stale core");
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o444))
+            .expect("protect stale core");
+        // RealFs::write reaches std::fs::write; exercise its denied-write
+        // boundary without parking a real filesystem task in GPUI's fake scheduler.
+        let write_error = std::fs::write(&file, canonical).expect_err("core overwrite denied");
+        assert_eq!(write_error.kind(), std::io::ErrorKind::PermissionDenied);
+        let disk = std::fs::read_to_string(&file).expect("stale core stays readable");
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644))
+            .expect("restore permissions");
+        std::fs::remove_dir_all(&root).expect("clean fixture");
+        assert_eq!(disk, stale, "the core write must have failed");
+        assert_ne!(disk, *canonical);
+
+        let fake = FakeFs::new(cx.executor());
+        let stale_dir = Path::new("/skills").join(name);
+        fake.create_dir(&stale_dir)
+            .await
+            .expect("fake core directory");
+        let stale_path = stale_dir.join(SKILL_FILE_NAME);
+        fake.insert_file(&stale_path, stale.into_bytes()).await;
+        let authoritative =
+            load_authoritative_global_skills(&(fake.clone() as Arc<dyn Fs>), Path::new("/skills"))
+                .await;
+        assert!(authoritative.iter().any(|result| {
+            matches!(result, Err(error) if error.message.contains("unverified core"))
+        }));
+        let loaded = load_skills_from_directory(
+            &(fake.clone() as Arc<dyn Fs>),
+            Path::new("/skills"),
+            SkillSource::Global,
+        )
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("readable stale skill");
+        let verified = verify_core_skill_contents(fake.as_ref(), &loaded).await;
+        assert!(!verified.contains(*name));
+        cx.update(|cx| {
+            SkillIndex::publish_verified_globals(loaded.clone(), &verified, cx);
+            assert!(cx.global::<SkillIndex>().global_skills.is_empty());
+            cx.set_global(SkillIndex::from_agent(
+                vec![
+                    parse_skill_frontmatter(
+                        Path::new("/skills/user-skill/SKILL.md"),
+                        "---\nname: user-skill\ndescription: User edit\n---\n",
+                        SkillSource::Global,
+                    )
+                    .expect("user skill"),
+                ],
+                Vec::new(),
+            ));
+            SkillIndex::publish_verified_globals(loaded, &verified, cx);
+            assert!(
+                cx.global::<SkillIndex>()
+                    .global_skills
+                    .iter()
+                    .all(|skill| skill.name != *name)
+            );
+        });
+    }
+
+    // expect: A verified installed core replaces stale agent metadata without losing project skills or user edits.
+    // [P5] Motivating: the Settings catalog converges to the canonical shipped core after successful seeding.
+    // pre: disk contains exactly the bundled core bytes; the agent published a partial catalog.
+    // post: the core is promoted and the publication signals active project refresh.
+    #[gpui::test]
+    async fn verified_core_seed_promotes_and_signals_refresh(cx: &mut TestAppContext) {
+        let (name, content) = shipped_skill_seed()
+            .iter()
+            .find(|(name, _)| is_core_skill(name))
+            .expect("shipped core skill");
+        let fs = FakeFs::new(cx.executor());
+        let dir = Path::new("/skills").join(name);
+        fs.create_dir(&dir).await.expect("core dir");
+        let path = dir.join(SKILL_FILE_NAME);
+        fs.insert_file(&path, content.as_bytes().to_vec()).await;
+        let loaded = load_skills_from_directory(
+            &(fs.clone() as Arc<dyn Fs>),
+            Path::new("/skills"),
+            SkillSource::Global,
+        )
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("canonical core");
+        let verified = verify_core_skill_contents(fs.as_ref(), &loaded).await;
+        assert!(verified.contains(*name));
+        let project = ProjectSkillGroup {
+            worktree_id: SkillScopeId(7),
+            worktree_root_name: "project".into(),
+            skills: Vec::new(),
+        };
+        let user = parse_skill_frontmatter(
+            Path::new("/skills/user-skill/SKILL.md"),
+            "---\nname: user-skill\ndescription: Newer user edit\n---\n",
+            SkillSource::Global,
+        )
+        .expect("user entry");
+        let stale_core = parse_skill_frontmatter(
+            &path,
+            &format!("---\nname: {name}\ndescription: Pre-seed core\ncore: true\n---\n"),
+            SkillSource::Global,
+        )
+        .expect("stale agent entry");
+        cx.update(|cx| {
+            cx.set_global(SkillIndex::from_agent(
+                vec![user, stale_core],
+                vec![project],
+            ));
+            SkillIndex::publish_verified_globals(loaded, &verified, cx);
+            let index = cx.global::<SkillIndex>();
+            assert!(index.is_startup_publication());
+            assert_eq!(index.project_skills.len(), 1);
+            assert!(index.global_skills.iter().any(|skill| skill.name == *name
+                && skill.core
+                && skill.description != "Pre-seed core"));
+            assert_eq!(
+                index
+                    .global_skills
+                    .iter()
+                    .filter(|skill| skill.name == *name)
+                    .count(),
+                1
+            );
+            assert!(index.global_skills.iter().any(|skill| {
+                skill.name == "user-skill" && skill.description == "Newer user edit"
+            }));
+        });
+    }
+
     #[test]
     fn test_skill_source_precedence_is_total_and_ordered() {
-        // Pin the hierarchy: project-local > global > built-in. Every
-        // override and conflict-resolution site routes through this,
+        // Pin the hierarchy: project-local > global.
+        // Every override and conflict-resolution site routes through this,
         // so the rest of the codebase relies on it being correct.
-        let built_in = SkillSource::BuiltIn.precedence();
         let global = SkillSource::Global.precedence();
         let project = SkillSource::ProjectLocal {
             worktree_id: SkillScopeId(1),
@@ -865,7 +1859,6 @@ mod tests {
         }
         .precedence();
 
-        assert!(built_in < global, "global must shadow built-in");
         assert!(global < project, "project-local must shadow global");
 
         // Two project-local skills from different worktrees tie. The
@@ -878,6 +1871,102 @@ mod tests {
         }
         .precedence();
         assert_eq!(project, other_project);
+    }
+
+    // zed-kask: A skill declaring `core: true` with a non-reserved name must
+    // be refused at load time. This closes the backdoor where a hand-edited
+    // skill claims core status to bypass ordinary user-skill edit/delete
+    // controls and gain core-only precedence.
+    // Project-local skills claiming a core name and status are rejected by
+    // `parse_skill_frontmatter`; this pins the unregistered-name side.
+    #[test]
+    fn test_parse_refuses_core_true_on_non_reserved_name() {
+        let content = r"---
+name: my-impostor-skill
+description: A skill falsely claiming core status.
+core: true
+---
+
+Body.
+";
+        let result = parse_skill_frontmatter(
+            Path::new("/skills/my-impostor-skill/SKILL.md"),
+            content,
+            SkillSource::Global,
+        );
+        assert!(
+            result.is_err(),
+            "a non-core skill declaring `core: true` must be refused at load time"
+        );
+        let message = result.unwrap_err().to_string();
+        assert!(
+            message.contains("not a registered core skill"),
+            "error should name the violation; got: {message}"
+        );
+    }
+
+    // zed-kask: A skill declaring `core: true` with a reserved (core) name
+    // parses successfully — legitimate core skills carry `core: true`. This
+    // pins that the enforcement does not reject the shipped core skills.
+    #[test]
+    fn test_parse_accepts_core_true_on_reserved_name() {
+        let content = r"---
+name: metacognition
+description: The core self-reflection skill.
+core: true
+---
+
+Body.
+";
+        let skill = parse_skill_frontmatter(
+            Path::new("/skills/metacognition/SKILL.md"),
+            content,
+            SkillSource::Global,
+        )
+        .expect("a core skill with `core: true` and a reserved name must parse");
+        assert!(skill.core, "core flag must be preserved");
+    }
+
+    // expect: A project cannot claim system-critical core status merely by
+    // naming a reserved skill and setting `core: true` in its frontmatter.
+    // [P2] Motivating: a trusted project still cannot mint a system skill.
+    // pre: project-local SKILL.md uses a reserved name with core: true.
+    // post: loading fails visibly; the same frontmatter remains valid globally.
+    #[test]
+    fn project_skill_cannot_claim_core_status() {
+        let content =
+            "---\nname: metacognition\ndescription: Project impostor\ncore: true\n---\nBody";
+        let path = Path::new("/project/.agents/skills/metacognition/SKILL.md");
+        let result = parse_skill_frontmatter(
+            path,
+            content,
+            SkillSource::ProjectLocal {
+                worktree_id: SkillScopeId(1),
+                worktree_root_name: "project".into(),
+            },
+        );
+        let message = result
+            .expect_err("project skill must not claim core status")
+            .to_string();
+        assert!(
+            message.contains("project-local"),
+            "error must name the source: {message}"
+        );
+        assert!(parse_skill_frontmatter(path, content, SkillSource::Global).is_ok());
+    }
+
+    #[test]
+    fn project_skill_with_core_name_without_core_status_remains_loadable() {
+        let skill = parse_skill_frontmatter(
+            Path::new("/project/.agents/skills/metacognition/SKILL.md"),
+            "---\nname: metacognition\ndescription: Explicitly scoped project skill\n---\nBody",
+            SkillSource::ProjectLocal {
+                worktree_id: SkillScopeId(1),
+                worktree_root_name: "project".into(),
+            },
+        )
+        .expect("non-core project skill remains available by explicit scope");
+        assert!(!skill.core);
     }
 
     #[test]
@@ -1848,7 +2937,8 @@ description: A skill with no body content
             skill_file_path: PathBuf::from("/skills/test-skill/SKILL.md"),
             load_warnings: Vec::new(),
             disable_model_invocation: false,
-            embedded_body: None,
+            dependencies: Vec::new(),
+            core: false,
         };
 
         let summary = SkillSummary::from(&skill);
@@ -2179,24 +3269,579 @@ description: A skill with no body content
         }
     }
 
+    // zed-kask: Shipped skills (authored in .agents/skills/) must parse
+    // cleanly via the strict `validate_description` path (hard-rejects
+    // >1024-byte descriptions). This is a deliberate deviation from the
+    // disk-loaded path (`parse_skill_file_content_for_loading`), which
+    // accepts long descriptions with no warning — see
+    // `test_parse_description_too_long_loads_with_warning`. The rationale:
+    // shipped skills are authored by us and should meet the strict bar;
+    // user-installed skills on disk get the lenient path. This test pins
+    // that contract so a shipped skill with an over-long description can't
+    // silently regress — it will fail this test AND fail the build-time
+    // check in `build.rs`.
     #[test]
-    fn skill_share_link_round_trips() {
-        let content =
-            "---\nname: my-skill\ndescription: Does a thing.\n---\n\n## Steps\n\nDo the thing.\n";
-        let link = encode_skill_share_link(content);
-        let data = link
-            .strip_prefix("zed://skill?data=")
-            .expect("link should start with the skill share prefix");
-        // base64url (no-pad) output must not require percent-encoding.
-        assert!(!data.contains('+') && !data.contains('/') && !data.contains('='));
-        assert_eq!(decode_skill_share_link(&link).unwrap(), content);
+    fn shipped_skill_seed_all_parse_without_errors() {
+        let seed = shipped_skill_seed();
+        // Sanity: we ship more than a handful of skills.
+        assert!(
+            seed.len() > 10,
+            "expected the shipped skill seed to include the kask catalog, got {}",
+            seed.len()
+        );
+        // Every shipped skill must parse cleanly. If a skill is missing
+        // from this list, check the test output for a parse warning.
+        let known_skills = [
+            "bug-hunt",
+            "metacognition",
+            "pragmatic-semantics",
+            "pragmatic-cybernetics",
+            "tdd",
+        ];
+        let parsed_names: std::collections::HashSet<&str> =
+            seed.iter().map(|(name, _)| *name).collect();
+        // Every authored skill ships to every install (operator ruling
+        // 2026-09-26): the payload is exactly the `.agents/skills/` tree.
+        let authored_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.agents/skills");
+        let authored: std::collections::HashSet<String> = std::fs::read_dir(&authored_dir)
+            .expect("authored skills directory")
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path().join(SKILL_FILE_NAME).is_file())
+            .filter_map(|entry| entry.file_name().to_str().map(str::to_owned))
+            .collect();
+        let payload: std::collections::HashSet<String> =
+            parsed_names.iter().map(|name| name.to_string()).collect();
+        assert_eq!(
+            payload, authored,
+            "the shipped payload must contain every authored skill and nothing else"
+        );
+        for name in known_skills {
+            assert!(
+                parsed_names.contains(name),
+                "shipped skill '{name}' is missing from the seed payload — \
+                 most likely cause: description exceeds {MAX_SKILL_DESCRIPTION_LEN} bytes \
+                 (caught at build time) or the SKILL.md was removed from .agents/skills/."
+            );
+        }
+        // Every shipped SKILL.md must parse cleanly (frontmatter valid,
+        // description within the strict limit).
+        for (name, content) in seed {
+            let (metadata, _body) = extract_frontmatter(content)
+                .unwrap_or_else(|e| panic!("shipped skill '{name}' failed to parse: {e}"));
+            validate_name(&metadata.name)
+                .unwrap_or_else(|e| panic!("shipped skill '{name}' has invalid name: {e}"));
+            validate_description(&metadata.description)
+                .unwrap_or_else(|e| panic!("shipped skill '{name}' has invalid description: {e}"));
+        }
+    }
+
+    // Seeding materialises the shipped SKILL.md files to disk so the catalog
+    // is built from disk (editable, no compiled-in runtime source). Pins:
+    // - a missing skill is written;
+    // - an existing USER (non-core) skill is never overwritten (user edits are
+    //   sovereign). Core skills are always overwritten — that contract is
+    //   pinned by `test_seed_shipped_skills_overwrites_core_skills`.
+    #[gpui::test]
+    async fn test_seed_shipped_skills_writes_missing_and_preserves_existing(
+        cx: &mut TestAppContext,
+    ) {
+        let fs = FakeFs::new(cx.executor());
+        fs.create_dir(Path::new("/skills")).await.unwrap();
+
+        seed_shipped_skills(fs.as_ref(), Path::new("/skills")).await;
+
+        // A known shipped USER (non-core) skill must be present on disk after
+        // seeding. `hypothesis-testing` is non-core, so user edits to it are
+        // sovereign and must survive re-seeding.
+        let user_skill = Path::new("/skills/hypothesis-testing/SKILL.md");
+        assert!(
+            fs.is_file(user_skill).await,
+            "shipped skill 'hypothesis-testing' should be seeded to disk"
+        );
+
+        // Overwrite the seeded file with a user edit, then re-seed. The
+        // user edit must survive — seeding never clobbers existing files.
+        fs.write(
+            user_skill,
+            b"---\nname: hypothesis-testing\ndescription: My custom edit\n---\n",
+        )
+        .await
+        .unwrap();
+        seed_shipped_skills(fs.as_ref(), Path::new("/skills")).await;
+        let content = fs.load(user_skill).await.unwrap();
+        assert!(
+            content.contains("My custom edit"),
+            "user edit to a shipped user skill must survive re-seeding; got: {content}"
+        );
     }
 
     #[test]
-    fn decode_skill_share_link_rejects_non_skill_links() {
-        assert!(decode_skill_share_link("zed://settings/agent.skills").is_err());
-        assert!(decode_skill_share_link("zed://skill").is_err());
-        assert!(decode_skill_share_link("zed://skill?other=1").is_err());
-        assert!(decode_skill_share_link("zed://skill?data=!!!notbase64").is_err());
+    fn test_parse_skill_frontmatter_accepts_core_skill_with_reserved_name() {
+        // A legitimate core skill (frontmatter `core: true`) bearing a
+        // reserved name must pass — it is the only kind of skill allowed
+        // to use a reserved name.
+        let content =
+            "---\nname: metacognition\ncore: true\ndescription: Legitimate core skill\n---\nbody\n";
+        let skill = parse_skill_frontmatter(
+            Path::new("/skills/metacognition/SKILL.md"),
+            content,
+            SkillSource::Global,
+        )
+        .expect("core skill with reserved name must be accepted");
+        assert_eq!(skill.name, "metacognition");
+        assert!(skill.core);
+    }
+
+    #[test]
+    fn test_is_reserved_skill_name_matches_core_skill_names() {
+        // `is_reserved_skill_name` is an alias for `is_core_skill` — the
+        // reserved-name set is exactly the core-skill-name set.
+        assert!(is_reserved_skill_name("metacognition"));
+        assert!(is_reserved_skill_name("bug-hunt"));
+        assert!(!is_reserved_skill_name("create-skill"));
+        assert!(!is_reserved_skill_name("my-user-skill"));
+        assert!(!is_reserved_skill_name(""));
+    }
+
+    // Core skills are always overwritten on every startup so user edits
+    // cannot break system-critical functionality. This pins the overwrite
+    // half of the seeder contract (the preserve-existing half is pinned by
+    // `test_seed_shipped_skills_writes_missing_and_preserves_existing`).
+    #[gpui::test]
+    async fn test_seed_shipped_skills_overwrites_core_skills(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.create_dir(Path::new("/skills")).await.unwrap();
+
+        // Seed once — the core skill lands on disk.
+        seed_shipped_skills(fs.as_ref(), Path::new("/skills")).await;
+        let metacognition_skill = Path::new("/skills/metacognition/SKILL.md");
+        assert!(
+            fs.is_file(metacognition_skill).await,
+            "core skill 'metacognition' should be seeded to disk"
+        );
+        let original = fs.load(metacognition_skill).await.unwrap();
+
+        // A user edit (or corruption) is written over the core skill.
+        fs.write(
+            metacognition_skill,
+            b"---\nname: metacognition\ndescription: TAMPERED\n---\n",
+        )
+        .await
+        .unwrap();
+
+        // Re-seed — the core skill must be overwritten with the shipped copy.
+        seed_shipped_skills(fs.as_ref(), Path::new("/skills")).await;
+        let after = fs.load(metacognition_skill).await.unwrap();
+        assert_eq!(
+            after, original,
+            "core skill must be overwritten on re-seed; user edits are not sovereign \
+             for core skills. Got tampered content."
+        );
+        assert!(
+            !after.contains("TAMPERED"),
+            "tampered content survived re-seed — core overwrite is broken: {after}"
+        );
+    }
+
+    // A retired skill's copied directory must not linger in an installed
+    // binary's skills dir: the seeder visits only shipped names, so
+    // without a sweep the stale copy stays loadable forever (its templates
+    // may not even resolve any more). User skills and retired-name
+    // directories the user has adopted (extra files) are never swept.
+    #[gpui::test]
+    async fn test_seed_shipped_skills_removes_retired_skill_copies(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/skills"),
+            serde_json::json!({
+                "kata-coaching": { "SKILL.md": "stale retired copy" },
+                "lora-training": { "SKILL.md": "stale retired copy" },
+                "swarm-steering": { "SKILL.md": "stale copy", "notes.txt": "user notes" },
+                "my-user-skill": { "SKILL.md": "user body" },
+            }),
+        )
+        .await;
+
+        seed_shipped_skills(fs.as_ref(), Path::new("/skills")).await;
+
+        assert!(
+            !fs.path_exists(Path::new("/skills/kata-coaching")),
+            "a retired skill's copied directory must be removed on re-seed"
+        );
+        assert!(
+            !fs.path_exists(Path::new("/skills/lora-training")),
+            "the retired training skill must be removed from installed copies"
+        );
+        assert!(
+            fs.is_file(Path::new("/skills/swarm-steering/notes.txt"))
+                .await
+                && fs
+                    .is_file(Path::new("/skills/swarm-steering/SKILL.md"))
+                    .await,
+            "a retired-name directory the user has adopted (extra files) must be refused, not swept"
+        );
+        assert!(
+            fs.is_file(Path::new("/skills/my-user-skill/SKILL.md"))
+                .await,
+            "a user skill must never be swept"
+        );
+        assert!(
+            fs.is_file(Path::new("/skills/metacognition/SKILL.md"))
+                .await,
+            "shipped skills still seed alongside the retired sweep"
+        );
+    }
+
+    // The retirement record must describe reality: every name on it is
+    // gone from the authored tree and from the shipped payload — a name
+    // in both lists would make the sweep fight the seeder.
+    #[test]
+    fn retired_skill_names_are_absent_from_the_authored_tree() {
+        assert!(
+            !RETIRED_SKILL_NAMES.is_empty(),
+            "the retirement record must carry the retired payload history"
+        );
+        let authored_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.agents/skills");
+        for name in RETIRED_SKILL_NAMES {
+            assert!(
+                !authored_dir.join(name).join(SKILL_FILE_NAME).is_file(),
+                "'{name}' is listed retired but still exists in .agents/skills"
+            );
+            assert!(
+                !is_shipped_skill(name),
+                "'{name}' is both retired and shipped"
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn development_shipped_skill_has_one_live_source(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        let root = Path::new("/repo/.agents/skills");
+        let source = root.join("metacognition");
+        fs.create_dir(&source).await.expect("create authored skill");
+        fs.write(
+            &source.join(SKILL_FILE_NAME),
+            b"---\nname: metacognition\ncore: true\ndescription: Source\n---\n\nSOURCE_V1",
+        )
+        .await
+        .expect("write authored skill");
+        let global = Path::new("/skills");
+        fs.create_dir(&global.join("metacognition"))
+            .await
+            .expect("create old global");
+        fs.write(&global.join("metacognition/SKILL.md"), b"OLD_GLOBAL")
+            .await
+            .expect("write old global");
+        seed_shipped_skills_from_source(fs.as_ref(), global, Some(root)).await;
+        let global_path = global.join("metacognition");
+        assert!(
+            !fs.path_exists(&global_path),
+            "copied skill directory must be removed"
+        );
+        assert!(
+            !fs.path_exists(Path::new("/skill-migration-archive")),
+            "no legacy archive"
+        );
+        let user_dir = global.join("my-user-skill");
+        fs.create_dir(&user_dir).await.expect("user directory");
+        fs.write(
+            &user_dir.join(SKILL_FILE_NAME),
+            b"---\nname: my-user-skill\ndescription: User skill\n---\nUSER_BODY",
+        )
+        .await
+        .expect("user skill");
+        fs.write(
+            &source.join(SKILL_FILE_NAME),
+            b"---\nname: metacognition\ncore: true\ndescription: Source\n---\n\nSOURCE_V2",
+        )
+        .await
+        .expect("edit authoring source");
+        let fresh = root.join("fresh-skill");
+        fs.create_dir(&fresh).await.expect("fresh source directory");
+        fs.write(
+            &fresh.join(SKILL_FILE_NAME),
+            b"---\nname: fresh-skill\ndescription: Fresh\n---\nFRESH_BODY",
+        )
+        .await
+        .expect("fresh source body");
+        fs.create_dir(&global.join("fresh-skill"))
+            .await
+            .expect("stale fresh directory");
+        fs.write(&global.join("fresh-skill/SKILL.md"), b"STALE_FRESH")
+            .await
+            .expect("stale fresh copy");
+        seed_shipped_skills_from_source(fs.as_ref(), global, Some(root)).await;
+        assert!(
+            !fs.path_exists(&global.join("fresh-skill")),
+            "new authored names must also remove copies"
+        );
+        assert!(
+            !fs.path_exists(&global_path),
+            "repeat seeding must not restore copies"
+        );
+        // Even if an older process recreates a stale copy between removal
+        // and discovery, it must never override the authored body.
+        fs.create_dir(&global_path).await.expect("stale directory");
+        fs.write(
+            &global_path.join(SKILL_FILE_NAME),
+            b"---\nname: metacognition\ndescription: Stale\n---\nOLD_GLOBAL",
+        )
+        .await
+        .expect("stale copy");
+        // Every authored checkout skill is a global skill (operator ruling
+        // 2026-09-26: all skills ship); a legacy `shipped: false` key is inert.
+        let authored = root.join("authoring-tool");
+        fs.create_dir(&authored)
+            .await
+            .expect("authored skill directory");
+        fs.write(
+            &authored.join(SKILL_FILE_NAME),
+            b"---\nname: authoring-tool\nshipped: false\ndescription: Authoring\n---\nBODY",
+        )
+        .await
+        .expect("authored skill body");
+        let fs_dyn: Arc<dyn Fs> = fs.clone();
+        let loaded = load_global_skills_from_source(&fs_dyn, global, Some(root)).await;
+        let skills: Vec<_> = loaded.into_iter().filter_map(|entry| entry.ok()).collect();
+        assert!(
+            skills.iter().any(|skill| skill.name == "authoring-tool"),
+            "every authored skill must load as a global skill"
+        );
+        assert_eq!(
+            skills.len(),
+            4,
+            "each authored skill once plus one global-only user skill"
+        );
+        let shipped = skills
+            .iter()
+            .find(|skill| skill.name == "metacognition")
+            .expect("shipped skill");
+        assert_eq!(shipped.skill_file_path, source.join(SKILL_FILE_NAME));
+        assert!(
+            fs.load(&shipped.skill_file_path)
+                .await
+                .expect("live body")
+                .contains("SOURCE_V2")
+        );
+        assert!(skills.iter().any(|skill| skill.name == "my-user-skill"));
+        assert_eq!(
+            skills
+                .iter()
+                .filter(|skill| skill.name == "fresh-skill")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn checkout_shipped_skills_have_one_catalog_identity() {
+        let source = development_skills_dir().expect("checkout skills");
+        assert!(is_development_shipped_skill(
+            &source.join("metacognition/SKILL.md")
+        ));
+        assert!(is_development_shipped_skill(
+            &source.join("create-skill/SKILL.md")
+        ));
+        assert!(!is_development_shipped_skill(Path::new(
+            "/other/.agents/skills/metacognition/SKILL.md"
+        )));
+    }
+
+    // Template seeding writes the compiled-in .j2 templates and reference
+    // YAML to disk so remaining MCP servers and skills find them in production
+    // where the CWD-relative default does not exist. Templates have no
+    // user-sovereignty exception: the seeded copy is always brought back to
+    // the shipped content — but only files that actually differ are written.
+    #[gpui::test]
+    async fn test_seed_templates_writes_all_shipped_templates_to_disk(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        let target_dir = Path::new("/templates");
+        fs.create_dir(target_dir).await.unwrap();
+
+        seed_templates(fs.as_ref(), target_dir).await;
+
+        let seed = shipped_template_seed();
+        assert!(
+            !seed.is_empty(),
+            "shipped_template_seed must not be empty — build.rs scans kask/registry/templates/"
+        );
+
+        // Category invariant, not a name list: every .j2/.yaml file in the
+        // registry templates tree must be in the seed payload — the collector's
+        // contract is "nothing of a shipped category is dropped". Reference
+        // YAMLs are cited by skills from the seeded tree. File names belong to
+        // the skills that cite them, not to this crate — a name list here breaks
+        // on every content rename and silently misses every addition.
+        let templates_dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../kask/registry/templates");
+        let mut shipped_on_disk = Vec::new();
+        collect_seedable_files(&templates_dir, &templates_dir, &mut shipped_on_disk);
+        assert!(
+            !shipped_on_disk.is_empty(),
+            "no seedable files found under {} — scan path broken",
+            templates_dir.display()
+        );
+        for rel in &shipped_on_disk {
+            assert!(
+                seed.iter().any(|(s, _)| *s == rel.as_str()),
+                "shipped_template_seed must include `{rel}` — the collector \
+                 dropped a file the registry tree ships"
+            );
+        }
+
+        assert!(
+            seed.iter().all(|(path, _)| !path.ends_with(".jinja")),
+            "retired training chat templates must not be shipped"
+        );
+
+        for (rel_path, expected_content) in seed {
+            let full_path = target_dir.join(rel_path);
+            assert!(
+                fs.is_file(&full_path).await,
+                "template '{}' must be seeded to disk",
+                full_path.display()
+            );
+            let actual = fs.load(&full_path).await.unwrap();
+            assert_eq!(
+                actual, *expected_content,
+                "seeded template '{}' does not match the compiled-in source",
+                rel_path
+            );
+        }
+    }
+
+    /// Collect .j2/.yaml relative paths from the registry templates tree —
+    /// the same shipped-category contract `build.rs` enforces. `.jinja` is
+    /// intentionally absent: startup cleanup still recognizes that retired
+    /// category so old installed training chat templates are deleted.
+    /// If either side's category list changes, the seed test fails until both
+    /// agree.
+    fn collect_seedable_files(base: &Path, dir: &Path, out: &mut Vec<String>) {
+        for entry in std::fs::read_dir(dir).expect("read templates dir") {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                collect_seedable_files(base, &path, out);
+            } else if path.extension().is_some_and(|e| e == "j2" || e == "yaml") {
+                out.push(
+                    path.strip_prefix(base)
+                        .expect("template path under base")
+                        .to_str()
+                        .expect("UTF-8 relative path")
+                        .to_string(),
+                );
+            }
+        }
+    }
+
+    // Template seeding refreshes stale content — a file that differs from
+    // the shipped copy (corrupted or outdated) is replaced on re-seed; a
+    // file that already matches is left untouched.
+    #[gpui::test]
+    async fn test_seed_templates_overwrites_existing_files(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        let target_dir = Path::new("/templates");
+        fs.create_dir(target_dir).await.unwrap();
+
+        // Seed once.
+        seed_templates(fs.as_ref(), target_dir).await;
+
+        let seed = shipped_template_seed();
+        let first_rel = seed[0].0;
+        let first_path = target_dir.join(first_rel);
+        let original = fs.load(&first_path).await.unwrap();
+
+        // Corrupt the file.
+        fs.write(&first_path, b"TAMPERED").await.unwrap();
+
+        // Re-seed — the corrupted content must be replaced.
+        seed_templates(fs.as_ref(), target_dir).await;
+        let after = fs.load(&first_path).await.unwrap();
+        assert_eq!(
+            after, original,
+            "template re-seed must overwrite corrupted content; got tampered file"
+        );
+    }
+
+    /// A template removed from the shipped registry must not stay renderable
+    /// from the seeded copy MCP servers read. Files outside the seeded
+    /// categories (operator notes) are left alone.
+    #[gpui::test]
+    async fn test_seed_templates_removes_templates_no_longer_shipped(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        let target_dir = Path::new("/templates");
+        fs.insert_tree(
+            target_dir,
+            serde_json::json!({
+                "retired-skill": {
+                    "old.j2": "stale",
+                    "old-chat.jinja": "stale",
+                    "ref.yaml": "stale"
+                },
+                "notes.txt": "keep",
+            }),
+        )
+        .await;
+
+        seed_templates(fs.as_ref(), target_dir).await;
+
+        assert!(!fs.is_file(&target_dir.join("retired-skill/old.j2")).await);
+        assert!(
+            !fs.is_file(&target_dir.join("retired-skill/old-chat.jinja"))
+                .await
+        );
+        assert!(!fs.is_file(&target_dir.join("retired-skill/ref.yaml")).await);
+        assert!(!fs.is_dir(&target_dir.join("retired-skill")).await);
+        assert!(fs.is_file(&target_dir.join("notes.txt")).await);
+        let (first, _) = shipped_template_seed()[0];
+        assert!(fs.is_file(&target_dir.join(first)).await);
+    }
+
+    // The skip decision itself: identical content is not rewritten; a
+    // missing or changed file is.
+    #[test]
+    fn template_needs_seed_skips_identical_content_only() {
+        let shipped = "[inference]\ncontract: {}\n---\nbody";
+        assert!(
+            template_needs_seed(None, shipped),
+            "a missing file is seeded"
+        );
+        assert!(
+            template_needs_seed(Some("stale content"), shipped),
+            "changed content is re-seeded"
+        );
+        assert!(
+            !template_needs_seed(Some(shipped), shipped),
+            "identical content is left untouched"
+        );
+    }
+
+    // zed-kask: D28 — pins the global skills dir override hook.
+    // Mirrors `test_threads_db_override_hook_round_trips` in
+    // `crates/agent/src/db.rs`. Tests that `global_skills_dir()` returns the
+    // path set by `set_global_skills_dir_override` (checked first, before the
+    // `paths::data_dir()` fallback), and that resetting the override restores
+    // the default path. Does NOT seed or list skills through the override
+    // (which would race with concurrent FakeFs tests via the global
+    // `Mutex`); the production wiring is covered by `main.rs` + the kask
+    // data-root composition root.
+    #[test]
+    fn test_global_skills_dir_override_hook_round_trips() {
+        // Default: no override set (other tests may have reset it).
+        // We set it, verify, then reset.
+        let sentinel = std::path::PathBuf::from("/tmp/kask-test-global-skills");
+        set_global_skills_dir_override(Some(sentinel.clone()));
+        assert_eq!(
+            global_skills_dir(),
+            sentinel,
+            "global_skills_dir must return the path set by set_global_skills_dir_override \
+             (the override is checked first, before the paths::data_dir fallback)"
+        );
+        set_global_skills_dir_override(None);
+        assert_eq!(
+            global_skills_dir(),
+            paths::data_dir().join("agents").join(SKILLS_DIR_NAME),
+            "global_skills_dir must return the default path after the override is reset"
+        );
     }
 }

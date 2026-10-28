@@ -29,10 +29,22 @@ mod hang_detection;
 
 type ProjectRegistry = Rc<RefCell<Vec<WeakEntity<Project>>>>;
 
-pub fn init(client: Arc<Client>, workspace_store: Entity<WorkspaceStore>, cx: &mut App) {
+pub fn init(
+    client: Arc<Client>,
+    workspace_store: Entity<WorkspaceStore>,
+    context_server_health_source: Arc<kask_bridge::BridgeContextServerHealthSource>,
+    mcp_runtime: Arc<hkask_mcp::McpRuntime>,
+    cx: &mut App,
+) {
     hang_detection::start(client.clone(), cx);
     let projects = ProjectRegistry::default();
-    start_memory_usage_logging(workspace_store, projects.clone(), cx);
+    start_memory_usage_logging(workspace_store.clone(), projects.clone(), cx);
+    start_context_server_health_polling(
+        workspace_store,
+        context_server_health_source,
+        mcp_runtime,
+        cx,
+    );
 
     cx.on_flags_ready({
         let client = client.clone();
@@ -128,6 +140,34 @@ fn start_memory_usage_logging(
         let mut last_logged_resident: Option<u64> = None;
         let mut last_logged_at = Instant::now();
         loop {
+            // zed-kask: D84 follow-up — frame health alongside memory health,
+            // per window: draw count, average and max draw time since the last
+            // poll, read with take semantics. This decomposes UI sluggishness
+            // into draw rate vs draw cost per window from the operational log
+            // (draws ≈ 0 while idle is the idle-floor reading; high draws with
+            // low max = rate-driven lag; low draws with high max = cost-driven
+            // lag). Per-window because the operator runs several agent windows
+            // concurrently and process-wide aggregates cannot attribute cost.
+            {
+                let windows = gpui::profiler::take_draw_stats();
+                const MS: f64 = 1_000_000.0;
+                if windows.is_empty() {
+                    log::info!("ui frame health: draws 0 (no window drew since the last poll)");
+                } else {
+                    let summary = windows
+                        .iter()
+                        .map(|(id, draws, nanos, max_nanos)| {
+                            format!(
+                                "w{id:?} draws={draws} avg_ms={:.1} max_ms={:.1}",
+                                *nanos as f64 / MS / *draws as f64,
+                                *max_nanos as f64 / MS,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" | ");
+                    log::info!("ui frame health: {summary}");
+                }
+            }
             let refreshed = system.refresh_processes_specifics(
                 ProcessesToUpdate::Some(&[pid]),
                 false,
@@ -165,6 +205,192 @@ fn start_memory_usage_logging(
         }
     })
     .detach();
+}
+
+// zed-kask: D8 — retain governed MCP fleet health alongside upstream diagnostics.
+/// Polls all open projects' `ContextServerStore`s on a timer and updates
+/// the shared health snapshot. The cybernetics loop's
+/// `ContextServerHealthSensor` reads this snapshot each tick to detect MCP
+/// servers stuck in `Starting` or `Error` — the signature of the
+/// foreground-executor starvation bug where `initialize` never completes.
+///
+/// Runs on the foreground thread (reads GPUI entities) driven by a
+/// background timer, mirroring `start_memory_usage_logging`'s pattern.
+fn start_context_server_health_polling(
+    workspace_store: Entity<WorkspaceStore>,
+    health_source: Arc<kask_bridge::BridgeContextServerHealthSource>,
+    mcp_runtime: Arc<hkask_mcp::McpRuntime>,
+    cx: &App,
+) {
+    let (update_sender, mut update_receiver) = futures::channel::mpsc::unbounded();
+    cx.spawn({
+        async move |cx| {
+            while update_receiver.next().await.is_some() {
+                // Pre-login gate: user-configured context servers launch with
+                // no login gating (`maintain_servers` checks only
+                // `disable_ai`) and can legitimately sit in `Starting`
+                // pre-login — counting them toward the fleet total produced
+                // the `ContextServerFleetDegraded` alert storm every tick.
+                let user_id = cx.update(|cx| Client::global(cx).user_id());
+                if !context_server_fleet_observable(user_id) {
+                    health_source.update(0, 0);
+                    continue;
+                }
+                // Read ContextServerStore statuses synchronously on the foreground.
+                let css_statuses =
+                    cx.update(|cx| read_context_server_statuses(&workspace_store, cx));
+                // Query McpRuntime running servers asynchronously.
+                let mrt_running = mcp_runtime.running_server_ids().await;
+                // Merge and update.
+                let (healthy, total) = merge_fleet_health(css_statuses, mrt_running);
+                health_source.update(healthy, total);
+            }
+        }
+    })
+    .detach();
+
+    let executor = cx.background_executor().clone();
+    cx.background_spawn(async move {
+        loop {
+            if update_sender.unbounded_send(()).is_err() {
+                return;
+            }
+            executor.timer(CONTEXT_SERVER_HEALTH_POLL_INTERVAL).await;
+        }
+    })
+    .detach();
+}
+
+/// How often to poll context-server health. Matches the cybernetics loop's
+/// tick cadence (10s) so the sensor sees a stuck server within one tick.
+const CONTEXT_SERVER_HEALTH_POLL_INTERVAL: Duration = Duration::from_secs(10);
+
+/// Whether the context-server fleet snapshot can be meaningfully measured.
+///
+/// Before the Zed user resolves (no credentials), user-configured context
+/// servers can legitimately sit in `Starting` (slow launch, or
+/// credential-gated with no way to authenticate yet) — measuring then
+/// produced a constant false-positive `ContextServerFleetDegraded` alert
+/// storm every tick. Restored 2026-08-30: the gate was removed with the
+/// single-spawn-authority change on the theory that the kask servers it
+/// guarded against had left `ContextServerStore`, but code analysis showed
+/// `maintain_servers` has no login gating, so user-configured servers keep
+/// the storm path open. Gate on `Client::user_id` (the same predicate the
+/// deferred post-login task waits on via `UserStore::watch_current_user`).
+fn context_server_fleet_observable(user_id: Option<u64>) -> bool {
+    user_id.is_some()
+}
+
+/// Compute `(healthy_count, total_count)` across all open projects'
+/// Read ContextServerStore statuses (per-project) as a map of server_id → is_healthy.
+///
+/// Only servers expected to be running count toward the map: `Starting`,
+/// `Running`, and `Error`. Servers in `Stopped`, `AuthRequired`, etc. are
+/// excluded — they are legitimate non-running states, not fleet degradation.
+fn read_context_server_statuses(
+    workspace_store: &Entity<WorkspaceStore>,
+    cx: &App,
+) -> std::collections::HashMap<String, bool> {
+    use project::context_server_store::ContextServerStatus;
+    use std::collections::HashMap;
+
+    let workspaces = workspace_store
+        .read(cx)
+        .workspaces()
+        .filter_map(|workspace| workspace.upgrade())
+        .collect::<Vec<_>>();
+    let mut seen_stores = HashSet::new();
+    let mut statuses: HashMap<String, bool> = HashMap::new();
+    for workspace in workspaces {
+        let project = workspace.read(cx).project().clone();
+        let context_server_store = project.read(cx).context_server_store();
+        if !seen_stores.insert(context_server_store.entity_id()) {
+            continue;
+        }
+        let store = context_server_store.read(cx);
+        for server_id in store.server_ids() {
+            if let Some(status) = store.status_for_server(server_id) {
+                let is_counted = matches!(
+                    status,
+                    ContextServerStatus::Starting
+                        | ContextServerStatus::Running
+                        | ContextServerStatus::Error(_)
+                );
+                if is_counted {
+                    let is_healthy = matches!(status, ContextServerStatus::Running);
+                    statuses.insert(server_id.0.to_string(), is_healthy);
+                }
+            }
+        }
+    }
+    statuses
+}
+
+/// Merge ContextServerStore and McpRuntime fleet health into (healthy, total).
+///
+/// A server is healthy if it is `Running` in the ContextServerStore OR has a
+/// live connection in the McpRuntime. The total is the union of all server IDs
+/// from both paths — no double-counting.
+fn merge_fleet_health(
+    css_statuses: std::collections::HashMap<String, bool>,
+    mrt_running: Vec<String>,
+) -> (usize, usize) {
+    use std::collections::HashSet;
+
+    let mut all_servers: HashSet<String> = HashSet::new();
+    all_servers.extend(css_statuses.keys().cloned());
+    all_servers.extend(mrt_running.iter().cloned());
+
+    let total = all_servers.len();
+    let healthy = all_servers
+        .iter()
+        .filter(|id| {
+            *css_statuses.get(*id).unwrap_or(&false)
+                || mrt_running.iter().any(|mrt_id| mrt_id == *id)
+        })
+        .count();
+
+    (healthy, total)
+}
+
+/// Classify context-server fleet health from a slice of server statuses.
+///
+/// Only servers expected to be running count toward `total`: `Starting`,
+/// `Running`, and `Error`. Servers in `Stopped` (deliberately stopped or
+/// disabled), `AuthRequired`, `ClientSecretRequired`, and `Authenticating`
+/// (OAuth-waiting) are excluded — they are legitimate non-running states,
+/// not fleet degradation. Counting them produced constant false-positive
+/// `ContextServerFleetDegraded` alerts every tick.
+///
+/// Returns `(healthy_count, total_count)` where `healthy_count` is the
+/// number of `Running` servers and `total_count` is the number of servers
+/// expected to be running (`Starting` + `Running` + `Error`).
+#[cfg(test)]
+fn classify_fleet_health(
+    statuses: &[project::context_server_store::ContextServerStatus],
+) -> (usize, usize) {
+    use project::context_server_store::ContextServerStatus;
+
+    let mut healthy = 0;
+    let mut total = 0;
+    for status in statuses {
+        match status {
+            ContextServerStatus::Starting
+            | ContextServerStatus::Running
+            | ContextServerStatus::Error(_) => {
+                total += 1;
+                if let ContextServerStatus::Running = status {
+                    healthy += 1;
+                }
+            }
+            // Deliberately not running — not fleet degradation.
+            ContextServerStatus::Stopped
+            | ContextServerStatus::AuthRequired
+            | ContextServerStatus::ClientSecretRequired { .. }
+            | ContextServerStatus::Authenticating => {}
+        }
+    }
+    (healthy, total)
 }
 
 fn log_worktree_diagnostics(
@@ -539,5 +765,196 @@ impl FormExt for Form {
             Some(value) => self.text(label.into(), value.into()),
             None => self,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::classify_fleet_health;
+    use project::context_server_store::ContextServerStatus;
+    use std::sync::Arc;
+
+    #[test]
+    fn all_running_is_fully_healthy() {
+        let statuses = vec![
+            ContextServerStatus::Running,
+            ContextServerStatus::Running,
+            ContextServerStatus::Running,
+        ];
+        let (healthy, total) = classify_fleet_health(&statuses);
+        assert_eq!(healthy, 3);
+        assert_eq!(total, 3);
+    }
+
+    #[test]
+    fn starting_counts_toward_total_but_not_healthy() {
+        // A server stuck in Starting is the real degradation signal — it must
+        // count toward total so the ratio drops below 1.0 and the alert fires.
+        let statuses = vec![ContextServerStatus::Running, ContextServerStatus::Starting];
+        let (healthy, total) = classify_fleet_health(&statuses);
+        assert_eq!(healthy, 1);
+        assert_eq!(total, 2);
+    }
+
+    #[test]
+    fn error_counts_toward_total_but_not_healthy() {
+        let statuses = vec![
+            ContextServerStatus::Running,
+            ContextServerStatus::Error("spawn failed".into()),
+        ];
+        let (healthy, total) = classify_fleet_health(&statuses);
+        assert_eq!(healthy, 1);
+        assert_eq!(total, 2);
+    }
+
+    #[test]
+    fn stopped_servers_are_excluded_from_total() {
+        // Stopped is a deliberate state (disabled, AI off) — not fleet
+        // degradation. It must NOT count toward total, or the alert fires
+        // every tick as a false positive.
+        let statuses = vec![
+            ContextServerStatus::Running,
+            ContextServerStatus::Stopped,
+            ContextServerStatus::Stopped,
+        ];
+        let (healthy, total) = classify_fleet_health(&statuses);
+        assert_eq!(healthy, 1);
+        assert_eq!(total, 1);
+    }
+
+    #[test]
+    fn oauth_waiting_states_are_excluded_from_total() {
+        // AuthRequired, ClientSecretRequired, and Authenticating are
+        // OAuth-waiting states, not broken servers.
+        let statuses = vec![
+            ContextServerStatus::Running,
+            ContextServerStatus::AuthRequired,
+            ContextServerStatus::ClientSecretRequired { error: None },
+            ContextServerStatus::Authenticating,
+        ];
+        let (healthy, total) = classify_fleet_health(&statuses);
+        assert_eq!(healthy, 1);
+        assert_eq!(total, 1);
+    }
+
+    #[test]
+    fn all_stopped_produces_zero_total_no_alert() {
+        // When every server is deliberately stopped, total is 0 and the
+        // sensor returns None (no signal) — no false-positive alert.
+        let statuses = vec![ContextServerStatus::Stopped, ContextServerStatus::Stopped];
+        let (healthy, total) = classify_fleet_health(&statuses);
+        assert_eq!(healthy, 0);
+        assert_eq!(total, 0);
+    }
+
+    #[test]
+    fn all_starting_signals_degradation() {
+        // The original storm scenario: every server stuck in Starting.
+        let statuses = vec![
+            ContextServerStatus::Starting,
+            ContextServerStatus::Starting,
+            ContextServerStatus::Starting,
+        ];
+        let (healthy, total) = classify_fleet_health(&statuses);
+        assert_eq!(healthy, 0);
+        assert_eq!(total, 3);
+    }
+
+    #[test]
+    fn mixed_real_and_excluded_states() {
+        // Real-world mix: some running, some stopped, one stuck starting,
+        // one in error, one waiting for OAuth.
+        let error: Arc<str> = "connection refused".into();
+        let statuses = vec![
+            ContextServerStatus::Running,
+            ContextServerStatus::Running,
+            ContextServerStatus::Stopped,
+            ContextServerStatus::Starting,
+            ContextServerStatus::Error(error),
+            ContextServerStatus::AuthRequired,
+        ];
+        let (healthy, total) = classify_fleet_health(&statuses);
+        // 2 Running (healthy), 1 Starting + 1 Error count toward total.
+        // Stopped and AuthRequired excluded.
+        assert_eq!(healthy, 2);
+        assert_eq!(total, 4);
+    }
+
+    #[test]
+    fn empty_slice_is_zero_zero() {
+        let (healthy, total) = classify_fleet_health(&[]);
+        assert_eq!(healthy, 0);
+        assert_eq!(total, 0);
+    }
+
+    // ── pre-login gate tests (restored 2026-08-30) ───────────────────
+
+    #[test]
+    fn pre_login_fleet_is_unobservable() {
+        // No credentials → gate is closed → snapshot reports (0, 0) → the
+        // sensor emits no signal. This pins the false-positive-storm fix.
+        assert!(!super::context_server_fleet_observable(None));
+    }
+
+    #[test]
+    fn resolved_user_opens_the_gate() {
+        assert!(super::context_server_fleet_observable(Some(7)));
+    }
+
+    // ── merge_fleet_health tests ──────────────────────────────────────
+
+    #[test]
+    fn merge_both_paths_running_is_fully_healthy() {
+        // Both ContextServerStore and McpRuntime have the same servers running.
+        let css = std::collections::HashMap::from([
+            ("curator".to_string(), true),
+            ("corpus".to_string(), true),
+        ]);
+        let mrt = vec!["curator".to_string(), "corpus".to_string()];
+        let (healthy, total) = super::merge_fleet_health(css, mrt);
+        assert_eq!(healthy, 2);
+        assert_eq!(total, 2);
+    }
+
+    #[test]
+    fn merge_mrt_only_server_is_healthy() {
+        // A server only in McpRuntime (not in ContextServerStore) is still healthy.
+        let css = std::collections::HashMap::from([("curator".to_string(), true)]);
+        let mrt = vec!["curator".to_string(), "companies".to_string()];
+        let (healthy, total) = super::merge_fleet_health(css, mrt);
+        assert_eq!(healthy, 2);
+        assert_eq!(total, 2);
+    }
+
+    #[test]
+    fn merge_css_error_mrt_running_is_healthy() {
+        // A server in Error state in ContextServerStore but running in McpRuntime
+        // is healthy — the McpRuntime path compensates.
+        let css = std::collections::HashMap::from([
+            ("media".to_string(), false), // Error in CSS
+        ]);
+        let mrt = vec!["media".to_string()]; // Running in MRT
+        let (healthy, total) = super::merge_fleet_health(css, mrt);
+        assert_eq!(healthy, 1);
+        assert_eq!(total, 1);
+    }
+
+    #[test]
+    fn merge_both_empty_is_zero() {
+        let css = std::collections::HashMap::new();
+        let mrt = vec![];
+        let (healthy, total) = super::merge_fleet_health(css, mrt);
+        assert_eq!(healthy, 0);
+        assert_eq!(total, 0);
+    }
+
+    #[test]
+    fn merge_no_double_counting() {
+        // Same server in both paths — counted once.
+        let css = std::collections::HashMap::from([("curator".to_string(), true)]);
+        let mrt = vec!["curator".to_string()];
+        let (healthy, total) = super::merge_fleet_health(css, mrt);
+        assert_eq!(healthy, 1);
+        assert_eq!(total, 1);
     }
 }

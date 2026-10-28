@@ -165,12 +165,13 @@ mod tests {
             profile: None,
             subagent_context: None,
             speed: None,
-            thinking_enabled: false,
             thinking_effort: None,
+            thinking_enabled: false,
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: Default::default(),
+            delegation_authority: None,
         }
     }
 

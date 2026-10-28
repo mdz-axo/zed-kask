@@ -8,7 +8,7 @@ use language_model_core::{
     LanguageModelRequestToolInput, LanguageModelToolChoice, LanguageModelToolResultContent,
     LanguageModelToolUse, LanguageModelToolUseInput, MessageContent, ProviderCompactionState, Role,
     SharedString, StopReason, TokenUsage,
-    util::{fix_streamed_json, parse_tool_arguments},
+    util::{fix_streamed_json, parse_tool_arguments, tool_call_truncation_error},
 };
 use std::pin::Pin;
 use std::str::FromStr;
@@ -281,11 +281,21 @@ fn to_anthropic_content(
     }
 }
 
+/// zed-kask: D83 — the value sent as `max_tokens` when neither the request
+/// nor the model metadata configures an output cap. Exists only because
+/// the Anthropic Messages API requires the parameter. Deliberately large
+/// (the largest documented Anthropic-class output cap) so it practically
+/// never binds: a provider either accepts it, clamps to its own limit, or
+/// rejects visibly — never the silent mid-tool-call cut the former
+/// per-provider `unwrap_or(4_096)` fabrications produced (the D42/D83
+/// hidden output-limit class).
+pub(crate) const UNCONFIGURED_MAX_OUTPUT_TOKENS: u64 = 65_536;
+
 pub fn into_anthropic(
     request: LanguageModelRequest,
     model: String,
     default_temperature: f32,
-    max_output_tokens: u64,
+    max_output_tokens: Option<u64>,
     mode: AnthropicModelMode,
     cache_mode: AnthropicPromptCacheMode,
     compaction_state_owner: &LanguageModelProviderId,
@@ -299,9 +309,12 @@ pub fn into_anthropic(
     } else {
         mode
     };
+    // zed-kask: D83 — the model cap is metadata: None means unconfigured,
+    // never a fabricated default. The request-level cap intersects it as
+    // before; only the mandatory-wire fallback differs from upstream.
     let max_output_tokens = request
-        .max_output_tokens
-        .map_or(max_output_tokens, |limit| limit.min(max_output_tokens));
+        .effective_max_output_tokens(max_output_tokens)
+        .unwrap_or(UNCONFIGURED_MAX_OUTPUT_TOKENS);
     let mut new_messages: Vec<Message> = Vec::new();
     let mut system_message = String::new();
     let mut any_message_wants_cache = false;
@@ -708,12 +721,22 @@ impl AnthropicEventMapper {
                             },
                         )),
                         Err(json_parse_err) => {
-                            Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
-                                id: tool_use.id.into(),
-                                tool_name: tool_use.name.into(),
-                                raw_input: input_json.into(),
-                                json_parse_error: json_parse_err.to_string(),
-                            })
+                            // zed-kask: D36 — an EOF-classified argument
+                            // fragment is a transport cut (nothing dispatched,
+                            // no clean Stop), not a model fault; the
+                            // primitive's doc has the full rationale.
+                            if let Some(truncation) =
+                                tool_call_truncation_error(&tool_use.name, input_json)
+                            {
+                                Err(truncation)
+                            } else {
+                                Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                                    id: tool_use.id.into(),
+                                    tool_name: tool_use.name.into(),
+                                    raw_input: input_json.into(),
+                                    json_parse_error: json_parse_err.to_string(),
+                                })
+                            }
                         }
                     };
 
@@ -834,6 +857,7 @@ fn convert_usage(usage: &Usage) -> TokenUsage {
         output_tokens: usage.output_tokens.unwrap_or(0),
         cache_creation_input_tokens: usage.cache_creation_input_tokens.unwrap_or(0),
         cache_read_input_tokens: usage.cache_read_input_tokens.unwrap_or(0),
+        cost: None,
     }
 }
 
@@ -937,7 +961,7 @@ mod tests {
             request,
             "claude-3-5-sonnet".to_string(),
             0.7,
-            4096,
+            Some(4096),
             AnthropicModelMode::Default,
             AnthropicPromptCacheMode::Automatic,
             &ANTHROPIC_PROVIDER_ID,
@@ -1051,7 +1075,7 @@ mod tests {
             request,
             "claude-3-5-sonnet".to_string(),
             0.7,
-            4096,
+            Some(4096),
             AnthropicModelMode::Default,
             AnthropicPromptCacheMode::Legacy,
             &ANTHROPIC_PROVIDER_ID,
@@ -1117,7 +1141,7 @@ mod tests {
             request,
             "claude-opus-4-8".to_string(),
             1.0,
-            128_000,
+            Some(128_000),
             AnthropicModelMode::AdaptiveThinking,
             AnthropicPromptCacheMode::Automatic,
             &ANTHROPIC_PROVIDER_ID,
@@ -1171,7 +1195,7 @@ mod tests {
                 request,
                 model.to_string(),
                 1.0,
-                128_000,
+                Some(128_000),
                 AnthropicModelMode::AdaptiveThinking,
                 AnthropicPromptCacheMode::Automatic,
                 &ANTHROPIC_PROVIDER_ID,
@@ -1243,7 +1267,7 @@ mod tests {
                 request,
                 model.to_string(),
                 1.0,
-                128_000,
+                Some(128_000),
                 AnthropicModelMode::AdaptiveThinking,
                 AnthropicPromptCacheMode::Automatic,
                 &ANTHROPIC_PROVIDER_ID,
@@ -1306,7 +1330,8 @@ mod tests {
             request,
             "claude-sonnet-5-5".to_string(),
             1.0,
-            128_000,
+            // zed-kask: D83 — truthful `Option<u64>` max-output-tokens param.
+            Some(128_000),
             AnthropicModelMode::AdaptiveThinking,
             AnthropicPromptCacheMode::Automatic,
             &ANTHROPIC_PROVIDER_ID,
@@ -1370,7 +1395,7 @@ mod tests {
             request,
             "claude-3-5-sonnet".to_string(),
             0.7,
-            4096,
+            Some(4096),
             AnthropicModelMode::Default,
             AnthropicPromptCacheMode::Automatic,
             &ANTHROPIC_PROVIDER_ID,
@@ -1421,7 +1446,7 @@ mod tests {
             request,
             "claude-sonnet-4-5".to_string(),
             1.0,
-            16000,
+            Some(16000),
             AnthropicModelMode::Thinking {
                 budget_tokens: Some(10000),
             },
@@ -1524,7 +1549,7 @@ mod tests {
             request,
             "claude-sonnet-4-5".to_string(),
             1.0,
-            4096,
+            Some(4096),
             AnthropicModelMode::Default,
             AnthropicPromptCacheMode::Disabled,
             &ANTHROPIC_PROVIDER_ID,
@@ -1841,6 +1866,96 @@ mod tests {
         );
     }
 
+    /// A tool-use block whose accumulated `input_json_delta` fragments end
+    /// mid-JSON (`{"query":`) is the transport-cut signature: the
+    /// ContentBlockStop arm must classify it as `ToolCallTruncated` (nothing
+    /// dispatched, no clean Stop) instead of a model-fault parse error.
+    #[test]
+    fn test_event_mapper_classifies_eof_fragment_as_truncated() {
+        let mut mapper = AnthropicEventMapper::new(ANTHROPIC_PROVIDER_NAME, ANTHROPIC_PROVIDER_ID);
+
+        let start_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": { "type": "tool_use", "id": "toolu_eof", "name": "reg_query", "input": {} }
+        }))
+        .unwrap();
+        let delta_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": { "type": "input_json_delta", "partial_json": r#"{"query":"# }
+        }))
+        .unwrap();
+        let stop_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "content_block_stop",
+            "index": 0
+        }))
+        .unwrap();
+
+        let mut events = Vec::new();
+        events.extend(mapper.map_event(start_event));
+        events.extend(mapper.map_event(delta_event));
+        events.extend(mapper.map_event(stop_event));
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Err(LanguageModelCompletionError::ToolCallTruncated {
+                tool_name,
+                json_parse_error,
+                raw_input_chars: 9,
+            }) if tool_name == "reg_query"
+                && json_parse_error.contains("EOF while parsing")
+        )));
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            Ok(LanguageModelCompletionEvent::ToolUseJsonParseError { .. })
+        )));
+    }
+
+    /// A complete-but-malformed argument string (`{not json}`) is a model
+    /// fault, not a transport cut: the ContentBlockStop arm keeps surfacing
+    /// `ToolUseJsonParseError` so the turn still flows through the
+    /// tool-boundary recovery path.
+    #[test]
+    fn test_event_mapper_maps_syntax_failure_to_json_parse_error() {
+        let mut mapper = AnthropicEventMapper::new(ANTHROPIC_PROVIDER_NAME, ANTHROPIC_PROVIDER_ID);
+
+        let start_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": { "type": "tool_use", "id": "toolu_syntax", "name": "reg_query", "input": {} }
+        }))
+        .unwrap();
+        let delta_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": { "type": "input_json_delta", "partial_json": r#"{not json}"# }
+        }))
+        .unwrap();
+        let stop_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "content_block_stop",
+            "index": 0
+        }))
+        .unwrap();
+
+        let mut events = Vec::new();
+        events.extend(mapper.map_event(start_event));
+        events.extend(mapper.map_event(delta_event));
+        events.extend(mapper.map_event(stop_event));
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                tool_name,
+                ..
+            }) if tool_name.as_ref() == "reg_query"
+        )));
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            Err(LanguageModelCompletionError::ToolCallTruncated { .. })
+        )));
+    }
+
     #[test]
     fn test_event_mapper_rejects_compaction_delta_before_start() {
         let mut mapper = AnthropicEventMapper::new(ANTHROPIC_PROVIDER_NAME, ANTHROPIC_PROVIDER_ID);
@@ -1941,6 +2056,93 @@ mod tests {
                 output_tokens: 1_239,
                 ..Default::default()
             }
+        );
+    }
+
+    #[test]
+    fn unconfigured_output_cap_falls_back_to_the_documented_wire_value() {
+        // zed-kask: D83 — Anthropic's wire parameter is mandatory, so "no
+        // cap at all" is not expressible on this protocol. When neither the
+        // request nor the model metadata configures one, into_anthropic
+        // sends the single documented fallback instead of a small
+        // fabricated cap (the former `unwrap_or(4_096)` at every provider
+        // mapping — the D42/D83 hidden output-limit class that cut agent
+        // streams mid-tool-call).
+        let request = || LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hi".to_string())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+
+        let unconfigured = into_anthropic(
+            request(),
+            "claude-sonnet-4-5".to_string(),
+            1.0,
+            None,
+            AnthropicModelMode::Default,
+            AnthropicPromptCacheMode::Disabled,
+            &ANTHROPIC_PROVIDER_ID,
+        )
+        .unwrap();
+        assert_eq!(unconfigured.max_tokens, UNCONFIGURED_MAX_OUTPUT_TOKENS);
+        assert_eq!(
+            serde_json::to_value(&unconfigured).unwrap()["max_tokens"],
+            serde_json::json!(UNCONFIGURED_MAX_OUTPUT_TOKENS),
+            "the mandatory wire parameter must still be serialized"
+        );
+
+        let mut request_capped = request();
+        request_capped.max_output_tokens = Some(1024);
+        assert_eq!(
+            into_anthropic(
+                request_capped,
+                "claude-sonnet-4-5".to_string(),
+                1.0,
+                None,
+                AnthropicModelMode::Default,
+                AnthropicPromptCacheMode::Disabled,
+                &ANTHROPIC_PROVIDER_ID,
+            )
+            .unwrap()
+            .max_tokens,
+            1024
+        );
+
+        assert_eq!(
+            into_anthropic(
+                request(),
+                "claude-sonnet-4-5".to_string(),
+                1.0,
+                Some(8_192),
+                AnthropicModelMode::Default,
+                AnthropicPromptCacheMode::Disabled,
+                &ANTHROPIC_PROVIDER_ID,
+            )
+            .unwrap()
+            .max_tokens,
+            8_192
+        );
+
+        let mut both_capped = request();
+        both_capped.max_output_tokens = Some(1024);
+        assert_eq!(
+            into_anthropic(
+                both_capped,
+                "claude-sonnet-4-5".to_string(),
+                1.0,
+                Some(8_192),
+                AnthropicModelMode::Default,
+                AnthropicPromptCacheMode::Disabled,
+                &ANTHROPIC_PROVIDER_ID,
+            )
+            .unwrap()
+            .max_tokens,
+            1024,
+            "the request-level cap still intersects the model cap"
         );
     }
 }

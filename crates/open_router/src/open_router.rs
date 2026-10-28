@@ -79,6 +79,14 @@ pub struct Model {
     pub name: String,
     pub display_name: Option<String>,
     pub max_tokens: u64,
+    /// zed-kask: D83 — the model's discovered output cap
+    /// (`max_completion_tokens`, with OpenRouter's `top_provider` nesting
+    /// promoted by `model_from_entry`), capped at half the context window
+    /// to leave room for input. `None` means the catalog reported none and
+    /// the request omits `max_tokens` — the provider's own default output
+    /// limit then binds, which can cut agent streams mid-tool-call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u64>,
     pub supports_tools: Option<bool>,
     pub supports_images: Option<bool>,
     #[serde(default)]
@@ -124,6 +132,7 @@ impl Model {
             name: name.to_owned(),
             display_name: display_name.map(|s| s.to_owned()),
             max_tokens: max_tokens.unwrap_or(2000000),
+            max_output_tokens: None,
             supports_tools,
             supports_images,
             mode: mode.unwrap_or(ModelMode::Default),
@@ -148,7 +157,7 @@ impl Model {
     }
 
     pub fn max_output_tokens(&self) -> Option<u64> {
-        None
+        self.max_output_tokens
     }
 
     pub fn supports_tool_calls(&self) -> bool {
@@ -428,6 +437,12 @@ pub struct ModelEntry {
     pub description: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_length: Option<u64>,
+    /// zed-kask: D83 — the model's output cap. OpenRouter usually nests it
+    /// under `top_provider.max_completion_tokens` rather than here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_completion_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_provider: Option<ModelTopProvider>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub supported_parameters: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -440,6 +455,16 @@ pub struct ModelEntry {
 pub struct ModelArchitecture {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub input_modalities: Vec<String>,
+}
+
+/// zed-kask: D83 — OpenRouter nests the per-provider output limit under
+/// `top_provider` rather than at the top level of the model entry; without
+/// promoting it the request sends no `max_tokens` and the provider's own
+/// default output limit binds (the mid-tool-call stream-cut class).
+#[derive(Default, Debug, Clone, PartialEq, Deserialize)]
+pub struct ModelTopProvider {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_completion_tokens: Option<u64>,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Deserialize)]
@@ -483,7 +508,7 @@ pub async fn stream_completion(
                     Some(Err(OpenRouterError::ApiError(ApiError {
                         status: None,
                         code: error.code,
-                        message: error.message,
+                        message: error.message_with_details(),
                         retry_after: None,
                     })))
                 }
@@ -529,11 +554,105 @@ pub async fn list_models(
         .body(AsyncBody::default())
         .map_err(OpenRouterError::BuildRequestBody)?;
     let host = request.uri().host().unwrap_or(api_url).to_owned();
-    let mut response = client
+    let response = client
         .send(request)
         .await
         .map_err(|error| OpenRouterError::HttpSend { host, error })?;
+    parse_models_response(response).await
+}
 
+#[cfg(any(test, feature = "test-support"))]
+pub async fn parse_models_response_for_test(
+    entry: ModelEntry,
+) -> Result<Vec<Model>, OpenRouterError> {
+    Ok(vec![model_from_entry(entry)])
+}
+
+fn model_from_entry(entry: ModelEntry) -> Model {
+    let context_length = entry.context_length.unwrap_or(2_000_000);
+    Model {
+        name: entry.id,
+        // OpenRouter returns display names in the format "provider_name: model_name".
+        // When displayed in the UI, these names can get truncated from the right.
+        // Since users typically already know the provider, we extract just the model name
+        // portion (after the colon) to create a more concise and user-friendly label
+        // for the model dropdown in the agent panel.
+        display_name: Some(
+            entry
+                .name
+                .split(':')
+                .next_back()
+                .unwrap_or(&entry.name)
+                .trim()
+                .to_string(),
+        ),
+        max_tokens: context_length,
+        // zed-kask: D83 — use the discovered cap, but never reserve more
+        // than half the context for output. Some providers advertise nearly
+        // the whole context as max_completion_tokens; forwarding it makes
+        // non-empty requests fail before the model can stream a response.
+        max_output_tokens: entry
+            .max_completion_tokens
+            .or_else(|| {
+                entry
+                    .top_provider
+                    .as_ref()
+                    .and_then(|t| t.max_completion_tokens)
+            })
+            .map(|tokens| tokens.min(context_length / 2)),
+        supports_tools: Some(entry.supported_parameters.contains(&"tools".to_string())),
+        supports_images: Some(
+            entry
+                .architecture
+                .as_ref()
+                .map(|arch| arch.input_modalities.contains(&"image".to_string()))
+                .unwrap_or(false),
+        ),
+        mode: if entry
+            .supported_parameters
+            .contains(&"reasoning".to_string())
+        {
+            // Thinking enabled, uncapped. The former hardcoded
+            // `budget_tokens: Some(4_096)` silently killed agent turns:
+            // reasoning-heavy completions hit the 4096-token cap, OpenRouter
+            // ended the stream with finish_reason "length", zed mapped that
+            // to StopReason::MaxTokens, and the turn ended with no retry and
+            // no visible error — the operator saw threads "just stop".
+            // Reasoning depth is the model's business, not a client budget.
+            ModelMode::Thinking {
+                budget_tokens: None,
+            }
+        } else {
+            ModelMode::Default
+        },
+        supported_efforts: entry
+            .reasoning
+            .as_ref()
+            .map(|r| r.supported_efforts.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .rev()
+            .collect(),
+        default_effort: entry.reasoning.as_ref().and_then(|r| r.default_effort),
+        supports_max_tokens: entry
+            .reasoning
+            .as_ref()
+            .and_then(|r| r.supports_max_tokens)
+            .unwrap_or(false),
+        mandatory_reasoning: entry
+            .reasoning
+            .as_ref()
+            .and_then(|r| r.mandatory)
+            .unwrap_or(false),
+        provider: None,
+    }
+}
+
+/// Parse the response from either `/models` or `/models/user` into a list of
+/// `Model`s.
+async fn parse_models_response(
+    mut response: http_client::Response<AsyncBody>,
+) -> Result<Vec<Model>, OpenRouterError> {
     let mut body = String::new();
     response
         .body_mut()
@@ -545,64 +664,7 @@ pub async fn list_models(
         let response: ListModelsResponse =
             serde_json::from_str(&body).map_err(OpenRouterError::DeserializeResponse)?;
 
-        let models = response
-            .data
-            .into_iter()
-            .map(|entry| Model {
-                name: entry.id,
-                // OpenRouter returns display names in the format "provider_name: model_name".
-                // When displayed in the UI, these names can get truncated from the right.
-                // Since users typically already know the provider, we extract just the model name
-                // portion (after the colon) to create a more concise and user-friendly label
-                // for the model dropdown in the agent panel.
-                display_name: Some(
-                    entry
-                        .name
-                        .split(':')
-                        .next_back()
-                        .unwrap_or(&entry.name)
-                        .trim()
-                        .to_string(),
-                ),
-                max_tokens: entry.context_length.unwrap_or(2000000),
-                supports_tools: Some(entry.supported_parameters.contains(&"tools".to_string())),
-                supports_images: Some(
-                    entry
-                        .architecture
-                        .as_ref()
-                        .map(|arch| arch.input_modalities.contains(&"image".to_string()))
-                        .unwrap_or(false),
-                ),
-                mode: if entry
-                    .supported_parameters
-                    .contains(&"reasoning".to_string())
-                {
-                    ModelMode::Adaptive
-                } else {
-                    ModelMode::Default
-                },
-                supported_efforts: entry
-                    .reasoning
-                    .as_ref()
-                    .map(|r| r.supported_efforts.clone())
-                    .unwrap_or_default()
-                    .into_iter()
-                    .rev()
-                    .collect(),
-                default_effort: entry.reasoning.as_ref().and_then(|r| r.default_effort),
-                supports_max_tokens: entry
-                    .reasoning
-                    .as_ref()
-                    .and_then(|r| r.supports_max_tokens)
-                    .unwrap_or(false),
-                mandatory_reasoning: entry
-                    .reasoning
-                    .as_ref()
-                    .and_then(|r| r.mandatory)
-                    .unwrap_or(false),
-                provider: None,
-            })
-            .collect();
+        let models = response.data.into_iter().map(model_from_entry).collect();
 
         Ok(models)
     } else {
@@ -668,7 +730,7 @@ impl OpenRouterError {
         Self::ApiError(ApiError {
             status: Some(status_code.as_u16()),
             code: error_response.code,
-            message: error_response.message,
+            message: error_response.message_with_details(),
             retry_after: retry_after_with_rate_limit_default(status_code, &headers),
         })
     }
@@ -692,6 +754,28 @@ pub struct OpenRouterErrorBody {
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<std::collections::HashMap<String, serde_json::Value>>,
+}
+
+impl OpenRouterErrorBody {
+    fn message_with_details(&self) -> String {
+        let mut message = self.message.clone();
+        // zed-kask: D43 — the generic wrapper hides the actionable upstream
+        // rejection. Keep its diagnostic fields, not arbitrary metadata.
+        if let Some(metadata) = &self.metadata {
+            for key in ["provider_name", "raw"] {
+                if let Some(value) = metadata.get(key).filter(|value| !value.is_null()) {
+                    let detail = match value {
+                        Value::String(detail) => detail.clone(),
+                        value => value.to_string(),
+                    };
+                    if !detail.is_empty() {
+                        message.push_str(&format!("\n{key}: {detail}"));
+                    }
+                }
+            }
+        }
+        message
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -838,6 +922,135 @@ mod tests {
     }
 
     #[test]
+    fn reasoning_models_get_uncapped_thinking_budget() {
+        // D42: the former hardcoded `budget_tokens: Some(4_096)` silently
+        // killed reasoning-heavy agent turns — OpenRouter ended the stream
+        // with finish_reason "length", zed mapped it to StopReason::MaxTokens,
+        // and the turn ended with no retry and no visible error.
+        let reasoning_entry = ModelEntry {
+            supported_parameters: vec!["reasoning".to_string()],
+            reasoning: Some(ModelReasoning {
+                supported_efforts: vec![ReasoningEffort::Low, ReasoningEffort::High],
+                default_effort: Some(ReasoningEffort::High),
+                mandatory: Some(true),
+                supports_max_tokens: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let model = model_from_entry(reasoning_entry);
+        assert!(matches!(
+            model.mode,
+            ModelMode::Thinking {
+                budget_tokens: None
+            }
+        ));
+
+        assert_eq!(
+            model.supported_efforts,
+            vec![ReasoningEffort::High, ReasoningEffort::Low]
+        );
+        assert_eq!(model.default_effort, Some(ReasoningEffort::High));
+        assert!(model.mandatory_reasoning);
+        assert!(model.supports_max_tokens);
+
+        let plain_entry = ModelEntry::default();
+        assert!(matches!(
+            model_from_entry(plain_entry).mode,
+            ModelMode::Default
+        ));
+    }
+
+    #[test]
+    fn provider_error_details_survive_http_and_streaming_responses() -> Result<()> {
+        let raw = serde_json::json!({"error": {
+            "code": "context_length_exceeded",
+            "message": "This model's maximum context length is 1048576 tokens, but the request requires 1303727 tokens (720023 input including image/vision expansion + 583704 for the completion). Reduce the input length or max_tokens."
+        }}).to_string();
+        for status in [400, 200] {
+            for with_metadata in [true, false] {
+                let mut body = serde_json::json!({"error": {
+                    "code": 400, "message": "Provider returned error"
+                }});
+                if with_metadata {
+                    body["error"]["metadata"] = serde_json::json!({
+                        "provider_name": "Together", "raw": raw,
+                        "unrelated_metadata": "must not be exposed"
+                    });
+                }
+                let body = if status == 200 {
+                    format!("data: {body}\n\ndata: [DONE]\n\n")
+                } else {
+                    body.to_string()
+                };
+                let client = FakeHttpClient::create(move |_| {
+                    let body = body.clone();
+                    async move {
+                        Ok(Response::builder()
+                            .status(status)
+                            .body(AsyncBody::from(body))?)
+                    }
+                });
+                let request = serde_json::from_value(serde_json::json!({
+                    "model": "z-ai/glm-5.3", "messages": [], "stream": true,
+                    "temperature": 0.4, "usage": {"include": true}, "provider": null
+                }))?;
+                let error = block_on(async {
+                    match stream_completion(
+                        client.as_ref(),
+                        OPEN_ROUTER_API_URL,
+                        "test-key",
+                        request,
+                        &CustomHeaders::default(),
+                    )
+                    .await
+                    {
+                        Err(error) => error,
+                        Ok(mut stream) => stream
+                            .next()
+                            .await
+                            .expect("error event")
+                            .expect_err("provider rejection"),
+                    }
+                });
+                let error = language_model_core::LanguageModelCompletionError::from(error);
+                let language_model_core::LanguageModelCompletionError::ProviderRejection {
+                    status: actual_status,
+                    code,
+                    message,
+                    category,
+                    ..
+                } = error
+                else {
+                    panic!("expected provider rejection: {error:?}")
+                };
+                assert_eq!(
+                    actual_status.map(|status| status.as_u16()),
+                    (status == 400).then_some(400)
+                );
+                assert_eq!(code.as_deref(), Some("400"));
+                assert!(message.starts_with("Provider returned error"));
+                assert!(!message.contains("must not be exposed"));
+                if with_metadata {
+                    assert!(message.contains("Together"), "{message}");
+                    assert!(message.contains(&raw), "{message}");
+                    assert_eq!(
+                        category,
+                        language_model_core::ProviderErrorCategory::PromptTooLarge { tokens: None }
+                    );
+                } else {
+                    assert_eq!(message, "Provider returned error");
+                    assert_eq!(
+                        category,
+                        language_model_core::ProviderErrorCategory::InvalidRequest
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn shared_transport_errors_retain_language_model_classification() {
         let error = OpenRouterError::ChatCompletion(open_ai::RequestError::HttpSend {
             provider: "OpenRouter".to_string(),
@@ -925,6 +1138,70 @@ mod tests {
         assert_eq!(
             completion_error.retry_delay(1),
             Some(Duration::from_secs(5))
+        );
+    }
+
+    #[test]
+    fn cloudflare_wrapped_context_overflow_reaches_compaction_category() {
+        let error: language_model_core::LanguageModelCompletionError = ApiError {
+            status: Some(400),
+            code: 400,
+            message: "Provider returned error\nprovider_name: Cloudflare\nraw: {\"errors\":[{\"message\":\"Requested token count exceeds the model's maximum context length of 1048576 tokens. You requested a total of 1412853 tokens: 818417 tokens from the input messages and 594436 tokens for the completion.\"}]}".into(),
+            retry_after: None,
+        }
+        .into();
+        assert!(matches!(
+            error,
+            language_model_core::LanguageModelCompletionError::ProviderRejection {
+                category: language_model_core::ProviderErrorCategory::PromptTooLarge { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn discovered_output_cap_parses_and_promotes() {
+        // zed-kask: D83 — the request's `max_tokens` comes from the model's
+        // discovered output cap (bounded to half the context). OpenRouter
+        // nests it under `top_provider.max_completion_tokens`; an entry without it
+        // leaves the cap None, the request omits `max_tokens`, and the
+        // provider's own default output limit binds — the mid-tool-call
+        // stream-cut class behind the 2026-09-27/28 ToolInput::recv warns.
+        let top_level = model_from_entry(ModelEntry {
+            max_completion_tokens: Some(65_536),
+            ..Default::default()
+        });
+        assert_eq!(top_level.max_output_tokens(), Some(65_536));
+
+        let nested = model_from_entry(ModelEntry {
+            top_provider: Some(ModelTopProvider {
+                max_completion_tokens: Some(131_072),
+            }),
+            ..Default::default()
+        });
+        assert_eq!(nested.max_output_tokens(), Some(131_072));
+
+        // A provider can advertise a completion budget near or equal to the
+        // whole context window. Reserve at least half for the prompt instead
+        // of sending a request the provider will reject before streaming.
+        let oversized = model_from_entry(ModelEntry {
+            context_length: Some(1_310_720),
+            top_provider: Some(ModelTopProvider {
+                max_completion_tokens: Some(943_718),
+            }),
+            ..Default::default()
+        });
+        assert_eq!(oversized.max_output_tokens(), Some(655_360));
+        let equal_to_context = model_from_entry(ModelEntry {
+            context_length: Some(1_048_576),
+            max_completion_tokens: Some(1_048_576),
+            ..Default::default()
+        });
+        assert_eq!(equal_to_context.max_output_tokens(), Some(524_288));
+
+        assert_eq!(
+            model_from_entry(ModelEntry::default()).max_output_tokens(),
+            None
         );
     }
 }

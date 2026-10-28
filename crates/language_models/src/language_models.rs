@@ -29,6 +29,7 @@ use crate::provider::open_ai_compatible::OpenAiCompatibleLanguageModelProvider;
 use crate::provider::open_router::OpenRouterLanguageModelProvider;
 use crate::provider::openai_subscribed::OpenAiSubscribedProvider;
 use crate::provider::opencode::OpenCodeLanguageModelProvider;
+use crate::provider::runpod::RunpodLanguageModelProvider;
 use crate::provider::vercel_ai_gateway::VercelAiGatewayLanguageModelProvider;
 use crate::provider::x_ai::XAiLanguageModelProvider;
 use crate::provider::x_ai_subscribed::XAiSubscribedProvider;
@@ -289,6 +290,14 @@ fn register_language_model_providers(
         cx,
     );
     registry.register_provider(
+        Arc::new(RunpodLanguageModelProvider::new(
+            client.http_client(),
+            credentials_provider.clone(),
+            cx,
+        )),
+        cx,
+    );
+    registry.register_provider(
         Arc::new(GoogleLanguageModelProvider::new(
             client.http_client(),
             credentials_provider.clone(),
@@ -377,6 +386,49 @@ mod tests {
     use std::pin::Pin;
     use ui::IconName;
 
+    #[test]
+    fn provider_tool_serializers_preserve_json_text_parameters() {
+        fn round_trip<T: serde::de::DeserializeOwned + serde::Serialize>(
+            fixture: &serde_json::Value,
+        ) -> serde_json::Value {
+            let definition: T =
+                serde_json::from_value(fixture.clone()).expect("provider tool input");
+            serde_json::to_value(definition).expect("provider tool wire JSON")
+        }
+
+        let parameters = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "payload": {"type": "string", "description": "Complete JSON text"},
+                "name": {"type": "string"}
+            },
+            "required": ["payload", "name"]
+        });
+        let function = serde_json::json!({
+            "type": "function",
+            "function": {"name": "probe", "description": "JSON text tool", "parameters": parameters}
+        });
+        for wire in [
+            round_trip::<open_ai::ToolDefinition>(&function),
+            round_trip::<open_router::ToolDefinition>(&function),
+            round_trip::<deepseek::ToolDefinition>(&function),
+            round_trip::<mistral::ToolDefinition>(&function),
+            round_trip::<llama_cpp::ToolDefinition>(&function),
+            round_trip::<lmstudio::ToolDefinition>(&function),
+            round_trip::<ollama::OllamaTool>(&function),
+        ] {
+            assert_eq!(wire["function"]["parameters"], parameters);
+        }
+        let anthropic = round_trip::<anthropic::Tool>(&serde_json::json!({
+            "name": "probe", "description": "JSON text tool", "input_schema": parameters
+        }));
+        assert_eq!(anthropic["input_schema"], parameters);
+        let google = round_trip::<google_ai::FunctionDeclaration>(&serde_json::json!({
+            "name": "probe", "description": "JSON text tool", "parametersJsonSchema": parameters
+        }));
+        assert_eq!(google["parametersJsonSchema"], parameters);
+    }
+
     struct FakeCredentialsProvider;
 
     impl CredentialsProvider for FakeCredentialsProvider {
@@ -407,9 +459,18 @@ mod tests {
         }
     }
 
+    pub(crate) fn set_fake_credentials_provider(cx: &mut App) {
+        cx.set_global(zed_credentials_provider::ZedCredentialsProvider(Arc::new(
+            FakeCredentialsProvider,
+        )));
+    }
+
     fn init_test(cx: &mut App) -> (Arc<Client>, Arc<dyn CredentialsProvider>) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
+        set_fake_credentials_provider(cx);
+        // OpenCode's dynamic model catalog reads the global filesystem.
+        <dyn fs::Fs>::set_global(fs::FakeFs::new(cx.background_executor().clone()), cx);
         cx.set_global(db::AppDatabase::test_new());
         let app_version = AppVersion::global(cx);
         release_channel::init_test(app_version, release_channel::ReleaseChannel::Dev, cx);
@@ -565,6 +626,53 @@ mod tests {
             registry.read_with(cx, |registry, _| provider_icons(registry, "acme")),
             Vec::new(),
             "removing all entries should unregister the provider"
+        );
+    }
+
+    /// Pin (D29): RunPod is registered as a dedicated `LanguageModelProvider`
+    /// (like DeepSeek), not via `openai_compatible`. The dedicated
+    /// registration is what makes `RunPod/kask-ocr` resolvable through the
+    /// IPC bridge with an empty settings file — an `openai_compatible`
+    /// provider only exists after a settings entry creates it, and its id
+    /// would not carry the endpoint-name model resolution the OCR pipeline
+    /// depends on. The kask_bridge mirror test pins the credential side; this
+    /// pins the provider-registration side.
+    #[gpui::test]
+    fn runpod_is_a_dedicated_provider_not_openai_compatible(cx: &mut App) {
+        let (client, credentials_provider) = init_test(cx);
+        let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+        // The Cloud provider reads the LLM token listener global.
+        client::RefreshLlmTokenListener::register(client.clone(), user_store.clone(), cx);
+        let registry = cx.new(|_| LanguageModelRegistry::default());
+        registry.update(cx, |registry, cx| {
+            register_language_model_providers(
+                registry,
+                user_store,
+                client,
+                credentials_provider,
+                cx,
+            );
+        });
+
+        // The dedicated registration surfaces with an empty settings file —
+        // no `openai_compatible` entry can do that (they only register via
+        // `register_compatible_providers` after a settings entry exists).
+        // The registration id is lowercase `runpod` (the display name
+        // "RunPod" is separate) — the same case split that forced D29's
+        // `resolve_ocr_model` case-insensitivity fix.
+        let runpod = registry
+            .read(cx)
+            .provider(&LanguageModelProviderId::from("runpod".to_string()))
+            .expect("RunPod must be registered as a dedicated provider");
+        assert_eq!(runpod.id().0.as_ref(), "runpod");
+
+        // Control: DeepSeek is the dedicated-provider pattern D29 mirrors.
+        assert!(
+            registry
+                .read(cx)
+                .provider(&LanguageModelProviderId::from("deepseek".to_string()))
+                .is_some(),
+            "DeepSeek (the dedicated-provider pattern RunPod mirrors) must also be registered"
         );
     }
 }

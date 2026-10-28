@@ -1,5 +1,6 @@
 pub mod batches;
 pub mod completion;
+pub mod list_models;
 pub mod responses;
 
 #[cfg(test)]

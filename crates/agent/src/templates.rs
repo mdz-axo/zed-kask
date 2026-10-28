@@ -46,6 +46,10 @@ pub struct SystemPromptTemplate<'a> {
     /// Contents of the user-global `~/.config/zed/AGENTS.md` file (or the
     /// platform equivalent), if present and non-empty.
     pub user_agents_md: Option<SharedString>,
+    /// Agent static context (e.g., Curator overlay, Steer panel overlay).
+    /// Rendered in the system prompt's `## Session Context` section.
+    /// `None` when no agent overlay is set.
+    pub static_context: Option<SharedString>,
     /// Whether agent-run terminal commands are wrapped in an OS-level
     /// sandbox for this thread. When `true` — and the `terminal` tool is
     /// in `available_tools` — the rendered prompt describes the sandbox's
@@ -61,6 +65,17 @@ pub struct SystemPromptTemplate<'a> {
     pub is_linux: bool,
     /// Whether sandboxed terminal commands run through WSL on Windows.
     pub is_windows: bool,
+    /// zed-kask: D44 — how many registered MCP server tools are absent from
+    /// this turn's `available_tools` (the set sent to the model). Zero renders
+    /// nothing. Non-zero
+    /// renders a Tool Use bullet telling the model the visible list is a
+    /// selection, not the whole surface — without it, the model reads a
+    /// filtered list as the complete toolset and reports registered tools as
+    /// "unavailable" (observed live: an agent denied `web_ping` existed
+    /// because a filter layer hadn't selected it). Pinned by
+    /// `test_system_prompt_names_registered_mcp_tools_hidden_this_turn` and
+    /// `test_system_prompt_omits_hidden_mcp_section_when_nothing_hidden`.
+    pub mcp_tools_hidden: usize,
 }
 
 impl Template for SystemPromptTemplate<'_> {
@@ -105,16 +120,838 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            static_context: None,
             sandboxing: false,
             is_linux: false,
             is_windows: false,
+            mcp_tools_hidden: 0,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
-        assert!(rendered.contains("You are the Zed coding agent"));
+        assert!(
+            rendered.contains("You are the Z-K agent running inside the Zed-Kask fork of Zed.dev")
+        );
         assert!(rendered.contains("Today's Date: 2026-01-01"));
         assert!(rendered.contains("## Fixing Diagnostics"));
         assert!(rendered.contains("test-model"));
+    }
+
+    #[test]
+    fn test_system_prompt_establishes_expectation_before_substantive_inquiry() {
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: Some("test-model".to_string()),
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+            mcp_tools_hidden: 0,
+        };
+        let rendered = template
+            .render(&Templates::new())
+            .expect("render system prompt");
+        let checkpoint = rendered
+            .find("Before a substantive inquiry")
+            .expect("agent must form an expectation before probing");
+        let tools = rendered.find("## Tool Use").expect("tool guidance present");
+        assert!(
+            checkpoint < tools,
+            "checkpoint must precede tool instructions"
+        );
+        assert!(rendered.contains("what would falsify it"));
+        assert!(rendered.contains("state unknown"));
+        assert!(rendered.contains("gradient-hunter"));
+        assert!(rendered.contains("Skip this for trivial mechanical tasks"));
+    }
+
+    #[test]
+    fn test_system_prompt_renders_session_context_without_rules_or_agents_md() {
+        // Regression: the `static_context` (Session Context) block was nested
+        // inside `{{#if (or user_agents_md has_rules)}}`, so it was silently
+        // dropped for projects with no `.rules` and no personal `AGENTS.md` —
+        // which dropped the Curator overlay's `CURATOR_STATIC_CONTEXT`. It must
+        // render independently of that guard.
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: Some("test-model".to_string()),
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: Some("CURATOR-CTX".to_string().into()),
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+            mcp_tools_hidden: 0,
+        };
+        let templates = Templates::new();
+        let rendered = template.render(&templates).unwrap();
+        assert!(
+            rendered.contains("## Session Context"),
+            "Session Context heading must render even without rules/AGENTS.md"
+        );
+        assert!(
+            rendered.contains("CURATOR-CTX"),
+            "static_context body must render even without rules/AGENTS.md"
+        );
+    }
+
+    #[test]
+    fn test_system_prompt_contains_tool_failure_mode_warnings() {
+        // D26: the built-in tools' failure-mode rules are `## Tool Use`
+        // bullets (folded 2026-09-26 from a separate section); they render
+        // whenever tools are available.
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: Some("test-model".to_string()),
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+            mcp_tools_hidden: 0,
+        };
+        let templates = Templates::new();
+        let rendered = template.render(&templates).unwrap();
+        let tool_use = rendered
+            .split("## Tool Use")
+            .nth(1)
+            .and_then(|rest| rest.split("\n## ").next())
+            .expect("## Tool Use section");
+        for rule in [
+            "`read_file`: Do not loop on stale per-file diagnostics",
+            "`edit_file`: If an edit fails because `old_text` didn't match",
+            "`terminal`: Never run a command whose effect",
+        ] {
+            assert!(tool_use.contains(rule), "Tool Use must carry: {rule}");
+        }
+        assert!(
+            !rendered.contains("## Tool failure-mode warnings"),
+            "the folded section must not reappear"
+        );
+    }
+
+    #[test]
+    fn test_system_prompt_contains_loop_termination_guardrail() {
+        // Pins the zed-kask-only loop-budget guardrail added to `## Task
+        // Execution` (a divergence in a shared upstream section) so an upstream
+        // merge that drops it is caught.
+        //
+        // The threshold must stay a concrete count, not a vague quantifier:
+        // "several iterations" left the stop point to model discretion, so
+        // different models bounded the loop at different depths.
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: None,
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+            mcp_tools_hidden: 0,
+        };
+        let rendered = template.render(&Templates::new()).unwrap();
+        assert!(
+            rendered.contains("If a tool loop repeats without measurable progress"),
+            "loop-termination guardrail must be present in the rendered prompt"
+        );
+        assert!(
+            rendered.contains("three times"),
+            "the loop guardrail must state a concrete iteration count, not a \
+             vague quantifier the model has to interpret"
+        );
+    }
+
+    // zed-kask: D44 pins — the tool-visibility marker. Registered MCP tools
+    // absent from this turn's available set must be counted in the system
+    // prompt, so the model never mistakes the visible list for
+    // the complete surface (observed live 2026-08-30: an agent denied
+    // `web_ping` existed because a filter layer hadn't selected it — the
+    // operator caught the false report). These two tests pin the render in
+    // both states.
+    #[test]
+    fn test_system_prompt_names_registered_mcp_tools_hidden_this_turn() {
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: None,
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+            mcp_tools_hidden: 321,
+        };
+        let rendered = template.render(&Templates::new()).unwrap();
+        assert!(
+            rendered.contains("321 additional MCP server tools are registered"),
+            "the marker must name the hidden count so the model can gauge the \
+             size of the surface it cannot see"
+        );
+        assert!(
+            rendered.contains("Never report a tool as unavailable"),
+            "the marker must forbid absence claims — the false-belief failure \
+             mode it exists to kill"
+        );
+        assert!(
+            rendered.contains("call `list_mcp_tools` to enumerate"),
+            "the marker must state the recovery path (the discovery meta-tool) \
+             so the model acts instead of denying"
+        );
+    }
+
+    #[test]
+    fn test_system_prompt_omits_hidden_mcp_section_when_nothing_hidden() {
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: None,
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+            mcp_tools_hidden: 0,
+        };
+        let rendered = template.render(&Templates::new()).unwrap();
+        assert!(
+            !rendered.contains("additional MCP server tools are registered"),
+            "when the router retained everything (or is disabled), the marker \
+             must not render — per the D40 principle, never advertise a \
+             condition the turn doesn't have"
+        );
+    }
+
+    #[test]
+    fn test_system_prompt_contains_division_of_responsibilities() {
+        // Pins the four-moves interaction loop (functional-interaction-spec.md,
+        // Phase A) so an upstream merge that drops it is caught. The roles are
+        // fixed in the opening (user = product manager, agent = technical
+        // program manager); the section carries the working loop, and move 2
+        // enforces the decision-class split: functional decisions are the
+        // user's, technical decisions are the agent's — never routed to the
+        // user as questions (operator ruling 2026-09-10: agents kept asking
+        // technical questions at intake and ignoring functional requirements).
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: None,
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+            mcp_tools_hidden: 0,
+        };
+        let rendered = template.render(&Templates::new()).unwrap();
+        assert!(
+            rendered.contains("## Division of Responsibilities (kask)"),
+            "the division section must be present in the rendered prompt"
+        );
+        // The roles live in the opening, and the section points up at them.
+        assert!(
+            rendered.contains("You are the Z-K agent running inside the Zed-Kask fork of Zed.dev"),
+            "the opening names the agent and its fork"
+        );
+        assert!(
+            rendered.contains("technical program manager"),
+            "the opening fixes the agent's role"
+        );
+        assert!(
+            rendered.contains("The roles are fixed in the opening of this prompt"),
+            "the section anchors to the opening's role statement"
+        );
+        for move_phrase in [
+            "Point at the same target",
+            "Decide by class",
+            "Report outcomes, not artifacts",
+            "Bank the learning",
+        ] {
+            assert!(
+                rendered.contains(move_phrase),
+                "all four moves must be present; missing: {move_phrase}"
+            );
+        }
+        assert!(
+            rendered.contains("present it in functional terms — what each option lets the user do"),
+            "the opening's question-class rule: technical questions carry their functional context"
+        );
+        assert!(
+            rendered.contains("as a decision the user can veto on functional grounds"),
+            "move 2 presents technical decisions as decisions, positively framed"
+        );
+        assert!(
+            rendered.contains("Tie every feature to its functional requirement"),
+            "every feature names the functional requirement it serves"
+        );
+        assert!(
+            rendered.contains("to interpret it, not to revise it"),
+            "the agent interprets the functional requirement; it never revises it"
+        );
+        assert!(
+            rendered.contains("`program-manager` skill"),
+            "the division section must point at the program-manager rubric for the agent's side"
+        );
+        assert!(
+            rendered.contains("`product-manager` skill"),
+            "the division section must point at the product-manager intake contract for the user's side"
+        );
+        assert!(
+            rendered.contains("do not improvise the requirement"),
+            "underspecified intake routes through the product-manager skill, not improvisation"
+        );
+    }
+
+    // zed-kask: co-research-environment identity frame (2026-10-17). The
+    // opening carries the platform thesis — the human is the principal
+    // investigator, the agent holds the instruments, the methods, and the
+    // memory — and nests the two-role division as the operating contract
+    // within the co-research environment. The identity ADDS to the opening;
+    // it must not replace the program-manager role language (the division
+    // is the contract; the role is a method — see
+    // kask/docs/architecture/core/co-research-environment.md).
+    #[test]
+    fn test_system_prompt_opening_carries_co_research_identity() {
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: None,
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+            mcp_tools_hidden: 0,
+        };
+        let rendered = template.render(&Templates::new()).unwrap();
+        assert!(
+            rendered.contains("co-research environment"),
+            "the opening names the platform's identity"
+        );
+        assert!(
+            rendered.contains("principal investigator"),
+            "the opening fixes the human's seat: question, judgment, veto"
+        );
+        assert!(
+            rendered.contains("kask/docs/architecture/core/co-research-environment.md"),
+            "the opening points at the thesis charter"
+        );
+        assert!(
+            rendered.contains("technical program manager"),
+            "the identity nests the division; it does not replace it"
+        );
+    }
+
+    #[test]
+    fn test_division_skill_references_resolve_on_disk() {
+        // The Division of Responsibilities names two skills as the operational
+        // rubrics for its two roles. A prompt reference to a skill that does
+        // not LOAD is a ghost instruction — the file can exist and still be
+        // unusable (observed 2026-09-04: an unquoted description containing
+        // ": " made product-manager's frontmatter unparseable YAML). This
+        // pins that both skills exist AND parse with the real loader.
+        let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for skill in ["program-manager", "product-manager"] {
+            let path = repo_root.join(format!(".agents/skills/{skill}/SKILL.md"));
+            let content = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+                panic!(
+                    "the system prompt references the {skill} skill; reading {} failed: {e}",
+                    path.display()
+                )
+            });
+            agent_skills::parse_skill_file_content(&content).unwrap_or_else(|e| {
+                panic!(
+                    "the system prompt references the {skill} skill; its frontmatter must load: {e}"
+                )
+            });
+        }
+    }
+
+    #[test]
+    fn test_system_prompt_contains_ontology_anchored_reasoning() {
+        // Pins the ontology-anchored professional identity (D53) so an
+        // upstream merge that drops it is caught. De-ghettoized per operator
+        // ruling 2026-09-10: ontology resolution is a REQUIRED TOOL OF
+        // ANALYSIS living in `## Tool Use` (anchoring all reasoning and
+        // category analysis), with the identity framing in the opening —
+        // NOT a standalone section. This test pins the new locations AND
+        // the absence of the standalone section (the ghetto is closed).
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: None,
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+            mcp_tools_hidden: 0,
+        };
+        let rendered = template.render(&Templates::new()).unwrap();
+        // The standalone section is gone — de-ghettoization is pinned, not
+        // just the new content's presence.
+        assert!(
+            !rendered.contains("## Ontology-anchored reasoning (kask)"),
+            "ontology anchoring must not be a standalone section; it lives in Tool Use and the opening"
+        );
+        // Identity framing in the opening.
+        assert!(
+            rendered.contains("no professional works in a private language"),
+            "the opening carries the professional-identity framing"
+        );
+        // The required-tool-of-analysis bullet in Tool Use, now naming the
+        // native onto_anchor tool and the canonical ladder invariant.
+        for phrase in [
+            "Anchor all reasoning and category analysis",
+            "resolve it with the `onto_anchor` tool",
+            "hkask-bridge-ontology",
+            "required tool of analysis",
+            "nothing is ever untagged",
+            "ask `onto_anchor` for `relation_query`",
+            "Use only the returned typed, sourced edges",
+            "no_supported_path` is not proof",
+        ] {
+            assert!(
+                rendered.contains(phrase),
+                "the Tool Use anchoring bullet must carry its load-bearing phrases; missing: {phrase}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_system_prompt_autonomy_bullet_includes_experience_trigger() {
+        // Pins the amended autonomy bullet in `## Task Execution`: asking is
+        // triggered not only by missing information or risk but by choices
+        // that change what the user will experience. Without this carve-out
+        // the bullet licenses unilateral functional decisions (the agent has
+        // the information; the question is authority, not information).
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: None,
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+            mcp_tools_hidden: 0,
+        };
+        let rendered = template.render(&Templates::new()).unwrap();
+        assert!(
+            rendered.contains("a choice changes what the user will experience"),
+            "the autonomy bullet must name the experience-changing-choice ask trigger"
+        );
+    }
+
+    #[test]
+    fn test_system_prompt_final_message_leads_with_functional_outcome() {
+        // Pins the functional-first Final Message bullet: reports lead with
+        // what the user can now do (or no longer experiences as broken)
+        // before technical detail. The prior bullet alone rehearsed a
+        // file-list summary format every turn.
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: None,
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+            mcp_tools_hidden: 0,
+        };
+        let rendered = template.render(&Templates::new()).unwrap();
+        assert!(
+            rendered.contains("lead with the functional outcome"),
+            "the Final Message section must require the functional outcome first"
+        );
+        assert!(
+            !rendered.contains("briefly summarize what changed, reference the relevant files, and state what validation you ran"),
+            "the old file-list-first bullet must not coexist with the functional-first \
+             bullet — two \"what comes first\" instructions resolve unpredictably (§7.3)"
+        );
+    }
+
+    #[test]
+    fn test_system_prompt_vagueness_resolved_with_user() {
+        // Pins the amended `## Ambition vs. Precision` bullet: scope vagueness
+        // is resolved WITH the user, not filled with initiative. The upstream
+        // text ("creative touches when scope is vague") directly contradicted
+        // the Division of Responsibilities — scope-vague is the four-moves'
+        // ask-trigger, so the contradiction is asserted absent as well.
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: None,
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+            mcp_tools_hidden: 0,
+        };
+        let rendered = template.render(&Templates::new()).unwrap();
+        assert!(
+            rendered.contains("resolve the vagueness with the user"),
+            "vague scope must route to the user, not to initiative"
+        );
+        assert!(
+            !rendered.contains("creative touches when scope is vague"),
+            "the upstream phrase licenses unilateral product decisions in \
+             exactly the situation where the functional requirement matters most"
+        );
+    }
+
+    #[test]
+    fn test_system_prompt_autonomy_bullet_reframes_prematurely() {
+        // Pins the amended autonomy bullet: the anti-pattern is asking for
+        // findable information — not asking per se. "Prematurely" framed
+        // user-contact as cost and biased against interpretation rounds and
+        // choice-surfacing.
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: None,
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+            mcp_tools_hidden: 0,
+        };
+        let rendered = template.render(&Templates::new()).unwrap();
+        assert!(
+            rendered.contains("for information you can find yourself"),
+            "the autonomy bullet must name findable-information as the anti-pattern, not asking per se"
+        );
+        assert!(
+            !rendered.contains("coming back to the user prematurely"),
+            "\"prematurely\" biases against the Division's ask-triggers"
+        );
+    }
+
+    #[test]
+    fn test_system_prompt_wires_four_moves_to_goal_tools_when_available() {
+        // Pin the approved separation of worker progress and host-authenticated closure.
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec![
+                "echo".into(),
+                "kanban_goal_create".into(),
+                "kanban_goal_judge".into(),
+                "kanban_goal_close".into(),
+                "kanban_goal_correct_outcome".into(),
+            ],
+            model_name: None,
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+            mcp_tools_hidden: 0,
+        };
+        let rendered = template.render(&Templates::new()).unwrap();
+        assert!(
+            rendered.contains("run the loop on the native system"),
+            "the tool wiring must be present when the goal tools are available"
+        );
+        for wiring in [
+            "Move 1 → `kanban_goal_create`",
+            "Move 3 → `kanban_goal_judge`",
+            "Move 4 → `kanban_goal_close`",
+            "Correction → `kanban_goal_correct_outcome`",
+        ] {
+            assert!(
+                rendered.contains(wiring),
+                "every move-to-tool mapping must be present; missing: {wiring}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_goal_prompt_corpus_retires_coupled_scoring_and_keeps_authority() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut paths = vec![root.join("crates/agent/src/templates/system_prompt.hbs")];
+        let mut directories = vec![
+            root.join(".agents/skills"),
+            root.join("kask/registry/templates"),
+        ];
+        while let Some(directory) = directories.pop() {
+            for entry in std::fs::read_dir(&directory).expect("read live prompt directory") {
+                let path = entry.expect("read live prompt entry").path();
+                if path.is_dir() {
+                    directories.push(path);
+                } else if matches!(
+                    path.extension().and_then(|extension| extension.to_str()),
+                    Some("md" | "j2" | "yaml" | "hbs")
+                ) {
+                    paths.push(path);
+                }
+            }
+        }
+        assert!(
+            paths.len() > 100,
+            "a narrowed or empty sweep is not coverage"
+        );
+        for path in paths {
+            let text = std::fs::read_to_string(&path).expect("read live prompt text");
+            for retired in [
+                "kanban_goal_score",
+                "kanban_goal_memory_acknowledge",
+                "brier_interpretation",
+                "calibration_note",
+                "excellent < 0.05",
+                "inverse-Brier weighting).",
+                "assessor cannot fetch evidence",
+                "assessor has no evidence-fetch",
+                "no evidence-fetch tools and must report unknown",
+                "overconfidence_score",
+                "MachineArtifactDigest",
+                "MachineEvidence",
+                "machine_artifact_access",
+                "machine_artifact_digest",
+                "goal_archive_legacy",
+                "goal_observe_machine_artifact_digest",
+                "goal_refresh_forecast",
+                "goal_pending_work",
+                "goal_claim_assessment",
+                "goal_complete_assessment",
+                "goal_fail_assessment",
+                "goal_mark_projection_delivered",
+                "projection:{event_id}",
+                "GoalProjectionReceipt",
+                "LegacyGoalArchive",
+                "machine_artifact_observation",
+            ] {
+                assert!(
+                    !text.contains(retired),
+                    "{} still advertises {retired}",
+                    path.display()
+                );
+            }
+        }
+        let governance =
+            std::fs::read_to_string(root.join(".agents/skills/program-manager/SKILL.md"))
+                .expect("read canonical skill governance")
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+        for requirement in [
+            "interaction_id",
+            "spec_digest",
+            "GOAL_INTERFACE.md",
+            "HumanAcceptance",
+            "forecast",
+            "worker `done` is not human acceptance",
+            "not scoring administration",
+        ] {
+            assert!(
+                governance.contains(requirement),
+                "goal governance missing {requirement}"
+            );
+        }
+        let forecasting =
+            std::fs::read_to_string(root.join(".agents/skills/superforecasting/SKILL.md"))
+                .expect("read forecasting protocol");
+        for requirement in [
+            "scenario_declare",
+            "resolution_at",
+            "one synced journal event",
+            "after cutoff",
+            "date-only",
+            "resolver",
+            "Murphy (1973)",
+            "not calibration",
+            "same cases",
+            "undefined",
+        ] {
+            assert!(
+                forecasting.contains(requirement),
+                "forecast guidance missing {requirement}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_goal_prompt_discloses_local_read_consent_and_narrow_source_authority() {
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["kanban_goal_create".into(), "kanban_goal_close".into()],
+            model_name: None,
+            date: "2026-10-20".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+            mcp_tools_hidden: 0,
+        };
+        let rendered = template
+            .render(&Templates::new())
+            .expect("render consent-aware goal prompt");
+        for requirement in [
+            "exact paths/hashes",
+            "configured assessor",
+            "semantic-indexing provider",
+            "16 local artifacts",
+            "64 KiB",
+            "256 KiB",
+            "nofollow regular files",
+            "frozen before inference",
+            "without a model call",
+            "only through HumanAcceptance",
+            "original\nhuman closure time",
+            "unknown stays unscored",
+            "not scoring administration",
+            "one current recall record",
+            "indexed_revision",
+            "GOAL_INTERFACE.md",
+            "PermissionGrant",
+            "concrete offered option ID",
+            "that claimed tests ran",
+        ] {
+            assert!(
+                rendered.contains(requirement),
+                "missing native consent/source limit: {requirement}"
+            );
+        }
+        assert!(!rendered.contains("assessor cannot fetch evidence"));
+    }
+
+    #[test]
+    fn test_goal_prompt_does_not_advertise_native_decisions_without_tools() {
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["kanban_goal_create".into(), "kanban_goal_judge".into()],
+            model_name: None,
+            date: "2026-10-20".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+            mcp_tools_hidden: 0,
+        };
+        let rendered = template
+            .render(&Templates::new())
+            .expect("render create-only goal prompt");
+        assert!(rendered.contains("Move 1 → `kanban_goal_create`"));
+        assert!(!rendered.contains("Move 4 → `kanban_goal_close`"));
+        assert!(!rendered.contains("Correction → `kanban_goal_correct_outcome`"));
+        assert!(!rendered.contains("kanban_goal_score"));
+        assert!(rendered.contains("Ordinary goals omit `forecast`"));
+    }
+
+    #[test]
+    fn test_system_prompt_omits_goal_tool_wiring_when_tools_unavailable() {
+        // The conditional-section principle (skills-and-composition.md
+        // §3.1): the model is never told about a capability it does not
+        // have. Without the kata-kanban server, the wiring text must vanish
+        // — advertising tools that aren't callable degrades to "tool not
+        // found" at dispatch.
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: None,
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+            mcp_tools_hidden: 0,
+        };
+        let rendered = template.render(&Templates::new()).unwrap();
+        assert!(
+            !rendered.contains("run the loop on the native system"),
+            "the goal-tool wiring must be absent when the tools are not available"
+        );
+        // The four moves themselves are unconditional — the loop survives
+        // without the tools.
+        assert!(rendered.contains("Point at the same target"));
+    }
+
+    #[test]
+    fn test_system_prompt_mermaid_list_uses_renderer_directives() {
+        // Supersedes an earlier test that asserted `kanban` was NOT a mermaid
+        // type. That was wrong: `kanban` is in the renderer's allowlist
+        // (`markdown::mermaid::SUPPORTED_PREFIXES`) and
+        // `test_beta_suffixed_diagram_types_are_extracted` proves merman
+        // extracts it. `kanban` is BOTH a mermaid directive and, separately, a
+        // D18 fenced-block widget tag — the prompt must distinguish the two
+        // rather than deny the mermaid form.
+        //
+        // The prompt must also name the `-beta` directives merman actually
+        // requires; advertising bare `sankey`/`xychart` produced diagrams the
+        // renderer silently dropped. The exhaustive prompt-vs-allowlist check
+        // lives in `markdown`, next to the constant
+        // (`test_system_prompt_advertises_every_supported_diagram_type`).
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: None,
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+            mcp_tools_hidden: 0,
+        };
+        let rendered = template.render(&Templates::new()).unwrap();
+        for directive in [
+            "sankey-beta",
+            "xychart-beta",
+            "architecture-beta",
+            "radar-beta",
+        ] {
+            assert!(
+                rendered.contains(directive),
+                "prompt must advertise the `{directive}` directive merman requires"
+            );
+        }
+        assert!(
+            rendered.contains("kanban"),
+            "`kanban` is a supported mermaid directive and must be advertised"
+        );
+        assert!(
+            rendered.contains("kask viz widgets, not mermaid"),
+            "D18 widget blocks must be distinguished from mermaid diagrams"
+        );
     }
 
     #[test]
@@ -128,6 +965,7 @@ mod tests {
             rules_file: Some(RulesFileContext {
                 path_in_worktree: RelPath::from_unix_str("AGENTS.md").unwrap().into(),
                 text: "project-specific guidance".to_string(),
+                frontmatter: None,
                 project_entry_id: 1,
             }),
         }];
@@ -138,9 +976,11 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: Some("always be concise".into()),
+            static_context: None,
             sandboxing: false,
             is_linux: false,
             is_windows: false,
+            mcp_tools_hidden: 0,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -167,9 +1007,11 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            static_context: None,
             sandboxing: false,
             is_linux: false,
             is_windows: false,
+            mcp_tools_hidden: 0,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -200,9 +1042,11 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            static_context: None,
             sandboxing: true,
             is_linux: false,
             is_windows: false,
+            mcp_tools_hidden: 0,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -243,9 +1087,11 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            static_context: None,
             sandboxing: true,
             is_linux: true,
             is_windows: false,
+            mcp_tools_hidden: 0,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -276,9 +1122,11 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            static_context: None,
             sandboxing: true,
             is_linux: false,
             is_windows: true,
+            mcp_tools_hidden: 0,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -306,9 +1154,11 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            static_context: None,
             sandboxing: true,
             is_linux: false,
             is_windows: false,
+            mcp_tools_hidden: 0,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -328,9 +1178,11 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            static_context: None,
             sandboxing: true,
             is_linux: false,
             is_windows: false,
+            mcp_tools_hidden: 0,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -348,9 +1200,11 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            static_context: None,
             sandboxing: false,
             is_linux: false,
             is_windows: false,
+            mcp_tools_hidden: 0,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -366,14 +1220,160 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            static_context: None,
             sandboxing: false,
             is_linux: false,
             is_windows: false,
+            mcp_tools_hidden: 0,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
 
         assert!(!rendered.contains("The user has specified the following rules"));
         assert!(!rendered.contains("Rules title:"));
+    }
+
+    // The Agent Skills section follows upstream Zed: skills are markdown
+    // bodies the model retrieves and follows. This test pins the upstream
+    // wording so the D1 manifest-cascade text cannot silently regress.
+    #[test]
+    fn test_system_prompt_skills_section_describes_body_retrieval() {
+        use agent_skills::SkillSummary;
+        use prompt_store::ProjectContext;
+
+        let summary = SkillSummary {
+            name: "skill-maintenance".to_string(),
+            description: "Skill lifecycle management.".to_string(),
+            location: "/skills/skill-maintenance/SKILL.md".to_string(),
+        };
+        let project = ProjectContext::new(vec![]).with_skills(vec![summary]);
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["skill".into()],
+            model_name: Some("test-model".to_string()),
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+            mcp_tools_hidden: 0,
+        };
+        let templates = Templates::new();
+        let rendered = template.render(&templates).unwrap();
+
+        assert!(
+            rendered.contains("use the `skill` tool to retrieve the full instructions"),
+            "skills section must describe body retrieval"
+        );
+        assert!(
+            rendered.contains(
+                "If the Skill references additional files, use `read_file` to access them"
+            ),
+            "skills section must instruct reading additional files"
+        );
+
+        // The D1 manifest-cascade wording must be gone.
+        assert!(
+            !rendered.contains("PDCA (Plan-Do-Check-Act) cascade of Jinja2 templates"),
+            "D1 manifest-cascade phrasing must be removed"
+        );
+        assert!(
+            !rendered.contains("gas/rjoule budgets"),
+            "D1 gas/rjoule mention must be removed"
+        );
+        assert!(
+            !rendered.contains("discovery-only catalog entry"),
+            "D1 discovery-only label must be removed"
+        );
+
+        // The catalog itself is still rendered.
+        assert!(
+            rendered.contains("<name>skill-maintenance</name>"),
+            "available_skills catalog must still list the skill by name"
+        );
+    }
+
+    use crate::curator_agent_server::CURATOR_STATIC_CONTEXT;
+
+    // D2 standing obligation: an overlay that advertises tool names must pin
+    // them against the tools' actual NAME constants — a rename would degrade
+    // to "tool not found" at dispatch. Every `\`curator_*\` tool` mention in
+    // CURATOR_STATIC_CONTEXT must be a registered Curator tool's NAME.
+    #[test]
+    fn test_curator_overlay_advertises_only_registered_tool_names() {
+        use crate::thread::AgentTool;
+        use crate::tools::{CuratorClearAlgedonicLogTool, CuratorDirectiveTool, CuratorStatusTool};
+        const NAMES: &[&str] = &[
+            <CuratorStatusTool as AgentTool>::NAME,
+            <CuratorDirectiveTool as AgentTool>::NAME,
+            <CuratorClearAlgedonicLogTool as AgentTool>::NAME,
+        ];
+
+        // Extract every backtick token from the overlay — the base context and
+        // each interaction-mode block it is composed with — that looks like a
+        // curator tool reference (`curator_...`).
+        let overlay = [
+            settings::CuratorInteractionMode::Control,
+            settings::CuratorInteractionMode::Collaboration,
+            settings::CuratorInteractionMode::LearningCollaboration,
+        ]
+        .into_iter()
+        .map(crate::curator_agent_server::interaction_mode_context)
+        .fold(CURATOR_STATIC_CONTEXT.to_string(), |acc, mode| acc + mode);
+        assert!(
+            overlay.contains("`memory_insert`")
+                && crate::curator_agent_server::interaction_mode_context(
+                    settings::CuratorInteractionMode::LearningCollaboration
+                )
+                .contains("`memory_insert`"),
+            "the Level 3 block routes lessons to `memory_insert`"
+        );
+        let mut advertised: Vec<&str> = Vec::new();
+        for segment in overlay.split('`') {
+            let token = segment.trim();
+            if token.starts_with("curator_")
+                && token.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+            {
+                advertised.push(token);
+            }
+        }
+        assert!(
+            !advertised.is_empty(),
+            "CURATOR_STATIC_CONTEXT must advertise at least one curator tool"
+        );
+
+        // Curator-MCP tools the overlay routes to (the learning loop) are
+        // checked against the curator server's source at test time, so a
+        // rename or removal there breaks this pin instead of the loop.
+        let curator_server_src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs"
+        ))
+        .expect("curator MCP server source");
+        let mcp_registered = |name: &str| {
+            curator_server_src.contains(&format!("pub async fn {name}("))
+                || curator_server_src.contains(&format!("execute_tool(self, \"{name}\""))
+        };
+        assert!(
+            CURATOR_STATIC_CONTEXT.contains("`memory_insert`"),
+            "the overlay's learning loop must route lessons to `memory_insert`"
+        );
+        assert!(
+            mcp_registered("memory_insert"),
+            "CURATOR_STATIC_CONTEXT advertises `memory_insert` but the curator MCP \
+             server no longer registers it"
+        );
+
+        for token in advertised {
+            if mcp_registered(token) {
+                continue;
+            }
+            assert!(
+                NAMES.contains(&token),
+                "CURATOR_STATIC_CONTEXT advertises `{token}` but no Curator tool \
+                 registers that NAME — update the overlay or the tool together"
+            );
+        }
     }
 }

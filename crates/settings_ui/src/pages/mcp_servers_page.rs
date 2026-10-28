@@ -40,6 +40,11 @@ pub(crate) fn render_mcp_servers_page(
         render_no_project_state(cx)
     };
 
+    // zed-kask: D45 — the kask managed servers are app-global (governed
+    // runtime, not the per-project store), so they render regardless of
+    // whether a project is open.
+    let kask_section = render_kask_managed_servers_section(cx);
+
     let timeout_setting = render_context_server_timeout(settings_window, window, cx);
 
     v_flex()
@@ -64,6 +69,7 @@ pub(crate) fn render_mcp_servers_page(
                 .child(server_list)
                 .child(Divider::horizontal()),
         )
+        .child(kask_section)
         .child(timeout_setting)
         .into_any_element()
 }
@@ -146,6 +152,208 @@ fn render_server_list(
             || Divider::horizontal_dashed().into_any_element(),
         ))
         .into_any_element()
+}
+
+// ── zed-kask: Kask Managed Servers (D45) ──────────────────────────────────────
+//
+// The built-in kask MCP servers are owned by the governed `McpRuntime`
+// (single spawn authority — they are deliberately NOT in the per-project
+// `ContextServerStore` this page reads for "Configured Servers"), so they
+// render here from `BUILT_IN_MCP_SERVERS` + the `kask.mcp` settings instead.
+// The process-global `KaskToolSource` supplies discovered tools and a
+// non-blocking live-connection snapshot. Discovery alone cannot make a row
+// Running; a missing health reading remains Unknown. The toggle writes the
+// same `kask.mcp.overrides` key the Kask settings page writes; the `SettingsStore` observer
+// (`sync_kask_mcp_runtime_servers`) then starts/stops the governed server
+// through the runtime's own primitives, preserving the self-healing
+// semantics (a stopped server is not resurrected; a started one gets
+// retry/backoff + the health supervisor).
+
+/// The load state of a kask managed server — the same expression the
+/// deferred launch loop and the settings-change observer use
+/// (`kask.mcp.load_default` + per-server override, defaulting to loaded).
+fn kask_server_loaded(mcp: &kask_bridge::KaskMcpSettings, server_id: &str) -> bool {
+    mcp.load_default && *mcp.overrides.get(server_id).unwrap_or(&true)
+}
+
+/// `Running` requires both a discovered tool and a live transport. An
+/// unavailable snapshot (e.g. a busy runtime lock) is Unknown, not healthy.
+fn kask_managed_server_status(
+    loaded: bool,
+    live_tool_count: usize,
+    connected: Option<bool>,
+) -> AiSettingItemStatus {
+    if !loaded {
+        AiSettingItemStatus::Stopped
+    } else if live_tool_count > 0 && connected == Some(true) {
+        AiSettingItemStatus::Running
+    } else {
+        AiSettingItemStatus::Unknown
+    }
+}
+
+/// Group the live kask tool surface into per-server tool counts, so each
+/// row can show "N tools" like the configured-server rows do.
+fn kask_tool_counts_from_descriptors(
+    descriptors: Vec<agent::KaskToolDescriptor>,
+) -> HashMap<String, usize> {
+    let mut counts: HashMap<String, usize> = HashMap::default();
+    for descriptor in descriptors {
+        *counts.entry(descriptor.server_id).or_insert(0) += 1;
+    }
+    counts
+}
+
+/// One source supplies both the discovered surface and the live reading.
+/// Missing source or contended runtime state leaves liveness unknown.
+fn kask_server_snapshot() -> (HashMap<String, usize>, Option<Vec<String>>) {
+    match agent::kask_tool_source() {
+        Some(source) => (
+            kask_tool_counts_from_descriptors(source.tools()),
+            source.running_server_ids_now(),
+        ),
+        None => (HashMap::default(), None),
+    }
+}
+
+fn render_kask_managed_servers_section(cx: &App) -> AnyElement {
+    // Resolve via `From` so the UI shows the same defaults the runtime uses
+    // (the same resolution pattern as the Kask settings page).
+    let mcp: kask_bridge::KaskMcpSettings = super::kask_page::raw_kask_settings(cx)
+        .and_then(|content| content.mcp)
+        .map(Into::into)
+        .unwrap_or_default();
+    let (live_tool_counts, running_server_ids) = kask_server_snapshot();
+
+    let mut server_rows: Vec<AnyElement> = Vec::new();
+    for server in kask_bridge::BUILT_IN_MCP_SERVERS {
+        let loaded = kask_server_loaded(&mcp, server.id);
+        let live_tool_count = live_tool_counts.get(server.id).copied().unwrap_or(0);
+        let connected = running_server_ids
+            .as_ref()
+            .map(|ids| ids.iter().any(|id| id == server.id));
+        server_rows.push(
+            render_kask_managed_server(server, loaded, live_tool_count, connected)
+                .into_any_element(),
+        );
+    }
+
+    v_flex()
+        .w_full()
+        .px_8()
+        .gap_2()
+        .child(
+            v_flex().child(Label::new("Kask Managed Servers")).child(
+                Label::new(
+                    "Built-in kask MCP servers, launched and governed by the kask \
+                         runtime — registered tools appear in the agent when available. \
+                         Toggle a server to load or unload it; the change takes effect immediately.",
+                )
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+            ),
+        )
+        .when(!mcp.load_default, |this| {
+            this.child(
+                h_flex()
+                    .py_1()
+                    .gap_1()
+                    .child(
+                        Icon::new(IconName::Info)
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new(
+                            "The master \"Load Default MCP Servers\" toggle is off — no kask \
+                             servers are loaded. Enable it under Settings → Kask → MCP Servers.",
+                        )
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                    ),
+            )
+        })
+        .child(
+            v_flex()
+                .w_full()
+                .gap_1()
+                .children(itertools::intersperse_with(server_rows, || {
+                    Divider::horizontal_dashed().into_any_element()
+                })),
+        )
+        .child(Divider::horizontal())
+        .into_any_element()
+}
+
+fn render_kask_managed_server(
+    server: &'static kask_bridge::BuiltinMcpServer,
+    loaded: bool,
+    live_tool_count: usize,
+    connected: Option<bool>,
+) -> impl IntoElement {
+    let status = kask_managed_server_status(loaded, live_tool_count, connected);
+    let tool_label = match status {
+        AiSettingItemStatus::Running if live_tool_count == 1 => Some(SharedString::from("1 tool")),
+        AiSettingItemStatus::Running => {
+            Some(SharedString::from(format!("{live_tool_count} tools")))
+        }
+        _ => None,
+    };
+
+    AiSettingItem::new(
+        SharedString::from(format!("kask-mcp-{}", server.id)),
+        server.id,
+        status,
+        AiSettingItemSource::BuiltIn,
+    )
+    .action(render_kask_server_toggle(server.id, loaded))
+    .when_some(tool_label, |this, label| this.detail_label(label))
+    .details(
+        h_flex()
+            .py_1()
+            .min_w_0()
+            .w_full()
+            .gap_2()
+            .child(div().size_3().flex_shrink_0())
+            .child(
+                Label::new(server.description)
+                    .color(Color::Muted)
+                    .size(LabelSize::Small),
+            ),
+    )
+}
+
+fn render_kask_server_toggle(server_id: &'static str, loaded: bool) -> impl IntoElement {
+    let server_id_for_write = server_id.to_string();
+    Switch::new(
+        SharedString::from(format!("kask-mcp-toggle-{server_id}")),
+        if loaded {
+            ToggleState::Selected
+        } else {
+            ToggleState::Unselected
+        },
+    )
+    .tab_index(0isize)
+    .on_click(move |state, _window, cx| {
+        let enabled = *state == ToggleState::Selected;
+        let fs = <dyn fs::Fs>::global(cx);
+        // The same `kask.mcp.overrides` write the Kask settings page performs.
+        // The `SettingsStore` observer (`sync_kask_mcp_runtime_servers` in
+        // `main.rs`) picks up the change and starts/stops the governed
+        // server through the runtime's own stop/start primitives.
+        settings::update_settings_file(fs, cx, {
+            let server_id = server_id_for_write.clone();
+            move |settings, _| {
+                settings
+                    .kask
+                    .get_or_insert_default()
+                    .mcp
+                    .get_or_insert_default()
+                    .overrides
+                    .insert(server_id, enabled);
+            }
+        });
+    })
 }
 
 fn render_context_server(
@@ -1392,6 +1600,75 @@ mod tests {
         assert!(parse_timeout("abc").is_err());
         assert!(parse_timeout("-5").is_err());
         assert!(parse_timeout("1.5").is_err());
+    }
+
+    // ── zed-kask: Kask Managed Servers pins (D45) ───────────────────────
+
+    /// A loaded server needs both discovered tools and a live connection.
+    #[test]
+    fn kask_managed_server_status_requires_liveness_and_discovery() {
+        assert_eq!(
+            kask_managed_server_status(false, 7, Some(true)),
+            AiSettingItemStatus::Stopped
+        );
+        assert_eq!(
+            kask_managed_server_status(true, 0, Some(true)),
+            AiSettingItemStatus::Unknown
+        );
+        assert_eq!(
+            kask_managed_server_status(true, 1, Some(false)),
+            AiSettingItemStatus::Unknown
+        );
+        assert_eq!(
+            kask_managed_server_status(true, 1, None),
+            AiSettingItemStatus::Unknown
+        );
+        assert_eq!(
+            kask_managed_server_status(true, 1, Some(true)),
+            AiSettingItemStatus::Running
+        );
+    }
+
+    /// The live tool surface groups by server id — the per-row "N tools"
+    /// label depends on every descriptor landing in its own server's bucket.
+    #[test]
+    fn kask_tool_counts_group_descriptors_by_server() {
+        let descriptor = |server_id: &str| agent::KaskToolDescriptor {
+            server_id: server_id.to_string(),
+            name: format!("{server_id}-tool"),
+            description: String::new(),
+            input_schema: serde_json::Value::Null,
+        };
+        let counts = kask_tool_counts_from_descriptors(vec![
+            descriptor("swarm"),
+            descriptor("swarm"),
+            descriptor("curator"),
+        ]);
+        assert_eq!(counts.get("swarm"), Some(&2));
+        assert_eq!(counts.get("curator"), Some(&1));
+        assert!(!counts.contains_key("media"));
+    }
+
+    /// The load expression must match the deferred launch loop and the
+    /// settings-change observer exactly (`load_default && override,
+    /// defaulting to true`) — a drift here makes the page's toggle disagree
+    /// with what actually runs.
+    #[test]
+    fn kask_server_loaded_follows_master_toggle_and_overrides() {
+        let mut mcp = kask_bridge::KaskMcpSettings::default();
+        mcp.load_default = true;
+        assert!(kask_server_loaded(&mcp, "swarm"));
+
+        mcp.overrides.insert("swarm".to_string(), false);
+        assert!(!kask_server_loaded(&mcp, "swarm"));
+        // Un-overridden servers stay loaded.
+        assert!(kask_server_loaded(&mcp, "curator"));
+
+        // The master toggle gates everything, including explicit `true`
+        // overrides (the same semantics as the Kask settings page).
+        mcp.overrides.insert("curator".to_string(), true);
+        mcp.load_default = false;
+        assert!(!kask_server_loaded(&mcp, "curator"));
     }
 
     #[test]

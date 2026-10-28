@@ -1407,6 +1407,17 @@ mod tests {
             // Interactive prompt: always asks the user via prompt_for_decision,
             // so it has no settings-driven permission rules.
             "ask_user",
+            // Native outcome decisions always require a fresh ActionChoice;
+            // configurable permission grants cannot supply a human judgment.
+            "kanban_goal_close",
+            "kanban_goal_correct_outcome",
+            // Read-only view of the single in-process metacognition provider;
+            // no directive or log-mutation authority follows from visibility.
+            "curator_status",
+            // Curator-only session tools (registered by NativeAgent::new_session
+            // for Curator sessions); the Curator role is their authorization.
+            "curator_directive",
+            "curator_clear_algedonic_log",
             "diagnostics",
             "find_path",
             "find_references",
@@ -1415,6 +1426,7 @@ mod tests {
             "grep",
             "list_agents_and_models",
             "list_directory",
+            "list_mcp_tools",
             "open",
             "read_file",
             "rename_symbol",
@@ -1426,6 +1438,31 @@ mod tests {
             // tool calls inside the spawned thread, not the spawning itself.
             "create_thread",
             "spawn_agent",
+            // skill_bundle delegates to the skill execution (same as skill);
+            // permission checks happen inside the composed cascade's tool calls.
+            "skill_bundle",
+            // run_pipeline executes a pipeline manifest via the same
+            // inference path as skill. No skill execution —
+            // is contained via find_project_path (same as ReadFileTool), and
+            // permission checks happen inside the cascade's tool calls.
+            "run_pipeline",
+            // Deterministic sandboxed computation — no I/O, no network, no
+            // side effects. No permission checks needed.
+            "lisp_eval",
+            // Executes local project code only after a mandatory per-call prompt,
+            // independent of configurable allow rules.
+            "lean_check",
+            // Read-only ontology resolution against fixture-pinned published
+            // vocabularies — no I/O, no side effects. No permission checks
+            // needed.
+            "onto_anchor",
+            // Reads a template file and renders it with Jinja2 — no side effects
+            // beyond reading a file the agent already has read access to.
+            "render_template",
+            // Records the operator's skill evaluation during the Curator's
+            // algedonic review — a regulation-archive record; no
+            // permission-relevant side effects.
+            "record_skill_feedback",
         ];
 
         let tool_info_ids: Vec<&str> = TOOLS.iter().map(|t| t.id).collect();

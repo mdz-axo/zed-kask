@@ -1170,6 +1170,12 @@ pub struct ToolCall {
     /// sandboxing was active (see [`SANDBOX_NOT_APPLIED_META_KEY`]). `None` when
     /// the command was sandboxed normally (or sandboxing was off).
     pub sandbox_not_applied: Option<SandboxNotAppliedReason>,
+    /// Real-time thinking trace from the tool's execution. Populated by skill
+    /// execution via `thinking_sender()` — each step appends its reasoning
+    /// here so the user sees a live thinking trace, not just a one-line
+    /// title. `None` when the tool call has no skill execution
+    /// (ordinary built-in tools like `read_file`).
+    pub thoughts: Option<Entity<Markdown>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1360,6 +1366,18 @@ impl ToolCallPatch {
 }
 
 impl ToolCall {
+    /// Append a thinking trace chunk to this tool call. Creates the `Markdown`
+    /// entity lazily on first append so ordinary tool calls pay no cost.
+    pub fn append_thinking(&mut self, text: &str, cx: &mut App) {
+        if text.is_empty() {
+            return;
+        }
+        let markdown = self
+            .thoughts
+            .get_or_insert_with(|| cx.new(|cx| Markdown::new_text(SharedString::default(), cx)));
+        markdown.update(cx, |md, cx| md.append(text, cx));
+    }
+
     fn from_acp(
         tool_call: acp_v1::ToolCall,
         status: Option<ToolCallStatus>,
@@ -1448,6 +1466,7 @@ impl ToolCall {
             sandbox_authorization_details,
             sandbox_fallback_authorization_details,
             sandbox_not_applied,
+            thoughts: None,
         };
         result.update_raw_output_content(&language_registry, cx);
         Ok(result)
@@ -3624,7 +3643,15 @@ struct StreamingTextBuffer {
 impl StreamingTextBuffer {
     /// The number of milliseconds between each timer tick, controlling how quickly
     /// text is revealed.
-    const TASK_UPDATE_MS: u64 = 16;
+    //
+    // zed-kask: increased from 16ms (60fps) to 50ms (20fps) to reduce render
+    // pressure on the GPUI foreground thread. At 60fps, the streaming text
+    // reveal timer saturates the foreground thread with Markdown re-renders,
+    // starving the BlinkManager's 500ms timer and causing irregular cursor
+    // flashing. 20fps is still smooth for text reveal (the human eye can't
+    // perceive text appearing at >20fps) but reduces render pressure by 3x.
+    // See DIVERGENCE.md D14.
+    const TASK_UPDATE_MS: u64 = 50;
     /// The time in milliseconds to reveal the entire pending text.
     const REVEAL_TARGET: f32 = 200.0;
 
@@ -5966,6 +5993,22 @@ impl AcpThread {
         Ok(())
     }
 
+    /// Append a thinking trace chunk to a tool call's `thoughts` buffer.
+    /// Called from `ThreadEvent::ToolCallThinking` — skill execution emits
+    /// these so the user sees a live thinking trace during long-running tool
+    /// calls, not just a one-line title.
+    pub fn append_tool_call_thinking(
+        &mut self,
+        tool_call_id: &acp_v2::ToolCallId,
+        text: &str,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some((ix, call)) = self.tool_call_mut(tool_call_id) {
+            call.append_thinking(text, cx);
+            cx.emit(AcpThreadEvent::EntryUpdated(ix));
+        }
+    }
+
     /// Updates a tool call if id matches an existing entry, otherwise inserts a new one.
     pub fn upsert_tool_call(
         &mut self,
@@ -7820,6 +7863,9 @@ impl AcpThread {
                 #[cfg(not(target_os = "windows"))]
                 let (task_command, task_args, task_env, sandbox, spawn_cwd) = {
                     let mut builder = ShellBuilder::new(&Shell::Program(shell), is_windows);
+                    // zed-kask: D27 — upstream adopted the non-interactive sandboxed
+                    // shell (linux-gated; zed-kask is linux-only per D7). Failure
+                    // rationale: DIVERGENCE.md D27. Pin: test_sandboxed_terminal_runs_non_interactively.
                     if headless || (cfg!(target_os = "linux") && sandbox_wrap.is_some()) {
                         builder = builder.non_interactive();
                     }
@@ -22154,6 +22200,58 @@ mod tests {
             thread.read_with(cx, |t, _| t.status()),
             ThreadStatus::Idle,
             "running_turn must be cleared even when tx was dropped without send"
+        );
+    }
+
+    /// D14: the streaming text reveal timer interval must be 50ms, not the
+    /// upstream 16ms. At 16ms (60fps) the timer saturates the GPUI foreground
+    /// thread with Markdown re-renders during streaming, starving the
+    /// BlinkManager's 500ms timer and causing irregular cursor flashing.
+    /// 50ms (20fps) is still smooth for text reveal but reduces render
+    /// pressure by 3x.
+    #[test]
+    fn test_streaming_reveal_timer_interval_kask_contract() {
+        assert_eq!(
+            StreamingTextBuffer::TASK_UPDATE_MS,
+            50,
+            "D14: TASK_UPDATE_MS must be 50ms (20fps), not upstream's 16ms (60fps). \
+             See DIVERGENCE.md D14."
+        );
+    }
+
+    /// D27: sandboxed terminal commands must run non-interactively. The sandbox
+    /// creates a new session (setsid) with no controlling terminal and stdin
+    /// redirected to /dev/null. An interactive shell (-i) tries to set the tty
+    /// process group, fails with "Cannot set tty process group (No such
+    /// process)", and exits with code 2 — making every sandboxed terminal
+    /// command appear to fail even when the command itself succeeds. This test
+    /// pins the ShellBuilder contract: non_interactive() omits the -i flag that
+    /// interactive mode would pass.
+    #[test]
+    fn test_sandboxed_terminal_runs_non_interactively() {
+        let shell = Shell::Program("/bin/sh".to_string());
+
+        // Interactive (upstream default for non-headless GUI): -i flag present.
+        let (program, args) = ShellBuilder::new(&shell, false)
+            .redirect_stdin_to_dev_null()
+            .build(Some("echo hello".to_string()), &[]);
+        assert_eq!(program, "/bin/sh");
+        assert!(
+            args.contains(&"-i".to_string()),
+            "interactive shell must pass -i (upstream default for non-headless GUI)"
+        );
+
+        // Non-interactive (zed-kask sandboxed path): no -i flag.
+        let (program, args) = ShellBuilder::new(&shell, false)
+            .non_interactive()
+            .redirect_stdin_to_dev_null()
+            .build(Some("echo hello".to_string()), &[]);
+        assert_eq!(program, "/bin/sh");
+        assert!(
+            !args.contains(&"-i".to_string()),
+            "D27: sandboxed terminal must not pass -i — the sandbox has no \
+             controlling terminal, so -i causes \"Cannot set tty process group\" \
+             and exit code 2. See DIVERGENCE.md D27."
         );
     }
 

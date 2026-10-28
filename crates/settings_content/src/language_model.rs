@@ -24,6 +24,7 @@ pub struct AllLanguageModelSettingsContent {
     pub open_router: Option<OpenRouterSettingsContent>,
     pub openai: Option<OpenAiSettingsContent>,
     pub openai_compatible: Option<HashMap<Arc<str>, OpenAiCompatibleSettingsContent>>,
+    pub runpod: Option<RunpodSettingsContent>,
     pub vercel_ai_gateway: Option<VercelAiGatewaySettingsContent>,
     pub x_ai: Option<XAiSettingsContent>,
     #[serde(rename = "zed.dev")]
@@ -369,6 +370,55 @@ pub struct DeepseekAvailableModel {
     pub max_output_tokens: Option<u64>,
 }
 
+/// zed-kask: RunPod serverless endpoint provider settings.
+///
+/// RunPod serverless endpoints with vLLM expose OpenAI-compatible APIs.
+/// Each endpoint has its own URL (`/v2/{endpoint_id}/openai/v1`), so the
+/// provider discovers endpoints via the RunPod GraphQL API and registers
+/// each as a model. Statically configured `available_models` are also
+/// supported for endpoints that should not be auto-discovered.
+#[with_fallible_options]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub struct RunpodSettingsContent {
+    /// Base URL for the RunPod API. Defaults to `https://api.runpod.io`.
+    pub api_url: Option<String>,
+    /// Whether to auto-discover serverless endpoints via the RunPod GraphQL API.
+    /// Defaults to `true`. The API key's presence is the effective opt-in.
+    pub auto_discover: Option<bool>,
+    /// Statically configured endpoints, in addition to discovered ones.
+    pub available_models: Option<Vec<RunpodAvailableModel>>,
+    pub custom_headers: Option<HashMap<String, String>>,
+}
+
+/// A RunPod serverless endpoint configured as an available model.
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct RunpodAvailableModel {
+    /// The endpoint name (used as the model id and `LanguageModel::name()`).
+    pub name: String,
+    /// Optional display name override. Defaults to the endpoint name.
+    pub display_name: Option<String>,
+    /// The RunPod serverless endpoint ID (e.g. `hsldzov6932wf5`).
+    pub endpoint_id: String,
+    /// Maximum context length in tokens.
+    pub max_tokens: u64,
+    /// Maximum output tokens. If `None`, uses the provider default.
+    pub max_output_tokens: Option<u64>,
+    /// Whether this endpoint supports vision/image input.
+    #[serde(default)]
+    pub supports_images: bool,
+    /// The model name to send in the OpenAI `model` field of inference
+    /// requests. vLLM matches this case-sensitively against its served ids.
+    /// For discovered endpoints, this is resolved from the endpoint's own
+    /// OpenAI-compatible `/v1/models` listing (the authoritative served id —
+    /// it can differ from the `MODEL_NAME` env var, e.g. lowercased), falling
+    /// back to `MODEL_NAME` when the listing is unreachable. If `None`,
+    /// defaults to the endpoint `name` — which works when the endpoint is
+    /// configured with `--served-model-name` equal to the endpoint name, but
+    /// may cause 400/404 from vLLM otherwise.
+    pub served_model_name: Option<String>,
+}
+
 #[with_fallible_options]
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct MistralSettingsContent {
@@ -425,6 +475,18 @@ pub struct OpenAiCompatibleSettingsContent {
     pub api_url: String,
     pub available_models: Vec<OpenAiCompatibleAvailableModel>,
     pub custom_headers: Option<HashMap<String, String>>,
+    /// Whether to auto-discover models via the provider's `/v1/models` endpoint.
+    /// When `true` (the default), the provider fetches its model list on
+    /// authentication and merges the result with `available_models`. The API
+    /// key's presence is the effective opt-in — discovery only runs once the
+    /// user has authenticated. Set to `false` to use only the statically
+    /// configured `available_models`.
+    #[serde(default = "default_auto_discover")]
+    pub auto_discover: bool,
+}
+
+fn default_auto_discover() -> bool {
+    true
 }
 
 #[with_fallible_options]

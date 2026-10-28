@@ -469,6 +469,7 @@ fn convert_usage(usage: &UsageMetadata) -> TokenUsage {
         output_tokens,
         cache_read_input_tokens: cached_tokens,
         cache_creation_input_tokens: 0,
+        cost: None,
     }
 }
 
@@ -833,6 +834,8 @@ mod tests {
                 output_tokens: 107,
                 cache_read_input_tokens: 30436,
                 cache_creation_input_tokens: 0,
+                // zed-kask: D20 — observed per-call USD cost (None on the wire).
+                cost: None,
             }]
         );
     }

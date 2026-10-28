@@ -97,4 +97,11 @@ impl Tokio {
     pub fn handle(cx: &App) -> tokio::runtime::Handle {
         GlobalTokio::global(cx).handle.clone()
     }
+
+    /// Get the tokio runtime handle from any `AppContext` (e.g. `AsyncApp`).
+    /// Use this from inside `cx.spawn(async move |cx| ...)` where `cx` is
+    /// `&mut AsyncApp`, not `&App`.
+    pub fn handle_async<C: AppContext>(cx: &C) -> tokio::runtime::Handle {
+        cx.read_global(|tokio: &GlobalTokio, _| tokio.handle.clone())
+    }
 }

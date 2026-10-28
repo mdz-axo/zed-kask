@@ -23,7 +23,7 @@ use util::markdown::MarkdownInlineCode;
 /// If the source and destination directories are the same, but the filename is different, this performs a rename. Otherwise, it performs a move.
 ///
 /// This tool should be used when it's desirable to move or rename a file or directory without changing its contents at all.
-/// The only supported paths outside the project are descendants of `~/.agents/skills`, for global agent skills.
+/// The only supported paths outside the project are descendants of the global skills directory, for global agent skills.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct MovePathToolInput {
     /// The source path of the file or directory to move/rename.
@@ -328,9 +328,7 @@ mod tests {
         cx.executor().run_until_parked();
 
         let tool = Arc::new(MovePathTool::new(project));
-        let input_path = PathBuf::from("~")
-            .join(".agents")
-            .join("skills")
+        let input_path = agent_skills::global_skills_dir()
             .join("my-skill")
             .to_string_lossy()
             .into_owned();
@@ -399,9 +397,7 @@ mod tests {
         cx.executor().run_until_parked();
 
         let tool = Arc::new(MovePathTool::new(project));
-        let destination_path = PathBuf::from("~")
-            .join(".agents")
-            .join("skills")
+        let destination_path = agent_skills::global_skills_dir()
             .join("exported-skill")
             .to_string_lossy()
             .into_owned();

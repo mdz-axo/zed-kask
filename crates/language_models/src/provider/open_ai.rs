@@ -396,7 +396,7 @@ impl LanguageModelClient for OpenAiLanguageModelProvider {
             request.speed = None;
         }
         if config.uses_responses_api() {
-            normalize_open_ai_response_thinking_effort(&mut request, &config);
+            normalize_open_ai_response_reasoning_effort(&mut request, &config);
             let request = match into_open_ai_response(
                 request,
                 config.id(),
@@ -404,9 +404,6 @@ impl LanguageModelClient for OpenAiLanguageModelProvider {
                 config.supports_prompt_cache_key(),
                 config.max_output_tokens(),
                 default_thinking_reasoning_effort(&config),
-                config
-                    .supported_reasoning_efforts()
-                    .contains(&open_ai::ReasoningEffort::None),
                 &OPEN_AI_PROVIDER_ID,
             ) {
                 Ok(request) => request,
@@ -463,7 +460,7 @@ impl LanguageModelClient for OpenAiLanguageModelProvider {
         if !config.uses_responses_api() {
             return async { Ok(None) }.boxed();
         }
-        normalize_open_ai_response_thinking_effort(&mut request, &config);
+        normalize_open_ai_response_reasoning_effort(&mut request, &config);
         let request = into_open_ai_response(
             request,
             config.id(),
@@ -471,9 +468,6 @@ impl LanguageModelClient for OpenAiLanguageModelProvider {
             config.supports_prompt_cache_key(),
             config.max_output_tokens(),
             default_thinking_reasoning_effort(&config),
-            config
-                .supported_reasoning_efforts()
-                .contains(&open_ai::ReasoningEffort::None),
             &OPEN_AI_PROVIDER_ID,
         );
         let http_client = self.http_client.clone();
@@ -525,7 +519,7 @@ impl LanguageModelClient for OpenAiLanguageModelProvider {
             .boxed();
         }
 
-        normalize_open_ai_response_thinking_effort(&mut request, &config);
+        normalize_open_ai_response_reasoning_effort(&mut request, &config);
         let request = match into_open_ai_response(
             request,
             config.id(),
@@ -533,9 +527,6 @@ impl LanguageModelClient for OpenAiLanguageModelProvider {
             config.supports_prompt_cache_key(),
             config.max_output_tokens(),
             default_thinking_reasoning_effort(&config),
-            config
-                .supported_reasoning_efforts()
-                .contains(&open_ai::ReasoningEffort::None),
             &OPEN_AI_PROVIDER_ID,
         ) {
             Ok(request) => request,
@@ -578,7 +569,7 @@ fn open_ai_reasoning_effort_is_supported(effort: open_ai::ReasoningEffort) -> bo
     effort != open_ai::ReasoningEffort::None
 }
 
-fn normalize_open_ai_response_thinking_effort(
+fn normalize_open_ai_response_reasoning_effort(
     request: &mut LanguageModelRequest,
     model: &open_ai::Model,
 ) {
@@ -596,7 +587,7 @@ fn normalize_open_ai_response_thinking_effort(
     }
 }
 
-fn supports_selectable_thinking_effort(model: &open_ai::Model) -> bool {
+fn supports_selectable_reasoning_effort(model: &open_ai::Model) -> bool {
     model.uses_responses_api()
         && model
             .supported_reasoning_efforts()
@@ -604,8 +595,8 @@ fn supports_selectable_thinking_effort(model: &open_ai::Model) -> bool {
             .any(|effort| open_ai_reasoning_effort_is_supported(*effort))
 }
 
-fn supported_thinking_effort_levels(model: &open_ai::Model) -> Vec<LanguageModelEffortLevel> {
-    if !supports_selectable_thinking_effort(model) {
+fn supported_reasoning_effort_levels(model: &open_ai::Model) -> Vec<LanguageModelEffortLevel> {
+    if !supports_selectable_reasoning_effort(model) {
         return Vec::new();
     }
 
@@ -634,8 +625,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn supported_thinking_effort_levels_hide_none() {
-        let effort_levels = supported_thinking_effort_levels(&open_ai::Model::FivePointTwo);
+    fn supported_reasoning_effort_levels_hide_none() {
+        let effort_levels = supported_reasoning_effort_levels(&open_ai::Model::FivePointTwo);
         let values = effort_levels
             .iter()
             .map(|level| level.value.as_ref())
@@ -652,7 +643,7 @@ mod tests {
     }
 
     #[test]
-    fn models_supporting_only_none_have_no_selectable_thinking_effort() {
+    fn models_supporting_only_none_have_no_selectable_reasoning_effort() {
         let model = open_ai::Model::Custom {
             name: "custom-model".to_string(),
             display_name: None,
@@ -664,8 +655,8 @@ mod tests {
             supports_images: true,
         };
 
-        assert!(!supports_selectable_thinking_effort(&model));
-        assert!(supported_thinking_effort_levels(&model).is_empty());
+        assert!(!supports_selectable_reasoning_effort(&model));
+        assert!(supported_reasoning_effort_levels(&model).is_empty());
         assert!(
             model
                 .supported_reasoning_efforts()
@@ -708,11 +699,11 @@ fn language_model(model: &open_ai::Model) -> LanguageModel {
         supports_images,
         tool_choice_support: LanguageModelToolChoiceSupport::ALL,
         supports_streaming_tools: true,
-        supports_thinking: supports_selectable_thinking_effort(model),
+        supports_thinking: supports_selectable_reasoning_effort(model),
         supports_fast_mode: model.supports_priority(),
         supports_server_side_compaction: model.supports_compaction(),
         supports_explicit_compaction: model.supports_compaction(),
-        supported_effort_levels: supported_thinking_effort_levels(model).into(),
+        supported_effort_levels: supported_reasoning_effort_levels(model).into(),
         supports_split_token_display: true,
         max_output_tokens: model.max_output_tokens(),
         ..LanguageModel::new(

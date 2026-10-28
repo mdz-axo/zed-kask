@@ -541,9 +541,6 @@ fn codex_responses_request(
         model.supports_prompt_cache_key(),
         None,
         model.default_reasoning_effort(),
-        model
-            .supported_reasoning_efforts()
-            .contains(&ReasoningEffort::None),
         &PROVIDER_ID,
     )?;
     responses_request.store = Some(false);

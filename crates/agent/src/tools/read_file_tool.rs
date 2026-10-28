@@ -146,6 +146,7 @@ use super::tool_permissions::{
     resolve_global_skill_path, resolve_project_path,
 };
 use crate::{AgentTool, ToolCallEventStream, ToolInput, outline};
+use hkask_types::maybe_string::deserialize_optional_u32_from_maybe_string;
 
 /// Reads the content of the given file in the project.
 ///
@@ -155,13 +156,15 @@ use crate::{AgentTool, ToolCallEventStream, ToolInput, outline};
 ///   Do NOT retry reading the same file without line numbers if you receive an outline.
 /// - This tool supports reading image files. Supported formats: PNG, JPEG, WebP, GIF, BMP, TIFF.
 ///   Image files are returned as visual content that you can analyze directly.
+/// - A skill's `SKILL.md` cannot be read: it is a discovery-only catalog entry, and this tool
+///   refuses it. Invoke the `skill` tool instead. Other files inside a skill directory are readable.
 ///
-/// The only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.
+/// The only supported path outside the project is the global skills directory or a descendant, for global agent skills.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReadFileToolInput {
     /// The relative path of the file to read.
     ///
-    /// This path should never be absolute, and the first component of the path should always be a root directory in a project, unless it's a global agent skill under `~/.agents/skills`.
+    /// This path should never be absolute, and the first component of the path should always be a root directory in a project, unless it's a global agent skill under the global skills directory.
     ///
     /// <example>
     /// If the project has the following root directories:
@@ -174,14 +177,20 @@ pub struct ReadFileToolInput {
     /// </example>
     ///
     /// <example>
-    /// To read a global agent skill file, you may provide a path under `~/.agents/skills`, such as `~/.agents/skills/my-skill/SKILL.md`.
+    /// To read a global agent skill file, use the global skills directory path shown in the system prompt.
     /// </example>
     pub path: String,
     /// Optional line number to start reading on (1-based index)
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_u32_from_maybe_string"
+    )]
     pub start_line: Option<u32>,
     /// Optional line number to end reading on (1-based index, inclusive)
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_u32_from_maybe_string"
+    )]
     pub end_line: Option<u32>,
 }
 
@@ -1784,6 +1793,52 @@ mod test {
         assert_eq!(
             text.as_ref(),
             "     1\t# Spec\n     2\t\n     3\tReference body."
+        );
+    }
+
+    #[gpui::test]
+    async fn test_read_file_allows_global_skill_catalog_entry(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // D1 revert: SKILL.md reads are now allowed. The `skill` tool reads
+        // the body from disk and injects it; `read_file` can also read it.
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({})).await;
+
+        let catalog_path = agent_skills::global_skills_dir()
+            .join("my-skill")
+            .join("SKILL.md");
+        fs.create_dir(catalog_path.parent().unwrap()).await.unwrap();
+        fs.insert_file(
+            &catalog_path,
+            b"---\nname: my-skill\n---\nSENTINEL_SKILL_BODY_TEXT".to_vec(),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
+
+        let result = cx
+            .update(|cx| {
+                let input = ReadFileToolInput {
+                    path: catalog_path.to_string_lossy().into_owned(),
+                    start_line: None,
+                    end_line: None,
+                };
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let content = result.expect("reading a SKILL.md must succeed (body injection restored)");
+        let text = format!("{content:?}");
+        assert!(
+            text.contains("SENTINEL_SKILL_BODY_TEXT"),
+            "read_file must return the SKILL.md body content: {text}"
         );
     }
 

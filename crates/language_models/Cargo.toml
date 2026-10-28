@@ -30,9 +30,9 @@ cloud_api_client.workspace = true
 cloud_api_types.workspace = true
 collections.workspace = true
 component.workspace = true
-convert_case.workspace = true
 copilot_chat.workspace = true
 copilot_ui.workspace = true
+convert_case.workspace = true
 credentials_provider.workspace = true
 deepseek = { workspace = true, features = ["schemars"] }
 extension.workspace = true
@@ -77,11 +77,14 @@ cloud_llm_client.workspace = true
 credentials_provider = { workspace = true, features = ["test-support"] }
 db = { workspace = true, features = ["test-support"] }
 feature_flags.workspace = true
+fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
+open_router = { workspace = true, features = ["test-support"] }
 parking_lot.workspace = true
 settings = { workspace = true, features = ["test-support"] }
+zed_credentials_provider.workspace = true
 
 [package.metadata.cargo-shear]
 ignored = ["component"]

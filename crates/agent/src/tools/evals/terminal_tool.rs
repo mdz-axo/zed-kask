@@ -146,7 +146,7 @@ impl Display for EvalOutput {
 
 struct TerminalToolTest {
     model: LanguageModel,
-    model_thinking_effort: Option<String>,
+    model_reasoning_effort: Option<String>,
 }
 
 impl TerminalToolTest {
@@ -193,13 +193,13 @@ impl TerminalToolTest {
             })
             .await;
 
-        let model_thinking_effort = model
+        let model_reasoning_effort = model
             .default_effort_level()
             .map(|effort_level| effort_level.value.to_string());
 
         Self {
             model,
-            model_thinking_effort,
+            model_reasoning_effort,
         }
     }
 
@@ -228,9 +228,11 @@ impl TerminalToolTest {
                 model_name: None,
                 date: chrono::Local::now().format("%Y-%m-%d").to_string(),
                 user_agents_md: None,
+                static_context: None,
                 sandboxing: false,
                 is_linux: cfg!(target_os = "linux"),
                 is_windows: cfg!(target_os = "windows"),
+                mcp_tools_hidden: 0,
             };
             template.render(&Templates::new())?
         };
@@ -257,7 +259,7 @@ impl TerminalToolTest {
             messages,
             tools,
             thinking_allowed: true,
-            thinking_effort: self.model_thinking_effort.clone(),
+            thinking_effort: self.model_reasoning_effort.clone(),
             ..Default::default()
         };
 

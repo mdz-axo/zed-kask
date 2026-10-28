@@ -32,9 +32,8 @@ use git::Oid;
 use git::commit::ParsedCommitMessage;
 use git::repository::{
     Branch, CommitData, CommitDetails, CommitOptions, CommitSummary, DiffType, FetchOptions,
-    GitCommitTemplate, GitCommitter, InitialGraphCommitData, LogOrder, LogSource, PushOptions,
-    Remote, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking, UpstreamTrackingStatus,
-    get_git_committer,
+    GitCommitTemplate, InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote,
+    RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking, UpstreamTrackingStatus,
 };
 use git::stash::GitStash;
 use git::status::{DiffStat, StageStatus};
@@ -57,8 +56,9 @@ use gpui::{
 use itertools::Itertools;
 use language::{Buffer, BufferEvent, File};
 use language_model::{
-    CompletionIntent, Event as LanguageModelEvent, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, Role,
+    CompletionIntent, Event as LanguageModelEvent, LanguageModelCompletionError,
+    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
+    ProviderErrorCategory, Role,
 };
 use menu;
 use multi_buffer::ExcerptBoundaryInfo;
@@ -138,8 +138,6 @@ actions!(
         FirstEntry,
         /// Select last git panel menu item, and show it in the diff view
         LastEntry,
-        /// Toggles automatic co-author suggestions.
-        ToggleFillCoAuthors,
         /// Sorts entries by path.
         SetSortByPath,
         /// Sorts entries by name.
@@ -1177,7 +1175,6 @@ pub struct GitPanel {
     commit_editor_toggled: bool,
     conflicted_count: usize,
     conflicted_staged_count: usize,
-    add_coauthors: bool,
     generate_commit_message_task: Option<Task<Option<()>>>,
     entries: Vec<GitListEntry>,
     collapsed_sections: HashSet<Section>,
@@ -1217,10 +1214,6 @@ pub struct GitPanel {
     context_menu: Option<GitPanelContextMenu>,
     modal_open: bool,
     show_placeholders: bool,
-    // Only read to compute collaborative co-authors, which requires the `call` feature.
-    #[cfg_attr(not(feature = "call"), allow(dead_code))]
-    local_committer: Option<GitCommitter>,
-    local_committer_task: Option<Task<()>>,
     commit_template: Option<GitCommitTemplate>,
     bulk_staging: Option<BulkStaging>,
     stash_entries: GitStash,
@@ -1516,7 +1509,6 @@ impl GitPanel {
                 commit_editor_toggled: commit_editor_was_serialized,
                 conflicted_count: 0,
                 conflicted_staged_count: 0,
-                add_coauthors: true,
                 generate_commit_message_task: None,
                 entries: Vec::new(),
                 collapsed_sections: HashSet::default(),
@@ -1552,8 +1544,6 @@ impl GitPanel {
                 update_visible_entries_task: Task::ready(()),
                 reopen_commit_buffer_task: Task::ready(()),
                 show_placeholders: false,
-                local_committer: None,
-                local_committer_task: None,
                 commit_template: None,
                 context_menu: None,
                 workspace: workspace.weak_handle(),
@@ -4062,17 +4052,13 @@ impl GitPanel {
         let askpass = self.askpass_delegate("git commit", window, cx);
         let commit_message = self.custom_or_suggested_commit_message(window, cx);
 
-        let Some(mut message) = commit_message else {
+        let Some(message) = commit_message else {
             self.commit_editor
                 .read(cx)
                 .focus_handle(cx)
                 .focus(window, cx);
             return;
         };
-
-        if self.add_coauthors {
-            self.fill_co_authors(&mut message, cx);
-        }
 
         let task = if self.has_staged_changes() {
             // Repository serializes all git operations, so we can just send a commit immediately
@@ -4603,7 +4589,21 @@ impl GitPanel {
                     &diff_text,
                 );
 
-                let request = LanguageModelRequest {
+                // zed-kask: D37 — commit-message generation must respect the
+                // selected model's reasoning requirements. Upstream hardcodes
+                // `thinking_allowed: false`, which makes reasoning-only models
+                // (gpt-5, o3, claude-opus-5, etc.) reject the request with a
+                // 400, leaving the generate button stuck while the rest of the
+                // session reasons along. The guard enables thinking at low
+                // effort when the model advertises `supports_thinking()`; the
+                // self-healing retry catches models that require reasoning but
+                // don't advertise it (common for OpenAI-compatible providers
+                // where `/v1/models` discovery leaves `reasoning_effort:
+                // None`). See DIVERGENCE.md D37.
+                let (thinking_allowed, reasoning_effort) =
+                    Self::commit_message_thinking_settings(model.supports_thinking());
+
+                let mut request = LanguageModelRequest {
                     thread_id: None,
                     prompt_cache_key: None,
                     prompt_id: None,
@@ -4618,53 +4618,75 @@ impl GitPanel {
                     tool_choice: None,
                     stop: Vec::new(),
                     temperature,
-                    thinking_allowed: false,
-                    thinking_effort: None,
+                    thinking_allowed,
+                    thinking_effort: reasoning_effort,
                     speed: None,
                     compact_at_tokens: None,
                     max_output_tokens: None,
                 };
 
-                let stream = provider.stream_completion_text(&model, request, cx);
-                match stream.await {
-                    Ok(mut messages) => {
-                        if !text_empty {
-                            this.update(cx, |this, cx| {
-                                this.commit_message_buffer(cx).update(cx, |buffer, cx| {
-                                    let insert_position = buffer.anchor_before(buffer.len());
-                                    buffer.edit(
-                                        [(insert_position..insert_position, "\n")],
-                                        None,
-                                        cx,
-                                    )
-                                });
-                            })?;
-                        }
+                let mut retried_with_thinking = false;
+                loop {
+                    let stream = provider.stream_completion_text(&model, request.clone(), cx);
+                    match stream.await {
+                        Ok(mut messages) => {
+                            if !text_empty {
+                                this.update(cx, |this, cx| {
+                                    this.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                                        let insert_position = buffer.anchor_before(buffer.len());
+                                        buffer.edit(
+                                            [(insert_position..insert_position, "\n")],
+                                            None,
+                                            cx,
+                                        )
+                                    });
+                                })?;
+                            }
 
-                        while let Some(message) = messages.stream.next().await {
-                            match message {
-                                Ok(text) => {
-                                    this.update(cx, |this, cx| {
-                                        this.commit_message_buffer(cx).update(cx, |buffer, cx| {
-                                            let insert_position =
-                                                buffer.anchor_before(buffer.len());
-                                            buffer.edit(
-                                                [(insert_position..insert_position, text)],
-                                                None,
+                            while let Some(message) = messages.stream.next().await {
+                                match message {
+                                    Ok(text) => {
+                                        this.update(cx, |this, cx| {
+                                            this.commit_message_buffer(cx).update(
                                                 cx,
+                                                |buffer, cx| {
+                                                    let insert_position =
+                                                        buffer.anchor_before(buffer.len());
+                                                    buffer.edit(
+                                                        [(insert_position..insert_position, text)],
+                                                        None,
+                                                        cx,
+                                                    );
+                                                },
                                             );
-                                        });
-                                    })?;
-                                }
-                                Err(e) => {
-                                    Self::show_commit_message_error(&this, &e, cx);
-                                    break;
+                                        })?;
+                                    }
+                                    Err(e) => {
+                                        Self::show_commit_message_error(&this, &e, cx);
+                                        break;
+                                    }
                                 }
                             }
+                            break;
                         }
-                    }
-                    Err(e) => {
-                        Self::show_commit_message_error(&this, &e, cx);
+                        Err(e) => {
+                            // Self-healing: if the provider rejected a
+                            // non-thinking request with a 400, retry once with
+                            // thinking enabled. Catches reasoning-only models
+                            // whose `supports_thinking()` returns false because
+                            // the provider doesn't advertise reasoning effort.
+                            if !retried_with_thinking
+                                && !thinking_allowed
+                                && Self::is_reasoning_required_error(&e)
+                            {
+                                retried_with_thinking = true;
+                                request.thinking_allowed = true;
+                                request.thinking_effort = Some("low".to_string());
+                                continue;
+                            }
+                            Self::show_commit_message_error(&this, &e, cx);
+                            break;
+                        }
                     }
                 }
 
@@ -5225,89 +5247,6 @@ impl GitPanel {
         }
     }
 
-    pub fn load_local_committer(&mut self, cx: &Context<Self>) {
-        if self.local_committer_task.is_none() {
-            self.local_committer_task = Some(cx.spawn(async move |this, cx| {
-                let committer = get_git_committer(cx).await;
-                this.update(cx, |this, cx| {
-                    this.local_committer = Some(committer);
-                    cx.notify()
-                })
-                .ok();
-            }));
-        }
-    }
-
-    #[cfg(not(feature = "call"))]
-    fn potential_co_authors(&self, _cx: &App) -> Vec<(String, String)> {
-        Vec::new()
-    }
-
-    #[cfg(feature = "call")]
-    fn potential_co_authors(&self, cx: &App) -> Vec<(String, String)> {
-        let mut new_co_authors = Vec::new();
-        let project = self.project.read(cx);
-
-        let Some(room) =
-            call::ActiveCall::try_global(cx).and_then(|call| call.read(cx).room().cloned())
-        else {
-            return Vec::default();
-        };
-
-        let room = room.read(cx);
-
-        for (peer_id, collaborator) in project.collaborators() {
-            if collaborator.is_host {
-                continue;
-            }
-
-            let Some(participant) = room.remote_participant_for_peer_id(*peer_id) else {
-                continue;
-            };
-            if !participant.can_write() {
-                continue;
-            }
-            if let Some(email) = &collaborator.committer_email {
-                let name = collaborator
-                    .committer_name
-                    .clone()
-                    .or_else(|| participant.user.name.clone())
-                    .unwrap_or_else(|| participant.user.username.clone().to_string());
-                new_co_authors.push((name.clone(), email.clone()))
-            }
-        }
-        if !project.is_local()
-            && !project.is_read_only(cx)
-            && let Some(local_committer) = self.local_committer(room, cx)
-        {
-            new_co_authors.push(local_committer);
-        }
-        new_co_authors
-    }
-
-    #[cfg(feature = "call")]
-    fn local_committer(&self, room: &call::Room, cx: &App) -> Option<(String, String)> {
-        let user = room.local_participant_user(cx)?;
-        let committer = self.local_committer.as_ref()?;
-        let email = committer.email.clone()?;
-        let name = committer
-            .name
-            .clone()
-            .or_else(|| user.name.clone())
-            .unwrap_or_else(|| user.username.clone().to_string());
-        Some((name, email))
-    }
-
-    fn toggle_fill_co_authors(
-        &mut self,
-        _: &ToggleFillCoAuthors,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.add_coauthors = !self.add_coauthors;
-        cx.notify();
-    }
-
     fn set_sort_by_path(&mut self, _: &SetSortByPath, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(workspace) = self.workspace.upgrade() {
             let workspace = workspace.read(cx);
@@ -5491,54 +5430,6 @@ impl GitPanel {
         } else {
             util::debug_panic!("Attempted to toggle directory in flat Git Panel state");
         }
-    }
-
-    fn fill_co_authors(&mut self, message: &mut String, cx: &mut Context<Self>) {
-        const CO_AUTHOR_PREFIX: &str = "Co-authored-by: ";
-
-        let existing_text = message.to_ascii_lowercase();
-        let lowercase_co_author_prefix = CO_AUTHOR_PREFIX.to_lowercase();
-        let mut ends_with_co_authors = false;
-        let existing_co_authors = existing_text
-            .lines()
-            .filter_map(|line| {
-                let line = line.trim();
-                if line.starts_with(&lowercase_co_author_prefix) {
-                    ends_with_co_authors = true;
-                    Some(line)
-                } else {
-                    ends_with_co_authors = false;
-                    None
-                }
-            })
-            .collect::<HashSet<_>>();
-
-        let new_co_authors = self
-            .potential_co_authors(cx)
-            .into_iter()
-            .filter(|(_, email)| {
-                !existing_co_authors
-                    .iter()
-                    .any(|existing| existing.contains(email.as_str()))
-            })
-            .collect::<Vec<_>>();
-
-        if new_co_authors.is_empty() {
-            return;
-        }
-
-        if !ends_with_co_authors {
-            message.push('\n');
-        }
-        for (name, email) in new_co_authors {
-            message.push('\n');
-            message.push_str(CO_AUTHOR_PREFIX);
-            message.push_str(&name);
-            message.push_str(" <");
-            message.push_str(&email);
-            message.push('>');
-        }
-        message.push('\n');
     }
 
     fn schedule_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -6374,6 +6265,29 @@ impl GitPanel {
         }
     }
 
+    // zed-kask: D37 — classifies whether a completion error looks like a
+    // reasoning-required rejection, so the self-healing retry knows when to
+    // re-attempt with thinking enabled.
+    fn is_reasoning_required_error(err: &LanguageModelCompletionError) -> bool {
+        matches!(
+            err,
+            LanguageModelCompletionError::ProviderRejection {
+                category: ProviderErrorCategory::InvalidRequest,
+                ..
+            }
+        )
+    }
+
+    // zed-kask: D37 — returns `(thinking_allowed, reasoning_effort)` for a
+    // commit-message request based on whether the selected model supports
+    // thinking. Commit messages are simple, so low effort minimizes tokens
+    // while satisfying the model's reasoning requirement.
+    fn commit_message_thinking_settings(supports_thinking: bool) -> (bool, Option<String>) {
+        let thinking_allowed = supports_thinking;
+        let reasoning_effort = thinking_allowed.then(|| "low".to_string());
+        (thinking_allowed, reasoning_effort)
+    }
+
     fn show_remote_output(
         &mut self,
         action: RemoteAction,
@@ -6597,49 +6511,6 @@ impl GitPanel {
         };
 
         Some(button.into_any_element())
-    }
-
-    pub(crate) fn render_co_authors(&self, cx: &Context<Self>) -> Option<AnyElement> {
-        let potential_co_authors = self.potential_co_authors(cx);
-
-        let (tooltip_label, icon) = if self.add_coauthors {
-            ("Remove co-authored-by", IconName::Person)
-        } else {
-            ("Add co-authored-by", IconName::UserCheck)
-        };
-
-        if potential_co_authors.is_empty() {
-            None
-        } else {
-            Some(
-                IconButton::new("co-authors", icon)
-                    .shape(ui::IconButtonShape::Square)
-                    .icon_color(Color::Disabled)
-                    .selected_icon_color(Color::Selected)
-                    .toggle_state(self.add_coauthors)
-                    .tooltip(move |_, cx| {
-                        let title = format!(
-                            "{}:{}{}",
-                            tooltip_label,
-                            if potential_co_authors.len() == 1 {
-                                ""
-                            } else {
-                                "\n"
-                            },
-                            potential_co_authors
-                                .iter()
-                                .map(|(name, email)| format!(" {} <{}>", name, email))
-                                .join("\n")
-                        );
-                        Tooltip::simple(title, cx)
-                    })
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.add_coauthors = !this.add_coauthors;
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            )
-        }
     }
 
     fn render_git_commit_menu(
@@ -6995,7 +6866,6 @@ impl GitPanel {
         let settings = ThemeSettings::get_global(cx);
         let panel_editor_style =
             git_commit_editor_style(settings.git_commit_buffer_font_size(cx), cx);
-        let enable_coauthors = self.render_co_authors(cx);
         let editor_focus_handle = self.commit_editor.focus_handle(cx);
         let branch = active_repository.read(cx).branch.clone();
         let head_commit = active_repository.read(cx).head_commit.clone();
@@ -7181,12 +7051,7 @@ impl GitPanel {
                                     .child(toggle_commit_editor_button)
                                     .children(self.render_generate_commit_message_button(cx)),
                             )
-                            .child(
-                                h_flex()
-                                    .gap_0p5()
-                                    .children(enable_coauthors)
-                                    .child(self.render_commit_button(cx)),
-                            ),
+                            .child(h_flex().gap_0p5().child(self.render_commit_button(cx))),
                     ),
             );
 
@@ -9549,23 +9414,6 @@ impl Render for GitPanel {
         let has_entries = !self.entries.is_empty();
         let has_write_access = self.has_write_access(cx);
 
-        #[cfg(feature = "call")]
-        let has_co_authors = self
-            .workspace
-            .upgrade()
-            .and_then(|_workspace| {
-                call::ActiveCall::try_global(cx).and_then(|call| call.read(cx).room().cloned())
-            })
-            .is_some_and(|room| {
-                self.load_local_committer(cx);
-                let room = room.read(cx);
-                room.remote_participants()
-                    .values()
-                    .any(|remote_participant| remote_participant.can_write())
-            });
-        #[cfg(not(feature = "call"))]
-        let has_co_authors = false;
-
         v_flex()
             .id("git_panel")
             .key_context(self.dispatch_context(window, cx))
@@ -9617,10 +9465,6 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::focus_changes_list))
             .on_action(cx.listener(Self::focus_editor))
             .on_action(cx.listener(Self::expand_commit_editor))
-            .on_action(cx.listener(Self::toggle_commit_editor))
-            .when(has_write_access && has_co_authors, |git_panel| {
-                git_panel.on_action(cx.listener(Self::toggle_fill_co_authors))
-            })
             .on_action(cx.listener(Self::set_sort_by_path))
             .on_action(cx.listener(Self::set_sort_by_name))
             .on_action(cx.listener(Self::set_group_by_none))
@@ -15398,6 +15242,77 @@ mod tests {
                 Status(GitStatusEntry { staging: StageStatus::Unstaged, .. }),
                 Status(GitStatusEntry { staging: StageStatus::Unstaged, .. }),
             ],
+        );
+    }
+
+    // zed-kask: D37 — pins the commit-message thinking guard.
+    #[test]
+    fn test_commit_message_guard_enables_thinking_for_reasoning_model() {
+        let (thinking_allowed, reasoning_effort) = GitPanel::commit_message_thinking_settings(true);
+        assert!(
+            thinking_allowed,
+            "guard should enable thinking when the model supports it"
+        );
+        assert_eq!(
+            reasoning_effort.as_deref(),
+            Some("low"),
+            "guard should use low effort for commit messages"
+        );
+    }
+
+    // zed-kask: D37 — pins the guard for non-reasoning models.
+    #[test]
+    fn test_commit_message_guard_disables_thinking_for_non_reasoning_model() {
+        let (thinking_allowed, reasoning_effort) =
+            GitPanel::commit_message_thinking_settings(false);
+        assert!(
+            !thinking_allowed,
+            "guard should disable thinking when the model does not support it"
+        );
+        assert!(
+            reasoning_effort.is_none(),
+            "guard should not set reasoning effort for non-thinking models"
+        );
+    }
+
+    // zed-kask: D37 — pins the self-healing error classifier. Only
+    // `InvalidRequest` (400) rejections trigger the thinking retry; rate
+    // limits, auth failures, and transport errors do not.
+    #[test]
+    fn test_is_reasoning_required_error_classifies_invalid_request() {
+        use language_model::LanguageModelProviderName;
+        use std::time::Duration;
+
+        let invalid_request = LanguageModelCompletionError::ProviderRejection {
+            provider: LanguageModelProviderName::new("test"),
+            status: None,
+            code: None,
+            message: "reasoning effort cannot be disabled".to_string(),
+            retry_after: None,
+            category: ProviderErrorCategory::InvalidRequest,
+        };
+        assert!(
+            GitPanel::is_reasoning_required_error(&invalid_request),
+            "InvalidRequest rejection should trigger self-healing retry"
+        );
+
+        let rate_limit = LanguageModelCompletionError::ProviderRejection {
+            provider: LanguageModelProviderName::new("test"),
+            status: None,
+            code: None,
+            message: "rate limited".to_string(),
+            retry_after: Some(Duration::from_secs(60)),
+            category: ProviderErrorCategory::RateLimit,
+        };
+        assert!(
+            !GitPanel::is_reasoning_required_error(&rate_limit),
+            "RateLimit rejection should not trigger self-healing retry"
+        );
+
+        let other = LanguageModelCompletionError::Other(anyhow::anyhow!("transport error"));
+        assert!(
+            !GitPanel::is_reasoning_required_error(&other),
+            "non-rejection errors should not trigger self-healing retry"
         );
     }
 

@@ -38,6 +38,24 @@
       "formatter": "prettier",
     },
     "Rust": {
+      "prettier": {
+        "allowed": false,
+      },
+      // zed-kask: D7 workstation isolation. This workspace is ~450 crates;
+      // any editor's rust-analyzer indexing it burns multi-GB RSS and every
+      // core for hours (2026-09-01 incident: an upstream Flatpak Zed window
+      // ran `cargo check --workspace` at 5.7 GB / 263% CPU for 5 h). RA is
+      // disabled here in BOTH forms — the lsp form below and this
+      // per-language exclusion — because older Zed builds ignore one or the
+      // other. Pinned by check-zed-isolation.sh. Develop zed-kask in
+      // zed-kask; do not open this repo in upstream Zed.
+      "language_servers": ["!rust-analyzer"],
+      "formatter": {
+        "external": {
+          "command": "rustfmt",
+          "arguments": ["--edition", "2024", "--emit", "stdout", "--quiet"],
+        },
+      },
       "tasks": {
         "variables": {
           "RUST_DEFAULT_PACKAGE_RUN": "zed",
@@ -47,17 +65,41 @@
   },
   "lsp": {
     "rust-analyzer": {
+      "enabled": false,
       "initialization_options": {
         "procMacro": {
           "processes": 4,
         },
       },
     },
+    // zed-kask: enable language servers for the file types the kask
+    // codebase relies on (templates, manifests, configs, scripts).
+    "bash-language-server": {
+      "enabled": true,
+    },
+    "yaml-language-server": {
+      "enabled": true,
+    },
+    "taplo": {
+      "enabled": true,
+    },
+  },
+  // zed-kask: auto-install extensions that provide language support
+  // (tree-sitter grammars + LSPs) for file types used throughout the
+  // kask registry and configs. bash and yaml LSPs are built-in.
+  "auto_install_extensions": {
+    "html": true,
+    "toml": true,
+    "csv": true,
+    "jinja": true,
   },
   "file_types": {
     "Dockerfile": ["Dockerfile*[!dockerignore]"],
     "JSONC": ["**/assets/**/*.json", "renovate.json"],
     "Git Ignore": ["dockerignore"],
+    // zed-kask: map kask template extensions to Jinja so the jinja
+    // extension's grammar and tooling apply by default.
+    "Jinja": ["**/*.j2", "**/*.jinja", "**/*.jinja2"],
   },
   "hard_tabs": false,
   "formatter": "auto",
@@ -65,4 +107,5 @@
   "ensure_final_newline_on_save": true,
   "file_scan_exclusions": ["...", "crates/agent/src/tools/evals/fixtures"],
   "read_only_files": ["**/.rustup/**", "**/.cargo/registry/**", "**/.cargo/git/**", "target/**/*.rs", "**/*.lock"],
+
 }

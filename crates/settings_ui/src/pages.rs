@@ -1,8 +1,7 @@
-mod audio_input_output_setup;
-mod audio_test_window;
 mod edit_prediction_provider_setup;
 mod external_agents_page;
 mod feature_flags;
+mod kask_page;
 mod llm_providers_page;
 mod mcp_servers_page;
 mod sandbox_settings;
@@ -10,15 +9,12 @@ mod skill_creator;
 mod skills_setup;
 mod tool_permissions_setup;
 
-pub(crate) use audio_input_output_setup::{
-    render_input_audio_device_dropdown, render_output_audio_device_dropdown,
-};
-pub(crate) use audio_test_window::open_audio_test_window;
 pub(crate) use edit_prediction_provider_setup::render_edit_prediction_setup_page;
 pub(crate) use external_agents_page::{
     CustomAgentForm, render_add_agent_popover, render_external_agents_page,
 };
 pub(crate) use feature_flags::render_feature_flags_page;
+pub(crate) use kask_page::kask_page;
 pub(crate) use llm_providers_page::{
     LlmProviderForm, render_add_llm_provider_popover, render_llm_providers_page,
 };
@@ -27,9 +23,7 @@ pub(crate) use mcp_servers_page::{
 };
 pub(crate) use sandbox_settings::render_sandbox_settings_page;
 pub use skill_creator::SkillCreatorOpenMode;
-pub(crate) use skill_creator::{
-    SkillCreatorEvent, SkillCreatorPage, render_skill_creator_page, skill_url_from_clipboard,
-};
+pub(crate) use skill_creator::{SkillCreatorEvent, SkillCreatorPage, render_skill_creator_page};
 #[cfg(test)]
 pub(crate) use skills_setup::displayed_skills;
 pub(crate) use skills_setup::render_skills_setup_page;

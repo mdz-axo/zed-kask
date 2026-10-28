@@ -936,7 +936,7 @@ mod tests {
     use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
     use editor::RowInfo;
     use fs::FakeFs;
-    use gpui::{AppContext as _, TestAppContext};
+    use gpui::{AppContext as _, Focusable as _, TestAppContext};
     use parking_lot::RwLock;
 
     use crate::entry_view_state::{Entry, EntryViewEvent, EntryViewState, ToolCallSync, ViewEvent};
@@ -964,6 +964,88 @@ mod tests {
         assert_eq!(reindex_after_removal(5, &(2..4)), Some(3));
         // An empty removal range leaves indices untouched.
         assert_eq!(reindex_after_removal(3, &(2..2)), Some(3));
+    }
+
+    #[gpui::test]
+    async fn test_historical_user_messages_hydrate_at_entry_creation(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({ "file.txt": "" })).await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let connection = Rc::new(StubAgentConnection::new());
+        let thread = cx
+            .update(|_, cx| {
+                connection.new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new(path!("/project"))]),
+                    cx,
+                )
+            })
+            .await
+            .expect("session opens");
+        thread.update(cx, |thread, cx| {
+            thread.push_user_content_block(None, "first saved prompt".into(), cx);
+            thread.push_assistant_content_block("reply".into(), false, cx);
+            thread.push_user_content_block(None, "second saved prompt".into(), cx);
+        });
+        let view_state = cx.new(|_cx| {
+            EntryViewState::new(
+                workspace.downgrade(),
+                project.downgrade(),
+                None,
+                Arc::new(RwLock::new(SessionCapabilities::default())),
+                "Test Agent".into(),
+            )
+        });
+        view_state.update_in(cx, |state, window, cx| {
+            for index in 0..thread.read(cx).entries().len() {
+                state.sync_entry_initial(index, &thread, window, cx);
+            }
+        });
+
+        let editors = view_state.read_with(cx, |state, _| {
+            [0, 2].map(|index| {
+                state
+                    .entry(index)
+                    .and_then(|entry| entry.message_editor())
+                    .cloned()
+                    .expect("saved user row has an editor and focus handle")
+            })
+        });
+        // zed-kask: D73 — upstream's `synced_source_version` mechanism
+        // hydrates saved user messages at entry creation; there is no lazy
+        // materialization step for user messages (tool calls still defer).
+        assert_eq!(
+            editors[0].read_with(cx, |editor, cx| editor.text(cx)),
+            "first saved prompt"
+        );
+        assert_eq!(
+            editors[1].read_with(cx, |editor, cx| editor.text(cx)),
+            "second saved prompt"
+        );
+        cx.update(|window, cx| {
+            let focus = editors[0].read(cx).focus_handle(cx);
+            focus.focus(window, cx);
+            assert!(focus.is_focused(window));
+        });
+        view_state.read_with(cx, |state, cx| {
+            for (index, editor) in [(0, &editors[0]), (2, &editors[1])] {
+                let row_editor = state
+                    .entry(index)
+                    .and_then(|entry| entry.message_editor())
+                    .expect("hydration retains the editor");
+                assert_eq!(row_editor.entity_id(), editor.entity_id());
+                assert!(
+                    state
+                        .entry(index)
+                        .and_then(|entry| entry.focus_handle(cx))
+                        .is_some()
+                );
+            }
+        });
     }
 
     #[gpui::test]
