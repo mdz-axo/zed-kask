@@ -160,6 +160,7 @@ struct TranscriptPaneState {
     working_text: String,
     paragraph_breaks: Option<Vec<usize>>,
     speaker_spans: Option<Vec<PaneSpeakerSpan>>,
+    review: Option<PaneReview>,
     layers: Vec<PaneLayerRow>,
     highlights: Vec<PaneHighlight>,
     strikes: Vec<PaneStrike>,
@@ -175,6 +176,45 @@ struct PaneBlock {
     text: String,
     word_char_ranges: Vec<Range<usize>>,
     word_starts: Vec<(usize, u64)>,
+}
+
+/// The derived review view's pane projection (task 1a): per-block flags
+/// from the server's deterministic derivation — the pane renders them, it
+/// never re-derives (D5). `None` means the payload carried no review view
+/// (a server predating the field).
+#[derive(Clone, Debug, PartialEq)]
+struct PaneReview {
+    threshold: f64,
+    blocks: Vec<PaneReviewFlag>,
+    note: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct PaneReviewFlag {
+    start_word: usize,
+    end_word: usize,
+    min_confidence: Option<f64>,
+    status: PaneReviewStatus,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PaneReviewStatus {
+    Flagged,
+    Ok,
+    NoConfidenceRecorded,
+}
+
+impl PaneReviewStatus {
+    /// Strict-parse the wire string; an unknown status rejects the payload
+    /// rather than rendering a guess.
+    fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "flagged" => Ok(Self::Flagged),
+            "ok" => Ok(Self::Ok),
+            "no-confidence-recorded" => Ok(Self::NoConfidenceRecorded),
+            other => Err(format!("review block has unknown status \"{other}\".")),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -4138,6 +4178,25 @@ impl MediaViewer {
             );
         }
         sections = sections.child(Self::section_label("Transcript"));
+        // Review flags (task 1a): the derived marker rides the payload; the
+        // pane renders it, never re-derives (D5). Per-block markers gate on
+        // index-identical views like every source-index overlay; the note
+        // line speaks for whole-transcript absences (missing layers), so a
+        // per-block no-confidence marker renders only when both layers
+        // exist and the gap is isolated.
+        let review = state
+            .review
+            .as_ref()
+            .filter(|_| matches!(state.alignment.as_str(), "original" | "aligned"));
+        if let Some(note) = review.and_then(|review| review.note.as_deref()) {
+            sections = sections.child(
+                Label::new(SharedString::from(format!("Review: {note}")))
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Muted)
+                    .mt_1(),
+            );
+        }
+        let per_block_no_confidence = review.is_some_and(|review| review.note.is_none());
         // Paragraph blocks over the working words when the view is timed;
         // the corrected/plain text as one block otherwise (S3a). Timed
         // blocks are interactive text: every word is a click range that
@@ -4166,6 +4225,26 @@ impl MediaViewer {
                         .color(ui::Color::Muted)
                         .mt_1(),
                 );
+            }
+            if let Some(flag) = review.and_then(|review| review.blocks.get(block_index)) {
+                let marker = match flag.status {
+                    PaneReviewStatus::Flagged => Some(format!(
+                        "⚑ review recommended (min {:.2})",
+                        flag.min_confidence.unwrap_or_default()
+                    )),
+                    PaneReviewStatus::NoConfidenceRecorded if per_block_no_confidence => {
+                        Some("no confidence recorded".to_string())
+                    }
+                    _ => None,
+                };
+                if let Some(marker) = marker {
+                    sections = sections.child(
+                        Label::new(SharedString::from(marker))
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Muted)
+                            .mt_1(),
+                    );
+                }
             }
             if block.word_char_ranges.is_empty() {
                 // Text-only view: no word map, no interaction — a wrapping
@@ -5632,6 +5711,10 @@ fn parse_transcript_payload(payload: &Value) -> Result<TranscriptPaneState, Stri
                 .collect::<Result<Vec<_>, String>>()
         })
         .transpose()?;
+    // Review flags (task 1a): optional and tolerant — the running editor
+    // may predate the server field, so its absence parses as None; when
+    // present, the view parses strictly.
+    let review = object.get("review").map(parse_pane_review).transpose()?;
     Ok(TranscriptPaneState {
         transcript_id,
         media_path,
@@ -5641,9 +5724,71 @@ fn parse_transcript_payload(payload: &Value) -> Result<TranscriptPaneState, Stri
         working_text,
         paragraph_breaks,
         speaker_spans,
+        review,
         layers,
         highlights,
         strikes,
+    })
+}
+
+/// Strict-parse the derived review view (task 1a). Only invoked when the
+/// payload carries a "review" object; a malformed one rejects the whole
+/// payload — never a half view.
+fn parse_pane_review(payload: &Value) -> Result<PaneReview, String> {
+    let object = payload
+        .as_object()
+        .ok_or_else(|| "review is not an object.".to_string())?;
+    let threshold = object
+        .get("threshold")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| "review has no threshold.".to_string())?;
+    let blocks_array = object
+        .get("blocks")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "review has no blocks array.".to_string())?;
+    let mut blocks = Vec::with_capacity(blocks_array.len());
+    for block in blocks_array {
+        let object = block
+            .as_object()
+            .ok_or_else(|| "review block is not an object.".to_string())?;
+        let start_word = object
+            .get("start_word")
+            .and_then(Value::as_u64)
+            .and_then(|index| usize::try_from(index).ok())
+            .ok_or_else(|| "review block has no start_word.".to_string())?;
+        let end_word = object
+            .get("end_word")
+            .and_then(Value::as_u64)
+            .and_then(|index| usize::try_from(index).ok())
+            .ok_or_else(|| "review block has no end_word.".to_string())?;
+        let min_confidence = match object.get("min_confidence") {
+            None | Some(Value::Null) => None,
+            Some(value) => Some(
+                value
+                    .as_f64()
+                    .ok_or_else(|| "review block min_confidence is not a number.".to_string())?,
+            ),
+        };
+        let status = object
+            .get("status")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "review block has no status.".to_string())?;
+        let status = PaneReviewStatus::parse(status)?;
+        blocks.push(PaneReviewFlag {
+            start_word,
+            end_word,
+            min_confidence,
+            status,
+        });
+    }
+    let note = object
+        .get("note")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    Ok(PaneReview {
+        threshold,
+        blocks,
+        note,
     })
 }
 
@@ -6822,6 +6967,7 @@ mod tests {
                 working_text: String::new(),
                 paragraph_breaks: None,
                 speaker_spans: None,
+                review: None,
                 layers: Vec::new(),
                 highlights: Vec::new(),
                 strikes: Vec::new(),
@@ -6957,6 +7103,7 @@ mod tests {
             working_text: String::new(),
             paragraph_breaks: None,
             speaker_spans: None,
+            review: None,
             layers: Vec::new(),
             highlights: Vec::new(),
             strikes: Vec::new(),
@@ -7859,6 +8006,9 @@ mod tests {
             "renders": []
         });
         let state = parse_transcript_payload(&valid).expect("valid payload parses");
+        // Tolerant absence (task 1a): a payload without a review view
+        // parses — the pane renders no flags, never a fabricated green.
+        assert_eq!(state.review, None);
         assert_eq!(state.transcript_id, "caa6566e");
         assert_eq!(state.media_path, "/generated/vonnegut.mp4");
         assert_eq!(state.alignment, "original");
@@ -8022,12 +8172,101 @@ mod tests {
             "layers": []
         });
         let state = parse_transcript_payload(&untimed).expect("untimed payload parses");
+        assert_eq!(state.review, None);
         assert_eq!(state.words, None);
         assert_eq!(state.working_text, "plain text only");
         assert_eq!(
             state.alignment_note.as_deref(),
             Some("source transcript has no word-level timings")
         );
+    }
+
+    /// dcterms:identifier: `parse_transcript_payload`
+    /// expect: A derived review view parses strictly when present —
+    /// flagged blocks carry the stored minimum confidence and gaps surface
+    /// no-confidence-recorded — and a malformed one rejects the payload.
+    #[test]
+    fn transcript_payload_parses_review_flags() {
+        let payload = serde_json::json!({
+            "summary": {
+                "id": "t-review",
+                "media_path": "/generated/review.wav",
+                "words_count": 4,
+                "has_word_timings": true
+            },
+            "working_transcript": {
+                "text": "a b c d",
+                "alignment": "original",
+                "correction_layer_id": null,
+                "realignment_layer_id": null,
+                "alignment_error": null,
+                "words": [
+                    {"word": "a", "start_ms": 0, "end_ms": 500, "confidence": null},
+                    {"word": "b", "start_ms": 500, "end_ms": 1000, "confidence": null},
+                    {"word": "c", "start_ms": 1000, "end_ms": 1500, "confidence": null},
+                    {"word": "d", "start_ms": 1500, "end_ms": 2000, "confidence": null}
+                ]
+            },
+            "review": {
+                "threshold": 0.75,
+                "paragraph_layer_id": "p-1",
+                "speaker_layer_id": "s-1",
+                "blocks": [
+                    {"start_word": 0, "end_word": 1, "min_confidence": 0.9, "status": "ok"},
+                    {"start_word": 2, "end_word": 3, "min_confidence": 0.5, "status": "flagged"},
+                    {"start_word": 4, "end_word": 5, "min_confidence": null, "status": "no-confidence-recorded"}
+                ],
+                "note": null
+            },
+            "layers": [],
+            "exports": [],
+            "renders": []
+        });
+        let state = parse_transcript_payload(&payload).expect("payload with review parses");
+        let review = state.review.expect("review view present");
+        assert_eq!(review.threshold, 0.75);
+        assert_eq!(review.note, None);
+        assert_eq!(
+            review.blocks,
+            vec![
+                PaneReviewFlag {
+                    start_word: 0,
+                    end_word: 1,
+                    min_confidence: Some(0.9),
+                    status: PaneReviewStatus::Ok
+                },
+                PaneReviewFlag {
+                    start_word: 2,
+                    end_word: 3,
+                    min_confidence: Some(0.5),
+                    status: PaneReviewStatus::Flagged
+                },
+                PaneReviewFlag {
+                    start_word: 4,
+                    end_word: 5,
+                    min_confidence: None,
+                    status: PaneReviewStatus::NoConfidenceRecorded
+                },
+            ]
+        );
+
+        // Malformed review views reject the whole payload — never a half
+        // view: an unknown status, a non-numeric confidence, a missing
+        // threshold.
+        let mut unknown_status = payload.clone();
+        unknown_status["review"]["blocks"][0]["status"] = serde_json::json!("green");
+        assert!(parse_transcript_payload(&unknown_status).is_err());
+
+        let mut bad_confidence = payload.clone();
+        bad_confidence["review"]["blocks"][0]["min_confidence"] = serde_json::json!("high");
+        assert!(parse_transcript_payload(&bad_confidence).is_err());
+
+        let mut no_threshold = payload;
+        no_threshold["review"]
+            .as_object_mut()
+            .expect("review object")
+            .remove("threshold");
+        assert!(parse_transcript_payload(&no_threshold).is_err());
     }
 
     /// dcterms:identifier: `latest_layer_payload`
@@ -8239,6 +8478,7 @@ mod tests {
             working_text: String::new(),
             paragraph_breaks: None,
             speaker_spans: None,
+            review: None,
             layers: Vec::new(),
             highlights: vec![
                 PaneHighlight {
@@ -8629,6 +8869,7 @@ mod tests {
             ]),
             working_text: "hello world again".into(),
             paragraph_breaks: Some(vec![1]),
+            review: None,
             speaker_spans: Some(vec![PaneSpeakerSpan {
                 start_word: 0,
                 end_word: 2,
@@ -8686,6 +8927,7 @@ mod tests {
                 working_text: "hi".into(),
                 paragraph_breaks: None,
                 speaker_spans: None,
+                review: None,
                 layers: Vec::new(),
                 highlights: Vec::new(),
                 strikes: Vec::new(),
@@ -8979,6 +9221,7 @@ mod viewer_layout_tests {
                 working_text: String::new(),
                 paragraph_breaks: None,
                 speaker_spans: None,
+                review: None,
                 layers: Vec::new(),
                 highlights: Vec::new(),
                 strikes: Vec::new(),
@@ -9023,6 +9266,7 @@ mod viewer_layout_tests {
                 working_text: "words in the workspace".into(),
                 paragraph_breaks: None,
                 speaker_spans: None,
+                review: None,
                 layers: Vec::new(),
                 highlights: Vec::new(),
                 strikes: Vec::new(),

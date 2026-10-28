@@ -313,6 +313,16 @@ struct CorpusExportEffectiveParams<'a> {
     composition: &'static str,
 }
 
+#[derive(serde::Serialize)]
+struct ReviewCsvExportEffectiveParams<'a> {
+    transcript_id: &'a str,
+    paragraph_layer_id: Option<&'a str>,
+    speaker_layer_id: Option<&'a str>,
+    threshold: f64,
+    blocks: usize,
+    flagged: usize,
+}
+
 #[derive(Debug, Clone, Copy, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 enum WorkingTranscriptAlignment {
@@ -959,14 +969,20 @@ impl MediaServer {
                 )));
             };
             let working = working_transcript(driver, &transcript_id, &bundle)?;
+            let layers =
+                transcript_store::list_layers(driver, &transcript_id).map_err(map_store_error)?;
+            // Derived review view (task 1a): paragraph blocks scored by the
+            // latest speaker layer's stored attribution confidences. A
+            // missing layer or uncovered block is named in the view —
+            // never a fabricated green.
+            let review = crate::transcript_review::derive_review_flags(bundle.words.len(), &layers);
             let mut result = serde_json::json!({
                 "summary": summary,
                 "transcript": bundle,
                 "working_transcript": working,
+                "review": review,
             });
             if include_layers.unwrap_or(true) {
-                let layers = transcript_store::list_layers(driver, &transcript_id)
-                    .map_err(map_store_error)?;
                 result["layers"] = serde_json::json!(layers);
             }
             let exports =
@@ -1689,7 +1705,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Publish a durable transcript document with stable export_id and provenance. SRT and mapped corpus text use the timing-aligned working transcript; unaligned corrected text remains exportable for search with an explicit no-range-mapping degradation. Documents stay outside the playable-media gallery."
+        description = "Publish a durable transcript document with stable export_id and provenance. SRT and mapped corpus text use the timing-aligned working transcript; review_csv derives paragraph-block review flags from the latest speaker layer's stored confidences; unaligned corrected text remains exportable for search with an explicit no-range-mapping degradation. Documents stay outside the playable-media gallery."
     )]
     pub async fn educt_export(
         &self,
@@ -1710,8 +1726,8 @@ impl MediaServer {
             let export_format = crate::transcript_export::TranscriptExportFormat::parse(&format)
                 .ok_or_else(|| {
                     McpToolError::invalid_argument(format!(
-                        "format must be \"srt\", \"highlights_csv\", or \"corpus_text\", got \
-                         \"{format}\""
+                        "format must be \"srt\", \"highlights_csv\", \"review_csv\", or \
+                         \"corpus_text\", got \"{format}\""
                     ))
                 })?;
             match export_format {
@@ -1772,6 +1788,47 @@ impl MediaServer {
                         transcript_id: &transcript_id,
                         layer_ids: &layer_ids,
                         rows,
+                    };
+                    crate::transcript_export::publish_document(
+                        driver,
+                        &transcript_id,
+                        export_format,
+                        csv.as_bytes(),
+                        &effective_params,
+                    )
+                }
+                crate::transcript_export::TranscriptExportFormat::ReviewCsv => {
+                    let layers = transcript_store::list_layers(driver, &transcript_id)
+                        .map_err(map_store_error)?;
+                    let review = crate::transcript_review::derive_review_flags(
+                        bundle.words.len(),
+                        &layers,
+                    );
+                    if review.paragraph_layer_id.is_none() {
+                        return Err(McpToolError::not_found(format!(
+                            "no paragraph layer found for transcript {transcript_id} — review \
+                             flags attach to paragraph blocks; run educt_paragraph_pass first"
+                        )));
+                    }
+                    let csv = crate::transcript_export::review_csv(&bundle.words, &review)
+                        .map_err(|error| {
+                            McpToolError::invalid_argument(format!(
+                                "review CSV export: {error}"
+                            ))
+                        })?;
+                    let effective_params = ReviewCsvExportEffectiveParams {
+                        transcript_id: &transcript_id,
+                        paragraph_layer_id: review.paragraph_layer_id.as_deref(),
+                        speaker_layer_id: review.speaker_layer_id.as_deref(),
+                        threshold: review.threshold,
+                        blocks: review.blocks.len(),
+                        flagged: review
+                            .blocks
+                            .iter()
+                            .filter(|block| {
+                                block.status == crate::transcript_review::ReviewStatus::Flagged
+                            })
+                            .count(),
                     };
                     crate::transcript_export::publish_document(
                         driver,

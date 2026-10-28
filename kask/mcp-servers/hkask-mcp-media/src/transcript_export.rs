@@ -4,6 +4,9 @@
 //!   segments stay a derived view.
 //! - **A CSV of every stored highlight** — with time ranges via the
 //!   selection algebra (the only index→time mapping).
+//! - **A CSV of derived review flags** (plan §7 Phase 1a) — paragraph
+//!   blocks scored by the latest speaker layer's stored attribution
+//!   confidences; unscoreable states are named, never a fabricated green.
 //! - **The rendered transcript text** for corpus ingestion —
 //!   repository-wide semantic search by composition (decision 8: media
 //!   owns the artifacts, corpus owns the index). A corpus hit on the
@@ -24,6 +27,7 @@ use hkask_storage::database::driver::DatabaseDriver;
 pub(crate) enum TranscriptExportFormat {
     Srt,
     HighlightsCsv,
+    ReviewCsv,
     CorpusText,
 }
 
@@ -32,6 +36,7 @@ impl TranscriptExportFormat {
         match value {
             "srt" => Some(Self::Srt),
             "highlights_csv" => Some(Self::HighlightsCsv),
+            "review_csv" => Some(Self::ReviewCsv),
             "corpus_text" => Some(Self::CorpusText),
             _ => None,
         }
@@ -41,6 +46,7 @@ impl TranscriptExportFormat {
         match self {
             Self::Srt => "srt",
             Self::HighlightsCsv => "csv",
+            Self::ReviewCsv => "csv",
             Self::CorpusText => "txt",
         }
     }
@@ -49,6 +55,7 @@ impl TranscriptExportFormat {
         match self {
             Self::Srt => "srt",
             Self::HighlightsCsv => "highlights_csv",
+            Self::ReviewCsv => "review_csv",
             Self::CorpusText => "corpus_text",
         }
     }
@@ -326,6 +333,39 @@ pub fn highlights_csv(
                 csv_escape(&entry.note),
             ));
         }
+    }
+    Ok(csv)
+}
+
+/// Build a CSV of every derived review flag (plan §7 Phase 1a):
+/// `block_index,start_word,end_word,start_ms,end_ms,min_confidence,status`.
+/// Provenance (threshold and the source layer ids) lives in the export's
+/// effective params, not the rows. Time ranges come from the selection
+/// algebra; blocks derive over the same word count, so a mismatch is a
+/// named error, never a silent row.
+pub fn review_csv(
+    words: &[TimedWord],
+    review: &crate::transcript_review::ReviewFlags,
+) -> Result<String, SelectionError> {
+    let mut csv =
+        String::from("block_index,start_word,end_word,start_ms,end_ms,min_confidence,status\n");
+    for (index, block) in review.blocks.iter().enumerate() {
+        let (start_ms, end_ms) =
+            word_range_to_time_range(words, WordRange::new(block.start_word, block.end_word))?;
+        let min_confidence = block
+            .min_confidence
+            .map(|confidence| format!("{confidence}"))
+            .unwrap_or_default();
+        csv.push_str(&format!(
+            "{},{},{},{},{},{},{}\n",
+            index,
+            block.start_word,
+            block.end_word,
+            start_ms,
+            end_ms,
+            min_confidence,
+            block.status.as_str(),
+        ));
     }
     Ok(csv)
 }

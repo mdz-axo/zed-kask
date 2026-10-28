@@ -183,6 +183,7 @@ pub mod transcript;
 pub mod transcript_export;
 pub mod transcript_layers;
 pub mod transcript_pass;
+pub mod transcript_review;
 pub mod transcript_select;
 pub mod transcript_store;
 pub mod types;
@@ -4559,6 +4560,209 @@ mod tool_behavior_tests {
         )
         .expect("parse export metadata");
         (content, output, metadata)
+    }
+
+    /// Store a paragraph layer with the standard test provenance over
+    /// `breaks_after` — the review-flag fixtures' shared store call (through
+    /// the real store-layer tool, so validation runs).
+    async fn store_paragraph_layer(
+        server: &MediaServer,
+        transcript_id: &str,
+        breaks_after: Vec<usize>,
+    ) {
+        use crate::transcript_layers::{LayerProvenance, ParagraphLayer, TranscriptLayer};
+        use crate::types::EductStoreLayerRequest;
+        let paragraph = TranscriptLayer::Paragraph(ParagraphLayer {
+            provenance: LayerProvenance {
+                model: "test".to_string(),
+                prompt_template: "test".to_string(),
+                created_at: "2026-10-27T00:00:01Z".to_string(),
+            },
+            breaks_after,
+        });
+        server
+            .educt_store_layer(Parameters(EductStoreLayerRequest {
+                transcript_id: transcript_id.to_string(),
+                layer: hkask_types::AnyJsonValue(
+                    serde_json::to_value(&paragraph).expect("serialize paragraph"),
+                ),
+            }))
+            .await
+            .expect("store paragraph layer");
+    }
+
+    /// Store a speaker layer with the standard test provenance over
+    /// `spans` — the review-flag fixtures' shared store call.
+    async fn store_speaker_layer(
+        server: &MediaServer,
+        transcript_id: &str,
+        spans: Vec<crate::transcript_layers::SpeakerSpan>,
+    ) {
+        use crate::transcript_layers::{LayerProvenance, SpeakerLayer, TranscriptLayer};
+        use crate::types::EductStoreLayerRequest;
+        let speaker = TranscriptLayer::Speaker(SpeakerLayer {
+            provenance: LayerProvenance {
+                model: "test".to_string(),
+                prompt_template: "test".to_string(),
+                created_at: "2026-10-27T00:00:02Z".to_string(),
+            },
+            spans,
+        });
+        server
+            .educt_store_layer(Parameters(EductStoreLayerRequest {
+                transcript_id: transcript_id.to_string(),
+                layer: hkask_types::AnyJsonValue(
+                    serde_json::to_value(&speaker).expect("serialize speaker"),
+                ),
+            }))
+            .await
+            .expect("store speaker layer");
+    }
+
+    /// A speaker-span fixture with a confidence — the review-flag tests
+    /// vary exactly the range and score.
+    fn speaker_span(
+        start_word: usize,
+        end_word: usize,
+        confidence: f64,
+    ) -> crate::transcript_layers::SpeakerSpan {
+        crate::transcript_layers::SpeakerSpan {
+            start_word,
+            end_word,
+            speaker: "speaker-1".to_string(),
+            confidence,
+        }
+    }
+
+    /// dcterms:identifier: `transcript_review::derive_review_flags`
+    /// expect: educt_get_transcript carries the derived review view —
+    /// paragraph blocks scored by the latest speaker layer's stored
+    /// confidences, with layer provenance and the threshold; a
+    /// below-threshold block is flagged, an at-threshold one is ok.
+    #[tokio::test]
+    async fn educt_get_transcript_derives_review_flags() {
+        let server = make_pass_server("{}".to_string());
+        let transcript_id = store_two_word_transcript(&server).await;
+        store_paragraph_layer(&server, &transcript_id, vec![0]).await;
+        store_speaker_layer(
+            &server,
+            &transcript_id,
+            vec![speaker_span(0, 0, 0.9), speaker_span(1, 1, 0.5)],
+        )
+        .await;
+
+        let result = server
+            .educt_get_transcript(Parameters(crate::types::EductGetTranscriptRequest {
+                transcript_id,
+                include_layers: None,
+            }))
+            .await
+            .expect("get transcript succeeds");
+        let review = content_of(&result)["review"].clone();
+        assert_eq!(review["threshold"].as_f64(), Some(0.75));
+        assert_eq!(review["note"], serde_json::json!(null));
+        assert!(review["paragraph_layer_id"].as_str().is_some());
+        assert!(review["speaker_layer_id"].as_str().is_some());
+        assert_eq!(
+            review["blocks"][0],
+            serde_json::json!({
+                "start_word": 0,
+                "end_word": 0,
+                "min_confidence": 0.9,
+                "status": "ok"
+            })
+        );
+        assert_eq!(
+            review["blocks"][1],
+            serde_json::json!({
+                "start_word": 1,
+                "end_word": 1,
+                "min_confidence": 0.5,
+                "status": "flagged"
+            })
+        );
+    }
+
+    /// dcterms:identifier: `transcript_review::derive_review_flags`
+    /// expect: A transcript with no layers names the missing paragraph
+    /// layer in the review view — a surfaced degradation, never a
+    /// fabricated green or an empty success.
+    #[tokio::test]
+    async fn educt_get_transcript_review_names_missing_layers() {
+        let server = make_pass_server("{}".to_string());
+        let transcript_id = store_two_word_transcript(&server).await;
+        let result = server
+            .educt_get_transcript(Parameters(crate::types::EductGetTranscriptRequest {
+                transcript_id,
+                include_layers: None,
+            }))
+            .await
+            .expect("get transcript succeeds");
+        let review = content_of(&result)["review"].clone();
+        assert_eq!(review["blocks"].as_array().map(Vec::len), Some(0));
+        let note = review["note"].as_str().expect("note names the absence");
+        assert!(note.contains("educt_paragraph_pass"), "note: {note}");
+    }
+
+    #[tokio::test]
+    async fn educt_export_review_csv_writes_flags() {
+        let _artifacts = IsolatedArtifacts::new().await;
+        let server = make_pass_server("{}".to_string());
+        let transcript_id = store_two_word_transcript(&server).await;
+        store_paragraph_layer(&server, &transcript_id, vec![0]).await;
+        store_speaker_layer(
+            &server,
+            &transcript_id,
+            vec![speaker_span(0, 0, 0.9), speaker_span(1, 1, 0.5)],
+        )
+        .await;
+
+        let (content, output, metadata) =
+            export_content_and_metadata(&server, &transcript_id, "review_csv").await;
+        assert_eq!(
+            metadata["effective_params"], content["effective_params"],
+            "the export row and the response agree on provenance"
+        );
+        assert_eq!(metadata["transcript_id"], serde_json::json!(transcript_id));
+        assert_eq!(metadata["format"], serde_json::json!("review_csv"));
+        // The provenance lands in the export's effective params.
+        assert_eq!(
+            metadata["effective_params"]["flagged"],
+            serde_json::json!(1)
+        );
+        assert_eq!(metadata["effective_params"]["blocks"], serde_json::json!(2));
+        assert_eq!(
+            metadata["effective_params"]["threshold"],
+            serde_json::json!(0.75)
+        );
+        let csv = std::fs::read_to_string(&output).expect("read review CSV");
+        assert!(
+            csv.starts_with(
+                "block_index,start_word,end_word,start_ms,end_ms,min_confidence,status"
+            )
+        );
+        // Block 0 "alpha" (0–500 ms) scores ok; block 1 "beta" (500–900 ms)
+        // is flagged at the stored 0.5.
+        assert!(csv.contains("\n0,0,0,0,500,0.9,ok\n"), "rows: {csv}");
+        assert!(csv.contains("\n1,1,1,500,900,0.5,flagged\n"), "rows: {csv}");
+    }
+
+    #[tokio::test]
+    async fn educt_export_review_csv_without_paragraph_layer_is_not_found() {
+        let server = make_pass_server("{}".to_string());
+        let transcript_id = store_two_word_transcript(&server).await;
+        let error = server
+            .educt_export(Parameters(crate::types::EductExportRequest {
+                transcript_id,
+                format: "review_csv".to_string(),
+            }))
+            .await
+            .expect_err("review csv without a paragraph layer is not-found");
+        assert!(
+            error.message.contains("educt_paragraph_pass"),
+            "the missing layer must be named: {}",
+            error.message
+        );
     }
 
     #[tokio::test]
