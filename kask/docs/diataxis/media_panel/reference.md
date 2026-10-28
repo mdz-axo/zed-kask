@@ -1,8 +1,8 @@
 ---
 title: "media_panel — Reference: Media Viewer Interaction Model"
 audience: [developers extending the media panel or media widget]
-last_updated: 2026-10-26
-version: "2.0.0"
+last_updated: 2026-10-27
+version: "2.1.0"
 status: "Active"
 domain: "Media"
 mds_categories: [domain, composition, lifecycle]
@@ -11,15 +11,17 @@ mds_categories: [domain, composition, lifecycle]
 # media_panel — Reference: Media Viewer Interaction Model
 
 The media viewer has five tabs backed by live state — Media, Library, Queue,
-Detail, and Transcript (`crates/media_panel/src/media_viewer.rs:231-237`) —
+Detail, and Transcript (`crates/media_panel/src/media_viewer.rs:259-265`) —
 covering selected media, paginated gallery assets, process-local research
-jobs, selected-asset detail, and the direct transcript workspace (the
-2026-10-25/26 transcript bench: browse recordings, read synced to playback,
-annotate by selecting text, compose and play reels). All server calls route
-through the governed tool invoker to the `media` server; gallery pages are
-sized at 100 rows with a one-second queue poll
-(`GALLERY_PAGE_LIMIT`/`QUEUE_POLL_INTERVAL`, media_viewer.rs:37-39) and the
-transcript recordings list at the server's 500 cap.
+jobs, selected-asset detail, and the direct transcript workspace. Each tab
+opens with one line of purpose copy (the orientation contract,
+`tab_purpose`, 2026-10-27): Media is playback and derivative edits, Library
+is browse-and-delete (the listing, never the file), Queue is the async
+long-operation path, Detail is the inspector, Transcript is the
+workbench. All server calls route through the governed tool invoker to the
+`media` server; gallery pages are sized at 100 rows with a one-second queue
+poll (`GALLERY_PAGE_LIMIT`/`QUEUE_POLL_INTERVAL`, media_viewer.rs:37-39) and
+the transcript recordings list at the server's 500 cap.
 
 ## Research-curation scope
 
@@ -34,6 +36,8 @@ only; explicit empty values disable the selected pipeline visibly.
 - `gallery_annotation_create` uses stable `gallery_asset_id`, `kind` (`tag` or
   `note`), and `value`. List by asset ID, update with asset/annotation IDs and
   replacement value, delete with both IDs. Positional indices are not identities.
+  Since 2026-10-27 the Detail tab exposes this full CRUD directly — the
+  Researcher tags & notes section (see "Detail lifecycle").
 - `educt_annotation_create` uses `transcript_id`, inclusive immutable-source
   `start_word` / `end_word`, `label`, and `note`; list by transcript ID, update
   with transcript/annotation IDs and all replacement fields, delete with both
@@ -52,10 +56,11 @@ only; explicit empty values disable the selected pipeline visibly.
 - Historical media and lineage remain readable. Face identification requires
   explicit selection. Local educt never silently uploads or falls back to cloud.
 
-Chat remains the agent-mediated surface; since the transcript bench, the
-Transcript tab is the direct-manipulation surface — annotations, reels, and
-synced reading no longer cost an agent turn (see "Transcript surface" below).
-The lifecycles and security boundaries below govern all five tabs.
+Chat remains the agent-mediated surface; the panel's direct-manipulation
+surfaces are the Media tab (playback, marks, trim, concat — both media
+kinds), the Detail tab (inspection plus annotation CRUD), and the Transcript
+tab (browse, synced reading, highlight CRUD, reels). The lifecycles and
+security boundaries below govern all five tabs.
 
 ## Component and request map
 
@@ -94,6 +99,7 @@ classDiagram
         Detail
         Edit
         DetailTranscripts
+        DetailAnnotations
         Transcript
         TranscriptListing
     }
@@ -104,8 +110,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MEDIA-PANEL-001
-verified_date: 2026-10-26
-verified_against: crates/media_panel/src/media_panel.rs:101-121 (MediaPanel fields); crates/media_panel/src/media_viewer.rs:46-54 (RequestOwner — seven variants); crates/media_panel/src/media_viewer.rs:143-210 (ResourceState, RequestLifecycle); crates/media_panel/src/media_viewer.rs:244-340 (MediaViewer fields incl. thread, concat_queue, transcript state, seven request lifecycles)
+verified_date: 2026-10-27
+verified_against: crates/media_panel/src/media_panel.rs:101-121 (MediaPanel fields); crates/media_panel/src/media_viewer.rs:46-55 (RequestOwner — eight variants); crates/media_panel/src/media_viewer.rs:166-233 (ResourceState, RequestLifecycle); crates/media_panel/src/media_viewer.rs:267-363 (MediaViewer fields incl. thread, concat_queue, transcript and annotation state, eight request lifecycles)
 status: VERIFIED
 -->
 
@@ -113,51 +119,53 @@ status: VERIFIED
 
 Each asynchronous read resource has an independent `RequestLifecycle` with an epoch,
 owner, and `Idle | Loading | Ready | Failed` state
-(`crates/media_panel/src/media_viewer.rs:46-54,143-210`). `begin` suppresses duplicate
+(`crates/media_panel/src/media_viewer.rs:46-55,166-233`). `begin` suppresses duplicate
 requests for the same loading owner; a newer owner advances the epoch. Callback
 handlers mutate state only when they still own that epoch (`apply_gallery_listing`
-:799, `apply_jobs_listing` :955, `apply_detail_result` :1089,
-`apply_transcript_result` :1275). This prevents a slow page, job, detail, or
-transcript response from overwriting newer state. Direct edits are serialized
-instead: trim, concat, highlight create/rename/delete, and reel compose disable
+:843, `apply_jobs_listing` :1000, `apply_detail_result` :1134,
+`apply_transcript_result` :1709). This prevents a slow page, job, detail,
+annotation, or transcript response from overwriting newer state. Direct edits
+are serialized instead: trim, concat, highlight create/rename/delete, reel
+compose, and annotation create/replace/disable
 while one side effect is active (`begin_edit` rejects overlap at
-`crates/media_panel/src/media_viewer.rs:589`), so no completed operation can
+`crates/media_panel/src/media_viewer.rs:631`), so no completed operation can
 be hidden by a later epoch.
 
 | Resource | Owner key | Latest-response gate | Evidence |
 | --- | --- | --- | --- |
-| Gallery | requested offset | `gallery_request.owns(epoch)` | `request_gallery_page`/`apply_gallery_listing`, media_viewer.rs:760,799 |
-| Jobs | queue resource | `jobs_request.owns(epoch)` | `load_jobs`/`apply_jobs_listing`, :920,955 |
-| Detail | stable gallery asset ID | `detail_request.owns(epoch)` | `load_detail`/`apply_detail_result`, :1031,1089 |
-| Detail transcripts | stable gallery asset ID | `detail_transcripts_request.owns(epoch)` | `load_detail_transcripts`, :1117 |
-| Transcript workspace | transcript ID | `transcript_request.owns(epoch)` | `open_transcript`/`apply_transcript_result`, :1196,1275 |
-| Recordings listing | listing resource | `transcript_listing_request.owns(epoch)` | `load_transcript_listing`, :1315 |
-| Edit | one admitted side-effecting operation | `begin_edit` rejects overlap; `edit_request.owns(epoch)` closes it | :589,602 |
+| Gallery | requested offset | `gallery_request.owns(epoch)` | `request_gallery_page`/`apply_gallery_listing`, media_viewer.rs:804,843 |
+| Jobs | queue resource | `jobs_request.owns(epoch)` | `load_jobs`/`apply_jobs_listing`, :965,1000 |
+| Detail | stable gallery asset ID | `detail_request.owns(epoch)` | `load_detail`/`apply_detail_result`, :1076,1134 |
+| Detail transcripts | stable gallery asset ID | `detail_transcripts_request.owns(epoch)` | `load_detail_transcripts`, :1162 |
+| Detail annotations | stable gallery asset ID | `detail_annotations_request.owns(epoch)` | `load_detail_annotations`, :1246 |
+| Transcript workspace | transcript ID | `transcript_request.owns(epoch)` | `open_transcript`/`apply_transcript_result`, :1630,1709 |
+| Recordings listing | listing resource | `transcript_listing_request.owns(epoch)` | `load_transcript_listing`, :1749 |
+| Edit | one admitted side-effecting operation | `begin_edit` rejects overlap; `edit_request.owns(epoch)` closes it | :631,645 |
 
 Failures retain last-good data and surface degraded status instead of clearing
 the resource: each `apply_*` handler completes its epoch into
 `ResourceState::Failed` while leaving the committed rows, queue, detail, or
 workspace untouched (the same handlers as above; `resource_status` renders the
-degraded state at :3581, and a transcript reload keeps the last-good
+degraded state at :4169, and a transcript reload keeps the last-good
 workspace visible rather than flashing the idle browser — `load_transcript_with`
 retains the prior state; only an explicit open or the back affordance clears
-it, `open_transcript` :1196 / `close_transcript_workspace` :1214).
+it, `open_transcript` :1630 / `close_transcript_workspace` :1648).
 
 ## Result-derived Library freshness
 
 Published assets, imports, transcript renders, and deletions carry
 `gallery_changed: true` only after their durable gallery transition succeeds —
 the viewer reads the completed-result field
-(`tool_result_changed_gallery`, `crates/media_panel/src/media_viewer.rs:4649`)
+(`tool_result_changed_gallery`, `crates/media_panel/src/media_viewer.rs:5315`)
 inside `ingest_tool_result`
-(`crates/media_panel/src/media_viewer.rs:511`). The panel observes that
+(`crates/media_panel/src/media_viewer.rs:554`). The panel observes that
 completed-result field rather than classifying tool names; read-only
 `gallery_*` results therefore do not trigger reloads. A mutation-driven or
 manual Library reload invalidates an older same-page request before dispatch,
 while switching to Library always requests current state. Completed background
 jobs carry the same enriched display/mutation result and are ingested exactly
 once by stable job identity (`processed_job_results`, a seen-set keyed by job
-ID, inside `apply_jobs_listing` :955).
+ID, inside `apply_jobs_listing` :1000).
 
 ## Gallery pagination lifecycle
 
@@ -165,15 +173,15 @@ The Library requests 100 rows per page (`GALLERY_PAGE_LIMIT`,
 `crates/media_panel/src/media_viewer.rs:38`). A response commits only
 when its gallery ID, total, requested offset, positive limit, row count, row
 indices, and required asset fields validate (`parse_gallery_listing`,
-`crates/media_panel/src/media_viewer.rs:3614`). Failed or superseded page
-requests preserve the prior page and cursor (`apply_gallery_listing` :799).
+`crates/media_panel/src/media_viewer.rs:4202`). Failed or superseded page
+requests preserve the prior page and cursor (`apply_gallery_listing` :843).
 
 Previous/next navigation uses the server-confirmed page size and total, with
 saturating cursor arithmetic
-(`crates/media_panel/src/media_viewer.rs:901,906`). A gallery-root change
+(`crates/media_panel/src/media_viewer.rs:946,951`). A gallery-root change
 removes prior indexed rows, clears pending selection and delete state, and
 invalidates detail; a same-gallery refresh reconciles by stable asset source
-(`commit_gallery_listing`, `crates/media_panel/src/media_viewer.rs:820`).
+(`commit_gallery_listing`, `crates/media_panel/src/media_viewer.rs:865`).
 
 ```mermaid
 stateDiagram-v2
@@ -188,8 +196,8 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MEDIA-PANEL-002
-verified_date: 2026-10-26
-verified_against: crates/media_panel/src/media_viewer.rs:760-906 (request, apply, commit, navigation); crates/media_panel/src/media_viewer.rs:3614 (parse_gallery_listing validation)
+verified_date: 2026-10-27
+verified_against: crates/media_panel/src/media_viewer.rs:804-951 (request, apply, commit, navigation); crates/media_panel/src/media_viewer.rs:4202 (parse_gallery_listing validation)
 status: VERIFIED
 -->
 
@@ -197,10 +205,10 @@ status: VERIFIED
 
 Only selected video assets can enter the concat queue. Duplicates are no-ops;
 an over-cap addition is rejected without truncating the queue
-(`queue_selected_for_concat`, `crates/media_panel/src/media_viewer.rs:662`).
+(`queue_selected_for_concat`, `crates/media_panel/src/media_viewer.rs:705`).
 Dispatch requires at least two clips and rechecks the upper bound before
 calling `video_concat` (`dispatch_concat`,
-`crates/media_panel/src/media_viewer.rs:685`). The shared admission limit is
+`crates/media_panel/src/media_viewer.rs:727`). The shared admission limit is
 64 inputs (`MAX_CONCAT_ITEMS`,
 `kask/crates/hkask-types/src/media_limits.rs:8`).
 
@@ -208,20 +216,20 @@ calling `video_concat` (`dispatch_concat`,
 
 The Queue calls `job_list` with the shared default limit of 20
 (`DEFAULT_JOB_LIST_LIMIT`, `kask/crates/hkask-types/src/media_limits.rs:16`;
-`load_jobs`, `crates/media_panel/src/media_viewer.rs:920`). Producer and panel
+`load_jobs`, `crates/media_panel/src/media_viewer.rs:965`). Producer and panel
 consume one strict `JobListPayload` carrying `jobs`, `total`, `limit`,
 `has_more`, `history_scope`, and `restart_behavior`
 (`kask/mcp-servers/hkask-mcp-media/src/types.rs:706-713`). Legacy arrays,
 incomplete objects, incoherent counts, and unknown statuses surface degradation
 while the last-good queue remains visible
-(`parse_job_listing`, `crates/media_panel/src/media_viewer.rs:4463`).
+(`parse_job_listing`, `crates/media_panel/src/media_viewer.rs:5129`).
 
 While the Queue tab is active and any job remains nonterminal, one GPUI-native
 one-second poll task is scheduled (`QUEUE_POLL_INTERVAL`,
 `crates/media_panel/src/media_viewer.rs:39`; `should_poll_jobs`/`schedule_queue_poll`
-:1006,1010). Polling stops on terminal state, tab change, or failure. Queued
+:1052,1056). Polling stops on terminal state, tab change, or failure. Queued
 or running jobs can be cancelled through `job_cancel`, followed by a fresh
-listing (`cancel_job`, `crates/media_panel/src/media_viewer.rs:2255`). Job
+listing (`cancel_job`, `crates/media_panel/src/media_viewer.rs:2688`). Job
 history is process-local, so a server restart may produce an empty ready
 queue.
 
@@ -229,47 +237,56 @@ queue.
 
 Detail requests address the selected asset by stable gallery ID, never by its
 positional index. Assets not yet indexed surface a remediation message instead
-of dispatching (`load_detail`, `crates/media_panel/src/media_viewer.rs:1031`).
+of dispatching (`load_detail`, `crates/media_panel/src/media_viewer.rs:1076`).
 Only an owned, object-shaped `gallery_asset_detail` response replaces the
 last-good detail; stale and failed responses do not blank it
-(`apply_detail_result`, `crates/media_panel/src/media_viewer.rs:1089`). The
+(`apply_detail_result`, `crates/media_panel/src/media_viewer.rs:1134`). The
 renderer exposes image record, tags, lineage, faces when present, linked
-transcripts (words/timings per row), and reel provenance
-(`render_detail`, `crates/media_panel/src/media_viewer.rs:2889`).
+transcripts (words/timings per row), reel provenance, and — since 2026-10-27 —
+the **Researcher tags & notes** section: the direct annotation CRUD surface
+(`render_detail`, `crates/media_panel/src/media_viewer.rs:3331`). The
+section lists `gallery_annotation_list` rows under its own request lifecycle
+(`load_detail_annotations`, :1246), offers add tag / add note editors
+(the label editor's modal input pattern), per-row value replacement through
+`gallery_annotation_update` over the stable identity, and delete through
+`gallery_annotation_delete` — all under the single edit admission with the
+visible-refusal discipline (`confirm_annotation_edit`, :1429); every completion
+reloads the list. The section needs an indexed asset and says why otherwise;
+a failed listing surfaces an unavailable note, never silence.
 
 ## Transcript surface
 
-The Transcript tab is the direct transcript workspace (2026-10-26) — no agent
-turn in the loop. Its idle state is the recordings browser
-(`load_transcript_listing` :1315); clicking a row opens the workspace
-(`open_transcript` :1196), and an in-workspace `← all recordings` affordance
-returns (`close_transcript_workspace` :1214).
+The Transcript tab is the direct transcript workspace — no agent turn in the
+loop. Its idle state is the recordings browser
+(`load_transcript_listing` :1749); clicking a row opens the workspace
+(`open_transcript` :1630), and an in-workspace `← all recordings` affordance
+returns (`close_transcript_workspace` :1648).
 
 - **Workspace**: one strict `educt_get_transcript` dispatch
-  (`parse_transcript_payload` :4205) drives paragraph blocks
-  (`build_pane_blocks` :4094), speaker labels, the layers strip, highlight
+  (`parse_transcript_payload` :4871) drives paragraph blocks
+  (`build_pane_blocks` :4760), speaker labels, the layers strip, highlight
   overlays, and the five alignment states (untimed/unaligned render text-only
   with a visible status note).
 - **Sync**: clicking a word seeks the bound shared player to its start
-  (`seek_workspace_transcript` :2133 over `MediaWidget::seek_to_secs`); while
+  (`seek_workspace_transcript` :2565 over `MediaWidget::seek_to_secs`); while
   playing, a 4 Hz GPUI-native follow-along marks the containing word
-  (`start_transcript_follow` :2146, `current_word_index` :4085, gated on
+  (`start_transcript_follow` :2579, `current_word_index` :4751, gated on
   `MediaWidget::is_transport_playing`).
 - **Annotation**: Select-range mode turns word clicks into a two-click range
-  (`handle_word_selection` :1387) opening a label editor (typed or pasted
+  (`handle_word_selection` :1820) opening a label editor (typed or pasted
   labels; Enter confirms, Escape cancels, empty keeps the
-  `research-highlight` default — `open_label_editor` :1887,
-  `confirm_label_edit` :1913). Create/rename/delete dispatch
-  `educt_annotation_create`/`update`/`delete` (:1473, :1801, :1725);
+  `research-highlight` default — `open_label_editor` :2320,
+  `confirm_label_edit` :2346). Create/rename/delete dispatch
+  `educt_annotation_create`/`update`/`delete` (:1906, :2234, :2158);
   researcher detection mirrors the server's researcher-annotation guard
   exactly, so the compose flow's gather layers never render as annotations.
   Hand highlights exist only on index-identical views — the pure five-state
-  gate `highlight_range_gate` (:3973) surfaces the reason otherwise; the panel
+  gate `highlight_range_gate` (:4639) surfaces the reason otherwise; the panel
   never re-implements the server's projection (D5).
 - **Reels**: per-clip include/exclude toggles shape the next compose
-  (`gather_reel_params` :4045, provenance-keyed membership); one click chains
+  (`gather_reel_params` :4711, provenance-keyed membership); one click chains
   `educt_store_layer` → `educt_edl_from_highlights` → `educt_render_edl`
-  (`compose_workspace_reel` :1583) and the rendered reel lands as a playable
+  (`compose_workspace_reel` :2016) and the rendered reel lands as a playable
   asset through display-hint ingestion, with the compose progress visible on
   the tab status line.
 
@@ -277,10 +294,18 @@ returns (`close_transcript_workspace` :1214).
 
 The selected media entity is owned directly by the viewer so trim marks and the
 playback clock remain reachable; selection replacement resolves through the
-stable-asset weak registry (`crates/media_panel/src/media_viewer.rs:244-260`).
+stable-asset weak registry (`crates/media_panel/src/media_viewer.rs:267-290`).
 The panel remains a vertically split viewer/director surface with a draggable
 split (`MediaPanel`, `VerticalSplitState`, and `MediaPanel::render` in
 `crates/media_panel/src/media_panel.rs`).
+
+The edit toolbar serves **both media kinds** (2026-10-27 unification):
+`MediaWidget::transport_position_secs` is the one position accessor, so marks,
+the position label, and Trim-to-Marks work on audio exactly as on video. Trim
+dispatches `video_clip`, which stream-copies video to mp4 and decodes audio
+inputs to wav server-side — the published asset's kind follows the input, so
+an audio excerpt never masquerades as video. Concat stays video-only in the
+panel (the audio path is the Queue's `audio_concat` op).
 
 The viewer pane must retain `min_h_0` and `min_w_0` so media and toolbars shrink
 inside the dock instead of propagating intrinsic dimensions
@@ -311,7 +336,7 @@ widget as of this edit (method: grep for `playback_speed`, `set_rate`,
 
 | Capability | State |
 | --- | --- |
-| Play/pause, seek, stop, trim marks | supplied |
+| Play/pause, seek, stop, trim marks | supplied (both media kinds) |
 | Volume and mute | operating-system controlled |
 | Paginated gallery selection and refresh | supplied |
 | Stable-ID detail and delete operations | supplied |
@@ -320,4 +345,7 @@ widget as of this edit (method: grep for `playback_speed`, `set_rate`,
 | Recordings browse + transcript workspace with synced reading | supplied |
 | Researcher highlight create/rename/delete via label editor | supplied |
 | Reel compose, clip toggles, render, and play | supplied |
+| Researcher tags/notes create/replace/delete in Detail | supplied (2026-10-27) |
+| Trim on audio through the same Media-tab marks | supplied (2026-10-27) |
+| Per-tab purpose copy | supplied (2026-10-27) |
 | Playback speed, zoom, fullscreen | absent |
