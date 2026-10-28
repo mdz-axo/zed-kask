@@ -49,6 +49,7 @@ enum RequestOwner {
     Detail(String),
     Edit(&'static str),
     DetailTranscripts(String),
+    DetailAnnotations(String),
     Transcript(String),
     TranscriptListing,
 }
@@ -105,6 +106,28 @@ struct PaneHighlight {
     note: String,
     annotation_id: String,
     researcher_supplied: bool,
+}
+
+/// A researcher tag/note row for the Detail tab's annotation surface
+/// (strict-parsed from `gallery_annotation_list` — the direct-manipulation
+/// CRUD section, 2026-10-27).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PaneAnnotation {
+    annotation_id: String,
+    kind: String,
+    value: String,
+    created_at: String,
+}
+
+/// The Detail tab's open annotation editor: a new tag/note or an existing
+/// row's value being replaced. Mirrors the transcript label editor's
+/// modal pattern — Enter confirms, Escape cancels.
+#[derive(Clone, Debug)]
+struct AnnotationEdit {
+    kind: &'static str,
+    /// `None` creates a new row; `Some` replaces that annotation's value.
+    annotation_id: Option<String>,
+    buffer: LabelBuffer,
 }
 
 /// The strict-parsed `educt_get_transcript` payload the Transcript tab
@@ -284,6 +307,15 @@ pub struct MediaViewer {
     /// non-empty lists.
     detail_transcripts: Option<Vec<TranscriptSummaryRow>>,
     detail_transcripts_request: RequestLifecycle,
+    /// Researcher tags/notes for the selected asset (from
+    /// `gallery_annotation_list`) — the Detail tab's direct annotation
+    /// CRUD surface (2026-10-27).
+    detail_annotations: Option<Vec<PaneAnnotation>>,
+    detail_annotations_request: RequestLifecycle,
+    /// The Detail tab's open annotation editor and its input's focus
+    /// handle (lazily created on open, like the transcript label editor's).
+    annotation_edit: Option<AnnotationEdit>,
+    annotation_input_focus: Option<gpui::FocusHandle>,
     /// The open transcript workspace (from `educt_get_transcript`) — `None`
     /// until the request completes; `Some` renders the Transcript tab. The
     /// state persists across tab switches so returning to an open
@@ -360,6 +392,10 @@ impl MediaViewer {
             detail_request: RequestLifecycle::new(),
             detail_transcripts: None,
             detail_transcripts_request: RequestLifecycle::new(),
+            detail_annotations: None,
+            detail_annotations_request: RequestLifecycle::new(),
+            annotation_edit: None,
+            annotation_input_focus: None,
             transcript: None,
             transcript_request: RequestLifecycle::new(),
             current_word: None,
@@ -403,6 +439,9 @@ impl MediaViewer {
         self.detail_request.invalidate();
         self.detail_transcripts = None;
         self.detail_transcripts_request.invalidate();
+        self.detail_annotations = None;
+        self.detail_annotations_request.invalidate();
+        self.annotation_edit = None;
     }
 
     fn stop_queue_polling(&mut self) {
@@ -428,6 +467,9 @@ impl MediaViewer {
             self.detail_request.invalidate();
             self.detail_transcripts = None;
             self.detail_transcripts_request.invalidate();
+            self.detail_annotations = None;
+            self.detail_annotations_request.invalidate();
+            self.annotation_edit = None;
         }
         self.active_tab = tab;
         self.confirm_delete = None;
@@ -437,6 +479,7 @@ impl MediaViewer {
             ViewerTab::Detail => {
                 self.load_detail(cx);
                 self.load_detail_transcripts(cx);
+                self.load_detail_annotations(cx);
             }
             ViewerTab::Media => {}
             ViewerTab::Transcript => {
@@ -732,6 +775,7 @@ impl MediaViewer {
             ViewerTab::Detail => {
                 self.load_detail(cx);
                 self.load_detail_transcripts(cx);
+                self.load_detail_annotations(cx);
             }
             ViewerTab::Transcript => {
                 if let Some(transcript) = self.transcript.as_ref() {
@@ -881,6 +925,8 @@ impl MediaViewer {
             self.detail_request.invalidate();
             self.detail_transcripts = None;
             self.detail_transcripts_request.invalidate();
+            self.detail_annotations = None;
+            self.detail_annotations_request.invalidate();
         }
     }
 
@@ -1188,6 +1234,394 @@ impl MediaViewer {
             }
         }
         cx.notify();
+    }
+
+    /// Load the selected asset's researcher tags/notes via
+    /// `gallery_annotation_list` — the Detail tab's annotation surface
+    /// (2026-10-27). A read beside `load_detail`, keyed by the same stable
+    /// asset id and protected by its own request lifecycle; guard failures
+    /// stay silent (load_detail surfaces the no-selection and
+    /// unindexed-asset statuses for the same selection).
+    fn load_detail_annotations(&mut self, cx: &mut Context<Self>) {
+        let Some(ix) = self.selected.filter(|ix| *ix < self.assets.len()) else {
+            self.detail_annotations = None;
+            self.detail_annotations_request.invalidate();
+            return;
+        };
+        let Some(asset_id) = self.assets[ix].gallery_asset_id.clone() else {
+            self.detail_annotations = None;
+            self.detail_annotations_request.invalidate();
+            return;
+        };
+        let Some(epoch) = self
+            .detail_annotations_request
+            .begin(RequestOwner::DetailAnnotations(asset_id.clone()))
+        else {
+            return;
+        };
+        self.detail_annotations = None;
+        let Some(invoker) = hkask_tool_invoker::shared_tool_invoker() else {
+            self.apply_detail_annotations_result(
+                epoch,
+                Err("Tool invoker not wired — panel cannot load annotations.".into()),
+                cx,
+            );
+            return;
+        };
+        cx.notify();
+        let task = invoker.invoke_tool(
+            MEDIA_SERVER,
+            "gallery_annotation_list",
+            serde_json::json!({ "gallery_asset_id": asset_id }),
+        );
+        cx.spawn(async move |this, cx| {
+            let result = match task.await {
+                Ok(text) => match hkask_types::tool_response::parse_tool_response(&text) {
+                    Some(value) => parse_annotation_listing(&value),
+                    None => Err("gallery_annotation_list returned no parsable data.".to_string()),
+                },
+                Err(error) => Err(format!(
+                    "gallery_annotation_list failed: {}",
+                    error.message()
+                )),
+            };
+            this.update(cx, |this, cx| {
+                this.apply_detail_annotations_result(epoch, result, cx)
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    /// expect: A newer annotations request owns the rows even if an older outcome arrives later.
+    /// [P1] Motivating: overlapping annotation loads cannot regress visible detail state.
+    /// pre: epoch was returned by detail_annotations_request.begin.
+    /// post: stale outcomes are ignored; the owned outcome commits exactly once.
+    fn apply_detail_annotations_result(
+        &mut self,
+        epoch: u64,
+        result: Result<Vec<PaneAnnotation>, String>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.detail_annotations_request.owns(epoch) {
+            return;
+        }
+        match result {
+            Ok(rows) => {
+                self.detail_annotations = Some(rows);
+                self.detail_annotations_request.complete(epoch, Ok(()));
+            }
+            Err(error) => {
+                self.detail_annotations_request.complete(epoch, Err(error));
+            }
+        }
+        cx.notify();
+    }
+
+    /// Dispatch a researcher-annotation edit (create/update/delete) under
+    /// the single edit admission, then reload the annotation list so the
+    /// section reflects it.
+    fn dispatch_annotation_edit(
+        &mut self,
+        tool: &'static str,
+        params: serde_json::Value,
+        done: &'static str,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .selected
+            .and_then(|ix| self.assets.get(ix))
+            .and_then(|asset| asset.gallery_asset_id.as_deref())
+            .is_none()
+        {
+            self.status = Some(
+                "Asset is not in the gallery index yet — annotations need an indexed asset.".into(),
+            );
+            cx.notify();
+            return;
+        }
+        let epoch = match self.begin_edit(tool) {
+            Ok(epoch) => epoch,
+            Err(error) => {
+                self.status = Some(error);
+                cx.notify();
+                return;
+            }
+        };
+        self.edit_progress = Some(format!("{tool}…"));
+        let Some(invoker) = hkask_tool_invoker::shared_tool_invoker() else {
+            self.apply_annotation_edit_result(
+                epoch,
+                done,
+                Err("Tool invoker not wired — panel cannot edit annotations.".into()),
+                cx,
+            );
+            return;
+        };
+        cx.notify();
+        let task = invoker.invoke_tool(MEDIA_SERVER, tool, params);
+        cx.spawn(async move |this, cx| {
+            let result = task.await.map_err(|error| error.message());
+            this.update(cx, |this, cx| {
+                this.apply_annotation_edit_result(epoch, done, result, cx)
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    /// expect: The owned annotation edit commits once and the list reloads
+    /// with it; failures surface visibly and clear progress.
+    fn apply_annotation_edit_result(
+        &mut self,
+        epoch: u64,
+        done: &'static str,
+        result: Result<String, String>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.edit_request.owns(epoch) {
+            return;
+        }
+        self.edit_progress = None;
+        match result {
+            Ok(_acknowledgement) => {
+                self.status = Some(format!("Annotation {done} — the list reloads."));
+                self.edit_request.complete(epoch, Ok(()));
+                self.load_detail_annotations(cx);
+            }
+            Err(error) => {
+                self.status = Some(error);
+                self.edit_request
+                    .complete(epoch, Err(format!("annotation {done} failed")));
+            }
+        }
+        cx.notify();
+    }
+
+    /// Open the annotation editor for a new tag/note or an existing row's
+    /// value, focus its input, and hint the keys (the transcript label
+    /// editor's modal pattern).
+    fn open_annotation_editor(
+        &mut self,
+        edit: AnnotationEdit,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let focus = self
+            .annotation_input_focus
+            .get_or_insert_with(|| cx.focus_handle())
+            .clone();
+        let replacing = edit.annotation_id.is_some();
+        self.status = Some(if replacing {
+            "Replace the value — Enter saves; Escape cancels.".into()
+        } else {
+            "Write the tag or note — Enter saves; Escape cancels.".into()
+        });
+        self.annotation_edit = Some(edit);
+        focus.focus(window, cx);
+        cx.notify();
+    }
+
+    /// Confirm the open annotation editor: create dispatches with the typed
+    /// value, replace dispatches over the row's identity. Blank values
+    /// refuse visibly and keep the buffer; an in-flight edit refuses and
+    /// keeps the buffer for retry.
+    fn confirm_annotation_edit(&mut self, cx: &mut Context<Self>) {
+        let Some(edit) = self.annotation_edit.take() else {
+            return;
+        };
+        if self.edit_request.state == ResourceState::Loading {
+            self.annotation_edit = Some(edit);
+            self.status =
+                Some("Another media edit is already in progress; wait for it to finish.".into());
+            cx.notify();
+            return;
+        }
+        let value = edit.buffer.label();
+        if value.is_empty() {
+            self.annotation_edit = Some(edit);
+            self.status = Some("A tag or note needs text — Escape cancels.".into());
+            cx.notify();
+            return;
+        }
+        let Some(asset_id) = self
+            .selected
+            .and_then(|ix| self.assets.get(ix))
+            .and_then(|asset| asset.gallery_asset_id.clone())
+        else {
+            self.annotation_edit = Some(edit);
+            self.status = Some(
+                "Asset is not in the gallery index yet — annotations need an indexed asset.".into(),
+            );
+            cx.notify();
+            return;
+        };
+        match edit.annotation_id.clone() {
+            None => self.dispatch_annotation_edit(
+                "gallery_annotation_create",
+                annotation_create_params(&asset_id, edit.kind, &value),
+                "created",
+                cx,
+            ),
+            Some(annotation_id) => self.dispatch_annotation_edit(
+                "gallery_annotation_update",
+                annotation_update_params(&asset_id, &annotation_id, &value),
+                "updated",
+                cx,
+            ),
+        }
+    }
+
+    /// Cancel the open annotation editor without dispatching.
+    fn cancel_annotation_edit(&mut self, cx: &mut Context<Self>) {
+        if self.annotation_edit.take().is_some() {
+            self.status = Some("Annotation edit cancelled.".into());
+            cx.notify();
+        }
+    }
+
+    /// Route the annotation editor's keystrokes — the label editor's key
+    /// handling over the annotation confirm/cancel pair.
+    fn handle_annotation_key(&mut self, keystroke: &Keystroke, cx: &mut Context<Self>) {
+        match keystroke.key.as_str() {
+            "escape" => self.cancel_annotation_edit(cx),
+            "enter" => self.confirm_annotation_edit(cx),
+            _ => {
+                if let Some(edit) = self.annotation_edit.as_mut()
+                    && edit.buffer.apply_keystroke(keystroke)
+                {
+                    cx.notify();
+                }
+            }
+        }
+    }
+
+    /// Paste clipboard text into the open annotation editor (control
+    /// characters dropped — single-line values).
+    fn paste_into_annotation_edit(&mut self, cx: &mut Context<Self>) {
+        let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
+            return;
+        };
+        if let Some(edit) = self.annotation_edit.as_mut() {
+            edit.buffer.insert_str(&text);
+            cx.notify();
+        }
+    }
+
+    /// The Detail tab's annotation editor row — the label editor's input,
+    /// parameterized for a tag/note value. An associated fn so the caller
+    /// can hold the detail state's immutable borrow.
+    fn render_annotation_editor(
+        edit: &AnnotationEdit,
+        focus: &gpui::FocusHandle,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let context = if edit.annotation_id.is_some() {
+            format!("Replace {}", edit.kind)
+        } else {
+            format!("New {}", edit.kind)
+        };
+        let typed = edit.buffer.text();
+        let cursor = edit.buffer.cursor();
+        let before: String = typed.chars().take(cursor).collect();
+        let after: String = typed.chars().skip(cursor).collect();
+        let mut input = div()
+            .id("media-detail-annotation-input")
+            .track_focus(focus)
+            .flex()
+            .items_center()
+            .min_w_0()
+            .w(px(160.))
+            .overflow_hidden()
+            .rounded_md()
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .px_1()
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
+                let keystroke = &event.keystroke;
+                if (keystroke.modifiers.control || keystroke.modifiers.platform)
+                    && keystroke.key == "v"
+                {
+                    this.paste_into_annotation_edit(cx);
+                } else {
+                    this.handle_annotation_key(&event.keystroke, cx);
+                }
+                cx.stop_propagation();
+            }))
+            .on_click({
+                let focus = focus.clone();
+                cx.listener(move |_, _, window, cx| {
+                    window.focus(&focus, cx);
+                })
+            });
+        if typed.is_empty() {
+            input = input.child(
+                Label::new(SharedString::from("(value)"))
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Muted),
+            );
+        } else {
+            input = input
+                .child(
+                    Label::new(SharedString::from(before))
+                        .size(LabelSize::XSmall)
+                        .color(ui::Color::Default),
+                )
+                .child(
+                    div()
+                        .id("media-detail-annotation-caret")
+                        .w(px(1.))
+                        .h(px(12.))
+                        .bg(cx.theme().colors().text),
+                )
+                .child(
+                    Label::new(SharedString::from(after))
+                        .size(LabelSize::XSmall)
+                        .color(ui::Color::Default),
+                );
+        }
+        div()
+            .id("media-detail-annotation-editor")
+            .min_w_0()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap_2()
+            .child(
+                Label::new(SharedString::from(context))
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Muted),
+            )
+            .child(input)
+            .child(
+                div()
+                    .id("media-detail-annotation-confirm")
+                    .cursor_pointer()
+                    .hover(|el| el.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Label::new(SharedString::from("save"))
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Default),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.confirm_annotation_edit(cx);
+                    })),
+            )
+            .child(
+                div()
+                    .id("media-detail-annotation-cancel")
+                    .cursor_pointer()
+                    .hover(|el| el.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Label::new(SharedString::from("cancel"))
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Muted),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.cancel_annotation_edit(cx);
+                    })),
+            )
+            .into_any_element()
     }
 
     /// Open a transcript in the workspace tab: clear prior state, switch to
@@ -2991,6 +3425,132 @@ impl MediaViewer {
             sections = sections.child(Self::section_label("Transcripts"));
             sections = sections.child(Self::kv_row("unavailable", error, cx));
         }
+        // The annotation surface (2026-10-27): researcher tags/notes with
+        // direct create/replace/delete — the same direct-manipulation
+        // rationale as the transcript highlights, on the inspector's home
+        // surface. The whole section needs an indexed asset.
+        if let Some(asset_id) = self
+            .selected
+            .and_then(|ix| self.assets.get(ix))
+            .and_then(|asset| asset.gallery_asset_id.clone())
+        {
+            sections = sections.child(Self::section_label("Researcher tags & notes"));
+            if let Some(edit) = self.annotation_edit.clone()
+                && let Some(focus) = self.annotation_input_focus.clone()
+            {
+                sections = sections.child(Self::render_annotation_editor(&edit, &focus, cx));
+            } else {
+                for kind in ["tag", "note"] {
+                    sections = sections.child(
+                        div()
+                            .id(SharedString::from(format!(
+                                "media-detail-annotation-add-{kind}"
+                            )))
+                            .cursor_pointer()
+                            .flex()
+                            .flex_wrap()
+                            .gap_2()
+                            .hover(|el| el.bg(cx.theme().colors().element_hover))
+                            .child(
+                                Label::new(SharedString::from(format!("add {kind}")))
+                                    .size(LabelSize::XSmall)
+                                    .color(ui::Color::Muted),
+                            )
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open_annotation_editor(
+                                    AnnotationEdit {
+                                        kind,
+                                        annotation_id: None,
+                                        buffer: LabelBuffer::default(),
+                                    },
+                                    window,
+                                    cx,
+                                );
+                            })),
+                    );
+                }
+            }
+            if let Some(annotations) = &self.detail_annotations {
+                for annotation in annotations {
+                    let annotation_id = annotation.annotation_id.clone();
+                    let row_label = format!("{}: {}", annotation.kind, annotation.value);
+                    let edit_annotation_id = annotation.annotation_id.clone();
+                    let edit_value = annotation.value.clone();
+                    let kind_static: &'static str = if annotation.kind == "note" {
+                        "note"
+                    } else {
+                        "tag"
+                    };
+                    let delete_asset_id = asset_id.clone();
+                    sections = sections.child(
+                        div()
+                            .id(SharedString::from(format!(
+                                "media-detail-annotation-{annotation_id}"
+                            )))
+                            .flex()
+                            .flex_wrap()
+                            .gap_2()
+                            .child(
+                                Label::new(SharedString::from(row_label))
+                                    .size(LabelSize::XSmall)
+                                    .color(ui::Color::Default),
+                            )
+                            .child(
+                                div()
+                                    .id(SharedString::from(format!(
+                                        "media-detail-annotation-edit-{annotation_id}"
+                                    )))
+                                    .cursor_pointer()
+                                    .hover(|el| el.bg(cx.theme().colors().element_hover))
+                                    .child(
+                                        Label::new(SharedString::from("edit"))
+                                            .size(LabelSize::XSmall)
+                                            .color(ui::Color::Default),
+                                    )
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.open_annotation_editor(
+                                            AnnotationEdit {
+                                                kind: kind_static,
+                                                annotation_id: Some(edit_annotation_id.clone()),
+                                                buffer: LabelBuffer::from_str(&edit_value),
+                                            },
+                                            window,
+                                            cx,
+                                        );
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .id(SharedString::from(format!(
+                                        "media-detail-annotation-delete-{annotation_id}"
+                                    )))
+                                    .cursor_pointer()
+                                    .hover(|el| el.bg(cx.theme().colors().element_hover))
+                                    .child(
+                                        Label::new(SharedString::from("delete"))
+                                            .size(LabelSize::XSmall)
+                                            .color(ui::Color::Error),
+                                    )
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.dispatch_annotation_edit(
+                                            "gallery_annotation_delete",
+                                            annotation_delete_params(
+                                                &delete_asset_id,
+                                                &annotation_id,
+                                            ),
+                                            "deleted",
+                                            cx,
+                                        );
+                                    })),
+                            ),
+                    );
+                }
+            }
+        }
+        if let ResourceState::Failed(error) = &self.detail_annotations_request.state {
+            sections = sections.child(Self::section_label("Tags & notes"));
+            sections = sections.child(Self::kv_row("unavailable", error, cx));
+        }
         if let Some(provenance) = parse_reel_provenance(detail) {
             sections = sections.child(Self::section_label("Reel provenance"));
             sections = sections.child(Self::kv_row("rendered from transcript", &provenance, cx));
@@ -3740,6 +4300,84 @@ fn parse_delete_acknowledgement(output: &str, expected_id: &str) -> Result<usize
 /// Every summary must carry a non-empty `id`, a `words_count`, and a
 /// `has_word_timings` flag, and the declared `count` must match the rows.
 /// A malformed listing is an error, never an empty success — degradation
+/// The exact `gallery_annotation_create` request.
+fn annotation_create_params(gallery_asset_id: &str, kind: &str, value: &str) -> serde_json::Value {
+    serde_json::json!({
+        "gallery_asset_id": gallery_asset_id,
+        "kind": kind,
+        "value": value,
+    })
+}
+
+/// The exact `gallery_annotation_update` request — stable identity plus
+/// the replacement value.
+fn annotation_update_params(
+    gallery_asset_id: &str,
+    annotation_id: &str,
+    value: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "gallery_asset_id": gallery_asset_id,
+        "annotation_id": annotation_id,
+        "value": value,
+    })
+}
+
+/// The exact `gallery_annotation_delete` request.
+fn annotation_delete_params(gallery_asset_id: &str, annotation_id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "gallery_asset_id": gallery_asset_id,
+        "annotation_id": annotation_id,
+    })
+}
+
+/// Strict-parse `gallery_annotation_list` rows — a malformed row rejects
+/// the whole listing, never degrades to an empty success (the house
+/// pattern).
+fn parse_annotation_listing(payload: &Value) -> Result<Vec<PaneAnnotation>, String> {
+    let annotations = payload
+        .get("annotations")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "gallery_annotation_list returned no annotations array.".to_string())?;
+    let mut rows = Vec::with_capacity(annotations.len());
+    for annotation in annotations {
+        let object = annotation
+            .as_object()
+            .ok_or_else(|| "annotation row is not an object.".to_string())?;
+        let annotation_id = object
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| "annotation row has no id.".to_string())?
+            .to_string();
+        let kind = object
+            .get("tag_type")
+            .and_then(Value::as_str)
+            .filter(|kind| matches!(*kind, "tag" | "note"))
+            .ok_or_else(|| "annotation row has no tag/note kind.".to_string())?
+            .to_string();
+        let value = object
+            .get("value")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "annotation row has no value.".to_string())?
+            .to_string();
+        let created_at = object
+            .get("created_at")
+            .and_then(Value::as_str)
+            .filter(|created| !created.is_empty())
+            .ok_or_else(|| "annotation row has no created_at.".to_string())?
+            .to_string();
+        rows.push(PaneAnnotation {
+            annotation_id,
+            kind,
+            value,
+            created_at,
+        });
+    }
+    Ok(rows)
+}
+
 /// surfaces, it does not masquerade as "no transcripts".
 fn parse_transcript_listing(payload: &Value) -> Result<Vec<TranscriptSummaryRow>, String> {
     let object = payload
@@ -5989,6 +6627,189 @@ mod tests {
                 viewer.transcript.is_none(),
                 "an explicit open clears the old workspace immediately"
             );
+        });
+    }
+
+    /// dcterms:identifier: `parse_annotation_listing`
+    /// expect: Annotation listings parse strictly or reject — never
+    /// degrade to an empty success; the kind is the closed tag/note set.
+    #[test]
+    fn annotation_listing_is_strict() {
+        let valid = serde_json::json!({
+            "annotations": [
+                {"id": "ann-1", "tag_type": "tag", "value": "thesis", "created_at": "c1", "confidence": 1.0, "model_used": "user"},
+                {"id": "ann-2", "tag_type": "note", "value": "check audio at 0:30", "created_at": "c2", "confidence": 1.0, "model_used": "user"}
+            ]
+        });
+        let rows = parse_annotation_listing(&valid).expect("valid listing parses");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].kind, "tag");
+        assert_eq!(rows[0].value, "thesis");
+        assert_eq!(rows[1].kind, "note");
+        for invalid in [
+            r#"{"annotations": [{}]}"#,
+            r#"{"annotations": [{"id": ""}]}"#,
+            r#"{"annotations": [{"id": "a", "tag_type": "vibe"}]}"#,
+            r#"{"annotations": [{"id": "a", "tag_type": "tag"}]}"#,
+            r#"{"annotations": [{"id": "a", "tag_type": "tag", "value": ""}]}"#,
+            r#"{"annotations": [{"id": "a", "tag_type": "tag", "value": "v"}]}"#,
+            r#"{"annotations": ["a"]}"#,
+            r#"{}"#,
+        ] {
+            let payload: Value = serde_json::from_str(invalid).expect("fixture json");
+            assert!(
+                parse_annotation_listing(&payload).is_err(),
+                "malformed listing must reject: {invalid}"
+            );
+        }
+    }
+
+    /// dcterms:identifier: `annotation_create_params` / `annotation_update_params` / `annotation_delete_params`
+    /// expect: The three annotation dispatches carry their exact request
+    /// contracts.
+    #[test]
+    fn annotation_params_carry_the_exact_contract() {
+        let create = annotation_create_params("asset-1", "tag", "thesis");
+        let create = create.as_object().expect("object");
+        assert_eq!(create.len(), 3);
+        assert_eq!(create["gallery_asset_id"], serde_json::json!("asset-1"));
+        assert_eq!(create["kind"], serde_json::json!("tag"));
+        assert_eq!(create["value"], serde_json::json!("thesis"));
+
+        let update = annotation_update_params("asset-1", "ann-9", "revised");
+        let update = update.as_object().expect("object");
+        assert_eq!(update.len(), 3);
+        assert_eq!(update["gallery_asset_id"], serde_json::json!("asset-1"));
+        assert_eq!(update["annotation_id"], serde_json::json!("ann-9"));
+        assert_eq!(update["value"], serde_json::json!("revised"));
+
+        let delete = annotation_delete_params("asset-1", "ann-9");
+        let delete = delete.as_object().expect("object");
+        assert_eq!(delete.len(), 2);
+        assert_eq!(delete["annotation_id"], serde_json::json!("ann-9"));
+    }
+
+    /// dcterms:identifier: `MediaViewer::confirm_annotation_edit`
+    /// expect: Confirming a new tag closes the editor and surfaces the
+    /// dispatch outcome visibly (the unwired test invoker names itself);
+    /// a blank value refuses without dispatching; an unindexed asset
+    /// refuses and keeps the buffer; the replace arm dispatches over the
+    /// row's identity; Escape cancels without dispatching.
+    /// [P1] Motivating: the annotation editor never loses typed text to a
+    /// silent refusal, and every refusal surfaces, never swallows.
+    #[gpui::test]
+    fn annotation_editor_confirm_and_cancel_lifecycle(cx: &mut gpui::TestAppContext) {
+        let _invoker_lock = INVOKER_TEST_LOCK.lock().unwrap();
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            viewer.selected = Some(0);
+            viewer.assets = vec![indexed_asset("/annotation-a.png", 1)];
+
+            // Create confirm: the editor closes and the unwired invoker
+            // refusal surfaces.
+            viewer.annotation_edit = Some(AnnotationEdit {
+                kind: "tag",
+                annotation_id: None,
+                buffer: LabelBuffer::from_str("thesis"),
+            });
+            viewer.confirm_annotation_edit(cx);
+            assert!(
+                viewer.annotation_edit.is_none(),
+                "confirm consumed the editor"
+            );
+            assert!(
+                viewer
+                    .status
+                    .as_deref()
+                    .unwrap()
+                    .contains("cannot edit annotations"),
+                "status: {:?}",
+                viewer.status
+            );
+            assert!(matches!(
+                viewer.edit_request.state,
+                ResourceState::Failed(_)
+            ));
+
+            // A blank value refuses without dispatching; the editor stays.
+            viewer.edit_request.state = ResourceState::Idle;
+            viewer.annotation_edit = Some(AnnotationEdit {
+                kind: "note",
+                annotation_id: None,
+                buffer: LabelBuffer::from_str("   "),
+            });
+            viewer.confirm_annotation_edit(cx);
+            assert!(
+                viewer.annotation_edit.is_some(),
+                "the blank value stays open"
+            );
+            assert!(
+                viewer.status.as_deref().unwrap().contains("needs text"),
+                "status: {:?}",
+                viewer.status
+            );
+            assert_eq!(viewer.edit_request.state, ResourceState::Idle);
+
+            // The replace arm dispatches over the row's identity (the
+            // unwired invoker names the annotation path again).
+            viewer.annotation_edit = Some(AnnotationEdit {
+                kind: "note",
+                annotation_id: Some("ann-9".into()),
+                buffer: LabelBuffer::from_str("revised"),
+            });
+            viewer.confirm_annotation_edit(cx);
+            assert!(viewer.annotation_edit.is_none());
+            assert!(
+                viewer
+                    .status
+                    .as_deref()
+                    .unwrap()
+                    .contains("cannot edit annotations"),
+                "status: {:?}",
+                viewer.status
+            );
+
+            // An unindexed asset refuses and keeps the buffer.
+            viewer.edit_request.state = ResourceState::Idle;
+            viewer.assets = vec![surfaced_asset("/annotation-b.png")];
+            viewer.annotation_edit = Some(AnnotationEdit {
+                kind: "tag",
+                annotation_id: None,
+                buffer: LabelBuffer::from_str("orphan"),
+            });
+            viewer.confirm_annotation_edit(cx);
+            assert!(
+                viewer.annotation_edit.is_some(),
+                "the unindexed refusal keeps the buffer"
+            );
+            assert!(
+                viewer
+                    .status
+                    .as_deref()
+                    .unwrap()
+                    .contains("not in the gallery index"),
+                "status: {:?}",
+                viewer.status
+            );
+
+            // Escape cancels without dispatching anything.
+            viewer.handle_annotation_key(
+                &Keystroke {
+                    modifiers: gpui::Modifiers {
+                        control: false,
+                        alt: false,
+                        shift: false,
+                        platform: false,
+                        function: false,
+                    },
+                    key: "escape".into(),
+                    key_char: None,
+                },
+                cx,
+            );
+            assert!(viewer.annotation_edit.is_none());
+            assert!(viewer.status.as_deref().unwrap().contains("cancelled"));
+            assert_eq!(viewer.edit_request.state, ResourceState::Idle);
         });
     }
 
