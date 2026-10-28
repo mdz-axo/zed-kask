@@ -250,6 +250,13 @@ profile; later bundles get their spans embedded with the *same* model and matche
 matches surface as **scored suggestions** that a human confirms through the tools
 that already exist.
 
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-ARCH-SPEAKER-IDENT-001
+verified_date: 2026-10-27
+verified_against: the existing-tree nodes — the human-confirmation act over word ranges (kask/mcp-servers/hkask-mcp-media/src/tools/educt.rs:672 `educt_annotation_create`), the validated speaker layers and their attribution spans (educt.rs:1034 `educt_store_layer`, educt.rs:1131 `educt_speaker_pass`), the 16 kHz mono canonical-asset path (kask/mcp-servers/hkask-mcp-media/src/tools/audio.rs:4 `CAPTURE_SAMPLE_RATE`), and the SQLCipher profile-table placement beside `face_registry` (kask/mcp-servers/hkask-mcp-media/src/faces.rs:399). The quality-gate, CAM++-class enrollment, voice-profile-table, and threshold/margin-matching nodes are this document's §5 design contract (operator decisions D1–D4) — planned, not yet-implemented code; Phase 1a (`transcript_review.rs` review flags) is the only landed phase.
+status: VERIFIED
+-->
+
 ```mermaid
 flowchart TD
     A["Human confirms name on a word range (annotation / speaker span)"] --> B["Extract 16 kHz mono span (resample BEFORE fbank)"]
