@@ -33,7 +33,9 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
         | "educt_locate"
         | "educt_export"
         | "educt_annotation_list"
-        | "educt_search_transcripts" => Some(REPORT),
+        | "educt_search_transcripts"
+        | "layers_list"
+        | "layers_get" => Some(REPORT),
         "image_create_collage"
         | "video_clip"
         | "video_to_gif"
@@ -79,7 +81,8 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
         | "job_submit"
         | "job_cancel"
         | "youtube_search"
-        | "video_fetch" => Some(DATASET),
+        | "video_fetch"
+        | "layers_store" => Some(DATASET),
         _ => None,
     }
 }
@@ -107,6 +110,7 @@ hkask_mcp_server::dual_axis_annotate!(
         "gallery_",
         "face_",
         "educt_",
+        "layers_",
         "audio_",
         "video_",
         "image_",

@@ -37,10 +37,11 @@ use hkask_mcp_media::types::{
     GalleryListAlbumMembersRequest, GalleryListAssetsRequest, GalleryMoveToAlbumRequest,
     GalleryNameFaceRequest, GalleryOrganizeRequest, GalleryRefreshRequest,
     GalleryRemoveFromAlbumRequest, GallerySearchRequest, GalleryTimelineRequest, JobCancelRequest,
-    JobListRequest, JobStatusRequest, JobSubmitRequest, ModelInfoRequest, ModelListRequest,
-    RecordAndTranscribeRequest, TranscribeAndStoreRequest, TranscribeBundleRequest,
-    VideoAddCaptionRequest, VideoClipRequest, VideoConcatRequest, VideoExtractFramesRequest,
-    VideoFetchRequest, VideoInfoRequest, VideoToGifRequest, YoutubeSearchRequest,
+    JobListRequest, JobStatusRequest, JobSubmitRequest, LayersGetRequest, LayersListRequest,
+    LayersStoreRequest, ModelInfoRequest, ModelListRequest, RecordAndTranscribeRequest,
+    TranscribeAndStoreRequest, TranscribeBundleRequest, VideoAddCaptionRequest, VideoClipRequest,
+    VideoConcatRequest, VideoExtractFramesRequest, VideoFetchRequest, VideoInfoRequest,
+    VideoToGifRequest, YoutubeSearchRequest,
 };
 use hkask_types::find_boolean_schema_positions;
 use schemars::schema_for;
@@ -52,8 +53,8 @@ fn live_router_schema_inventory_is_complete_and_clean() {
     let tools = hkask_mcp_media::MediaServer::combined_router().list_all();
     assert_eq!(
         tools.len(),
-        71,
-        "approved surface: 91 - 20 Reduct cloud tools"
+        74,
+        "approved surface: 91 - 20 Reduct cloud tools + 3 media-layer tools"
     );
     let actual = tools
         .iter()
@@ -312,6 +313,39 @@ schema_clean_test!(
 schema_clean_test!(educt_render_edl_request_schema, EductRenderEdlRequest);
 schema_clean_test!(educt_export_request_schema, EductExportRequest);
 schema_clean_test!(educt_locate_request_schema, EductLocateRequest);
+schema_clean_test!(layers_store_request_schema, LayersStoreRequest);
+schema_clean_test!(layers_list_request_schema, LayersListRequest);
+schema_clean_test!(layers_get_request_schema, LayersGetRequest);
+
+/// The closed layer-kind vocabulary rejects unknown values at the wire
+/// boundary naming every valid kind — the rmcp deserializer surfaces this
+/// as the invalid-params (InvalidArgument) class, so the closed set is
+/// self-describing at the tool input seam.
+#[test]
+fn layers_store_kind_vocabulary_rejects_unknown_values_naming_valid_kinds() {
+    let bad = serde_json::json!({
+        "media_path": "/tmp/a.mp4",
+        "kind": "cloud",
+        "provenance": {"model": "user", "prompt_template": "t"},
+        "items": []
+    });
+    let error = serde_json::from_value::<LayersStoreRequest>(bad)
+        .expect_err("unknown kind must be rejected");
+    for valid in [
+        "shot",
+        "semantic",
+        "object",
+        "ocr",
+        "audio_event",
+        "researcher",
+        "edl",
+    ] {
+        assert!(
+            error.to_string().contains(valid),
+            "the rejection names valid kind {valid:?}: {error}"
+        );
+    }
+}
 
 // ── Layer 2: deserialization totality (proptest) ──────────────────────────
 // Closes the documented omission: arbitrary tool input must never panic a
@@ -558,3 +592,6 @@ deser_totality_test!(
 );
 deser_totality_test!(educt_export_request_deser_totality, EductExportRequest);
 deser_totality_test!(educt_locate_request_deser_totality, EductLocateRequest);
+deser_totality_test!(layers_store_request_deser_totality, LayersStoreRequest);
+deser_totality_test!(layers_list_request_deser_totality, LayersListRequest);
+deser_totality_test!(layers_get_request_deser_totality, LayersGetRequest);

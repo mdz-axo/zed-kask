@@ -158,7 +158,10 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         | "educt_annotation_create"
         | "educt_annotation_list"
         | "educt_annotation_update"
-        | "educt_annotation_delete" => Some(VERSION_INFO),
+        | "educt_annotation_delete"
+        | "layers_store"
+        | "layers_list"
+        | "layers_get" => Some(VERSION_INFO),
         _ => None,
     }
 }

@@ -179,6 +179,7 @@ hkask_mcp_server::mcp_server!(
     } = crate::ontology::annotate;
 );
 
+pub mod layer_store;
 pub mod transcript;
 pub mod transcript_export;
 pub mod transcript_layers;
@@ -433,6 +434,7 @@ impl MediaServer {
             + Self::models_router()
             + Self::jobs_router()
             + Self::educt_router()
+            + Self::layers_router()
             + Self::youtube_router()
     }
 }
@@ -444,7 +446,7 @@ impl rmcp::ServerHandler for MediaServer {}
 mod tool_surface_tests {
     use super::*;
 
-    // One macro call pins the surface two ways: the exact count (71) and
+    // One macro call pins the surface two ways: the exact count (74) and
     // the generated TOOL_NAMES set against the live rmcp surface. Catches
     // silent registration drops — a `#[tool]` impl block without
     // `#[tool_router]`, or a sub-router missing from `combined_router()`,
@@ -457,8 +459,8 @@ mod tool_surface_tests {
     hkask_mcp_server::tool_surface_pin!(
         MediaServer::combined_router(),
         "combined_router",
-        71,
-        tool_surface_is_exactly_71_registered_tools,
+        74,
+        tool_surface_is_exactly_74_registered_tools,
     );
 
     // Coverage: every registered tool must map to an OMC concept. Catches
@@ -5370,6 +5372,309 @@ mod tool_behavior_tests {
         let deleted = content_of(&deleted);
         assert_eq!(deleted["transcripts_removed"].as_u64(), Some(1));
         assert_eq!(deleted["layers_removed"].as_u64(), Some(1));
+    }
+
+    // ── Media layer store contract tests ────────────────────────────────
+
+    /// One wire-form layer item at `start_sec..end_sec` with searchable
+    /// text and an object payload.
+    fn wire_item(start_sec: f64, end_sec: Option<f64>) -> crate::types::LayersStoreItemRequest {
+        crate::types::LayersStoreItemRequest {
+            start_sec,
+            end_sec,
+            searchable_text: "a labeled moment".to_string(),
+            payload: hkask_types::AnyJsonValue(serde_json::json!({"label": "moment"})),
+            frame_asset_ids: None,
+        }
+    }
+
+    /// A researcher-authored layer request over the given media path with
+    /// the given items — the store/list/get fixture shape.
+    fn researcher_layer_request(
+        media_path: String,
+        items: Vec<crate::types::LayersStoreItemRequest>,
+    ) -> crate::types::LayersStoreRequest {
+        crate::types::LayersStoreRequest {
+            media_path,
+            gallery_asset_id: None,
+            kind: crate::layer_store::MediaLayerKind::Researcher,
+            label: Some("review selections".to_string()),
+            provenance: crate::types::LayersProvenanceRequest {
+                model: "user".to_string(),
+                prompt_template: "researcher_annotation".to_string(),
+            },
+            items,
+        }
+    }
+
+    /// t1 AC1: a researcher layer with items round-trips store -> list ->
+    /// get on a real fixture video, with every range inside the ffprobe
+    /// duration. One payload rides the `AnyJsonValue` JSON-string
+    /// transport and must decode to an object (the transcript-store
+    /// wire-form precedent).
+    #[tokio::test]
+    async fn researcher_layer_round_trips_store_list_get_on_a_real_fixture_video()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let env = video_server_env().await?;
+        let media_path = env.source.to_string_lossy().into_owned();
+        let string_transport_item = crate::types::LayersStoreItemRequest {
+            searchable_text: "second moment".to_string(),
+            payload: hkask_types::AnyJsonValue(serde_json::Value::String(
+                r#"{"label": "string-transport"}"#.to_string(),
+            )),
+            ..wire_item(1.0, Some(1.5))
+        };
+        let stored = content_of(
+            &env.server
+                .layers_store(Parameters(researcher_layer_request(
+                    media_path.clone(),
+                    vec![wire_item(0.0, Some(0.5)), string_transport_item],
+                )))
+                .await?,
+        );
+        assert_eq!(stored["kind"], serde_json::json!("researcher"));
+        assert_eq!(stored["items_count"].as_u64(), Some(2));
+        let layer_id = stored["id"].as_str().ok_or("missing layer id")?.to_string();
+        let probed_duration = stored["probed_duration_secs"]
+            .as_f64()
+            .ok_or("missing probed duration")?;
+        assert!(
+            probed_duration > 0.0,
+            "the real fixture carries a positive ffprobe duration"
+        );
+
+        let listed = content_of(
+            &env.server
+                .layers_list(Parameters(crate::types::LayersListRequest {
+                    media_path: Some(media_path.clone()),
+                    kind: Some(crate::layer_store::MediaLayerKind::Researcher),
+                    limit: None,
+                }))
+                .await?,
+        );
+        assert_eq!(listed["count"].as_u64(), Some(1));
+        let summary = &listed["layers"][0];
+        assert_eq!(summary["id"].as_str(), Some(layer_id.as_str()));
+        assert_eq!(summary["items_count"].as_u64(), Some(2));
+        assert_eq!(summary["provenance"]["model"], serde_json::json!("user"));
+
+        let fetched = content_of(
+            &env.server
+                .layers_get(Parameters(crate::types::LayersGetRequest {
+                    layer_id: layer_id.clone(),
+                }))
+                .await?,
+        );
+        let items = fetched["layer"]["items"].as_array().ok_or("items array")?;
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["start_sec"].as_f64(), Some(0.0));
+        assert_eq!(items[0]["end_sec"].as_f64(), Some(0.5));
+        assert_eq!(
+            items[0]["searchable_text"],
+            serde_json::json!("a labeled moment")
+        );
+        assert_eq!(
+            items[1]["payload"]["label"],
+            serde_json::json!("string-transport"),
+            "the JSON-string payload transport decodes to an object"
+        );
+        for item in items {
+            let start = item["start_sec"].as_f64().ok_or("start_sec")?;
+            let end = item["end_sec"].as_f64().ok_or("end_sec")?;
+            assert!(
+                start >= 0.0 && end <= probed_duration,
+                "item range [{start}, {end}] inside the probed duration {probed_duration}"
+            );
+        }
+        Ok(())
+    }
+
+    /// t1 AC2: reversed and out-of-bounds ranges are rejected with typed
+    /// errors naming the bounds and the probed duration — never silently
+    /// stored.
+    #[tokio::test]
+    async fn layers_store_rejects_reversed_and_out_of_bounds_ranges_naming_the_bounds()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let env = video_server_env().await?;
+        let media_path = env.source.to_string_lossy().into_owned();
+        let info = content_of(
+            &env.server
+                .video_info(Parameters(crate::types::VideoInfoRequest {
+                    video_url: media_path.clone(),
+                }))
+                .await?,
+        );
+        let duration = info["duration_secs"].as_f64().ok_or("duration")?;
+        assert!(duration >= 1.5, "fixture long enough for the anchor range");
+
+        let reversed = env
+            .server
+            .layers_store(Parameters(researcher_layer_request(
+                media_path.clone(),
+                vec![wire_item(1.5, Some(0.5))],
+            )))
+            .await
+            .expect_err("reversed range rejected");
+        let message = reversed.to_string();
+        assert!(
+            message.contains("invalid_argument"),
+            "classified invalid_argument: {message}"
+        );
+        assert!(
+            message.contains("reversed") && message.contains('1') && message.contains('0'),
+            "names the reversed invariant and both bounds: {message}"
+        );
+
+        let beyond_end = duration + 10.0;
+        let out_of_bounds = env
+            .server
+            .layers_store(Parameters(researcher_layer_request(
+                media_path.clone(),
+                vec![wire_item(1.0, Some(beyond_end))],
+            )))
+            .await
+            .expect_err("end beyond duration rejected");
+        let message = out_of_bounds.to_string();
+        assert!(
+            message.contains("end_sec") && message.contains(&beyond_end.to_string()),
+            "names the offending end_sec value: {message}"
+        );
+        assert!(
+            message.contains(&duration.to_string()),
+            "names the probed duration: {message}"
+        );
+
+        let start_beyond = duration + 5.0;
+        let out_of_bounds_start = env
+            .server
+            .layers_store(Parameters(researcher_layer_request(
+                media_path.clone(),
+                vec![wire_item(start_beyond, None)],
+            )))
+            .await
+            .expect_err("start beyond duration rejected");
+        let message = out_of_bounds_start.to_string();
+        assert!(
+            message.contains("start_sec"),
+            "names the offending bound: {message}"
+        );
+
+        let listed = content_of(
+            &env.server
+                .layers_list(Parameters(crate::types::LayersListRequest {
+                    media_path: Some(media_path.clone()),
+                    kind: None,
+                    limit: None,
+                }))
+                .await?,
+        );
+        assert_eq!(
+            listed["count"].as_u64(),
+            Some(0),
+            "no rejected layer is stored"
+        );
+        Ok(())
+    }
+
+    /// t1 AC3: deleting a layer cascades its items and never touches the
+    /// source media file. Deletion is a store-level operation (the t1 tool
+    /// surface is store/list/get), called through the same gallery driver
+    /// the tools use.
+    #[tokio::test]
+    async fn deleting_a_layer_cascades_items_and_never_touches_source_media()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let env = video_server_env().await?;
+        let media_path = env.source.to_string_lossy().into_owned();
+        let source_before = std::fs::read(&env.source)?;
+        let stored = content_of(
+            &env.server
+                .layers_store(Parameters(researcher_layer_request(
+                    media_path.clone(),
+                    vec![wire_item(0.0, Some(0.5)), wire_item(1.0, None)],
+                )))
+                .await?,
+        );
+        let layer_id = stored["id"].as_str().ok_or("layer id")?.to_string();
+
+        let driver = &**env.server.gallery_store.driver();
+        let counts = crate::layer_store::delete_layer(driver, &layer_id)
+            .map_err(|error| format!("delete layer: {error}"))?;
+        assert_eq!(counts.layers_removed, 1);
+        assert_eq!(
+            counts.items_removed, 2,
+            "the cascade receipt names both items"
+        );
+
+        let gone = env
+            .server
+            .layers_get(Parameters(crate::types::LayersGetRequest {
+                layer_id: layer_id.clone(),
+            }))
+            .await
+            .expect_err("deleted layer is gone");
+        let message = gone.to_string();
+        assert!(
+            message.contains("not_found") && message.contains(&layer_id),
+            "names the deleted layer id: {message}"
+        );
+
+        let row = driver
+            .query_optional(
+                "SELECT COUNT(*) FROM media_layer_items WHERE layer_id = ?1",
+                &[hkask_storage::database::value::DbValue::Text(
+                    layer_id.clone(),
+                )],
+            )?
+            .ok_or("count row")?;
+        assert_eq!(row.get_int(0)?, 0, "the cascade removed every item row");
+
+        let source_after = std::fs::read(&env.source)?;
+        assert_eq!(
+            source_before, source_after,
+            "layers never write source media bytes"
+        );
+        Ok(())
+    }
+
+    /// t1 AC4: unknown layer ids and nonexistent media paths classify
+    /// not_found naming the id/path (the typed-error contract — a
+    /// caller-named resource that is absent is never invalid_argument or
+    /// internal).
+    #[tokio::test]
+    async fn layers_get_unknown_id_and_missing_media_path_are_not_found() {
+        let server = make_server();
+        let error = server
+            .layers_get(Parameters(crate::types::LayersGetRequest {
+                layer_id: "no-such-layer".to_string(),
+            }))
+            .await
+            .expect_err("unknown layer id fails");
+        let message = error.to_string();
+        assert!(
+            message.contains("not_found"),
+            "classified not_found: {message}"
+        );
+        assert!(
+            message.contains("no-such-layer"),
+            "names the unknown id: {message}"
+        );
+
+        let error = server
+            .layers_store(Parameters(researcher_layer_request(
+                "/nonexistent/media-layers-probe.mp4".to_string(),
+                vec![wire_item(0.0, Some(0.5))],
+            )))
+            .await
+            .expect_err("missing media path fails");
+        let message = error.to_string();
+        assert!(
+            message.contains("not_found"),
+            "classified not_found: {message}"
+        );
+        assert!(
+            message.contains("/nonexistent/media-layers-probe.mp4"),
+            "names the missing path: {message}"
+        );
     }
 
     #[tokio::test]

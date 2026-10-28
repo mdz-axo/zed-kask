@@ -249,6 +249,7 @@ fn steer_system_prompt() -> SharedString {
             ("Video tools", &["video_"]),
             ("Audio tools", &["audio_", "transcribe", "record_"]),
             ("Transcript store tools (local)", &["educt_"]),
+            ("Media layer tools", &["layers_"]),
             ("Model tools", &["model_"]),
             ("Job tools", &["job_"]),
         ],
@@ -476,7 +477,7 @@ mod tests {
     /// while retaining source processing, annotations, retrieval, and history.
     #[test]
     fn steer_prompt_carries_research_scope_and_boundaries() {
-        assert_eq!(hkask_mcp_media::TOOL_NAMES.len(), 71);
+        assert_eq!(hkask_mcp_media::TOOL_NAMES.len(), 74);
         let prompt = steer_system_prompt();
         for required in [
             "gallery_annotation_create",

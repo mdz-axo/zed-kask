@@ -734,3 +734,71 @@ pub struct VideoFetchRequest {
     /// URL of the video to download (YouTube, Vimeo, direct file URL, etc.).
     pub url: String,
 }
+
+// ── Media layer requests ──────────────────────────────────────────────
+
+/// Provenance for a layer being stored: which model, which prompt
+/// template. `created_at` is stamped server-side at store time.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LayersProvenanceRequest {
+    /// The model that produced the layer (e.g. an inference-catalog label,
+    /// or "user" for researcher-authored annotations).
+    pub model: String,
+    /// The prompt template that produced it (template name; for
+    /// researcher-authored layers, a short description of the authoring path).
+    pub prompt_template: String,
+}
+
+/// One item of a layer being stored — the wire form. `payload` is arbitrary
+/// JSON in the `AnyJsonValue` JSON-text transport.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LayersStoreItemRequest {
+    /// Range start in source-PTS seconds.
+    pub start_sec: f64,
+    /// Range end in source-PTS seconds; omit for a point-in-time item.
+    pub end_sec: Option<f64>,
+    /// The text a lexical search matches — must be nonblank.
+    pub searchable_text: String,
+    /// Arbitrary structured payload (labels, boxes, confidences, OCR text).
+    pub payload: hkask_types::AnyJsonValue,
+    /// Gallery asset ids of frames this item references; each must exist.
+    pub frame_asset_ids: Option<Vec<String>>,
+}
+
+/// Request to store one media layer over a media file.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LayersStoreRequest {
+    /// Absolute local path (or URL) of the source media the layer annotates.
+    pub media_path: String,
+    /// Optional gallery asset ID linking the layer to a gallery asset.
+    pub gallery_asset_id: Option<String>,
+    /// Layer kind: "shot", "semantic", "object", "ocr", "audio_event",
+    /// "researcher", or "edl" (closed set — unknown values are rejected
+    /// naming the valid kinds).
+    pub kind: crate::layer_store::MediaLayerKind,
+    /// Optional human-readable label.
+    pub label: Option<String>,
+    /// Which model and prompt template produced the layer.
+    pub provenance: LayersProvenanceRequest,
+    /// The layer's items, keyed in source-PTS seconds and validated against
+    /// the ffprobe-anchored media duration.
+    pub items: Vec<LayersStoreItemRequest>,
+}
+
+/// Request to list stored media layers.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LayersListRequest {
+    /// Filter by the annotated media's path.
+    pub media_path: Option<String>,
+    /// Filter by layer kind (same closed set as layers_store).
+    pub kind: Option<crate::layer_store::MediaLayerKind>,
+    /// Maximum layers to return (default 50, capped at 500).
+    pub limit: Option<u32>,
+}
+
+/// Request to load one stored media layer with its full items.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LayersGetRequest {
+    /// The layer ID returned by layers_store.
+    pub layer_id: String,
+}

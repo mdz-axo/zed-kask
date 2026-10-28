@@ -619,7 +619,7 @@ fn map_pass_error(error: PassError) -> McpToolError {
 /// stringified: some MCP transports serialize object params into their
 /// JSON-string form. Accept both — the parsed object or the string form —
 /// so every client can store transcripts and layers.
-fn parse_json_value(
+pub(crate) fn parse_json_value(
     value: serde_json::Value,
     what: &str,
 ) -> Result<serde_json::Value, McpToolError> {
