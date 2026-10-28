@@ -694,6 +694,65 @@ pub fn mutate_user_highlight(
     Ok(())
 }
 
+/// Change only a single researcher-supplied strike (a one-Cut edit decision
+/// stored as an EDL layer). `model = user` marks manually supplied data, not
+/// authenticated human identity/approval; invocation authorization is the
+/// host's boundary. The replacement is a bare word range — the Cut op is
+/// constructed here, so a stored strike can never be mutated into any other
+/// edit decision. Compare the exact previous payload in the write so
+/// concurrent edits are never overwritten. Pass-produced layers are inert.
+pub fn mutate_user_strike(
+    driver: &dyn DatabaseDriver,
+    transcript_id: &str,
+    layer_id: &str,
+    replacement: Option<(usize, usize)>,
+) -> Result<(), TranscriptStoreError> {
+    let missing = || TranscriptStoreError::LayerNotFound {
+        transcript_id: transcript_id.to_string(),
+        layer_id: layer_id.to_string(),
+    };
+    let row = driver.query_optional(
+        "SELECT payload_json FROM transcript_layers WHERE id = ?1 AND transcript_id = ?2 AND layer_kind = 'edl'",
+        &[DbValue::Text(layer_id.to_string()), DbValue::Text(transcript_id.to_string())],
+    )?.ok_or_else(missing)?;
+    let previous = row.get_str(0)?.to_string();
+    let mut layer: TranscriptLayer = serde_json::from_str(&previous)
+        .map_err(|error| TranscriptStoreError::Serialization(error.to_string()))?;
+    let TranscriptLayer::Edl(edl) = &mut layer else {
+        return Err(missing());
+    };
+    if edl.provenance.model != "user"
+        || edl.provenance.prompt_template != "researcher_annotation"
+        || edl.ops.len() != 1
+        || edl.ops[0].op != crate::transcript_select::EdlOp::Cut
+    {
+        return Err(missing());
+    }
+    let changed = if let Some((start_word, end_word)) = replacement {
+        edl.ops[0] = crate::transcript_select::EdlEntry {
+            range: crate::transcript_select::WordRange::new(start_word, end_word),
+            op: crate::transcript_select::EdlOp::Cut,
+        };
+        let (_, bundle) = load_transcript(driver, transcript_id)?.ok_or_else(|| {
+            TranscriptStoreError::TranscriptNotFound {
+                transcript_id: transcript_id.to_string(),
+            }
+        })?;
+        layer.validate(bundle.words.len())?;
+        let payload = serde_json::to_string(&layer)
+            .map_err(|error| TranscriptStoreError::Serialization(error.to_string()))?;
+        driver.execute("UPDATE transcript_layers SET payload_json = ?1 WHERE id = ?2 AND transcript_id = ?3 AND payload_json = ?4",
+            &[DbValue::Text(payload), DbValue::Text(layer_id.to_string()), DbValue::Text(transcript_id.to_string()), DbValue::Text(previous)])?
+    } else {
+        driver.execute("DELETE FROM transcript_layers WHERE id = ?1 AND transcript_id = ?2 AND payload_json = ?3",
+            &[DbValue::Text(layer_id.to_string()), DbValue::Text(transcript_id.to_string()), DbValue::Text(previous)])?
+    };
+    if changed == 0 {
+        return Err(missing());
+    }
+    Ok(())
+}
+
 /// List the layers stored over a transcript, oldest first.
 pub fn list_layers(
     driver: &dyn DatabaseDriver,

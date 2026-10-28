@@ -670,6 +670,27 @@ mod tests {
         );
     }
 
+    /// expect: A Cut-only EDL keeps the complement of the unioned cuts, and
+    /// an all-cut EDL keeps nothing — the render layer refuses the latter
+    /// visibly (nothing to render), never silently rendering the source. [P1]
+    #[test]
+    fn cut_only_edl_is_subtractive_mode() {
+        // Six words; overlapping cuts [1,2] and [2,4] union to [1,4], so the
+        // kept complement is [0,0] + [5,5].
+        let edl = Edl {
+            ops: vec![entry(1, 2, EdlOp::Cut), entry(2, 4, EdlOp::Cut)],
+        };
+        assert_eq!(
+            edl_to_keep_ranges(6, &edl).unwrap(),
+            vec![WordRange::new(0, 0), WordRange::new(5, 5)]
+        );
+        // All-cut: the complement is empty.
+        let all_cut = Edl {
+            ops: vec![entry(0, 5, EdlOp::Cut)],
+        };
+        assert!(edl_to_keep_ranges(6, &all_cut).unwrap().is_empty());
+    }
+
     // ── union_ranges ─────────────────────────────────────────────────────
 
     #[test]

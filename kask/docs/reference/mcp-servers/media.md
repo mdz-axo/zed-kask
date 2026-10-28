@@ -545,10 +545,10 @@ verified source evidence. Model-derived metadata/suggestions remain distinct.
 | `gallery_annotation_list` | stable `gallery_asset_id` |
 | `gallery_annotation_update` | `gallery_asset_id`, `annotation_id`, replacement `value` |
 | `gallery_annotation_delete` | `gallery_asset_id`, `annotation_id` |
-| `educt_annotation_create` | `transcript_id`, inclusive immutable-source `start_word`, `end_word`, `label`, `note` |
-| `educt_annotation_list` | `transcript_id` |
-| `educt_annotation_update` | `transcript_id`, `annotation_id`, all replacement range/label/note fields |
-| `educt_annotation_delete` | `transcript_id`, `annotation_id` |
+| `educt_annotation_create` | `transcript_id`, inclusive immutable-source `start_word`, `end_word`, `label`, `note`; optional `kind`: `highlight` (default) or `strike` (an unannotated cut — a single-Cut EDL; `label` and `note` must be blank) |
+| `educt_annotation_list` | `transcript_id` (highlights and strikes; multi-op EDLs excluded) |
+| `educt_annotation_update` | `transcript_id`, `annotation_id`, all replacement range/label/note fields; dispatches on the stored kind (a strike takes a new range with blank `label`/`note`) |
+| `educt_annotation_delete` | `transcript_id`, `annotation_id` (highlight or strike) |
 | `educt_search_transcripts` | `query`, `mode: "lexical"`; optional `limit`, `recording_limit`, `recording_offset`, `start_byte`, `gallery_asset_id` |
 
 Gallery indices are positional and must not replace stable IDs. Transcript
@@ -613,7 +613,7 @@ Three tests pin the mapping: `omc_mapping_covers_all_registered_tools` (every re
 
 - **Gallery lifecycle:** `gallery_organize` → `gallery_analyze` (persist tags) → `gallery_search` (tags or semantic mode) / `gallery_timeline`; `gallery_refresh` after adding files; `gallery_add_media` for non-image assets
 - **Face pipeline:** `face_validate` → `face_register` (or `face_scan_folder` in bulk) → `gallery_refresh` with `include_faces=true` → `gallery_name_face` → `gallery_search` by person name. **Design decision (2026-08-29, tightened 2026-10-14):** face recognition relies on vision-LLM calls, not local code — the implementation surface is the minijinja (j2) templates `validate_face_ref` and `match_faces` (`kask/mcp-servers/hkask-mcp-media/src/templates.rs`) dispatched through the inference port. `run_face_matching` (`src/faces.rs`) groups reference portraits by `(first_name, last_name)` for best-of multi-reference matching, replaces unnamed `face` tags in place via `GalleryStore::replace_tag` with `bbox` preserved, skips already-named `face` tags on subsequent refreshes, and surfaces crop failures instead of sending uncropped images.
-- **Research annotations:** stable gallery Asset → `gallery_annotation_create` / list / update / delete; transcript source-word ranges → `educt_annotation_create` / list / update / delete. User observations remain distinct from model metadata.
+- **Research annotations:** stable gallery Asset → `gallery_annotation_create` / list / update / delete; transcript source-word ranges → `educt_annotation_create` / list / update / delete (highlights carry a label and note; strikes are unannotated single-Cut EDLs that render as transcript-minus-struck-range). User observations remain distinct from model metadata.
 - **Recording retrieval:** `educt_search_transcripts` (`mode: "lexical"`) → exact excerpt plus source/timing citations; export corpus text for semantic retrieval.
 - **Historical lineage:** `gallery_lineage` / `gallery_asset_detail` inspect prior provenance without restoring creative execution.
 - **YouTube discovery and acquisition:** `youtube_search` (SerpApi metadata and ranking) → select URL → `video_fetch` (yt-dlp binary retrieval) → `video_clip` / `video_add_caption` / `video_to_gif`; `video_extract_frames` turns keyframes back into searchable assets

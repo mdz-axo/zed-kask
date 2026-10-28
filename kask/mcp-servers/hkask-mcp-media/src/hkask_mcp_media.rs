@@ -4369,6 +4369,152 @@ mod tool_behavior_tests {
         Ok(())
     }
 
+    /// expect: A researcher strike (a single-Cut EDL annotation) renders via
+    /// `educt_render_edl` with the strike layer id as whole-transcript-minus-
+    /// strike — the subtractive semantics end to end over real media. [P1]
+    /// Constraining: clip intermediates are removed and the render lineage
+    /// names the struck EDL.
+    #[tokio::test]
+    async fn strike_annotation_renders_full_transcript_minus_the_strike()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::tools::educt::EductAnnotationCreateRequest;
+        use crate::transcript::{TimedWord, TranscriptBundle};
+        use crate::types::{EductRenderEdlRequest, EductStoreTranscriptRequest};
+
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
+        let wav = gallery_root.path().join("educt-strike-source.wav");
+        let status = tokio::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=3",
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+            ])
+            .arg(&wav)
+            .output()
+            .await
+            .expect("ffmpeg runs");
+        assert!(
+            status.status.success(),
+            "ffmpeg must generate the test WAV: {}",
+            String::from_utf8_lossy(&status.stderr)
+        );
+        let bundle = TranscriptBundle {
+            words: vec![
+                TimedWord {
+                    word: "alpha".to_string(),
+                    start_ms: 0,
+                    end_ms: 500,
+                    confidence: None,
+                },
+                TimedWord {
+                    word: "beta".to_string(),
+                    start_ms: 1000,
+                    end_ms: 1500,
+                    confidence: None,
+                },
+                TimedWord {
+                    word: "gamma".to_string(),
+                    start_ms: 2500,
+                    end_ms: 3000,
+                    confidence: None,
+                },
+            ],
+            ..TranscriptBundle::new(
+                wav.display().to_string(),
+                3.0,
+                "alpha beta gamma".to_string(),
+            )
+        };
+        let stored = server
+            .educt_store_transcript(Parameters(EductStoreTranscriptRequest {
+                transcript: hkask_types::AnyJsonValue(
+                    serde_json::to_value(&bundle).expect("serialize bundle"),
+                ),
+                gallery_asset_id: None,
+            }))
+            .await
+            .expect("transcript stored");
+        let transcript_id = content_of(&stored)["id"].as_str().expect("id").to_string();
+
+        // Strike the middle word (1-1.5s) through the annotation surface.
+        let strike = content_of(
+            &server
+                .educt_annotation_create(Parameters(EductAnnotationCreateRequest {
+                    transcript_id: transcript_id.clone(),
+                    start_word: 1,
+                    end_word: 1,
+                    label: String::new(),
+                    note: String::new(),
+                    kind: Some("strike".to_string()),
+                }))
+                .await
+                .expect("strike stored"),
+        );
+        assert_eq!(strike["layer"]["kind"], "edl");
+        let strike_id = strike["annotation_id"]
+            .as_str()
+            .expect("strike annotation ID")
+            .to_string();
+
+        let temp_files_before = temp_media_files().expect("read temp media files before render");
+        let rendered = server
+            .educt_render_edl(Parameters(EductRenderEdlRequest {
+                transcript_id: transcript_id.clone(),
+                layer_id: Some(strike_id.clone()),
+            }))
+            .await
+            .expect("the strike renders subtractively");
+        let content = content_of(&rendered);
+        // Whole transcript minus the struck middle word: two clips, the
+        // 1-1.5s word gone.
+        assert_eq!(content["clips"].as_u64(), Some(2));
+        assert_eq!(
+            content["clip_plan"],
+            serde_json::json!([[0.0, 0.5], [2.5, 3.0]]),
+            "the strike renders as full-transcript-minus-strike"
+        );
+        let output = std::path::PathBuf::from(content["output"].as_str().ok_or("output path")?);
+        let asset_id = content["gallery_asset_id"]
+            .as_str()
+            .ok_or("missing gallery_asset_id")?;
+        assert!(
+            output.starts_with(crate::assets::generated_assets_dir()),
+            "the render publishes under the generated assets dir"
+        );
+        assert!(
+            output.is_file(),
+            "rendered clip exists at {}",
+            output.display()
+        );
+        assert_eq!(store.get_by_id(asset_id)?.media_type, "audio");
+        let render_relation = crate::transcript_store::get_render(&**store.driver(), asset_id)?
+            .ok_or("EDL render relationship missing")?;
+        assert_eq!(render_relation.source_transcript_id, transcript_id);
+        assert_eq!(
+            render_relation.edl_layer_id.as_deref(),
+            Some(strike_id.as_str()),
+            "the render lineage names the struck EDL"
+        );
+        let temp_files_after = temp_media_files()?;
+        assert_eq!(
+            temp_files_after.difference(&temp_files_before).count(),
+            0,
+            "strike render left FFmpeg intermediates: {:?}",
+            temp_files_after
+                .difference(&temp_files_before)
+                .collect::<Vec<_>>()
+        );
+        Ok(())
+    }
+
     #[tokio::test]
     async fn educt_render_edl_without_an_edl_is_not_found() {
         let server = make_pass_server("{}".to_string());

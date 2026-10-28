@@ -31,6 +31,9 @@ pub struct EductAnnotationCreateRequest {
     pub end_word: usize,
     pub label: String,
     pub note: String,
+    /// Annotation kind: highlight (default — a labeled selection) or strike
+    /// (an unannotated cut over the range; label and note must be blank).
+    pub kind: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -71,6 +74,73 @@ fn researcher_highlight(
         label,
         note,
     })
+}
+
+/// Validate and build one researcher strike: a single Cut edit decision over
+/// the word range. Strikes carry no label or note — they are unannotated
+/// cuts; a labeled selection is a highlight.
+fn researcher_strike(
+    start_word: usize,
+    end_word: usize,
+    label: String,
+    note: String,
+) -> Result<EdlEntry, McpToolError> {
+    if !label.trim().is_empty() || !note.trim().is_empty() {
+        return Err(McpToolError::invalid_argument(
+            "a strike carries no label or note — it is an unannotated cut; use kind highlight to carry a label and note",
+        ));
+    }
+    Ok(EdlEntry {
+        range: WordRange::new(start_word, end_word),
+        op: EdlOp::Cut,
+    })
+}
+
+/// The researcher-annotation kind of a stored layer, if it is one: a
+/// highlight (user researcher_annotation highlight layer — any entry count,
+/// preserving the list's original semantics) or a strike (user
+/// researcher_annotation EDL with exactly one Cut op). Multi-op EDLs never
+/// masquerade as strikes.
+fn researcher_annotation_kind(layer: &TranscriptLayer) -> Option<&'static str> {
+    match layer {
+        TranscriptLayer::Highlight(layer)
+            if layer.provenance.model == "user"
+                && layer.provenance.prompt_template == "researcher_annotation" =>
+        {
+            Some("highlight")
+        }
+        TranscriptLayer::Edl(layer)
+            if layer.provenance.model == "user"
+                && layer.provenance.prompt_template == "researcher_annotation"
+                && layer.ops.len() == 1
+                && layer.ops[0].op == EdlOp::Cut =>
+        {
+            Some("strike")
+        }
+        _ => None,
+    }
+}
+
+/// Read one stored layer by annotation id — the dispatch key update and
+/// delete share. The mutate functions re-verify identity and compare the
+/// exact previous payload inside the write, so a concurrent edit between
+/// this read and the mutate still fails safely.
+fn annotation_layer(
+    driver: &dyn hkask_storage::database::driver::DatabaseDriver,
+    transcript_id: &str,
+    annotation_id: &str,
+) -> Result<TranscriptLayer, McpToolError> {
+    transcript_store::list_layers(driver, transcript_id)
+        .map_err(map_store_error)?
+        .into_iter()
+        .find(|record| record.id == annotation_id)
+        .map(|record| record.layer)
+        .ok_or_else(|| {
+            map_store_error(TranscriptStoreError::LayerNotFound {
+                transcript_id: transcript_id.to_string(),
+                layer_id: annotation_id.to_string(),
+            })
+        })
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -577,27 +647,44 @@ pub(crate) fn store_transcript_summary_value(
 #[tool_router(router = educt_router, vis = "pub")]
 impl MediaServer {
     #[tool(
-        description = "Author a manually supplied researcher highlight with label and note over inclusive immutable source-word indices. Returns stable annotation_id (a highlight layer ID). Never changes source bytes. Provenance is researcher_supplied, not authenticated human identity; authorization is the existing host boundary."
+        description = "Author a manually supplied researcher annotation over inclusive immutable source-word indices. kind highlight (default) carries a label and note; kind strike is an unannotated cut over the range (label and note must be blank) — strikethrough editing, rendered by educt_render_edl as the transcript minus the struck range. Returns stable annotation_id (the annotation layer's ID). Never changes source bytes. Provenance is researcher_supplied, not authenticated human identity; authorization is the existing host boundary."
     )]
     pub async fn educt_annotation_create(
         &self,
         Parameters(request): Parameters<EductAnnotationCreateRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_annotation_create", async {
-            let entry = researcher_highlight(request.start_word, request.end_word, request.label, request.note)?;
             let driver = &**self.gallery_store.driver();
+            let provenance = LayerProvenance { model: "user".to_string(), prompt_template: "researcher_annotation".to_string(), created_at: hkask_types::time::now_rfc3339() };
+            let layer = match request.kind.as_deref().unwrap_or("highlight") {
+                "highlight" => {
+                    let entry = researcher_highlight(request.start_word, request.end_word, request.label, request.note)?;
+                    TranscriptLayer::Highlight(crate::transcript_layers::HighlightLayer {
+                        provenance,
+                        highlights: vec![entry],
+                    })
+                }
+                "strike" => {
+                    let entry = researcher_strike(request.start_word, request.end_word, request.label, request.note)?;
+                    TranscriptLayer::Edl(crate::transcript_layers::EdlLayer {
+                        provenance,
+                        ops: vec![entry],
+                    })
+                }
+                other => {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "kind must be highlight or strike, got {other:?}"
+                    )))
+                }
+            };
             load_timed_transcript(driver, &request.transcript_id, "research annotations require source word timings")?;
-            let layer = TranscriptLayer::Highlight(crate::transcript_layers::HighlightLayer {
-                provenance: LayerProvenance { model: "user".to_string(), prompt_template: "researcher_annotation".to_string(), created_at: hkask_types::time::now_rfc3339() },
-                highlights: vec![entry],
-            });
             let record = transcript_store::store_layer(driver, &request.transcript_id, &layer).map_err(map_store_error)?;
             Ok(serde_json::json!({"annotation_id": record.id, "transcript_id": request.transcript_id, "layer": record.layer, "provenance": "researcher_supplied", "word_index_basis": "immutable_source"}))
         }).await
     }
 
     #[tool(
-        description = "List researcher-authored highlight annotations with their original label, note, and inclusive source-word ranges. Excludes model suggestions; existing transcript layers remain available via educt_list_layers."
+        description = "List researcher-authored annotations with their original payload and inclusive source-word ranges: highlights (label, note) and strikes (single-Cut edit decisions). Excludes model suggestions and multi-op EDLs; existing transcript layers remain available via educt_list_layers."
     )]
     pub async fn educt_annotation_list(
         &self,
@@ -609,35 +696,60 @@ impl MediaServer {
                 return Err(McpToolError::not_found(format!("transcript {} not found", request.transcript_id)));
             }
             let annotations = transcript_store::list_layers(driver, &request.transcript_id).map_err(map_store_error)?.into_iter()
-                .filter(|record| matches!(&record.layer, TranscriptLayer::Highlight(layer) if layer.provenance.model == "user" && layer.provenance.prompt_template == "researcher_annotation"))
+                .filter(|record| researcher_annotation_kind(&record.layer).is_some())
                 .collect::<Vec<_>>();
             Ok(serde_json::json!({"transcript_id": request.transcript_id, "annotations": annotations, "provenance": "researcher_supplied", "word_index_basis": "immutable_source"}))
         }).await
     }
 
     #[tool(
-        description = "Update one researcher highlight by stable annotation_id, replacing its source-word range, label, and note while preserving identity/provenance. Cannot edit model suggestions."
+        description = "Update one researcher annotation by stable annotation_id, dispatching on its stored kind: a highlight replaces its source-word range, label, and note; a strike replaces its source-word range with blank label and note. Identity and provenance are preserved. Cannot edit model suggestions or multi-op EDLs."
     )]
     pub async fn educt_annotation_update(
         &self,
         Parameters(request): Parameters<EductAnnotationUpdateRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_annotation_update", async {
-            let entry = researcher_highlight(request.start_word, request.end_word, request.label, request.note)?;
-            transcript_store::mutate_user_highlight(&**self.gallery_store.driver(), &request.transcript_id, &request.annotation_id, Some(&entry)).map_err(map_store_error)?;
-            Ok(serde_json::json!({"transcript_id": request.transcript_id, "annotation_id": request.annotation_id, "highlight": entry, "provenance": "researcher_supplied", "word_index_basis": "immutable_source"}))
+            let driver = &**self.gallery_store.driver();
+            let stored = annotation_layer(driver, &request.transcript_id, &request.annotation_id)?;
+            match researcher_annotation_kind(&stored) {
+                Some("highlight") => {
+                    let entry = researcher_highlight(request.start_word, request.end_word, request.label, request.note)?;
+                    transcript_store::mutate_user_highlight(driver, &request.transcript_id, &request.annotation_id, Some(&entry)).map_err(map_store_error)?;
+                    Ok(serde_json::json!({"transcript_id": request.transcript_id, "annotation_id": request.annotation_id, "highlight": entry, "provenance": "researcher_supplied", "word_index_basis": "immutable_source"}))
+                }
+                Some("strike") => {
+                    researcher_strike(request.start_word, request.end_word, request.label, request.note)?;
+                    transcript_store::mutate_user_strike(driver, &request.transcript_id, &request.annotation_id, Some((request.start_word, request.end_word))).map_err(map_store_error)?;
+                    Ok(serde_json::json!({"transcript_id": request.transcript_id, "annotation_id": request.annotation_id, "strike": {"start_word": request.start_word, "end_word": request.end_word}, "provenance": "researcher_supplied", "word_index_basis": "immutable_source"}))
+                }
+                _ => Err(map_store_error(TranscriptStoreError::LayerNotFound {
+                    transcript_id: request.transcript_id.clone(),
+                    layer_id: request.annotation_id.clone(),
+                })),
+            }
         }).await
     }
 
     #[tool(
-        description = "Delete only the named researcher highlight, preserving all other annotations, model layers, transcript text, and source media."
+        description = "Delete only the named researcher annotation (highlight or strike), preserving all other annotations, model layers, transcript text, and source media."
     )]
     pub async fn educt_annotation_delete(
         &self,
         Parameters(request): Parameters<EductAnnotationDeleteRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_annotation_delete", async {
-            transcript_store::mutate_user_highlight(&**self.gallery_store.driver(), &request.transcript_id, &request.annotation_id, None).map_err(map_store_error)?;
+            let driver = &**self.gallery_store.driver();
+            let stored = annotation_layer(driver, &request.transcript_id, &request.annotation_id)?;
+            match researcher_annotation_kind(&stored) {
+                Some("highlight") => transcript_store::mutate_user_highlight(driver, &request.transcript_id, &request.annotation_id, None),
+                Some("strike") => transcript_store::mutate_user_strike(driver, &request.transcript_id, &request.annotation_id, None),
+                _ => Err(TranscriptStoreError::LayerNotFound {
+                    transcript_id: request.transcript_id.clone(),
+                    layer_id: request.annotation_id.clone(),
+                }),
+            }
+            .map_err(map_store_error)?;
             Ok(serde_json::json!({"transcript_id": request.transcript_id, "annotation_id": request.annotation_id, "deleted": true}))
         }).await
     }
@@ -2201,6 +2313,7 @@ mod researcher_tests {
                 end_word: 1,
                 label: "finding".into(),
                 note: "researcher's note".into(),
+                kind: None,
             })
         };
         let result = payload(&server.educt_annotation_create(create()).await?);
@@ -2269,6 +2382,208 @@ mod researcher_tests {
             transcript_store::load_transcript(driver, &summary.id)?.ok_or("original bundle")?;
         assert_eq!(original.full_text, bundle.full_text);
 
+        Ok(())
+    }
+
+    /// expect: Researchers author strikes (single-Cut EDLs) through the same
+    /// annotation CRUD surface — blank label/note enforced, listed beside
+    /// highlights, update/delete dispatch on the stored kind, and multi-op
+    /// researcher-EDLs never masquerade as strikes. [P1]
+    #[tokio::test]
+    async fn researcher_strike_crud_round_trips_as_a_single_cut_edl()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server = research_server();
+        let driver = &**server.gallery_store.driver();
+        let bundle = recording("/missing/source.wav", &["a", "fracture", "here"]);
+        let summary = transcript_store::store_transcript(driver, &bundle, None)?;
+        // Two EDLs that must stay outside the annotation surface: a
+        // model-produced one, and a researcher-EDL with two ops.
+        let model_edl = transcript_store::store_layer(
+            driver,
+            &summary.id,
+            &TranscriptLayer::Edl(crate::transcript_layers::EdlLayer {
+                provenance: LayerProvenance {
+                    model: "test-model".into(),
+                    prompt_template: "highlight_pass".into(),
+                    created_at: "2026-10-27T00:00:00Z".into(),
+                },
+                ops: vec![EdlEntry {
+                    range: WordRange::new(0, 0),
+                    op: EdlOp::Cut,
+                }],
+            }),
+        )?;
+        let multi_op = transcript_store::store_layer(
+            driver,
+            &summary.id,
+            &TranscriptLayer::Edl(crate::transcript_layers::EdlLayer {
+                provenance: LayerProvenance {
+                    model: "user".into(),
+                    prompt_template: "researcher_annotation".into(),
+                    created_at: "2026-10-27T00:00:00Z".into(),
+                },
+                ops: vec![
+                    EdlEntry {
+                        range: WordRange::new(0, 0),
+                        op: EdlOp::Cut,
+                    },
+                    EdlEntry {
+                        range: WordRange::new(2, 2),
+                        op: EdlOp::Cut,
+                    },
+                ],
+            }),
+        )?;
+        let strike_request =
+            |start_word: usize, end_word: usize, label: &str, note: &str, kind: Option<&str>| {
+                Parameters(EductAnnotationCreateRequest {
+                    transcript_id: summary.id.clone(),
+                    start_word,
+                    end_word,
+                    label: label.into(),
+                    note: note.into(),
+                    kind: kind.map(str::to_string),
+                })
+            };
+        // Create: a strike is a single-Cut EDL with blank label and note.
+        let strike = payload(
+            &server
+                .educt_annotation_create(strike_request(1, 1, "", "", Some("strike")))
+                .await?,
+        );
+        assert_eq!(strike["provenance"], "researcher_supplied");
+        assert_eq!(strike["layer"]["kind"], "edl");
+        assert_eq!(strike["layer"]["ops"][0]["op"], "cut");
+        assert_eq!(strike["layer"]["ops"][0]["range"]["start_word"], 1);
+        assert_eq!(strike["layer"]["ops"][0]["range"]["end_word"], 1);
+        let strike_id = strike["annotation_id"]
+            .as_str()
+            .ok_or("annotation ID")?
+            .to_string();
+        // Nonblank label or note is refused: strikes are unannotated cuts.
+        assert!(
+            server
+                .educt_annotation_create(strike_request(1, 1, "finding", "", Some("strike")))
+                .await
+                .is_err()
+        );
+        assert!(
+            server
+                .educt_annotation_create(strike_request(1, 1, "", "note", Some("strike")))
+                .await
+                .is_err()
+        );
+        // An unknown kind is refused with a named error.
+        assert!(
+            server
+                .educt_annotation_create(strike_request(1, 1, "", "", Some("scribble")))
+                .await
+                .is_err()
+        );
+        // A highlight (kind omitted) coexists.
+        let highlight = payload(
+            &server
+                .educt_annotation_create(strike_request(0, 0, "finding", "note", None))
+                .await?,
+        );
+        let highlight_id = highlight["annotation_id"]
+            .as_str()
+            .ok_or("highlight ID")?
+            .to_string();
+        // List: the strike and highlight are annotations; the model EDL and
+        // the multi-op researcher-EDL never masquerade as strikes.
+        let listed = payload(
+            &server
+                .educt_annotation_list(Parameters(EductAnnotationListRequest {
+                    transcript_id: summary.id.clone(),
+                }))
+                .await?,
+        );
+        let annotations = listed["annotations"].as_array().ok_or("annotations")?;
+        assert_eq!(annotations.len(), 2);
+        assert!(
+            annotations
+                .iter()
+                .any(|record| record["id"] == *strike_id && record["layer"]["kind"] == "edl")
+        );
+        assert!(
+            annotations
+                .iter()
+                .any(|record| record["id"] == *highlight_id
+                    && record["layer"]["kind"] == "highlight")
+        );
+        assert!(
+            annotations
+                .iter()
+                .all(|record| record["id"] != model_edl.id && record["id"] != multi_op.id),
+            "non-annotation EDLs stay outside the annotation list"
+        );
+        // Update dispatches on the stored kind: the strike's range moves
+        // with blank label/note, and a nonblank note is refused.
+        server
+            .educt_annotation_update(Parameters(EductAnnotationUpdateRequest {
+                transcript_id: summary.id.clone(),
+                annotation_id: strike_id.clone(),
+                start_word: 0,
+                end_word: 1,
+                label: String::new(),
+                note: String::new(),
+            }))
+            .await?;
+        assert!(
+            server
+                .educt_annotation_update(Parameters(EductAnnotationUpdateRequest {
+                    transcript_id: summary.id.clone(),
+                    annotation_id: strike_id.clone(),
+                    start_word: 0,
+                    end_word: 1,
+                    label: String::new(),
+                    note: "annotated".into(),
+                }))
+                .await
+                .is_err(),
+            "strikes carry no note"
+        );
+        // The multi-op researcher-EDL is not an annotation: update and delete
+        // are refused by the stored-kind dispatch.
+        assert!(
+            server
+                .educt_annotation_update(Parameters(EductAnnotationUpdateRequest {
+                    transcript_id: summary.id.clone(),
+                    annotation_id: multi_op.id.clone(),
+                    start_word: 0,
+                    end_word: 0,
+                    label: String::new(),
+                    note: String::new(),
+                }))
+                .await
+                .is_err()
+        );
+        assert!(
+            server
+                .educt_annotation_delete(Parameters(EductAnnotationDeleteRequest {
+                    transcript_id: summary.id.clone(),
+                    annotation_id: multi_op.id.clone(),
+                }))
+                .await
+                .is_err()
+        );
+        // Delete dispatches on the stored kind: the strike deletes; the
+        // highlight and both EDLs remain, and the source text is untouched.
+        server
+            .educt_annotation_delete(Parameters(EductAnnotationDeleteRequest {
+                transcript_id: summary.id.clone(),
+                annotation_id: strike_id.clone(),
+            }))
+            .await?;
+        let remaining = transcript_store::list_layers(driver, &summary.id)?;
+        assert_eq!(remaining.len(), 3);
+        assert!(remaining.iter().any(|record| record.id == highlight_id));
+        assert!(remaining.iter().any(|record| record.id == model_edl.id));
+        assert!(remaining.iter().any(|record| record.id == multi_op.id));
+        let (_, original) =
+            transcript_store::load_transcript(driver, &summary.id)?.ok_or("original bundle")?;
+        assert_eq!(original.full_text, bundle.full_text);
         Ok(())
     }
 }
