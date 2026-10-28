@@ -636,36 +636,36 @@ direct-manipulation workspace — no agent turn in the loop
   computation the workspace gate uses, so the browser never disagrees
   with the opened view. Click opens the workspace, and an in-workspace
   `← all recordings` affordance returns to the browser
-  (`close_transcript_workspace`, :1660). Per-asset transcripts remain
+  (`close_transcript_workspace`, :1663). Per-asset transcripts remain
   visible in Detail's section alongside reel provenance, carrying the same
   alignment note.
 - **Workspace**: one strict-parsed `educt_get_transcript` dispatch
-  (`parse_transcript_payload`, media_viewer.rs:5294) drives everything:
-  paragraph blocks (`build_pane_blocks`, :5183), speaker labels, the layers
+  (`parse_transcript_payload`, media_viewer.rs:5338) drives everything:
+  paragraph blocks (`build_pane_blocks`, :5227), speaker labels, the layers
   strip, highlight overlays, and strike line-through marks. The bound player is the same shared widget
   the Media tab and inline renders use (one player per media identity);
-  clicking a word seeks to its start (`seek_workspace_transcript`, :2685);
+  clicking a word seeks to its start (`seek_workspace_transcript`, :2688);
   follow-along marks the word containing playback at 4 Hz, polling only
-  while playing (`current_word_index`, :5174, over `MediaWidget::transport_position_secs`
+  while playing (`current_word_index`, :5218, over `MediaWidget::transport_position_secs`
   + `is_transport_playing` — the cross-media position and playing sources).
   A reload keeps the last-good workspace visible; only an explicit open or
   the back affordance clears it.
 - **Annotate**: an explicit Select-range mode turns word clicks into a
-  two-click range (`handle_word_selection`, :1832) that opens a label
-  editor (`open_label_editor`, :2413; `render_label_editor`, :2527) —
+  two-click range (`handle_word_selection`, :1835) that opens a label
+  editor (`open_label_editor`, :2416; `render_label_editor`, :2530) —
   a focused input over the range; Enter confirms, Escape cancels, an
   empty create confirm keeps the default label `research-highlight`
-  (`confirm_label_edit`, :2439, single-flight: an in-flight edit refuses
+  (`confirm_label_edit`, :2442, single-flight: an in-flight edit refuses
   visibly and keeps the typed buffer), and clipboard text pastes
   (control characters dropped). Create dispatches
-  `educt_annotation_create` (`create_workspace_highlight`, :1918);
+  `educt_annotation_create` (`create_workspace_highlight`, :1921);
   researcher-authored rows (layer-provenance identified — the pane's
   detection mirrors the server's researcher-annotation list guard
   exactly (the mutate guards additionally require exactly one entry), so
   the legacy gather layers and compose EDLs never render as annotations) also offer
   rename via `educt_annotation_update` with the typed label over the
-  unchanged range and note (`rename_workspace_highlight`, :2325) and delete
-  via `educt_annotation_delete` (`delete_workspace_annotation`, :2236 —
+  unchanged range and note (`rename_workspace_highlight`, :2328) and delete
+  via `educt_annotation_delete` (`delete_workspace_annotation`, :2239 —
   kind-dispatched: highlight or strike).
   Every completion reloads the workspace so overlays, rows, and label
   colors reflect it (`apply_workspace_annotation_result` names its subject
@@ -673,10 +673,10 @@ direct-manipulation workspace — no agent turn in the loop
 - **Strike (2026-10-27)**: the same selection can cut instead of label — the
   editor's create arm offers a strike affordance dispatching
   `educt_annotation_create` with kind strike (blank label/note: an
-  unannotated single-Cut EDL; `strike_selected_range`, :1997 →
-  `create_workspace_strike`, :2018). Struck words render line-through
+  unannotated single-Cut EDL; `strike_selected_range`, :2000 →
+  `create_workspace_strike`, :2021). Struck words render line-through
   (index-identical views only; overlapping marks compose field-wise via
-  `resolved_highlight_runs`, :4930 — a struck word inside a highlight keeps
+  `resolved_highlight_runs`, :4974 — a struck word inside a highlight keeps
   both the background and the line-through), a Strikes list offers
   click-to-seek rows and unstrike, and the pane parses strikes under the
   server's strike identity only (user + researcher_annotation + exactly
@@ -684,7 +684,7 @@ direct-manipulation workspace — no agent turn in the loop
   never render as strikes.
 - **Reel editing + generation (2026-10-27)**: the pane offers three compose
   modes, each building the reel EDL directly from its annotations
-  (`compose_reel_params`, :5109) — assemble from the toggled-in
+  (`compose_reel_params`, :5153) — assemble from the toggled-in
   researcher-authored highlights (union-merged so overlapping selections
   stay disjoint), reduce by cutting every strike out of the whole
   transcript, and mixed (keeps minus strikes). Membership keys on provenance
@@ -693,14 +693,14 @@ direct-manipulation workspace — no agent turn in the loop
   wrapper, so reduce shows on a strikes-only transcript; Mixed with nothing
   toggled in refuses with its empty status rather than silently composing
   the reduce reel. Each chains `educt_store_layer` → `educt_render_edl`
-  (`compose_workspace_reel`, :2134); the compose provenance carries the
+  (`compose_workspace_reel`, :2137); the compose provenance carries the
   pane_reel_compose template — never researcher_annotation — so a composed
   single-cut EDL never re-parses as a researcher strike. The rendered reel
   lands as a playable gallery asset through the display-hint ingestion; the
   per-mode compose progress surfaces on the tab's status line.
 - **Alignment gating (D5)**: text overlays and hand highlights exist only on
   index-identical views (original/aligned) — the pure five-state gate with
-  visible reasons is `highlight_range_gate`, :4859; re-anchored views list
+  visible reasons is `highlight_range_gate`, :4903; re-anchored views list
   ranges with a visible note — the panel never re-implements the server's
   projection (the server-side `reanchored_index_map` is the named v2 path).
 
