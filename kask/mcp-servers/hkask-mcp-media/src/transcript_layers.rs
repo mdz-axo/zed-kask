@@ -37,6 +37,14 @@ pub struct LayerProvenance {
     pub created_at: String,
 }
 
+/// The provenance pair marking a researcher-authored annotation layer —
+/// the identity the annotation tools' kind dispatch, both store mutate
+/// guards, and the media panel's parse all key on. The panel mirrors
+/// these literals across the workspace seam (it cannot import them);
+/// the parse-identity and compose round-trip tests pin that mirror.
+pub(crate) const RESEARCHER_ANNOTATION_MODEL: &str = "user";
+pub(crate) const RESEARCHER_ANNOTATION_TEMPLATE: &str = "researcher_annotation";
+
 /// One speaker span: `speaker` said the words `[start_word, end_word]`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SpeakerSpan {

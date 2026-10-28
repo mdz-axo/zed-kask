@@ -3866,47 +3866,6 @@ impl MediaViewer {
                     .color(ui::Color::Error),
                 );
             }
-            // R3: the three compose affordances — assemble the toggled
-            // highlights into a reel, reduce by cutting the strikes out of
-            // the whole transcript, or mixed (keeps minus strikes). Each
-            // shows only when its inputs exist.
-            let any_researcher_highlight = state
-                .highlights
-                .iter()
-                .any(|highlight| highlight.researcher_supplied);
-            let affordances = [
-                (ReelComposeMode::Assemble, any_researcher_highlight),
-                (ReelComposeMode::Reduce, !state.strikes.is_empty()),
-                (
-                    ReelComposeMode::Mixed,
-                    any_researcher_highlight && !state.strikes.is_empty(),
-                ),
-            ];
-            for (mode, visible) in affordances {
-                if !visible {
-                    continue;
-                }
-                sections = sections.child(
-                    div()
-                        .id(SharedString::from(format!(
-                            "media-transcript-compose-reel-{}",
-                            mode.key()
-                        )))
-                        .cursor_pointer()
-                        .flex()
-                        .flex_wrap()
-                        .gap_2()
-                        .hover(|el| el.bg(cx.theme().colors().element_hover))
-                        .child(
-                            Label::new(SharedString::from(mode.label()))
-                                .size(LabelSize::XSmall)
-                                .color(ui::Color::Default),
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.compose_workspace_reel(mode, cx);
-                        })),
-                );
-            }
             for (row_index, highlight) in state.highlights.iter().enumerate() {
                 let row = format!(
                     "{} — words {}..{}",
@@ -4127,6 +4086,49 @@ impl MediaViewer {
                 );
             }
         }
+        // R3: the three compose affordances — assemble the toggled
+        // highlights into a reel, reduce by cutting the strikes out of
+        // the whole transcript, or mixed (keeps minus strikes). Rendered
+        // after both annotation lists, outside either section's wrapper:
+        // reduce composes from strikes alone and must show on a
+        // strikes-only transcript. Each shows only when its inputs exist.
+        let any_researcher_highlight = state
+            .highlights
+            .iter()
+            .any(|highlight| highlight.researcher_supplied);
+        let affordances = [
+            (ReelComposeMode::Assemble, any_researcher_highlight),
+            (ReelComposeMode::Reduce, !state.strikes.is_empty()),
+            (
+                ReelComposeMode::Mixed,
+                any_researcher_highlight && !state.strikes.is_empty(),
+            ),
+        ];
+        for (mode, visible) in affordances {
+            if !visible {
+                continue;
+            }
+            sections = sections.child(
+                div()
+                    .id(SharedString::from(format!(
+                        "media-transcript-compose-reel-{}",
+                        mode.key()
+                    )))
+                    .cursor_pointer()
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .hover(|el| el.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Label::new(SharedString::from(mode.label()))
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Default),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.compose_workspace_reel(mode, cx);
+                    })),
+            );
+        }
         sections = sections.child(Self::section_label("Transcript"));
         // Paragraph blocks over the working words when the view is timed;
         // the corrected/plain text as one block otherwise (S3a). Timed
@@ -4214,7 +4216,8 @@ impl MediaViewer {
             let entity = cx.entity().downgrade();
             let interactive = InteractiveText::new(
                 SharedString::from(format!("media-transcript-paragraph-{block_index}")),
-                StyledText::new(block.text.clone()).with_highlights(highlights),
+                StyledText::new(block.text.clone())
+                    .with_highlights(resolved_highlight_runs(highlights)),
             )
             .on_click(
                 block.word_char_ranges.clone(),
@@ -4915,6 +4918,62 @@ fn strike_create_params(
     })
 }
 
+/// Compose the pane's text marks into the sorted, non-overlapping run list
+/// gpui's `with_highlights` consumes. Its cursor runs forward only, so an
+/// out-of-order or overlapping mark would style text past its range — a
+/// struck word inside a highlight could lose its line-through, and the
+/// follow-along mark inside any overlay could shift styling past its
+/// word. Overlapping marks merge field-wise (the later mark's set fields
+/// win), so a struck word inside a highlight keeps BOTH the background
+/// and the line-through. The cost is bounded by the marked envelope, not
+/// the block length.
+fn resolved_highlight_runs(
+    marks: Vec<(Range<usize>, HighlightStyle)>,
+) -> Vec<(Range<usize>, HighlightStyle)> {
+    if marks.is_empty() {
+        return Vec::new();
+    }
+    let envelope_start = marks
+        .iter()
+        .map(|(range, _)| range.start)
+        .min()
+        .unwrap_or(0);
+    let envelope_end = marks.iter().map(|(range, _)| range.end).max().unwrap_or(0);
+    let mut cells: Vec<Option<HighlightStyle>> =
+        vec![None; envelope_end.saturating_sub(envelope_start)];
+    for (range, style) in marks {
+        let start = range.start.max(envelope_start);
+        let end = range.end.min(envelope_end);
+        for cell in &mut cells[start - envelope_start..end - envelope_start] {
+            *cell = Some(match cell.take() {
+                None => style,
+                Some(previous) => previous.highlight(style),
+            });
+        }
+    }
+    let mut runs = Vec::new();
+    let mut open: Option<(usize, HighlightStyle)> = None;
+    for (offset, cell) in cells.into_iter().enumerate() {
+        let index = offset + envelope_start;
+        match (open, cell) {
+            (None, Some(style)) => open = Some((index, style)),
+            (Some((start, style)), Some(next)) if style != next => {
+                runs.push((start..index, style));
+                open = Some((index, next));
+            }
+            (Some((start, style)), None) => {
+                runs.push((start..index, style));
+                open = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some((start, style)) = open {
+        runs.push((start..envelope_end, style));
+    }
+    runs
+}
+
 /// The char range within `block` covering the word range
 /// `start_word..=end_word` — None when the range misses the block or its
 /// clamped local indices fall outside the word map. The block owns the
@@ -5072,6 +5131,13 @@ fn compose_reel_params(
             .map(|strike| (strike.start_word, strike.end_word))
             .collect(),
     };
+    // Mixed is "keeps minus strikes": with nothing toggled in there is
+    // nothing to keep, so it refuses with its empty status rather than
+    // silently composing the reduce reel (cuts-only ops read as the whole
+    // transcript under the algebra's subtractive base).
+    if mode == ReelComposeMode::Mixed && keeps.is_empty() {
+        return None;
+    }
     let mut ops = Vec::new();
     for (start_word, end_word) in union_word_ranges(&keeps) {
         ops.push(serde_json::json!({
@@ -8178,9 +8244,11 @@ mod tests {
         assert_eq!(ops[0]["op"], serde_json::json!("keep"));
         assert_eq!(ops[1]["op"], serde_json::json!("cut"));
 
-        // Empty op sets yield None.
+        // Empty op sets yield None — and Mixed with nothing toggled in
+        // refuses rather than silently composing the reduce reel.
         let none_toggled: HashSet<(usize, usize)> = HashSet::new();
         assert!(compose_reel_params(&state, &none_toggled, ReelComposeMode::Assemble).is_none());
+        assert!(compose_reel_params(&state, &none_toggled, ReelComposeMode::Mixed).is_none());
         let no_strikes = TranscriptPaneState {
             strikes: Vec::new(),
             ..state
@@ -8207,6 +8275,200 @@ mod tests {
             "a composed single-cut EDL is not a researcher strike"
         );
         assert_eq!(parsed.layers.len(), 1, "it stays in the Layers strip");
+    }
+
+    /// dcterms:identifier: `resolved_highlight_runs`
+    /// expect: Overlapping and out-of-order marks compose into the sorted,
+    /// non-overlapping run list gpui consumes — a struck word inside a
+    /// highlight keeps BOTH styles (its run carries the background and
+    /// the line-through), so the follow-along mark no longer shifts
+    /// styling past its range. [P1]
+    #[test]
+    fn resolved_highlight_runs_sorts_merges_and_keeps_both_styles() {
+        let background = HighlightStyle {
+            background_color: Some(gpui::black()),
+            ..Default::default()
+        };
+        let strike = HighlightStyle {
+            strikethrough: Some(StrikethroughStyle {
+                thickness: px(1.),
+                color: None,
+            }),
+            ..Default::default()
+        };
+        // Out of order, with the strike overlapping the highlight.
+        let runs =
+            resolved_highlight_runs(vec![(10..12, strike), (0..6, background), (4..8, strike)]);
+        assert_eq!(
+            runs.len(),
+            4,
+            "0..4 background, 4..6 both, 6..8 strike, 10..12 strike"
+        );
+        assert_eq!(runs[0].0, 0..4);
+        assert!(runs[0].1.background_color.is_some());
+        assert!(runs[0].1.strikethrough.is_none());
+        assert_eq!(runs[1].0, 4..6);
+        assert!(
+            runs[1].1.background_color.is_some() && runs[1].1.strikethrough.is_some(),
+            "the overlap keeps both styles"
+        );
+        assert_eq!(runs[2].0, 6..8);
+        assert!(runs[2].1.strikethrough.is_some());
+        assert!(runs[2].1.background_color.is_none());
+        assert_eq!(runs[3].0, 10..12);
+        // No marks, no runs — the plain text path.
+        assert!(resolved_highlight_runs(Vec::new()).is_empty());
+    }
+
+    /// dcterms:identifier: `block_word_char_range`
+    /// expect: The block-owned word-to-char mapping gates ranges that
+    /// miss the block, clamps partial overlaps to the block bounds, and
+    /// returns None when the clamped indices fall outside the word map
+    /// (the R2 refactor's behavior-equivalence pin). [P1]
+    #[test]
+    fn block_word_char_range_gates_clamps_and_bounds() {
+        let block = PaneBlock {
+            speaker: None,
+            text: "a b c".into(),
+            word_char_ranges: vec![0..1, 2..3, 4..5],
+            word_starts: vec![(0, 0), (1, 100), (2, 200)],
+        };
+        assert_eq!(block_word_char_range(&block, 0, 2), Some(0..5));
+        assert_eq!(block_word_char_range(&block, 1, 1), Some(2..3));
+        assert_eq!(
+            block_word_char_range(&block, 5, 9),
+            None,
+            "a range missing the block maps nothing"
+        );
+        // A text-only block has no word map: nothing maps, even word 0.
+        assert_eq!(block_word_char_range(&PaneBlock::default(), 0, 0), None);
+    }
+
+    /// dcterms:identifier: `MediaViewer::strike_selected_range`
+    /// expect: An in-flight edit refuses the strike and keeps the editor
+    /// open for retry — the confirm path's admission contract, pinned on
+    /// the strike arm. [P1]
+    #[gpui::test]
+    fn strike_admission_refusal_keeps_the_editor(cx: &mut gpui::TestAppContext) {
+        let _invoker_lock = INVOKER_TEST_LOCK.lock().unwrap();
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript = Some(pane_state("t-1"));
+            viewer.edit_request.state = ResourceState::Loading;
+            viewer.highlight_edit = Some(HighlightEdit {
+                kind: HighlightEditKind::Create {
+                    start_word: 3,
+                    end_word: 9,
+                },
+                buffer: LabelBuffer::from_str("typed but refused"),
+            });
+            viewer.strike_selected_range(3, 9, cx);
+            assert!(
+                viewer.highlight_edit.is_some(),
+                "a refused strike keeps the editor for retry"
+            );
+            assert!(
+                viewer
+                    .status
+                    .as_deref()
+                    .unwrap()
+                    .contains("already in progress"),
+                "status: {:?}",
+                viewer.status
+            );
+            assert_eq!(viewer.edit_request.state, ResourceState::Loading);
+        });
+    }
+
+    /// dcterms:identifier: `MediaViewer::delete_workspace_annotation`
+    /// expect: The kind-dispatched delete refusal names its subject — the
+    /// strike arm says strikes, the highlight arm stays byte-identical to
+    /// the pre-R2 message — both surfacing the unwired invoker and
+    /// completing the edit request into Failed. [P1]
+    #[gpui::test]
+    fn annotation_delete_refusals_name_the_subject(cx: &mut gpui::TestAppContext) {
+        let _invoker_lock = INVOKER_TEST_LOCK.lock().unwrap();
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript = Some(pane_state("t-1"));
+            viewer.delete_workspace_annotation("layer-strike".into(), "Strike", cx);
+            assert!(
+                viewer
+                    .status
+                    .as_deref()
+                    .unwrap()
+                    .contains("cannot delete strikes"),
+                "status: {:?}",
+                viewer.status
+            );
+            assert!(matches!(
+                viewer.edit_request.state,
+                ResourceState::Failed(_)
+            ));
+            viewer.delete_workspace_annotation("layer-highlight".into(), "Highlight", cx);
+            assert!(
+                viewer
+                    .status
+                    .as_deref()
+                    .unwrap()
+                    .contains("cannot delete highlights"),
+                "the highlight message is unchanged: {:?}",
+                viewer.status
+            );
+        });
+    }
+
+    /// dcterms:identifier: `MediaViewer::compose_workspace_reel`
+    /// expect: A compose dispatch runs under the edit admission — the
+    /// unwired invoker completes the request into Failed with progress
+    /// cleared — and a mode with nothing to compose surfaces its per-mode
+    /// empty status without admitting an edit. [P1]
+    #[gpui::test]
+    fn compose_dispatch_refusal_and_empty_status_surface(cx: &mut gpui::TestAppContext) {
+        let _invoker_lock = INVOKER_TEST_LOCK.lock().unwrap();
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            let mut state = pane_state("t-1");
+            state.highlights = vec![PaneHighlight {
+                start_word: 0,
+                end_word: 2,
+                label: "thesis".into(),
+                note: String::new(),
+                annotation_id: "layer-0".into(),
+                researcher_supplied: true,
+            }];
+            state.strikes = vec![PaneStrike {
+                start_word: 4,
+                end_word: 5,
+                annotation_id: "strike-4".into(),
+            }];
+            viewer.transcript = Some(state);
+            viewer.reel_selection.insert((0, 2));
+            viewer.compose_workspace_reel(ReelComposeMode::Assemble, cx);
+            assert!(
+                matches!(viewer.edit_request.state, ResourceState::Failed(_)),
+                "the unwired compose refusal fails the edit request"
+            );
+            assert!(
+                viewer.edit_progress.is_none(),
+                "the refusal cleared the compose progress"
+            );
+            // Nothing toggled in: the assemble empty status surfaces
+            // without admitting an edit.
+            viewer.edit_request.state = ResourceState::Idle;
+            viewer.reel_selection.clear();
+            viewer.compose_workspace_reel(ReelComposeMode::Assemble, cx);
+            assert!(
+                viewer
+                    .status
+                    .as_deref()
+                    .unwrap()
+                    .contains("No pane highlights to compose"),
+                "status: {:?}",
+                viewer.status
+            );
+            assert_eq!(viewer.edit_request.state, ResourceState::Idle);
+        });
     }
 
     /// dcterms:identifier: `transcript_media_body`

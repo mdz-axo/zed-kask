@@ -104,14 +104,16 @@ fn researcher_strike(
 fn researcher_annotation_kind(layer: &TranscriptLayer) -> Option<&'static str> {
     match layer {
         TranscriptLayer::Highlight(layer)
-            if layer.provenance.model == "user"
-                && layer.provenance.prompt_template == "researcher_annotation" =>
+            if layer.provenance.model == crate::transcript_layers::RESEARCHER_ANNOTATION_MODEL
+                && layer.provenance.prompt_template
+                    == crate::transcript_layers::RESEARCHER_ANNOTATION_TEMPLATE =>
         {
             Some("highlight")
         }
         TranscriptLayer::Edl(layer)
-            if layer.provenance.model == "user"
-                && layer.provenance.prompt_template == "researcher_annotation"
+            if layer.provenance.model == crate::transcript_layers::RESEARCHER_ANNOTATION_MODEL
+                && layer.provenance.prompt_template
+                    == crate::transcript_layers::RESEARCHER_ANNOTATION_TEMPLATE
                 && layer.ops.len() == 1
                 && layer.ops[0].op == EdlOp::Cut =>
         {
@@ -122,9 +124,12 @@ fn researcher_annotation_kind(layer: &TranscriptLayer) -> Option<&'static str> {
 }
 
 /// Read one stored layer by annotation id — the dispatch key update and
-/// delete share. The mutate functions re-verify identity and compare the
-/// exact previous payload inside the write, so a concurrent edit between
-/// this read and the mutate still fails safely.
+/// delete share. The mutate functions re-verify identity against their
+/// own fresh read, so the dispatch can never write through the wrong arm;
+/// a concurrent same-kind edit landing between this read and the mutate
+/// is absorbed by the mutate's own re-read (last writer wins on the word
+/// range), and only an edit inside the mutate's read-to-write window
+/// fails with the named LayerNotFound.
 fn annotation_layer(
     driver: &dyn hkask_storage::database::driver::DatabaseDriver,
     transcript_id: &str,
@@ -655,7 +660,12 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_annotation_create", async {
             let driver = &**self.gallery_store.driver();
-            let provenance = LayerProvenance { model: "user".to_string(), prompt_template: "researcher_annotation".to_string(), created_at: hkask_types::time::now_rfc3339() };
+            let provenance = LayerProvenance {
+                model: crate::transcript_layers::RESEARCHER_ANNOTATION_MODEL.to_string(),
+                prompt_template: crate::transcript_layers::RESEARCHER_ANNOTATION_TEMPLATE
+                    .to_string(),
+                created_at: hkask_types::time::now_rfc3339(),
+            };
             let layer = match request.kind.as_deref().unwrap_or("highlight") {
                 "highlight" => {
                     let entry = researcher_highlight(request.start_word, request.end_word, request.label, request.note)?;
@@ -2460,25 +2470,35 @@ mod researcher_tests {
             .as_str()
             .ok_or("annotation ID")?
             .to_string();
-        // Nonblank label or note is refused: strikes are unannotated cuts.
+        // Nonblank label or note is refused naming the unannotated-cut
+        // contract: strikes are unannotated cuts.
+        let refused = server
+            .educt_annotation_create(strike_request(1, 1, "finding", "", Some("strike")))
+            .await
+            .expect_err("a labeled strike is refused");
         assert!(
-            server
-                .educt_annotation_create(strike_request(1, 1, "finding", "", Some("strike")))
-                .await
-                .is_err()
+            refused.message.contains("no label or note"),
+            "named: {}",
+            refused.message
         );
+        let refused = server
+            .educt_annotation_create(strike_request(1, 1, "", "note", Some("strike")))
+            .await
+            .expect_err("a noted strike is refused");
         assert!(
-            server
-                .educt_annotation_create(strike_request(1, 1, "", "note", Some("strike")))
-                .await
-                .is_err()
+            refused.message.contains("no label or note"),
+            "named: {}",
+            refused.message
         );
-        // An unknown kind is refused with a named error.
+        // An unknown kind is refused naming both valid values.
+        let refused = server
+            .educt_annotation_create(strike_request(1, 1, "", "", Some("scribble")))
+            .await
+            .expect_err("an unknown kind is refused");
         assert!(
-            server
-                .educt_annotation_create(strike_request(1, 1, "", "", Some("scribble")))
-                .await
-                .is_err()
+            refused.message.contains("kind must be highlight or strike"),
+            "named: {}",
+            refused.message
         );
         // A highlight (kind omitted) coexists.
         let highlight = payload(
@@ -2530,43 +2550,67 @@ mod researcher_tests {
                 note: String::new(),
             }))
             .await?;
-        assert!(
-            server
-                .educt_annotation_update(Parameters(EductAnnotationUpdateRequest {
+        // The update persisted: the stored Cut op moved to the new range.
+        let persisted = payload(
+            &server
+                .educt_annotation_list(Parameters(EductAnnotationListRequest {
                     transcript_id: summary.id.clone(),
-                    annotation_id: strike_id.clone(),
-                    start_word: 0,
-                    end_word: 1,
-                    label: String::new(),
-                    note: "annotated".into(),
                 }))
-                .await
-                .is_err(),
-            "strikes carry no note"
+                .await?,
         );
-        // The multi-op researcher-EDL is not an annotation: update and delete
-        // are refused by the stored-kind dispatch.
+        let moved = persisted["annotations"]
+            .as_array()
+            .ok_or("annotations")?
+            .iter()
+            .find(|record| record["id"] == *strike_id)
+            .ok_or("updated strike")?;
+        assert_eq!(moved["layer"]["ops"][0]["range"]["start_word"], 0);
+        assert_eq!(moved["layer"]["ops"][0]["range"]["end_word"], 1);
+        let refused = server
+            .educt_annotation_update(Parameters(EductAnnotationUpdateRequest {
+                transcript_id: summary.id.clone(),
+                annotation_id: strike_id.clone(),
+                start_word: 0,
+                end_word: 1,
+                label: String::new(),
+                note: "annotated".into(),
+            }))
+            .await
+            .expect_err("strikes carry no note");
         assert!(
-            server
-                .educt_annotation_update(Parameters(EductAnnotationUpdateRequest {
-                    transcript_id: summary.id.clone(),
-                    annotation_id: multi_op.id.clone(),
-                    start_word: 0,
-                    end_word: 0,
-                    label: String::new(),
-                    note: String::new(),
-                }))
-                .await
-                .is_err()
+            refused.message.contains("no label or note"),
+            "named: {}",
+            refused.message
         );
+        // The multi-op researcher-EDL is not an annotation: update and
+        // delete are refused by the stored-kind dispatch, naming the layer.
+        let refused = server
+            .educt_annotation_update(Parameters(EductAnnotationUpdateRequest {
+                transcript_id: summary.id.clone(),
+                annotation_id: multi_op.id.clone(),
+                start_word: 0,
+                end_word: 0,
+                label: String::new(),
+                note: String::new(),
+            }))
+            .await
+            .expect_err("the multi-op EDL is not an annotation");
         assert!(
-            server
-                .educt_annotation_delete(Parameters(EductAnnotationDeleteRequest {
-                    transcript_id: summary.id.clone(),
-                    annotation_id: multi_op.id.clone(),
-                }))
-                .await
-                .is_err()
+            refused.message.contains("not found"),
+            "the refusal names the layer: {}",
+            refused.message
+        );
+        let refused = server
+            .educt_annotation_delete(Parameters(EductAnnotationDeleteRequest {
+                transcript_id: summary.id.clone(),
+                annotation_id: multi_op.id.clone(),
+            }))
+            .await
+            .expect_err("the multi-op EDL cannot be deleted as an annotation");
+        assert!(
+            refused.message.contains("not found"),
+            "the refusal names the layer: {}",
+            refused.message
         );
         // Delete dispatches on the stored kind: the strike deletes; the
         // highlight and both EDLs remain, and the source text is untouched.
@@ -2584,6 +2628,49 @@ mod researcher_tests {
         let (_, original) =
             transcript_store::load_transcript(driver, &summary.id)?.ok_or("original bundle")?;
         assert_eq!(original.full_text, bundle.full_text);
+        Ok(())
+    }
+
+    /// expect: An all-cut EDL refuses at the render gate with the named
+    /// message — nothing renders, never the full source; the plan check
+    /// precedes the ffmpeg requirement, so the refusal needs no runner.
+    /// [P1]
+    #[tokio::test]
+    async fn all_cut_edl_render_refuses_visibly() -> Result<(), Box<dyn std::error::Error>> {
+        let server = research_server();
+        let driver = &**server.gallery_store.driver();
+        let bundle = recording("/missing/source.wav", &["a", "b", "c"]);
+        let summary = transcript_store::store_transcript(driver, &bundle, None)?;
+        let all_cut = TranscriptLayer::Edl(crate::transcript_layers::EdlLayer {
+            provenance: LayerProvenance {
+                model: "test".into(),
+                prompt_template: "test".into(),
+                created_at: "2026-10-27T00:00:00Z".into(),
+            },
+            ops: vec![
+                EdlEntry {
+                    range: WordRange::new(0, 0),
+                    op: EdlOp::Cut,
+                },
+                EdlEntry {
+                    range: WordRange::new(1, 2),
+                    op: EdlOp::Cut,
+                },
+            ],
+        });
+        let record = transcript_store::store_layer(driver, &summary.id, &all_cut)?;
+        let error = server
+            .educt_render_edl(Parameters(crate::types::EductRenderEdlRequest {
+                transcript_id: summary.id.clone(),
+                layer_id: Some(record.id),
+            }))
+            .await
+            .expect_err("an all-cut EDL must refuse to render");
+        assert!(
+            error.message.contains("nothing to render"),
+            "the refusal names the reason: {}",
+            error.message
+        );
         Ok(())
     }
 }

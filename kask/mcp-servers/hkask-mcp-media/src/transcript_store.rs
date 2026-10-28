@@ -666,8 +666,9 @@ pub fn mutate_user_highlight(
     let TranscriptLayer::Highlight(highlight) = &mut layer else {
         return Err(missing());
     };
-    if highlight.provenance.model != "user"
-        || highlight.provenance.prompt_template != "researcher_annotation"
+    if highlight.provenance.model != crate::transcript_layers::RESEARCHER_ANNOTATION_MODEL
+        || highlight.provenance.prompt_template
+            != crate::transcript_layers::RESEARCHER_ANNOTATION_TEMPLATE
         || highlight.highlights.len() != 1
     {
         return Err(missing());
@@ -721,8 +722,9 @@ pub fn mutate_user_strike(
     let TranscriptLayer::Edl(edl) = &mut layer else {
         return Err(missing());
     };
-    if edl.provenance.model != "user"
-        || edl.provenance.prompt_template != "researcher_annotation"
+    if edl.provenance.model != crate::transcript_layers::RESEARCHER_ANNOTATION_MODEL
+        || edl.provenance.prompt_template
+            != crate::transcript_layers::RESEARCHER_ANNOTATION_TEMPLATE
         || edl.ops.len() != 1
         || edl.ops[0].op != crate::transcript_select::EdlOp::Cut
     {
