@@ -1,4 +1,4 @@
-{# goal: Emit the Phase 0 condensation-triage output shapes for the doc-update skill: the triage table (CORE / FOLD / DELETE with named successors), the fold plan, and the lifecycle-ledger entry appended to kask/docs/README.md. Every decision needs a successor; "none" is only valid for DELETE rows whose content is fully obsolete. Feeds the <75-document cap check (working target 60). The Phase 6 gate results are reported by the skill's own convergence form, not by this template — gate data does not exist at Phase 0 render time. #}
+{# goal: Emit the Phase 0 condensation-triage output shapes for the doc-update skill: the triage table (CORE / FOLD / DELETE with named successors), the fold plan, and the lifecycle-ledger entry appended to kask/docs/README.md. Every decision needs a successor; "none" is only valid for DELETE rows whose content is fully obsolete. Feeds the fewer-than-85-document cap check (working target 75 — operator ruling 2026-10-07, DOCUMENTATION_STANDARDS.md §3). The Phase 6 gate results are reported by the skill's own convergence form, not by this template — gate data does not exist at Phase 0 render time. #}
 [inference]
 contract:
   input:
@@ -16,7 +16,7 @@ contract:
 ---
 ## Condensation triage (`triage_table`) — {{ date }}
 
-Tree count before: {{ count_before }} (cap: < 75, working target 60)
+Tree count before: {{ count_before }} (cap: < 85, working target 75)
 Tree count after (projected): {{ count_after }}
 
 | Path | Role (CORE / FOLD / DELETE) | Reason | Successor |
