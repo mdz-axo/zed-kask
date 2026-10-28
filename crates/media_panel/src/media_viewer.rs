@@ -2571,6 +2571,9 @@ impl MediaViewer {
         v_flex()
             .flex_1()
             .min_h_0()
+            .child(Self::tab_purpose(
+                "Playback and derivative edits — marks and trims serve audio and video; results land as new assets.",
+            ))
             .child(header)
             .child(toolbar)
             .child(content)
@@ -2748,6 +2751,9 @@ impl MediaViewer {
             .id("media-viewer-library")
             .flex_1()
             .min_h_0()
+            .child(Self::tab_purpose(
+                "Every indexed asset — browse and select; delete removes the listing, never the file on disk.",
+            ))
             .child(pagination)
             .child(content)
             .into_any_element()
@@ -2867,6 +2873,9 @@ impl MediaViewer {
             .id("media-viewer-queue")
             .flex_1()
             .min_h_0()
+            .child(Self::tab_purpose(
+                "Async research jobs — the long-operation path (transcribe, batch edits); history is process-local.",
+            ))
             .child(
                 h_flex().h_8().px_2().items_center().child(
                     Label::new(count_label)
@@ -2900,6 +2909,9 @@ impl MediaViewer {
             return self.render_empty(title, hint).into_any_element();
         };
         let mut sections = v_flex().gap_2().p_3();
+        sections = sections.child(Self::tab_purpose(
+            "The selected asset's inspector — record, lineage, tags, linked transcripts, reel provenance.",
+        ));
         if let Some(image) = detail.get("image").and_then(|i| i.as_object()) {
             sections = sections.child(Self::section_label("Record"));
             for (key, value) in image {
@@ -3037,6 +3049,9 @@ impl MediaViewer {
             .as_ref()
             .expect("the empty-state guard returned above");
         let mut sections = v_flex().gap_2().p_3();
+        sections = sections.child(Self::tab_purpose(
+            "The transcript workbench — read synced to playback; select text to label highlights; toggle clips to compose a reel.",
+        ));
         if let Some(widget) = media_widget {
             sections = sections.child(div().flex().min_w_0().overflow_hidden().child(widget));
         } else if media_unavailable {
@@ -3493,6 +3508,9 @@ impl MediaViewer {
                 .into_any_element();
         }
         let mut sections = v_flex().gap_2().p_3();
+        sections = sections.child(Self::tab_purpose(
+            "Every stored recording — click one to open its transcript workspace.",
+        ));
         sections = sections.child(Self::section_label("Recordings"));
         for transcript in listing {
             let timings = if transcript.has_word_timings {
@@ -3539,6 +3557,16 @@ impl MediaViewer {
             .size(LabelSize::XSmall)
             .color(ui::Color::Hint)
             .mt_1()
+    }
+
+    /// One line of tab purpose copy — the orientation contract (2026-10-27):
+    /// every tab states what it is for before it shows content.
+    fn tab_purpose(text: &str) -> Div {
+        div().px_3().pt_2().child(
+            Label::new(SharedString::from(text.to_string()))
+                .size(LabelSize::XSmall)
+                .color(ui::Color::Muted),
+        )
     }
 
     fn kv_row(key: &str, value: &str, _cx: &Context<Self>) -> impl IntoElement + use<> {
