@@ -366,8 +366,26 @@ impl FfmpegRunner {
         })
     }
 
-    /// Trim a video to specified start/end times.
-    /// Uses stream copy (-c copy) for fast, lossless trimming.
+    /// Audio-only container inputs for [`FfmpegRunner::clip`]: these trim by
+    /// decoding to 16-bit PCM wav (stream copy cannot land compressed audio in
+    /// a wav container — ffmpeg has no wav tag for mp3 frames); every other
+    /// input trims by lossless stream copy into mp4.
+    fn clip_input_is_audio(input: &str) -> bool {
+        matches!(
+            std::path::Path::new(input)
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(str::to_ascii_lowercase)
+                .as_deref(),
+            Some("mp3" | "wav" | "m4a" | "aac" | "flac" | "ogg" | "opus" | "wma")
+        )
+    }
+
+    /// Trim media to specified start/end times. Video inputs stream-copy
+    /// losslessly into mp4 (`-c copy`); audio inputs decode to 16-bit PCM wav —
+    /// the publication path then infers the right asset kind from the container
+    /// (2026-10-27: the Media tab's trim serves both media kinds through this
+    /// one path).
     pub async fn clip(
         &self,
         input: &str,
@@ -379,7 +397,9 @@ impl FfmpegRunner {
         }
         self.ensure_temp_dir()?;
 
-        let output = RollbackOwnedOutput::new(self.output_path("mp4"));
+        let audio_input = Self::clip_input_is_audio(input);
+        let output =
+            RollbackOwnedOutput::new(self.output_path(if audio_input { "wav" } else { "mp4" }));
         let duration = end_sec - start_sec;
 
         let mut command = Command::new(&self.ffmpeg_path);
@@ -389,16 +409,21 @@ impl FfmpegRunner {
             .arg("-to")
             .arg(format!("{:.3}", end_sec))
             .arg("-i")
-            .arg(input)
-            .arg("-c")
-            .arg("copy")
-            .arg("-avoid_negative_ts")
-            .arg("make_zero")
-            .arg(output.path());
+            .arg(input);
+        if audio_input {
+            command.arg("-c:a").arg("pcm_s16le");
+        } else {
+            command
+                .arg("-c")
+                .arg("copy")
+                .arg("-avoid_negative_ts")
+                .arg("make_zero");
+        }
+        command.arg(output.path());
         Self::run_to_completion(command, "clip").await?;
 
         let output = output.commit();
-        tracing::info!(target: "hkask.mcp.media.ffmpeg", input = %input, duration = %duration, output = %output.display(), "Video clipped");
+        tracing::info!(target: "hkask.mcp.media.ffmpeg", input = %input, duration = %duration, audio_input, output = %output.display(), "Media clipped");
         Ok(output)
     }
 

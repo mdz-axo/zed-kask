@@ -321,11 +321,12 @@ fn sampled_coverage(interval_sec: f32, max_frames: u32, timestamps: &[f64]) -> s
 
 #[tool_router(router = processing_router, vis = "pub")]
 impl MediaServer {
-    /// Admission choreography shared by the local-video tools: local
+    /// Admission choreography shared by the local-media tools: local
     /// inputs must exist, the test gate observes admission (test builds
     /// only), remote inputs pass DNS validation, and ffmpeg must be
-    /// available — in that order, once per tool call.
-    async fn admit_local_video_inputs(&self, urls: &[String]) -> Result<(), McpToolError> {
+    /// available — in that order, once per tool call. Video tools and the
+    /// kind-agnostic clip both pass through here.
+    async fn admit_local_media_inputs(&self, urls: &[String]) -> Result<(), McpToolError> {
         for url in urls {
             ensure_local_input_exists(url)?;
         }
@@ -523,7 +524,9 @@ impl MediaServer {
     /// pre: an active gallery exists and `0 <= start_sec < end_sec`.
     /// post: the durable output, gallery row, lineage, result id, and media-block id agree.
     /// [P1] Constraining: any publication failure removes the output and coupled rows.
-    #[tool(description = "Trim a video to specified start/end times using local ffmpeg.")]
+    #[tool(
+        description = "Trim media to specified start/end times using local ffmpeg — video inputs stream-copy losslessly to mp4, audio inputs decode to wav; the published asset kind follows the input."
+    )]
     pub async fn video_clip(
         &self,
         Parameters(VideoClipRequest {
@@ -545,7 +548,7 @@ impl MediaServer {
                     "start_sec must be less than end_sec.",
                 ));
             }
-            self.admit_local_video_inputs(std::slice::from_ref(&video_url))
+            self.admit_local_media_inputs(std::slice::from_ref(&video_url))
                 .await?;
 
             let params = ClipEffectiveParams {
@@ -560,12 +563,20 @@ impl MediaServer {
                 .await
                 .map_err(map_media_error)?;
             let effective_params = LocalVideoEffectiveParams::Clip(params);
+            // The publication format follows the real output (2026-10-27):
+            // audio inputs decode to wav — publishing them as the op's
+            // default Mp4 would mislabel the asset's kind and display hint.
+            let format = if output.extension().and_then(|ext| ext.to_str()) == Some("wav") {
+                crate::assets::LocalMediaFormat::Wav
+            } else {
+                effective_params.format()
+            };
             crate::assets::publish_local_media(
                 &self.gallery_store,
                 &output,
                 effective_params.op(),
                 effective_params.status(),
-                effective_params.format(),
+                format,
                 &effective_params,
             )
         })
@@ -603,7 +614,7 @@ impl MediaServer {
             if f == 0 {
                 return Err(McpToolError::invalid_argument("fps must be greater than 0"));
             }
-            self.admit_local_video_inputs(std::slice::from_ref(&video_url))
+            self.admit_local_media_inputs(std::slice::from_ref(&video_url))
                 .await?;
             let params = GifEffectiveParams {
                 source: &video_url,
@@ -655,7 +666,7 @@ impl MediaServer {
                     "font_size must be greater than 0",
                 ));
             }
-            self.admit_local_video_inputs(std::slice::from_ref(&video_url))
+            self.admit_local_media_inputs(std::slice::from_ref(&video_url))
                 .await?;
             let params = CaptionEffectiveParams {
                 source: &video_url,
@@ -699,7 +710,7 @@ impl MediaServer {
                 2,
                 hkask_types::media_limits::MAX_CONCAT_ITEMS,
             )?;
-            self.admit_local_video_inputs(&video_urls).await?;
+            self.admit_local_media_inputs(&video_urls).await?;
 
             let params = ConcatEffectiveParams {
                 sources: &video_urls,

@@ -254,6 +254,16 @@ impl ResearchJob {
             ),
         };
         let output = output.map_err(map_media_error)?;
+        // A clip's output kind follows its input (audio decodes to wav) —
+        // the publication format must match the real output, not the op's
+        // default container (2026-10-27).
+        let format = if format == LocalMediaFormat::Mp4
+            && output.extension().and_then(|ext| ext.to_str()) == Some("wav")
+        {
+            LocalMediaFormat::Wav
+        } else {
+            format
+        };
         args["format"] = serde_json::Value::String(format.extension().to_string());
         let publication = crate::assets::stage_local_media_publication(&output, format)
             .map_err(map_media_error)?;
@@ -830,22 +840,22 @@ mod tests {
             else {
                 panic!("source editing must stage a media publication");
             };
-            assert_eq!(
-                kind,
-                if op.starts_with("audio") {
-                    "audio"
-                } else {
-                    "video"
-                }
-            );
-            assert_eq!(
-                args["format"],
-                if op.starts_with("audio") {
-                    "wav"
-                } else {
-                    "mp4"
-                }
-            );
+            // A clip's published kind follows its INPUT (2026-10-27): the
+            // shared wav fixture exercises exactly that — audio_trim and
+            // audio_concat stay audio/wav, video_concat hardcodes its mp4
+            // container, and video_clip on the wav input now correctly
+            // publishes as audio/wav (the pre-fix mp4/video label was the
+            // mislabel the kind-aware clip corrects).
+            let expect_kind = match op {
+                "audio_trim" | "audio_concat" | "video_clip" => "audio",
+                _ => "video",
+            };
+            let expect_format = match op {
+                "audio_trim" | "audio_concat" | "video_clip" => "wav",
+                _ => "mp4",
+            };
+            assert_eq!(kind, expect_kind);
+            assert_eq!(args["format"], expect_format);
             if op.ends_with("concat") {
                 assert_eq!(args["sources"][0], input.to_string_lossy().as_ref());
             } else {

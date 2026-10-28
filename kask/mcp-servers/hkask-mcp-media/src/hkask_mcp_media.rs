@@ -2496,6 +2496,91 @@ mod tool_behavior_tests {
         Ok(())
     }
 
+    /// dcterms:identifier: `MediaServer::video_clip` (audio inputs)
+    /// expect: Trimming an audio input decodes to wav and publishes an
+    /// AUDIO-kind asset with an audio display hint — the one Media-tab
+    /// trim path serves both media kinds (2026-10-27 unification), and
+    /// the output kind never mislabels the input.
+    /// [P1] Constraining: stream copy cannot land compressed audio in a
+    /// wav container; the decode path is the only honest trim.
+    #[tokio::test]
+    async fn video_clip_trims_audio_inputs_to_audio_kind_assets()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        let gallery_root = tempfile::tempdir()?;
+        let source = gallery_root.path().join("source.mp3");
+        let status = tokio::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=2",
+                "-c:a",
+                "libmp3lame",
+                "-q:a",
+                "4",
+                source.to_str().ok_or("mp3 fixture path is not UTF-8")?,
+            ])
+            .output()
+            .await?;
+        assert!(status.status.success(), "mp3 fixture generated");
+        let db_path = artifacts.path().join("gallery.db");
+
+        let (store, _) = file_backed_gallery_store(&db_path)?;
+        let gallery = store.open(
+            gallery_root
+                .path()
+                .to_str()
+                .ok_or("gallery root is not UTF-8")?,
+            GalleryMode::ReadOnly,
+        )?;
+        let server = server_with_gallery(store, gallery.id, gallery_root.path());
+        let result = server
+            .video_clip(Parameters(VideoClipRequest {
+                video_url: source.to_string_lossy().into_owned(),
+                start_sec: 0.25,
+                end_sec: 1.25,
+            }))
+            .await?;
+        let content = content_of(&result);
+        let output_path =
+            std::path::PathBuf::from(content["output"].as_str().ok_or("missing durable output")?);
+        assert_eq!(
+            output_path.extension().and_then(|ext| ext.to_str()),
+            Some("wav"),
+            "audio inputs decode to wav, never a video container"
+        );
+        let asset_id = content["gallery_asset_id"]
+            .as_str()
+            .ok_or("missing stable gallery_asset_id")?
+            .to_string();
+        let hint = media_hint_body(
+            content["display_hint"]
+                .as_str()
+                .ok_or("missing media display hint")?,
+        )?;
+        assert_eq!(hint["kind"], "audio", "the hint kind follows the output");
+        assert_eq!(hint["src"], content["output"]);
+        assert_eq!(hint["provenance"]["tool"], "video_clip");
+        let effective_params = serde_json::json!({
+            "source": source.to_string_lossy(),
+            "start_sec": 0.25,
+            "end_sec": 1.25,
+            "duration_sec": 1.0,
+            "format": "wav",
+        });
+        assert_eq!(content["effective_params"], effective_params);
+
+        let (reopened, _) = file_backed_gallery_store(&db_path)?;
+        let asset = reopened.get_by_id(&asset_id)?;
+        assert_eq!(asset.media_type, "audio");
+        assert_eq!(asset.format, "wav");
+        Ok(())
+    }
+
     /// dcterms:identifier: `MediaServer::video_clip`
     /// expect: A gallery-admission failure leaves none of my clipped output or database residue behind.
     /// [P1] Motivating: failed operations do not corrupt or clutter user work.

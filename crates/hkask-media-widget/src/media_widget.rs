@@ -1042,20 +1042,13 @@ impl gpui::Render for MediaWidget {
 }
 
 impl MediaWidget {
-    /// The current playback-clock position in seconds, when a video is
-    /// loaded. The viewer's edit toolbar reads this to label its controls.
-    #[must_use]
-    pub fn playback_position_secs(&self) -> Option<f64> {
-        self.video_player
-            .as_ref()
-            .map(|player| player.position().as_secs_f64())
-    }
-
     /// The current playback-clock position in seconds. For audio the
     /// player is eagerly constructed, so the audio arm reports `Some(0.0)`
     /// before a load completes or after a load error — callers gate on the
-    /// load outcome, not on `None`. The transcript pane's follow-along
-    /// source (unlike the video-only `playback_position_secs`).
+    /// load outcome, not on `None`. The one position accessor for both
+    /// media kinds: the transcript pane's follow-along source and the edit
+    /// toolbar's marks/position source (2026-10-27 unification — it
+    /// replaced the video-only accessor, which could not mark audio).
     #[must_use]
     pub fn transport_position_secs(&self) -> Option<f64> {
         if let Some(player) = &self.audio_player {
@@ -1115,7 +1108,7 @@ impl MediaWidget {
 
     /// Mark the current playback position as the trim in-point.
     pub fn mark_in(&mut self, cx: &mut Context<Self>) {
-        if let Some(position) = self.playback_position_secs() {
+        if let Some(position) = self.transport_position_secs() {
             self.mark_in_secs = Some(position);
             cx.notify();
         }
@@ -1123,7 +1116,7 @@ impl MediaWidget {
 
     /// Mark the current playback position as the trim out-point.
     pub fn mark_out(&mut self, cx: &mut Context<Self>) {
-        if let Some(position) = self.playback_position_secs() {
+        if let Some(position) = self.transport_position_secs() {
             self.mark_out_secs = Some(position);
             cx.notify();
         }
@@ -1153,7 +1146,7 @@ impl MediaWidget {
     #[must_use]
     pub fn edit_state_labels(&self) -> (gpui::SharedString, gpui::SharedString, bool) {
         let position = self
-            .playback_position_secs()
+            .transport_position_secs()
             .map(|secs| format!("{secs:.1}s"))
             .unwrap_or_else(|| "—".to_string());
         let marks = match (self.mark_in_secs, self.mark_out_secs) {
@@ -1984,13 +1977,6 @@ pub(crate) mod tests {
             duration >= Duration::from_millis(2900) && duration <= Duration::from_millis(3100),
             "the decoder reports the 3s fixture duration (got {duration:?})"
         );
-        // The pane's position source covers AUDIO — the video-only
-        // playback_position_secs returns None here (the discriminator).
-        assert_eq!(
-            widget.read_with(cx, |widget, _| widget.playback_position_secs()),
-            None,
-            "the video-only accessor does not cover audio"
-        );
         assert_eq!(
             widget.read_with(cx, |widget, _| widget.transport_position_secs()),
             Some(0.0),
@@ -2039,6 +2025,35 @@ pub(crate) mod tests {
                     |player| player.position() < Duration::from_millis(800)
                 )),
             "seek_to_secs(0.5) jumps audio playback backward to ~0.5s"
+        );
+        // The edit toolbar's marks cover audio too (2026-10-27): the same
+        // transport position source drives both media kinds, so trim is
+        // dispatchable on audio — mark in at the post-seek position while
+        // playing, advance past it, mark out, and the toolbar reports a
+        // dispatchable range.
+        cx.update(|cx| widget.update(cx, |widget, cx| widget.mark_in(cx)));
+        let mark_out_deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while widget.read_with(cx, |widget, _| {
+            !widget
+                .mark_in_secs
+                .zip(widget.transport_position_secs())
+                .is_some_and(|(in_secs, position)| in_secs + 0.2 <= position)
+        }) && std::time::Instant::now() < mark_out_deadline
+        {
+            let timer = cx.update(|cx| cx.background_executor().timer(Duration::from_millis(10)));
+            timer.await;
+            cx.run_until_parked();
+        }
+        cx.update(|cx| widget.update(cx, |widget, cx| widget.mark_out(cx)));
+        let (_position_label, marks_label, trim_ready) =
+            widget.read_with(cx, |widget, _| widget.edit_state_labels());
+        assert!(
+            trim_ready,
+            "audio marks produce a dispatchable trim range: {marks_label}"
+        );
+        assert!(
+            marks_label.starts_with("in "),
+            "the toolbar reports both marks: {marks_label}"
         );
     }
 
