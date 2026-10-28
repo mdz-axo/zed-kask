@@ -251,7 +251,7 @@ impl MediaServer {
     /// validator — see `is_local_media_path`), then run the provider
     /// transcription. The admission guard stays at each tool body so its
     /// scope covers the whole tool, not just the generate.
-    async fn transcribe_to_bundle(
+    pub(crate) async fn transcribe_to_bundle(
         &self,
         audio_url: &str,
         language: &Option<String>,
@@ -266,8 +266,11 @@ impl MediaServer {
         // the ORIGINAL media as its path (the extracted file is a transport
         // detail, never the transcript's identity).
         let transcribe_from = self.stt_precondition_input(audio_url).await?;
+        let upload_audio_url = transcribe_from
+            .clone()
+            .unwrap_or_else(|| audio_url.to_string());
         let media_params = hkask_types::MediaGenerateParams {
-            audio_url: transcribe_from.clone(),
+            audio_url: Some(upload_audio_url),
             language: language.clone(),
             ..Default::default()
         };

@@ -238,6 +238,20 @@ pub struct EductSpeakerPassRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct EductRetranscribeSectionRequest {
+    pub transcript_id: String,
+    /// Inclusive source word range to re-transcribe. Indices anchor the
+    /// immutable source words, like every layer — working-view selections
+    /// must be translated to source indices first (the reanchored index
+    /// map).
+    pub start_word: usize,
+    pub end_word: usize,
+    /// Optional ISO 639-1 language hint for the STT — same semantics as
+    /// transcribe_bundle.
+    pub language: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct EductCorrectionPassRequest {
     pub transcript_id: String,
     /// Optional model override (provider-prefixed, e.g. "OpenRouter/…").

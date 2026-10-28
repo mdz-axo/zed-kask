@@ -149,6 +149,7 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         | "educt_paragraph_pass"
         | "educt_speaker_pass"
         | "educt_correction_pass"
+        | "educt_retranscribe_section"
         | "educt_apply_corrections"
         | "educt_realign_transcript"
         | "educt_highlight_pass"

@@ -19,7 +19,8 @@ use crate::types::{
     EductEdlFromHighlightsRequest, EductExportRequest, EductGetTranscriptRequest,
     EductHighlightPassRequest, EductListLayersRequest, EductLocateRequest,
     EductParagraphPassRequest, EductRealignTranscriptRequest, EductRenderEdlRequest,
-    EductSpeakerPassRequest, EductStoreLayerRequest, EductStoreTranscriptRequest,
+    EductRetranscribeSectionRequest, EductSpeakerPassRequest, EductStoreLayerRequest,
+    EductStoreTranscriptRequest,
 };
 use crate::*;
 
@@ -1261,6 +1262,136 @@ impl MediaServer {
                 "stored": record,
                 "pass_stats": transcript_pass::speaker_pass_stats(),
             }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Re-transcribe a selected word range of a stored transcript (plan §7 Phase 1c): extract the range's audio span, run the configured STT on it (the same transcription path as transcribe_bundle, including upload preconditioning), and land the result as a candidate correction layer — source words are never mutated. Prior correction edits overlapping the range are superseded and listed in the response, never silently merged; disjoint ones are copied verbatim so earlier corrections survive. The range anchors immutable SOURCE word indices (translate working-view selections through the reanchored index map first). As with any cardinality-changing correction, run educt_realign_transcript afterwards to restore timing alignment."
+    )]
+    pub async fn educt_retranscribe_section(
+        &self,
+        Parameters(EductRetranscribeSectionRequest {
+            transcript_id,
+            start_word,
+            end_word,
+            language,
+        }): Parameters<EductRetranscribeSectionRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "educt_retranscribe_section", async {
+            let _admission = self.admit_heavy_operation()?;
+            let driver = &**self.gallery_store.driver();
+            let bundle = load_timed_transcript(
+                driver,
+                &transcript_id,
+                "transcript has no word-level timings; section re-transcribe cannot \
+                 anchor a range (NoWordTimings) — store a transcript from \
+                 transcribe_bundle first",
+            )?;
+            let words_count = bundle.words.len();
+            let last_word = words_count.saturating_sub(1);
+            if start_word > last_word || end_word > last_word {
+                return Err(McpToolError::invalid_argument(format!(
+                    "word index out of bounds: the range {start_word}..={end_word} must \
+                     stay within 0..={last_word}"
+                )));
+            }
+            if start_word > end_word {
+                return Err(McpToolError::invalid_argument(format!(
+                    "reversed word range: start {start_word} > end {end_word}"
+                )));
+            }
+            let start_ms = bundle.words[start_word].start_ms;
+            let end_ms = bundle.words[end_word].end_ms;
+            let span = self
+                .ffmpeg
+                .clip(
+                    &bundle.audio_path,
+                    start_ms as f32 / 1000.0,
+                    end_ms as f32 / 1000.0,
+                )
+                .await
+                .map_err(crate::map_media_error)?;
+            // The span file is a transport artifact — removed on both the
+            // success and failure paths (the preconditioning cleanup's
+            // pattern; it must not accumulate in the ffmpeg temp dir).
+            let section = self
+                .transcribe_to_bundle(&span.display().to_string(), &language)
+                .await;
+            if let Err(error) = std::fs::remove_file(&span) {
+                tracing::warn!(
+                    target: "hkask.mcp.media.ffmpeg",
+                    "failed to remove re-transcribe span artifact {}: {error}",
+                    span.display()
+                );
+            }
+            let section = section?;
+            let replacement = crate::transcript_retranscribe::replacement_text(&section.words);
+            let new_edit = crate::transcript_layers::CorrectionEdit {
+                start_word,
+                end_word,
+                replacement: replacement.clone(),
+                reason: "section re-transcribe".to_string(),
+            };
+            let layers =
+                transcript_store::list_layers(driver, &transcript_id).map_err(map_store_error)?;
+            let prior = layers.iter().rev().find_map(|record| match &record.layer {
+                TranscriptLayer::Correction(layer) => Some(layer),
+                _ => None,
+            });
+            let (edits, superseded) = crate::transcript_retranscribe::merge_over_prior(
+                prior.map(|layer| layer.edits.as_slice()).unwrap_or(&[]),
+                new_edit,
+            );
+            let correction = crate::transcript_layers::CorrectionLayer {
+                provenance: crate::transcript_layers::LayerProvenance {
+                    // The STT model resolves child-locally in the media
+                    // router; the layer records the route label, matching
+                    // the "deterministic"-style producer labels.
+                    model: "configured-stt".to_string(),
+                    prompt_template: "educt_retranscribe_section".to_string(),
+                    created_at: hkask_types::time::now_rfc3339(),
+                },
+                edits,
+            };
+            let record = transcript_store::store_layer(
+                driver,
+                &transcript_id,
+                &TranscriptLayer::Correction(correction),
+            )
+            .map_err(map_store_error)?;
+            let superseded_edits: Vec<serde_json::Value> = superseded
+                .iter()
+                .map(|edit| {
+                    serde_json::json!({
+                        "start_word": edit.start_word,
+                        "end_word": edit.end_word,
+                        "replacement": edit.replacement,
+                        "reason": edit.reason,
+                    })
+                })
+                .collect();
+            let mut result = serde_json::json!({
+                "stored": record,
+                "section": {
+                    "start_word": start_word,
+                    "end_word": end_word,
+                    "start_ms": start_ms,
+                    "end_ms": end_ms,
+                    "text": replacement,
+                    "words_count": section.words.len(),
+                },
+                "superseded_edits": superseded_edits,
+            });
+            if !superseded.is_empty() {
+                result["note"] = serde_json::json!(format!(
+                    "{} prior correction edit(s) overlapped the re-transcribed range \
+                     and were superseded — they are listed in superseded_edits, \
+                     never silently merged",
+                    superseded.len()
+                ));
+            }
+            Ok(result)
         })
         .await
     }

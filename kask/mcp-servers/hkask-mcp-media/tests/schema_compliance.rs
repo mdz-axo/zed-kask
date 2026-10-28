@@ -29,19 +29,20 @@ use hkask_mcp_media::types::{
     EductDeleteTranscriptRequest, EductEdlFromHighlightsRequest, EductExportRequest,
     EductGetTranscriptRequest, EductHighlightPassRequest, EductListLayersRequest,
     EductListTranscriptsRequest, EductLocateRequest, EductParagraphPassRequest,
-    EductRealignTranscriptRequest, EductRenderEdlRequest, EductSpeakerPassRequest,
-    EductStoreLayerRequest, EductStoreTranscriptRequest, FaceListRequest, FaceRegisterRequest,
-    FaceRemoveRequest, FaceScanFolderRequest, FaceValidateRequest, GalleryAddMediaRequest,
-    GalleryAnalyzeRequest, GalleryAssetDetailRequest, GalleryCreateAlbumRequest,
-    GalleryDeleteAlbumRequest, GalleryDeleteImageRequest, GalleryLineageRequest,
-    GalleryListAlbumMembersRequest, GalleryListAssetsRequest, GalleryMoveToAlbumRequest,
-    GalleryNameFaceRequest, GalleryOrganizeRequest, GalleryRefreshRequest,
-    GalleryRemoveFromAlbumRequest, GallerySearchRequest, GalleryTimelineRequest, JobCancelRequest,
-    JobListRequest, JobStatusRequest, JobSubmitRequest, LayersGetRequest, LayersListRequest,
-    LayersShotPassRequest, LayersStoreRequest, ModelInfoRequest, ModelListRequest,
-    RecordAndTranscribeRequest, TranscribeAndStoreRequest, TranscribeBundleRequest,
-    VideoAddCaptionRequest, VideoClipRequest, VideoConcatRequest, VideoExtractFramesRequest,
-    VideoFetchRequest, VideoInfoRequest, VideoToGifRequest, YoutubeSearchRequest,
+    EductRealignTranscriptRequest, EductRenderEdlRequest, EductRetranscribeSectionRequest,
+    EductSpeakerPassRequest, EductStoreLayerRequest, EductStoreTranscriptRequest, FaceListRequest,
+    FaceRegisterRequest, FaceRemoveRequest, FaceScanFolderRequest, FaceValidateRequest,
+    GalleryAddMediaRequest, GalleryAnalyzeRequest, GalleryAssetDetailRequest,
+    GalleryCreateAlbumRequest, GalleryDeleteAlbumRequest, GalleryDeleteImageRequest,
+    GalleryLineageRequest, GalleryListAlbumMembersRequest, GalleryListAssetsRequest,
+    GalleryMoveToAlbumRequest, GalleryNameFaceRequest, GalleryOrganizeRequest,
+    GalleryRefreshRequest, GalleryRemoveFromAlbumRequest, GallerySearchRequest,
+    GalleryTimelineRequest, JobCancelRequest, JobListRequest, JobStatusRequest, JobSubmitRequest,
+    LayersGetRequest, LayersListRequest, LayersShotPassRequest, LayersStoreRequest,
+    ModelInfoRequest, ModelListRequest, RecordAndTranscribeRequest, TranscribeAndStoreRequest,
+    TranscribeBundleRequest, VideoAddCaptionRequest, VideoClipRequest, VideoConcatRequest,
+    VideoExtractFramesRequest, VideoFetchRequest, VideoInfoRequest, VideoToGifRequest,
+    YoutubeSearchRequest,
 };
 use hkask_types::find_boolean_schema_positions;
 use schemars::schema_for;
@@ -53,8 +54,8 @@ fn live_router_schema_inventory_is_complete_and_clean() {
     let tools = hkask_mcp_media::MediaServer::combined_router().list_all();
     assert_eq!(
         tools.len(),
-        75,
-        "approved surface: 91 - 20 Reduct cloud tools + 4 media-layer tools"
+        76,
+        "approved surface: 92 - 20 Reduct cloud tools + 4 media-layer tools + 1 section re-transcribe"
     );
     let actual = tools
         .iter()
@@ -311,6 +312,10 @@ schema_clean_test!(
     EductEdlFromHighlightsRequest
 );
 schema_clean_test!(educt_render_edl_request_schema, EductRenderEdlRequest);
+schema_clean_test!(
+    educt_retranscribe_section_request_schema,
+    EductRetranscribeSectionRequest
+);
 schema_clean_test!(educt_export_request_schema, EductExportRequest);
 schema_clean_test!(educt_locate_request_schema, EductLocateRequest);
 schema_clean_test!(layers_store_request_schema, LayersStoreRequest);
@@ -592,6 +597,10 @@ deser_totality_test!(
     EductRenderEdlRequest
 );
 deser_totality_test!(educt_export_request_deser_totality, EductExportRequest);
+deser_totality_test!(
+    educt_retranscribe_section_request_deser_totality,
+    EductRetranscribeSectionRequest
+);
 deser_totality_test!(educt_locate_request_deser_totality, EductLocateRequest);
 deser_totality_test!(layers_store_request_deser_totality, LayersStoreRequest);
 deser_totality_test!(layers_list_request_deser_totality, LayersListRequest);

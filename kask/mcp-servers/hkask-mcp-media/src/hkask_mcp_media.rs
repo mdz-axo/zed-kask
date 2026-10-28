@@ -185,6 +185,7 @@ pub mod transcript;
 pub mod transcript_export;
 pub mod transcript_layers;
 pub mod transcript_pass;
+pub mod transcript_retranscribe;
 pub mod transcript_review;
 pub mod transcript_select;
 pub mod transcript_store;
@@ -460,8 +461,8 @@ mod tool_surface_tests {
     hkask_mcp_server::tool_surface_pin!(
         MediaServer::combined_router(),
         "combined_router",
-        75,
-        tool_surface_is_exactly_75_registered_tools,
+        76,
+        tool_surface_is_exactly_76_registered_tools,
     );
 
     // Coverage: every registered tool must map to an OMC concept. Catches
@@ -3127,6 +3128,7 @@ mod tool_behavior_tests {
         response: String,
         media_response: String,
         media_response_is_json: bool,
+        audio_urls: Arc<std::sync::Mutex<Vec<Option<String>>>>,
     }
 
     crate::test_support::media_inference_stub! {
@@ -3148,7 +3150,11 @@ mod tool_behavior_tests {
             };
             Box::pin(async move { Ok(result) })
         },
-        media_generate(self, _op, _params): {
+        media_generate(self, _op, params): {
+            self.audio_urls
+                .lock()
+                .expect("audio URL recorder")
+                .push(params.audio_url.clone());
             if self.media_response_is_json {
                 let value = serde_json::from_str::<serde_json::Value>(&self.media_response)
                     .expect("media_response_is_json requires valid JSON");
@@ -3209,6 +3215,7 @@ mod tool_behavior_tests {
             response,
             media_response,
             media_response_is_json: false,
+            audio_urls: Arc::new(std::sync::Mutex::new(Vec::new())),
         }))
     }
 
@@ -3220,6 +3227,7 @@ mod tool_behavior_tests {
             response: String::new(),
             media_response: media_json,
             media_response_is_json: true,
+            audio_urls: Arc::new(std::sync::Mutex::new(Vec::new())),
         }))
     }
 
@@ -3262,7 +3270,13 @@ mod tool_behavior_tests {
             ]
         })
         .to_string();
-        let server = make_stt_server(media_json);
+        let audio_urls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let server = make_server_with_port(Arc::new(MockInferencePort {
+            response: String::new(),
+            media_response: media_json,
+            media_response_is_json: true,
+            audio_urls: audio_urls.clone(),
+        }));
 
         let fixture = std::env::temp_dir().join(format!(
             "transcribe-and-store-{}-{}.m4a",
@@ -3274,13 +3288,17 @@ mod tool_behavior_tests {
 
         let result = server
             .transcribe_and_store(Parameters(crate::types::TranscribeAndStoreRequest {
-                audio_url,
+                audio_url: audio_url.clone(),
                 language: Some("en".to_string()),
                 gallery_asset_id: None,
             }))
             .await
             .expect("transcribe_and_store succeeds");
         let content = content_of(&result);
+        assert_eq!(
+            *audio_urls.lock().expect("audio URL recorder"),
+            vec![Some(audio_url)]
+        );
         assert_eq!(content["words_count"], serde_json::json!(2));
         assert_eq!(content["has_word_timings"], serde_json::json!(true));
         let transcript_id = content["id"].as_str().expect("id present").to_string();
@@ -4918,6 +4936,294 @@ mod tool_behavior_tests {
         );
     }
 
+    /// A real 16 kHz mono WAV fixture (ffmpeg-generated — the render test's
+    /// pattern): section re-transcribe clips it, so the file must be
+    /// genuinely clip-able, not a dummy byte blob.
+    async fn real_wav_fixture(name: &str) -> std::path::PathBuf {
+        let wav =
+            std::env::temp_dir().join(format!("retranscribe-{name}-{}.wav", std::process::id()));
+        let status = tokio::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=3",
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+            ])
+            .arg(&wav)
+            .output()
+            .await
+            .expect("ffmpeg runs");
+        assert!(
+            status.status.success(),
+            "ffmpeg must generate the fixture: {}",
+            String::from_utf8_lossy(&status.stderr)
+        );
+        wav
+    }
+
+    /// Store a four-word timed transcript over `wav_path` — the section
+    /// re-transcribe fixtures' shared setup (alpha/beta/gamma/delta,
+    /// 500ms slots).
+    async fn store_four_word_transcript(
+        server: &MediaServer,
+        wav_path: &std::path::Path,
+    ) -> String {
+        use crate::transcript::{TimedWord, TranscriptBundle};
+        use crate::types::EductStoreTranscriptRequest;
+        let words: Vec<TimedWord> = ["alpha", "beta", "gamma", "delta"]
+            .iter()
+            .enumerate()
+            .map(|(index, word)| TimedWord {
+                word: (*word).to_string(),
+                start_ms: index as u64 * 500,
+                end_ms: index as u64 * 500 + 450,
+                confidence: None,
+            })
+            .collect();
+        let bundle = TranscriptBundle {
+            words,
+            ..TranscriptBundle::new(
+                wav_path.display().to_string(),
+                3.0,
+                "alpha beta gamma delta".to_string(),
+            )
+        };
+        let stored = server
+            .educt_store_transcript(Parameters(EductStoreTranscriptRequest {
+                transcript: hkask_types::AnyJsonValue(
+                    serde_json::to_value(&bundle).expect("serialize bundle"),
+                ),
+                gallery_asset_id: None,
+            }))
+            .await
+            .expect("store succeeds");
+        content_of(&stored)["id"]
+            .as_str()
+            .expect("id present")
+            .to_string()
+    }
+
+    /// Store a correction layer with the standard test provenance over
+    /// `edits` — the re-transcribe fixtures' shared store call (through
+    /// the real store-layer tool, so validation runs).
+    async fn store_correction_layer(
+        server: &MediaServer,
+        transcript_id: &str,
+        edits: Vec<crate::transcript_layers::CorrectionEdit>,
+    ) {
+        use crate::transcript_layers::{CorrectionLayer, LayerProvenance, TranscriptLayer};
+        use crate::types::EductStoreLayerRequest;
+        let correction = TranscriptLayer::Correction(CorrectionLayer {
+            provenance: LayerProvenance {
+                model: "test".to_string(),
+                prompt_template: "test".to_string(),
+                created_at: "2026-10-28T00:00:01Z".to_string(),
+            },
+            edits,
+        });
+        server
+            .educt_store_layer(Parameters(EductStoreLayerRequest {
+                transcript_id: transcript_id.to_string(),
+                layer: hkask_types::AnyJsonValue(
+                    serde_json::to_value(&correction).expect("serialize correction"),
+                ),
+            }))
+            .await
+            .expect("store correction layer");
+    }
+
+    /// The canned STT response every re-transcribe fixture shares: two
+    /// words over the span.
+    fn retranscribe_stt_json() -> String {
+        serde_json::json!({
+            "text": " gamma  delta ",
+            "duration": 1.0,
+            "words": [
+                {"word": " gamma", "start": 0.0, "end": 0.5},
+                {"word": " delta", "start": 0.5, "end": 1.0}
+            ],
+            "segments": [
+                {"text": " gamma  delta ", "start": 0.0, "end": 1.0}
+            ]
+        })
+        .to_string()
+    }
+
+    /// dcterms:identifier: `educt_retranscribe_section`
+    /// expect: The section's STT text lands as a candidate correction
+    /// edit over the source range; the source words stay immutable; the
+    /// span audio is a transport detail, consumed by the configured STT
+    /// path (the same one transcribe_bundle uses).
+    #[tokio::test]
+    async fn educt_retranscribe_section_lands_a_candidate_correction() {
+        let server = make_stt_server(retranscribe_stt_json());
+        let wav = real_wav_fixture("happy").await;
+        let transcript_id = store_four_word_transcript(&server, &wav).await;
+
+        let result = server
+            .educt_retranscribe_section(Parameters(crate::types::EductRetranscribeSectionRequest {
+                transcript_id: transcript_id.clone(),
+                start_word: 1,
+                end_word: 2,
+                language: Some("en".to_string()),
+            }))
+            .await
+            .expect("section re-transcribe succeeds");
+        let content = content_of(&result);
+        assert_eq!(content["section"]["text"], serde_json::json!("gamma delta"));
+        assert_eq!(content["section"]["words_count"], serde_json::json!(2));
+        assert_eq!(content["section"]["start_ms"], serde_json::json!(500));
+        assert_eq!(content["section"]["end_ms"], serde_json::json!(1450));
+        assert_eq!(
+            content["superseded_edits"].as_array().map(Vec::len),
+            Some(0)
+        );
+        let edits = content["stored"]["layer"]["edits"].clone();
+        assert_eq!(edits.as_array().map(Vec::len), Some(1));
+        assert_eq!(edits[0]["start_word"], serde_json::json!(1));
+        assert_eq!(edits[0]["end_word"], serde_json::json!(2));
+        assert_eq!(edits[0]["replacement"], serde_json::json!("gamma delta"));
+        // The source words are never mutated — criterion 2.
+        let stored = server
+            .educt_get_transcript(Parameters(crate::types::EductGetTranscriptRequest {
+                transcript_id,
+                include_layers: Some(false),
+            }))
+            .await
+            .expect("get transcript succeeds");
+        let words = content_of(&stored)["transcript"]["words"]
+            .as_array()
+            .expect("words array")
+            .clone();
+        assert_eq!(words.len(), 4);
+        assert_eq!(words[1]["word"], serde_json::json!("beta"));
+    }
+
+    /// dcterms:identifier: `educt_retranscribe_section`
+    /// expect: Prior correction edits overlapping the range are
+    /// superseded and LISTED with the note; disjoint ones survive
+    /// verbatim in the new layer — never a silent merge or drop.
+    #[tokio::test]
+    async fn educt_retranscribe_section_surfaces_superseded_edits() {
+        use crate::transcript_layers::CorrectionEdit;
+        let server = make_stt_server(retranscribe_stt_json());
+        let wav = real_wav_fixture("supersede").await;
+        let transcript_id = store_four_word_transcript(&server, &wav).await;
+        store_correction_layer(
+            &server,
+            &transcript_id,
+            vec![
+                CorrectionEdit {
+                    start_word: 0,
+                    end_word: 0,
+                    replacement: "alpa-fixed".to_string(),
+                    reason: "prior".to_string(),
+                },
+                CorrectionEdit {
+                    start_word: 1,
+                    end_word: 3,
+                    replacement: "old-mid".to_string(),
+                    reason: "prior".to_string(),
+                },
+            ],
+        )
+        .await;
+
+        let result = server
+            .educt_retranscribe_section(Parameters(crate::types::EductRetranscribeSectionRequest {
+                transcript_id,
+                start_word: 1,
+                end_word: 2,
+                language: None,
+            }))
+            .await
+            .expect("section re-transcribe succeeds");
+        let content = content_of(&result);
+        let superseded = content["superseded_edits"]
+            .as_array()
+            .expect("superseded list");
+        assert_eq!(superseded.len(), 1);
+        assert_eq!(superseded[0]["start_word"], serde_json::json!(1));
+        assert_eq!(superseded[0]["end_word"], serde_json::json!(3));
+        assert_eq!(superseded[0]["replacement"], serde_json::json!("old-mid"));
+        let note = content["note"].as_str().expect("supersession surfaced");
+        assert!(note.contains("superseded"), "note: {note}");
+        // The new layer carries the disjoint prior edit verbatim plus the
+        // new STT edit — the working view keeps every surviving
+        // correction.
+        let edits = content["stored"]["layer"]["edits"].clone();
+        assert_eq!(edits.as_array().map(Vec::len), Some(2));
+        assert_eq!(edits[0]["replacement"], serde_json::json!("alpa-fixed"));
+        assert_eq!(edits[1]["replacement"], serde_json::json!("gamma delta"));
+        assert_eq!(edits[1]["start_word"], serde_json::json!(1));
+        assert_eq!(edits[1]["end_word"], serde_json::json!(2));
+    }
+
+    /// dcterms:identifier: `educt_retranscribe_section`
+    /// expect: Out-of-bounds and reversed ranges are typed rejections
+    /// naming the bound; an untimed transcript is the named NoWordTimings
+    /// degradation — never a silent no-op.
+    #[tokio::test]
+    async fn educt_retranscribe_section_rejects_bad_ranges_and_untimed() {
+        use crate::transcript::TranscriptBundle;
+        use crate::types::{EductRetranscribeSectionRequest, EductStoreTranscriptRequest};
+        let server = make_stt_server("{}".to_string());
+        // The error paths precede the clip, so the media path needs no
+        // real file.
+        let transcript_id =
+            store_four_word_transcript(&server, std::path::Path::new("/tmp/absent.wav")).await;
+        for (start_word, end_word, needle) in
+            [(4usize, 4usize, "out of bounds"), (2, 1, "reversed")]
+        {
+            let error = server
+                .educt_retranscribe_section(Parameters(EductRetranscribeSectionRequest {
+                    transcript_id: transcript_id.clone(),
+                    start_word,
+                    end_word,
+                    language: None,
+                }))
+                .await
+                .expect_err("bad range must be rejected");
+            assert!(
+                error.message.contains(needle),
+                "the named rejection must surface: {}",
+                error.message
+            );
+        }
+        // An untimed transcript cannot anchor a range — the named
+        // degradation, before any clip or STT spend.
+        let untimed = TranscriptBundle::new("/tmp/absent.wav".to_string(), 3.0, "text".to_string());
+        let stored = server
+            .educt_store_transcript(Parameters(EductStoreTranscriptRequest {
+                transcript: hkask_types::AnyJsonValue(
+                    serde_json::to_value(&untimed).expect("serialize bundle"),
+                ),
+                gallery_asset_id: None,
+            }))
+            .await
+            .expect("store succeeds");
+        let untimed_id = content_of(&stored)["id"].as_str().expect("id").to_string();
+        let error = server
+            .educt_retranscribe_section(Parameters(EductRetranscribeSectionRequest {
+                transcript_id: untimed_id,
+                start_word: 0,
+                end_word: 0,
+                language: None,
+            }))
+            .await
+            .expect_err("untimed transcript must be rejected");
+        assert!(
+            error.message.contains("NoWordTimings"),
+            "the named degradation must surface: {}",
+            error.message
+        );
+    }
+
     #[tokio::test]
     async fn educt_export_srt_writes_captions() {
         let _artifacts = IsolatedArtifacts::new().await;
@@ -6142,6 +6448,7 @@ mod tool_behavior_tests {
             response,
             media_response,
             media_response_is_json,
+            audio_urls: Arc::new(std::sync::Mutex::new(Vec::new())),
         })
     }
 

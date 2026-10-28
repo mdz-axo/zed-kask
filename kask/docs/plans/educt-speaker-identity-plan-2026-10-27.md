@@ -550,7 +550,7 @@ recomputable from the ledger.
   the board, each advancing criterion 4: 1a review flags
   (`09ba1b37-b95a-4814-ad39-025192faf1fc`), 1b gated lexical post-pass
   (`943ef3ff-2410-4a05-891e-36a3dbc70e42`), 1c section re-transcribe
-  (`bf891388-20ea-407b-8bfb-e424c57a9c4a`).
+  (`bf891388-20ea-457b-b7fb-e424c57a9c4a`).
 - 2026-10-28 — Task 1a (review flags) worker-delivered, green-gated,
   **uncommitted**: `educt_get_transcript` carries the derived `review`
   view; `review_csv` export added; the panel renders per-block markers
@@ -574,3 +574,20 @@ recomputable from the ledger.
   card Done (`943ef3ff-2410-4a05-891e-36a3dbc70e42`); the live
   multi-speaker spot-check is named open on the card (no such recording
   in the store; the Phase 2/4 dev set supplies it).
+- 2026-10-28 — 1b **committed** by the operator with the shot-pass work
+  (`7fcf115f94` "Land the layer pass core, shot pass, and speaker 1b") —
+  the live multi-speaker spot-check stays the named open item, now
+  transferring to the Phase 2/4 dev set.
+- 2026-10-28 — Task 1c (section re-transcribe) worker-delivered,
+  green-gated, **uncommitted**: new tool `educt_retranscribe_section`
+  (surface 76; the compliance pin caught and now names the arithmetic) —
+  ffmpeg-clip span extraction, STT via the shared `transcribe_to_bundle`
+  path, and a candidate correction layer in which disjoint prior edits
+  survive verbatim and overlapping ones are superseded and listed
+  (`superseded_edits`), never silently merged; source words immutable
+  (pinned); typed rejections for bad ranges and untimed transcripts.
+  Suites: hkask-mcp-media 535/535; `./script/clippy` exit 0; fmt clean.
+  Task card Done (`bf891388-20ea-457b-b7fb-e424c57a9c4a`); goal
+  criterion 4 judged **passed** at the worker level (limitations named) —
+  the cheap-wins track is complete; next is Phase 2 after the operator's
+  rebuild/commit.
