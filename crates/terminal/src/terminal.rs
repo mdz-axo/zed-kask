@@ -3144,20 +3144,23 @@ impl Terminal {
     /// [`Terminal::write_output`], while retaining process metadata and buffered
     /// output.
     ///
-    /// Calling this method after the resources have already been released is a no-op.
+    /// The PTY teardown is a no-op once the resources have already been
+    /// released; the parse buffer is dropped on every call, so a buffer
+    /// rebuilt by later `write_output` calls does not survive either.
     pub fn release_pty_resources(&mut self) {
         let TerminalType::Pty { resources, info } = &mut self.terminal_type else {
             return;
         };
+
+        // The terminal is retained past the command, so drop the parse buffer's
+        // reservation; `write_output` builds a new one if it is called again.
+        self.output_processor = None;
+
         let PtyResources::Active(pty_tx) = std::mem::replace(resources, PtyResources::Released)
         else {
             return;
         };
         let info = info.clone();
-
-        // The terminal is retained past the command, so drop the parse buffer's
-        // reservation; `write_output` builds a new one if it is called again.
-        self.output_processor = None;
 
         pty_tx.shutdown();
         info.terminate_child_process();
@@ -3213,6 +3216,13 @@ impl Terminal {
             self.child_exited = Some(e);
         }
         self.complete_init_command_startup_handshake();
+        // The alacritty event loop ends with the child process, so the PTY
+        // sender can never deliver again past this point. Release the
+        // resources here: terminals retained past their command (task panes
+        // never emit `CloseTerminal` under `HideStrategy::Never`, and a shell
+        // kept open after a spawn failure) would otherwise keep claiming a
+        // live PTY and fail every later layout resize on the closed channel.
+        self.release_pty_resources();
         let task = match &mut self.task {
             Some(task) => task,
             None => {
@@ -6204,6 +6214,33 @@ mod tests {
             "injecting output after a release should build a new parse buffer"
         );
         assert_content_eventually(&terminal, "injected_after_release", cx).await;
+    }
+
+    /// A terminal is retained past its finished command (task panes never emit
+    /// `CloseTerminal` under the default `HideStrategy::Never`), but its
+    /// alacritty event loop ends with the child, so the PTY sender can never
+    /// deliver again. Task finish must release the PTY resources: otherwise
+    /// every later layout resize (`TerminalElement::prepaint` → `set_size`)
+    /// sends on the closed channel and logs
+    /// `failed to resize alacritty pty: sending on a closed channel`.
+    #[gpui::test]
+    async fn test_task_finish_releases_pty_resources(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let terminal = build_test_terminal(cx, "echo", &["captured_output"]).await;
+
+        let exit_status =
+            terminal.read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx));
+        assert_eq!(exit_status.await, Some(ExitStatus::default()));
+        assert_content_eventually(&terminal, "captured_output", cx).await;
+
+        assert!(
+            !terminal.read_with(cx, |terminal, _| terminal.has_active_pty_resources()),
+            "a finished terminal must not claim live PTY resources: its event loop has ended"
+        );
+
+        // The retained terminal still renders its captured output.
+        assert_content_eventually(&terminal, "captured_output", cx).await;
     }
 
     mod perf {

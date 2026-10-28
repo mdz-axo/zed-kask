@@ -100,7 +100,12 @@ impl PtySender {
             .0
             .send(Msg::Resize(window_size_from_terminal_bounds(bounds)))
         {
-            log::error!("failed to resize alacritty pty: {error}");
+            // A send failure here means the PTY event loop already ended with
+            // its child process, so there is no PTY left to resize — the
+            // terminal grid itself is resized by the caller either way. Treat
+            // it like `shutdown` below (and like alacritty's own `Notifier`,
+            // which drops closed-channel input silently).
+            log::debug!("failed to resize alacritty pty: {error}");
         }
     }
 
@@ -1230,5 +1235,27 @@ mod tests {
         set_selection(&mut term, Some(&selection));
 
         assert_eq!(selection_text(&term).as_deref(), Some("zms-demo.target"));
+    }
+
+    /// A resize send fails on a closed channel whenever the layout resizes a
+    /// terminal whose PTY event loop has already ended with its child — an
+    /// expected post-exit condition, not an operator-actionable error. The
+    /// pin reads the source because the log level is the only observable.
+    #[test]
+    fn resize_logs_a_closed_channel_at_debug_not_error() {
+        let source = include_str!("alacritty.rs");
+        let resize_body = source
+            .split("fn resize(&self, bounds: TerminalBounds)")
+            .nth(1)
+            .expect("PtySender::resize should exist in alacritty.rs");
+        let up_to_shutdown = resize_body
+            .split("fn shutdown")
+            .next()
+            .expect("PtySender::shutdown should follow resize in the impl");
+
+        assert!(
+            up_to_shutdown.contains("log::debug!(\"failed to resize alacritty pty"),
+            "a resize against the ended PTY event loop must log at debug, not error"
+        );
     }
 }
