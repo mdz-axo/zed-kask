@@ -1,8 +1,8 @@
 ---
 title: "Media MCP Server Lead — Onboarding"
 audience: [developers, architects, agents]
-last_updated: 2026-10-21
-version: "1.0.0"
+last_updated: 2026-10-28
+version: "1.1.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, domain, trust]
@@ -28,8 +28,8 @@ This document assumes:
 
 The media MCP server curates existing research evidence: ingest, organize,
 annotate, search, transcribe, and derive source-linked excerpts/reels. The
-operator-approved integration target is **71 tools** (91 − 20 Reduct cloud
-operations, removed 2026-10-22), not a claim that a rebuilt child
+operator-approved integration target is **74 tools** (91 − 20 Reduct cloud
+operations, removed 2026-10-22, + 3 media-layers tools landed 2026-10-28), not a claim that a rebuilt child
 or current integration suite has been validated. The generated `TOOL_NAMES`
 and `MediaServer::combined_router()` are the inventory authority. Shared
 inference-library creative capabilities are not this server's tool surface.
@@ -60,6 +60,11 @@ Synthetic speech, image/video creation, and creative recipe execution are retire
 `educt_store_transcript`, `educt_list_transcripts`, `educt_get_transcript`, `educt_delete_transcript`, `educt_store_layer`, `educt_list_layers`, `educt_paragraph_pass`, `educt_speaker_pass`, `educt_correction_pass`, `educt_apply_corrections`, `educt_realign_transcript`, `educt_highlight_pass`, `educt_edl_from_highlights`, `educt_render_edl`, `educt_export`, `educt_locate`, `educt_annotation_create`, `educt_annotation_list`, `educt_annotation_update`, `educt_annotation_delete`, `educt_search_transcripts`
 
 A local transcript-editing system modeled on Reduct.video's published interaction model: immutable word-level time anchors, text selections as media ranges, labeled highlights, ordered Keep ranges composed into an EDL ("Reel"), deterministic FFmpeg rendering, and durable SRT/highlight-CSV/corpus-text exports (`README.md:230-249`). LLM "passes" (paragraph, speaker, correction, highlight) store validated layers over the immutable word timeline. Researcher annotations are separate supplied observations, not authenticated human identity or verified evidence: gallery CRUD uses stable `gallery_asset_id`, `kind` (`tag`/`note`) and `value`; transcript CRUD uses immutable-source word ranges, label/note and stable annotation IDs. `educt_search_transcripts` is bounded lexical substring matching with exact excerpts, source/timing citations and continuation offsets, not semantic retrieval. Missing/unaligned timing stays visible. See the media reference for exact request fields and bounds.
+
+### Media layers — 3 tools (`src/tools/layers.rs`)
+`layers_store`, `layers_list`, `layers_get`
+
+Time-keyed layers over an immutable media file — the media sibling of the word-indexed educt layers: items anchor to source-PTS second ranges validated against the ffprobe-anchored duration, over a closed kind vocabulary (shot, semantic, object, ocr, audio_event, researcher, edl). Persistence is SQLite in the server's existing database (`layer_store.rs`); layers are database rows only, source media bytes are never modified. Landed 2026-10-28 (commit `512ac8723a`).
 
 ### Async job queue — 4 tools (`src/tools/jobs.rs`)
 `job_submit`, `job_list`, `job_status`, `job_cancel`

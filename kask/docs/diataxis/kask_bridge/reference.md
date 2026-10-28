@@ -1,8 +1,8 @@
 ---
 title: "kask_bridge — Reference"
 audience: [developers, architects, agents working at the zed↔hKask seam]
-last_updated: 2026-10-19
-version: "1.5.4"
+last_updated: 2026-10-28
+version: "1.5.5"
 status: "Active"
 domain: "Integration"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -173,8 +173,8 @@ quoted env-var names inside each `credentials` / `config_env` array).
 | `media` | 4 | 10 |
 | `experimentation` | 1 | 2 |
 
-The media server's live router is pinned at 71 tools
-(`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:452-456`).
+The media server's live router is pinned at 74 tools
+(`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:455-465`).
 
 ## Child environment lifecycle
 

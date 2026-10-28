@@ -1,8 +1,8 @@
 ---
 title: "Scenarios MCP Server Reference"
 audience: [developers, architects]
-last_updated: 2026-10-07
-version: "0.40.0"
+last_updated: 2026-10-28
+version: "0.41.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, lifecycle]
@@ -14,11 +14,11 @@ mds_categories: [composition, lifecycle]
 **Tools:** 22 — `scenario_frame`, `scenario_frame_document`, `scenario_brainstorm`, `scenario_build`, `scenario_quantify`, `scenario_propagate`, `scenario_recompute_posteriors`, `scenario_calibrate`, `scenario_update`, `scenario_synthesize`, `scenario_cross_validate`, `scenario_declare`, `scenario_score`, `scenario_calibration`, `scenario_assess`, `scenario_triage`, `scenario_status`, `scenario_from_markets_set`, `forecast_persist`, `forecast_record`, `forecast_list`, `scenario_risk_measure`. The direct market-record bridge is `scenario_from_markets_set`; a single record is passed as a set of one. The four forecast tools were ported from the retired companies server (2026-10-18).
 **Auto-start:** Yes by default with the full built-in set; operators can disable the fleet or this server through `kask.mcp` (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:254-268,700-710`).
 
-Tool count is pinned against the live `combined_router()` by `tool_surface_is_exactly_21_registered_tools` (the `mod tests` pin in `kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs`).
+Tool count is pinned against the live `combined_router()` by `tool_surface_is_exactly_22_registered_tools` (the `mod tests` pin in `kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs:1726`).
 
 ## Pipeline Architecture (DIAG-RF-005)
 
-This diagram shows the recommended flow between the 21 MCP tools, grouped by methodology phase. Arrows describe how outputs can feed later work, not an enforced tool-call order; dashed arrows show optional or independent paths. Tools process caller-supplied inputs without session-order advisories. Framing guidance remains available through `scenario_frame`, but supplied answers can go directly to `scenario_frame_document`; actual input and persisted-state requirements still apply.[^tetlock-scenarios-ref][^schwartz-scenarios-ref]
+This diagram shows the recommended flow between the 22 MCP tools, grouped by methodology phase. Arrows describe how outputs can feed later work, not an enforced tool-call order; dashed arrows show optional or independent paths. Tools process caller-supplied inputs without session-order advisories. Framing guidance remains available through `scenario_frame`, but supplied answers can go directly to `scenario_frame_document`; actual input and persisted-state requirements still apply.[^tetlock-scenarios-ref][^schwartz-scenarios-ref]
 
 ```mermaid
 flowchart TD

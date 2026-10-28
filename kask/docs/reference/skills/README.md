@@ -1,8 +1,8 @@
 ---
 title: "Skill Registry — Reference"
 audience: [developers, skill-authors, agents]
-last_updated: 2026-10-21
-version: "0.43.2"
+last_updated: 2026-10-28
+version: "0.44.0"
 status: "Active"
 domain: "Core"
 mds_categories: [domain, composition]
@@ -45,7 +45,7 @@ mds_categories: [domain, composition]
 >
 > **Layout:** A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kask/`)
 > containing a `SKILL.md` file with YAML frontmatter (`name`, `description`, and optional metadata)
-> plus a markdown body of process instructions. **59 skills** are authored here and available in every zed-kask install. **222 Jinja2 templates across 55
+> plus a markdown body of process instructions. **60 skills** are authored here and available in every zed-kask install. **224 Jinja2 templates across 57
 > template namespaces** remain under `kask/registry/templates/` for use by `render_template`; these
 > are companion resources, not the source of truth for skill execution.
 
@@ -63,12 +63,12 @@ carrier of the loop itself.
 
 ---
 
-## Registry counts (re-verified 2026-10-24)
+## Registry counts (re-verified 2026-10-28)
 
 | Surface | Count | Notes |
 |---------|-------|-------|
-| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **59** | filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md`. Composition changed since the 2026-10-19 note's 59: `media-workflow` retired 2026-10-21 (commit `8262bf5b80`, −1) and `eureka-cycle` added 2026-10-23 (+1) — net 59 |
-| Template namespaces (`kask/registry/templates/*/`) | **56** (**220** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree. Since the 2026-10-19 note's 55/222: the media-workflow retirement removed 2 and the program-manager rewrite removed 3 (commit `4deebd6840`), `eureka-cycle` added 4, and its memory-candidate template was removed 2026-10-24 — net 56 namespaces / 220 files |
+| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **60** | filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md`. Composition changed since the 2026-10-19 note's 59: `media-workflow` retired 2026-10-21 (commit `8262bf5b80`, −1), `eureka-cycle` added 2026-10-23 (+1), `security-audit` added 2026-10-24 (+1) — net 60 |
+| Template namespaces (`kask/registry/templates/*/`) | **57** (**224** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree. Since the 2026-10-19 note's 55/222: the media-workflow retirement removed 2 and the program-manager rewrite removed 3 (commit `4deebd6840`), `eureka-cycle` added 4 then lost its memory-candidate template 2026-10-24 (−1), and `security-audit` added 1 namespace with 4 templates (2026-10-24) — net 57 namespaces / 224 files |
 
 **The SKILL.md is the source of truth.** A skill is its `SKILL.md`. Template crates are
 read-only resources the skill body may reference via `render_template`.
@@ -82,7 +82,7 @@ annual. The embedded seed payload equals the authored tree (pinned in
 
 ---
 
-## Skills (59)
+## Skills (60)
 
 ### Research, markets and forecasting
 
@@ -174,16 +174,17 @@ annual. The embedded seed payload equals the authored tree (pinned in
 | `gpui-bench` | Design, write, review, run, and interpret production-shaped GPUI Criterion benchmarks (renderer/task benches, responsiveness, hang regressions, before/after evidence) |
 | `kask-seam-audit` | Convergent multi-skill audit of the zed-kask Kask-Zed seam (`DIVERGENCE.md` is the current numbered-seam authority); its measured-layout loop also runs standalone for GPUI cards and panels |
 | `mcp-tool-review` | Anchor a built-in MCP server's tools to published reference models and audit their functionality and quality — inventory reconciliation, fidelity-labeled checks, measured probes, bounded passes, and a findings artifact whose file:line citations are script-verified and routed to actuators |
+| `security-audit` | Target-scoped deep security audit of zed-kask code — a change, crate, MCP server, or named surface — against the OWASP LLM Top-10 (2025), MITRE ATLAS v5.1 and NIST SSDF SP 800-218A: deterministic evidence sweeps first, falsifier-backed findings citing file:line with verbatim evidence, defense-layer coverage verdicts, coverage honesty, and a hardening loop proposing ratchet entries for operator ratification (added 2026-10-24 with its four templates) |
 | `upstream-rebase` | Manage upstream Zed rebases for zed-kask: per-D-seam-file strategy, mapped re-application, test-pin, DIVERGENCE.md update |
 | `provider-audit` | Two-directional provider contract audit over kask-adopted vendors: inbound (provider alignment with principles P1–P4 and values V1–V8) and outbound (our code's alignment with provider capabilities), over the profile layer at `kask/registry/providers/`; carries the provider lifecycle — adoption gate, drift trigger, scheduled cadence, announcement trigger, retirement pass |
 | `doc-update` | Realign the kask/docs tree with the code: condensation triage (<85 cap, working target 75), ground-compare-recompose per docs-set, file:line citation gates, corpus-tool decision point |
 | `improv` | Agent interaction grammar (Plussing, Yes And, Freestyling, Riffing) |
 
-> **Filesystem reality (re-verified 2026-10-23):** `.agents/skills/` contains 59
+> **Filesystem reality (re-verified 2026-10-28):** `.agents/skills/` contains 60
 > `SKILL.md` directories (the company-research deep/flash skills were retired
 > 2026-10-18 with the companies capability, commit `6af8ab2e18`;
 > `experimental-design` and `hypothesis-testing` were added 2026-10-16/18
-> with the experimentation program). Merged by operator decision 2026-09-24:
+> with the experimentation program; `security-audit` was added 2026-10-24). Merged by operator decision 2026-09-24:
 > `gemba-walk` into `algedonic-review`, `skill-router` into `skill-discovery`
 > (route phase), `sequential-inquiry` into
 > `metacognition`, `swarm-compose-guide` into `swarm-intelligence`,

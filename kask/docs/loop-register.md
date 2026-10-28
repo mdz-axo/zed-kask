@@ -1,8 +1,8 @@
 ---
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-10-24
-version: "0.25.6"
+last_updated: 2026-10-28
+version: "0.25.7"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -120,10 +120,10 @@ below is retained: the admitted reference model (Pass 3) cites it.
 | L16 | PARTIAL | pragmatic-cybernetics (VSM S1–S5) applies; `algedonic-review` skill lacks a recorded section |
 | L17 | ANCHOR | `scenario-planning` skill `## Reference models` (Schwartz/Tetlock/Chermack) |
 | L18 | RETIRED | loop removed 2026-10-17 with the training server (out of scope for the co-researcher mandate) |
-| L19 | ANCHOR | `portfolio-review` skill `## Reference models and labels` |
+| L19 | RETIRED | loop removed 2026-10-15 with the portfolio capability (operator ruling; the widget's diagram was removed the same day per `DIAGRAMS_INDEX.md`); the `portfolio-review` skill is retired with its name recorded in `RETIRED_SKILL_NAMES` (`crates/agent_skills/agent_skills.rs`) — re-marked 2026-10-28, was ANCHOR |
 | L20 | GAP | HTTP conditional GET (RFC 9110) is the implicit, unrecorded model |
 | L21 | GAP | no recorded model |
-| L22 | ANCHOR | `kask/docs/plans/logisheets-spreadsheet-capability-plan.md` (plan-form, chartered 2026-09-18) |
+| L22 | RETIRED | loop removed 2026-10-15 with the spreadsheet capability (Tranche S, operator ruling; the plan's tombstone is in the README lifecycle ledger, `plans/logisheets-spreadsheet-capability-plan.md` deleted the same day) — re-marked 2026-10-28, was ANCHOR |
 | L23 | GAP | no recorded model |
 | L24 | PARTIAL | the experimentation protocol (reference-model form, `kask/docs/research/experimentation-reference-model.md` — promoted from the repair plan §P8 on 2026-10-05, carrying the research anchors; the plan retains the execution records) |
 | L25 | PARTIAL | the admitted CNS reference model — the afferent-pathway structure is this row's own shape; no domain prior-art model recorded |
