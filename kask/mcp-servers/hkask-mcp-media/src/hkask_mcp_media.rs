@@ -2019,10 +2019,19 @@ mod tool_behavior_tests {
     /// injection — the trigger SQL stays at each call site, it is what the
     /// test varies. The holders stay bound in the struct so the env outlives
     /// the test body.
+    ///
+    /// Field order is load-bearing: struct fields drop in declaration order,
+    /// so the env guard must be declared BEFORE the lock — otherwise the
+    /// lock releases while `HKASK_ARTIFACTS_DIR` still points into this
+    /// test's tempdir, and a test waiting on the lock can set its own env
+    /// inside that window only for this guard's Drop to restore a stale
+    /// value over it (live 2026-10-28: `video_clip_file_publication_failure`
+    /// saw staging succeed against another test's artifacts dir). The env
+    /// restores first, the lock releases last.
     struct VideoServerEnv {
+        _env: ArtifactsEnvGuard,
         _env_lock: tokio::sync::MutexGuard<'static, ()>,
         _artifacts: tempfile::TempDir,
-        _env: ArtifactsEnvGuard,
         _gallery_root: tempfile::TempDir,
         source: std::path::PathBuf,
         store: Arc<GalleryStore>,
