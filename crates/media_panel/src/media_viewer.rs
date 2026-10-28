@@ -23,7 +23,7 @@ use acp_thread::AgentThreadEntry;
 use agent_client_protocol::schema::v2::ToolCallId;
 use gpui::{
     Context, Entity, HighlightStyle, InteractiveText, KeyDownEvent, Keystroke, Render,
-    SharedString, StyledText, Task, Window,
+    SharedString, StrikethroughStyle, StyledText, Task, Window,
 };
 use hkask_mcp_media::{
     tools::jobs::parse_job_list_response,
@@ -108,6 +108,17 @@ struct PaneHighlight {
     researcher_supplied: bool,
 }
 
+/// A researcher strike (R2): an unannotated cut over words
+/// `start_word..=end_word`, parsed from single-Cut researcher EDL layers
+/// under the server's strike identity — multi-op compose EDLs and model
+/// EDLs never render as strikes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PaneStrike {
+    start_word: usize,
+    end_word: usize,
+    annotation_id: String,
+}
+
 /// A researcher tag/note row for the Detail tab's annotation surface
 /// (strict-parsed from `gallery_annotation_list` — the direct-manipulation
 /// CRUD section, 2026-10-27).
@@ -148,6 +159,7 @@ struct TranscriptPaneState {
     speaker_spans: Option<Vec<PaneSpeakerSpan>>,
     layers: Vec<PaneLayerRow>,
     highlights: Vec<PaneHighlight>,
+    strikes: Vec<PaneStrike>,
 }
 
 /// A rendered paragraph block of the workspace (S3b-2): its text, the char
@@ -1927,9 +1939,10 @@ impl MediaViewer {
         };
         self.edit_progress = Some(format!("creating highlight {start_word}..{end_word}…"));
         let Some(invoker) = hkask_tool_invoker::shared_tool_invoker() else {
-            self.apply_highlight_edit_result(
+            self.apply_workspace_annotation_result(
                 epoch,
                 transcript_id,
+                "Highlight",
                 "created",
                 "creation",
                 Err("Tool invoker not wired — panel cannot create highlights.".into()),
@@ -1961,9 +1974,10 @@ impl MediaViewer {
                 )),
             };
             this.update(cx, |this, cx| {
-                this.apply_highlight_edit_result(
+                this.apply_workspace_annotation_result(
                     epoch,
                     transcript_id,
+                    "Highlight",
                     "created",
                     "creation",
                     result,
@@ -1975,13 +1989,113 @@ impl MediaViewer {
         .detach();
     }
 
-    /// expect: The owned highlight edit (create, rename, or delete) commits
-    /// once and the workspace reloads with it; failures surface visibly and
-    /// clear progress.
-    fn apply_highlight_edit_result(
+    /// Strike the pending range instead of labeling it (R2): close the
+    /// editor and dispatch the cut — a strike carries no label, so the
+    /// label flow ends here. The range already passed the selection's
+    /// alignment gate when the editor opened; an in-flight edit keeps the
+    /// editor open for retry (the confirm path's admission contract).
+    fn strike_selected_range(
+        &mut self,
+        start_word: usize,
+        end_word: usize,
+        cx: &mut Context<Self>,
+    ) {
+        if self.edit_request.state == ResourceState::Loading {
+            self.status =
+                Some("Another media edit is already in progress; wait for it to finish.".into());
+            cx.notify();
+            return;
+        }
+        self.highlight_edit = None;
+        self.create_workspace_strike(start_word, end_word, cx);
+    }
+
+    /// Create a researcher strike over the word range via
+    /// `educt_annotation_create` (kind strike — a single-Cut EDL with blank
+    /// label/note), then reload the workspace so the line-through overlay
+    /// and the Strikes list reflect it (single-flight via the edit
+    /// admission).
+    fn create_workspace_strike(
+        &mut self,
+        start_word: usize,
+        end_word: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(transcript_id) = self
+            .transcript
+            .as_ref()
+            .map(|state| state.transcript_id.clone())
+        else {
+            return;
+        };
+        let epoch = match self.begin_edit("educt_annotation_create") {
+            Ok(epoch) => epoch,
+            Err(error) => {
+                self.status = Some(error);
+                cx.notify();
+                return;
+            }
+        };
+        self.edit_progress = Some(format!("striking words {start_word}..{end_word}…"));
+        let Some(invoker) = hkask_tool_invoker::shared_tool_invoker() else {
+            self.apply_workspace_annotation_result(
+                epoch,
+                transcript_id,
+                "Strike",
+                "struck",
+                "creation",
+                Err("Tool invoker not wired — panel cannot strike words.".into()),
+                cx,
+            );
+            return;
+        };
+        cx.notify();
+        let task = invoker.invoke_tool(
+            MEDIA_SERVER,
+            "educt_annotation_create",
+            strike_create_params(&transcript_id, start_word, end_word),
+        );
+        cx.spawn(async move |this, cx| {
+            let result = match task.await {
+                Ok(text) => match hkask_types::tool_response::parse_tool_response(&text) {
+                    Some(value) => value
+                        .get("annotation_id")
+                        .and_then(serde_json::Value::as_str)
+                        .map(|id| id.to_string())
+                        .ok_or_else(|| {
+                            "educt_annotation_create returned no annotation_id.".to_string()
+                        }),
+                    None => Err("educt_annotation_create returned no parsable data.".to_string()),
+                },
+                Err(error) => Err(format!(
+                    "educt_annotation_create failed: {}",
+                    error.message()
+                )),
+            };
+            this.update(cx, |this, cx| {
+                this.apply_workspace_annotation_result(
+                    epoch,
+                    transcript_id,
+                    "Strike",
+                    "struck",
+                    "creation",
+                    result,
+                    cx,
+                )
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    /// expect: The owned annotation edit (create, rename, delete, or
+    /// strike) commits once and the workspace reloads with it; failures
+    /// surface visibly and clear progress.
+    fn apply_workspace_annotation_result(
         &mut self,
         epoch: u64,
         transcript_id: String,
+        subject: &'static str,
         done: &'static str,
         failed: &'static str,
         result: Result<String, String>,
@@ -1994,15 +2108,17 @@ impl MediaViewer {
         match result {
             Ok(_acknowledgement) => {
                 self.status = Some(format!(
-                    "Highlight {done} — the transcript reloads with it."
+                    "{subject} {done} — the transcript reloads with it."
                 ));
                 self.edit_request.complete(epoch, Ok(()));
                 self.load_transcript_with(transcript_id, cx);
             }
             Err(error) => {
                 self.status = Some(error);
-                self.edit_request
-                    .complete(epoch, Err(format!("highlight {failed} failed")));
+                self.edit_request.complete(
+                    epoch,
+                    Err(format!("{} {failed} failed", subject.to_lowercase())),
+                );
             }
         }
         cx.notify();
@@ -2151,11 +2267,18 @@ impl MediaViewer {
         .detach();
     }
 
-    /// Delete a researcher-authored highlight via `educt_annotation_delete`,
-    /// then reload the workspace so the row, overlay, and any reel selection
-    /// reflect the removal (single-flight via the edit admission; the
-    /// completion reuses the create path's reload semantics).
-    fn delete_workspace_highlight(&mut self, annotation_id: String, cx: &mut Context<Self>) {
+    /// Delete a researcher-authored annotation (highlight or strike) via
+    /// `educt_annotation_delete`, then reload the workspace so the row,
+    /// overlay, and any reel selection reflect the removal (single-flight
+    /// via the edit admission; the completion reuses the create path's
+    /// reload semantics). The subject names the kind for the progress and
+    /// failure messages; the server dispatches on the stored layer kind.
+    fn delete_workspace_annotation(
+        &mut self,
+        annotation_id: String,
+        subject: &'static str,
+        cx: &mut Context<Self>,
+    ) {
         let Some(transcript_id) = self
             .transcript
             .as_ref()
@@ -2171,14 +2294,21 @@ impl MediaViewer {
                 return;
             }
         };
-        self.edit_progress = Some(format!("deleting highlight {annotation_id}…"));
+        self.edit_progress = Some(format!(
+            "deleting {} {annotation_id}…",
+            subject.to_lowercase()
+        ));
         let Some(invoker) = hkask_tool_invoker::shared_tool_invoker() else {
-            self.apply_highlight_edit_result(
+            self.apply_workspace_annotation_result(
                 epoch,
                 transcript_id,
+                subject,
                 "deleted",
                 "deletion",
-                Err("Tool invoker not wired — panel cannot delete highlights.".into()),
+                Err(format!(
+                    "Tool invoker not wired — panel cannot delete {}s.",
+                    subject.to_lowercase()
+                )),
                 cx,
             );
             return;
@@ -2212,9 +2342,10 @@ impl MediaViewer {
                 )),
             };
             this.update(cx, |this, cx| {
-                this.apply_highlight_edit_result(
+                this.apply_workspace_annotation_result(
                     epoch,
                     transcript_id,
+                    subject,
                     "deleted",
                     "deletion",
                     result,
@@ -2257,9 +2388,10 @@ impl MediaViewer {
         };
         self.edit_progress = Some(format!("renaming highlight {annotation_id}…"));
         let Some(invoker) = hkask_tool_invoker::shared_tool_invoker() else {
-            self.apply_highlight_edit_result(
+            self.apply_workspace_annotation_result(
                 epoch,
                 transcript_id,
+                "Highlight",
                 "renamed",
                 "rename",
                 Err("Tool invoker not wired — panel cannot rename highlights.".into()),
@@ -2300,9 +2432,10 @@ impl MediaViewer {
                 )),
             };
             this.update(cx, |this, cx| {
-                this.apply_highlight_edit_result(
+                this.apply_workspace_annotation_result(
                     epoch,
                     transcript_id,
+                    "Highlight",
                     "renamed",
                     "rename",
                     result,
@@ -2329,7 +2462,7 @@ impl MediaViewer {
             .clone();
         let creating = matches!(edit.kind, HighlightEditKind::Create { .. });
         self.status = Some(if creating {
-            "Label the highlight — Enter creates (an empty label keeps research-highlight); Escape cancels.".into()
+            "Label the highlight — Enter creates (an empty label keeps research-highlight), or strike to cut the range; Escape cancels.".into()
         } else {
             "Rename the highlight — Enter saves; Escape cancels.".into()
         });
@@ -2515,7 +2648,7 @@ impl MediaViewer {
                         .color(ui::Color::Default),
                 );
         }
-        div()
+        let editor = div()
             .id("media-transcript-label-editor")
             .min_w_0()
             .flex()
@@ -2542,7 +2675,33 @@ impl MediaViewer {
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.confirm_label_edit(cx);
                     })),
-            )
+            );
+        // R2: the create arm also offers Strike — cut the range without a
+        // label (a rename has no strike affordance).
+        let editor = match &edit.kind {
+            HighlightEditKind::Create {
+                start_word,
+                end_word,
+            } => {
+                let (start_word, end_word) = (*start_word, *end_word);
+                editor.child(
+                    div()
+                        .id("media-transcript-label-strike")
+                        .cursor_pointer()
+                        .hover(|el| el.bg(cx.theme().colors().element_hover))
+                        .child(
+                            Label::new(SharedString::from("strike (cut)"))
+                                .size(LabelSize::XSmall)
+                                .color(ui::Color::Error),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.strike_selected_range(start_word, end_word, cx);
+                        })),
+                )
+            }
+            HighlightEditKind::Rename { .. } => editor,
+        };
+        editor
             .child(
                 div()
                     .id("media-transcript-label-cancel")
@@ -3905,10 +4064,91 @@ impl MediaViewer {
                                     .color(ui::Color::Error),
                             )
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                this.delete_workspace_highlight(annotation_id.clone(), cx);
+                                this.delete_workspace_annotation(
+                                    annotation_id.clone(),
+                                    "Highlight",
+                                    cx,
+                                );
                             })),
                     );
                 }
+            }
+        }
+        // Strikes (R2): struck word ranges with their unstrike affordance;
+        // the line-through marks render in the text below (index-identical
+        // views only, D5).
+        if !state.strikes.is_empty() {
+            let index_identical = matches!(state.alignment.as_str(), "original" | "aligned");
+            sections = sections.child(Self::section_label("Strikes"));
+            if !index_identical {
+                sections = sections.child(
+                    Label::new(SharedString::from(
+                        "Strikes list by range; the line-through overlay and jump-to-time need an index-identical view.",
+                    ))
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Error),
+                );
+            }
+            for strike in &state.strikes {
+                let row = format!("struck words {}..{}", strike.start_word, strike.end_word);
+                let start_ms = if index_identical {
+                    state
+                        .words
+                        .as_deref()
+                        .and_then(|words| words.get(strike.start_word))
+                        .map(|word| word.start_ms)
+                } else {
+                    None
+                };
+                match start_ms {
+                    Some(start_ms) => {
+                        sections = sections.child(
+                            div()
+                                .id(SharedString::from(format!(
+                                    "media-transcript-strike-row-{}",
+                                    strike.annotation_id
+                                )))
+                                .cursor_pointer()
+                                .flex()
+                                .flex_wrap()
+                                .gap_2()
+                                .hover(|el| el.bg(cx.theme().colors().element_hover))
+                                .child(
+                                    Label::new(SharedString::from(row))
+                                        .size(LabelSize::XSmall)
+                                        .color(ui::Color::Default),
+                                )
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.seek_workspace_transcript(start_ms, cx);
+                                })),
+                        );
+                    }
+                    None => {
+                        sections = sections.child(Self::kv_row("strike", &row, cx));
+                    }
+                }
+                // Unstrike — delete the strike layer; the server dispatches
+                // on the stored kind.
+                let annotation_id = strike.annotation_id.clone();
+                sections = sections.child(
+                    div()
+                        .id(SharedString::from(format!(
+                            "media-transcript-strike-delete-{annotation_id}"
+                        )))
+                        .cursor_pointer()
+                        .flex()
+                        .flex_wrap()
+                        .gap_2()
+                        .hover(|el| el.bg(cx.theme().colors().element_hover))
+                        .child(
+                            Label::new(SharedString::from("unstrike (delete)"))
+                                .size(LabelSize::XSmall)
+                                .color(ui::Color::Error),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.delete_workspace_annotation(annotation_id.clone(), "Strike", cx);
+                        })),
+                );
             }
         }
         sections = sections.child(Self::section_label("Transcript"));
@@ -3922,6 +4162,14 @@ impl MediaViewer {
         let selection_anchor = self.selection_anchor;
         let highlight_style = HighlightStyle {
             background_color: Some(cx.theme().colors().element_active),
+            ..Default::default()
+        };
+        // R2: struck words render line-through.
+        let strike_style = HighlightStyle {
+            strikethrough: Some(StrikethroughStyle {
+                thickness: px(1.),
+                color: Some(cx.theme().colors().text),
+            }),
             ..Default::default()
         };
         for (block_index, block) in build_pane_blocks(state).into_iter().enumerate() {
@@ -3962,33 +4210,27 @@ impl MediaViewer {
             // Highlight overlays (S4): researcher/model ranges painted in
             // deterministic label colors — only on index-identical views
             // (D5: the panel never re-implements the server's projection).
+            // Strike marks (R2): struck words render line-through under the
+            // same gate.
             if matches!(state.alignment.as_str(), "original" | "aligned") {
-                let block_first = block
-                    .word_starts
-                    .first()
-                    .map(|(index, _)| *index)
-                    .unwrap_or(0);
-                let block_last = block
-                    .word_starts
-                    .last()
-                    .map(|(index, _)| *index)
-                    .unwrap_or(0);
                 for highlight in &state.highlights {
-                    if highlight.start_word <= block_last && highlight.end_word >= block_first {
-                        let local_start = highlight.start_word.max(block_first) - block_first;
-                        let local_end = highlight.end_word.min(block_last) - block_first;
-                        if let (Some(first), Some(last)) = (
-                            block.word_char_ranges.get(local_start),
-                            block.word_char_ranges.get(local_end),
-                        ) {
-                            highlights.push((
-                                first.start..last.end,
-                                HighlightStyle {
-                                    background_color: Some(highlight_label_color(&highlight.label)),
-                                    ..Default::default()
-                                },
-                            ));
-                        }
+                    if let Some(range) =
+                        block_word_char_range(&block, highlight.start_word, highlight.end_word)
+                    {
+                        highlights.push((
+                            range,
+                            HighlightStyle {
+                                background_color: Some(highlight_label_color(&highlight.label)),
+                                ..Default::default()
+                            },
+                        ));
+                    }
+                }
+                for strike in &state.strikes {
+                    if let Some(range) =
+                        block_word_char_range(&block, strike.start_word, strike.end_word)
+                    {
+                        highlights.push((range, strike_style));
                     }
                 }
             }
@@ -4679,6 +4921,55 @@ fn highlight_create_params(
     })
 }
 
+/// The exact `educt_annotation_create` request for a pane strike (R2):
+/// kind strike with blank label and note — the server enforces the
+/// unannotated-cut invariant; the pane asks for it explicitly.
+fn strike_create_params(
+    transcript_id: &str,
+    start_word: usize,
+    end_word: usize,
+) -> serde_json::Value {
+    serde_json::json!({
+        "transcript_id": transcript_id,
+        "start_word": start_word,
+        "end_word": end_word,
+        "label": "",
+        "note": "",
+        "kind": "strike",
+    })
+}
+
+/// The char range within `block` covering the word range
+/// `start_word..=end_word` — None when the range misses the block or its
+/// clamped local indices fall outside the word map. The block owns the
+/// global→local mapping (D5); callers never re-implement it.
+fn block_word_char_range(
+    block: &PaneBlock,
+    start_word: usize,
+    end_word: usize,
+) -> Option<Range<usize>> {
+    let block_first = block
+        .word_starts
+        .first()
+        .map(|(index, _)| *index)
+        .unwrap_or(0);
+    let block_last = block
+        .word_starts
+        .last()
+        .map(|(index, _)| *index)
+        .unwrap_or(0);
+    if start_word > block_last || end_word < block_first {
+        return None;
+    }
+    let first = block
+        .word_char_ranges
+        .get(start_word.max(block_first) - block_first)?;
+    let last = block
+        .word_char_ranges
+        .get(end_word.min(block_last) - block_first)?;
+    Some(first.start..last.end)
+}
+
 /// The exact `educt_annotation_update` request for a pane rename (S4-3):
 /// stable identity plus the replacement label over the unchanged range
 /// and note.
@@ -4953,6 +5244,7 @@ fn parse_transcript_payload(payload: &Value) -> Result<TranscriptPaneState, Stri
         .ok_or_else(|| "educt_get_transcript returned no layers array.".to_string())?;
     let mut layers = Vec::with_capacity(layers_array.len());
     let mut highlights = Vec::new();
+    let mut strikes = Vec::new();
     for layer in layers_array {
         let object = layer
             .as_object()
@@ -5049,6 +5341,58 @@ fn parse_transcript_payload(payload: &Value) -> Result<TranscriptPaneState, Stri
                     researcher_supplied,
                 });
             }
+        } else if kind == "edl" {
+            // Strikes (R2): researcher-authored single-Cut EDLs. The pane
+            // mirrors the server's strike identity exactly (model "user"
+            // AND the researcher_annotation template AND exactly one Cut
+            // op), so multi-op compose EDLs and model EDLs stay in the
+            // Layers strip but never render as strikes.
+            let provenance = layer_object.get("provenance");
+            let researcher_supplied = provenance
+                .and_then(|provenance| provenance.get("model"))
+                .and_then(Value::as_str)
+                == Some("user")
+                && provenance
+                    .and_then(|provenance| provenance.get("prompt_template"))
+                    .and_then(Value::as_str)
+                    == Some("researcher_annotation");
+            if researcher_supplied {
+                let ops = layer_object
+                    .get("ops")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| "edl layer has no ops array.".to_string())?;
+                if ops.len() == 1 {
+                    let entry = ops
+                        .first()
+                        .and_then(Value::as_object)
+                        .ok_or_else(|| "edl op is not an object.".to_string())?;
+                    let op = entry
+                        .get("op")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| "edl op has no op.".to_string())?;
+                    if op == "cut" {
+                        let range = entry
+                            .get("range")
+                            .and_then(Value::as_object)
+                            .ok_or_else(|| "edl cut op has no range.".to_string())?;
+                        let start_word = range
+                            .get("start_word")
+                            .and_then(Value::as_u64)
+                            .and_then(|index| usize::try_from(index).ok())
+                            .ok_or_else(|| "edl cut range has no start_word.".to_string())?;
+                        let end_word = range
+                            .get("end_word")
+                            .and_then(Value::as_u64)
+                            .and_then(|index| usize::try_from(index).ok())
+                            .ok_or_else(|| "edl cut range has no end_word.".to_string())?;
+                        strikes.push(PaneStrike {
+                            start_word,
+                            end_word,
+                            annotation_id: id.clone(),
+                        });
+                    }
+                }
+            }
         }
         let created_at = object
             .get("created_at")
@@ -5122,6 +5466,7 @@ fn parse_transcript_payload(payload: &Value) -> Result<TranscriptPaneState, Stri
         speaker_spans,
         layers,
         highlights,
+        strikes,
     })
 }
 
@@ -6302,6 +6647,7 @@ mod tests {
                 speaker_spans: None,
                 layers: Vec::new(),
                 highlights: Vec::new(),
+                strikes: Vec::new(),
             });
 
             // Create confirm: the editor closes and the unwired invoker
@@ -6436,6 +6782,7 @@ mod tests {
             speaker_spans: None,
             layers: Vec::new(),
             highlights: Vec::new(),
+            strikes: Vec::new(),
         }
     }
 
@@ -6488,6 +6835,126 @@ mod tests {
         // The gather layer still shows in the Layers strip — it is real
         // stored state, just not an annotation.
         assert_eq!(state.layers.len(), 3);
+    }
+
+    /// dcterms:identifier: `parse_transcript_payload`
+    /// expect: Strike layers parse under the server's strike identity only
+    /// (model "user", template researcher_annotation, exactly one Cut op) —
+    /// model EDLs, multi-op researcher EDLs, and single-Keep researcher EDLs
+    /// stay in the Layers strip but never render as strikes. [P1]
+    #[test]
+    fn strike_layers_parse_with_the_server_identity() {
+        let payload = serde_json::json!({
+            "summary": {"id": "t-1", "media_path": "/m", "words_count": 3, "has_word_timings": true},
+            "working_transcript": {"text": "a b c", "alignment": "original", "words": [
+                {"word": "a", "start_ms": 0, "end_ms": 300},
+                {"word": "b", "start_ms": 400, "end_ms": 700},
+                {"word": "c", "start_ms": 800, "end_ms": 900}
+            ]},
+            "layers": [
+                {"id": "layer-strike", "created_at": "c1", "layer": {
+                    "kind": "edl",
+                    "provenance": {"model": "user", "prompt_template": "researcher_annotation", "created_at": "c1"},
+                    "ops": [{"op": "cut", "range": {"start_word": 1, "end_word": 1}}]
+                }},
+                {"id": "layer-model-edl", "created_at": "c2", "layer": {
+                    "kind": "edl",
+                    "provenance": {"model": "pass-model", "prompt_template": "semantic", "created_at": "c2"},
+                    "ops": [{"op": "cut", "range": {"start_word": 0, "end_word": 0}}]
+                }},
+                {"id": "layer-multi-op", "created_at": "c3", "layer": {
+                    "kind": "edl",
+                    "provenance": {"model": "user", "prompt_template": "researcher_annotation", "created_at": "c3"},
+                    "ops": [
+                        {"op": "cut", "range": {"start_word": 0, "end_word": 0}},
+                        {"op": "cut", "range": {"start_word": 2, "end_word": 2}}
+                    ]
+                }},
+                {"id": "layer-keep", "created_at": "c4", "layer": {
+                    "kind": "edl",
+                    "provenance": {"model": "user", "prompt_template": "researcher_annotation", "created_at": "c4"},
+                    "ops": [{"op": "keep", "range": {"start_word": 0, "end_word": 2}}]
+                }}
+            ],
+            "exports": [], "renders": []
+        });
+        let state = parse_transcript_payload(&payload).expect("parses");
+        assert_eq!(state.strikes.len(), 1, "only the strike identity renders");
+        assert_eq!(state.strikes[0].start_word, 1);
+        assert_eq!(state.strikes[0].end_word, 1);
+        assert_eq!(state.strikes[0].annotation_id, "layer-strike");
+        assert!(
+            !state
+                .strikes
+                .iter()
+                .any(|strike| strike.annotation_id == "layer-model-edl"
+                    || strike.annotation_id == "layer-multi-op"
+                    || strike.annotation_id == "layer-keep"),
+            "non-strike EDLs never render as strikes"
+        );
+        assert_eq!(state.layers.len(), 4, "every EDL stays in the Layers strip");
+        assert!(state.highlights.is_empty());
+    }
+
+    /// dcterms:identifier: `MediaViewer::strike_selected_range`
+    /// expect: Striking from the open label editor closes the editor and
+    /// dispatches the cut (kind strike) — the unwired invoker refusal
+    /// surfaces visibly, progress clears, and the edit request completes
+    /// into Failed, the same admission contract the highlight create path
+    /// carries. [P1]
+    #[gpui::test]
+    fn strike_from_the_label_editor_closes_and_dispatches(cx: &mut gpui::TestAppContext) {
+        let _invoker_lock = INVOKER_TEST_LOCK.lock().unwrap();
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript = Some(pane_state("t-1"));
+            viewer.highlight_edit = Some(HighlightEdit {
+                kind: HighlightEditKind::Create {
+                    start_word: 3,
+                    end_word: 9,
+                },
+                buffer: LabelBuffer::from_str("typed but struck"),
+            });
+            viewer.strike_selected_range(3, 9, cx);
+            assert!(
+                viewer.highlight_edit.is_none(),
+                "the strike consumed the editor"
+            );
+            assert!(
+                viewer
+                    .status
+                    .as_deref()
+                    .unwrap()
+                    .contains("Tool invoker not wired"),
+                "status: {:?}",
+                viewer.status
+            );
+            assert!(
+                viewer.edit_progress.is_none(),
+                "the refusal cleared the edit progress: {:?}",
+                viewer.edit_progress
+            );
+            assert!(matches!(
+                viewer.edit_request.state,
+                ResourceState::Failed(_)
+            ));
+        });
+    }
+
+    /// dcterms:identifier: `strike_create_params`
+    /// expect: The strike create request carries the exact server contract
+    /// — kind strike with blank label and note over the selected range.
+    #[test]
+    fn strike_create_params_carry_the_exact_contract() {
+        let params = strike_create_params("t-1", 34, 51);
+        let object = params.as_object().expect("object");
+        assert_eq!(object.len(), 6);
+        assert_eq!(params["transcript_id"], serde_json::json!("t-1"));
+        assert_eq!(params["start_word"], serde_json::json!(34));
+        assert_eq!(params["end_word"], serde_json::json!(51));
+        assert_eq!(params["label"], serde_json::json!(""));
+        assert_eq!(params["note"], serde_json::json!(""));
+        assert_eq!(params["kind"], serde_json::json!("strike"));
     }
 
     /// dcterms:identifier: `MediaViewer::presented_status`
@@ -7594,6 +8061,7 @@ mod tests {
                     researcher_supplied: true,
                 },
             ],
+            strikes: Vec::new(),
         };
         let all_selected: HashSet<(usize, usize)> = [(34, 51), (200, 210)].into_iter().collect();
         let params = gather_reel_params(&state, &all_selected).expect("selections present");
@@ -7736,6 +8204,7 @@ mod tests {
             }]),
             layers: Vec::new(),
             highlights: Vec::new(),
+            strikes: Vec::new(),
         };
         let blocks = build_pane_blocks(&state);
         assert_eq!(blocks.len(), 2);
@@ -7787,6 +8256,7 @@ mod tests {
                 speaker_spans: None,
                 layers: Vec::new(),
                 highlights: Vec::new(),
+                strikes: Vec::new(),
             };
             viewer.apply_transcript_result(new_request, Ok(state.clone()), cx);
             viewer.apply_transcript_result(old_request, Err("stale error".into()), cx);
@@ -8079,6 +8549,7 @@ mod viewer_layout_tests {
                 speaker_spans: None,
                 layers: Vec::new(),
                 highlights: Vec::new(),
+                strikes: Vec::new(),
             });
             viewer.active_tab = ViewerTab::Transcript;
             cx.notify();
@@ -8122,6 +8593,7 @@ mod viewer_layout_tests {
                 speaker_spans: None,
                 layers: Vec::new(),
                 highlights: Vec::new(),
+                strikes: Vec::new(),
             });
             viewer.active_tab = ViewerTab::Transcript;
             viewer.highlight_edit = Some(HighlightEdit {

@@ -628,50 +628,61 @@ direct-manipulation workspace — no agent turn in the loop
 - **Browse**: the Transcript tab's idle state lists every stored recording
   (`educt_list_transcripts` at the server's 500 cap; media path + words +
   timings per row, lifecycle-protected at `load_transcript_listing`,
-  media_viewer.rs:1749); click opens the workspace, and an in-workspace
+  media_viewer.rs:1759); click opens the workspace, and an in-workspace
   `← all recordings` affordance returns to the browser
-  (`close_transcript_workspace`, :1648). Per-asset transcripts remain
+  (`close_transcript_workspace`, :1658). Per-asset transcripts remain
   visible in Detail's section alongside reel provenance.
 - **Workspace**: one strict-parsed `educt_get_transcript` dispatch
-  (`parse_transcript_payload`, media_viewer.rs:4871) drives everything:
-  paragraph blocks (`build_pane_blocks`, :4760), speaker labels, the layers
-  strip, and highlight overlays. The bound player is the same shared widget
+  (`parse_transcript_payload`, media_viewer.rs:5161) drives everything:
+  paragraph blocks (`build_pane_blocks`, :5050), speaker labels, the layers
+  strip, highlight overlays, and strike line-through marks. The bound player is the same shared widget
   the Media tab and inline renders use (one player per media identity);
-  clicking a word seeks to its start (`seek_workspace_transcript`, :2565);
+  clicking a word seeks to its start (`seek_workspace_transcript`, :2723);
   follow-along marks the word containing playback at 4 Hz, polling only
-  while playing (`current_word_index`, :4751, over `MediaWidget::transport_position_secs`
+  while playing (`current_word_index`, :5041, over `MediaWidget::transport_position_secs`
   + `is_transport_playing` — the cross-media position and playing sources).
   A reload keeps the last-good workspace visible; only an explicit open or
   the back affordance clears it.
 - **Annotate**: an explicit Select-range mode turns word clicks into a
-  two-click range (`handle_word_selection`, :1820) that opens a label
-  editor (`open_label_editor`, :2320; `render_label_editor`, :2434) —
+  two-click range (`handle_word_selection`, :1830) that opens a label
+  editor (`open_label_editor`, :2451; `render_label_editor`, :2565) —
   a focused input over the range; Enter confirms, Escape cancels, an
   empty create confirm keeps the default label `research-highlight`
-  (`confirm_label_edit`, :2346, single-flight: an in-flight edit refuses
+  (`confirm_label_edit`, :2477, single-flight: an in-flight edit refuses
   visibly and keeps the typed buffer), and clipboard text pastes
   (control characters dropped). Create dispatches
-  `educt_annotation_create` (`create_workspace_highlight`, :1906);
+  `educt_annotation_create` (`create_workspace_highlight`, :1916);
   researcher-authored rows (layer-provenance identified — the pane's
   detection mirrors the server's researcher-annotation guard exactly, so
   the compose flow's gather layers never render as annotations) also offer
   rename via `educt_annotation_update` with the typed label over the
-  unchanged range and note (`rename_workspace_highlight`, :2234) and delete
-  via `educt_annotation_delete` (`delete_workspace_highlight`, :2158).
+  unchanged range and note (`rename_workspace_highlight`, :2363) and delete
+  via `educt_annotation_delete` (`delete_workspace_annotation`, :2274 —
+  kind-dispatched: highlight or strike).
   Every completion reloads the workspace so overlays, rows, and label
-  colors reflect it (`apply_highlight_edit_result` names its verb).
+  colors reflect it (`apply_workspace_annotation_result` names its subject
+  and verb).
+- **Strike (2026-10-27)**: the same selection can cut instead of label — the
+  editor's create arm offers a strike affordance dispatching
+  `educt_annotation_create` with kind strike (blank label/note: an
+  unannotated single-Cut EDL; `strike_selected_range`, :1995 →
+  `create_workspace_strike`, :2016). Struck words render line-through
+  (index-identical views only), a Strikes list offers click-to-seek rows and
+  unstrike, and the pane parses strikes under the server's strike identity
+  only (user + researcher_annotation + exactly one Cut op) — multi-op
+  compose EDLs and model EDLs never render as strikes.
 - **Reel editing + generation**: per-clip include/exclude toggles shape the
-  next compose (`gather_reel_params`, :4711 gathers only toggled-in
+  next compose (`gather_reel_params`, :5001 gathers only toggled-in
   researcher-authored selections into one derived layer — membership keys
   on provenance, never the label text, so free-text labels never affect
   the reel); one click chains `educt_store_layer` →
   `educt_edl_from_highlights` → `educt_render_edl`
-  (`compose_workspace_reel`, :2016) and the rendered reel lands as a playable
+  (`compose_workspace_reel`, :2130) and the rendered reel lands as a playable
   gallery asset through the display-hint ingestion; the compose progress
   surfaces on the tab's status line.
 - **Alignment gating (D5)**: text overlays and hand highlights exist only on
   index-identical views (original/aligned) — the pure five-state gate with
-  visible reasons is `highlight_range_gate`, :4639; re-anchored views list
+  visible reasons is `highlight_range_gate`, :4880; re-anchored views list
   ranges with a visible note — the panel never re-implements the server's
   projection (the server-side `reanchored_index_map` is the named v2 path).
 
