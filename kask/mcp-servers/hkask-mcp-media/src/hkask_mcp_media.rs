@@ -179,6 +179,7 @@ hkask_mcp_server::mcp_server!(
     } = crate::ontology::annotate;
 );
 
+pub mod layer_pass;
 pub mod layer_store;
 pub mod transcript;
 pub mod transcript_export;
@@ -446,7 +447,7 @@ impl rmcp::ServerHandler for MediaServer {}
 mod tool_surface_tests {
     use super::*;
 
-    // One macro call pins the surface two ways: the exact count (74) and
+    // One macro call pins the surface two ways: the exact count (75) and
     // the generated TOOL_NAMES set against the live rmcp surface. Catches
     // silent registration drops — a `#[tool]` impl block without
     // `#[tool_router]`, or a sub-router missing from `combined_router()`,
@@ -459,8 +460,8 @@ mod tool_surface_tests {
     hkask_mcp_server::tool_surface_pin!(
         MediaServer::combined_router(),
         "combined_router",
-        74,
-        tool_surface_is_exactly_74_registered_tools,
+        75,
+        tool_surface_is_exactly_75_registered_tools,
     );
 
     // Coverage: every registered tool must map to an OMC concept. Catches
@@ -1070,9 +1071,11 @@ mod integration_tests {
 mod tool_behavior_tests {
     use super::*;
     use crate::test_support::read_only_organize_request;
+    use crate::transcript_pass::PassMode;
     use crate::types::{GalleryRefreshRequest, YoutubeSearchRequest};
     use rmcp::handler::server::wrapper::Parameters;
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     fn make_server() -> MediaServer {
         make_server_with_port(Arc::new(NoopInferencePort))
@@ -2005,6 +2008,43 @@ mod tool_behavior_tests {
         if !output.status.success() {
             return Err(format!(
                 "real ffmpeg fixture creation failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+        Ok(())
+    }
+
+    /// A real two-scene fixture: one second of solid blue concatenated with
+    /// one second of solid red — a deterministic hard cut at ~1.0s whose
+    /// scene score is near maximal.
+    async fn create_real_hard_cut_video(
+        path: &std::path::Path,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let output = tokio::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=blue:s=64x64:d=1",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=red:s=64x64:d=1",
+                "-filter_complex",
+                "[0:v:0][1:v:0]concat=n=2:v=1:a=0[out]",
+                "-map",
+                "[out]",
+                "-c:v",
+                "mpeg4",
+                path.to_str().ok_or("hard-cut fixture path is not UTF-8")?,
+            ])
+            .output()
+            .await?;
+        if !output.status.success() {
+            return Err(format!(
+                "real ffmpeg hard-cut fixture creation failed: {}",
                 String::from_utf8_lossy(&output.stderr)
             )
             .into());
@@ -3526,6 +3566,7 @@ mod tool_behavior_tests {
                 model: Some("test-stt-model".to_string()),
                 source: Some("text".to_string()),
                 structured: None,
+                correct_existing: None,
             }))
             .await
             .expect("pass succeeds");
@@ -3588,6 +3629,7 @@ mod tool_behavior_tests {
                 model: Some("test-stt-model".to_string()),
                 source: Some("text".to_string()),
                 structured: None,
+                correct_existing: None,
             }))
             .await
             .expect_err("overlapping spans must be rejected");
@@ -3609,6 +3651,7 @@ mod tool_behavior_tests {
                 model: Some("test-stt-model".to_string()),
                 source: None,
                 structured: None,
+                correct_existing: None,
             }))
             .await
             .expect("audio pass succeeds");
@@ -3635,6 +3678,7 @@ mod tool_behavior_tests {
                 model: Some("test-stt-model".to_string()),
                 source: Some("bogus".to_string()),
                 structured: None,
+                correct_existing: None,
             }))
             .await
             .expect_err("unknown source must be rejected");
@@ -3658,6 +3702,7 @@ mod tool_behavior_tests {
                 model: Some("test-stt-model".to_string()),
                 source: Some("audio".to_string()),
                 structured: None,
+                correct_existing: None,
             }))
             .await
             .expect_err("unparseable audio output must surface");
@@ -4087,6 +4132,7 @@ mod tool_behavior_tests {
                 model: Some("test-stt-model".to_string()),
                 source: None,
                 structured: Some(true),
+                correct_existing: None,
             }))
             .await
             .expect_err("structured+audio must be rejected, never a silent no-op");
@@ -4772,6 +4818,102 @@ mod tool_behavior_tests {
         assert!(
             error.message.contains("educt_paragraph_pass"),
             "the missing layer must be named: {}",
+            error.message
+        );
+    }
+
+    /// dcterms:identifier: `transcript_pass::gate_speaker_corrections`
+    /// expect: The correction mode stores the GATED result — the short
+    /// proposed fix lands, the long rewrite reverts to the existing
+    /// labels, and the refusal is surfaced in the response with the
+    /// gate's counts.
+    #[tokio::test]
+    async fn educt_speaker_pass_correction_mode_gates_locality() {
+        let server = make_inference_server(
+            r#"{"spans": [{"start_word": 0, "end_word": 0, "speaker": "speaker-2", "confidence": 0.8}, {"start_word": 1, "end_word": 1, "speaker": "speaker-1", "confidence": 0.95}, {"start_word": 2, "end_word": 11, "speaker": "speaker-2", "confidence": 0.7}]}"#
+                .to_string(),
+            "{}".to_string(),
+        );
+        let transcript_id = store_n_word_transcript(&server, 12).await;
+        store_speaker_layer(&server, &transcript_id, vec![speaker_span(0, 11, 0.9)]).await;
+
+        let result = server
+            .educt_speaker_pass(Parameters(crate::types::EductSpeakerPassRequest {
+                transcript_id,
+                model: Some("test-stt-model".to_string()),
+                source: Some("text".to_string()),
+                structured: None,
+                correct_existing: Some(true),
+            }))
+            .await
+            .expect("correction pass succeeds");
+        let content = content_of(&result);
+        // The gate: word 0's one-word change accepted; the ten-word
+        // rewrite reverted — and both counted, never silent.
+        assert_eq!(content["gate"]["runs_accepted"], serde_json::json!(1));
+        assert_eq!(content["gate"]["words_accepted"], serde_json::json!(1));
+        assert_eq!(content["gate"]["runs_reverted"], serde_json::json!(1));
+        assert_eq!(content["gate"]["words_reverted"], serde_json::json!(10));
+        assert_eq!(content["gate"]["max_locality_words"], serde_json::json!(5));
+        let note = content["gate_note"].as_str().expect("refusal surfaced");
+        assert!(note.contains("reverted"), "note: {note}");
+        assert!(content["pass_stats"]["attempts"].as_u64().is_some());
+        // The stored layer is the gated merge: the short fix on word 0,
+        // the existing label over the reverted monologue.
+        let spans = content["stored"]["layer"]["spans"].clone();
+        assert_eq!(spans.as_array().map(Vec::len), Some(2));
+        assert_eq!(spans[0]["speaker"], serde_json::json!("speaker-2"));
+        assert_eq!(spans[0]["start_word"], serde_json::json!(0));
+        assert_eq!(spans[0]["end_word"], serde_json::json!(0));
+        assert_eq!(spans[1]["speaker"], serde_json::json!("speaker-1"));
+        assert_eq!(spans[1]["start_word"], serde_json::json!(1));
+        assert_eq!(spans[1]["end_word"], serde_json::json!(11));
+    }
+
+    /// dcterms:identifier: `educt_speaker_pass` correction mode
+    /// expect: Correction without an existing speaker layer is typed
+    /// not_found naming the prerequisite — never a silent no-op.
+    #[tokio::test]
+    async fn educt_speaker_pass_correction_without_layer_is_not_found() {
+        let server = make_pass_server("{}".to_string());
+        let transcript_id = store_two_word_transcript(&server).await;
+        let error = server
+            .educt_speaker_pass(Parameters(crate::types::EductSpeakerPassRequest {
+                transcript_id,
+                model: Some("test-stt-model".to_string()),
+                source: Some("text".to_string()),
+                structured: None,
+                correct_existing: Some(true),
+            }))
+            .await
+            .expect_err("correction without a speaker layer is not-found");
+        assert!(
+            error.message.contains("educt_speaker_pass"),
+            "the prerequisite must be named: {}",
+            error.message
+        );
+    }
+
+    /// dcterms:identifier: `educt_speaker_pass` correction mode
+    /// expect: Correction requires source "text" — the audio default is
+    /// rejected with the reason, never silently coerced.
+    #[tokio::test]
+    async fn educt_speaker_pass_correction_requires_the_text_source() {
+        let server = make_pass_server("{}".to_string());
+        let transcript_id = store_two_word_transcript(&server).await;
+        let error = server
+            .educt_speaker_pass(Parameters(crate::types::EductSpeakerPassRequest {
+                transcript_id,
+                model: Some("test-stt-model".to_string()),
+                source: None,
+                structured: None,
+                correct_existing: Some(true),
+            }))
+            .await
+            .expect_err("correction with the audio default is rejected");
+        assert!(
+            error.message.contains("source \"text\""),
+            "the source requirement must be named: {}",
             error.message
         );
     }
@@ -5683,6 +5825,718 @@ mod tool_behavior_tests {
         assert!(
             message.contains("/nonexistent/media-layers-probe.mp4"),
             "names the missing path: {message}"
+        );
+    }
+
+    /// t2 AC1: a hard-cut fixture yields two or more ordered, disjoint
+    /// shot items inside the probed duration, with provenance recording
+    /// the ffmpeg:scdet template and the exact filter + threshold
+    /// parameters.
+    #[tokio::test]
+    async fn layers_shot_pass_detects_a_hard_cut_as_ordered_disjoint_shots()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let source = gallery_root.path().join("hard-cut.mp4");
+        create_real_hard_cut_video(&source).await?;
+        let media_path = source.to_string_lossy().into_owned();
+        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
+        let result = content_of(
+            &server
+                .layers_shot_pass(Parameters(crate::types::LayersShotPassRequest {
+                    media_path: media_path.clone(),
+                    gallery_asset_id: None,
+                    threshold: None,
+                    min_shot_length: None,
+                }))
+                .await?,
+        );
+        assert_eq!(result["status"], serde_json::json!("completed"));
+        let layer = &result["layer"];
+        assert_eq!(layer["kind"], serde_json::json!("shot"));
+        assert_eq!(
+            layer["items_count"].as_u64(),
+            Some(2),
+            "a single hard cut yields exactly two shots: {layer}"
+        );
+        let duration = result["probed_duration_secs"]
+            .as_f64()
+            .ok_or("probed duration")?;
+        assert!(duration > 1.5, "the two-second fixture probes its duration");
+
+        // Provenance records the template and the exact parameters.
+        assert_eq!(layer["provenance"]["model"], serde_json::json!("ffmpeg"));
+        assert_eq!(
+            layer["provenance"]["prompt_template"],
+            serde_json::json!("ffmpeg:scdet")
+        );
+        let parameters = &layer["provenance"]["parameters"];
+        assert!(
+            parameters["filter"]
+                .as_str()
+                .is_some_and(|filter| filter.contains("gt(scene,0.300)")),
+            "provenance records the exact filter: {parameters}"
+        );
+        assert_eq!(parameters["threshold"], serde_json::json!(0.3));
+        assert_eq!(parameters["min_shot_length"], serde_json::json!(0.5));
+
+        // The items are recallable through the store: ordered, disjoint,
+        // and inside the probed duration.
+        let layer_id = layer["id"].as_str().ok_or("layer id")?.to_string();
+        let fetched = content_of(
+            &server
+                .layers_get(Parameters(crate::types::LayersGetRequest {
+                    layer_id: layer_id.clone(),
+                }))
+                .await?,
+        );
+        let items = fetched["layer"]["items"].as_array().ok_or("items array")?;
+        assert_eq!(items.len(), 2);
+        for pair in items.windows(2) {
+            let previous_end = pair[0]["end_sec"].as_f64().ok_or("end_sec")?;
+            let next_start = pair[1]["start_sec"].as_f64().ok_or("start_sec")?;
+            assert!(
+                previous_end <= next_start,
+                "shots are ordered and disjoint: {items:?}"
+            );
+        }
+        for item in items {
+            let start = item["start_sec"].as_f64().ok_or("start_sec")?;
+            let end = item["end_sec"].as_f64().ok_or("end_sec")?;
+            assert!(
+                start >= 0.0 && end <= duration,
+                "shot range [{start}, {end}] inside the probed duration {duration}"
+            );
+            assert!(
+                !item["searchable_text"]
+                    .as_str()
+                    .unwrap_or("")
+                    .trim()
+                    .is_empty()
+            );
+        }
+        Ok(())
+    }
+
+    /// t2 AC2a: a no-cut fixture returns the explicit no-shots note carrying
+    /// the exact filter parameters — a named degradation, never an error
+    /// and never a silent empty success — and stores nothing.
+    #[tokio::test]
+    async fn layers_shot_pass_no_cut_fixture_returns_the_named_no_shots_note()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let source = gallery_root.path().join("single-scene.mp4");
+        create_real_video(&source).await?;
+        let media_path = source.to_string_lossy().into_owned();
+        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
+        let result = content_of(
+            &server
+                .layers_shot_pass(Parameters(crate::types::LayersShotPassRequest {
+                    media_path: media_path.clone(),
+                    gallery_asset_id: None,
+                    threshold: None,
+                    min_shot_length: None,
+                }))
+                .await?,
+        );
+        assert_eq!(result["status"], serde_json::json!("no_shots"));
+        let note = result["note"].as_str().ok_or("note present")?;
+        assert!(
+            note.contains("no scene changes"),
+            "the note names the degradation: {note}"
+        );
+        assert!(
+            result["filter"]
+                .as_str()
+                .is_some_and(|filter| filter.contains("gt(scene,0.300)")),
+            "the note carries the exact filter parameters: {result}"
+        );
+        assert_eq!(result["threshold"], serde_json::json!(0.3));
+        assert_eq!(result["min_shot_length"], serde_json::json!(0.5));
+        assert!(
+            result["probed_duration_secs"]
+                .as_f64()
+                .is_some_and(|d| d > 0.0)
+        );
+        let listed = content_of(
+            &server
+                .layers_list(Parameters(crate::types::LayersListRequest {
+                    media_path: Some(media_path.clone()),
+                    kind: None,
+                    limit: None,
+                }))
+                .await?,
+        );
+        assert_eq!(
+            listed["count"].as_u64(),
+            Some(0),
+            "the no-shots degradation stores no layer"
+        );
+        Ok(())
+    }
+
+    /// t2 AC2b: media without a video stream (an audio-only file) returns a
+    /// named degradation naming the requirement — never a raw ffmpeg
+    /// error — and stores nothing.
+    #[tokio::test]
+    async fn layers_shot_pass_audio_only_is_a_named_degradation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let source = gallery_root.path().join("audio-only.wav");
+        create_real_audio(&source).await?;
+        let media_path = source.to_string_lossy().into_owned();
+        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
+        let error = server
+            .layers_shot_pass(Parameters(crate::types::LayersShotPassRequest {
+                media_path: media_path.clone(),
+                gallery_asset_id: None,
+                threshold: None,
+                min_shot_length: None,
+            }))
+            .await
+            .expect_err("audio-only media must fail the stream requirement");
+        let message = error.to_string();
+        assert!(
+            message.contains("failed_precondition"),
+            "classified failed_precondition (the named degradation kind): {message}"
+        );
+        assert!(
+            message.contains("video stream"),
+            "names the requirement: {message}"
+        );
+        assert!(
+            message.contains(&media_path),
+            "names the media path: {message}"
+        );
+        let listed = content_of(
+            &server
+                .layers_list(Parameters(crate::types::LayersListRequest {
+                    media_path: Some(media_path.clone()),
+                    kind: None,
+                    limit: None,
+                }))
+                .await?,
+        );
+        assert_eq!(listed["count"].as_u64(), Some(0), "nothing is stored");
+        Ok(())
+    }
+
+    /// t2 AC2c: a missing media file fails as not_found naming the path.
+    #[tokio::test]
+    async fn layers_shot_pass_missing_media_is_not_found() {
+        let server = make_server();
+        let error = server
+            .layers_shot_pass(Parameters(crate::types::LayersShotPassRequest {
+                media_path: "/nonexistent/shot-pass-probe.mp4".to_string(),
+                gallery_asset_id: None,
+                threshold: None,
+                min_shot_length: None,
+            }))
+            .await
+            .expect_err("missing media path fails");
+        let message = error.to_string();
+        assert!(
+            message.contains("not_found"),
+            "classified not_found: {message}"
+        );
+        assert!(
+            message.contains("/nonexistent/shot-pass-probe.mp4"),
+            "names the missing path: {message}"
+        );
+    }
+
+    // ── Layer pass core contract tests (t3) ────────────────────────────
+
+    /// Serializes tests that set the model env vars (`ARTIFACTS_ENV_LOCK`'s
+    /// discipline): every existing pass test passes an explicit model
+    /// override and reads no env, so only these chain tests touch the
+    /// vars today; any future test that relies on configured model envs
+    /// takes this lock.
+    static MODEL_ENV_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+        std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+    /// Sets the pass/vision model env vars for one test and restores the
+    /// prior values on drop (missing restored by removal).
+    struct ModelEnvGuard {
+        prior_pass: Option<String>,
+        prior_vision: Option<String>,
+    }
+
+    impl ModelEnvGuard {
+        fn set(pass: Option<&str>, vision: Option<&str>) -> Self {
+            let guard = Self {
+                prior_pass: std::env::var(crate::models::PASS_ENV).ok(),
+                prior_vision: std::env::var(crate::models::VISION_ENV).ok(),
+            };
+            match pass {
+                Some(value) => unsafe { std::env::set_var(crate::models::PASS_ENV, value) },
+                None => unsafe { std::env::remove_var(crate::models::PASS_ENV) },
+            }
+            match vision {
+                Some(value) => unsafe { std::env::set_var(crate::models::VISION_ENV, value) },
+                None => unsafe { std::env::remove_var(crate::models::VISION_ENV) },
+            }
+            guard
+        }
+    }
+
+    impl Drop for ModelEnvGuard {
+        fn drop(&mut self) {
+            match self.prior_pass.take() {
+                Some(value) => unsafe { std::env::set_var(crate::models::PASS_ENV, value) },
+                None => unsafe { std::env::remove_var(crate::models::PASS_ENV) },
+            }
+            match self.prior_vision.take() {
+                Some(value) => unsafe { std::env::set_var(crate::models::VISION_ENV, value) },
+                None => unsafe { std::env::remove_var(crate::models::VISION_ENV) },
+            }
+        }
+    }
+
+    /// A mock layer-pass output — the core is generic over the typed
+    /// output; t4/t5 pass outputs are pass-specific shapes of this same
+    /// contract.
+    #[derive(
+        Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize, schemars::JsonSchema,
+    )]
+    struct MockLayerPassOutput {
+        items: Vec<MockLayerPassItem>,
+    }
+
+    #[derive(
+        Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize, schemars::JsonSchema,
+    )]
+    struct MockLayerPassItem {
+        start_sec: f64,
+        end_sec: Option<f64>,
+        searchable_text: String,
+    }
+
+    /// The canned two-item layer output every mock layer pass returns.
+    fn mock_layer_response() -> String {
+        serde_json::json!({
+            "items": [
+                {"start_sec": 0.0, "end_sec": 1.0, "searchable_text": "first moment"},
+                {"start_sec": 1.0, "end_sec": 2.0, "searchable_text": "second moment"},
+            ]
+        })
+        .to_string()
+    }
+
+    fn mock_layer_schema() -> String {
+        serde_json::to_string(&schemars::schema_for!(MockLayerPassOutput))
+            .expect("mock output schema serializes")
+    }
+
+    /// The mock inference port over the canned layer response — the
+    /// capability-carrying constructor the pass tests use (`make_pass_server`
+    /// hides its port; the core takes the port directly).
+    fn mock_layer_inference(
+        response: String,
+        media_response: String,
+        media_response_is_json: bool,
+    ) -> Arc<dyn hkask_types::InferencePort> {
+        Arc::new(MockInferencePort {
+            response,
+            media_response,
+            media_response_is_json,
+        })
+    }
+
+    /// Drive the t1 store from the core's outputs — the composition AC1
+    /// pins: the typed outputs flow through the layer store and are
+    /// recallable.
+    fn store_mock_pass_layer(
+        server: &MediaServer,
+        output: &MockLayerPassOutput,
+        model: &str,
+    ) -> crate::layer_store::MediaLayerSummary {
+        use crate::layer_store::{LayerProvenance, MediaLayerKind, NewMediaLayer};
+        let items = output
+            .items
+            .iter()
+            .map(|item| crate::layer_store::MediaLayerItem {
+                start_sec: item.start_sec,
+                end_sec: item.end_sec,
+                searchable_text: item.searchable_text.clone(),
+                payload: serde_json::json!({"source": "mock layer pass"}),
+                frame_asset_ids: None,
+            })
+            .collect();
+        let driver = &**server.gallery_store.driver();
+        crate::layer_store::store_layer(
+            driver,
+            &NewMediaLayer {
+                media_path: "/tmp/mock-layer-pass.mp4".to_string(),
+                gallery_asset_id: None,
+                kind: MediaLayerKind::Researcher,
+                label: Some("mock pass layer".to_string()),
+                provenance: LayerProvenance {
+                    model: model.to_string(),
+                    prompt_template: "mock_layer_pass".to_string(),
+                    created_at: hkask_types::time::now_rfc3339(),
+                    parameters: None,
+                },
+                duration_secs: 2.0,
+                items,
+            },
+        )
+        .expect("the core's outputs store as a layer")
+    }
+
+    /// t3 AC1a: the v1 prompt-schema mode drives a stored layer from a mock
+    /// inference response — one inference call per chunk, typed outputs,
+    /// the layer recallable through the store with the resolved model in
+    /// its provenance.
+    #[tokio::test]
+    async fn layer_pass_prompt_mode_drives_a_stored_layer_from_a_mock_response() {
+        let inference = mock_layer_inference(mock_layer_response(), String::new(), false);
+        let schema = mock_layer_schema();
+        let prompts = vec!["analyze chunk 0".to_string()];
+        let (attempts, rejections) = (AtomicU64::new(0), AtomicU64::new(0));
+        let result = crate::layer_pass::run_layer_pass::<MockLayerPassOutput>(
+            &inference,
+            &schema,
+            PassMode::PromptSchema,
+            Some("test-pass-model"),
+            &prompts,
+            0,
+            10,
+            &attempts,
+            &rejections,
+            "MockLayerPassOutput {\"items\": [...]}",
+        )
+        .await
+        .expect("the prompt-schema pass core succeeds");
+        assert_eq!(result.model, "test-pass-model");
+        assert_eq!(result.resume_from, None);
+        assert_eq!(attempts.load(Ordering::Relaxed), 1);
+        assert_eq!(rejections.load(Ordering::Relaxed), 0);
+        assert_eq!(result.outputs.len(), 1);
+        assert_eq!(result.outputs[0].items.len(), 2);
+
+        let server = make_server();
+        let summary = store_mock_pass_layer(&server, &result.outputs[0], &result.model);
+        assert_eq!(summary.items_count, 2);
+        let driver = &**server.gallery_store.driver();
+        let record = crate::layer_store::get_layer(driver, &summary.id)
+            .expect("get layer")
+            .expect("stored layer present");
+        assert_eq!(record.items.len(), 2);
+        assert_eq!(record.items[1].item.searchable_text, "second moment");
+        assert_eq!(record.provenance.model, "test-pass-model");
+    }
+
+    /// t3 AC1a (structured half): the v2 mode drives a stored layer through
+    /// `chat_json` — the mock's media arm serves the response inside
+    /// `{"text": …}` and the core reads exactly that member.
+    #[tokio::test]
+    async fn layer_pass_structured_mode_drives_a_stored_layer_via_chat_json() {
+        let inference = mock_layer_inference(String::new(), mock_layer_response(), false);
+        let schema = mock_layer_schema();
+        let prompts = vec!["analyze chunk 0".to_string()];
+        let (attempts, rejections) = (AtomicU64::new(0), AtomicU64::new(0));
+        let result = crate::layer_pass::run_layer_pass::<MockLayerPassOutput>(
+            &inference,
+            &schema,
+            PassMode::Structured,
+            Some("test-pass-model"),
+            &prompts,
+            0,
+            10,
+            &attempts,
+            &rejections,
+            "MockLayerPassOutput {\"items\": [...]}",
+        )
+        .await
+        .expect("the structured pass core succeeds");
+        assert_eq!(attempts.load(Ordering::Relaxed), 1);
+        assert_eq!(rejections.load(Ordering::Relaxed), 0);
+        assert_eq!(result.outputs[0].items.len(), 2);
+
+        let server = make_server();
+        let summary = store_mock_pass_layer(&server, &result.outputs[0], &result.model);
+        assert_eq!(summary.items_count, 2);
+        let driver = &**server.gallery_store.driver();
+        let record = crate::layer_store::get_layer(driver, &summary.id)
+            .expect("get layer")
+            .expect("stored layer present");
+        assert_eq!(record.items[0].item.end_sec, Some(1.0));
+    }
+
+    /// t3 AC1b: a plan larger than `max_chunks` processes the bounded slice
+    /// and returns the resume cursor naming the next chunk — resuming
+    /// completes the plan with no re-processing.
+    #[tokio::test]
+    async fn layer_pass_returns_a_resume_cursor_when_input_exceeds_max_chunks() {
+        let inference = mock_layer_inference(mock_layer_response(), String::new(), false);
+        let schema = mock_layer_schema();
+        let prompts: Vec<String> = (0..3)
+            .map(|index| format!("analyze chunk {index}"))
+            .collect();
+        let (attempts, rejections) = (AtomicU64::new(0), AtomicU64::new(0));
+        let first = crate::layer_pass::run_layer_pass::<MockLayerPassOutput>(
+            &inference,
+            &schema,
+            PassMode::PromptSchema,
+            Some("test-pass-model"),
+            &prompts,
+            0,
+            2,
+            &attempts,
+            &rejections,
+            "MockLayerPassOutput {\"items\": [...]}",
+        )
+        .await
+        .expect("the first bounded slice succeeds");
+        assert_eq!(first.outputs.len(), 2, "only the bounded slice runs");
+        assert_eq!(
+            first.resume_from,
+            Some(2),
+            "the cursor names the next chunk"
+        );
+        assert_eq!(attempts.load(Ordering::Relaxed), 2);
+
+        let (attempts, rejections) = (AtomicU64::new(0), AtomicU64::new(0));
+        let second = crate::layer_pass::run_layer_pass::<MockLayerPassOutput>(
+            &inference,
+            &schema,
+            PassMode::PromptSchema,
+            Some("test-pass-model"),
+            &prompts,
+            first.resume_from.expect("cursor"),
+            2,
+            &attempts,
+            &rejections,
+            "MockLayerPassOutput {\"items\": [...]}",
+        )
+        .await
+        .expect("resuming from the cursor succeeds");
+        assert_eq!(second.outputs.len(), 1);
+        assert_eq!(second.resume_from, None, "the plan is complete");
+        assert_eq!(attempts.load(Ordering::Relaxed), 1);
+        assert_eq!(rejections.load(Ordering::Relaxed), 0);
+    }
+
+    /// t3 AC2: model resolution follows the per-call override, then
+    /// `HKASK_MEDIA_PASS_MODEL`, then `HKASK_MEDIA_VISION_MODEL`; nothing
+    /// configured surfaces the typed NotConfigured error naming the env
+    /// vars — never a hidden constant.
+    #[tokio::test]
+    async fn layer_pass_model_resolution_chain_prefers_override_then_pass_env_then_vision_env() {
+        let _env_lock = MODEL_ENV_LOCK.lock().await;
+        let inference = mock_layer_inference(mock_layer_response(), String::new(), false);
+        let schema = mock_layer_schema();
+        let prompts = vec!["analyze chunk 0".to_string()];
+        let expected = "MockLayerPassOutput {\"items\": [...]}";
+
+        {
+            let _env = ModelEnvGuard::set(Some("pass-env-model"), Some("vision-env-model"));
+            let result = crate::layer_pass::run_layer_pass::<MockLayerPassOutput>(
+                &inference,
+                &schema,
+                PassMode::PromptSchema,
+                Some("per-call-override"),
+                &prompts,
+                0,
+                1,
+                &AtomicU64::new(0),
+                &AtomicU64::new(0),
+                expected,
+            )
+            .await
+            .expect("override resolves");
+            assert_eq!(result.model, "per-call-override", "the override wins");
+        }
+        {
+            let _env = ModelEnvGuard::set(Some("pass-env-model"), Some("vision-env-model"));
+            let result = crate::layer_pass::run_layer_pass::<MockLayerPassOutput>(
+                &inference,
+                &schema,
+                PassMode::PromptSchema,
+                None,
+                &prompts,
+                0,
+                1,
+                &AtomicU64::new(0),
+                &AtomicU64::new(0),
+                expected,
+            )
+            .await
+            .expect("pass env resolves");
+            assert_eq!(
+                result.model, "pass-env-model",
+                "HKASK_MEDIA_PASS_MODEL wins"
+            );
+        }
+        {
+            let _env = ModelEnvGuard::set(None, Some("vision-env-model"));
+            let result = crate::layer_pass::run_layer_pass::<MockLayerPassOutput>(
+                &inference,
+                &schema,
+                PassMode::PromptSchema,
+                None,
+                &prompts,
+                0,
+                1,
+                &AtomicU64::new(0),
+                &AtomicU64::new(0),
+                expected,
+            )
+            .await
+            .expect("vision fallback resolves");
+            assert_eq!(
+                result.model, "vision-env-model",
+                "the vision fallback serves"
+            );
+        }
+        {
+            let _env = ModelEnvGuard::set(None, None);
+            let error = crate::layer_pass::run_layer_pass::<MockLayerPassOutput>(
+                &inference,
+                &schema,
+                PassMode::PromptSchema,
+                None,
+                &prompts,
+                0,
+                1,
+                &AtomicU64::new(0),
+                &AtomicU64::new(0),
+                expected,
+            )
+            .await
+            .expect_err("nothing configured fails visibly");
+            let message = error.to_string();
+            assert!(
+                message.contains("HKASK_MEDIA_PASS_MODEL"),
+                "names the pass env var: {message}"
+            );
+            assert!(
+                message.contains("HKASK_MEDIA_VISION_MODEL"),
+                "names the vision fallback env var: {message}"
+            );
+        }
+    }
+
+    /// t3 AC3: unparseable model output surfaces as the typed
+    /// UnparseableOutput error — naming the expected shape, carrying the
+    /// truncated raw text, and ticking the rejection counter — never a
+    /// silent empty result. The structured mode's text-less chat_json
+    /// response is the same class.
+    #[tokio::test]
+    async fn layer_pass_unparseable_output_surfaces_as_a_typed_error_with_counters() {
+        let inference = mock_layer_inference("not-json {{{".to_string(), String::new(), false);
+        let schema = mock_layer_schema();
+        let prompts = vec!["analyze chunk 0".to_string()];
+        let (attempts, rejections) = (AtomicU64::new(0), AtomicU64::new(0));
+        let error = crate::layer_pass::run_layer_pass::<MockLayerPassOutput>(
+            &inference,
+            &schema,
+            PassMode::PromptSchema,
+            Some("test-pass-model"),
+            &prompts,
+            0,
+            1,
+            &attempts,
+            &rejections,
+            "MockLayerPassOutput {\"items\": [...]}",
+        )
+        .await
+        .expect_err("unparseable output must surface");
+        let message = error.to_string();
+        assert!(
+            message.contains("failed to parse"),
+            "names the unparseable-output class: {message}"
+        );
+        assert!(
+            message.contains("MockLayerPassOutput"),
+            "names the expected shape: {message}"
+        );
+        assert!(
+            message.contains("not-json"),
+            "carries the raw model output: {message}"
+        );
+        assert_eq!(attempts.load(Ordering::Relaxed), 1);
+        assert_eq!(rejections.load(Ordering::Relaxed), 1);
+
+        // A chat_json response with no "text" member — the structured
+        // mode's unparseable class.
+        let broken = mock_layer_inference(
+            String::new(),
+            serde_json::json!({"unexpected": true}).to_string(),
+            true,
+        );
+        let error = crate::layer_pass::run_layer_pass::<MockLayerPassOutput>(
+            &broken,
+            &schema,
+            PassMode::Structured,
+            Some("test-pass-model"),
+            &prompts,
+            0,
+            1,
+            &AtomicU64::new(0),
+            &AtomicU64::new(0),
+            "MockLayerPassOutput {\"items\": [...]}",
+        )
+        .await
+        .expect_err("a text-less chat_json response must surface");
+        assert!(
+            error.to_string().contains("chat_json"),
+            "names the structured-mode contract: {error}"
+        );
+    }
+
+    /// The chunk-plan bounds are the caller's contract with the core —
+    /// violations surface as the typed ChunkPlan error, never a panic.
+    #[tokio::test]
+    async fn layer_pass_rejects_invalid_chunk_plans() {
+        let inference = mock_layer_inference(mock_layer_response(), String::new(), false);
+        let schema = mock_layer_schema();
+        let prompts = vec!["analyze chunk 0".to_string()];
+        let expected = "MockLayerPassOutput {\"items\": [...]}";
+        for (resume_from, max_chunks, name) in [
+            (0usize, 0usize, "max_chunks zero"),
+            (2, 1, "resume past plan"),
+        ] {
+            let error = crate::layer_pass::run_layer_pass::<MockLayerPassOutput>(
+                &inference,
+                &schema,
+                PassMode::PromptSchema,
+                Some("test-pass-model"),
+                &prompts,
+                resume_from,
+                max_chunks,
+                &AtomicU64::new(0),
+                &AtomicU64::new(0),
+                expected,
+            )
+            .await
+            .expect_err(name);
+            assert!(
+                error.to_string().contains("invalid chunk plan"),
+                "{name} surfaces as ChunkPlan: {error}"
+            );
+        }
+        let empty: Vec<String> = Vec::new();
+        let error = crate::layer_pass::run_layer_pass::<MockLayerPassOutput>(
+            &inference,
+            &schema,
+            PassMode::PromptSchema,
+            Some("test-pass-model"),
+            &empty,
+            0,
+            1,
+            &AtomicU64::new(0),
+            &AtomicU64::new(0),
+            expected,
+        )
+        .await
+        .expect_err("empty plan rejected");
+        assert!(
+            error.to_string().contains("no chunks"),
+            "the empty plan names the caller's duty: {error}"
         );
     }
 

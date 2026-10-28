@@ -559,3 +559,18 @@ recomputable from the ledger.
   fmt clean. Task card in Review
   (`09ba1b37-b95a-4814-ad39-025192faf1fc`); goal judged `continue`
   (criterion 4 partial).
+- 2026-10-28 — 1a live-verified after the operator's rebuild:
+  `educt_get_transcript` on the Vonnegut sample returns the derived
+  `review` view (named no-speaker-layer state, 14 blocks from the
+  paragraph layer) — the running server carries the feature, not just
+  the tree.
+- 2026-10-28 — Task 1b (gated lexical speaker post-pass)
+  worker-delivered, green-gated, **uncommitted**: `educt_speaker_pass`
+  gains `correct_existing` (text source) with the deterministic ≤5-word
+  locality gate — long rewrites revert with a surfaced refusal; typed
+  preconditions for the missing layer and the wrong source. Suites:
+  hkask-mcp-media 517/517 (shared tree also green with the concurrently
+  landing shot-pass stream); `./script/clippy` exit 0; fmt clean. Task
+  card Done (`943ef3ff-2410-4a05-891e-36a3dbc70e42`); the live
+  multi-speaker spot-check is named open on the card (no such recording
+  in the store; the Phase 2/4 dev set supplies it).

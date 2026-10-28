@@ -1126,7 +1126,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Run the speaker pass over a stored transcript. Source \"audio\" (default): an audio-capable model hears the recording and attributes speaker turns as word-index spans — the primary source. Source \"text\": the text-cue pass (works with every model, approximate). Both produce the same validated SpeakerLayer; provenance records which source produced it. The response carries pass stats."
+        description = "Run the speaker pass over a stored transcript. Source \"audio\" (default): an audio-capable model hears the recording and attributes speaker turns as word-index spans — the primary source. Source \"text\": the text-cue pass (works with every model, approximate). Both produce the same validated SpeakerLayer; provenance records which source produced it. correct_existing=true (with source \"text\") runs the gated correction pass instead: it refines the latest stored speaker layer — the locality gate accepts only contiguous changes of at most 5 words and reverts longer rewrites with a surfaced refusal. The response carries pass stats."
     )]
     pub async fn educt_speaker_pass(
         &self,
@@ -1135,6 +1135,7 @@ impl MediaServer {
             model,
             source,
             structured,
+            correct_existing,
         }): Parameters<EductSpeakerPassRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_speaker_pass", async {
@@ -1162,6 +1163,66 @@ impl MediaServer {
             } else {
                 PassMode::PromptSchema
             };
+            // Gated correction mode (plan §7 Phase 1b): refine the latest
+            // stored speaker layer instead of attributing from scratch.
+            // The locality gate decides what lands — the model only
+            // proposes; long rewrites revert with a surfaced refusal.
+            if correct_existing.unwrap_or(false) {
+                if !matches!(source.as_deref(), Some("text")) {
+                    return Err(McpToolError::invalid_argument(
+                        "speaker correction mode (correct_existing=true) requires \
+                         source \"text\" — it is the lexical post-pass; run the \
+                         audio or text pass without correct_existing to attribute \
+                         from scratch",
+                    ));
+                }
+                let layers = transcript_store::list_layers(driver, &transcript_id)
+                    .map_err(map_store_error)?;
+                let Some(existing) = layers.iter().rev().find_map(|record| match &record.layer {
+                    TranscriptLayer::Speaker(layer) => Some(layer),
+                    _ => None,
+                }) else {
+                    return Err(McpToolError::not_found(format!(
+                        "no speaker layer found for transcript {transcript_id} — the \
+                         correction pass refines an existing attribution; run \
+                         educt_speaker_pass first"
+                    )));
+                };
+                let proposed = transcript_pass::run_speaker_correction_pass(
+                    &self.vision_port,
+                    &self.template_env,
+                    &bundle,
+                    existing,
+                    mode,
+                    model.as_deref(),
+                )
+                .await
+                .map_err(map_pass_error)?;
+                let (gated_spans, gate) = transcript_pass::gate_speaker_corrections(
+                    bundle.words.len(),
+                    &existing.spans,
+                    &proposed.spans,
+                );
+                let gated = crate::transcript_layers::SpeakerLayer {
+                    provenance: proposed.provenance,
+                    spans: gated_spans,
+                };
+                let record = transcript_store::store_layer(
+                    driver,
+                    &transcript_id,
+                    &TranscriptLayer::Speaker(gated),
+                )
+                .map_err(map_store_error)?;
+                let mut result = serde_json::json!({
+                    "stored": record,
+                    "gate": gate,
+                    "pass_stats": transcript_pass::speaker_correction_pass_stats(),
+                });
+                if let Some(note) = gate.reverted_note() {
+                    result["gate_note"] = serde_json::json!(note);
+                }
+                return Ok(result);
+            }
             // Source dispatch: "audio" (default — the scaffold's primary,
             // decision 7) or "text" (the text-cue pass). An audio failure
             // surfaces as its own error — retry with source "text" is the

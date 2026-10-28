@@ -82,7 +82,8 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
         | "job_cancel"
         | "youtube_search"
         | "video_fetch"
-        | "layers_store" => Some(DATASET),
+        | "layers_store"
+        | "layers_shot_pass" => Some(DATASET),
         _ => None,
     }
 }

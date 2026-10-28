@@ -228,6 +228,13 @@ pub struct EductSpeakerPassRequest {
     /// (provider-enforced JSON Schema). Not supported with source
     /// "audio" — the audio path is prompt-schema. Default false.
     pub structured: Option<bool>,
+    /// Gated correction mode (plan §7 Phase 1b): instead of attributing
+    /// from scratch, refine the latest stored speaker layer. The model
+    /// proposes corrections to the current attribution and the
+    /// deterministic locality gate accepts only contiguous changes of at
+    /// most 5 words, reverting longer rewrites with a surfaced refusal.
+    /// Requires source "text". Default false.
+    pub correct_existing: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -801,4 +808,20 @@ pub struct LayersListRequest {
 pub struct LayersGetRequest {
     /// The layer ID returned by layers_store.
     pub layer_id: String,
+}
+
+/// Request to detect shot boundaries as a deterministic layer over a video
+/// file.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LayersShotPassRequest {
+    /// Absolute local path (or URL) of the source video to analyze.
+    pub media_path: String,
+    /// Optional gallery asset ID linking the layer to a gallery asset.
+    pub gallery_asset_id: Option<String>,
+    /// Scene score a frame must exceed to count as a cut, in (0.0, 1.0]
+    /// (ffmpeg's conventional default 0.3 when omitted).
+    pub threshold: Option<f64>,
+    /// Minimum shot length in seconds — a boundary closer than this to the
+    /// previous one is suppressed (default 0.5; 0.0 disables the guard).
+    pub min_shot_length: Option<f64>,
 }

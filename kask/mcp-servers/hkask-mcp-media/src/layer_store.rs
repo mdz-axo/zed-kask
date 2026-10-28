@@ -121,17 +121,24 @@ impl MediaLayerKind {
 /// Provenance envelope carried by every media layer — which model, which
 /// prompt template, when. Mirrors `transcript_layers::LayerProvenance`; the
 /// media layer store owns its own envelope so the two layer families can
-/// evolve their provenance independently (the shot pass will record filter
-/// parameters here).
+/// evolve their provenance independently (the shot pass records its filter
+/// and threshold parameters here).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct LayerProvenance {
     /// The model that produced the layer (an inference-catalog label, or
     /// "user" for researcher-authored annotations).
     pub model: String,
-    /// The prompt template that produced it (template name or inline hash).
+    /// The prompt template that produced it (template name or inline hash;
+    /// deterministic producers use a producer-scoped template label like
+    /// "ffmpeg:scdet").
     pub prompt_template: String,
     /// RFC 3339 creation timestamp.
     pub created_at: String,
+    /// Producer parameters (the shot pass's select filter and threshold,
+    /// a pass's sampling controls) — absent for researcher-authored layers.
+    /// Persisted inside `provenance_json`, so no schema change is needed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parameters: Option<serde_json::Value>,
 }
 
 /// One layer item — a time range over the source media in source-PTS
@@ -720,6 +727,7 @@ mod tests {
             model: "test-model".to_string(),
             prompt_template: "test-template".to_string(),
             created_at: "2026-10-27T00:00:00Z".to_string(),
+            parameters: None,
         }
     }
 

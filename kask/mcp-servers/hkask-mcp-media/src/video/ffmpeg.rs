@@ -22,6 +22,15 @@ pub(crate) struct ExtractedFrames {
     pub(crate) timestamps_sec: Vec<f64>,
 }
 
+/// A scene-detection run's result: the exact select filter applied (the
+/// provenance record) and the selected frames' source-PTS seconds in frame
+/// order — frame 0 first, then every detected cut boundary.
+#[derive(Debug)]
+pub(crate) struct SceneDetection {
+    pub(crate) filter: String,
+    pub(crate) boundaries_sec: Vec<f64>,
+}
+
 impl ExtractedFrames {
     pub(crate) fn is_empty(&self) -> bool {
         self.paths.is_empty()
@@ -98,6 +107,10 @@ pub struct VideoProbeInfo {
     pub codec: String,
     pub fps: f32,
     pub bit_rate: u64,
+    /// Whether the input carries a video stream — the stream-requirement
+    /// signal the video passes degrade on (an audio-only file probes fine
+    /// but has none; width/height/fps stay zero).
+    pub has_video_stream: bool,
 }
 
 /// Parse only selected-frame showinfo records; no ordinal-based fallback.
@@ -363,6 +376,7 @@ impl FfmpegRunner {
             codec,
             fps: fps as f32,
             bit_rate,
+            has_video_stream: video_stream.is_some(),
         })
     }
 
@@ -723,6 +737,71 @@ impl FfmpegRunner {
         Ok(frames)
     }
 
+    /// A scene-detection run: the exact select filter used (recorded in the
+    /// stored layer's provenance) and the strictly increasing source-PTS
+    /// seconds of the frames the filter selected. The
+    /// `isnan(prev_selected_t)` term selects frame 0 unconditionally, so the
+    /// first boundary is the video's start; every further boundary is a cut
+    /// (scene score above the threshold, subject to the minimum shot
+    /// length). `showinfo` runs after selection with `-copyts`, so the PTS
+    /// belongs to the source timeline — the same parsing contract as
+    /// `extract_keyframes`.
+    pub(crate) async fn detect_scene_changes(
+        &self,
+        input: &str,
+        threshold: f64,
+        min_shot_sec: f64,
+    ) -> Result<SceneDetection, crate::MediaError> {
+        if !self.available {
+            return Err(crate::MediaError::FfmpegUnavailable);
+        }
+        if !threshold.is_finite() || threshold <= 0.0 || threshold > 1.0 {
+            return Err(crate::MediaError::FfmpegFailed(format!(
+                "Invalid scene threshold {threshold} — must be within (0.0, 1.0]"
+            )));
+        }
+        if !min_shot_sec.is_finite() || min_shot_sec < 0.0 {
+            return Err(crate::MediaError::FfmpegFailed(format!(
+                "Invalid minimum shot length {min_shot_sec} — must be >= 0.0"
+            )));
+        }
+        let filter = format!(
+            "select='isnan(prev_selected_t)+gte(t-prev_selected_t,{min_shot_sec:.3})*gt(scene,{threshold:.3})',showinfo"
+        );
+        let mut command = Command::new(&self.ffmpeg_path);
+        command
+            .arg("-copyts")
+            .arg("-i")
+            .arg(input)
+            .arg("-map")
+            .arg("0:v:0")
+            .arg("-vf")
+            .arg(&filter)
+            .arg("-f")
+            .arg("null")
+            .arg("-");
+        let output = command.output().await.map_err(|error| {
+            crate::MediaError::FfmpegFailed(format!("scene detection spawn: {error}"))
+        })?;
+        if !output.status.success() {
+            return Err(crate::MediaError::FfmpegFailed(format!(
+                "scene detection failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+        let boundaries_sec = selected_frame_timestamps(&String::from_utf8_lossy(&output.stderr))?;
+        tracing::info!(
+            target: "hkask.mcp.media.ffmpeg",
+            input = %input,
+            boundaries = boundaries_sec.len(),
+            "Scene changes detected"
+        );
+        Ok(SceneDetection {
+            filter,
+            boundaries_sec,
+        })
+    }
+
     /// Trim an audio file to specified start/end times.
     /// Uses stream copy (-c copy) for fast, lossless trimming.
     pub async fn audio_trim(
@@ -826,6 +905,58 @@ mod tests {
         assert!(error.to_string().contains("Missing source PTS"));
         assert_eq!(std::fs::read_dir(output_dir)?.count(), 0);
         Ok(())
+    }
+
+    /// Scene detection records the exact select filter (the provenance
+    /// record) and parses the selected frames' showinfo PTS from stderr —
+    /// the same observed-PTS contract as frame extraction.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn scene_detection_records_the_filter_and_parses_selected_pts()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let (runner, _output_dir) = fake_ffmpeg_runner(
+            &root,
+            "scdet.sh",
+            "#!/bin/sh\nprintf '[Parsed_showinfo_1] n: 0 pts_time:0.000\\n[Parsed_showinfo_1] n: 1 pts_time:1.000\\n' >&2\n",
+        )?;
+        let detection = runner
+            .detect_scene_changes("source.mp4", 0.3, 0.5)
+            .await
+            .expect("scene detection parses the fake output");
+        assert_eq!(detection.boundaries_sec, vec![0.0, 1.0]);
+        assert!(
+            detection.filter.contains("gt(scene,0.300)"),
+            "the filter records the threshold: {}",
+            detection.filter
+        );
+        assert!(
+            detection.filter.contains("gte(t-prev_selected_t,0.500)"),
+            "the filter records the minimum shot length: {}",
+            detection.filter
+        );
+        assert!(
+            detection
+                .filter
+                .starts_with("select='isnan(prev_selected_t)+")
+        );
+        Ok(())
+    }
+
+    /// Invalid detection controls fail before any ffmpeg spawn.
+    #[tokio::test]
+    async fn scene_detection_rejects_invalid_controls() {
+        let runner = FfmpegRunner::detect();
+        for (threshold, min_shot) in [(0.0, 0.5), (1.5, 0.5), (-0.1, 0.5), (0.3, -1.0)] {
+            let error = runner
+                .detect_scene_changes("source.mp4", threshold, min_shot)
+                .await
+                .expect_err("invalid controls must fail");
+            assert!(
+                error.to_string().contains("Invalid"),
+                "names the invalid control: {error}"
+            );
+        }
     }
 
     /// Write a fake ffmpeg shell script, mark it executable, and build a

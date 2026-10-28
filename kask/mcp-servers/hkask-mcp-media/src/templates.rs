@@ -25,6 +25,10 @@ pub fn create_env() -> Result<Environment<'static>, crate::MediaError> {
         ("educt_paragraph_pass", EDUCT_PARAGRAPH_PASS),
         ("educt_speaker_pass", EDUCT_SPEAKER_PASS),
         ("educt_speaker_audio_pass", EDUCT_SPEAKER_AUDIO_PASS),
+        (
+            "educt_speaker_correction_pass",
+            EDUCT_SPEAKER_CORRECTION_PASS,
+        ),
         ("educt_correction_pass", EDUCT_CORRECTION_PASS),
         ("educt_highlight_pass", EDUCT_HIGHLIGHT_PASS),
     ];
@@ -102,6 +106,47 @@ Rules:
   inclusive.
 - "speaker" is a short label: "speaker-1", "speaker-2", or an inferred
   role ("interviewer", "host") — never empty.
+- "confidence" is between 0.0 and 1.0; use lower values for uncertain
+  attributions.
+- Output the JSON object only — no prose, no code fences."#;
+
+/// Educt speaker correction pass — the gated lexical post-pass (plan §7
+/// Phase 1b): the model re-reads the transcript WITH the current
+/// attribution and proposes corrections to short, lexically-resolvable
+/// attribution errors. Locality is NOT trusted to the model — the
+/// deterministic gate (transcript_pass::gate_speaker_corrections) accepts
+/// only contiguous changes of at most
+/// SPEAKER_CORRECTION_MAX_LOCALITY_WORDS and reverts longer rewrites with
+/// a surfaced refusal (the DiarizationLM boundary: text-only corrections
+/// of long monologues measurably corrupt multi-speaker attribution).
+const EDUCT_SPEAKER_CORRECTION_PASS: &str = r#"You are correcting speaker attribution in a transcript.
+
+The transcript is a sequence of indexed words. Each token is INDEX:WORD —
+INDEX is the word's 0-based position, WORD is the word as spoken.
+
+Transcript ({{ words_count }} words, indices 0..{{ last_word_index }}):
+{{ words }}
+
+Current speaker attribution (start_word..=end_word, speaker, confidence):
+{{ request }}
+
+Some words may be attributed to the wrong speaker. Re-read the transcript
+and return the corrected attribution — the same word ranges or adjusted
+ranges, with the speakers you believe are correct. Correct ONLY errors the
+text itself resolves: short turn-boundary mistakes, backchannels,
+interjections attributed to the wrong turn. Do NOT reassign long
+monologues on textual intuition alone.
+
+Return ONLY a JSON object matching this JSON Schema:
+{{ schema }}
+
+Rules:
+- "spans" covers the speaker turns you can attribute, in transcript
+  order, without overlaps (every word belongs to at most one span).
+- Every index must be an integer between 0 and {{ last_word_index }},
+  inclusive.
+- "speaker" is a short label — keep the existing labels where they are
+  right ("speaker-1", "speaker-2", or an inferred role) — never empty.
 - "confidence" is between 0.0 and 1.0; use lower values for uncertain
   attributions.
 - Output the JSON object only — no prose, no code fences."#;

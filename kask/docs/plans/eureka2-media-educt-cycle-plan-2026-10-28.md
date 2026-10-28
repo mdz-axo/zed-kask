@@ -122,9 +122,9 @@ may be vetoed on functional grounds at any time:
   change discipline (D-seams, gates, pathspec commits); the cycle proposes and
   never commits.
 - **Phase 3 — Resolution.** Algedonic review (single selection surface, you
-  chair); study report from the template; memory candidates only, never
-  written; T4 reconciliation checklist; net-surface accounting vs the 71-tool
-  pin.
+  chair); study report from the template with EUR-1/EUR-2 lisp_eval receipts
+  (lesson capture is automatic thread distillation — no memory-candidate step);
+  T4 reconciliation checklist; net-surface accounting vs the tool-count pin.
 
 ## 5. Default funding portfolio
 
@@ -203,8 +203,10 @@ prediction is frozen now, before any fixture runs.
    (7) no new server/skill machinery created.
 2. Recreate the Open Questions board (5 columns); open Phase 0 with the
    current-condition brief.
-3. Templates in play: eureka-generate, eureka-triage-brief, eureka-study-report,
-   eureka-memory-candidate [tree].
+3. Templates in play: eureka-generate, eureka-triage-brief, eureka-study-report
+   [tree]. (Corrected 2026-10-28: the original text listed a fourth template,
+   eureka-memory-candidate — retired from the skill 2026-10-24; lesson capture
+   is automatic thread distillation and the loop proposes no memory candidates.)
 
 ## 8. Governance — what remains the operator's
 

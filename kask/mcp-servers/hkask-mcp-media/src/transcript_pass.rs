@@ -38,6 +38,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub const PARAGRAPH_PASS_TEMPLATE: &str = "educt_paragraph_pass";
 pub const SPEAKER_PASS_TEMPLATE: &str = "educt_speaker_pass";
 pub const SPEAKER_AUDIO_PASS_TEMPLATE: &str = "educt_speaker_audio_pass";
+pub const SPEAKER_CORRECTION_PASS_TEMPLATE: &str = "educt_speaker_correction_pass";
 pub const CORRECTION_PASS_TEMPLATE: &str = "educt_correction_pass";
 pub const HIGHLIGHT_PASS_TEMPLATE: &str = "educt_highlight_pass";
 
@@ -59,6 +60,8 @@ static PARAGRAPH_PASS_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 static PARAGRAPH_PASS_REJECTIONS: AtomicU64 = AtomicU64::new(0);
 static SPEAKER_PASS_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 static SPEAKER_PASS_REJECTIONS: AtomicU64 = AtomicU64::new(0);
+static SPEAKER_CORRECTION_PASS_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
+static SPEAKER_CORRECTION_PASS_REJECTIONS: AtomicU64 = AtomicU64::new(0);
 static CORRECTION_PASS_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 static CORRECTION_PASS_REJECTIONS: AtomicU64 = AtomicU64::new(0);
 static HIGHLIGHT_PASS_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
@@ -157,6 +160,15 @@ pub fn paragraph_pass_stats() -> serde_json::Value {
 /// The accumulated speaker-pass measurement.
 pub fn speaker_pass_stats() -> serde_json::Value {
     pass_stats_json(&SPEAKER_PASS_ATTEMPTS, &SPEAKER_PASS_REJECTIONS)
+}
+
+/// The accumulated speaker-correction-pass measurement (the gated
+/// lexical post-pass, plan §7 Phase 1b).
+pub fn speaker_correction_pass_stats() -> serde_json::Value {
+    pass_stats_json(
+        &SPEAKER_CORRECTION_PASS_ATTEMPTS,
+        &SPEAKER_CORRECTION_PASS_REJECTIONS,
+    )
 }
 
 /// The accumulated correction-pass measurement.
@@ -454,6 +466,216 @@ pub async fn run_speaker_pass(
         &TranscriptLayer::Speaker(layer.clone()),
         bundle.words.len(),
         &SPEAKER_PASS_REJECTIONS,
+        mode,
+    )?;
+    Ok(layer)
+}
+
+/// The locality boundary for lexical speaker corrections (plan §7 Phase
+/// 1b — the DiarizationLM boundary, plan ref [3]): text-only corrections
+/// of contiguous disagreement runs longer than this measurably corrupt
+/// multi-speaker attribution (long-monologue speaker collapse), so the
+/// gate reverts them to the existing labels.
+pub const SPEAKER_CORRECTION_MAX_LOCALITY_WORDS: usize = 5;
+
+/// The gate's accounting, surfaced with every correction result —
+/// refusals are never silent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct SpeakerCorrectionGate {
+    pub max_locality_words: usize,
+    /// Disagreement runs at or below the locality bound — accepted.
+    pub runs_accepted: usize,
+    /// Disagreement runs above the locality bound — reverted to the
+    /// existing labels.
+    pub runs_reverted: usize,
+    pub words_accepted: usize,
+    pub words_reverted: usize,
+}
+
+impl SpeakerCorrectionGate {
+    /// The surfaced refusal when any run was reverted — named, never a
+    /// silent trim.
+    pub fn reverted_note(&self) -> Option<String> {
+        (self.runs_reverted > 0).then(|| {
+            format!(
+                "{} proposed change(s) spanned more than {} consecutive \
+                 words and were reverted to the existing labels — the \
+                 locality gate: text alone cannot resolve which speaker \
+                 holds a long monologue",
+                self.runs_reverted, self.max_locality_words
+            )
+        })
+    }
+}
+
+/// Expand validated spans to per-word labels; the clamp is insurance
+/// against a mismatched words_count, never a correctness path (stored
+/// layers are in-bounds and disjoint).
+fn spans_to_word_labels(words_count: usize, spans: &[SpeakerSpan]) -> Vec<Option<(String, f64)>> {
+    let mut labels = vec![None; words_count];
+    for span in spans {
+        for word in span.start_word..=span.end_word.min(words_count.saturating_sub(1)) {
+            labels[word] = Some((span.speaker.clone(), span.confidence));
+        }
+    }
+    labels
+}
+
+/// Enforce the locality gate over proposed speaker corrections: expand
+/// the existing and proposed spans to per-word labels, diff into maximal
+/// disagreement runs, accept each run at or below the bound, revert
+/// longer runs to the existing labels, and rebuild disjoint spans from
+/// the merged per-word labels (a rebuilt span carries the minimum
+/// confidence of the words it covers — the span's claim is its weakest
+/// word). Pure and deterministic: the model proposes, this decides.
+pub fn gate_speaker_corrections(
+    words_count: usize,
+    existing: &[SpeakerSpan],
+    proposed: &[SpeakerSpan],
+) -> (Vec<SpeakerSpan>, SpeakerCorrectionGate) {
+    let existing_words = spans_to_word_labels(words_count, existing);
+    let proposed_words = spans_to_word_labels(words_count, proposed);
+    let mut take_proposed = vec![false; words_count];
+    let mut gate = SpeakerCorrectionGate {
+        max_locality_words: SPEAKER_CORRECTION_MAX_LOCALITY_WORDS,
+        runs_accepted: 0,
+        runs_reverted: 0,
+        words_accepted: 0,
+        words_reverted: 0,
+    };
+    // Maximal disagreement runs: a run opens at the first word whose
+    // speaker label differs between the two views and closes at the
+    // first word that agrees again (the sentinel iteration at
+    // `words_count` closes a trailing run).
+    let mut run_start = 0usize;
+    let mut in_run = false;
+    for word in 0..=words_count {
+        let differs = word < words_count
+            && existing_words[word]
+                .as_ref()
+                .map(|(label, _)| label.as_str())
+                != proposed_words[word]
+                    .as_ref()
+                    .map(|(label, _)| label.as_str());
+        if differs {
+            if !in_run {
+                run_start = word;
+                in_run = true;
+            }
+        } else if in_run {
+            in_run = false;
+            let run_len = word - run_start;
+            if run_len <= gate.max_locality_words {
+                gate.runs_accepted += 1;
+                gate.words_accepted += run_len;
+                for accepted in &mut take_proposed[run_start..word] {
+                    *accepted = true;
+                }
+            } else {
+                gate.runs_reverted += 1;
+                gate.words_reverted += run_len;
+            }
+        }
+    }
+    let merged: Vec<Option<(String, f64)>> = (0..words_count)
+        .map(|word| {
+            if take_proposed[word] {
+                proposed_words[word].clone()
+            } else {
+                existing_words[word].clone()
+            }
+        })
+        .collect();
+    let mut spans: Vec<SpeakerSpan> = Vec::new();
+    let mut index = 0usize;
+    while index < words_count {
+        let Some((speaker, confidence)) = merged[index].clone() else {
+            index += 1;
+            continue;
+        };
+        let start = index;
+        let mut min_confidence = confidence;
+        index += 1;
+        while index < words_count
+            && merged[index]
+                .as_ref()
+                .is_some_and(|(next, _)| next == &speaker)
+        {
+            if let Some((_, next_confidence)) = merged[index].as_ref() {
+                min_confidence = min_confidence.min(*next_confidence);
+            }
+            index += 1;
+        }
+        spans.push(SpeakerSpan {
+            start_word: start,
+            end_word: index - 1,
+            speaker,
+            confidence: min_confidence,
+        });
+    }
+    (spans, gate)
+}
+
+/// Render the current attribution for the correction prompt: one line
+/// per span, the form the model re-reads.
+fn current_attribution_request(spans: &[SpeakerSpan]) -> String {
+    spans
+        .iter()
+        .map(|span| {
+            format!(
+                "{}..={}: {} (confidence {:.2})",
+                span.start_word, span.end_word, span.speaker, span.confidence
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Run the speaker correction pass (the gated lexical post-pass, plan
+/// §7 Phase 1b): the model re-reads the transcript and the CURRENT
+/// attribution, then proposes corrections. Locality is never trusted to
+/// the model — the caller applies [`gate_speaker_corrections`] before
+/// storing.
+pub async fn run_speaker_correction_pass(
+    inference: &Arc<dyn InferencePort>,
+    template_env: &Environment<'static>,
+    bundle: &TranscriptBundle,
+    existing: &SpeakerLayer,
+    mode: PassMode,
+    model_override: Option<&str>,
+) -> Result<SpeakerLayer, PassError> {
+    if bundle.words.is_empty() {
+        return Err(PassError::NoWordTimings);
+    }
+    let schema = serde_json::to_string(&schemars::schema_for!(SpeakerPassOutput))
+        .map_err(|e| PassError::Prompt(format!("schema serialization: {e}")))?;
+    let current = current_attribution_request(&existing.spans);
+    let (output, model) = run_pass_core::<SpeakerPassOutput>(
+        inference,
+        template_env,
+        SPEAKER_CORRECTION_PASS_TEMPLATE,
+        &schema,
+        Some(&current),
+        &bundle.words,
+        mode,
+        model_override,
+        &SPEAKER_CORRECTION_PASS_ATTEMPTS,
+        &SPEAKER_CORRECTION_PASS_REJECTIONS,
+        "SpeakerPassOutput {\"spans\": [{start_word, end_word, speaker, confidence}]}",
+    )
+    .await?;
+    let layer = SpeakerLayer {
+        provenance: LayerProvenance {
+            model,
+            prompt_template: SPEAKER_CORRECTION_PASS_TEMPLATE.to_string(),
+            created_at: hkask_types::time::now_rfc3339(),
+        },
+        spans: output.spans,
+    };
+    validate_or_reject(
+        &TranscriptLayer::Speaker(layer.clone()),
+        bundle.words.len(),
+        &SPEAKER_CORRECTION_PASS_REJECTIONS,
         mode,
     )?;
     Ok(layer)
@@ -769,6 +991,130 @@ mod tests {
             assert!(stats.get("rejection_rate").is_some());
             assert!(stats.get("structured").is_some(), "the A/B measurement");
         }
+    }
+
+    fn gate_span(
+        start_word: usize,
+        end_word: usize,
+        speaker: &str,
+        confidence: f64,
+    ) -> SpeakerSpan {
+        SpeakerSpan {
+            start_word,
+            end_word,
+            speaker: speaker.to_string(),
+            confidence,
+        }
+    }
+
+    /// dcterms:identifier: `gate_speaker_corrections`
+    /// expect: A short disagreement run (≤ the locality bound) is
+    /// accepted and a long one reverted — the DiarizationLM boundary
+    /// enforced deterministically, with the refusal counted and named.
+    #[test]
+    fn gate_accepts_short_runs_and_reverts_long_runs() {
+        let existing = vec![gate_span(0, 11, "speaker-1", 0.9)];
+        let proposed = vec![
+            gate_span(0, 0, "speaker-2", 0.8),
+            gate_span(1, 1, "speaker-1", 0.95),
+            gate_span(2, 11, "speaker-2", 0.7),
+        ];
+        let (spans, gate) = gate_speaker_corrections(12, &existing, &proposed);
+        assert_eq!(
+            gate,
+            SpeakerCorrectionGate {
+                max_locality_words: 5,
+                runs_accepted: 1,
+                runs_reverted: 1,
+                words_accepted: 1,
+                words_reverted: 10,
+            }
+        );
+        // Word 0 takes the proposed label; the long rewrite reverts to
+        // the existing labels.
+        assert_eq!(
+            spans,
+            vec![
+                gate_span(0, 0, "speaker-2", 0.8),
+                gate_span(1, 11, "speaker-1", 0.9),
+            ]
+        );
+        assert!(
+            gate.reverted_note()
+                .is_some_and(|note| note.contains("reverted"))
+        );
+    }
+
+    #[test]
+    fn gate_boundary_run_of_exactly_five_is_accepted() {
+        let existing = vec![gate_span(0, 11, "speaker-1", 0.9)];
+        let proposed = vec![
+            gate_span(0, 4, "speaker-2", 0.8),
+            gate_span(5, 11, "speaker-1", 0.9),
+        ];
+        let (spans, gate) = gate_speaker_corrections(12, &existing, &proposed);
+        assert_eq!(gate.runs_accepted, 1);
+        assert_eq!(gate.runs_reverted, 0);
+        assert_eq!(
+            spans,
+            vec![
+                gate_span(0, 4, "speaker-2", 0.8),
+                gate_span(5, 11, "speaker-1", 0.9),
+            ]
+        );
+        assert_eq!(gate.reverted_note(), None);
+    }
+
+    #[test]
+    fn gate_coverage_changes_are_locality_gated_too() {
+        // Proposed drops words 2..=4 entirely: a coverage disagreement,
+        // short enough to accept — the rebuilt spans leave the uncovered
+        // gap unattributed (gaps are legal; review flags surface them).
+        let existing = vec![gate_span(0, 4, "speaker-1", 0.9)];
+        let proposed = vec![gate_span(0, 1, "speaker-1", 0.9)];
+        let (spans, gate) = gate_speaker_corrections(5, &existing, &proposed);
+        assert_eq!(gate.runs_accepted, 1);
+        assert_eq!(gate.words_accepted, 3);
+        assert_eq!(spans, vec![gate_span(0, 1, "speaker-1", 0.9)]);
+    }
+
+    #[test]
+    fn gate_rebuilt_spans_take_the_weakest_word_confidence() {
+        // An accepted run joining proposed words of differing confidence
+        // yields one span carrying the minimum — the span's claim is its
+        // weakest word.
+        let existing = vec![gate_span(0, 2, "speaker-1", 0.9)];
+        let proposed = vec![
+            gate_span(0, 0, "speaker-2", 0.8),
+            gate_span(1, 2, "speaker-2", 0.6),
+        ];
+        let (spans, gate) = gate_speaker_corrections(3, &existing, &proposed);
+        assert_eq!(gate.runs_accepted, 1);
+        assert_eq!(spans, vec![gate_span(0, 2, "speaker-2", 0.6)]);
+    }
+
+    #[test]
+    fn gate_with_no_disagreement_returns_existing_labels() {
+        let existing = vec![gate_span(0, 2, "speaker-1", 0.9)];
+        let (spans, gate) = gate_speaker_corrections(3, &existing, &existing);
+        assert_eq!(spans, existing);
+        assert_eq!(gate.runs_accepted + gate.runs_reverted, 0);
+    }
+
+    #[test]
+    fn gate_with_nothing_at_all_is_empty_and_zeroed() {
+        let (spans, gate) = gate_speaker_corrections(0, &[], &[]);
+        assert!(spans.is_empty());
+        assert_eq!(
+            gate,
+            SpeakerCorrectionGate {
+                max_locality_words: 5,
+                runs_accepted: 0,
+                runs_reverted: 0,
+                words_accepted: 0,
+                words_reverted: 0,
+            }
+        );
     }
 
     #[test]
