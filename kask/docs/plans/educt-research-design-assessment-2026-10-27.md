@@ -2,8 +2,8 @@
 title: "educt transcript/video research and speaker-identity design assessment"
 audience: [operator, architects, developers]
 last_updated: 2026-10-27
-version: "1.0.0"
-status: "Research assessment and updated-plan review; no implementation or measurements"
+version: "1.0.1"
+status: "Research assessment and updated-plan review; no implementation or measurements; execution state rechecked at HEAD 6bcd04e894"
 domain: "Media / transcript capabilities"
 mds_categories: [domain, research]
 ---
@@ -16,6 +16,8 @@ mds_categories: [domain, research]
 Primary ledger: research run `258f6fd09a8285aa` (completed). The updated plan's
 independent earlier ledger is `e99d0ff4045bfb64`; its source claims were used only
 where the artifact was inspected or is explicitly downgraded below.
+Execution state was independently rechecked at HEAD `6bcd04e894` after a mid-review
+external commit; this changes delivery status only, not the research cutoff.
 
 Evidence labels:
 
@@ -240,10 +242,11 @@ storage/contracts, not acoustic attribution accuracy. A `SpeakerLayer` comment
 calling audio attribution “exact” is not evaluation evidence and should not be used
 as a capability claim.
 
-**Working-tree caveat:** uncommitted Phase 1a review-flag code is present
-(`transcript_review.rs`, `transcript_export.rs`, `tools/educt.rs`, and
-`hkask_mcp_media.rs` modifications). It is work in progress, not a demonstrated
-completed feature; no tests were run in this assessment.
+**Execution-state update:** Phase 1a review-flag code landed in commit
+`6d7caa0c65`, including `crates/media_panel/src/media_viewer.rs`, and its task is
+`done` on the live board. The plan records hkask-mcp-media 480/480, media_panel
+73/73, clippy, and fmt checks; those results were **not rerun** in this assessment.
+This delivery does not add acoustic diarization or cross-recording voice identity.
 
 ### 5.2 Reduct baseline and the class boundary
 
@@ -407,7 +410,7 @@ conversion. Keep model extraction failures and `unknown` visible as outcomes.
 |---|---|---|---|---|
 | 0 | Correct governance/storage/evaluation specifications | Prevents biometric, consent, and inflated-result failures; highest evidence strength | New protected store decision; corrected preregistration before seal | **Blocking** |
 | 0 | Acoustic diarization bake-off: Nemotron 3 native C++ vs CAM++/cluster candidate; external pyannote/DiariZen only as research comparators | Supplies the recording-local clusters identity needs; tests overlap/language/long-form directly | Target-hardware RTF/memory and DER/JER unknown; model terms review | **Blocking measurement** |
-| 1 | Review-confidence markers, labeled uncalibrated | Reduct-grounded review value; low integration effort; Phase 1a WIP exists | STT/LLM confidence may be uninformative; calibrate before numeric presentation | Accompanies enrollment quality review |
+| 1 | Review-confidence markers, labeled uncalibrated | Reduct-grounded review value; Phase 1a is worker-delivered | STT/LLM confidence may be uninformative; calibrate before numeric presentation | Accompanies enrollment quality review |
 | 1 | Bounded short-span speaker post-pass | DiarizationLM evidence; preserves immutable text | Replace one-recording spot-check with frozen WDER/cpWER comparison and long-monologue guard | Cleans clusters before embedding |
 | 1 | Section re-transcribe → candidate correction/realignment | Reduct-grounded; uses existing correction seam | Conflicts/timing reconciliation; no source mutation | Improves transcript without voice identity |
 | 1 | Typed overlap/evidence representation | Prevents silent mixed-speaker attribution | Current single-layer spans are disjoint; multi-label semantics and migration needed | **Prerequisite for honest overlap handling** |
@@ -436,21 +439,22 @@ following corrections are required for factual/technical integrity.
 |---|---|---|
 | **Critical** | Plan §5.2/T3 calls tables beside `face_registry` SQLCipher-protected. Current media DB is explicitly unencrypted and deliberately does not receive `HKASK_DB_PASSPHRASE` (`hkask_mcp_media.rs:536-546`). The registered variant repeats the false storage premise. | Specify a new protected store or encrypted migration and credential-path change before Phase 2. Correct the experiment genotype before any seal. |
 | **Critical** | Plan §0/§5.1/§5.5 and goal criteria equate annotation/naming with human/data-subject consent. `educt_annotation_create` explicitly says researcher-supplied, agent-mediated, not authenticated human identity (`tools/educt.rs:659-697`). | Keep D3 lifecycle, but call this an operator authorization record. Decide the actual consent/authority UX by deployment; do not claim legal/ethical compliance from the existing tool. |
-| **High** | Registered eval excludes overlap-flagged spans from identification errors. This hides a required hard condition and inflates end-to-end performance. | Score all trials; report clean diagnostic separately; count abstention/coverage correctly. |
-| **High** | Plan §8 uses a dev set for threshold pinning/reporting and lacks a frozen final test. CAM++ is the only registered “baseline”; no majority or simpler comparator/fitness exists. | Add session-disjoint dev/test and a real comparator, or redesign honestly as single-arm calibration with scientific headroom. No seal yet. |
+| **High** | Inspected experiment `exp_1d2d6140796a481eba7deb63fbfaf1f2` excludes overlap-flagged spans from identification errors. This hides a required hard condition and inflates end-to-end performance. | Score all trials; report clean diagnostic separately; count abstention/coverage correctly. |
+| **High** | Plan §8 uses a dev set for threshold pinning/reporting and lacks a frozen final test. The experiment's only variant, `var_2caa24f72efd4059adbf10c70b22f3de`, is CAM++ itself; no majority or simpler comparator/fitness exists. | Add session-disjoint dev/test and a real comparator, or redesign honestly as single-arm calibration with scientific headroom. No seal yet. |
 | **High** | “Existing annotation and speaker-label tools” do not provide typed suggestion confirmation/rejection, and one `SpeakerLayer` rejects overlap. | Add distinct suggestion/confirmation semantics and explicit overlap/evidence representation; do not mutate human/acoustic layers. |
 | **High** | Correcting a suggestion “may enroll” automatically (§5.3), enabling false-accept profile contamination. | Separate name confirmation from enrollment/profile updates; require an explicit authorized enrollment action. |
 | **Medium** | Meetily is called “proven”/the practical SOTA path. The PR is useful prototype evidence with self-reported build/tests, an initial unchecked manual-validation item, a maintainer-reported label problem, and later overlap commits [S20]. | Downgrade to prototype reference; evaluate independently. Do not generalize its initial VAD limitation to its later commits without qualification. |
 | **Medium** | “A model change means re-enrollment” is unnecessarily broad and cross-version incomparability is absolute. | Require fingerprint separation and recalibration; re-embed retained authorized spans where possible. Compatibility may only be claimed with artifact evidence and local validation. |
 | **Medium** | Memory decay is not an absolute retention limit; derived name/score layers are called “non-biometric,” obscuring personal-data/export questions [S33]. | Add explicit maximum-retention and deletion-scope decisions; call suggestion layers non-template personal data, not risk-free data. |
-| **Medium** | Plan status says no implementation code, but uncommitted Phase 1a files now exist. No validation was run here. Section 1c task id also differs from the live board: live `bf891388-20ea-457b-b7fb-e424c57a9c4a`. | Refresh execution state without counting WIP as delivered; correct the id. If the plan changes, use goal supersession rather than silently mutating the immutable spec. |
+| **Medium** | Plan status/execution text still says no implementation code and later calls Phase 1a uncommitted/in Review, but HEAD now contains `6d7caa0c65` and the task is `done`. Section 1c task id also differs from the live board: live `bf891388-20ea-457b-b7fb-e424c57a9c4a`. | Refresh execution state; correct the id. If the plan changes, use goal supersession rather than silently mutating the immutable spec. |
 | **Low** | Cloud alternatives are excluded by “D2's local-first consequence,” but D2 is suggest-only; local-first comes from the goal/platform constraint. | Correct the cross-reference. |
 | **Evidence update** | §10 still lists SRE24 full text and ECAPA as open gaps. The newer ledger inspected the official SRE24 plan and ECAPA paper; NISTIR 8271, ASVspoof 5, and the 2025 multi-talker WER paper also now supply stronger evaluation evidence. | Refresh references/gaps; retain SpeakerLM deployment and CoVoGER full-text limitations honestly. |
 
-Phase 0 existence checks succeeded: the goal and experiment records exist; the
-experiment has zero fitness records and no seal. The live board shows review flags
-in progress and the other Phase 1 tasks backlog. These are execution facts, not
-feature acceptance.
+Phase 0 existence checks used `kanban_goal_get`, `lineage_read`, and the live board:
+the goal and experiment `exp_1d2d6140796a481eba7deb63fbfaf1f2` exist; the
+experiment has zero fitness records and no seal. Review flags are `done`; 1b/1c
+remain backlog. These are execution facts, not independent feature acceptance or
+identity measurement.
 
 ## 10. Limitations, inaccessible sources, conflicts, and open decisions
 
@@ -464,6 +468,9 @@ feature acceptance.
   absence.
 - Community-1's raw model-card URL now requires authentication (HTTP 401); its public
   model page had previously been inspected. Gating itself is an adoption cost.
+- VoicePing's multilingual open-set page yielded a JS shell; its four-second probe /
+  four-enrollment-sample framing remains snippet-only. “Aurora” could not be
+  bibliographically resolved and was excluded. Neither is evidence of absence.
 - Multilingual/code-switching open-set identity, very short probes, and long-form
   speaker drift remain thin evidence areas for the exact local candidate stack.
 - Meetily's PR contains evolving overlap work; static summaries of its first revision
