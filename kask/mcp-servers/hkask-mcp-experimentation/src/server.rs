@@ -124,8 +124,8 @@ pub struct ExperimentProposeRequest {
     /// The typed rubric bundle — the machine-checkable eval contract
     /// (P1). Non-empty; at least one `metric` rubric and at least one
     /// `implementation` or `grounded_report` rubric; stable snake_case
-    /// ids; verification uses the same vocabulary as
-    /// `swarm_evaluate_local`'s evaluators (contains / not_contains /
+    /// ids; verification uses the same vocabulary as the execution
+    /// harnesses' evaluators (contains / not_contains /
     /// regex) plus `report_ref`.
     pub rubrics: Vec<Rubric>,
     /// The pre-registered prediction — the tiny controller (§P8.1). Its
