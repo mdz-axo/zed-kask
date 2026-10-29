@@ -192,13 +192,13 @@ fn validate_transcript_search(
 // Safety budget for literal matching, independent of recording count or result
 // count. Stored bundles/corrections still load one recording at a time; this is
 // a scan-work bound, not a bound on the size of an existing stored recording.
-const SEARCH_TEXT_BYTE_BUDGET: usize = 4 * 1024 * 1024;
+pub(crate) const SEARCH_TEXT_BYTE_BUDGET: usize = 4 * 1024 * 1024;
 
 /// Exact excerpts, not summaries. Only match starts in [start_byte, end_byte)
 /// are examined; a phrase crossing the end remains eligible (<=256 byte query).
 /// The caller validates UTF-8 boundaries. Word indices are inclusive in the
 /// working view, never invented from original words for unaligned corrections.
-fn lexical_citations(
+pub(crate) fn lexical_citations(
     working: &WorkingTranscript,
     query: &str,
     start_byte: usize,
@@ -335,7 +335,7 @@ enum WorkingTranscriptAlignment {
 }
 
 #[derive(serde::Serialize)]
-struct WorkingTranscript {
+pub(crate) struct WorkingTranscript {
     text: String,
     words: Option<Vec<TimedWord>>,
     alignment: WorkingTranscriptAlignment,
@@ -344,6 +344,14 @@ struct WorkingTranscript {
     /// present (the re-anchored path, MF-2).
     realignment_layer_id: Option<String>,
     alignment_error: Option<String>,
+}
+
+impl WorkingTranscript {
+    /// The working text — the unified lexical search's transcript scan
+    /// segment (t6); matching itself stays in `lexical_citations`.
+    pub(crate) fn text(&self) -> &str {
+        &self.text
+    }
 }
 
 impl WorkingTranscript {
@@ -446,7 +454,7 @@ fn select_correction_layer(
     Ok((record, correction))
 }
 
-fn working_transcript(
+pub(crate) fn working_transcript(
     driver: &dyn hkask_storage::database::driver::DatabaseDriver,
     transcript_id: &str,
     bundle: &TranscriptBundle,

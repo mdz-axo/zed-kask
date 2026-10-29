@@ -960,3 +960,29 @@ pub struct LayersAudioPassRequest {
     /// an explicit per-call override wins.
     pub model: Option<String>,
 }
+
+/// Request for the unified lexical search over media layers plus
+/// transcript working text (Media layers v1 t6).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LayersSearchRequest {
+    /// Literal substring; ASCII case-insensitive, non-ASCII text is exact.
+    pub query: String,
+    /// Explicit retrieval method. Only lexical is supported; corpus
+    /// export is the semantic handoff.
+    pub mode: String,
+    /// Maximum citations, 1..=100 (default 20).
+    pub limit: Option<usize>,
+    /// Maximum recordings examined in this page, 1..=500 (default 100).
+    pub recording_limit: Option<usize>,
+    /// Recording-page offset, default 0. Stable order: newest artifact
+    /// timestamp, then media path.
+    pub recording_offset: Option<usize>,
+    /// Resume byte offset in the first recording's scan stream (its layer
+    /// items, then its newest transcript's working text). Use
+    /// next_start_byte with next_recording_offset from the previous page.
+    pub start_byte: Option<usize>,
+    /// Restrict the corpus to one recording's media path.
+    pub media_path: Option<String>,
+    /// Restrict layer hits to one kind; transcript hits are unaffected.
+    pub kind: Option<crate::layer_store::MediaLayerKind>,
+}

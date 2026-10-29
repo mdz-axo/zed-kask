@@ -267,6 +267,63 @@ pub struct DeleteLayerCounts {
     pub items_removed: usize,
 }
 
+/// One recording in the unified lexical search's corpus (t6): the media
+/// path is the join key — a file with layers and/or a transcript. The
+/// latest artifact timestamp orders the page (newest first, then path —
+/// the same stable-order discipline as the transcript pages).
+pub struct UnifiedRecording {
+    pub media_path: String,
+    pub latest_at: String,
+}
+
+/// Page the unified recording corpus: the union of the transcripts
+/// table's (transcript_store's) and media_layers' media paths, newest
+/// artifact first, then path. `media_path` restricts the corpus to one
+/// recording. Reads the transcripts table read-only — the t6 join the
+/// schema-owner modules each keep DDL over; this is a query, not DDL.
+pub fn list_unified_recordings(
+    driver: &dyn DatabaseDriver,
+    media_path: Option<&str>,
+    limit: usize,
+    offset: usize,
+) -> Result<Vec<UnifiedRecording>, LayerStoreError> {
+    ensure_schema(driver)?;
+    let (sql, params): (&str, Vec<DbValue>) = match media_path {
+        Some(path) => (
+            "SELECT media_path, MAX(latest_at) AS latest FROM ( \
+             SELECT media_path, created_at AS latest_at FROM transcripts WHERE media_path = ?1 \
+             UNION ALL \
+             SELECT media_path, created_at FROM media_layers WHERE media_path = ?1 \
+             ) GROUP BY media_path ORDER BY latest DESC, media_path ASC LIMIT ?2 OFFSET ?3",
+            vec![
+                DbValue::Text(path.to_string()),
+                DbValue::Integer(limit as i64),
+                DbValue::Integer(offset as i64),
+            ],
+        ),
+        None => (
+            "SELECT media_path, MAX(latest_at) AS latest FROM ( \
+             SELECT media_path, created_at AS latest_at FROM transcripts \
+             UNION ALL \
+             SELECT media_path, created_at FROM media_layers \
+             ) GROUP BY media_path ORDER BY latest DESC, media_path ASC LIMIT ?1 OFFSET ?2",
+            vec![
+                DbValue::Integer(limit as i64),
+                DbValue::Integer(offset as i64),
+            ],
+        ),
+    };
+    let rows = driver.query(sql, &params)?;
+    let mut recordings = Vec::with_capacity(rows.len());
+    for row in rows.iter() {
+        recordings.push(UnifiedRecording {
+            media_path: row.get_named("media_path")?.as_text()?.to_string(),
+            latest_at: row.get_named("latest")?.as_text()?.to_string(),
+        });
+    }
+    Ok(recordings)
+}
+
 /// Named layer-validation failures — every variant names the broken
 /// invariant and the offending values (reject-with-named-reason; a failing
 /// layer is never partially applied or stored), mirroring

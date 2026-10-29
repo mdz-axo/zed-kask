@@ -466,8 +466,8 @@ mod tool_surface_tests {
     hkask_mcp_server::tool_surface_pin!(
         MediaServer::combined_router(),
         "combined_router",
-        83,
-        tool_surface_is_exactly_83_registered_tools,
+        84,
+        tool_surface_is_exactly_84_registered_tools,
     );
 
     // Coverage: every registered tool must map to an OMC concept. Catches
@@ -7267,6 +7267,385 @@ mod tool_behavior_tests {
                 .await?,
         );
         assert_eq!(listed["count"].as_u64(), Some(0), "nothing was stored");
+        Ok(())
+    }
+
+    /// t6 AC1: one query returns hits from at least two distinct layer
+    /// kinds plus a transcript hit, each with time range and layer
+    /// provenance.
+    #[tokio::test]
+    async fn layers_search_hits_two_layer_kinds_plus_a_transcript()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let server = server_with_gallery(store.clone(), gallery.id.clone(), gallery_root.path());
+        let unified_recording = gallery_root.path().join("unified-recording.wav");
+        create_real_audio(&unified_recording).await?;
+        let media_path = unified_recording.to_string_lossy().into_owned();
+        // Two distinct layer kinds over the same recording.
+        for kind in [
+            crate::layer_store::MediaLayerKind::Researcher,
+            crate::layer_store::MediaLayerKind::AudioEvent,
+        ] {
+            let stored = content_of(
+                &server
+                    .layers_store(Parameters(LayersStoreRequest {
+                        media_path: media_path.to_string(),
+                        gallery_asset_id: None,
+                        kind,
+                        label: None,
+                        provenance: LayersProvenanceRequest {
+                            model: "test".to_string(),
+                            prompt_template: "layers_search-test".to_string(),
+                        },
+                        items: vec![LayersStoreItemRequest {
+                            start_sec: 0.5,
+                            end_sec: Some(1.5),
+                            searchable_text: "beep one".to_string(),
+                            payload: hkask_types::AnyJsonValue(
+                                serde_json::json!({ "label": "beep" }),
+                            ),
+                            frame_asset_ids: None,
+                        }],
+                    }))
+                    .await?,
+            );
+            let _ = stored;
+        }
+        // A transcript over the same recording whose working text contains
+        // the query twice.
+        let bundle = crate::transcript::TranscriptBundle {
+            words: vec![
+                crate::transcript::TimedWord {
+                    word: "beep".to_string(),
+                    start_ms: 250,
+                    end_ms: 500,
+                    confidence: None,
+                },
+                crate::transcript::TimedWord {
+                    word: "one".to_string(),
+                    start_ms: 600,
+                    end_ms: 750,
+                    confidence: None,
+                },
+            ],
+            ..crate::transcript::TranscriptBundle::new(
+                media_path.to_string(),
+                1.0,
+                "beep one".to_string(),
+            )
+        };
+        let _ = content_of(
+            &server
+                .educt_store_transcript(Parameters(crate::types::EductStoreTranscriptRequest {
+                    transcript: hkask_types::AnyJsonValue(serde_json::to_value(&bundle).unwrap()),
+                    gallery_asset_id: None,
+                }))
+                .await?,
+        );
+        let result = content_of(
+            &server
+                .layers_search(Parameters(crate::types::LayersSearchRequest {
+                    query: "beep".to_string(),
+                    mode: "lexical".to_string(),
+                    limit: Some(10),
+                    recording_limit: Some(10),
+                    recording_offset: None,
+                    start_byte: None,
+                    media_path: Some(media_path.to_string()),
+                    kind: None,
+                }))
+                .await?,
+        );
+        assert_eq!(result["count"], serde_json::json!(3));
+        let sources: Vec<&str> = result["hits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|hit| hit["source"].as_str().unwrap())
+            .collect();
+        assert!(sources.contains(&"layer"));
+        assert_eq!(
+            sources
+                .iter()
+                .filter(|source| source.contains(&"transcript"))
+                .count(),
+            1
+        );
+        let layer_kinds: Vec<&str> = result["hits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|hit| hit["source"] == "layer")
+            .map(|hit| hit["kind"].as_str().unwrap())
+            .collect();
+        assert!(layer_kinds.contains(&"researcher"));
+        assert!(layer_kinds.contains(&"audio_event"));
+        for hit in result["hits"].as_array().unwrap().iter() {
+            assert!(hit["start_byte"].is_u64());
+            assert!(hit["end_byte"].is_u64());
+            if hit["source"] == serde_json::json!("layer") {
+                assert!(hit["provenance"].is_object());
+            }
+        }
+        Ok(())
+    }
+
+    /// t6 AC2: matching, cap and resume behavior match
+    /// educt_search_transcripts — over a corpus with no layers the hits
+    /// and cursor are identical; a layer item prefix shifts the
+    /// transcript hits' stream bytes by exactly its length.
+    #[tokio::test]
+    async fn layers_search_matching_matches_educt_search_transcripts()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let server = server_with_gallery(store.clone(), gallery.id.clone(), gallery_root.path());
+        let educt_parity = gallery_root.path().join("educt-parity.wav");
+        create_real_audio(&educt_parity).await?;
+        let media_path = educt_parity.to_string_lossy().into_owned();
+        let bundle = crate::transcript::TranscriptBundle {
+            words: vec![
+                crate::transcript::TimedWord {
+                    word: "beep".to_string(),
+                    start_ms: 250,
+                    end_ms: 500,
+                    confidence: None,
+                },
+                crate::transcript::TimedWord {
+                    word: "one".to_string(),
+                    start_ms: 600,
+                    end_ms: 750,
+                    confidence: None,
+                },
+            ],
+            ..crate::transcript::TranscriptBundle::new(
+                media_path.clone(),
+                1.0,
+                "beep one".to_string(),
+            )
+        };
+        let stored = content_of(
+            &server
+                .educt_store_transcript(Parameters(crate::types::EductStoreTranscriptRequest {
+                    transcript: hkask_types::AnyJsonValue(serde_json::to_value(&bundle).unwrap()),
+                    gallery_asset_id: None,
+                }))
+                .await?,
+        );
+        let transcript_id = stored["id"].as_str().unwrap().to_string();
+        let educt = content_of(
+            &server
+                .educt_search_transcripts(Parameters(
+                    crate::tools::educt::EductSearchTranscriptsRequest {
+                        query: "beep".to_string(),
+                        mode: "lexical".to_string(),
+                        limit: Some(1),
+                        recording_limit: Some(10),
+                        recording_offset: None,
+                        start_byte: None,
+                        gallery_asset_id: None,
+                    },
+                ))
+                .await?,
+        );
+        let unified = content_of(
+            &server
+                .layers_search(Parameters(crate::types::LayersSearchRequest {
+                    query: "beep".to_string(),
+                    mode: "lexical".to_string(),
+                    limit: Some(1),
+                    recording_limit: Some(10),
+                    recording_offset: None,
+                    start_byte: None,
+                    media_path: Some(media_path.clone()),
+                    kind: None,
+                }))
+                .await?,
+        );
+        assert_eq!(educt["count"], unified["count"]);
+        // The unified hit is the educt citation plus the source field; the
+        // citation's matching fields are identical.
+        let educt_hit = &educt["hits"][0];
+        let unified_hit = &unified["hits"][0];
+        assert_eq!(educt_hit["matched_text"], unified_hit["matched_text"]);
+        assert_eq!(educt_hit["start_byte"], unified_hit["start_byte"]);
+        assert_eq!(educt_hit["end_byte"], unified_hit["end_byte"]);
+        assert_eq!(educt_hit["word_range"], unified_hit["word_range"]);
+        assert_eq!(educt_hit["time_range_ms"], unified_hit["time_range_ms"]);
+        assert_eq!(educt_hit["alignment"], unified_hit["alignment"]);
+        assert_eq!(
+            educt_hit["correction_layer_id"],
+            unified_hit["correction_layer_id"]
+        );
+        assert_eq!(
+            educt_hit["realignment_layer_id"],
+            unified_hit["realignment_layer_id"]
+        );
+        // Now a layer item over the same recording: the stream shifts the
+        // transcript hit by exactly the item text's length.
+        let stored_layer = content_of(
+            &server
+                .layers_store(Parameters(LayersStoreRequest {
+                    media_path: media_path.clone(),
+                    gallery_asset_id: None,
+                    kind: crate::layer_store::MediaLayerKind::Researcher,
+                    label: None,
+                    provenance: LayersProvenanceRequest {
+                        model: "test".to_string(),
+                        prompt_template: "layers_search-shift-test".to_string(),
+                    },
+                    items: vec![LayersStoreItemRequest {
+                        start_sec: 0.0,
+                        end_sec: Some(0.5),
+                        searchable_text: "shift".to_string(),
+                        payload: hkask_types::AnyJsonValue(serde_json::json!({ "label": "shift" })),
+                        frame_asset_ids: None,
+                    }],
+                }))
+                .await?,
+        );
+        let _ = stored_layer;
+        let shifted = content_of(
+            &server
+                .layers_search(Parameters(crate::types::LayersSearchRequest {
+                    query: "beep".to_string(),
+                    mode: "lexical".to_string(),
+                    limit: Some(5),
+                    recording_limit: Some(10),
+                    recording_offset: None,
+                    start_byte: None,
+                    media_path: Some(media_path.clone()),
+                    kind: None,
+                }))
+                .await?,
+        );
+        let shift = "shift".len();
+        let hit = &shifted["hits"][0];
+        assert_eq!(hit["source"], serde_json::json!("transcript"));
+        assert_eq!(
+            hit["start_byte"],
+            serde_json::json!(educt["hits"][0]["start_byte"].as_u64().unwrap() + shift as u64)
+        );
+        assert_eq!(hit["transcript_id"], serde_json::json!(transcript_id));
+        Ok(())
+    }
+
+    /// t6 AC3: recordings lacking layers or a transcript return their
+    /// available hits with an explicit scope note naming what was
+    /// skipped — never a silent skip.
+    #[tokio::test]
+    async fn layers_search_names_missing_sides_in_scope_notes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let server = server_with_gallery(store.clone(), gallery.id.clone(), gallery_root.path());
+        let layers_only_path = gallery_root.path().join("layers-only.wav");
+        create_real_audio(&layers_only_path).await?;
+        let transcript_only_path = gallery_root.path().join("transcript-only.wav");
+        create_real_audio(&transcript_only_path).await?;
+        let layers_only = layers_only_path.to_string_lossy().into_owned();
+        let transcript_only = transcript_only_path.to_string_lossy().into_owned();
+        let _ = content_of(
+            &server
+                .layers_store(Parameters(LayersStoreRequest {
+                    media_path: layers_only.clone(),
+                    gallery_asset_id: None,
+                    kind: crate::layer_store::MediaLayerKind::Researcher,
+                    label: None,
+                    provenance: LayersProvenanceRequest {
+                        model: "test".to_string(),
+                        prompt_template: "layers_search-scope-test".to_string(),
+                    },
+                    items: vec![LayersStoreItemRequest {
+                        start_sec: 0.0,
+                        end_sec: Some(0.5),
+                        searchable_text: "beep one".to_string(),
+                        payload: hkask_types::AnyJsonValue(serde_json::json!({ "label": "beep" })),
+                        frame_asset_ids: None,
+                    }],
+                }))
+                .await?,
+        );
+        let bundle = crate::transcript::TranscriptBundle {
+            words: vec![
+                crate::transcript::TimedWord {
+                    word: "beep".to_string(),
+                    start_ms: 250,
+                    end_ms: 500,
+                    confidence: None,
+                },
+                crate::transcript::TimedWord {
+                    word: "two".to_string(),
+                    start_ms: 600,
+                    end_ms: 750,
+                    confidence: None,
+                },
+            ],
+            ..crate::transcript::TranscriptBundle::new(
+                transcript_only.clone(),
+                1.0,
+                "beep two".to_string(),
+            )
+        };
+        let _ = content_of(
+            &server
+                .educt_store_transcript(Parameters(crate::types::EductStoreTranscriptRequest {
+                    transcript: hkask_types::AnyJsonValue(serde_json::to_value(&bundle).unwrap()),
+                    gallery_asset_id: None,
+                }))
+                .await?,
+        );
+        let result = content_of(
+            &server
+                .layers_search(Parameters(crate::types::LayersSearchRequest {
+                    query: "beep".to_string(),
+                    mode: "lexical".to_string(),
+                    limit: Some(10),
+                    recording_limit: Some(10),
+                    recording_offset: None,
+                    start_byte: None,
+                    media_path: None,
+                    kind: None,
+                }))
+                .await?,
+        );
+        let scope_notes: Vec<String> = result["scope_notes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|note| note.as_str().map(str::to_string))
+            .collect();
+        let notes_joined = scope_notes.join("; ");
+        assert!(
+            notes_joined.contains(&format!("no transcript for {layers_only}")),
+            "scope notes must name the skipped side: {}",
+            notes_joined
+        );
+        assert!(
+            notes_joined.contains(&format!("no layers for {transcript_only}"))
+                || notes_joined.contains(&format!("no researcher layers for {transcript_only}")),
+            "scope notes must name the recording with no layers: {}",
+            notes_joined
+        );
+        assert_eq!(
+            result["hits"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|hit| hit["media_path"] == serde_json::json!(layers_only))
+                .count(),
+            1
+        );
+        assert_eq!(
+            result["hits"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|hit| hit["media_path"] == serde_json::json!(transcript_only))
+                .count(),
+            1
+        );
         Ok(())
     }
 

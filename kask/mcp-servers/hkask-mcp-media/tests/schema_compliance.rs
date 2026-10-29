@@ -55,8 +55,8 @@ fn live_router_schema_inventory_is_complete_and_clean() {
     let tools = hkask_mcp_media::MediaServer::combined_router().list_all();
     assert_eq!(
         tools.len(),
-        83,
-        "approved surface: 92 - 20 Reduct cloud tools + 5 media-layer tools + 1 section re-transcribe + 4 voice-profile tools + 1 voice identification + 1 audio pass"
+        84,
+        "approved surface: 92 - 20 Reduct cloud tools + 5 media-layer tools + 1 section re-transcribe + 4 voice-profile tools + 1 voice identification + 1 audio pass + 1 layers search"
     );
     let actual = tools
         .iter()

@@ -91,7 +91,8 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
         | "layers_store"
         | "layers_shot_pass"
         | "layers_semantic_pass"
-        | "layers_audio_pass" => Some(DATASET),
+        | "layers_audio_pass"
+        | "layers_search" => Some(DATASET),
         _ => None,
     }
 }
