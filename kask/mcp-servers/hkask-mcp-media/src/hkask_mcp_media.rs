@@ -466,8 +466,8 @@ mod tool_surface_tests {
     hkask_mcp_server::tool_surface_pin!(
         MediaServer::combined_router(),
         "combined_router",
-        86,
-        tool_surface_is_exactly_86_registered_tools,
+        87,
+        tool_surface_is_exactly_87_registered_tools,
     );
 
     // Coverage: every registered tool must map to an OMC concept. Catches
@@ -3357,6 +3357,84 @@ mod tool_behavior_tests {
         assert_eq!(words[0]["word"], serde_json::json!("alpha"));
         assert_eq!(words[0]["start_ms"], serde_json::json!(0));
         assert_eq!(words[1]["end_ms"], serde_json::json!(1000));
+    }
+
+    /// M1 pin (2026-10-29 STT flip): the DeepInfra Nemotron-Transcribe
+    /// default returns word entries keyed `text` — not Whisper's `word`
+    /// (DeepInfra API docs, chunk_level:"word") — and the DeepInfra arm
+    /// now sends `chunk_level=word` (the API defaults to "segment",
+    /// which cannot back the word-indexed layer system). This fixture is
+    /// the documented response shape; the parse must produce trimmed,
+    /// word-timed TimedWords through the same stored-bundle path the
+    /// Whisper default used (the sibling test above).
+    #[tokio::test]
+    async fn deepinfra_nemotron_response_parses_into_word_timed_bundle() {
+        let media_json = serde_json::json!({
+            "text": " hello world",
+            "duration": 2.0,
+            "words": [
+                {"text": " hello", "start": 0.0, "end": 1.0},
+                {"text": " world", "start": 1.0, "end": 2.0}
+            ],
+            "segments": [
+                {"text": " hello world", "start": 0.0, "end": 2.0}
+            ]
+        })
+        .to_string();
+        let audio_urls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let server = make_server_with_port(Arc::new(MockInferencePort {
+            response: String::new(),
+            media_response: media_json,
+            media_response_is_json: true,
+            audio_urls: audio_urls.clone(),
+        }));
+
+        let fixture = std::env::temp_dir().join(format!(
+            "nemotron-pin-{}-{}.wav",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::write(&fixture, b"fixture").expect("fixture write");
+        let audio_url = fixture.to_str().expect("utf8 path").to_string();
+
+        let result = server
+            .transcribe_and_store(Parameters(crate::types::TranscribeAndStoreRequest {
+                audio_url: audio_url.clone(),
+                language: Some("en".to_string()),
+                gallery_asset_id: None,
+            }))
+            .await
+            .expect("transcribe_and_store succeeds");
+        let content = content_of(&result);
+        assert_eq!(
+            *audio_urls.lock().expect("audio URL recorder"),
+            vec![Some(audio_url)]
+        );
+        assert_eq!(content["words_count"], serde_json::json!(2));
+        assert_eq!(content["has_word_timings"], serde_json::json!(true));
+        let transcript_id = content["id"].as_str().expect("id present").to_string();
+
+        let stored = server
+            .educt_get_transcript(Parameters(crate::types::EductGetTranscriptRequest {
+                transcript_id,
+                include_layers: Some(false),
+            }))
+            .await
+            .expect("get transcript succeeds");
+        let stored = content_of(&stored);
+        let words = stored["transcript"]["words"]
+            .as_array()
+            .expect("words array");
+        assert_eq!(words.len(), 2);
+        assert_eq!(words[0]["word"], serde_json::json!("hello"));
+        assert_eq!(words[0]["start_ms"], serde_json::json!(0));
+        assert_eq!(words[0]["end_ms"], serde_json::json!(1000));
+        assert_eq!(words[1]["word"], serde_json::json!("world"));
+        assert_eq!(words[1]["end_ms"], serde_json::json!(2000));
+        let segments = stored["transcript"]["segments"]
+            .as_array()
+            .expect("segments array");
+        assert_eq!(segments.len(), 1);
     }
 
     /// The two-word timed bundle ("alpha" 0-500ms, "beta" 500-900ms) every

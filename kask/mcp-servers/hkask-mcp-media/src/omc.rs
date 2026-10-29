@@ -173,6 +173,7 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         | "layers_audio_pass"
         | "layers_search"
         | "layers_edl_compose"
+        | "layers_render_edl"
         | "layers_export" => Some(VERSION_INFO),
         _ => None,
     }

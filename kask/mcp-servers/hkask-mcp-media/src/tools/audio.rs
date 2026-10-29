@@ -84,11 +84,21 @@ struct AudioCaptureEffectiveParams {
 /// whitespace-only entries. Storing space-prefixed tokens verbatim made
 /// every quote no_match (observed live: `educt_locate` could not find
 /// real passages in a verbatim-stored whisper bundle).
+///
+/// Two key shapes parse here: Whisper's verbose_json keys the token as
+/// `word`; DeepInfra's ASR schema (Nemotron-Transcribe — the default STT
+/// since 2026-10-29 — at `chunk_level: "word"`) keys it as `text`. Same
+/// separator-prefixed shape otherwise.
 fn timed_words_from_provider(entries: &[serde_json::Value]) -> Vec<TimedWord> {
     entries
         .iter()
         .filter_map(|w| {
-            let word = w.get("word")?.as_str()?.trim().to_string();
+            let word = w
+                .get("word")
+                .or_else(|| w.get("text"))?
+                .as_str()?
+                .trim()
+                .to_string();
             if word.is_empty() {
                 return None;
             }

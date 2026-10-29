@@ -985,6 +985,16 @@ pub struct LayersAudioPassRequest {
     pub model: Option<String>,
 }
 
+/// Request to render a media EDL layer into a durable reel asset (t9).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LayersRenderEdlRequest {
+    /// Absolute local path (or URL) of the source media.
+    pub media_path: String,
+    /// Layer ID of the EDL layer to render. If omitted, renders the
+    /// latest EDL layer for the given media path.
+    pub layer_id: Option<String>,
+}
+
 /// Request for the unified lexical search over media layers plus
 /// transcript working text (Media layers v1 t6).
 #[derive(Debug, Deserialize, JsonSchema)]

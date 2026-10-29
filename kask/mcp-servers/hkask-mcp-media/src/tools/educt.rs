@@ -644,7 +644,7 @@ pub(crate) fn parse_json_value(
 
 /// Whether a media path is an audio file (extension check) — selects the
 /// audio trim/concat render path over the video path.
-fn is_audio_path(path: &str) -> bool {
+pub(crate) fn is_audio_path(path: &str) -> bool {
     let lower = path.to_lowercase();
     [".wav", ".mp3", ".flac", ".m4a", ".ogg", ".aac", ".wma"]
         .iter()

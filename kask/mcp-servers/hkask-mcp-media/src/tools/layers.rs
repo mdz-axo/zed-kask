@@ -15,11 +15,11 @@ use crate::layer_store::{
     self, LayerProvenance, MediaLayerFilter, MediaLayerItem, MediaLayerKind, MediaLayerRecord,
     NewMediaLayer, StoredMediaLayerItem,
 };
-use crate::tools::educt::parse_json_value;
 use crate::tools::educt::{
     SEARCH_TEXT_BYTE_BUDGET, WorkingTranscript, lexical_citations, map_store_error,
     working_transcript,
 };
+use crate::tools::educt::{is_audio_path, parse_json_value};
 use crate::tools::processing::SourceSnapshot;
 use crate::transcript_pass::PassMode;
 use crate::types::{
@@ -1913,6 +1913,131 @@ impl MediaServer {
                 "ops": merged.len(),
                 "input_ranges": ranges.len(),
                 "source": source_description,
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Render a media EDL layer into a durable playable gallery asset. Takes a media_path and an optional layer_id (of a kind=edl layer produced by layers_edl_compose). Each Keep op is clipped from the source media via ffmpeg and concatenated losslessly. The composed reel is published as a gallery asset whose OMC lineage records the EDL layer and contributing item ids. Rendering an unknown or empty EDL returns not_found naming the layer."
+    )]
+    pub async fn layers_render_edl(
+        &self,
+        Parameters(request): Parameters<LayersRenderEdlRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "layers_render_edl", async {
+            ensure_local_input_exists(&request.media_path)?;
+            let ffmpeg = self.require_ffmpeg()?;
+            let driver = &**self.gallery_store.driver();
+            let filter = MediaLayerFilter {
+                media_path: Some(request.media_path.clone()),
+                kind: Some(MediaLayerKind::Edl),
+                limit: MAX_LAYERS_PER_RECORDING,
+            };
+            let summaries =
+                layer_store::list_layers(driver, &filter).map_err(map_layer_store_error)?;
+            let record = match &request.layer_id {
+                Some(id) => summaries.iter().find(|s| &s.id == id),
+                None => summaries.first(),
+            };
+            let Some(record_summary) = record else {
+                return Err(McpToolError::not_found(format!(
+                    "no EDL layer found for {}",
+                    request.media_path
+                )));
+            };
+            let Some(record) = layer_store::get_layer(driver, &record_summary.id)
+                .map_err(map_layer_store_error)?
+            else {
+                return Err(McpToolError::not_found(format!(
+                    "layer {} disappeared during render",
+                    record_summary.id
+                )));
+            };
+            if record.items.is_empty() {
+                return Err(McpToolError::not_found(format!(
+                    "EDL layer {} is empty — nothing to render",
+                    record.id
+                )));
+            }
+            let audio = is_audio_path(&request.media_path);
+            let mut intermediates = crate::assets::ScratchIntermediates::new("layers_render_edl");
+            let mut clip_paths: Vec<std::path::PathBuf> = Vec::with_capacity(record.items.len());
+            for item in &record.items {
+                let clipped = if audio {
+                    ffmpeg
+                        .audio_trim(
+                            &request.media_path,
+                            item.item.start_sec as f32,
+                            item.item.end_sec.unwrap_or(item.item.start_sec) as f32,
+                        )
+                        .await
+                } else {
+                    ffmpeg
+                        .clip(
+                            &request.media_path,
+                            item.item.start_sec as f32,
+                            item.item.end_sec.unwrap_or(item.item.start_sec) as f32,
+                        )
+                        .await
+                }
+                .map_err(map_media_error)?;
+                intermediates.track(clipped.clone());
+                clip_paths.push(clipped);
+            }
+            let output = if clip_paths.len() == 1 {
+                clip_paths.first().cloned().ok_or_else(|| {
+                    McpToolError::internal("EDL render produced no clip after a non-empty plan")
+                })?
+            } else {
+                let clip_sources = clip_paths
+                    .iter()
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .collect::<Vec<_>>();
+                if audio {
+                    ffmpeg
+                        .audio_concat(&clip_sources)
+                        .await
+                        .map_err(map_media_error)?
+                } else {
+                    ffmpeg
+                        .concat(&clip_sources)
+                        .await
+                        .map_err(map_media_error)?
+                }
+            };
+            let effective_params = serde_json::json!({
+                "media_path": &request.media_path,
+                "edl_layer_id": &record.id,
+                "source": &request.media_path,
+                "clip_plan": record.items.iter().map(|item| {
+                    serde_json::json!([
+                        item.item.start_sec,
+                        item.item.end_sec.unwrap_or(item.item.start_sec),
+                    ])
+                }).collect::<Vec<_>>(),
+                "clips": clip_paths.len(),
+            });
+            let result = crate::assets::publish_local_media_with_transcript_render(
+                &self.gallery_store,
+                &output,
+                "layers_render_edl",
+                "rendered",
+                if audio {
+                    crate::assets::LocalMediaFormat::Wav
+                } else {
+                    crate::assets::LocalMediaFormat::Mp4
+                },
+                &effective_params,
+                &record.id,
+                &record.id,
+            )?;
+            intermediates.cleanup().map_err(map_media_error)?;
+            Ok(serde_json::json!({
+                "status": "rendered",
+                "result": result,
+                "edl_layer_id": record.id,
+                "media_path": request.media_path,
             }))
         })
         .await
