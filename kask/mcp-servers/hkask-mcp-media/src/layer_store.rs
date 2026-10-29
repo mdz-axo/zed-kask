@@ -982,7 +982,7 @@ mod tests {
         driver
             .execute(
                 "DELETE FROM gallery_images WHERE id = ?1",
-                &[DbValue::Text(asset.id.clone())],
+                &[DbValue::Text(asset.id)],
             )
             .expect("delete the asset row (fires the detach trigger)");
 
