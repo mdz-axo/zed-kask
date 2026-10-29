@@ -80,6 +80,22 @@ struct TranscriptSummaryRow {
     /// The five-state alignment (original, aligned, re_anchored, unaligned,
     /// untimed) — what the row's capability note keys on.
     alignment: String,
+    /// The stable gallery asset id of the RECORDING this transcript is
+    /// stored against (`None` = unlinked — no live recording owns it).
+    /// The recordings browser groups rows under their recording by it
+    /// (R2/R5, operator ruling 2026-10-28).
+    gallery_asset_id: Option<String>,
+}
+
+/// The per-recording transcription status (R2/R5): a running transcribe
+/// job whose source is the recording shows Transcribing; a stored
+/// transcript linked to the recording shows Transcribed; otherwise Not
+/// transcribed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RecordingTranscriptionStatus {
+    Transcribing,
+    Transcribed,
+    NotTranscribed,
 }
 
 /// A working-view word as the pane renders it (S3a renders paragraph text
@@ -401,6 +417,10 @@ pub struct MediaViewer {
     gallery_id: Option<String>,
     gallery_request: RequestLifecycle,
     jobs: Vec<JobRecord>,
+    /// The non-terminal transcribe job ids the last jobs listing saw
+    /// (R5) — when one lands, the recordings browser reloads its listing
+    /// once so the finished transcript appears under its recording.
+    transcribing_ids: HashSet<String>,
     jobs_total: Option<usize>,
     jobs_limit: usize,
     jobs_has_more: bool,
@@ -515,6 +535,7 @@ impl MediaViewer {
             gallery_id: None,
             gallery_request: RequestLifecycle::new(),
             jobs: Vec::new(),
+            transcribing_ids: HashSet::new(),
             jobs_total: None,
             jobs_limit: hkask_types::media_limits::DEFAULT_JOB_LIST_LIMIT,
             jobs_has_more: false,
@@ -1168,6 +1189,23 @@ impl MediaViewer {
                     })
                     .collect::<Vec<_>>();
                 self.jobs = listing.jobs;
+                // A transcribe job that landed terminal while the recordings
+                // browser is showing reloads the listing once so the
+                // finished transcript appears under its recording (R5).
+                let still_transcribing = self
+                    .jobs
+                    .iter()
+                    .filter(|job| job_is_nonterminal(job) && job.op == "transcribe")
+                    .map(|job| job.id.clone())
+                    .collect::<HashSet<_>>();
+                let landed = self
+                    .transcribing_ids
+                    .iter()
+                    .any(|id| !still_transcribing.contains(id));
+                self.transcribing_ids = still_transcribing;
+                if landed && self.active_tab == ViewerTab::Transcript && self.transcript.is_none() {
+                    self.load_transcript_listing(cx);
+                }
                 self.jobs_total = Some(listing.total);
                 self.jobs_limit = listing.limit;
                 self.jobs_has_more = listing.has_more;
@@ -1192,7 +1230,21 @@ impl MediaViewer {
     }
 
     fn should_poll_jobs(&self) -> bool {
-        self.active_tab == ViewerTab::Queue && self.jobs.iter().any(job_is_nonterminal)
+        self.jobs.iter().any(job_is_nonterminal)
+            && match self.active_tab {
+                ViewerTab::Queue => true,
+                // The recordings browser tracks its running transcribe jobs
+                // (R5) — the poll reloads the listing when one lands, so the
+                // finished transcript appears under its recording.
+                ViewerTab::Transcript => {
+                    self.transcript.is_none()
+                        && self
+                            .jobs
+                            .iter()
+                            .any(|job| job_is_nonterminal(job) && job.op == "transcribe")
+                }
+                _ => false,
+            }
     }
 
     fn schedule_queue_poll(&mut self, cx: &mut Context<Self>) {
@@ -4756,7 +4808,12 @@ impl MediaViewer {
             };
             return self.render_empty(title, hint).into_any_element();
         };
-        if listing.is_empty() {
+        // The recordings themselves are the primary surface (R2): a
+        // recording renders its Transcribe affordance even before any
+        // transcript exists (the Not-transcribed state is the operator's
+        // entry to R5's affordance). The "no transcripts" empty state
+        // only applies when there are no gallery recordings to show.
+        if listing.is_empty() && self.assets.is_empty() {
             return self
                 .render_empty(
                     "No transcripts",
@@ -4769,111 +4826,92 @@ impl MediaViewer {
             "Choose a recording to read, select text, and create a reel.",
         ));
         sections = sections.child(Self::section_label("Recordings"));
-        for transcript in listing {
-            let timings = if transcript.has_word_timings {
-                ""
-            } else {
-                " · text only"
+        for (asset_index, asset) in self.assets.iter().enumerate() {
+            let Some(recording_id) = asset.gallery_asset_id.as_deref() else {
+                // Conversation-surfaced assets (no gallery id) are not
+                // recordings; the gallery index is the recordings source.
+                continue;
             };
-            let transcript_id = transcript.id.clone();
-            let title = recording_display_name(&transcript.media_path);
-            let metadata = format!(
-                "{} · {} words{timings}",
-                format_recording_duration(transcript.duration_secs),
-                transcript.words_count
-            );
-            let mut row = div()
+            let status = self.recording_transcription_status(asset);
+            let row = div()
                 .id(SharedString::from(format!(
-                    "media-transcript-open-{}",
-                    transcript.id
+                    "media-recording-row-{asset_index}"
                 )))
-                .cursor_pointer()
                 .flex()
                 .flex_col()
                 .gap_1()
                 .py_1()
                 .flex_1()
                 .min_w_0()
-                .hover(|el| el.bg(cx.theme().colors().element_hover))
                 .child(
-                    Label::new(SharedString::from(title))
+                    Label::new(SharedString::from(recording_display_name(&asset.src)))
                         .size(LabelSize::Small)
                         .color(ui::Color::Default),
                 )
                 .child(
-                    Label::new(SharedString::from(metadata))
-                        .size(LabelSize::XSmall)
-                        .color(ui::Color::Muted),
+                    Label::new(SharedString::from(match status {
+                        RecordingTranscriptionStatus::Transcribing => "Transcribing…".to_string(),
+                        RecordingTranscriptionStatus::Transcribed => "Transcribed".to_string(),
+                        RecordingTranscriptionStatus::NotTranscribed => {
+                            "Not transcribed".to_string()
+                        }
+                    }))
+                    .size(LabelSize::XSmall)
+                    .color(match status {
+                        RecordingTranscriptionStatus::Transcribing => ui::Color::Hint,
+                        RecordingTranscriptionStatus::Transcribed => ui::Color::Muted,
+                        RecordingTranscriptionStatus::NotTranscribed => ui::Color::Error,
+                    }),
                 );
-            // The capability note says what a click opens before the click:
-            // gated recordings flag their read-only state on the row rather
-            // than surfacing the gate inside the workspace.
-            if let Some(note) = transcript_alignment_note(&transcript.alignment) {
-                row = row.child(
-                    Label::new(SharedString::from(note))
-                        .size(LabelSize::XSmall)
-                        .color(ui::Color::Error),
+            sections = sections.child(row);
+            // The Transcribe affordance (R5, operator ruling 2026-10-28):
+            // a not-transcribed recording can be taken to its transcript
+            // without a chat turn.
+            if status == RecordingTranscriptionStatus::NotTranscribed {
+                let recording_id = recording_id.to_string();
+                let source = asset.src.clone();
+                sections = sections.child(
+                    div()
+                        .id(SharedString::from(format!(
+                            "media-recording-transcribe-{asset_index}"
+                        )))
+                        .debug_selector(|| "media-recording-transcribe".into())
+                        .cursor_pointer()
+                        .px_2()
+                        .py_1()
+                        .flex_none()
+                        .hover(|el| el.bg(cx.theme().colors().element_hover))
+                        .child(
+                            Label::new(SharedString::from("Transcribe"))
+                                .size(LabelSize::XSmall)
+                                .color(ui::Color::Default),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.transcribe_recording(recording_id.clone(), source.clone(), cx);
+                        })),
                 );
             }
-            // The Delete affordance is a SIBLING of the clickable open area,
-            // never nested in it (the Library row pattern), so opening and
-            // deleting can never fire together. Two clicks: Delete arms the
-            // confirmation, Confirm delete dispatches the server's
-            // `educt_delete_transcript` (durable exports and rendered reels
-            // are preserved by the server, detached from the removed record).
-            let confirming = self.confirm_delete_transcript.is_armed(&transcript.id);
-            let delete_row_id = transcript.id.clone();
-            let delete_button = div()
-                .id(SharedString::from(format!(
-                    "media-transcript-delete-{}",
-                    transcript.id
-                )))
-                .debug_selector(move || {
-                    if confirming {
-                        "media-transcript-delete-confirm".into()
-                    } else {
-                        "media-transcript-delete".into()
-                    }
-                })
-                .cursor_pointer()
-                .px_2()
-                .py_1()
-                .flex_none()
-                .hover(|el| el.bg(cx.theme().colors().element_hover))
-                .child(
-                    Label::new(if confirming {
-                        SharedString::from("Confirm delete")
-                    } else {
-                        SharedString::from("Delete")
-                    })
-                    .size(LabelSize::XSmall)
-                    .color(if confirming {
-                        ui::Color::Error
-                    } else {
-                        ui::Color::Muted
-                    }),
-                )
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    if this.confirm_delete_transcript.confirm(&delete_row_id) {
-                        this.delete_transcript_recording(delete_row_id.clone(), cx);
-                    } else {
-                        cx.notify();
-                    }
-                }));
-            sections = sections.child(
-                div()
-                    .id(SharedString::from(format!(
-                        "media-transcript-row-{}",
-                        transcript.id
-                    )))
-                    .flex()
-                    .items_start()
-                    .gap_2()
-                    .child(row.on_click(cx.listener(move |this, _, _, cx| {
-                        this.open_transcript(transcript_id.clone(), cx);
-                    })))
-                    .child(delete_button),
-            );
+            // The stored transcripts of this recording, beneath it.
+            for (row_index, row) in listing.iter().enumerate() {
+                if row.gallery_asset_id.as_deref() == Some(recording_id) {
+                    sections = sections.child(self.render_transcript_row(row_index, cx));
+                }
+            }
+        }
+        // Unlinked transcripts — stored transcripts that belong to no live
+        // recording (their recording was deleted from the gallery index;
+        // the server preserves the transcript and its durable exports).
+        let unlinked: Vec<usize> = listing
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row.gallery_asset_id.is_none())
+            .map(|(row_index, _)| row_index)
+            .collect();
+        if !unlinked.is_empty() {
+            sections = sections.child(Self::section_label("Unlinked transcripts"));
+            for row_index in unlinked {
+                sections = sections.child(self.render_transcript_row(row_index, cx));
+            }
         }
         v_flex()
             .id("media-viewer-transcript-browser")
@@ -4882,6 +4920,186 @@ impl MediaViewer {
             .overflow_y_scroll()
             .child(sections)
             .into_any_element()
+    }
+
+    /// One stored-transcript row (S3a): the recording's name and metadata;
+    /// a click opens the workspace. The Delete affordance is a SIBLING of
+    /// the clickable open area (the Library row pattern), so opening and
+    /// deleting can never fire together. Two clicks: Delete arms the
+    /// confirmation, Confirm delete dispatches the server's
+    /// `educt_delete_transcript` (durable exports and rendered reels are
+    /// preserved by the server, detached from the removed record).
+    fn render_transcript_row(&self, row_index: usize, cx: &mut Context<Self>) -> AnyElement {
+        let Some(listing) = self.transcript_listing.as_ref() else {
+            return div().into_any_element();
+        };
+        let Some(transcript) = listing.get(row_index) else {
+            return div().into_any_element();
+        };
+        let timings = if transcript.has_word_timings {
+            ""
+        } else {
+            " · text only"
+        };
+        let transcript_id = transcript.id.clone();
+        let title = recording_display_name(&transcript.media_path);
+        let metadata = format!(
+            "{} · {} words{timings}",
+            format_recording_duration(transcript.duration_secs),
+            transcript.words_count
+        );
+        let mut row = div()
+            .id(SharedString::from(format!(
+                "media-transcript-open-{}",
+                transcript.id
+            )))
+            .cursor_pointer()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .py_1()
+            .flex_1()
+            .min_w_0()
+            .hover(|el| el.bg(cx.theme().colors().element_hover))
+            .child(
+                Label::new(SharedString::from(title))
+                    .size(LabelSize::Small)
+                    .color(ui::Color::Default),
+            )
+            .child(
+                Label::new(SharedString::from(metadata))
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Muted),
+            );
+        if let Some(note) = transcript_alignment_note(&transcript.alignment) {
+            row = row.child(
+                Label::new(SharedString::from(note))
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Error),
+            );
+        }
+        let confirming = self.confirm_delete_transcript.is_armed(&transcript.id);
+        let delete_row_id = transcript.id.clone();
+        let delete_button = div()
+            .id(SharedString::from(format!(
+                "media-transcript-delete-{}",
+                transcript.id
+            )))
+            .debug_selector(move || {
+                if confirming {
+                    "media-transcript-delete-confirm".into()
+                } else {
+                    "media-transcript-delete".into()
+                }
+            })
+            .cursor_pointer()
+            .px_2()
+            .py_1()
+            .flex_none()
+            .hover(|el| el.bg(cx.theme().colors().element_hover))
+            .child(
+                Label::new(if confirming {
+                    SharedString::from("Confirm delete")
+                } else {
+                    SharedString::from("Delete")
+                })
+                .size(LabelSize::XSmall)
+                .color(if confirming {
+                    ui::Color::Error
+                } else {
+                    ui::Color::Muted
+                }),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if this.confirm_delete_transcript.confirm(&delete_row_id) {
+                    this.delete_transcript_recording(delete_row_id.clone(), cx);
+                } else {
+                    cx.notify();
+                }
+            }));
+        div()
+            .id(SharedString::from(format!(
+                "media-transcript-row-{}",
+                transcript.id
+            )))
+            .flex()
+            .items_start()
+            .gap_2()
+            .child(row.on_click(cx.listener(move |this, _, _, cx| {
+                this.open_transcript(transcript_id.clone(), cx);
+            })))
+            .child(delete_button)
+            .into_any_element()
+    }
+
+    /// The per-recording transcription status (R2/R5): a running
+    /// transcribe job whose source is the recording shows Transcribing;
+    /// a stored transcript linked to the recording shows Transcribed;
+    /// otherwise Not transcribed.
+    fn recording_transcription_status(&self, asset: &MediaAsset) -> RecordingTranscriptionStatus {
+        let running = self.jobs.iter().any(|job| {
+            job_is_nonterminal(job) && job.source.as_deref() == Some(asset.src.as_str())
+        });
+        if running {
+            return RecordingTranscriptionStatus::Transcribing;
+        }
+        let recording_id = asset.gallery_asset_id.as_deref();
+        let stored = self.transcript_listing.as_ref().is_some_and(|listing| {
+            listing
+                .iter()
+                .any(|row| row.gallery_asset_id.as_deref() == recording_id)
+        });
+        if stored {
+            RecordingTranscriptionStatus::Transcribed
+        } else {
+            RecordingTranscriptionStatus::NotTranscribed
+        }
+    }
+
+    /// The Transcribe affordance (R5, operator ruling 2026-10-28):
+    /// submit the async transcribe job against the recording's source,
+    /// storing and linking the transcript on completion — the operator
+    /// can take a recording from import to transcript to reel entirely
+    /// in the panel.
+    fn transcribe_recording(
+        &mut self,
+        gallery_asset_id: String,
+        source: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(invoker) = hkask_tool_invoker::shared_tool_invoker() else {
+            self.status = Some("Tool invoker not wired — panel cannot transcribe.".into());
+            cx.notify();
+            return;
+        };
+        self.status = Some("Transcription queued — the Queue tab tracks it.".into());
+        let task = invoker.invoke_tool(
+            MEDIA_SERVER,
+            "job_submit",
+            serde_json::json!({
+                "op": "transcribe",
+                "params": serde_json::json!({
+                    "audio_url": source,
+                    "gallery_asset_id": gallery_asset_id,
+                })
+                .to_string(),
+            }),
+        );
+        cx.spawn(async move |this, cx| {
+            let result = match task.await {
+                Ok(_text) => Ok(()),
+                Err(error) => Err(format!("transcription submit failed: {}", error.message())),
+            };
+            this.update(cx, |this, cx| {
+                if let Err(error) = result {
+                    this.status = Some(error);
+                }
+                this.load_jobs(cx);
+                cx.notify();
+            })
+            .log_err();
+        })
+        .detach();
     }
 
     fn section_label(title: &str) -> impl IntoElement + use<> {
@@ -5213,6 +5431,11 @@ fn parse_transcript_listing(payload: &Value) -> Result<Vec<TranscriptSummaryRow>
                         .to_string()
                 })?
                 .to_string();
+            let gallery_asset_id = object
+                .get("gallery_asset_id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+                .map(str::to_string);
             Ok(TranscriptSummaryRow {
                 id: id.to_string(),
                 media_path: media_path.to_string(),
@@ -5220,6 +5443,7 @@ fn parse_transcript_listing(payload: &Value) -> Result<Vec<TranscriptSummaryRow>
                 duration_secs,
                 has_word_timings,
                 alignment,
+                gallery_asset_id,
             })
         })
         .collect()
@@ -6899,6 +7123,7 @@ mod tests {
             completed_at: None,
             result: None,
             error: None,
+            source: None,
         }
     }
 
@@ -8344,6 +8569,7 @@ mod tests {
                     duration_secs: 276,
                     has_word_timings: true,
                     alignment: "re_anchored".into(),
+                    gallery_asset_id: None,
                 },
                 TranscriptSummaryRow {
                     id: "t-untimed".into(),
@@ -8352,6 +8578,7 @@ mod tests {
                     duration_secs: 11,
                     has_word_timings: false,
                     alignment: "untimed".into(),
+                    gallery_asset_id: None,
                 }
             ])
         );
@@ -8484,6 +8711,7 @@ mod tests {
                     duration_secs: 2,
                     has_word_timings: true,
                     alignment: "original".into(),
+                    gallery_asset_id: None,
                 }]),
                 cx,
             );
@@ -8506,6 +8734,7 @@ mod tests {
                         duration_secs: 2,
                         has_word_timings: true,
                         alignment: "original".into(),
+                        gallery_asset_id: None,
                     }][..]
                 )
             );
@@ -10255,6 +10484,133 @@ mod viewer_layout_tests {
         );
     }
 
+    /// The per-recording transcription status (R2/R5): a running transcribe
+    /// job whose source is the recording shows Transcribing; a stored
+    /// transcript linked to the recording shows Transcribed; otherwise
+    /// Not transcribed. [P1] Motivating: the recordings browser is the
+    /// recordings CRUD the reference model's capability 3 names.
+    #[test]
+    fn recordings_rows_carry_transcription_status() {
+        let mut viewer = MediaViewer::new();
+        viewer.assets = vec![
+            MediaAsset {
+                body: r#"{"kind":"video","src":"/talk.mp4"}"#.into(),
+                src: "/talk.mp4".into(),
+                kind: "video".into(),
+                tool: "gallery".into(),
+                gallery_index: Some(0),
+                gallery_asset_id: Some("asset-talk".into()),
+            },
+            MediaAsset {
+                body: r#"{"kind":"audio","src":"/note.wav"}"#.into(),
+                src: "/note.wav".into(),
+                kind: "audio".into(),
+                tool: "gallery".into(),
+                gallery_index: Some(1),
+                gallery_asset_id: Some("asset-note".into()),
+            },
+        ];
+        viewer.transcript_listing = Some(vec![TranscriptSummaryRow {
+            id: "t-talk".into(),
+            media_path: "/talk.mp4".into(),
+            words_count: 42,
+            duration_secs: 30,
+            has_word_timings: true,
+            alignment: "original".into(),
+            gallery_asset_id: Some("asset-talk".into()),
+        }]);
+        viewer.jobs = vec![JobRecord {
+            id: "job-transcribe".into(),
+            op: "transcribe".into(),
+            status: "running".into(),
+            created_at: "2026-10-28T00:00:00Z".into(),
+            completed_at: None,
+            result: None,
+            error: None,
+            source: Some("/note.wav".into()),
+        }];
+        assert_eq!(
+            viewer.recording_transcription_status(&viewer.assets[0]),
+            RecordingTranscriptionStatus::Transcribed,
+            "a linked transcript shows Transcribed"
+        );
+        assert_eq!(
+            viewer.recording_transcription_status(&viewer.assets[1]),
+            RecordingTranscriptionStatus::Transcribing,
+            "a running transcribe job against the recording shows Transcribing"
+        );
+        // A gallery-backed recording with no transcript and no job shows
+        // Not transcribed — the operator can take it to its transcript.
+        viewer.assets.push(MediaAsset {
+            body: r#"{"kind":"video","src":"/later.mp4"}"#.into(),
+            src: "/later.mp4".into(),
+            kind: "video".into(),
+            tool: "gallery".into(),
+            gallery_index: Some(2),
+            gallery_asset_id: Some("asset-later".into()),
+        });
+        let later = viewer.assets.last().unwrap();
+        assert_eq!(
+            viewer.recording_transcription_status(later),
+            RecordingTranscriptionStatus::NotTranscribed,
+            "a recording with neither transcript nor job shows Not transcribed"
+        );
+    }
+
+    /// The Transcribe affordance (R5) renders on a not-transcribed
+    /// recording and dispatches the async transcribe job against the
+    /// recording's source; the unwired-invoker degradation surfaces a
+    /// status (tests run without a shared tool invoker).
+    #[gpui::test]
+    fn transcribe_affordance_renders_and_degrades_honestly(cx: &mut TestAppContext) {
+        init_layout_test_globals(cx);
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            viewer.assets = vec![MediaAsset {
+                body: r#"{"kind":"video","src":"/later.mp4"}"#.into(),
+                src: "/later.mp4".into(),
+                kind: "video".into(),
+                tool: "gallery".into(),
+                gallery_index: Some(0),
+                gallery_asset_id: Some("asset-later".into()),
+            }];
+            viewer.transcript_listing = Some(vec![]);
+            viewer.active_tab = ViewerTab::Transcript;
+            cx.notify();
+        });
+
+        let (_, cx) = cx.add_window_view(|_window, _cx| NarrowPaneHost {
+            viewer: viewer.clone(),
+        });
+        cx.simulate_resize(size(px(480.), px(320.)));
+        cx.run_until_parked();
+
+        // The Transcribe affordance renders on the not-transcribed
+        // recording; the operator can take the recording to its
+        // transcript without a chat turn.
+        assert!(
+            cx.debug_bounds("media-recording-transcribe").is_some(),
+            "the Transcribe affordance must render on the recording"
+        );
+
+        // The dispatch surfaces a status even on the unwired degradation
+        // path — never silence (D5).
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcribe_recording("asset-later".into(), "/later.mp4".into(), cx);
+        });
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, _cx| {
+            assert!(
+                viewer
+                    .status
+                    .as_deref()
+                    .is_some_and(|status| status.contains("cannot transcribe")),
+                "the unwired-invoker degradation must surface a status, got {:?}",
+                viewer.status
+            );
+        });
+    }
+
     /// The recordings browser's two-click delete: the Delete affordance
     /// renders per row, arming swaps it for Confirm delete, and the
     /// dispatch closes the edit lifecycle through the unwired-invoker
@@ -10271,6 +10627,7 @@ mod viewer_layout_tests {
                 duration_secs: 276,
                 has_word_timings: true,
                 alignment: "original".into(),
+                gallery_asset_id: None,
             }]);
             viewer.active_tab = ViewerTab::Transcript;
             cx.notify();

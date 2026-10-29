@@ -393,6 +393,8 @@ widget as of this edit (method: grep for `playback_speed`, `set_rate`,
 | Bounded video concatenation | supplied |
 | Job list, polling, status, and cancellation | supplied |
 | Recordings browse + transcript workspace with synced reading | supplied |
+| Recording-first browse with per-recording transcription status and Transcribe affordance (R2/R5, operator ruling 2026-10-28) | supplied |
+| Transcribe affordance: recording to transcript without a chat turn | supplied (2026-10-28, operator ruling) |
 | Follow-along viewport tracking with manual-scroll suspend + Follow toggle | supplied (2026-10-28) |
 | Researcher highlight create/rename/delete via label editor | supplied |
 | Per-recording alignment flag on the browser and Detail rows | supplied (2026-10-27) |
