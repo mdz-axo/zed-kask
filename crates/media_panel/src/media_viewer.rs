@@ -3779,6 +3779,28 @@ impl MediaViewer {
         sections = sections.child(Self::tab_purpose(
             "The transcript workbench — read synced to playback; select text to label highlights; toggle clips to compose a reel.",
         ));
+        // S6: the back affordance renders FIRST — above the player — so a
+        // full-pane widget error can never bury it (operator report
+        // 2026-10-28: the errored transcript view was an unrecoverable
+        // dead end with no way back).
+        sections = sections.child(
+            div()
+                .id("media-transcript-back-to-recordings")
+                .debug_selector(|| "media-transcript-back-to-recordings".into())
+                .cursor_pointer()
+                .flex()
+                .flex_wrap()
+                .gap_2()
+                .hover(|el| el.bg(cx.theme().colors().element_hover))
+                .child(
+                    Label::new(SharedString::from("← all recordings"))
+                        .size(LabelSize::XSmall)
+                        .color(ui::Color::Muted),
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.close_transcript_workspace(cx);
+                })),
+        );
         if let Some(widget) = media_widget {
             sections = sections.child(div().flex().min_w_0().overflow_hidden().child(widget));
         } else if media_unavailable {
@@ -3798,6 +3820,7 @@ impl MediaViewer {
         sections = sections.child(
             div()
                 .id("media-transcript-select-mode")
+                .debug_selector(|| "media-transcript-select-mode".into())
                 .cursor_pointer()
                 .flex()
                 .flex_wrap()
@@ -3837,25 +3860,6 @@ impl MediaViewer {
         if let Some(edit) = self.highlight_edit.clone() {
             sections = sections.child(Self::render_label_editor(&edit, &label_input_focus, cx));
         }
-        // S6: the workspace is reachable back — one click returns to the
-        // recordings browser.
-        sections = sections.child(
-            div()
-                .id("media-transcript-back-to-recordings")
-                .cursor_pointer()
-                .flex()
-                .flex_wrap()
-                .gap_2()
-                .hover(|el| el.bg(cx.theme().colors().element_hover))
-                .child(
-                    Label::new(SharedString::from("← all recordings"))
-                        .size(LabelSize::XSmall)
-                        .color(ui::Color::Muted),
-                )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.close_transcript_workspace(cx);
-                })),
-        );
         match state.alignment.as_str() {
             "original" => {}
             "aligned" => {
@@ -9346,6 +9350,70 @@ mod viewer_layout_tests {
             cx.simulate_resize(size(dock_width, px(600.)));
             cx.run_until_parked();
             assert_viewer_fits_narrow_pane(cx, dock_width, pane_available);
+        }
+    }
+
+    /// A failed player must not turn the transcript workspace into a dead
+    /// end: Back and range selection remain reachable while the error is
+    /// visible. The missing-file fixture fails synchronously and needs no
+    /// codec, device, network, or operator data.
+    #[gpui::test]
+    fn transcript_media_failure_keeps_navigation_and_curation_reachable(cx: &mut TestAppContext) {
+        init_layout_test_globals(cx);
+        let viewer = cx.new(|_| MediaViewer::new());
+        let media_path = "/definitely-missing-transcript-audio.mp3";
+        let widget = cx.new(|cx| {
+            hkask_media_widget::MediaWidget::new(
+                hkask_media_widget::MediaRef::new(
+                    media_path.into(),
+                    hkask_media_widget::MediaKind::Audio,
+                ),
+                cx,
+            )
+        });
+        widget.update(cx, |widget, cx| widget.load(cx));
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript = Some(TranscriptPaneState {
+                transcript_id: "t-media-failure".into(),
+                media_path: media_path.into(),
+                alignment: "original".into(),
+                alignment_note: None,
+                words: Some(vec![PaneWord {
+                    word: "recover".into(),
+                    start_ms: 0,
+                    end_ms: 100,
+                }]),
+                working_text: "recover".into(),
+                paragraph_breaks: None,
+                speaker_spans: None,
+                review: None,
+                layers: Vec::new(),
+                highlights: Vec::new(),
+                strikes: Vec::new(),
+            });
+            viewer.active_tab = ViewerTab::Transcript;
+            viewer.media_widget = Some(widget);
+            viewer.media_widget_body = Some(transcript_media_body(media_path));
+            cx.notify();
+        });
+
+        let (_, cx) = cx.add_window_view(|_window, _cx| NarrowPaneHost {
+            viewer: viewer.clone(),
+        });
+        cx.simulate_resize(size(px(480.), px(320.)));
+        cx.run_until_parked();
+
+        for selector in [
+            "media-transcript-back-to-recordings",
+            "media-transcript-select-mode",
+        ] {
+            let bounds = cx
+                .debug_bounds(selector)
+                .unwrap_or_else(|| panic!("{selector} remains laid out during media failure"));
+            assert!(
+                bounds.bottom() <= px(320.),
+                "{selector} remains reachable during media failure: {bounds:?}"
+            );
         }
     }
 

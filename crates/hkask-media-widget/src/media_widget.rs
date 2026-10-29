@@ -898,16 +898,30 @@ impl gpui::Render for MediaWidget {
         }
         let theme = cx.theme();
 
-        // A load/decode failure must be visible — storing it in `self.error`
-        // without rendering it leaves an empty widget the operator cannot
-        // distinguish from a slow load.
+        // A load/decode failure renders as a compact, dismissible status
+        // line — never a full-viewport takeover. The operator reported the
+        // old full-pane error burying the transcript text and every
+        // navigation affordance (a dead end); Dismiss clears the error so
+        // the surrounding surface (transcript text, back button) is usable.
         let main_content = if let Some(message) = &self.error {
             div()
-                .p_4()
-                .flex_1()
-                .text_sm()
-                .text_color(theme.colors().text_muted)
+                .p_2()
+                .flex()
+                .flex_wrap()
+                .gap_2()
+                .text_xs()
                 .child(SharedString::from(format!("Media error: {message}")))
+                .child(
+                    div()
+                        .id("media-widget-dismiss-error")
+                        .cursor_pointer()
+                        .hover(|el| el.bg(cx.theme().colors().element_hover))
+                        .child(SharedString::from("Dismiss"))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.error = None;
+                            cx.notify();
+                        })),
+                )
                 .into_any_element()
         } else {
             {
@@ -1018,8 +1032,12 @@ impl gpui::Render for MediaWidget {
             .size_full()
             // In definite-height containers (the viewer pane) size_full
             // fills; in content-flow containers (conversation inline) it
-            // collapses and this floor keeps the player usable.
-            .min_h(px(240.0))
+            // collapses and this floor keeps the player usable — but never
+            // for a failed load: an error is a compact status line, and a
+            // 240px floor would bury the surrounding surface (operator
+            // report 2026-10-28: the transcript tab dead-ended behind the
+            // errored widget).
+            .when(self.error.is_none(), |el| el.min_h(px(240.0)))
             // Flex column so the main content's flex_1 resolves against a
             // definite height — the root's size_full is definite only when
             // the embedding pane provides one (the viewer's Media tab does;
