@@ -1,3 +1,13 @@
+---
+title: "Media MCP server remediation plan — refactor-architecture run"
+audience: [architects, developers, operators]
+last_updated: 2026-10-28
+version: "1.0.0"
+status: "Proposed — dependency-ordered remediation plan for operator review; not yet executed"
+domain: "Media / hkask-mcp-media"
+mds_categories: [domain, lifecycle]
+---
+
 # Media MCP server remediation plan — refactor-architecture run (2026-10-28)
 
 **Commission:** operator commission — run `refactor-architecture` over

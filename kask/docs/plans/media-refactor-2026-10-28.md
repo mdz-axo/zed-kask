@@ -1,3 +1,13 @@
+---
+title: "Media system repair plan — refactor-architecture run"
+audience: [architects, developers, operators]
+last_updated: 2026-10-28
+version: "1.0.0"
+status: "Proposed — repair plan delivered for operator review; no production code changed in the commissioning session"
+domain: "Media / transcript capabilities"
+mds_categories: [domain, lifecycle]
+---
+
 # Media system repair plan — refactor-architecture run (2026-10-28)
 
 **Commission:** operator commission, this session — produce the prioritized,
