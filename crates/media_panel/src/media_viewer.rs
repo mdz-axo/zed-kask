@@ -80,10 +80,11 @@ struct TranscriptSummaryRow {
     /// The five-state alignment (original, aligned, re_anchored, unaligned,
     /// untimed) — what the row's capability note keys on.
     alignment: String,
-    /// The stable gallery asset id of the RECORDING this transcript is
-    /// stored against (`None` = unlinked — no live recording owns it).
-    /// The recordings browser groups rows under their recording by it
-    /// (R2/R5, operator ruling 2026-10-28).
+    /// The recording this transcript is stored against, when it has one:
+    /// the stable gallery asset id of the RECORDING (R3,
+    /// 2026-10-28). `None` for unlinked transcripts — a recording
+    /// that left the gallery index keeps its transcript and its durable
+    /// exports, detached (the server's detach contract).
     gallery_asset_id: Option<String>,
 }
 
@@ -184,6 +185,12 @@ struct AnnotationEdit {
 struct TranscriptPaneState {
     transcript_id: String,
     media_path: String,
+    /// The gallery recording this transcript is stored against, when it
+    /// has one: the stable asset id of the RECORDING (R3, 2026-10-28).
+    /// `None` for an unlinked transcript — a recording that left the
+    /// gallery index keeps its transcript and its durable exports,
+    /// detached (the server's detach contract).
+    gallery_asset_id: Option<String>,
     alignment: String,
     alignment_note: Option<String>,
     words: Option<Vec<PaneWord>>,
@@ -4061,6 +4068,29 @@ impl MediaViewer {
     /// viz-core-registry widget the Media tab and inline renders use — one
     /// player per media identity, rebound on tab activation, suspended on
     /// leave; D1). Alignment degradations surface as visible status notes,
+    /// The gallery recording a workspace transcript belongs to (R3): the
+    /// linked asset from the panel's current gallery page. Recordings on
+    /// unlisted pages fall to the unlinked path — the honest degradation.
+    fn recording_asset<'a>(&'a self, state: &'a TranscriptPaneState) -> Option<&'a MediaAsset> {
+        let asset_id = state.gallery_asset_id.as_deref()?;
+        self.assets
+            .iter()
+            .find(|asset| asset.gallery_asset_id.as_deref() == Some(asset_id))
+    }
+
+    /// The workspace's media body (R3): the RECORDING's asset body when the
+    /// transcript links to a live gallery recording — the same body the
+    /// Media tab renders, so a video-keyed transcript plays the video. An
+    /// unlinked transcript (its recording left the gallery index) falls
+    /// to its stored media_path — the transcript and its durable exports
+    /// stay reachable.
+    fn workspace_media_body(&self, state: &TranscriptPaneState) -> String {
+        match self.recording_asset(state) {
+            Some(asset) => asset.body.clone(),
+            None => transcript_media_body(&state.media_path),
+        }
+    }
+
     /// never silence (D5); click-to-seek and follow-along land with the
     /// S3b hit-testing element.
     fn render_transcript(
@@ -4071,8 +4101,8 @@ impl MediaViewer {
         let Some(state) = self.transcript.as_ref() else {
             return self.render_transcript_browser(cx);
         };
-        let media_path = state.media_path.clone();
-        let body = transcript_media_body(&media_path);
+        // The workspace media body is the RECORDING's (R3).
+        let body = self.workspace_media_body(state);
         if self.media_widget_body.as_deref() != Some(body.as_str()) {
             match hkask_viz_core::shared_media_widget(&body, window, cx) {
                 Some(widget) => {
@@ -4172,7 +4202,12 @@ impl MediaViewer {
                 let Some(state) = self.transcript.as_ref() else {
                     return div().into_any_element();
                 };
-                let recording_name = recording_display_name(&state.media_path);
+                // The recording's display name flows from the gallery asset
+                // (R3); an unlinked transcript falls to its stored media_path.
+                let recording_name = match self.recording_asset(state) {
+                    Some(asset) => recording_display_name(&asset.src),
+                    None => recording_display_name(&state.media_path),
+                };
                 let back = div()
                     .id("media-transcript-back-to-recordings")
                     .debug_selector(|| "media-transcript-back-to-recordings".into())
@@ -4200,7 +4235,8 @@ impl MediaViewer {
                     )
                     .into_any_element()
             }
-            1 => match self.media_widget.clone() {
+            1 => {
+                match self.media_widget.clone() {
                 Some(widget) => div()
                     .h(px(140.))
                     .flex()
@@ -4216,7 +4252,8 @@ impl MediaViewer {
                 .size(LabelSize::XSmall)
                 .color(ui::Color::Error)
                 .into_any_element(),
-            },
+                }
+            }
             2 => {
                 let selection_mode = self.selection_mode;
                 let following = self.follow_viewport;
@@ -6204,6 +6241,15 @@ fn parse_transcript_payload(payload: &Value) -> Result<TranscriptPaneState, Stri
         .filter(|path| !path.is_empty())
         .ok_or_else(|| "transcript summary has no media_path.".to_string())?
         .to_string();
+    // The recording this transcript is stored against, when it has one
+    // (R3): the workspace keys its media to the RECORDING — the same
+    // asset the Media tab renders — and falls to the transcript's stored
+    // media_path only when the recording left the gallery index.
+    let gallery_asset_id = summary
+        .get("gallery_asset_id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string);
     let working = object
         .get("working_transcript")
         .and_then(Value::as_object)
@@ -6488,6 +6534,7 @@ fn parse_transcript_payload(payload: &Value) -> Result<TranscriptPaneState, Stri
     Ok(TranscriptPaneState {
         transcript_id,
         media_path,
+        gallery_asset_id,
         alignment,
         alignment_note,
         words,
@@ -7733,6 +7780,7 @@ mod tests {
             viewer.transcript = Some(TranscriptPaneState {
                 transcript_id: "t-1".into(),
                 media_path: "/m".into(),
+                gallery_asset_id: None,
                 alignment: "original".into(),
                 alignment_note: None,
                 words: None,
@@ -7869,6 +7917,7 @@ mod tests {
         TranscriptPaneState {
             transcript_id: transcript_id.into(),
             media_path: "/m".into(),
+            gallery_asset_id: None,
             alignment: "original".into(),
             alignment_note: None,
             words: None,
@@ -8624,6 +8673,38 @@ mod tests {
     }
 
     #[test]
+    fn recording_keyed_workspace_bodies_prefer_the_recording() {
+        let mut viewer = MediaViewer::new();
+        // A video-keyed transcript: the gallery recording is the identity,
+        // so the workspace renders the RECORDING's asset body — the video
+        // plays, the same body the Media tab renders.
+        viewer.assets = vec![MediaAsset {
+            body: r#"{"kind":"video","src":"/talk.mp4"}"#.into(),
+            src: "/talk.mp4".into(),
+            kind: "video".into(),
+            tool: "gallery".into(),
+            gallery_index: Some(0),
+            gallery_asset_id: Some("asset-talk".into()),
+        }];
+        let mut state = pane_state("t-video");
+        state.gallery_asset_id = Some("asset-talk".into());
+        assert_eq!(
+            viewer.workspace_media_body(&state),
+            r#"{"kind":"video","src":"/talk.mp4"}"#,
+            "a linked transcript renders the recording's asset body"
+        );
+        // An unlinked transcript falls to its stored media_path — the
+        // recording left the gallery index; the transcript and its durable
+        // exports stay reachable.
+        let unlinked = pane_state("t-unlinked");
+        assert_eq!(
+            viewer.workspace_media_body(&unlinked),
+            transcript_media_body(&unlinked.media_path),
+            "an unlinked transcript falls to its stored media body"
+        );
+    }
+
+    #[test]
     fn human_recording_labels_avoid_internal_identifiers() {
         assert_eq!(
             recording_display_name("/generated/dunning-2017-audio.mp3"),
@@ -9291,6 +9372,7 @@ mod tests {
         let state = TranscriptPaneState {
             transcript_id: "t-1".into(),
             media_path: "/m".into(),
+            gallery_asset_id: None,
             alignment: "original".into(),
             alignment_note: None,
             words: None,
@@ -9667,6 +9749,7 @@ mod tests {
         let state = TranscriptPaneState {
             transcript_id: "t-parity".into(),
             media_path: "/generated/parity.wav".into(),
+            gallery_asset_id: None,
             alignment: "original".into(),
             alignment_note: None,
             words: Some(
@@ -9750,6 +9833,7 @@ mod tests {
         let state = TranscriptPaneState {
             transcript_id: "t".into(),
             media_path: "/m".into(),
+            gallery_asset_id: None,
             alignment: "original".into(),
             alignment_note: None,
             words: Some(vec![
@@ -9819,6 +9903,7 @@ mod tests {
             let state = TranscriptPaneState {
                 transcript_id: "t-new".into(),
                 media_path: "/m".into(),
+                gallery_asset_id: None,
                 alignment: "original".into(),
                 alignment_note: None,
                 words: Some(vec![PaneWord {
@@ -10109,6 +10194,7 @@ mod viewer_layout_tests {
             viewer.transcript = Some(TranscriptPaneState {
                 transcript_id: "t-long".into(),
                 media_path: "/generated/long.mp4".into(),
+                gallery_asset_id: None,
                 alignment: "original".into(),
                 alignment_note: None,
                 words: Some(
@@ -10162,6 +10248,7 @@ mod viewer_layout_tests {
             viewer.transcript = Some(TranscriptPaneState {
                 transcript_id: "t-edit".into(),
                 media_path: "/generated/edit.wav".into(),
+                gallery_asset_id: None,
                 alignment: "original".into(),
                 alignment_note: None,
                 words: None,
@@ -10274,6 +10361,7 @@ mod viewer_layout_tests {
             viewer.transcript = Some(TranscriptPaneState {
                 transcript_id: "t-media-failure".into(),
                 media_path: media_path.into(),
+                gallery_asset_id: None,
                 alignment: "original".into(),
                 alignment_note: None,
                 words: Some(vec![PaneWord {
@@ -10347,6 +10435,7 @@ mod viewer_layout_tests {
             viewer.transcript = Some(TranscriptPaneState {
                 transcript_id: "t-follow".into(),
                 media_path: "/generated/follow.wav".into(),
+                gallery_asset_id: None,
                 alignment: "original".into(),
                 alignment_note: None,
                 words: Some(
@@ -10413,6 +10502,7 @@ mod viewer_layout_tests {
             viewer.transcript = Some(TranscriptPaneState {
                 transcript_id: "t-suspend".into(),
                 media_path: "/generated/suspend.wav".into(),
+                gallery_asset_id: None,
                 alignment: "original".into(),
                 alignment_note: None,
                 words: Some(
