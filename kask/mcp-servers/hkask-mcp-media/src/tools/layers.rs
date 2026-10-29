@@ -12,8 +12,8 @@ use crate::layer_pass::{
     LayerAudioChunk, LayerPassError, LayerVisionChunk, run_layer_pass_audio, run_layer_pass_vision,
 };
 use crate::layer_store::{
-    self, LayerProvenance, MediaLayerFilter, MediaLayerItem, MediaLayerRecord, NewMediaLayer,
-    StoredMediaLayerItem,
+    self, LayerProvenance, MediaLayerFilter, MediaLayerItem, MediaLayerKind, MediaLayerRecord,
+    NewMediaLayer, StoredMediaLayerItem,
 };
 use crate::tools::educt::parse_json_value;
 use crate::tools::educt::{
@@ -1755,7 +1755,171 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Export every stored media layer item over one recording as corpus passages — the semantic handoff for corpus ingestion. Each item becomes one passage carrying its stable item id (resolvable via layers_get), start-end seconds, kind, label, and confidence, preceded by a recording header naming the media path. Feed the output to corpus_convert → corpus_chunk → corpus_embed; each item's text is a natural chunk boundary. Only the recording's layers are exported — the transcript has its own educt_export corpus_text path."
+        description = "Compose researcher selections into a media EDL layer with union-merged ordered Keep ops validated against media duration. Takes a media_path plus either a layer_id (of a researcher-authored selection layer) or a label query (searched via layers_search). Overlapping selections merge into one Keep op; duplicates collapse. Ops outside the probed media duration reject with a typed error naming the bounds. The composed EDL is stored as a new kind=edl layer whose provenance records the source (layer id or query)."
+    )]
+    pub async fn layers_edl_compose(
+        &self,
+        Parameters(request): Parameters<LayersEdlComposeRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "layers_edl_compose", async {
+            ensure_local_input_exists(&request.media_path)?;
+            let ffmpeg = self.require_ffmpeg()?;
+            let probe = ffmpeg
+                .probe(&request.media_path)
+                .await
+                .map_err(map_media_error)?;
+            let duration_secs = probe.duration_secs as f64;
+            let driver = &**self.gallery_store.driver();
+
+            // Collect time ranges from either a selection layer or a label
+            // query.
+            let (source_description, ranges) = match (&request.layer_id, &request.query) {
+                (Some(_), Some(_)) => {
+                    return Err(McpToolError::invalid_argument(
+                        "exactly one of layer_id or query is required",
+                    ));
+                }
+                (Some(layer_id), None) => {
+                    let Some(record) =
+                        layer_store::get_layer(driver, layer_id).map_err(map_layer_store_error)?
+                    else {
+                        return Err(McpToolError::not_found(format!(
+                            "layer {} not found",
+                            layer_id
+                        )));
+                    };
+                    if record.kind != MediaLayerKind::Researcher {
+                        return Err(McpToolError::invalid_argument(format!(
+                            "layer_id must reference a researcher-authored layer, got kind {}",
+                            record.kind.as_str()
+                        )));
+                    }
+                    let ranges: Vec<(f64, f64)> = record
+                        .items
+                        .iter()
+                        .map(|item| {
+                            (
+                                item.item.start_sec,
+                                item.item.end_sec.unwrap_or(item.item.start_sec),
+                            )
+                        })
+                        .collect();
+                    (format!("layer:{}", layer_id), ranges)
+                }
+                (None, Some(query)) => {
+                    let filter = MediaLayerFilter {
+                        media_path: Some(request.media_path.clone()),
+                        kind: Some(MediaLayerKind::Researcher),
+                        limit: MAX_LAYERS_PER_RECORDING,
+                    };
+                    let summaries =
+                        layer_store::list_layers(driver, &filter).map_err(map_layer_store_error)?;
+                    let mut ranges = Vec::new();
+                    for summary in &summaries {
+                        let Some(record) = layer_store::get_layer(driver, &summary.id)
+                            .map_err(map_layer_store_error)?
+                        else {
+                            return Err(McpToolError::not_found(format!(
+                                "layer {} disappeared during compose",
+                                summary.id
+                            )));
+                        };
+                        if record.label.as_deref() == Some(query.as_str()) {
+                            for item in &record.items {
+                                ranges.push((
+                                    item.item.start_sec,
+                                    item.item.end_sec.unwrap_or(item.item.start_sec),
+                                ));
+                            }
+                        }
+                    }
+                    (format!("query:{}", query), ranges)
+                }
+                (None, None) => {
+                    return Err(McpToolError::invalid_argument(
+                        "exactly one of layer_id or query is required",
+                    ));
+                }
+            };
+
+            if ranges.is_empty() {
+                return Err(McpToolError::not_found(format!(
+                    "no selections found for {} on {}",
+                    source_description, request.media_path
+                )));
+            }
+
+            // Union-merge overlapping ranges into ordered Keep ops.
+            let mut sorted = ranges.clone();
+            sorted.sort_by(|a, b| {
+                a.0.partial_cmp(&b.0)
+                    .unwrap()
+                    .then(a.1.partial_cmp(&b.1).unwrap())
+            });
+            let mut merged: Vec<(f64, f64)> = Vec::new();
+            for &(start, end) in &sorted {
+                if start < 0.0 || end > duration_secs + 1e-6 {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "selection {}..{}s is outside the probed media duration 0..{}s",
+                        start, end, duration_secs
+                    )));
+                }
+                match merged.last_mut() {
+                    Some(last) if start <= last.1 + 1e-9 => {
+                        last.1 = last.1.max(end);
+                    }
+                    _ => {
+                        merged.push((start, end));
+                    }
+                }
+            }
+
+            let items: Vec<MediaLayerItem> = merged
+                .iter()
+                .map(|&(start, end)| MediaLayerItem {
+                    start_sec: start,
+                    end_sec: Some(end),
+                    searchable_text: format!("keep {}..{}", start, end),
+                    payload: serde_json::json!({
+                        "op": "keep",
+                    }),
+                    frame_asset_ids: None,
+                })
+                .collect();
+            let new_layer = NewMediaLayer {
+                media_path: request.media_path.clone(),
+                gallery_asset_id: request.gallery_asset_id.clone(),
+                kind: MediaLayerKind::Edl,
+                label: Some(format!("edl from {}", source_description)),
+                provenance: LayerProvenance {
+                    model: "deterministic".to_string(),
+                    prompt_template: "layers_edl_compose".to_string(),
+                    created_at: hkask_types::time::now_rfc3339(),
+                    parameters: Some(serde_json::json!({
+                        "source": source_description,
+                        "ops": merged.len(),
+                        "input_ranges": ranges.len(),
+                    })),
+                },
+                duration_secs,
+                items,
+            };
+            let summary =
+                layer_store::store_layer(driver, &new_layer).map_err(map_layer_store_error)?;
+
+            Ok(serde_json::json!({
+                "status": "composed",
+                "layer": summary,
+                "ops": merged.len(),
+                "input_ranges": ranges.len(),
+                "source": source_description,
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Export every stored media layer item over one recording as corpus passages — the semantic handoff for corpus ingestion. Each item becomes one passage carrying its stable item id (resolvable via layers_get), start-end seconds, kind, label, and confidence, preceded by a recording header naming the media path. Feed the output to corpus_convert → corpus_chunk → corpus_embed; each item's text is a natural chunk boundary."
     )]
     pub async fn layers_export(
         &self,
@@ -1764,24 +1928,24 @@ impl MediaServer {
         execute_tool(self, "layers_export", async {
             ensure_local_input_exists(&request.media_path)?;
             let driver = &**self.gallery_store.driver();
-            let layer_filter = MediaLayerFilter {
+            let filter = MediaLayerFilter {
                 media_path: Some(request.media_path.clone()),
                 kind: request.kind,
                 limit: MAX_LAYERS_PER_RECORDING,
             };
-            let summaries =
-                layer_store::list_layers(driver, &layer_filter).map_err(map_layer_store_error)?;
+            let summaries = layer_store::list_layers(driver, &filter)
+                .map_err(map_layer_store_error)?;
             if summaries.is_empty() {
                 return Err(McpToolError::not_found(format!(
-                    "no layers found for {} — run a pass first",
+                    "no layers found for {}",
                     request.media_path
                 )));
             }
             let mut passages = String::new();
             let mut items_exported = 0;
             for summary in &summaries {
-                let Some(record) =
-                    layer_store::get_layer(driver, &summary.id).map_err(map_layer_store_error)?
+                let Some(record) = layer_store::get_layer(driver, &summary.id)
+                    .map_err(map_layer_store_error)?
                 else {
                     return Err(McpToolError::not_found(format!(
                         "layer {} disappeared during export",

@@ -939,6 +939,21 @@ pub struct LayersExportRequest {
     pub kind: Option<crate::layer_store::MediaLayerKind>,
 }
 
+/// Request to compose researcher selections into a media EDL layer (t8).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LayersEdlComposeRequest {
+    /// Absolute local path (or URL) of the source media.
+    pub media_path: String,
+    /// Optional gallery asset ID linking the produced layer to a gallery
+    /// asset.
+    pub gallery_asset_id: Option<String>,
+    /// Layer ID of a researcher-authored selection layer to compose from
+    /// (mutually exclusive with query).
+    pub layer_id: Option<String>,
+    /// Label query to search for (mutually exclusive with layer_id).
+    pub query: Option<String>,
+}
+
 /// Request to generate labeled audio_event items over a recording's audio
 /// via the bounded audio pass (t5).
 #[derive(Debug, Deserialize, JsonSchema)]
