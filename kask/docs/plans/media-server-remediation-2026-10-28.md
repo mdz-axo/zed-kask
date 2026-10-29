@@ -134,8 +134,8 @@ Ordering rule: contract repair → drift removal → structural deepening.
 | T2 Repair the range test + remove the stray file | B1, O1 | fake writes to the command's LAST argument; delete the filter-named file | none | `cargo test -p hkask-mcp-media range_extraction` (was: 0-vs-1 fail) | independent |
 | T3 Registration totality | B3–B7, O2 | pin 81→82 + test rename; `voice_identify` arms in omc.rs and ontology.rs; schema inventory count + arithmetic; panel pin; README count | none | `tool_surface_is_exactly_82…`, `omc_mapping_covers…`, `dual_axis_covers…`, schema_compliance, panel `steer_prompt…` | must land as ONE change — the pin surfaces move together |
 | T4 Voice error-mapping alignment | B8, B9 | `map_voice_encoder_error` (Media → `map_media_error`, Download → `unavailable`, Io/Integrity/Runtime → `internal`); seven store calls → `map_store_error`; delete the `let _ = summary` hack; new classification pin test | T1 (suite green to verify) | voice set + full suite + clippy | low |
-| T5 Flaky EDL render test stabilization | known weak spot (plan Phase 0, `.rules`) | make hermetic or split; keep intent | T1 | three consecutive full-suite greens | the standing isolated-re-run rule covers it meanwhile |
-| T6 Cross-store cascade decision (I1) | I1 | PI chooses (a)/(b)/(c) above; then a task per choice | T3 | per choice; (a) = `voice_list` shows the deleted transcript | doing nothing leaves provenance dishonest |
+| T5 Flaky EDL render test stabilization | known weak spot (plan Phase 0, `.rules`) | **EXECUTED — see §4, `76df402d6a`**: root cause was the shared-root observation race, not the render | T1 | the three rescoped tests + full suite green at the touched tree | the standing isolated-re-run rule is retired |
+| T6 Cross-store cascade decision (I1) | I1 | **EXECUTED — see §4, `b261a0fc0d`**: the platform's own precedent (the transcript store's detach triggers) settled the policy — detach-and-surface, never block, never cascade-delete | T3 | both new tests + full suite green | vetoable on functional grounds (the PI ratification is the algedonic review's) |
 | T7 `video_caption` strangler-fig (D1) | D1 | migrate the transient-caption mechanics onto the layer-pass core; delete the duplicated orchestration; behavior-parity tests before deletion | **post-t10** (EUREKA-2 D8) | parity tests + full suite + net-lines negative | walking the in-flight layer surface mid-design churns t5–t10 |
 | T8 Docs count refresh | O2 (rest) | onboarding/reference educt counts; media.md tool reference | with t10 | t10 card criteria | none |
 
@@ -151,6 +151,23 @@ Ordering rule: contract repair → drift removal → structural deepening.
 - `2df4b64986` — **Classify voice tool errors per variant**:
   T4. +65/−12. Verification: voice set 16 passed; full suite
   **408 + 161 + 1, 0 failed, 59.36s**; clippy exit 0.
+- `76df402d6a` — **Make the render-intermediate assertions hermetic**:
+  T5, root-caused. The flake was never the render: the before/after
+  snapshot walked the shared `hkask-media` temp root, written by every
+  concurrent ffmpeg runner on the machine (sibling tests, live
+  servers). The observation is now the server's own runner temp
+  directory (`FfmpegRunner::temp_dir()`), which no other runner can
+  legally write. +30/−8. Verification: the three rescoped tests pass;
+  full suite green at the touched tree.
+- `b261a0fc0d` — **Detach and surface cross-store references on
+  deletion**: T6, root-caused. Voice profiles (separate DB) gain the
+  read-side resolution — `voice_list` reports each profile's
+  authorization transcript status (present/deleted); media layers
+  (same DB) gain the trigger mirror of the transcript store's asset
+  detach — `gallery_asset_id` severed and `detached_at` stamped on
+  asset deletion, surfaced in list/get. +253/−9. Verification: both
+  new tests pass; full suite **412 lib + 161 schema + 1 doctest,
+  0 failed**; clippy exit 0.
 - Card comments recorded on t2 (`bcd53d23`), t4 (`169940b9`), and the
   speaker-identity Phase-3-prep card (`5ffe9726`) clearing their recorded
   blockers; the t4 card remains its owner's to verify and move.
@@ -187,6 +204,7 @@ the deepening tier is planned, not executed.
   surface; do not delete them in orphan sweeps.
 - The media server's `hkask-storage` dep is live (five production
   modules); the 2026-10-13 "residual dep" note is stale.
-- The flaky `educt_render_edl_produces_a_clip_from_a_real_media_file`
-  passed in both full-suite runs this session; the standing
-  isolated-re-run rule applies until T5 lands.
+- The EDL-render flake is root-caused and fixed (`76df402d6a`): the
+  intermediate-observation was a race against every concurrent runner
+  on the machine, scoped now to the server's own runner temp directory.
+  The standing isolated-re-run rule is retired.
