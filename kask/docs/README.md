@@ -110,7 +110,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 - [x] Internal links target retained documents.
 - [x] Diagram metadata has unique-ID/location registry parity (83 records, tree-verified 2026-10-28).
 - [x] Edited citations use full repository-relative paths; 525 sampled citations resolved (2026-09-28), and the 2026-10-05 deep-alignment run re-verified every citation it touched against live code (the compaction entry points and pin sample, the d-seam DIVERGENCE rows, kanban R1, the 13 live tool-surface pin sites, `SignalMetric` at `signals.rs:14`) with the tree-wide relative-link sweep resolving.
-- [x] Document count is 82, under the fewer-than-85 cap (measured 2026-10-28, `find kask/docs -type f | wc -l`); the 75-file working target is exceeded by seven — condensation direction, not a gate.
+- [x] Document count is 84, under the fewer-than-85 cap (measured 2026-10-29, `find kask/docs -type f | wc -l`); the 75-file working target is exceeded by nine — condensation direction, not a gate.
 
 ## See also
 
