@@ -1,7 +1,7 @@
 ---
 title: "Agent System and Skills — Prompt Surfaces, Skill Anatomy, and Composition"
 audience: [architects, developers, agents]
-last_updated: 2026-10-21
+last_updated: 2026-10-28
 version: "2.3.2"
 status: "Active"
 domain: "architecture"
@@ -38,17 +38,16 @@ was made[^nygard-adr]. Prompts are especially prone to this because their
 ## 2. The base prompt and five overlays
 
 Upstream Zed renders one base system prompt. zed-kask keeps that shared file and
-adds four scoped contexts:
+adds three scoped contexts:
 
 | # | Surface | Location | Scope |
 |---|---------|----------|-------|
 | 1 | Base template | `crates/agent/src/templates/system_prompt.hbs` | Every thread |
 | 2 | Curator overlay | `crates/agent/src/curator_agent_server.rs` (`CURATOR_STATIC_CONTEXT`) | Curator threads |
-| 3 | Swarm Steer overlay | `crates/swarm_panel/src/swarm_panel.rs` (`steer_system_prompt`) | Swarm panel |
-| 4 | Kanban Steer overlay | `crates/kanban_panel/src/kanban_panel.rs` (`steer_system_prompt`) | Kanban panel |
-| 5 | Media Steer overlay | `crates/media_panel/src/media_panel.rs:203-278` (`ensure_steer`, `steer_system_prompt`) | Media panel |
+| 3 | Kanban Steer overlay | `crates/kanban_panel/src/kanban_panel.rs` (`steer_system_prompt`) | Kanban panel |
+| 4 | Media Steer overlay | `crates/media_panel/src/media_panel.rs:203-278` (`ensure_steer`, `steer_system_prompt`) | Media panel |
 
-The three panel overlays all use `hkask_steer::ensure_steer`; their advertised
+The two panel overlays both use `hkask_steer::ensure_steer`; their advertised
 tool names are rendered from each server's generated `TOOL_NAMES` and checked
 before the conversation is created (`crates/hkask-steer/src/hkask_steer.rs:174-184`;
 media coverage pins at `crates/media_panel/src/media_panel.rs:478-543`).
@@ -72,9 +71,7 @@ flowchart TD
     C[Curator static context] --> K[KaskThreadState static context]
     K --> B
 
-    S[Swarm Steer prompt] --> H[hkask_steer ensure_steer]
-    N[Kanban Steer prompt] --> H
-    O[Portfolio Steer prompt] --> H
+    N[Kanban Steer prompt] --> H[hkask_steer ensure_steer]
     M[Media Steer prompt] --> H
     H --> V[Scoped ConversationView]
 ```
@@ -212,8 +209,7 @@ prompts). Pinned by `test_system_prompt_contains_tool_failure_mode_warnings`.
   `sankey-beta`, `xychart-beta`, `architecture-beta`, `radar-beta`,
   `treemap-beta`,
   `block`, `kanban` — and separately notes that the ` ```media `, ` ```graph `,
-  ` ```kanban `, ` ```portfolio `, ` ```scenarios `, and
-  ` ```swarm_delegate_results ` fenced blocks are kask viz widgets, not
+  ` ```kanban `, and ` ```scenarios ` fenced blocks are kask viz widgets, not
   mermaid.
 - **Upstream** `:26` lists only its thirteen core types.
 - **Why:** the renderer's allowlist is `crates/markdown/src/mermaid.rs:428-451`,
@@ -499,7 +495,7 @@ The model is the executor. Convergence is the model's judgment, optionally check
 
 | Tool | Location | Purpose |
 |------|----------|---------|
-| `lisp_eval` | `crates/agent/src/tools/lisp_eval_tool.rs` | Sandboxed Lisp for skill-directed convergence, invariants and scoring; no I/O/`eval`/network. Defaults 100000 steps / depth 1024 (`lisp_eval_tool.rs:291@default_max_steps`, `:295@default_max_depth`). Native typed decode/evaluation run in the background with one cooperative cancellation flag, mandatory teardown, cleanup join and publication/weak pending-owner guards (`lisp_eval_tool.rs:374@LispEvalTool::run`; `thread.rs:4565@Thread::process_tool_result`). Raw/pure APIs are unchanged; raw-output copying/display remain foreground. H7 authorized host decode/eval uses existing Tokio blocking execution and public shared `evaluate_lisp_controlled` (`lisp_eval_tool.rs:487@evaluate_lisp_controlled`; `kask/crates/kask_bridge/src/host_skill_tools.rs:119-190@run_lisp`). Its pre-spawn invocation guard signals on owner drop when actual IPC EOF wins; eventual worker exit is tested, not an immediate join or hard deadline. H8 direct/routed corpus queries share one body; only Lisp-option work is offloaded and observes request-context cancellation, not later inference/retrieval/generation (`kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs:108-243`). Explicit rmcp cancel reaches the worker; plain EOF does not immediately signal it (tested context cancellation follows service-owner teardown after drain). No immediate disconnect or service-shutdown-worker-join promise. [Bounds, transport evidence and nonpreemptible phases](../reference/lisp-eval-dialect.md#numeric-admission-and-limits); H4C measurements remain deferred, H6 native Stop validation not performed, installed live build `1c247be309` predates H7/H8. No hard time/heap/concurrency quota or new runtime/service/dependency/cache/configuration. |
+| `lisp_eval` | `crates/agent/src/tools/lisp_eval_tool.rs` | Sandboxed Lisp for skill-directed convergence, invariants and scoring; no I/O/`eval`/network. Defaults 100000 steps / depth 1024 (`lisp_eval_tool.rs:291@default_max_steps`, `:295@default_max_depth`). Native typed decode/evaluation run in the background with one cooperative cancellation flag, mandatory teardown, cleanup join and publication/weak pending-owner guards (`lisp_eval_tool.rs:374@LispEvalTool::run`; `thread.rs:4565@Thread::process_tool_result`). Raw/pure APIs are unchanged; raw-output copying/display remain foreground. (The H7/H8 continuation — the delegated host decode/eval path through `kask/crates/kask_bridge/src/host_skill_tools.rs` over the inference IPC `tool_invoke` method — was removed 2026-10-28 with the swarm capability, its only consumer; the native background decode/evaluation and cancellation behavior above are unchanged.) H8 direct/routed corpus queries share one body; only Lisp-option work is offloaded and observes request-context cancellation, not later inference/retrieval/generation (`kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs:108-243`). Explicit rmcp cancel reaches the worker; plain EOF does not immediately signal it (tested context cancellation follows service-owner teardown after drain). No immediate disconnect or service-shutdown-worker-join promise. [Bounds, transport evidence and nonpreemptible phases](../reference/lisp-eval-dialect.md#numeric-admission-and-limits); H4C measurements remain deferred, H6 native Stop validation not performed, installed live build `1c247be309` predates H7/H8. No hard time/heap/concurrency quota or new runtime/service/dependency/cache/configuration. |
 | `render_template` | `crates/agent/src/tools/render_template_tool.rs` | Renders Jinja2 templates from `kask/registry/templates/` using `minijinja`. Strips the `[inference]`-keyed header. Path traversal protection via `canonicalize` + `starts_with` check. Template base path wired via `agent::set_template_base_path()` in `crates/zed/src/main.rs:711-729`. |
 
 ### PDCA Loops Are Model-Coordinated

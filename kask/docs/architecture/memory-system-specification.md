@@ -1,7 +1,7 @@
 ---
 title: "Memory System Specification"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-10-19
+last_updated: 2026-10-28
 version: "5.3.4"
 status: "Active"
 domain: "Lifecycle"
@@ -39,7 +39,7 @@ mds_categories: [lifecycle, domain, curation, trust]
 >
 > **Migration verification:** deletion and column removal commit together.
 > Before the first open with the rebuilt binary, take a fresh SQLCipher
-> `VACUUM INTO` backup of curator, kanban, and swarm memory DBs. After restart, verify the column is
+> `VACUUM INTO` backup of curator, kanban, and research DBs. After restart, verify the column is
 > absent, retained-row counts match the pre-migration snapshot, and live
 > `curator_memory_recall` / `curator_semantic_search` work. Unit tests over
 > encrypted fixtures do not substitute for this operator restart gate.
@@ -48,8 +48,7 @@ mds_categories: [lifecycle, domain, curation, trust]
 > `kask/crates/hkask-storage/` (`hmem.rs`, schema), and
 > `kask/crates/kask_bridge/src/memory.rs` + `src/memory/` (the
 > `RealMemoryPort` bridge that wires thread turns into memory). This is the
-> D6 seam. Swarm-side memory (`hkask-mcp-swarm` `local_knowledge`) is
-> referenced but specified in its own server.
+> D6 seam.
 >
 > This is the canonical memory-family document. It folds in the former
 > companion docs (architecture/therapy framework, design-rationale
@@ -61,7 +60,7 @@ mds_categories: [lifecycle, domain, curation, trust]
 The memory system is a **vector embedding + relational lookup** store. One
 `entity_ref` string links each embedding vector to its relational row, so
 KNN search results can be joined back to the full text. There is exactly one
-store type: every h_mem — chat turn, curator fact, swarm delegation — flows
+store type: every h_mem — chat turn, curator fact — flows
 through the same `MemoryStore` (`kask/crates/hkask-memory/src/memory_store.rs:269`).
 The ontology blob on each h_mem carries dual-axis anchoring (PKO process
 axis + Dublin Core state axis, `kask/crates/hkask-storage/src/hmem.rs:183-186`);
@@ -1229,7 +1228,6 @@ graph TD
         ZedAgent["Zed Agent<br/>Turns ingested as shared copies<br/>NO recall (trait defaults are no-ops)"]
         Curator["Curator Agent<br/>curator.db<br/>Turns ingested as shared chunk copies<br/>Recalls own memory"]
         Corpus["Replica / Corpus<br/>Static memory<br/>Built from corpus<br/>via corpus server"]
-        Swarm["Swarm Agents<br/>mcp/swarm/memory.db<br/>ONE DB for ALL swarms<br/>Per-turn entities"]
     end
 
     User -->|chats with| ZedAgent
@@ -1239,8 +1237,8 @@ graph TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MEM-WHO
-verified_date: 2026-10-23
-verified_against: kask/crates/kask_bridge/src/memory/ingest.rs:271-660 (all turns ingested as shared chunk copies; curator-turn detection at :277 is logging-only), kask/crates/hkask-types/src/ports/memory_port.rs:106,124 (zed-agent recall no-op defaults), kask/crates/kask_bridge/src/memory/curator_stores.rs:20-29 (curator.db path), kask/mcp-servers/hkask-mcp-swarm/src/config.rs:53-57,177-180 (swarm memory DB path), kask/mcp-servers/hkask-mcp-swarm/src/local_knowledge.rs:304-320 (response-passage chunking)
+verified_date: 2026-10-28
+verified_against: kask/crates/kask_bridge/src/memory/ingest.rs:271-660 (all turns ingested as shared chunk copies; curator-turn detection at :277 is logging-only), kask/crates/hkask-types/src/ports/memory_port.rs:106,124 (zed-agent recall no-op defaults), kask/crates/kask_bridge/src/memory/curator_stores.rs:20-29 (curator.db path)
 status: VERIFIED
 -->
 
@@ -1266,7 +1264,7 @@ knowledge or consent.
 
 ## 12. Passphrases and provisioning
 
-All managed SQLCipher DBs (curator, swarm memory, kata-kanban, research)
+All managed SQLCipher DBs (curator, kata-kanban, research)
 share one passphrase architecture:
 
 - **Default:** `"allostery"` on first run
@@ -1281,16 +1279,14 @@ share one passphrase architecture:
   half (`provision_db_passphrase`, `identity.rs:132`) is spawned by
   `build_mcp_server_env` at MCP launch time so servers get a passphrase
   even before login (`kask/crates/kask_bridge/src/mcp_servers.rs:536@build_mcp_server_env`).
-  There is no swarm-memory provisioning step: the separate
-  `HKASK_SWARM_MEMORY_PASSPHRASE` and its spawn site were removed — the
-  swarm memory DB opens with the ONE shared passphrase, resolved inside
-  the swarm server by the canonical helper (below).
+  (The former separate `HKASK_SWARM_MEMORY_PASSPHRASE` and its per-DB
+  key were removed with the swarm server 2026-10-28 — the DB they opened
+  no longer exists.)
 - **Keychain namespace:** unified `kask://credentials/<key>` with label
   `zed-github-account` — the same schema zed's `CredentialsProvider` uses.
   One passphrase
   key: `hkask_db_passphrase`
-  (`kask/crates/hkask-keystore/src/keychain_keys.rs:14`) — there is no
-  per-DB `hkask_swarm_memory_passphrase` key.
+  (`kask/crates/hkask-keystore/src/keychain_keys.rs:14`) — no per-DB key exists.
 - **MCP-server resolution:** the canonical helper is
   `hkask_mcp_server::server::resolve_db_passphrase(&credentials)` — a
   2-tier chain (credentials map → `resolve_credential`, which for
@@ -1346,7 +1342,7 @@ already exposes this field; no UI omission is intended.
 | `HKASK_EMBEDDING_MODEL`            | (none — must be configured) | Embedding model, injected from `kask.models.embedding_model` / `kask.corpus.embedding_model` (`kask/crates/kask_bridge/src/settings.rs:719`); empty = embedding-dependent calls fail visibly naming the setting — no constant fallback (the operator's no-hidden-models spec) |
 | `HKASK_EMBEDDING_DIM`             | 1024                                  | Embedding vector dimension — the width embed requests ask MRL models for (`kask/crates/hkask-storage/src/core/connection.rs:105-116`) |
 | `HKASK_CURATOR_DB`                | `agents/curator/curator.db` under data dir | Curator DB path override (`curator_stores.rs:20-29`) |
-| `HKASK_DB_PASSPHRASE`             | keychain / `"allostery"`              | SQLCipher passphrase override — the ONE passphrase for every kask SQLCipher DB, swarm memory included (`kask/crates/hkask-keystore/src/keychain.rs:347-352`) |
+| `HKASK_DB_PASSPHRASE`             | keychain / `"allostery"`              | SQLCipher passphrase override — the ONE passphrase for every kask SQLCipher DB (`kask/crates/hkask-keystore/src/keychain.rs:347-352`) |
 
 ### Settings UI
 

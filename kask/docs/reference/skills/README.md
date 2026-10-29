@@ -2,7 +2,7 @@
 title: "Skill Registry — Reference"
 audience: [developers, skill-authors, agents]
 last_updated: 2026-10-28
-version: "0.44.0"
+version: "0.45.0"
 status: "Active"
 domain: "Core"
 mds_categories: [domain, composition]
@@ -23,11 +23,11 @@ mds_categories: [domain, composition]
 >   `crates/agent/src/tools/lisp_eval_tool.rs:374@LispEvalTool::run`). Defaults remain 100000 steps /
 >   depth 1024 (`lisp_eval_tool.rs:291@default_max_steps`, `:295@default_max_depth`). Titles read
 >   form only; copying/display stay foreground. [Bounds and nonpreemptible phases](../lisp-eval-dialect.md#numeric-admission-and-limits)
->   are not hard time/heap/concurrency guarantees. H7 authorized host decode/eval uses existing
->   Tokio blocking execution and public shared `evaluate_lisp_controlled`
->   (`lisp_eval_tool.rs:487@evaluate_lisp_controlled`; `kask/crates/kask_bridge/src/host_skill_tools.rs:119-190@run_lisp`).
->   A pre-spawn invocation guard signals on owner drop when actual IPC EOF wins;
->   eventual worker exit is tested, not immediate join or hard deadline.
+>   are not hard time/heap/concurrency guarantees. H7's authorized host decode/eval IPC surface
+>   (its host-side `run_lisp` wrapper) was removed 2026-10-28 with the swarm capability — the
+>   swarm delegate was its only consumer; the in-process path is unchanged and no host/IPC
+>   lisp promise remains (the public shared `evaluate_lisp_controlled`,
+>   `lisp_eval_tool.rs:487@evaluate_lisp_controlled`).
 >   H8 direct/routed corpus queries share one body; only Lisp options are offloaded and
 >   observe request-context cancellation, leaving downstream inference/retrieval/generation alone
 >   (`kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs:108-243`). Explicit rmcp cancel
@@ -45,7 +45,7 @@ mds_categories: [domain, composition]
 >
 > **Layout:** A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kask/`)
 > containing a `SKILL.md` file with YAML frontmatter (`name`, `description`, and optional metadata)
-> plus a markdown body of process instructions. **60 skills** are authored here and available in every zed-kask install. **224 Jinja2 templates across 57
+48:> plus a markdown body of process instructions. **58 skills** are authored here and available in every zed-kask install. **216 Jinja2 templates across 55
 > template namespaces** remain under `kask/registry/templates/` for use by `render_template`; these
 > are companion resources, not the source of truth for skill execution.
 
@@ -67,8 +67,8 @@ carrier of the loop itself.
 
 | Surface | Count | Notes |
 |---------|-------|-------|
-| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **60** | filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md`. Composition changed since the 2026-10-19 note's 59: `media-workflow` retired 2026-10-21 (commit `8262bf5b80`, −1), `eureka-cycle` added 2026-10-23 (+1), `security-audit` added 2026-10-24 (+1) — net 60 |
-| Template namespaces (`kask/registry/templates/*/`) | **57** (**224** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree. Since the 2026-10-19 note's 55/222: the media-workflow retirement removed 2 and the program-manager rewrite removed 3 (commit `4deebd6840`), `eureka-cycle` added 4 then lost its memory-candidate template 2026-10-24 (−1), and `security-audit` added 1 namespace with 4 templates (2026-10-24) — net 57 namespaces / 224 files |
+| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **58** | filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md`. Composition changed since the 2026-10-19 note's 59: `media-workflow` retired 2026-10-21 (commit `8262bf5b80`, −1), `eureka-cycle` added 2026-10-23 (+1), `security-audit` added 2026-10-24 (+1), and the two swarm skills (`local-research-swarm`, `swarm-intelligence`) retired 2026-10-28 with the swarm capability (commit `9a62f6a0bc`, the executed removal plan `plans/swarm-removal-plan-2026-10-28.md`) — net 58 |
+| Template namespaces (`kask/registry/templates/*/`) | **55** (**216** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree. Since the 2026-10-19 note's 55/222: the media-workflow retirement removed 2 and the program-manager rewrite removed 3 (commit `4deebd6840`), `eureka-cycle` added 4 then lost its memory-candidate template 2026-10-24 (−1), `security-audit` added 1 namespace with 4 templates (2026-10-24), and the swarm retirement removed the `swarm-intelligence` (6) and `local-research-swarm` (2) namespaces with their skills (2026-10-28) — net 55 namespaces / 216 files |
 
 **The SKILL.md is the source of truth.** A skill is its `SKILL.md`. Template crates are
 read-only resources the skill body may reference via `render_template`.
@@ -129,8 +129,6 @@ annual. The embedded seed payload equals the authored tree (pinned in
 | `region-routing` | Route task steps across the syntax-semantic x deterministic-probabilistic 2x2 regions: named tools per step, a deterministic gate per generating step, role checkpoints at semantic and dependency boundaries |
 | `kanban-task-management` | Unified kanban task management across the full task lifecycle |
 | `prompt-enhance` | General-purpose prompt enhancement: 7-type taxonomy routing with 3-tier effort knob |
-| `local-research-swarm` | Coordinate a project-sized, source-grounded research effort across a local agent roster, with a kanban board for work state and scoped A2A handoffs |
-| `swarm-intelligence` | Agent-swarm composition PDCA (SENSE → ORIENT → DECIDE → ACT → CHECK → CONVERGE), its receipt-checked local steering loop, and the swarm panel's agent/swarm authoring aid |
 | `system-maintenance` | Weekly system maintenance for this machine over the `~/system-maintenance/` scripts: run the health check, interpret warnings, preview and classify cleanups with probe-before-delete, execute the disposable class only, surface manual-review items, verify with reconciled measurements, and report a ledger |
 
 ### Coding in your project

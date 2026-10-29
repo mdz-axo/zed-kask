@@ -121,7 +121,6 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-VIZ-KANBAN` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-28 | VERIFIED |
 
 | `DIAG-VIZ-SCENARIOS` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-28 | VERIFIED |
-| `DIAG-VIZ-SWARM` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-28 | VERIFIED |
 
 Metadata-date distribution: 81 records at 2026-09-28, five at 2026-10-19 (the realignment pass re-verifying the companies-wave-touched records: `DIAG-ARCH-SKILL-MCP-LISP-001`, `DIAG-BRIDGE-002`, `DIAG-BRIDGE-003`, `DIAG-BRIDGE-004`, `DIAG-MDS-001`), three at 2026-10-13, two at 2026-10-26 (the media_panel diataxis re-anchor pass re-verifying `DIAG-MEDIA-PANEL-001` and `DIAG-MEDIA-PANEL-002` against the five-tab viewer), two at 2026-09-30 (the cybernetic-nervous-system model diagrams), one at 2026-10-05, and one externally-anchored record at 2026-09-16 (`DIAG-RES-CHUNK-001`, verified against arXiv/Anthropic engineering sources rather than tree files). All active records are `VERIFIED` (one tombstoned ID mention is excluded from the active count).
 

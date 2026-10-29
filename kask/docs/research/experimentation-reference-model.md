@@ -1,7 +1,7 @@
 ---
 title: "Experimentation Reference Model — vary locally, select centrally, retain durably"
 audience: [developers, architects, operators, agents]
-last_updated: 2026-10-05
+last_updated: 2026-10-28
 version: "1.0.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -31,16 +31,15 @@ The capability to evolve is already sharded across zed-kask's layers and stays s
 
 Two zed-kask-specific syntheses:
 
-1. **The pre-registered, Brier-scored prediction is the tiny controller.** The experiment machinery (swarm rollouts, eval harnesses) is the big shared commodity part; the hypothesis plus prediction is the small, legible, evolvable part; the Brier score is the selection signal on the experimenter, not just the artifact. This is the advantage over the source setting: Ha's fitness functions are external benchmarks; this system scores its own hypotheses.
+1. **The pre-registered, Brier-scored prediction is the tiny controller.** The experiment machinery (recorded harness rollouts, eval harnesses) is the big shared commodity part; the hypothesis plus prediction is the small, legible, evolvable part; the Brier score is the selection signal on the experimenter, not just the artifact. This is the advantage over the source setting: Ha's fitness functions are external benchmarks; this system scores its own hypotheses.
 2. **D/P labelling is the legibility constraint that makes variants selectable.** The variant carries its own deterministic gates, declared evaluators, and lineage — it explains itself, so selection is auditable.
 
 ## 2. Current state — the shard map (probe evidence, 2026-09-30)
 
 | Layer | Genotype | Variation today | Fitness today | Gap |
 | --- | --- | --- | --- | --- |
-| Prompt/template | system prompts, `.j2` | GEPA sub-loop (mutation+crossover, Pareto frontier, pinned D forms) | `swarm_eval_agent_local` on disjoint feedback/selection sets; 10% cost noise band | "Prompts only (v1)"; no cross-run lineage |
+| Prompt/template | system prompts, `.j2` | GEPA sub-loop (mutation+crossover, Pareto frontier, pinned D forms) | recorded harness reports on disjoint feedback/selection sets; 10% cost noise band (the former `swarm_eval_agent_local` harness was removed 2026-10-28 with the swarm capability — no in-process executor currently exists) | "Prompts only (v1)"; no cross-run lineage |
 | Skill | SKILL.md + templates | skill-maintenance edits; therapy reification | fixed-task comparisons; pin tests | ad hoc A/Bs, no records |
-| Agent/swarm | agent cards | reconfigure; roster composition | `swarm_eval_agent_local`; task boards | no variant populations or retention |
 | Tool schema | MCP schemas | `evolve_mcp_tool_schema` directive | skill-use reports | fitness loop thin (issues, not outcomes) |
 | Regulation scalars | thresholds, budgets | `calibrate_threshold` directives | variety deficit, Brier, calibration readings | calibration by judgment, not recorded fitness |
 | Memory | h_mems, rules | insert/update; therapy | recall/decay, contradictions | acquired vs heritable not distinguished |
@@ -59,7 +58,6 @@ Generalizes GEPA (prompts-only v1) to the artifact classes. **The skill genotype
 | Artifact class | Eval-set requirement | Fitness | Noise band / gates |
 | --- | --- | --- | --- |
 | Skill (composite: SKILL.md + templates) | Fixed task set plus the skill's pin tests | Evaluator pass rates on the fixed set; pin suites green | Pin-suite gate mandatory; D/P labels preserved |
-| Agent card | Fixed task set with declared evaluators | `swarm_eval_agent_local` pass_rate, total_tokens | 10% cost band (GEPA precedent) |
 | Standalone prompt/template | Runnable eval set, disjoint feedback/selection | Eval-set scores | GEPA dominance/convergence forms |
 | Tool schema | Skill-use reports over a window | Issue counts, resolution outcomes | Curator directive ledger |
 | Regulation scalar | Calibration/Brier records over a window | Calibration delta | Curator thresholds |

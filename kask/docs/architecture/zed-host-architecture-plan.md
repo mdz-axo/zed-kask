@@ -1,7 +1,7 @@
 ---
 title: "zed-kask — Minimal-Divergence Fork Architecture & Migration Plan"
 audience: [architects, integrators]
-last_updated: 2026-10-19
+last_updated: 2026-10-28
 version: "0.45.2"
 status: "Active"
 domain: "Cross-cutting"
@@ -40,7 +40,7 @@ mds_categories: [composition, trust, lifecycle]
 
 ---
 
-> **Current state (2026-10-18):** `kask/crates/` contains 17 libraries (16 `hkask-*` plus `kask_bridge`) and `kask/mcp-servers/` contains 10 server packages. The editor-side integration also includes Swarm, Kanban, and Media Steer panels plus inline viz widgets. [`DIVERGENCE.md`](../../../DIVERGENCE.md) is the authoritative Zed-side seam table; retired numbers are not active seams.
+> **Current state (2026-10-28):** `kask/crates/` contains 17 libraries (16 `hkask-*` plus `kask_bridge`) and `kask/mcp-servers/` contains 8 server packages. The editor-side integration also includes Kanban and Media Steer panels plus inline viz widgets. [`DIVERGENCE.md`](../../../DIVERGENCE.md) is the authoritative Zed-side seam table; retired numbers are not active seams.
 
 ---
 
@@ -75,7 +75,7 @@ Inference routing (`crates/language_model`, `language_model_core`, `language_mod
 
 ### 2.2 hKask keeps (unique: curator + sovereignty + tools) — compiled into zed-kask
 
-**Status (re-verified 2026-10-19):** **17 kask crates** under `kask/crates/` (16 `hkask-*` + `kask_bridge`; `hkask-services-core` was folded into `hkask-mcp-corpus` and deleted 2026-10-13, commit `8fb33f8e73`, with its empty residue directory removed 2026-10-18; the live settings reader now resides directly in `hkask-mcp-corpus/src/settings.rs`) plus **9 MCP server crates** under `kask/mcp-servers/` (portfolio and spreadsheet were removed 2026-10-15; training was removed 2026-10-17 as outside the co-researcher mandate; companies was removed 2026-10-18 with the companies/FMP/EODHD/FIBO retirement, commit `3439db5e00`) and zed-side crates (`swarm_panel`, `kanban_panel`, `media_panel`, `hkask-steer`, `hkask-viz-core`, `hkask-*-widget`, `hkask-tool-invoker`, `marketplace_ui_common`; the portfolio panel and portfolio widget were removed with the portfolio server). The `kask_extensions_ui` crate was removed 2026-08-20 (skill marketplace retired); the `hkask-conversation-injector` zed-side crate was removed 2026-09-28 (D21 retirement, commit `fa95c2b8c7`). Nine MCP servers remain on disk (curator may be unloaded via `kask.mcp.overrides`).
+> **Status (re-verified 2026-10-28):** **17 kask crates** under `kask/crates/` (16 `hkask-*` + `kask_bridge`; `hkask-services-core` was folded into `hkask-mcp-corpus` and deleted 2026-10-13, commit `8fb33f8e73`, with its empty residue directory removed 2026-10-18; the live settings reader now resides directly in `hkask-mcp-corpus/src/settings.rs`) plus **8 MCP server crates** under `kask/mcp-servers/` (portfolio and spreadsheet were removed 2026-10-15; training was removed 2026-10-17 as outside the co-researcher mandate; companies was removed 2026-10-18 with the companies/FMP/EODHD/FIBO retirement, commit `3439db5e00`; swarm was removed 2026-10-28 with the whole local swarm capability — plan `kask/docs/plans/swarm-removal-plan-2026-10-28.md`) and zed-side crates (`kanban_panel`, `media_panel`, `hkask-steer`, `hkask-viz-core`, `hkask-*-widget`, `hkask-tool-invoker`, `marketplace_ui_common`; the portfolio panel and portfolio widget were removed with the portfolio server, and `swarm_panel` + `hkask-swarm-widget` with the swarm server). The `kask_extensions_ui` crate was removed 2026-08-20 (skill marketplace retired); the `hkask-conversation-injector` zed-side crate was removed 2026-09-28 (D21 retirement, commit `fa95c2b8c7`). Eight MCP servers remain on disk (curator may be unloaded via `kask.mcp.overrides`).
 
 | Crate                                                                                     | Why irreducible                                                                                                                                                                                                                                                                                                            |
 | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -96,11 +96,11 @@ Inference routing (`crates/language_model`, `language_model_core`, `language_mod
 
 ### 2.3 MCP load set (9 on disk)
 
-The original 16 MCP servers were pruned, the **media** server was recovered (D35, 2026-08-28), the **experimentation** server was added (2026-10-05), the **portfolio** and **spreadsheet** servers were removed with their capabilities (2026-10-15), the **training** server was removed as outside the co-researcher mandate (2026-10-17), and the **companies** server was removed with the companies/FMP/EODHD/FIBO retirement (2026-10-18, commit `3439db5e00` — its provider-free forecast loop moved to the scenarios server). **9 remain on disk**: `corpus`, `curator`, `experimentation`, `kata-kanban`, `media`, `prediction-markets`, `research`, `scenarios`, `swarm`. The `BUILT_IN_MCP_SERVERS` constant in `kask/crates/kask_bridge/src/mcp_servers.rs` is authoritative; `builtin_mcp_server_ids()` derives the ID list.[^anthropic-mcp]
+The original 16 MCP servers were pruned, the **media** server was recovered (D35, 2026-08-28), the **experimentation** server was added (2026-10-05), the **portfolio** and **spreadsheet** servers were removed with their capabilities (2026-10-15), the **training** server was removed as outside the co-researcher mandate (2026-10-17), the **companies** server was removed with the companies/FMP/EODHD/FIBO retirement (2026-10-18, commit `3439db5e00` — its provider-free forecast loop moved to the scenarios server), and the **swarm** server was removed with the whole local swarm capability (2026-10-28 — plan `kask/docs/plans/swarm-removal-plan-2026-10-28.md`, DIVERGENCE.md retired D33). **8 remain on disk**: `corpus`, `curator`, `experimentation`, `kata-kanban`, `media`, `prediction-markets`, `research`, `scenarios`. The `BUILT_IN_MCP_SERVERS` constant in `kask/crates/kask_bridge/src/mcp_servers.rs` is authoritative; `builtin_mcp_server_ids()` derives the ID list.[^anthropic-mcp]
 
 | On disk (9) |
 | --- |
-| `corpus`, `curator`, `experimentation`, `kata-kanban`, `media`, `prediction-markets`, `research`, `scenarios`, `swarm` |
+| `corpus`, `curator`, `experimentation`, `kata-kanban`, `media`, `prediction-markets`, `research`, `scenarios` |
 
 > The Curator MCP server is distinct from the native Curator agent and may be disabled by settings. The media server is pinned at exactly 102 registered tools by `tool_surface_is_exactly_102_registered_tools` (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:485`); its OMC mapping is checked across the same registered set at `:492`.
 
@@ -334,12 +334,12 @@ All Kask documentation lives **inside zed-kask** under `kask/docs/`. The 2026-08
 
 - `kask/docs/architecture/` — this plan (`zed-host-architecture-plan.md`), the memory system ([`memory-system-specification.md`](memory-system-specification.md)), standardized artifact storage, the agent system prompt catalogue, principles, ADRs.
 - `kask/docs/reference/` — reference documentation (MCP servers incl. the forecasting stack, settings, regulation spans, skills).
-- `kask/docs/diataxis/` — per-crate Diataxis documentation set (incl. `diataxis/swarm_system/` for swarm content).
+- `kask/docs/diataxis/` — per-crate Diataxis documentation set (the `swarm_system/` set was removed 2026-10-28 with the swarm capability).
 - `kask/docs/diagrams/` + `kask/docs/DIAGRAMS_INDEX.md` — diagram sources and index.
 - `DIVERGENCE.md` stays at the zed-kask **repo root** (the fork's headline doc, referenced on every sync) and points into `kask/docs/` for detail.
   The `mdz-axo/hKask` repo is archived with a `README.md` pointing to `zed-kask/kask/`.
 
-Completed plan and explanation content was repointed: swarm system docs → `kask/docs/diataxis/swarm_system/`, memory → `kask/docs/architecture/memory-system-specification.md`, forecasting → `kask/docs/reference/mcp-servers/README.md#the-forecasting-stack-three-layer-architecture`, and the implemented inference-Regulation loop → `kask/docs/diataxis/hkask-regulation/{explanation,reference}.md`.
+Completed plan and explanation content was repointed: memory → `kask/docs/architecture/memory-system-specification.md`, forecasting → `kask/docs/reference/mcp-servers/README.md#the-forecasting-stack-three-layer-architecture`, and the implemented inference-Regulation loop → `kask/docs/diataxis/hkask-regulation/{explanation,reference}.md`; the former swarm-system docs were removed 2026-10-28 with the swarm capability (git history holds them).
 
 ### 14.4 Migration (complete)
 

@@ -1,7 +1,7 @@
 ---
-title: "UI Widget Diagrams — Graph, Kanban, Prediction Markets, Scenarios, Swarm"
+title: "UI Widget Diagrams — Graph, Kanban, Prediction Markets, Scenarios"
 audience: [architects, developers]
-last_updated: 2026-09-28
+last_updated: 2026-10-28
 version: "1.2.0"
 status: "Active"
 domain: "Composition"
@@ -203,7 +203,6 @@ classDiagram
         +status: String
         +description: Option~String~
         +assignee: Option~String~
-        +swarm_id: Option~String~
         +activity: Option~TaskActivityBody~
         +ontology: Option~String~
         +priority: Option~String~
@@ -275,8 +274,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-KANBAN
-verified_date: 2026-09-28
-verified_against: crates/hkask-kanban-widget/src/block.rs (KanbanBlockBody L22, ColumnBody L51, TaskBody L67 — swarm_id L86, activity L91, no gas fields; CommentBody L122, VerificationBody L136, TaskActivityBody L147, board_with_tasks L160); crates/hkask-kanban-widget/src/view.rs (KanbanWidget L100-121 — no disagree_draft, render_dispatch_status L233, KanbanColumn L81, group_tasks_into_columns L825); crates/hkask-kanban-widget/src/move_controller.rs (fields L62-77, stage_move L124, confirm_move L145, cancel_move L160, dispatch_move L174, cancel_dispatch L254); gas_spend/GasEntryBody and evaluate_move/disagree_draft removed (rJoule spend-log removal 2026-09-08; D21 conversation-injector retirement fa95c2b8c7)
+verified_date: 2026-10-28
+verified_against: crates/hkask-kanban-widget/src/block.rs (KanbanBlockBody L22, ColumnBody L51, TaskBody L67 — activity L85, no gas fields; CommentBody L122, VerificationBody L136, TaskActivityBody L147, board_with_tasks L160); crates/hkask-kanban-widget/src/view.rs (KanbanWidget L100-121 — no disagree_draft, render_dispatch_status L233, KanbanColumn L81, group_tasks_into_columns L825); crates/hkask-kanban-widget/src/move_controller.rs (fields L62-77, stage_move L124, confirm_move L145, cancel_move L160, dispatch_move L174, cancel_dispatch L254); gas_spend/GasEntryBody and evaluate_move/disagree_draft removed (rJoule spend-log removal 2026-09-08; D21 conversation-injector retirement fa95c2b8c7); the former `swarm_id` field was removed 2026-10-28 with the swarm capability
 status: VERIFIED
 -->
 
@@ -428,7 +427,7 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-PM
-verified_date: 2026-09-28
+verified_date: 2026-10-28
 verified_against: kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs (PredictionMarketsServer L49-64 — incl. fred_api_key, inference_port; combined_router L70 = prediction_markets_router + economic_data_tools_router; 12 #[tool] fns incl. prediction_markets_status L95); kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs (15 #[tool] fns — 14 economic-data + market_score_rationale L316); kask/mcp-servers/hkask-mcp-prediction-markets/src/types.rs (MarketRecord L136-180, calibration_for L184); kask/mcp-servers/hkask-mcp-prediction-markets/src/calibration.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/residual.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/matcher.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_polymarket.rs (GammaMarket L15); kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_kalshi.rs (KalshiMarket L25); kask/mcp-servers/hkask-mcp-prediction-markets/src/cache.rs (TtlCache L16); kask/mcp-servers/hkask-mcp-prediction-markets/src/ontology.rs
 status: VERIFIED
 -->
@@ -471,7 +470,7 @@ flowchart LR
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-PM-PIPELINE-001
-verified_date: 2026-09-28
+verified_date: 2026-10-28
 verified_against: kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs (combined_router L70); kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs (15 tools incl. market_score_rationale L316); kask/mcp-servers/hkask-mcp-prediction-markets/src/types.rs (MarketRecord L136); kask/mcp-servers/hkask-mcp-prediction-markets/src/calibration.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/residual.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/matcher.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_polymarket.rs (GammaMarket L15); kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_kalshi.rs (KalshiMarket L25); kask/crates/hkask-bridge-ontology/src/axis.rs:219-222 (economic statistics fall through to SUMO; only cube-shaped output takes the DataCube anchor — grounds the ECON node label)
 status: VERIFIED
 -->
@@ -597,7 +596,7 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-SCENARIOS
-verified_date: 2026-09-28
+verified_date: 2026-10-28
 verified_against: crates/hkask-scenarios-widget/src/block.rs (ScenariosBlockBody L23, PipelineOverview L49, RecentForecast L63, CalibrationSummary L79, EventTreeSummary L93, EventNode L107); crates/hkask-scenarios-widget/src/view.rs (dispatch fields L37-43, DEFAULT_SERVER fallback L24, dispatch_rung L548, build_dispatch_args provenance routing L551-556, ScaffoldingPrompt L626, scaffolding_for_state L632)
 status: VERIFIED
 -->
@@ -618,102 +617,8 @@ fabricated ontology URIs. The `fibo-fbc-fct-ra:*` URIs they formerly
 carried were never in the FIBO release and were removed with the FIBO rung
 (2026-10-18).
 
-## Swarm Widget
-
-The `hkask-swarm-widget` crate renders ```` ```swarm_delegate_results ````
-fenced blocks inline in agent markdown. It is a passive renderer — no
-`ToolInvoker` fetches, no dispatch affordance. The data is already in the
-chat stream; the widget makes it readable. Each `LocalDelegateResult` from
-the `swarm_execute_plan_local` MCP tool renders as a structured per-agent
-card: agent id, task-success badge, response (truncated), model, tokens,
-cost, latency, tool-call count, executed-skill count. Verified current.
-
-```mermaid
-classDiagram
-    class SwarmWidget {
-        -body: SwarmBlockBody
-        -focus_handle: FocusHandle
-        +new(body, cx) SwarmWidget
-        -render_header(cx) impl IntoElement
-        -render_empty_state() Option~impl IntoElement~
-        -render_cards(cx) impl IntoElement
-    }
-    class SwarmBlockBody {
-        +viz: Option~String~
-        +results: Vec~DelegateResultCard~
-        +ontology: Option~String~
-    }
-    class DelegateResultCard {
-        +agent_id: String
-        +response: String
-        +model: String
-        +tokens_used: i64
-        +cost: i64
-        +cost_uncapped: i64
-        +balance: Option~i64~
-        +latency_ms: u64
-        +tool_calls: Vec~Value~
-        +executed_skills: Vec~Value~
-        +task_success: Option~TaskSuccessVerdictCard~
-    }
-    class TaskSuccessVerdictCard {
-        +pass: bool
-        +score: Option~f64~
-        +detail: Option~String~
-        +provenance: String
-    }
-    class parse_swarm_body {
-        <<function>>
-        +parse_swarm_body(body: &str) Result~SwarmBlockBody~
-    }
-    class render_card {
-        <<function>>
-        +render_card(card, border_color) impl IntoElement
-    }
-    class render_success_badge {
-        <<function>>
-        +render_success_badge(card) impl IntoElement
-    }
-    class render_metrics {
-        <<function>>
-        +render_metrics(card) impl IntoElement
-    }
-    class truncate_response {
-        <<function>>
-        +truncate_response(response: &str) Option~String~
-    }
-
-    SwarmWidget *-- SwarmBlockBody : owns
-    SwarmBlockBody *-- DelegateResultCard : contains
-    DelegateResultCard *-- TaskSuccessVerdictCard : optional
-    SwarmWidget ..> parse_swarm_body : constructs from
-    SwarmWidget ..> render_card : delegates
-    render_card ..> render_success_badge
-    render_card ..> render_metrics
-    render_card ..> truncate_response
-```
-
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-VIZ-SWARM
-verified_date: 2026-09-28
-verified_against: crates/hkask-swarm-widget/src/hkask_swarm_widget.rs (RESPONSE_TRUNCATE_CHARS L43, SwarmWidget L47, render_header L65, render_empty_state L90, render_cards L104, render_card L136, render_success_badge L169, truncate_response L198, render_metrics L213); crates/hkask-swarm-widget/src/block.rs (SwarmBlockBody L26, DelegateResultCard L46 — cost/cost_uncapped/balance L58-68, TaskSuccessVerdictCard L88); crates/hkask-viz-core/src/hkask_viz_core.rs (SwarmWidget VizWidget impl L174-185)
-status: VERIFIED
--->
-
-Notes:
-
-- `RESPONSE_TRUNCATE_CHARS` (240) caps the visible response body; the full
-  response lives in the tool-call output block.
-- `balance: None` renders as a muted "—" rather than a fabricated 0 — the
-  `.rules` broken-feedback-loop trap.
-- `task_success: None` renders as "not evaluated" — never a fabricated
-  pass/fail.
-- The `ontology` field on `SwarmBlockBody` carries an optional concept URI
-  (e.g. `pko:Procedure`) emitted by the swarm server; pinned by the
-  registry-level S4 sensor test in `hkask-viz-core`.
-
 ## See also
 
 - [Architecture diagrams](./architecture.md) — the viz-core composition root (D18)
 - [Kanban diagrams](./kanban.md) — move controller + task status state machines
-- [Swarm diagrams](./swarm.md) — the swarm server whose tools produce these blocks
+

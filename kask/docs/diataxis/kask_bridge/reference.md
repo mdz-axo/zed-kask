@@ -36,12 +36,13 @@ exports no skill executor (`kask/crates/kask_bridge/src/kask_bridge.rs:50-124`).
 
 ## Settings hierarchy
 
-`KaskSettings` contains the data and artifact roots plus 12 subsystem sections:
+`KaskSettings` contains the data and artifact roots plus 11 subsystem sections:
 `general`, `mcp`, `curator`, `memory`, `condenser`, `research`,
-`corpus`, `scenarios`, `prediction_markets`, `swarm`, `media`, and
+`corpus`, `scenarios`, `prediction_markets`, `media`, and
 `models` (`kask/crates/kask_bridge/src/settings.rs:56-89`; the former
 `companies` section was removed with the companies server 2026-10-18,
-commit `3439db5e00`).
+commit `3439db5e00`, and the `swarm` section with the whole local swarm
+capability 2026-10-28).
 
 ```mermaid
 classDiagram
@@ -57,7 +58,6 @@ classDiagram
         +corpus: KaskCorpusSettings
         +scenarios: KaskScenariosSettings
         +prediction_markets: KaskPredictionMarketsSettings
-        +swarm: KaskSwarmSettings
         +media: KaskMediaSettings
         +models: KaskModelsSettings
     }
@@ -72,11 +72,6 @@ classDiagram
         +load_default: bool
         +overrides: Map
     }
-    class KaskSwarmSettings {
-        +default_agent_model: String
-        +a2a_http_enabled: bool
-        +embedding_dim: usize
-    }
     class KaskModelsSettings {
         +default_model: String
         +embedding_model: String
@@ -87,18 +82,17 @@ classDiagram
     }
     KaskSettings --> KaskGeneralSettings
     KaskSettings --> KaskMcpSettings
-    KaskSettings --> KaskSwarmSettings
     KaskSettings --> KaskModelsSettings
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-BRIDGE-003
-verified_date: 2026-10-19
-verified_against: kask/crates/kask_bridge/src/settings.rs:35-90 (KaskSettings); settings.rs general + Default; settings.rs mcp + Default; settings.rs swarm + Default; settings.rs models + Default
+verified_date: 2026-10-28
+verified_against: kask/crates/kask_bridge/src/settings.rs:35-90 (KaskSettings); settings.rs general + Default; settings.rs mcp + Default; settings.rs media + Default; settings.rs models + Default
 status: VERIFIED
 -->
 
-There is no general batch-size setting and no swarm-specific passphrase setting.
+There is no general batch-size setting and no per-DB passphrase setting.
 The database passphrase is provisioned once and shared by SQLCipher consumers
 (`crates/zed/src/main.rs:1690-1693`); scheduled rotation is applied at startup
 by `run_pending_db_passphrase_rotation` (`crates/zed/src/main.rs:373`) — see
@@ -114,13 +108,12 @@ by `run_pending_db_passphrase_rotation` (`crates/zed/src/main.rs:373`) — see
 | `KaskMemorySettings` | consolidation 300s; confidence 0.3; recall 5 at 0.3; auto-inject; federated auto-inject off with empty `federated_source_ids`; distillation 600s/300s; memory life 90 from `MemoryStore::default_memory_life_days`; forgetting 7 | `kask/crates/kask_bridge/src/settings.rs:226-291`; `kask/crates/hkask-memory/src/memory_store.rs:199` |
 | `KaskCondenserSettings` | normal profile; incoming-result compression off | `kask/crates/kask_bridge/src/settings.rs:299-318` |
 | `KaskCorpusSettings` | dimension 1024; embedding default `OpenRouter/qwen/qwen3-embedding-8b` (MRL — every embed request carries `dimensions = embedding_dim`); template root `kask/registry` | `kask/crates/kask_bridge/src/settings.rs:332-352` |
-| `KaskSwarmSettings` | Local substrate only; A2A HTTP off; dimension 1024; empty model override | `kask/crates/kask_bridge/src/settings.rs` |
 | `KaskMediaSettings` | STT and vision use shared constants; TTS/image/video empty | `kask/crates/kask_bridge/src/settings.rs:443-456` |
 | `KaskModelsSettings` | default GLM 5.3; classifier GLM 5.2; QA generator empty; OCR `ollama/glm-ocr:latest`; reranker from `DEFAULT_RERANK_MODEL` | `kask/crates/kask_bridge/src/settings.rs:489-561` |
 
 ## Built-in MCP registry
 
-`BUILT_IN_MCP_SERVERS` contains 9 descriptors
+`BUILT_IN_MCP_SERVERS` contains 8 descriptors
 (`kask/crates/kask_bridge/src/mcp_servers.rs:49-407`). IDs and descriptions
 are derived from that registry
 (`kask/crates/kask_bridge/src/mcp_servers.rs:411-412,458-463`).
@@ -142,17 +135,16 @@ classDiagram
         research
         scenarios
         prediction-markets
-        swarm
         media
     }
-    Registry --> BuiltinMcpServer : 9 entries
+    Registry --> BuiltinMcpServer : 8 entries
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-BRIDGE-004
-verified_against: kask/crates/kask_bridge/src/mcp_servers.rs:26-46 (BuiltinMcpServer); kask/crates/kask_bridge/src/mcp_servers.rs:49-407 (9-entry registry)
+verified_against: kask/crates/kask_bridge/src/mcp_servers.rs:26-46 (BuiltinMcpServer); kask/crates/kask_bridge/src/mcp_servers.rs:49-407 (8-entry registry)
 status: VERIFIED
-verified_date: 2026-10-19
+verified_date: 2026-10-28
 -->
 
 ### Allowlist sizes
@@ -169,7 +161,6 @@ quoted env-var names inside each `credentials` / `config_env` array).
 | `research` | 6 | 6 |
 | `scenarios` | 0 | 2 |
 | `prediction-markets` | 1 | 3 |
-| `swarm` | 2 | 18 |
 | `media` | 4 | 10 |
 | `experimentation` | 1 | 2 |
 
@@ -267,13 +258,13 @@ If the server needs a new non-secret setting, add it to the relevant settings
 sub-structure and its `mcp_env` emitter, then add that exact environment name to
 the server descriptor. Defaults belong only in `Default` implementations
 (`kask/crates/kask_bridge/src/settings.rs:24-34`). The emitted-default seam is
-pinned by `swarm_settings_default_emits_no_env`
-(`kask/crates/kask_bridge/src/mcp_env.rs:735`).
+pinned by `mcp_env_emits_nothing_for_default_settings`
+(`kask/crates/kask_bridge/src/mcp_env.rs:370`).
 
 Do not invent a batch-size control or a second database-passphrase setting. The
 general settings expose concurrency, timeout, and circuit-breaker controls
 (`kask/crates/kask_bridge/src/settings.rs:102-130`), and all SQLCipher consumers
-share `HKASK_DB_PASSPHRASE` (`crates/zed/src/main.rs:1690-1693`). Rotation is
+share `HKASK_DB_PASSPHRASE`. Rotation is
 startup-coordinated via the pending slot and is documented in
 [`kask-settings.md`](../../reference/kask-settings.md) under Passphrase rotation.
 

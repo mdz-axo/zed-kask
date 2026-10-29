@@ -616,3 +616,22 @@ recomputable from the ledger.
   invariant is a pinned test), the fingerprint-scoped voice-profile
   storage beside `face_registry` (decay fields per §5.5), and the
   enrollment tools mirroring `face_register`/`face_list`/`face_remove`.
+- 2026-10-28 — Phase 2 worker-delivered. The enrolled profile persists in
+  a separate SQLCipher store with exact transcript/media/operator/model
+  provenance; `voice_enroll`, `voice_list`, `voice_remove`, and explicit
+  `voice_prune` form the 80-tool media surface. Removal deletes derived
+  layers first and retains the profile as a retry handle on failure;
+  pruning shares that cleanup path and spares recently confirmed profiles.
+  Real pinned-CAM++ enrollment passed with 8 kHz stereo resampling, 512-D
+  persistence across reopen, no annotation side effect, and no voiceprint
+  leakage through SRT, highlights CSV, review CSV, or corpus export. Gates:
+  media 554/554; panel 74/74; bridge MCP 35/35; both real-model tests
+  explicitly passed; `./script/clippy -p hkask-mcp-media` exit 0. Bulk work
+  landed in `9a62f6a0bc` and `41c95ecd07`; final review fixes and this
+  record are uncommitted. No matching, auto-apply, recognition accuracy,
+  fbank-parity, or diarization claim is made. Before Phase 3 adds a
+  production confirmation caller, serialize confirmation against prune
+  candidate selection/removal and add a paused-after-selection regression;
+  no such caller exists in Phase 2. A deterministic fake-encoder enrollment
+  test remains test-infrastructure follow-up, not a substitute for the
+  explicitly run real-model checks. CAM++ artifact licensing stays open.

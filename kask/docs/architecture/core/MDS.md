@@ -1,7 +1,7 @@
 ---
 title: "MDS — Minimal Domain Specification"
 audience: [architects, developers, agents]
-last_updated: 2026-10-19
+last_updated: 2026-10-28
 version: "0.42.4"
 status: "Active"
 domain: "Cross-cutting"
@@ -288,7 +288,7 @@ threat_model:
       mitigation: cargo_deny + pinned_versions
 
 capability_separation:
-  - "Tool authority is a list the calling party does not write: the per-request `tool_allowlist` on the inference IPC `tool_invoke` dispatch (fail-closed on missing/empty), each swarm agent card's `mcp_tools` allowlist, and the per-server MCP env/credential allowlists"
+  - "Tool authority is a list the calling party does not write: the parent-held delegation grant (minted from `kask.mcp.delegated_tools` at `kask_bridge/src/delegation_grants.rs:16`, revocable before unload) intersected with the request's tool narrowing at the inference IPC `create_worktree_thread` dispatch (fail-closed on a missing narrowing, `kask_bridge/src/inference_ipc_server.rs:954-961`), and the per-server MCP env/credential allowlists"
   - "`McpRuntime::invoke` performs NO per-call authorization — it meters the call against the agent's per-tick runaway ceiling, dispatches, and emits the span. Its `agent: WebID` is an accounting identity, not a credential"
   - "Information flow is NOT gated. Defense Layer 5 is absent by decision, as Layer 3 is — treat every tool path as taint-unaware"
   - "Removed 2026-08-12: the per-call DelegationToken capability match (it compared a caller-supplied value against itself). Do not re-add a per-call authorization argument to `ToolPort::invoke`"
@@ -478,7 +478,7 @@ Cross-references are verified by the link checker in CI (relative links within t
 | `hkask-event-store` | Lifecycle, Composition | Append-only event log for agent rollouts (`EventStore`, `EventRecord`, `EventFilter`, `VerdictSource`, `RolloutKind`). Data-plane substrate for agent evaluation and regulation. Wired via `kask_bridge/src/rollout_event_bridge.rs`; consumed by `hkask-regulation/src/cybernetics_loop.rs`. |
 | ~~`hkask-services-core`~~ (removed) | Domain | Corpus retains `HkaskSettings` in `hkask-mcp-corpus/src/settings.rs`; no separate service foundation remains. |
 | `kask_bridge` | Composition | D8 — the bidirectional seam: in-process bridge exposing hKask port traits (InferencePort, ToolPort, MemoryPort, etc.) to MCP servers and zed-kask surfaces (composition root wires components directly) |
-| 9 MCP servers | Composition | The tools — child processes over stdio (D3), governed by the in-process `McpRuntime`: corpus, curator, experimentation, kata-kanban, media, prediction-markets, research, scenarios, swarm (the companies server was removed 2026-10-18, commit `3439db5e00`). |
+| 8 MCP servers | Composition | The tools — child processes over stdio (D3), governed by the in-process `McpRuntime`: corpus, curator, experimentation, kata-kanban, media, prediction-markets, research, scenarios (companies removed 2026-10-18, commit `3439db5e00`; swarm removed 2026-10-28 with the whole local swarm capability — plan `kask/docs/plans/swarm-removal-plan-2026-10-28.md`, DIVERGENCE.md retired D33). |
 
 > **Deleted crates:** see git history.
 
@@ -488,7 +488,7 @@ Cross-references are verified by the link checker in CI (relative links within t
 graph TD
     subgraph EDITOR["zed-kask editor process"]
         AGENT[Agent panel and Curator]
-        STEER[Swarm, Kanban, Portfolio, and Media Steer panels]
+        STEER[Kanban and Media Steer panels]
         BRIDGE[kask_bridge adapters and inference IPC server]
         RUNTIME[Managed McpRuntime]
         REG[Process-global Regulation ledger and loops]
@@ -531,8 +531,8 @@ other than the caller being checked; the rows below satisfy that.
 
 | Boundary | Enforcement | Principle |
 |----------|-------------|-----------|
-| Delegated tool dispatch | Per-request `tool_allowlist` on the inference IPC `tool_invoke` dispatch (`kask_bridge/src/inference_ipc_server.rs`), fail-closed on missing/empty, enforced before dispatch | P4 |
-| Per-agent tool reach | Each swarm agent card's declared `mcp_tools` allowlist (`hkask-mcp-swarm/src/agent_executor.rs`) | P4 |
+| Delegated tool dispatch | The parent-held grant (`kask_bridge/src/delegation_grants.rs:16`) intersected with the request's tool narrowing at the inference IPC `create_worktree_thread` dispatch (`kask_bridge/src/inference_ipc_server.rs:954-961`), fail-closed on a missing narrowing, enforced before the sibling thread is created | P4 |
+| Per-agent tool reach | The granted ceiling derived from the parent grant and the requested narrowing (`kask_bridge/src/delegation_grants.rs:67` `worktree_tools`) — an empty list deliberately creates an inference-only child, never grant-all | P4 |
 | Per-server credentials | Per-server MCP env / credential allowlists (`kask_bridge/src/mcp_servers.rs`) | P1 |
 | Information flow | **None — absent by decision.** Defense Layer 5 (information-flow control) is not implemented; treat every tool path as taint-unaware | P4 |
 | MCP server isolation | Child processes over stdio, owned by `McpRuntime`; server crates do not link Zed crates (`kask/crates/hkask-mcp/src/runtime.rs`) | P1 |

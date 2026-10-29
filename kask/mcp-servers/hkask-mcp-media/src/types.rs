@@ -257,7 +257,7 @@ pub struct VoiceRemoveRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct VoicePruneRequest {
     /// Delete profiles older than this many days unless a human-confirmed
-    /// match refreshed them within the same retention window.
+    /// match refreshed them within the same retention window. Maximum 365000.
     pub max_age_days: u32,
 }
 

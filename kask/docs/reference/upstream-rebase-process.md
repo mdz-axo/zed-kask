@@ -1,7 +1,7 @@
 ---
 title: "Upstream Rebase Management Process — zed-kask"
 audience: [architects, integrators, release engineers]
-last_updated: 2026-09-28
+last_updated: 2026-10-28
 version: "1.4.0"
 status: "Active"
 domain: "Lifecycle"
@@ -196,7 +196,7 @@ noted.
 | F2 | 617 | `gpui_tokio` init from kask tokio runtime handle | Prohibition | `kask_runtime_handle` | — | after `app` built, before any `Tokio::spawn` |
 | F3 | 677 | Alert channel: CyberneticsLoop → MetacognitionLoop | Prohibition | `alert_tx`, `alert_rx`, `regulation_ledger`, `event_sink` | `kask_runtime_handle` | F2 |
 | F4 | 700 | Algedonic threshold → `variety_max_deficit` wiring | Guardrail | `set_points`, `cybernetics_loop_inner` | `kask_settings_for_mcp` (F9), `regulation_ledger` (F3) | F3, F9 |
-| F5 | 725 | `swarm-panel` call-cap persona (call cap seed) | Prohibition | (call cap registration) | `cybernetics_loop_inner` (F4) | F4 |
+| F5 | 856 | `kask-panel` call-cap persona (call cap seed) | Prohibition | (call cap registration) | `cybernetics_loop_inner` (F4) | F4 |
 | F6 | 750 | CyberneticsLoop + MetacognitionLoop tick cycles (`Tokio::spawn`) | Prohibition | `cybernetics_loop`, `cybernetics_loop_for_tick`, `cybernetics_loop_for_panel`, `mcp_runtime`, `metacognition_loop` | F2, F3, F4, F5 | F4, F5 |
 | F7 | 804 | Metacognition provider hook (`set_metacognition_provider`) | Prohibition | (hook set) | `metacognition_loop` (F6) | F6 |
 | F8 | 835 | Global `Fs` registration (`<dyn Fs>::global`) | Prohibition | (global set) | `fs` (upstream) | after `fs` defined |
@@ -217,8 +217,8 @@ noted.
 | F23 | 2563 | `kask_server_env` (env var resolution for MCP servers) | Prohibition | (fn) | `KaskSettings`, credentials | — (fn definition, hoisted) |
 | F24 | 2618 | `sync_kask_mcp_servers` impl (descriptor registration) | Prohibition | (fn body) | F22, F23, `KaskMcpDescriptor` | F22, F23 |
 | F25 | 2701 | `sync_kask_mcp_runtime_servers` (governed McpRuntime restart) | Prohibition | (fn) | `McpRuntime`, `kask_server_env` (F23) | F23 |
-| F26 | 2706 | `tool_invoker` hook (`set_tool_invoker`) | Prohibition | (hook set) | `swarm_panel::ToolInvoker` | in deferred task (F20) |
-| F27 | 2808 | `tool_invoke` IPC (inference IPC server) | Prohibition | (IPC methods) | `ToolPort` | F20 |
+| F26 | 2500 | `tool_invoker` hook (`set_tool_invoker`) | Prohibition | (hook set) | `hkask_tool_invoker::ToolInvoker` impl (defined in `main.rs`; the trait lives in the `hkask-tool-invoker` leaf crate) | in deferred task (F20) |
+| F27 | — | **REMOVED** — the child→parent `tool_invoke`/`tool_definition` inference-IPC methods were removed 2026-10-28 with the swarm server, their only consumer. The `create_worktree_thread` IPC method (`inference_ipc_server.rs`) remains. | — | — | — |
 | F28 | 2810 | Skill executor resolution (resolves at call time) | Prohibition | (resolver fn) | (F20) | F20 |
 
 ### 4.2 Dependency DAG (topological order for re-application)
@@ -235,7 +235,7 @@ F25 (sync_kask_mcp_runtime_servers) → fn (hoisted, depends on F23)
 F3 (alert channel)  → after F2
 F9 (kask_settings_for_mcp) → after settings::init
 F4 (algedonic)      → after F3, F9
-F5 (swarm-panel cap) → after F4
+F5 (kask-panel cap) → after F4
 F6 (cybernetics loop + mcp_runtime) → after F2, F3, F4, F5
 F7 (metacognition provider) → after F6
 F8 (global Fs)      → after fs defined
@@ -354,7 +354,7 @@ Invoke this process (via the `upstream-rebase` skill) when:
 The process is **not** needed for:
 - Files under `kask/` (upstream never touches them).
 - D-seam files that auto-merge cleanly with all markers preserved.
-- Additive-only crates (`hkask-*`, `swarm_panel`, `kanban_panel`, `hkask-*-widget`).
+- Additive-only crates (`hkask-*`, `kanban_panel`, `hkask-*-widget`).
 
 ---
 

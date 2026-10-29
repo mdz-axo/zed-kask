@@ -1,7 +1,7 @@
 ---
 title: "hKask Architecture Diagrams — Ontology Bridge, Skill/MCP/Lisp Seam, Credentials, Tool Port, Event Store, Viz-Core, Skill Learning Loop"
 audience: [architects, developers, agents]
-last_updated: 2026-10-21
+last_updated: 2026-10-28
 version: "1.2.4"
 status: "Active"
 domain: "Cross-cutting"
@@ -57,7 +57,7 @@ graph TD
         end
     end
 
-    subgraph deps["Dependents — 14 crates"]
+    subgraph deps["Dependents — 11 crates"]
         direction TB
         subgraph kask_crates["kask crates"]
             condenser["hkask-condenser"]
@@ -75,7 +75,6 @@ graph TD
             pm["hkask-mcp-prediction-markets"]
             research["hkask-mcp-research"]
             scenarios["hkask-mcp-scenarios"]
-            swarm["hkask-mcp-swarm"]
         end
     end
 
@@ -90,13 +89,12 @@ graph TD
     pm -->|"depends on"| shared
     research -->|"depends on"| shared
     scenarios -->|"depends on"| shared
-    swarm -->|"depends on"| shared
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ONT-001
 verified_date: 2026-10-17
-verified_against: kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs (pub mod axis L94, data_cube L95, dc_bibo L96, derived L97, golem L98, ml_schema L99, omc L100, ontology_graph L101, pko L102, published L103, rdf L106, schema_org L107, sepio L109, sumo L110, term_resolution L111); dependent Cargo.tomls — kask/crates/hkask-condenser, kask/crates/hkask-types (L19), kask/crates/kask_bridge (L16), crates/agent (L48), crates/hkask-media-widget, kask/mcp-servers/{corpus, kata-kanban (L22), media, prediction-markets, research, scenarios, swarm}
+verified_against: kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs (pub mod axis L94, data_cube L95, dc_bibo L96, derived L97, golem L98, ml_schema L99, omc L100, ontology_graph L101, pko L102, published L103, rdf L106, schema_org L107, sepio L109, sumo L110, term_resolution L111); dependent Cargo.tomls — kask/crates/hkask-condenser, kask/crates/hkask-types (L19), kask/crates/kask_bridge (L16), crates/agent (L48), crates/hkask-media-widget, kask/mcp-servers/{corpus, kata-kanban (L22), media, prediction-markets, research, scenarios}
 status: VERIFIED
 -->
 
@@ -225,7 +223,7 @@ The two dispatch paths into `ToolPort::invoke`:
 | Caller | Entry point | Action | Resolves to |
 | --- | --- | --- | --- |
 | Agent tool-use loop (LLM-decided) | `Thread::enabled_tools` (profile + delegation filters, D44 — no per-turn router) | LLM emits a tool_use event | `ToolPort::invoke` under the agent's `WebID` |
-| Widget direct dispatch | `hkask_tool_invoker::ToolInvoker` impls | UI gesture (kanban move, scenarios rung) | `ToolPort::invoke` under the `swarm-panel` persona |
+| Widget direct dispatch | `hkask_tool_invoker::ToolInvoker` impls | UI gesture (kanban move, scenarios rung) | `ToolPort::invoke` under the `kask-panel` persona |
 
 Both share the same metering (`CallCapManager::charge_metered`), the same
 `reg.tool.*` span emission, and the same `unwrap_tool_envelope` result seam.
@@ -233,10 +231,10 @@ The only pre-dispatch refusal is `ToolPortError::EnergyBudgetExceeded` (the
 runaway-loop breaker). The model decides every tool call; skills do not
 dispatch MCP tools deterministically.
 
-The 9 on-disk MCP servers are enumerated by `BUILT_IN_MCP_SERVERS` in
+The 8 on-disk MCP servers are enumerated by `BUILT_IN_MCP_SERVERS` in
 `kask/crates/kask_bridge/src/mcp_servers.rs`: `corpus`,
 `curator`, `experimentation`, `kata-kanban`, `research`, `scenarios`,
-`prediction-markets`, `swarm`, `media`.
+`prediction-markets`, `media`.
 
 ## Credential Resolution Chain
 
@@ -247,9 +245,8 @@ inference-provider keys at their provider `api_url` slots.
 MCP server child processes. The server's `resolve_credential` reads API
 keys from env only — there is no keychain fallback for API keys.
 `HKASK_DB_PASSPHRASE` resolves via the canonical 2-tier helper
-(ctx.credentials → env → `kask://credentials/hkask_db_passphrase`); there
-is no `HKASK_SWARM_MEMORY_PASSPHRASE` — one passphrase covers every
-SQLCipher DB.
+(ctx.credentials → env → `kask://credentials/hkask_db_passphrase`) —
+one passphrase covers every SQLCipher DB.
 Writes/deletes to any credential URL that feeds MCP server env must call
 `nudge_mcp_servers` to re-fire the `SettingsStore` observer and restart
 changed servers. Verified current 2026-08-31.
@@ -404,16 +401,19 @@ verified_against: kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort trait L
 status: VERIFIED
 -->
 
-Authority lives outside this crate: the per-request `tool_allowlist` on the
-inference IPC dispatch, each swarm card's `mcp_tools` allowlist, and the
-per-server MCP env/credential allowlists. `invoke`'s `agent: WebID` is an
+Authority lives outside this crate: the parent-held delegation grant
+(`kask.mcp.delegated_tools` → `delegation_grants.rs`) intersected with the
+request's tool narrowing at the inference IPC `create_worktree_thread`
+dispatch, and the per-server MCP env/credential allowlists. `invoke`'s
+`agent: WebID` is an
 accounting identity, not a credential.
 
 ## hKask Event Store
 
 The `hkask-event-store` crate is the append-only event log for agent
-rollouts. It captures `model_request` and `verdict` events produced by local
-swarm delegations, harness runs, and (reserved) curator turns. Wired into the
+rollouts. It captures `model_request` and `verdict` events produced by
+harness runs (the rollout regression monitor) and (reserved) curator turns.
+Wired into the
 composition root via `kask_bridge/src/rollout_event_bridge.rs` and consumed
 by `hkask-regulation/src/cybernetics_loop.rs`. Verified current.
 
@@ -506,13 +506,13 @@ composes every widget into one `BlockRenderer` callback and caches widget
 entities by a hash of the block body so state survives the per-token
 re-renders of the streaming chat.
 
-**Corrections (2026-08-28, updated 2026-09-28):** the per-widget `create_*`
+**Corrections (2026-08-28, updated 2026-10-28):** the per-widget `create_*`
 factory functions were replaced by a `VizWidget` trait (`VIZ_TAG` /
 `LOG_PREFIX` / `parse_body` / `viz_of` / `new_widget`) with a shared
-`try_create` guard and an ordered `viz_factories()` registry — now of **four**
-widgets (graph, kanban, scenarios, swarm; the portfolio widget was removed
-with the portfolio server on 2026-10-15, and the spreadsheet widget with
-the spreadsheet capability the same day).
+`try_create` guard and an ordered `viz_factories()` registry — now of **three**
+widgets (graph, kanban, scenarios; the portfolio and spreadsheet widgets
+were removed with their capabilities 2026-10-15, and the swarm widget with
+the swarm capability 2026-10-28).
 `block_renderer` tries the media widget
 (`hkask_media_widget::create_media_widget`, discriminates on `kind`, needs
 `Window`) first, then the registered viz widgets (discriminate on `viz`).
@@ -540,7 +540,7 @@ classDiagram
         +try_create~T: VizWidget~(body, cx) Option~CachedWidget~
     }
     class viz_factories {
-        +ordered registry of 6 factories
+        +ordered registry of 3 factories
     }
     class CachedWidget {
         <<erased closure>>
@@ -569,19 +569,18 @@ classDiagram
     VizWidget <|.. GraphWidget : viz event_tree
     VizWidget <|.. KanbanWidget : viz kanban
     VizWidget <|.. ScenariosWidget : viz scenarios
-    VizWidget <|.. SwarmWidget : viz swarm_delegate_results
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-CORE
-verified_date: 2026-09-28
-verified_against: crates/hkask-viz-core/src/hkask_viz_core.rs (VizWidget trait L77-93, impls GraphWidget L95 / KanbanWidget L110 / ScenariosWidget L125 / SwarmWidget L140, CachedWidget L163, try_create L186, viz_factories L215-223, MAX_CACHE_SIZE L224, VizCache L320, cache_key L359, block_renderer L373); crates/hkask-media-widget/src/hkask_media_widget.rs (create_media_widget L56); crates/agent_ui/src/conversation_view.rs (media_block_renderer wiring L3574)
+verified_date: 2026-10-28
+verified_against: crates/hkask-viz-core/src/hkask_viz_core.rs (VizWidget trait L75, impls GraphWidget L93 / KanbanWidget L108 / ScenariosWidget L123, try_create L169, viz_factories L198, MAX_CACHE_SIZE L206, VizCache L302, cache_key L341, block_renderer L355); crates/hkask-media-widget/src/hkask_media_widget.rs (create_media_widget L56); crates/agent_ui/src/conversation_view.rs (media_block_renderer wiring)
 status: VERIFIED
 -->
 
 **Selection order** (intentional): media (`kind`) first, then graph
 (`viz: "event_tree"`), kanban (`viz: "kanban"`), scenarios
-(`viz: "scenarios"`), swarm (`viz: "swarm_delegate_results"`). The viz
+(`viz: "scenarios"`). The viz
 tags are disjoint, so factory order is arbitrary. A body claimed by none
 returns `None` and falls through to the default code-block renderer.
 
@@ -666,7 +665,6 @@ separate trigger: new records wait for the next review.
 ## See also
 
 - [Kanban diagrams](./kanban.md) — task status lifecycle, move controller
-- [Swarm diagrams](./swarm.md) — swarm server, panel modes, steering loop
 - [UI widget diagrams](./ui-widgets.md) — per-widget class diagrams
 - [MCP dispatch diagrams](./mcp-dispatch.md) — invoke path, tool-call sequence, CMP tool flow
 - [Ontology Bridge Reference](../reference/ontology-bridge.md) — the API reference for the crate

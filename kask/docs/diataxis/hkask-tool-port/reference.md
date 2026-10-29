@@ -1,7 +1,7 @@
 ---
 title: "hkask-tool-port — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-28
+last_updated: 2026-10-28
 version: "2.1.0"
 status: "Active"
 domain: "Sovereignty"
@@ -46,9 +46,7 @@ comparison was a value against itself
 | `CallCapManager::charge_metered` | `kask/crates/hkask-regulation/src/energy.rs:176`                                           |
 | `DEFAULT_RUNAWAY_CALL_CEILING` | `kask/crates/hkask-regulation/src/energy.rs:26`                                              |
 | `CyberneticsLoop::charge_call_metered` | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:675`                          |
-| Per-request `tool_allowlist` gate | `kask/crates/kask_bridge/src/inference_ipc_server.rs:895-948`                              |
-| Parent-held grant check     | `kask/crates/kask_bridge/src/delegation_grants.rs:66-77`; `kask/crates/kask_bridge/src/inference_ipc_server.rs:936-943` |
-| Per-agent `mcp_tools` allowlist | `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:262-274,537-548`                    |
+| Delegated worktree-tool narrowing ∩ parent grant | `kask/crates/kask_bridge/src/inference_ipc_server.rs:954-961` + `kask/crates/kask_bridge/src/delegation_grants.rs:67` |
 | Per-server credential allowlist | `kask/crates/kask_bridge/src/mcp_servers.rs:43` (`BuiltinMcpServer.credentials`)         |
 
 
@@ -201,18 +199,18 @@ sequenceDiagram
     participant Runtime as McpRuntime
 
     Caller->>Port: invoke(server, tool, args, agent)
-    Note over Port: No authorization check here.<br/>Authority is enforced at the<br/>IPC and card boundaries, not in invoke.
+    Note over Port: No authorization check here.<br/>Authority is enforced at the<br/>IPC and registry boundaries, not in invoke.
     Port->>Runtime: meter + dispatch
     Runtime-->>Port: result or ToolPortError
     Port-->>Caller: result
 
-    Note over Boundaries: Per-request tool_allowlist ∩ parent grant (IPC dispatch)<br/>Per-agent mcp_tools (swarm card)<br/>Per-server credentials (mcp_servers.rs)
+    Note over Boundaries: Requested tool narrowing ∩ parent grant (create_worktree_thread dispatch)<br/>Per-server credentials (mcp_servers.rs)
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CAP-005
-verified_date: 2026-09-28
-verified_against: kask/crates/hkask-tool-port/src/tool_port.rs:68-83 (invoke does not authorize); kask/crates/kask_bridge/src/inference_ipc_server.rs:895-948 (tool_allowlist + parent-grant gate); kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:262-274,537-548 (mcp_tools gate); kask/crates/kask_bridge/src/mcp_servers.rs:43 (credential allowlist)
+verified_date: 2026-10-28
+verified_against: kask/crates/hkask-tool-port/src/tool_port.rs:68-83 (invoke does not authorize); kask/crates/kask_bridge/src/inference_ipc_server.rs:954-961 (create_worktree_thread narrowing gate); kask/crates/kask_bridge/src/delegation_grants.rs:16,67 (grant mint + worktree_tools intersection); kask/crates/kask_bridge/src/mcp_servers.rs:43 (credential allowlist)
 status: VERIFIED
 -->
 
@@ -237,15 +235,14 @@ cascade tool call died at the gate).
 ## Where authority is enforced
 
 A capability check is only a gate when the authority list is not chosen by the
-caller being checked. Three boundaries satisfy that:
+caller being checked. Two boundaries satisfy that:
 
 | Boundary                                                        | Location                                                       | Note                                        |
 | --------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------- |
-| Per-request delegated-tool `tool_allowlist` intersected with the parent-held grant (both fail-closed) | `kask/crates/kask_bridge/src/inference_ipc_server.rs:895-948` `tool_invoke` dispatch | The child's request may narrow, never enlarge, the parent's grant (`delegation_grants.rs:66-77`, checked at `inference_ipc_server.rs:936-943`; configured via `kask.mcp.delegated_tools`). Missing or empty allowlist is a protocol violation, never an implicit grant-all. Pinned by `dispatch_tool_invoke_rejects_unallowed_tool` (`inference_ipc_server.rs:1600`) |
-| Per-agent declared `mcp_tools` allowlist                        | `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:262-274` | Restricts which tools a swarm agent may call; refusal at `agent_executor.rs:537-548` |
+| Delegated worktree-tool narrowing intersected with the parent-held grant (both fail-closed) | `kask/crates/kask_bridge/src/inference_ipc_server.rs:954-961` `create_worktree_thread` dispatch + `kask/crates/kask_bridge/src/delegation_grants.rs:67` (`worktree_tools`) | The child's request may narrow, never enlarge, the parent's grant (`delegation_grants.rs:16`, minted from `kask.mcp.delegated_tools`, checked at dispatch; a grant without `host/create_worktree_thread` yields no ceiling). A missing narrowing is a protocol violation, never an implicit grant-all; an empty narrowed list deliberately creates an inference-only child. Pinned by `grants_are_stable_until_changed_and_revoked` (`delegation_grants.rs:92`) and `worktree_authority_denies_before_enqueue` (`inference_ipc_server.rs:1697`) |
 | Per-server MCP env / credential allowlists                      | `kask/crates/kask_bridge/src/mcp_servers.rs:43`              | Scopes credentials per server (`BuiltinMcpServer.credentials`; `None` means no filtering, `Some(&[])` preferred for new servers) |
 
-There is no fourth gate. A FIDES `Source`→`Sink` information-flow check used
+There is no third gate. A FIDES `Source`→`Sink` information-flow check used
 to be listed here; it was deleted — see
 [Information flow](#information-flow-absent-by-decision).
 

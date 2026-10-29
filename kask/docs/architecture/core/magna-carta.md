@@ -1,7 +1,7 @@
 ---
 title: "The Magna Carta of hKask"
 audience: [architects, users, agents]
-last_updated: 2026-10-07
+last_updated: 2026-10-28
 version: "0.40.1"
 status: "Active"
 domain: "Cross-cutting"
@@ -70,8 +70,7 @@ PID-bound. See the settings reference for provisioning and revocation behavior.
 | Surface | Location | Role |
 |---|---|---|
 | `Visibility` enum (`Private`/`Shared`/`Public`) | `kask/crates/hkask-types/src/visibility.rs:34-39` | Per-h_mem data-category classification |
-| Parent-held delegated-tool grant intersected with the request allowlist | `kask_bridge/src/delegation_grants.rs` + `inference_ipc_server.rs` `tool_invoke` dispatch | Refuses `server/tool` outside either set before tool dispatch; missing/invalid grants deny. Settings unload revokes before child stop. |
-| Per-agent `mcp_tools` allowlist | `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:262-274` (declared set), `:541-547` (refusal) | Restricts which tools a swarm agent may call at all |
+| Parent-held delegated-tool grant intersected with the request's tool narrowing | `kask_bridge/src/delegation_grants.rs:16` (mint), `:54` (revoke), `:67` (`worktree_tools` intersection) + the `create_worktree_thread` dispatch (`kask_bridge/src/inference_ipc_server.rs:954-961`) | Refuses a `server/tool` outside the intersection before a sibling thread is created; missing grant or narrowing denies. Settings unload revokes before child stop. |
 | Per-server MCP env / credential allowlists | `kask_bridge/src/mcp_servers.rs` | Scopes credentials per server |
 | Call meter / runaway-loop breaker | `hkask-regulation::CallCapManager` (`kask/crates/hkask-regulation/src/energy.rs:131`), charged in `McpRuntime::invoke` (`kask/crates/hkask-mcp/src/runtime.rs`, `ToolPort::invoke`) | Bounds non-terminating loops and meters usage. **Fail-open** on an unseeded agent — not an authorization gate |
 
@@ -244,11 +243,11 @@ per-call capability token today.**
    tool name it then invoked, so the check compared a value against itself and
    denied nothing. What *is* live is capability **separation** — which tools a
    caller may reach at all:
-   - the per-request delegated-tool allowlist on the inference IPC `tool_invoke`
-     dispatch (`kask/crates/kask_bridge/src/inference_ipc_server.rs`), fail-closed on a
-     missing or empty allowlist;
-   - each swarm agent card's declared `mcp_tools` allowlist
-     (`kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs`);
+   - the parent-held delegated-tool grant (`kask/crates/kask_bridge/src/delegation_grants.rs:16`)
+     intersected with the request's tool narrowing at the inference IPC
+     `create_worktree_thread` dispatch
+     (`kask/crates/kask_bridge/src/inference_ipc_server.rs:954-961`), fail-closed on a
+     missing narrowing;
    - the per-server MCP env/credential allowlists (`kask_bridge/src/mcp_servers.rs`).
 2. **`require_sovereignty` (OUGHT — not yet enforced)** — Verify the data
    category access is permitted by the user's sovereignty boundary and explicit
@@ -452,7 +451,7 @@ assertions:
 | p3c | Generative Space | Generative resources are open-source with exposed weights and settings | Structural + behavioral |
 | p3e | Generative Space | User preference overrides take precedence over LLM aggregate defaults | Absence check |
 | p4a | Clear Boundaries | Every access path goes through `require_capability` *(IS)* + `require_sovereignty` *(OUGHT)* | Structural + behavioral |
-| p4b | Clear Boundaries | Tool authority is allowlisted outside the caller (IPC `tool_allowlist`, swarm `mcp_tools`, per-server env) — the per-call token check was removed as vacuous | Structural |
+| p4b | Clear Boundaries | Tool authority is allowlisted outside the caller (the parent grant intersected with the IPC tool narrowing, per-server env) — the per-call token check was removed as vacuous | Structural |
 | p4c | Clear Boundaries | Generative settings tokens obtainable through P2's affirmative consent | Structural |
 | p4d | Clear Boundaries | Connected inference providers expose settings (open-source requirement) | Structural |
 

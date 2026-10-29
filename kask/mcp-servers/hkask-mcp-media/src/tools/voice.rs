@@ -8,6 +8,7 @@ use crate::voice_profiles::{
 use crate::*;
 
 const MAX_ENROLLMENT_SPAN_MS: u64 = 60_000;
+const MAX_PRUNE_AGE_DAYS: u32 = 365_000;
 
 #[derive(Debug, serde::Serialize)]
 struct VoiceSegmentView {
@@ -292,6 +293,11 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "voice_prune", async {
             let _admission = self.admit_heavy_operation()?;
+            if max_age_days > MAX_PRUNE_AGE_DAYS {
+                return Err(McpToolError::invalid_argument(format!(
+                    "max_age_days must be at most {MAX_PRUNE_AGE_DAYS}"
+                )));
+            }
             let cutoff =
                 (chrono::Utc::now() - chrono::Duration::days(i64::from(max_age_days))).to_rfc3339();
             let store = self.voice.profile_store().map_err(map_voice_error)?;
@@ -321,6 +327,7 @@ impl MediaServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::educt::EductAnnotationCreateRequest;
     use crate::voice_profiles::{
         EncoderFingerprint, EnrollmentAudioEmbedding, NewVoiceEnrollment, OperatorAuthorization,
         VoiceProfileRuntime,
@@ -585,7 +592,33 @@ mod tests {
                 .is_empty(),
             "enrollment must not author a speaker annotation as a side effect"
         );
-        for format in ["srt", "highlights_csv", "corpus_text"] {
+        server
+            .educt_annotation_create(Parameters(EductAnnotationCreateRequest {
+                transcript_id: transcript_id.clone(),
+                start_word: 0,
+                end_word: 0,
+                label: "export fixture".to_string(),
+                note: String::new(),
+                kind: None,
+            }))
+            .await
+            .expect("seed highlight export fixture");
+        server
+            .educt_store_layer(Parameters(EductStoreLayerRequest {
+                transcript_id: transcript_id.clone(),
+                layer: hkask_types::AnyJsonValue(serde_json::json!({
+                    "kind": "paragraph",
+                    "provenance": {
+                        "model": "test",
+                        "prompt_template": "voice-export-fixture",
+                        "created_at": "2026-10-28T23:00:00Z"
+                    },
+                    "breaks_after": [2]
+                })),
+            }))
+            .await
+            .expect("seed paragraph export fixture");
+        for format in ["srt", "highlights_csv", "review_csv", "corpus_text"] {
             let exported = server
                 .educt_export(Parameters(EductExportRequest {
                     transcript_id: transcript_id.clone(),
@@ -704,6 +737,15 @@ mod tests {
         .await;
         seed_identification_layer(&server, &transcript_id, "derived-stale", &stale.id);
         seed_identification_layer(&server, &transcript_id, "derived-recent", &recent.id);
+
+        let error = server
+            .voice_prune(Parameters(VoicePruneRequest {
+                max_age_days: u32::MAX,
+            }))
+            .await
+            .expect_err("an unrepresentable retention cutoff must be rejected");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+        assert_eq!(identification_layer_count(&server), 2);
 
         let pruned = server
             .voice_prune(Parameters(VoicePruneRequest { max_age_days: 0 }))

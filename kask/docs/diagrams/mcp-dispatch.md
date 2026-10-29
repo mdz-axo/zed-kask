@@ -1,7 +1,7 @@
 ---
 title: "MCP Dispatch Diagrams — Runtime Invoke, Tool-Call Sequence, CMP Tool Flow"
 audience: [architects, developers, agents]
-last_updated: 2026-09-28
+last_updated: 2026-10-28
 version: "1.1.0"
 status: "Active"
 domain: "Trust"
@@ -49,11 +49,11 @@ rather than failing closed.
 
 Where authority is enforced instead:
 
-- the per-request `tool_allowlist` on the inference IPC `tool_invoke`
-  dispatch (`kask/crates/kask_bridge/src/inference_ipc_server.rs`),
-  fail-closed on a missing or empty allowlist
-- each swarm agent card's declared `mcp_tools` allowlist
-  (`kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs`)
+- the parent-held delegation grant (`kask.mcp.delegated_tools`, minted at
+  `kask/crates/kask_bridge/src/delegation_grants.rs:16`) intersected with the
+  request's tool narrowing at the inference IPC `create_worktree_thread`
+  dispatch (`kask/crates/kask_bridge/src/inference_ipc_server.rs:954-961`),
+  fail-closed on a missing narrowing
 - the per-server MCP env/credential allowlists
   (`kask/crates/kask_bridge/src/mcp_servers.rs`)
 
@@ -114,7 +114,7 @@ sequenceDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-SEQ-MCP-TOOL-CALL-001
 verified_date: 2026-09-28
-verified_against: crates/agent/src/thread.rs (enabled_tools L5156, count_hidden_mcp_tools L6074); crates/agent/src/tools/list_mcp_tools_tool.rs (ListMcpToolsTool L58, enumerate_tool_listing L119); crates/agent/src/templates/system_prompt.hbs (D44 visibility marker L62-63); kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort L89, ToolPortError::EnergyBudgetExceeded L12); kask/crates/hkask-mcp/src/runtime.rs (McpRuntime, impl ToolPort for McpRuntime, start_server_with_env, stop_server, tool_surface_changes); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/inference_ipc_server.rs (tool_allowlist L843, L918); kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs (mcp_tools allowlist L262-274); kask/crates/kask_bridge/src/mcp_servers.rs (BuiltinMcpServer credentials L40-54)
+verified_against: crates/agent/src/thread.rs (enabled_tools L5156, count_hidden_mcp_tools L6074); crates/agent/src/tools/list_mcp_tools_tool.rs (ListMcpToolsTool L58, enumerate_tool_listing L119); crates/agent/src/templates/system_prompt.hbs (D44 visibility marker L62-63); kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort L89, ToolPortError::EnergyBudgetExceeded L12); kask/crates/hkask-mcp/src/runtime.rs (McpRuntime, impl ToolPort for McpRuntime, start_server_with_env, stop_server, tool_surface_changes); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/delegation_grants.rs (grant_for_server L16, worktree_tools L67); kask/crates/kask_bridge/src/inference_ipc_server.rs (create_worktree_thread narrowing L954-961); kask/crates/kask_bridge/src/mcp_servers.rs (BuiltinMcpServer credentials)
 status: VERIFIED
 -->
 
@@ -132,4 +132,3 @@ pinned by proptest in `kask/crates/hkask-types/src/tool_response.rs`.
 ## See also
 
 - [Architecture diagrams](./architecture.md) — tool port type system, skill/MCP/lisp seam, credential chain
-- [Swarm diagrams](./swarm.md) — the swarm server dispatch surface

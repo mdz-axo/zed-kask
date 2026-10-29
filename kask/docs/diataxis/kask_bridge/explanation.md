@@ -1,7 +1,7 @@
 ---
 title: "kask_bridge — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-10-18
+last_updated: 2026-10-28
 version: "1.4.1"
 status: "Active"
 domain: "Integration"
@@ -75,9 +75,8 @@ verified_against: crates/zed/src/main.rs:1589-1646 (deferred task + fallback ide
 status: VERIFIED
 -->
 
-There is one SQLCipher passphrase for curator, swarm-memory, kanban, and
-research databases. The deferred task explicitly performs no separate
-swarm-memory provisioning (`crates/zed/src/main.rs:1690-1693`). Scheduled
+There is one SQLCipher passphrase for curator, kanban, and
+research databases. Scheduled
 rotation is startup-coordinated: `schedule_db_passphrase_rotation` writes the
 pending slot (`hkask_db_passphrase_pending`) plus a pending record file, and
 `run_pending_db_passphrase_rotation` applies it before any DB opens
@@ -107,10 +106,9 @@ The settings hierarchy has one source of default values: each settings type's
 MCP environment emitters compare against them
 (`kask/crates/kask_bridge/src/settings.rs:24-34,130-137,790-812`). The general
 settings contain concurrency, timeout, and circuit-breaker controls—there is no
-batch-size setting (`kask/crates/kask_bridge/src/settings.rs:102-130`). The swarm
-settings contain mode, URL, credit ceiling, curator-consent policy,
-default-agent-model override, A2A toggle, and embedding dimension; they contain
-no separate passphrase field (`kask/crates/kask_bridge/src/settings.rs:398-430`).
+batch-size setting (`kask/crates/kask_bridge/src/settings.rs:102-130`). No
+settings section carries a separate passphrase field — one shared
+`HKASK_DB_PASSPHRASE` covers every SQLCipher database.
 
 ## Port lifecycle
 

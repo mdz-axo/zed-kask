@@ -73,11 +73,10 @@ principles:
           command: bash kask/scripts/check-goal-traceability-selftest.sh
       - id: ax-port-typing
         assertion: Unsupported schema keywords do not yield a successful validation verdict.
-        status: runtime_enforced
-        scope: Port registry schema checks; not complete permission or information-flow enforcement
-        owner: swarm maintainer
-        enforced_at: kask/mcp-servers/hkask-mcp-swarm/src/port_registry.rs
+        status: gap
+        scope: The enforcement site (the swarm server's port registry and schema validation) was removed 2026-10-28 with the whole local swarm capability; no equivalent gate currently exists
+        owner: repository maintainer
+        enforced_at: kask/docs/plans/swarm-removal-plan-2026-10-28.md
         check:
-          path: kask/mcp-servers/hkask-mcp-swarm/src/port_registry.rs
-          symbol: unsupported_keyword_is_never_a_pass
-          command: cargo test -p hkask-mcp-swarm unsupported_keyword_is_never_a_pass
+          path: kask/docs/plans/swarm-removal-plan-2026-10-28.md
+          command: grep -c "swarm" kask/docs/plans/swarm-removal-plan-2026-10-28.md

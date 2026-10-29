@@ -1,8 +1,8 @@
 ---
 title: "The Verification Ladder: Five Rungs and Their zed-kask Homes"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-10-22
-version: "1.0.1"
+last_updated: 2026-10-28
+version: "1.1.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [trust, composition, domain]
@@ -27,11 +27,11 @@ is findable.
 
 | Rung | Question | zed-kask home | Clock | Catches |
 |---|---|---|---|---|
-| 1. Presence | Does the declared thing exist? | `port_registry.rs` (an `accepts`/`produces` label that resolves to no registered type is rejected at admission); `schema_validate.rs:1-24` (no schema or an unsupported keyword is `unverified_*`, never `valid`) | admission, then per invocation | a card declaring a type that does not exist; a contract nobody wrote |
+| 1. Presence | Does the declared thing exist? | `tool_surface_pin!` (every built-in server pins its exact tool count and generated tool-name set against the live router, so a declared tool that does not exist fails CI instead of degrading to tool-not-found; `kask/scripts/check-mcp-registration.sh` gates on pin presence); the former admission homes (`port_registry.rs`, `schema_validate.rs`) were removed 2026-10-28 with the whole local swarm capability (DIVERGENCE.md retired D33) | CI pin suite, then per dispatch | a card declaring a type that does not exist; a contract nobody wrote |
 | 2. Liveness | Does the writer ever run? | `hkask-regulation/src/loops/core.rs:325` (`LivenessTrust`: `Live`/`Stale`/`NeverRun`), `:342` (`Reading`), `:387` (`LoopView`), `:436` (`compute_reading`) | per regulation tick | a loop that reports success while having never run — `WiringClosed`, the dominant failure mode |
 | 3. Truth | Does the stored value equal its source of truth? | the `grounding-verify` skill's Step 3 mechanical re-derivation (`.agents/skills/grounding-verify/SKILL.md` — `lisp_eval` re-derives every computed number against its inputs); `core.rs:305` (`OutcomeTrust`: impact verified / untrusted / unverified); source-backed outcome resolution (`forecast_record`, market observations, native human goal closure); Brier checks loss arithmetic, not source truth | per claim at verification; at resolution for forecasts | a derived number that does not re-derive; an outcome label unsupported by its declared source (a probabilistic forecast can legitimately lose on one event) |
 | 4. Grounding | Could this value have come from any available tool? | the `grounding-verify` skill's provenance lattice (verification-time, skill-applied: `tool_verified` requires a mechanical match against retained source output, never mere tool-call presence — the swarm server's per-delegation grounding gate that promoted any tool call to `tool_verified` was removed 2026-10-21) | per verification run | a fabricated measurement — a value no tool of the agent's could have supplied |
-| 5. Binding | Does the invocation match the declared interface? | `local_runtime.rs:583` (`contract_checks` — `input_contract_check` / `output_contract_check` / `bind_matched` on every delegation result); `local_registry.rs:46` (`validate_typing` at admission); `contract.rs` (the composition contract, fermi's `agent_contract.rs` port) | per request | prose sent to a structured-only port; a document that contradicts its declared type |
+| 5. Binding | Does the invocation match the declared interface? | **not yet enforced** — the former enforcement sites (the swarm server's `contract_checks` / `validate_typing` / `contract.rs`) were removed 2026-10-28 with the whole local swarm capability (DIVERGENCE.md retired D33); no equivalent binding gate currently exists, so this rung is applied as a review criterion, not a machine check | per request | prose sent to a structured-only port; a document that contradicts its declared type |
 
 ## The two ladder properties
 
@@ -110,14 +110,11 @@ ported:
   schema and default to `model_inference` — fail-safe (never overstates),
   to be stamped in their own changes if their recall surfaces ever
   surface provenance.
-- **Dispatch provenance signals — CLOSED 2026-10-10 (R6).** Every production
-  dispatch surface stamps its results: `DispatchStamp` (`route_reason` +
-  `question_source`, slug-validated, server-authored — never caller-supplied;
-  `local_runtime.rs:745-781`) carried on `LocalDelegateResult.dispatch`
-  (`local_runtime.rs:877-884`) and through `to_result_json`. Stamped surfaces:
-  `direct`, `thread`, `fanout`, `pipeline`, `workflow`, `plan`, `eval`
-  (agent + suite), `a2a` (send/broadcast/HTTP). Swarm C6 blame now separates
-  routing-attributable failures (`bind_matched: false` or
-  `input_contract_check: invalid` — fix the composition) from
-  agent-attributable ones (reconfigure the agent); `route_reason: "eval"`
-  results feed stats, never blame.
+- **Dispatch provenance signals — CLOSED 2026-10-10 (R6); REMOVED 2026-10-28.**
+  The `DispatchStamp` provenance machinery (stamped by every swarm dispatch
+  surface — `direct`, `thread`, `fanout`, `pipeline`, `workflow`, `plan`,
+  `eval`, `a2a`) and the C6 routing-vs-agent blame split lived entirely in
+  the removed swarm server (`local_runtime.rs`); the capability retirement
+  deleted them with it (DIVERGENCE.md retired D33). The record stands as
+  the design's audit history; no dispatch provenance signals are
+  currently stamped.

@@ -1,7 +1,7 @@
 ---
 title: "Experimentation MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-10-19
+last_updated: 2026-10-28
 version: "0.44.0"
 status: "Active"
 domain: "Composition"
@@ -31,7 +31,7 @@ authenticate the reports).
    ruling D2 2026-10-15), genotype refs, eval set, fitness function, noise
    band, **a typed rubric bundle** (P1: non-empty; at least one `metric`
    rubric and one `implementation` or `grounded_report` rubric; stable
-   snake_case ids; verification in the swarm evaluator vocabulary —
+   snake_case ids; verification in the deterministic evaluator vocabulary —
    contains / not_contains / regex / report_ref), a pre-registered
    prediction with confidence in [0,1], and an energy budget carrying
    `max_runs`. Optional `design_spec` carries a typed, versioned scientific
