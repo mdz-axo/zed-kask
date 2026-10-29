@@ -101,6 +101,13 @@ majority is secondary.
 
 For each arm, compute per-session `Δs = top-1 arm,s − top-1 majority,s` and the
 paired statistic `T = Σs nsΔs`, where `ns` is the session's final-probe count.
+The paired null is zero arm effect: conditional on each session's absolute
+contribution, its sign is independently equiprobable because paired outcomes
+are sign-exchangeable within that session. This is an explicit assumption, not
+a consequence of the majority rival; dependence that violates it invalidates
+the p-value analysis and yields `measurement_void`, while descriptive outcomes
+remain reportable.
+
 Test the positive alternative with a sign-flip permutation of each session's
 `nsΔs`. Enumerate all `2^n` sign assignments when n≤12; otherwise draw 10,000
 assignments with the recorded fixed seed. For observed `Tobs`, the one-sided

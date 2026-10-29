@@ -963,7 +963,15 @@ mod tests {
                 )
                 .expect("execute confirmation after removal")
         });
-        busy_rx.recv().expect("wait for actual database contention");
+        if let Err(wait_error) = busy_rx.recv_timeout(std::time::Duration::from_secs(10)) {
+            let release_result = continue_tx.send(());
+            let removal = remover.join();
+            let confirmation = confirmer.join();
+            panic!(
+                "timed out waiting for actual database contention: {wait_error}; \
+                 release={release_result:?}; removal={removal:?}; confirmation={confirmation:?}"
+            );
+        }
         continue_tx.send(()).expect("release stale removal");
         let removal = remover
             .join()

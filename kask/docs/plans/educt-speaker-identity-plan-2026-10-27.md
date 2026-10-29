@@ -635,3 +635,20 @@ recomputable from the ledger.
   no such caller exists in Phase 2. A deterministic fake-encoder enrollment
   test remains test-infrastructure follow-up, not a substitute for the
   explicitly run real-model checks. CAM++ artifact licensing stays open.
+- 2026-10-29 — Phase 3 prerequisites worker-delivered. Voice confirmation
+  and removal now serialize through the storage driver's `BEGIN IMMEDIATE`
+  transaction across independent opens of the same database; stale recheck
+  distinguishes removed/refreshed/missing, and controlled SQLITE_BUSY plus
+  failure/retry tests cover both orderings and gallery cleanup. The corrected
+  evaluation contract is
+  `educt-speaker-identity-evaluation-design-v2-2026-10-28.md`: all-trial
+  overlap scoring, majority/CAM++/ERes2NetV2 arms, development/final session
+  partitions, explicit cluster-bootstrap intervals and paired sign-flip
+  inference. HT-R returned `registry_schema_mismatch` because the real
+  manifest and executor do not exist; no registry write, fitness, seal, or
+  accuracy claim resulted. Bulk work landed in `77fffe2131` and
+  `207466f90c`; the final busy-wait timeout and paired-null clarification
+  remain uncommitted. Gates: 23 focused voice checks, both real-model tests,
+  and clippy pass. The broader run had 398 passes and one unrelated ffmpeg
+  range-extraction failure, which also fails in isolation and keeps the full
+  suite gate open (reported on Media layers t2).
