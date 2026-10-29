@@ -334,7 +334,14 @@ mod tests {
 
     fn signal_confirmation_busy(_kind: i32) -> bool {
         CONFIRMATION_BUSY_TX
-ct NoopPort;
+            .get()
+            .expect("confirmation busy sender")
+            .send(())
+            .expect("signal blocked confirmation");
+        true
+    }
+
+    struct NoopPort;
     crate::test_support::media_inference_stub! {
         NoopPort,
         generate(self, _prompt): {
@@ -914,6 +921,9 @@ ct NoopPort;
         let (rechecked_tx, rechecked_rx) = std::sync::mpsc::channel();
         let (continue_tx, continue_rx) = std::sync::mpsc::channel();
         let (busy_tx, busy_rx) = std::sync::mpsc::channel();
+        CONFIRMATION_BUSY_TX
+            .set(busy_tx)
+            .expect("install confirmation busy sender");
         let gallery = server.gallery_store.driver().clone();
         let profile_id = profile.id.clone();
         let remover_profile_id = profile_id.clone();
@@ -930,7 +940,7 @@ ct NoopPort;
         });
         rechecked_rx.recv().expect("wait for stale recheck");
         let confirmer_path = path.clone();
-        let confirmer_profile_id = profile_id.clone();
+        let confirmer_profile_id = profile_id;
         let confirmer = std::thread::spawn(move || {
             // A raw second connection exposes SQLITE_BUSY deterministically;
             // the main thread releases removal only after this writer is
@@ -941,10 +951,7 @@ ct NoopPort;
                 .execute_batch("PRAGMA key = 'test-passphrase'")
                 .expect("key second SQLCipher connection");
             connection
-                .busy_handler(Some(move |_kind| {
-                    busy_tx.send(()).expect("signal blocked confirmation");
-                    true
-                }))
+                .busy_handler(Some(signal_confirmation_busy))
                 .expect("install confirmation busy handler");
             let transaction = connection
                 .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
