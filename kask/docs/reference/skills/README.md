@@ -23,10 +23,8 @@ mds_categories: [domain, composition]
 >   `crates/agent/src/tools/lisp_eval_tool.rs:374@LispEvalTool::run`). Defaults remain 100000 steps /
 >   depth 1024 (`lisp_eval_tool.rs:291@default_max_steps`, `:295@default_max_depth`). Titles read
 >   form only; copying/display stay foreground. [Bounds and nonpreemptible phases](../lisp-eval-dialect.md#numeric-admission-and-limits)
->   are not hard time/heap/concurrency guarantees. H7's authorized host decode/eval IPC surface
->   (its host-side `run_lisp` wrapper) was removed 2026-10-28 with the swarm capability — the
->   swarm delegate was its only consumer; the in-process path is unchanged and no host/IPC
->   lisp promise remains (the public shared `evaluate_lisp_controlled`,
+>   are not hard time/heap/concurrency guarantees. No host/IPC lisp surface exists —
+>   decode/evaluation runs in-process (the public shared `evaluate_lisp_controlled`,
 >   `lisp_eval_tool.rs:487@evaluate_lisp_controlled`).
 >   H8 direct/routed corpus queries share one body; only Lisp options are offloaded and
 >   observe request-context cancellation, leaving downstream inference/retrieval/generation alone
@@ -67,8 +65,8 @@ carrier of the loop itself.
 
 | Surface | Count | Notes |
 |---------|-------|-------|
-| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **58** | filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md`. Composition changed since the 2026-10-19 note's 59: `media-workflow` retired 2026-10-21 (commit `8262bf5b80`, −1), `eureka-cycle` added 2026-10-23 (+1), `security-audit` added 2026-10-24 (+1), and the two swarm skills (`local-research-swarm`, `swarm-intelligence`) retired 2026-10-28 with the swarm capability (commit `9a62f6a0bc`, the executed removal plan `plans/swarm-removal-plan-2026-10-28.md`) — net 58 |
-| Template namespaces (`kask/registry/templates/*/`) | **55** (**216** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree. Since the 2026-10-19 note's 55/222: the media-workflow retirement removed 2 and the program-manager rewrite removed 3 (commit `4deebd6840`), `eureka-cycle` added 4 then lost its memory-candidate template 2026-10-24 (−1), `security-audit` added 1 namespace with 4 templates (2026-10-24), and the swarm retirement removed the `swarm-intelligence` (6) and `local-research-swarm` (2) namespaces with their skills (2026-10-28) — net 55 namespaces / 216 files |
+| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **58** | filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md`. |
+| Template namespaces (`kask/registry/templates/*/`) | **55** (**216** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree. |
 
 **The SKILL.md is the source of truth.** A skill is its `SKILL.md`. Template crates are
 read-only resources the skill body may reference via `render_template`.
@@ -178,29 +176,3 @@ annual. The embedded seed payload equals the authored tree (pinned in
 | `doc-update` | Realign the kask/docs tree with the code: condensation triage (<85 cap, working target 75), ground-compare-recompose per docs-set, file:line citation gates, corpus-tool decision point |
 | `improv` | Agent interaction grammar (Plussing, Yes And, Freestyling, Riffing) |
 
-> **Filesystem reality (re-verified 2026-10-28):** `.agents/skills/` contains 60
-> `SKILL.md` directories (the company-research deep/flash skills were retired
-> 2026-10-18 with the companies capability, commit `6af8ab2e18`;
-> `experimental-design` and `hypothesis-testing` were added 2026-10-16/18
-> with the experimentation program; `security-audit` was added 2026-10-24). Merged by operator decision 2026-09-24:
-> `gemba-walk` into `algedonic-review`, `skill-router` into `skill-discovery`
-> (route phase), `sequential-inquiry` into
-> `metacognition`, `swarm-compose-guide` into `swarm-intelligence`,
-> `scenario-builder` into `scenario-planning`, `eqm-improvement` into `eqm`;
-> removed: `idiomatic-lisp`, `constraint-forces-recast`,
-> `gradient-seeded-recombination`, `capabilities-reasoner`,
-> `principle-constraints`, `goal-analysis` (its judge moved to
-> `company-research/thesis-judge`, removed 2026-09-27 with the deep pipeline's
-> gate machinery); `lora-training` (removed 2026-10-17 with the training
-> server — model training is out of scope for the co-researcher mandate).
-> Folded 2026-09-26: `adapter-lifecycle` into
-> `self-improvement`, `calibration-stewardship` into
-> `superforecasting` (Market-prior calibration check). Folded 2026-09-28
-> (commit `ebcd901c80`): `kata-coaching` into `kata-improvement` — the five
-> coaching templates moved to `kask/registry/templates/kata-improvement/`.
-> `kask/registry/templates/` contains 56
-> template namespaces holding 220 `.j2` files (re-verified 2026-10-24:
-> `media-workflow` retired with its 2 templates and the program-manager
-> rewrite removed 3 on 2026-10-21; `eureka-cycle` added 4 on 2026-10-23,
-> and its memory-candidate template was removed 2026-10-24 with the
-> D5-misreading correction).

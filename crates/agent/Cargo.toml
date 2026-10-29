@@ -133,7 +133,7 @@ smol.workspace = true
 # `RemoteConnectionOptions::Mock`. The match arm handling that variant in
 # `remote_connection` is gated on `remote_connection`'s own `test-support`, so
 # both must be on together or the match is non-exhaustive (E0004) whenever this
-# crate's dev-deps are in the graph. Same trap as `swarm_panel`'s dev-dep.
+# crate's dev-deps are in the graph.
 remote_connection = { workspace = true, "features" = ["test-support"] }
 
 theme = { workspace = true, "features" = ["test-support"] }

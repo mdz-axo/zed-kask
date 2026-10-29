@@ -837,9 +837,8 @@ mod tests {
             );
         }
 
-        // The removed ABW key feeds nothing — the ABW cloud swarm
-        // integration is gone, so nudging on it would be wasted work and its
-        // presence in the feed set would mean the removal regressed.
+        // The ABW key feeds nothing — nudging on it would be wasted work and its
+        // presence in the feed set would mean a removal regressed.
         assert!(!credential_url_feeds_mcp_servers(
             "kask://credentials/hkask_abw_api_key"
         ));

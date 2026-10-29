@@ -1227,9 +1227,9 @@ fn main() {
         // unified `kask://credentials/*` namespace (same as zed's
         // CredentialsProvider). One keychain, one namespace.
         //
-        // zed-kask: D5 (ABW removal) — the ABW cloud swarm integration is
-        // gone; purge its orphaned keychain entry once at startup so no
-        // dormant third-party secret survives without a management surface.
+        // zed-kask: D5 — purge the orphaned ABW keychain entry once at
+        // startup so no dormant third-party secret survives without a
+        // management surface.
         kask_bridge::purge_removed_abw_api_key(cx);
         //
         // zed-kask: D5/D9 (Reduct.cloud removal, 2026-10-22) — same posture:

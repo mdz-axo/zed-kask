@@ -1279,7 +1279,7 @@ mod tests {
                 description: "evaluator pass rate on the fixed set reaches 0.8".to_string(),
                 kind: RUBRIC_KIND_METRIC.to_string(),
                 verification: RubricVerification::ReportRef {
-                    harness: "swarm_eval_agent_local".to_string(),
+                    harness: "eval_harness".to_string(),
                 },
             },
             Rubric {
@@ -1404,7 +1404,7 @@ mod tests {
             .record_fitness(
                 &experiment.id,
                 &challenger.id,
-                &["swarm_eval_agent_local run 42".to_string()],
+                &["eval_harness run 42".to_string()],
                 3,
                 &serde_json::json!({"pass_rate": 0.8, "total_tokens": 1200}),
                 Some(&seal.id),
@@ -1415,7 +1415,7 @@ mod tests {
         assert_eq!(fitness.seal_id.as_deref(), Some(seal.id.as_str()));
         assert_eq!(
             fitness.runs,
-            vec!["swarm_eval_agent_local run 42".to_string()]
+            vec!["eval_harness run 42".to_string()]
         );
 
         let (selection, updated) = store
@@ -2013,7 +2013,7 @@ mod tests {
             description: "pass rate reaches threshold".to_string(),
             kind: RUBRIC_KIND_METRIC.to_string(),
             verification: RubricVerification::ReportRef {
-                harness: "swarm_eval_agent_local".to_string(),
+                harness: "eval_harness".to_string(),
             },
         };
         let implementation = || Rubric {
@@ -2047,7 +2047,7 @@ mod tests {
                 description: "duplicate id".to_string(),
                 kind: RUBRIC_KIND_GROUNDED_REPORT.to_string(),
                 verification: RubricVerification::ReportRef {
-                    harness: "swarm_eval_agent_local".to_string(),
+                    harness: "eval_harness".to_string(),
                 },
             },
         ];

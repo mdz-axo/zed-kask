@@ -258,67 +258,56 @@ a failed listing surfaces an unavailable note, never silence.
 
 The Transcript tab is the direct transcript workspace — no agent turn in the
 loop. Its idle state is the recordings browser
-(`load_transcript_listing` :1804); each row carries the transcript's
-five-state alignment, and the gated states (re-anchored, unaligned) flag
-their read-only status on the row (`transcript_alignment_note` :4774) —
-the entry surface says what a click opens. Clicking a row opens the
-workspace (`open_transcript` :1685), and an in-workspace `← all recordings`
-affordance returns (`close_transcript_workspace` :1703).
+(`load_transcript_listing` :1805). Rows lead with a human recording name (a
+filename, or “Untitled recording” for generated UUID filenames), duration,
+and word count; internal transcript IDs and full paths are not presentation
+content. Gated states use plain-language notes
+(`transcript_alignment_note` :4803). Clicking a row opens the workspace
+(`open_transcript` :1686), and `← Recordings` returns
+(`close_transcript_workspace` :1704).
 
 - **Workspace**: one strict `educt_get_transcript` dispatch
-  (`parse_transcript_payload` :5421) drives paragraph blocks
-  (`build_pane_blocks` :5310), speaker labels, the layers strip, highlight
-  overlays, strike line-through marks, and the five alignment states
-  (untimed/unaligned render text-only with a visible status note).
+  (`parse_transcript_payload` :5450) drives paragraph blocks
+  (`build_pane_blocks` :5339), speaker labels, highlight overlays, and cut
+  line-through marks. The presentation order is recording title → bounded
+  140px player → Select text → transcript → highlights/cuts → Create a reel.
+  Raw layer inventories, source indices, and tool/lineage identifiers stay
+  out of this workflow; technical lineage remains available in Detail.
 - **Sync**: clicking a word seeks the bound shared player to its start
-  (`seek_workspace_transcript` :2728 over `MediaWidget::seek_to_secs`); while
+  (`seek_workspace_transcript` :2718 over `MediaWidget::seek_to_secs`); while
   playing, a 4 Hz GPUI-native follow-along marks the containing word
-  (`start_transcript_follow` :2741, `current_word_index` :5301, gated on
+  (`start_transcript_follow` :2731, `current_word_index` :5330, gated on
   `MediaWidget::is_transport_playing`).
-- **Annotation**: Select-range mode turns word clicks into a two-click range
-  (`handle_word_selection` :1875) opening a label editor (typed or pasted
-  labels; Enter confirms, Escape cancels, empty keeps the
-  `research-highlight` default — `open_label_editor` :2456,
-  `confirm_label_edit` :2482). Create/rename/delete dispatch
-  `educt_annotation_create`/`update`/`delete` (:1961, :2368, :2279);
-  researcher detection mirrors the server's researcher-annotation list
-  guard exactly (the mutate guards additionally require exactly one entry),
-  so the legacy gather layers and compose EDLs never render as annotations.
-  Hand highlights exist only on index-identical views — the pure five-state
-  gate `highlight_range_gate` (:4986) surfaces the reason otherwise; the panel
-  never re-implements the server's projection (D5).
-- **Strikes (R2, 2026-10-27)**: the same two-click range can cut instead of
-  label — the editor's create arm offers a strike affordance that dispatches
-  `educt_annotation_create` with kind strike (blank label/note: an
-  unannotated single-Cut EDL; `strike_selected_range` :2040,
-  `create_workspace_strike` :2061). Struck words render line-through on
-  index-identical views (`block_word_char_range` :5108 maps word ranges to
-  the block's char ranges for both overlay families; overlapping marks
-  compose field-wise — `resolved_highlight_runs` :5057 — so a struck word
-  inside a highlight keeps both the background and the line-through, and
-  the follow-along mark never shifts styling past its word); a Strikes
-  list offers click-to-seek rows and unstrike via the shared
-  kind-dispatched delete (`delete_workspace_annotation` :2279). The pane
-  parses strikes under the server's strike identity only (user +
-  researcher_annotation + exactly one Cut op), so compose EDLs
-  (pane_reel_compose provenance) and model EDLs never render as strikes.
+- **Annotation**: Select text turns word clicks into a two-click range
+  (`handle_word_selection` :1876) opening a label editor (typed or pasted
+  labels; Enter confirms, Escape cancels, empty uses “Highlight” —
+  `open_label_editor` :2455, `confirm_label_edit` :2481). Create/rename/delete
+  dispatch `educt_annotation_create`/`update`/`delete`; progress text never
+  exposes annotation UUIDs. Hand highlights exist only on index-identical
+  views — the pure five-state gate `highlight_range_gate` (:5015) surfaces a
+  human-readable reason otherwise; the panel never re-implements the server's
+  projection (D5). Highlight rows show an excerpt, with Include in reel,
+  Rename, and Delete actions rather than source-word indices.
+- **Cuts (R2, 2026-10-27)**: the same two-click range can be cut instead of
+  labeled (`strike_selected_range` :2042, `create_workspace_strike` :2063).
+  Struck words render line-through on index-identical views
+  (`block_word_char_range` :5137; overlapping marks compose field-wise —
+  `resolved_highlight_runs` :5086). The Cuts list shows excerpts and a
+  Restore action through the shared kind-dispatched delete. The pane parses
+  strikes only under the server's strike identity (user +
+  researcher_annotation + exactly one Cut op), so compose EDLs and model EDLs
+  never render as strikes.
 - **Reels (R3, 2026-10-27)**: three compose modes build the reel EDL
-  directly from the pane's annotations (`compose_reel_params` :5236 over
-  `union_word_ranges` :5208) — assemble keeps the toggled-in researcher
-  highlights (union-merged so overlapping selections stay disjoint), reduce
-  cuts every strike out of the whole transcript, mixed carries both. The
-  affordances render after both annotation lists, outside either section's
-  wrapper, so reduce shows on a strikes-only transcript; each shows only
-  when its inputs exist, and Mixed with nothing toggled in refuses with its
-  empty status rather than silently composing the reduce reel. Each chains
-  `educt_store_layer` → `educt_render_edl` (`compose_workspace_reel` :2177)
-  under the single edit admission. The compose provenance carries the
-  pane_reel_compose template — never researcher_annotation — so the compose
-  flow's own output never re-parses as a researcher strike. The rendered
-  reel lands as a playable asset through display-hint ingestion, with the
-  per-mode compose progress visible on the tab status line. Membership keys
-  on provenance and the per-clip include/exclude toggles, never the label
-  text.
+  directly from the pane's annotations (`compose_reel_params` :5265 over
+  `union_word_ranges` :5237) — included highlights, the whole recording with
+  cuts applied, or included highlights with cuts applied. The actions render
+  after the transcript and annotation sections and appear only when their
+  inputs exist. Each chains `educt_store_layer` → `educt_render_edl`
+  (`compose_workspace_reel` :2179) under the single edit admission. Compose
+  provenance remains `pane_reel_compose`, so its output never re-parses as a
+  researcher strike. The rendered reel lands as a playable asset through
+  display-hint ingestion. Membership still keys on provenance and per-clip
+  inclusion, never label text.
 
 ## Playback and layout contracts
 
@@ -363,9 +352,9 @@ rodio/symphonia stack (`decode_bytes`,
 fixture per format at :225-245); a failed load renders as a compact
 dismissible status line rather than a full-pane takeover
 (`crates/hkask-media-widget/src/media_widget.rs:906`), and in the
-transcript workspace the `← all recordings` affordance renders above
-the player so a failed player never buries navigation
-(`crates/media_panel/src/media_viewer.rs:3786`). Playback speed,
+transcript workspace the `← Recordings` affordance renders above
+the bounded player so a failed player never buries navigation or transcript
+text (`crates/media_panel/src/media_viewer.rs:3771`). Playback speed,
 zoom, and fullscreen controls are not implemented in `media_panel` or the
 widget as of this edit (method: grep for `playback_speed`, `set_rate`,
 `fullscreen`, `zoom` over `crates/media_panel/src/` and
@@ -384,7 +373,7 @@ widget as of this edit (method: grep for `playback_speed`, `set_rate`,
 | Recordings browse + transcript workspace with synced reading | supplied |
 | Researcher highlight create/rename/delete via label editor | supplied |
 | Per-recording alignment flag on the browser and Detail rows | supplied (2026-10-27) |
-| Researcher strike (strikethrough cut) with line-through overlay and unstrike | supplied (2026-10-27) |
+| Cut selection with line-through overlay and Restore | supplied (2026-10-27) |
 | Reel compose (assemble/reduce/mixed), clip toggles, render, and play | supplied (2026-10-27) |
 | Researcher tags/notes create/replace/delete in Detail | supplied (2026-10-27) |
 | Trim on audio through the same Media-tab marks | supplied (2026-10-27) |

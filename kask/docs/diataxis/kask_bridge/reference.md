@@ -39,10 +39,7 @@ exports no skill executor (`kask/crates/kask_bridge/src/kask_bridge.rs:50-124`).
 `KaskSettings` contains the data and artifact roots plus 11 subsystem sections:
 `general`, `mcp`, `curator`, `memory`, `condenser`, `research`,
 `corpus`, `scenarios`, `prediction_markets`, `media`, and
-`models` (`kask/crates/kask_bridge/src/settings.rs:56-89`; the former
-`companies` section was removed with the companies server 2026-10-18,
-commit `3439db5e00`, and the `swarm` section with the whole local swarm
-capability 2026-10-28).
+`models` (`kask/crates/kask_bridge/src/settings.rs:56-89`).
 
 ```mermaid
 classDiagram

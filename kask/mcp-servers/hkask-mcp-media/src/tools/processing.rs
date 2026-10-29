@@ -219,13 +219,15 @@ fn validate_sampling(interval_sec: f32, max_frames: u32) -> Result<(), McpToolEr
 }
 
 /// Hash and decode the same private snapshot, never a mutable original or URL.
-struct SourceSnapshot {
+/// `pub(crate)`: the media layer passes reuse the capture/stamping machinery
+/// (source_sha256 identity + publish params) for their sampled frames.
+pub(crate) struct SourceSnapshot {
     file: tempfile::NamedTempFile,
-    identity: serde_json::Value,
+    pub(crate) identity: serde_json::Value,
 }
 
 impl SourceSnapshot {
-    async fn capture(store: &GalleryStore, source: &str) -> Result<Self, McpToolError> {
+    pub(crate) async fn capture(store: &GalleryStore, source: &str) -> Result<Self, McpToolError> {
         use sha2::Digest;
         use std::io::{Read, Write};
         let mut file = tempfile::NamedTempFile::new()
@@ -302,7 +304,7 @@ impl SourceSnapshot {
         })
     }
 
-    fn path(&self) -> String {
+    pub(crate) fn path(&self) -> String {
         self.file.path().to_string_lossy().into_owned()
     }
 }

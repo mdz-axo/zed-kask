@@ -22,8 +22,7 @@ metering, not a credential**.
 
 A capability check is only a gate when the authority list is not chosen by the
 caller being checked. Authority in zed-kask lives at three such boundaries
-(PRINCIPLES P4.2; the former per-agent swarm-card `mcp_tools` allowlist was a
-fourth, removed 2026-10-28 with the whole local swarm capability):
+(PRINCIPLES P4.2):
 
 | Boundary | Location | Pinned by |
 |---|---|---|

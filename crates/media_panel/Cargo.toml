@@ -42,8 +42,8 @@ gpui = { workspace = true, features = ["test-support"] }
 # crate's own `test-support` (`project/src/trusted_worktrees.rs`,
 # `remote_connection/src/remote_connection.rs`,
 # `workspace/src/persistence.rs`), so all three must be on together or
-# the matches are non-exhaustive (E0004). Same trap as `agent`'s and
-# `swarm_panel`'s propagation deps.
+# the matches are non-exhaustive (E0004). Same trap as `agent`'s
+# propagation deps.
 project = { workspace = true, features = ["test-support"] }
 remote_connection = { workspace = true, features = ["test-support"] }
 settings.workspace = true

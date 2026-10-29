@@ -74,9 +74,9 @@ principles:
       - id: ax-port-typing
         assertion: Unsupported schema keywords do not yield a successful validation verdict.
         status: gap
-        scope: The enforcement site (the swarm server's port registry and schema validation) was removed 2026-10-28 with the whole local swarm capability; no equivalent gate currently exists
+        scope: No equivalent gate currently exists
         owner: repository maintainer
-        enforced_at: kask/docs/plans/swarm-removal-plan-2026-10-28.md
+        enforced_at: kask/docs/reference/verification-ladder.md
         check:
-          path: kask/docs/plans/swarm-removal-plan-2026-10-28.md
-          command: grep -c "swarm" kask/docs/plans/swarm-removal-plan-2026-10-28.md
+          path: kask/docs/reference/verification-ladder.md
+          command: grep -c "not yet enforced" kask/docs/reference/verification-ladder.md

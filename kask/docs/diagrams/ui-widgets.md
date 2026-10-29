@@ -275,7 +275,7 @@ classDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-KANBAN
 verified_date: 2026-10-28
-verified_against: crates/hkask-kanban-widget/src/block.rs (KanbanBlockBody L22, ColumnBody L51, TaskBody L67 — activity L85, no gas fields; CommentBody L122, VerificationBody L136, TaskActivityBody L147, board_with_tasks L160); crates/hkask-kanban-widget/src/view.rs (KanbanWidget L100-121 — no disagree_draft, render_dispatch_status L233, KanbanColumn L81, group_tasks_into_columns L825); crates/hkask-kanban-widget/src/move_controller.rs (fields L62-77, stage_move L124, confirm_move L145, cancel_move L160, dispatch_move L174, cancel_dispatch L254); gas_spend/GasEntryBody and evaluate_move/disagree_draft removed (rJoule spend-log removal 2026-09-08; D21 conversation-injector retirement fa95c2b8c7); the former `swarm_id` field was removed 2026-10-28 with the swarm capability
+verified_against: crates/hkask-kanban-widget/src/block.rs (KanbanBlockBody L22, ColumnBody L51, TaskBody L67 — activity L85, no gas fields; CommentBody L122, VerificationBody L136, TaskActivityBody L147, board_with_tasks L160); crates/hkask-kanban-widget/src/view.rs (KanbanWidget L100-121 — no disagree_draft, render_dispatch_status L233, KanbanColumn L81, group_tasks_into_columns L825); crates/hkask-kanban-widget/src/move_controller.rs (fields L62-77, stage_move L124, confirm_move L145, cancel_move L160, dispatch_move L174, cancel_dispatch L254)
 status: VERIFIED
 -->
 

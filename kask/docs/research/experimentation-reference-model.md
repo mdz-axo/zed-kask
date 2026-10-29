@@ -38,7 +38,7 @@ Two zed-kask-specific syntheses:
 
 | Layer | Genotype | Variation today | Fitness today | Gap |
 | --- | --- | --- | --- | --- |
-| Prompt/template | system prompts, `.j2` | GEPA sub-loop (mutation+crossover, Pareto frontier, pinned D forms) | recorded harness reports on disjoint feedback/selection sets; 10% cost noise band (the former `swarm_eval_agent_local` harness was removed 2026-10-28 with the swarm capability — no in-process executor currently exists) | "Prompts only (v1)"; no cross-run lineage |
+| Prompt/template | system prompts, `.j2` | GEPA sub-loop (mutation+crossover, Pareto frontier, pinned D forms) | recorded harness reports on disjoint feedback/selection sets; 10% cost noise band (no in-process executor currently exists) | "Prompts only (v1)"; no cross-run lineage |
 | Skill | SKILL.md + templates | skill-maintenance edits; therapy reification | fixed-task comparisons; pin tests | ad hoc A/Bs, no records |
 | Tool schema | MCP schemas | `evolve_mcp_tool_schema` directive | skill-use reports | fitness loop thin (issues, not outcomes) |
 | Regulation scalars | thresholds, budgets | `calibrate_threshold` directives | variety deficit, Brier, calibration readings | calibration by judgment, not recorded fitness |

@@ -1278,10 +1278,7 @@ share one passphrase architecture:
   `kask/crates/hkask-keystore/src/keychain.rs:383`). The username-independent
   half (`provision_db_passphrase`, `identity.rs:132`) is spawned by
   `build_mcp_server_env` at MCP launch time so servers get a passphrase
-  even before login (`kask/crates/kask_bridge/src/mcp_servers.rs:536@build_mcp_server_env`).
-  (The former separate `HKASK_SWARM_MEMORY_PASSPHRASE` and its per-DB
-  key were removed with the swarm server 2026-10-28 — the DB they opened
-  no longer exists.)
+  (`kask/crates/kask_bridge/src/mcp_servers.rs:536@build_mcp_server_env`).
 - **Keychain namespace:** unified `kask://credentials/<key>` with label
   `zed-github-account` — the same schema zed's `CredentialsProvider` uses.
   One passphrase

@@ -88,7 +88,8 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
         | "youtube_search"
         | "video_fetch"
         | "layers_store"
-        | "layers_shot_pass" => Some(DATASET),
+        | "layers_shot_pass"
+        | "layers_semantic_pass" => Some(DATASET),
         _ => None,
     }
 }

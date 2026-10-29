@@ -1734,7 +1734,7 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         term: "agent_to_agent_protocol",
         aliases: &["a2a protocol", "a2a", "agent2agent", "agent2agent protocol"],
         identity: "an inter-agent delegation and communication protocol in which agents advertise typed capabilities and skills via an AgentCard and exchange scoped Message turns that produce durable Task and Artifact records",
-        definition: "Agent2Agent (A2A) Protocol Specification: defines five core protocol objects — AgentCard (JSON capability advertisement with input/output modes, skills, and auth), Task (unit of delegated work with lifecycle state), Message (communication turn), Artifact (durable task output), and Part (typed content unit). In zed-kask it grounded the former A2A tool surface (swarm_a2a_card, swarm_a2a_send, swarm_a2a_broadcast) and the local-research-swarm skill, removed 2026-10-28 with the whole local swarm capability; the published-protocol anchor is retained as reference.",
+        definition: "Agent2Agent (A2A) Protocol Specification: defines five core protocol objects — AgentCard (JSON capability advertisement with input/output modes, skills, and auth), Task (unit of delegated work with lifecycle state), Message (communication turn), Artifact (durable task output), and Part (typed content unit). In zed-kask it is retained as the published-protocol reference anchor.",
         constituents: &["agent card", "task", "artifact"],
         authority: "operator ruling 2026-10-14 (Cohort 9 skill-corpus audit); Agent2Agent (A2A) Protocol Specification (agent2agent.info)",
     },

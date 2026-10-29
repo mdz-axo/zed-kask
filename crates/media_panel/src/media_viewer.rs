@@ -62,6 +62,7 @@ struct TranscriptSummaryRow {
     id: String,
     media_path: String,
     words_count: u64,
+    duration_secs: u64,
     has_word_timings: bool,
     /// The five-state alignment (original, aligned, re_anchored, unaligned,
     /// untimed) — what the row's capability note keys on.
@@ -1911,7 +1912,8 @@ impl MediaViewer {
             WordClickOutcome::AnchorSet(word) => {
                 self.selection_anchor = Some(word);
                 self.status = Some(
-                    "Anchor set — click a second word to complete the highlight range.".into(),
+                    "Click the last word to finish selecting, then create a highlight or cut."
+                        .into(),
                 );
                 cx.notify();
             }
@@ -1980,7 +1982,7 @@ impl MediaViewer {
                 return;
             }
         };
-        self.edit_progress = Some(format!("creating highlight {start_word}..{end_word}…"));
+        self.edit_progress = Some("Creating highlight…".into());
         let Some(invoker) = hkask_tool_invoker::shared_tool_invoker() else {
             self.apply_workspace_annotation_result(
                 epoch,
@@ -2079,7 +2081,7 @@ impl MediaViewer {
                 return;
             }
         };
-        self.edit_progress = Some(format!("striking words {start_word}..{end_word}…"));
+        self.edit_progress = Some("Cutting selection…".into());
         let Some(invoker) = hkask_tool_invoker::shared_tool_invoker() else {
             self.apply_workspace_annotation_result(
                 epoch,
@@ -2297,10 +2299,7 @@ impl MediaViewer {
                 return;
             }
         };
-        self.edit_progress = Some(format!(
-            "deleting {} {annotation_id}…",
-            subject.to_lowercase()
-        ));
+        self.edit_progress = Some(format!("Deleting {}…", subject.to_lowercase()));
         let Some(invoker) = hkask_tool_invoker::shared_tool_invoker() else {
             self.apply_workspace_annotation_result(
                 epoch,
@@ -2389,7 +2388,7 @@ impl MediaViewer {
                 return;
             }
         };
-        self.edit_progress = Some(format!("renaming highlight {annotation_id}…"));
+        self.edit_progress = Some("Renaming highlight…".into());
         let Some(invoker) = hkask_tool_invoker::shared_tool_invoker() else {
             self.apply_workspace_annotation_result(
                 epoch,
@@ -2465,7 +2464,7 @@ impl MediaViewer {
             .clone();
         let creating = matches!(edit.kind, HighlightEditKind::Create { .. });
         self.status = Some(if creating {
-            "Label the highlight — Enter creates (an empty label keeps research-highlight), or strike to cut the range; Escape cancels.".into()
+            "Name the highlight, or choose Cut selection. Enter confirms; Escape cancels.".into()
         } else {
             "Rename the highlight — Enter saves; Escape cancels.".into()
         });
@@ -2573,23 +2572,14 @@ impl MediaViewer {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let (context, confirm_text, placeholder) = match &edit.kind {
-            HighlightEditKind::Create {
-                start_word,
-                end_word,
-            } => (
-                format!("Label words {start_word}..{end_word}"),
-                "create highlight",
-                "(label — Enter keeps research-highlight)",
+            HighlightEditKind::Create { .. } => (
+                "Name this highlight".to_string(),
+                "Create",
+                "Highlight name",
             ),
-            HighlightEditKind::Rename {
-                start_word,
-                end_word,
-                ..
-            } => (
-                format!("Rename words {start_word}..{end_word}"),
-                "save label",
-                "(label)",
-            ),
+            HighlightEditKind::Rename { .. } => {
+                ("Rename highlight".to_string(), "Save", "Highlight name")
+            }
         };
         let typed = edit.buffer.text();
         let cursor = edit.buffer.cursor();
@@ -2693,7 +2683,7 @@ impl MediaViewer {
                         .cursor_pointer()
                         .hover(|el| el.bg(cx.theme().colors().element_hover))
                         .child(
-                            Label::new(SharedString::from("strike (cut)"))
+                            Label::new(SharedString::from("Cut selection"))
                                 .size(LabelSize::XSmall)
                                 .color(ui::Color::Error),
                         )
@@ -2711,7 +2701,7 @@ impl MediaViewer {
                     .cursor_pointer()
                     .hover(|el| el.bg(cx.theme().colors().element_hover))
                     .child(
-                        Label::new(SharedString::from("cancel"))
+                        Label::new(SharedString::from("Cancel"))
                             .size(LabelSize::XSmall)
                             .color(ui::Color::Muted),
                     )
@@ -3775,45 +3765,49 @@ impl MediaViewer {
             .transcript
             .as_ref()
             .expect("the empty-state guard returned above");
+        let recording_name = recording_display_name(&media_path);
         let mut sections = v_flex().gap_2().p_3();
-        sections = sections.child(Self::tab_purpose(
-            "The transcript workbench — read synced to playback; select text to label highlights; toggle clips to compose a reel.",
-        ));
-        // S6: the back affordance renders FIRST — above the player — so a
-        // full-pane widget error can never bury it (operator report
-        // 2026-10-28: the errored transcript view was an unrecoverable
-        // dead end with no way back).
+        let back = div()
+            .id("media-transcript-back-to-recordings")
+            .debug_selector(|| "media-transcript-back-to-recordings".into())
+            .cursor_pointer()
+            .flex()
+            .flex_wrap()
+            .gap_2()
+            .hover(|el| el.bg(cx.theme().colors().element_hover))
+            .child(
+                Label::new(SharedString::from("← Recordings"))
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Muted),
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.close_transcript_workspace(cx);
+            }));
         sections = sections.child(
-            div()
-                .id("media-transcript-back-to-recordings")
-                .debug_selector(|| "media-transcript-back-to-recordings".into())
-                .cursor_pointer()
-                .flex()
-                .flex_wrap()
-                .gap_2()
-                .hover(|el| el.bg(cx.theme().colors().element_hover))
-                .child(
-                    Label::new(SharedString::from("← all recordings"))
-                        .size(LabelSize::XSmall)
-                        .color(ui::Color::Muted),
-                )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.close_transcript_workspace(cx);
-                })),
+            h_flex().items_center().gap_2().child(back).child(
+                Label::new(SharedString::from(recording_name))
+                    .size(LabelSize::Small)
+                    .color(ui::Color::Default),
+            ),
         );
         if let Some(widget) = media_widget {
-            sections = sections.child(div().flex().min_w_0().overflow_hidden().child(widget));
+            sections = sections.child(
+                div()
+                    .h(px(140.))
+                    .flex()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .child(widget),
+            );
         } else if media_unavailable {
             sections = sections.child(
-                Label::new(SharedString::from(format!(
-                    "Media unavailable for this transcript's path: {media_path}"
-                )))
+                Label::new(SharedString::from(
+                    "Playback unavailable — the transcript and editing controls remain available.",
+                ))
                 .size(LabelSize::XSmall)
                 .color(ui::Color::Error),
             );
         }
-        sections = sections.child(Self::kv_row("transcript", &state.transcript_id, cx));
-        sections = sections.child(Self::kv_row("media", &state.media_path, cx));
         let selection_mode = self.selection_mode;
         // S4 part-2: the select-range mode toggle — an explicit mode beats
         // every-click-seek plus accidental creation.
@@ -3828,9 +3822,9 @@ impl MediaViewer {
                 .hover(|el| el.bg(cx.theme().colors().element_hover))
                 .child(
                     Label::new(SharedString::from(if selection_mode {
-                        "Select range: ON — click words to build a highlight; click this toggle to finish"
+                        "Finish selection"
                     } else {
-                        "Select range: off — clicking words seeks playback"
+                        "Select text"
                     }))
                     .size(LabelSize::XSmall)
                     .color(if selection_mode {
@@ -3845,13 +3839,11 @@ impl MediaViewer {
                     // Toggling the mode abandons any open label editor —
                     // it is the tail of a selection this toggle ends.
                     this.highlight_edit = None;
-                    this.status = Some(
-                        if this.selection_mode {
-                            "Select mode on — click the first word of the range.".into()
-                        } else {
-                            "Select mode off — clicks seek playback.".into()
-                        },
-                    );
+                    this.status = Some(if this.selection_mode {
+                        "Select mode on — click the first word of the range.".into()
+                    } else {
+                        "Select mode off — clicks seek playback.".into()
+                    });
                     cx.notify();
                 })),
         );
@@ -3861,30 +3853,21 @@ impl MediaViewer {
             sections = sections.child(Self::render_label_editor(&edit, &label_input_focus, cx));
         }
         match state.alignment.as_str() {
-            "original" => {}
-            "aligned" => {
-                sections = sections.child(Self::kv_row(
-                    "alignment",
-                    "corrected — index-identical to source",
-                    cx,
-                ));
-            }
+            "original" | "aligned" => {}
             "re_anchored" => {
-                sections = sections.child(Self::kv_row(
-                    "alignment",
-                    "re-anchored — timings are derived estimates",
-                    cx,
-                ));
+                sections = sections.child(
+                    Label::new(SharedString::from(
+                        "Estimated timings — review existing ranges before creating a reel.",
+                    ))
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Muted),
+                );
             }
             "unaligned" => {
-                let note = state
-                    .alignment_note
-                    .as_deref()
-                    .unwrap_or("the correction layer is unaligned");
                 sections = sections.child(
-                    Label::new(SharedString::from(format!(
-                        "Corrected text only — timed features unavailable: {note}. Store a realignment layer via educt_realign_transcript to restore them."
-                    )))
+                    Label::new(SharedString::from(
+                        "Corrected text only — playback and timed selection are unavailable.",
+                    ))
                     .size(LabelSize::XSmall)
                     .color(ui::Color::Error),
                 );
@@ -3892,7 +3875,7 @@ impl MediaViewer {
             "untimed" => {
                 sections = sections.child(
                     Label::new(SharedString::from(
-                        "Text-only transcript — the source has no word-level timings; layers cannot anchor.",
+                        "Text-only transcript — playback and timed selection are unavailable.",
                     ))
                     .size(LabelSize::XSmall)
                     .color(ui::Color::Error),
@@ -3900,287 +3883,7 @@ impl MediaViewer {
             }
             _ => {}
         }
-        if !state.layers.is_empty() {
-            sections = sections.child(Self::section_label("Layers"));
-            for layer in &state.layers {
-                sections = sections.child(Self::kv_row(&layer.kind, &layer.created_at, cx));
-            }
-        }
-        if !state.highlights.is_empty() {
-            let index_identical = matches!(state.alignment.as_str(), "original" | "aligned");
-            sections = sections.child(Self::section_label("Highlights"));
-            if !index_identical {
-                sections = sections.child(
-                    Label::new(SharedString::from(
-                        "Highlights list by range; the text overlay and jump-to-time need an index-identical view (this one is re-anchored — D5 v2).",
-                    ))
-                    .size(LabelSize::XSmall)
-                    .color(ui::Color::Error),
-                );
-            }
-            for (row_index, highlight) in state.highlights.iter().enumerate() {
-                let row = format!(
-                    "{} — words {}..{}",
-                    highlight.label, highlight.start_word, highlight.end_word
-                );
-                let start_ms = if index_identical {
-                    state
-                        .words
-                        .as_deref()
-                        .and_then(|words| words.get(highlight.start_word))
-                        .map(|word| word.start_ms)
-                } else {
-                    None
-                };
-                match start_ms {
-                    Some(start_ms) => {
-                        sections = sections.child(
-                            div()
-                                .id(SharedString::from(format!(
-                                    "media-transcript-highlight-row-{row_index}"
-                                )))
-                                .cursor_pointer()
-                                .flex()
-                                .flex_wrap()
-                                .gap_2()
-                                .hover(|el| el.bg(cx.theme().colors().element_hover))
-                                .child(
-                                    Label::new(SharedString::from(row))
-                                        .size(LabelSize::XSmall)
-                                        .color(ui::Color::Default),
-                                )
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.seek_workspace_transcript(start_ms, cx);
-                                })),
-                        );
-                    }
-                    None => {
-                        sections = sections.child(Self::kv_row("highlight", &row, cx));
-                    }
-                }
-                // S5 reel editing: per-clip include/exclude for the next
-                // compose — researcher-authored rows only (the compose
-                // gathers those; free-text labels never affect membership).
-                if highlight.researcher_supplied {
-                    let annotation_id = highlight.annotation_id.clone();
-                    let (start_word, end_word) = (highlight.start_word, highlight.end_word);
-                    let included = self.reel_selection.contains(&(start_word, end_word));
-                    sections = sections.child(
-                        div()
-                            .id(SharedString::from(format!(
-                                "media-transcript-reel-toggle-{annotation_id}"
-                            )))
-                            .cursor_pointer()
-                            .flex()
-                            .flex_wrap()
-                            .gap_2()
-                            .hover(|el| el.bg(cx.theme().colors().element_hover))
-                            .child(
-                                Label::new(SharedString::from(if included {
-                                    "✓ in next reel — click to exclude"
-                                } else {
-                                    "✗ excluded — click to include"
-                                }))
-                                .size(LabelSize::XSmall)
-                                .color(if included {
-                                    ui::Color::Muted
-                                } else {
-                                    ui::Color::Hint
-                                }),
-                            )
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if !this.reel_selection.remove(&(start_word, end_word)) {
-                                    this.reel_selection.insert((start_word, end_word));
-                                }
-                                cx.notify();
-                            })),
-                    );
-                }
-                // S4-3: rename — researcher-authored rows only (the server
-                // refuses model-layer updates too; the pane never offers
-                // them).
-                if highlight.researcher_supplied {
-                    let edit = HighlightEdit {
-                        kind: HighlightEditKind::Rename {
-                            annotation_id: highlight.annotation_id.clone(),
-                            start_word: highlight.start_word,
-                            end_word: highlight.end_word,
-                            note: highlight.note.clone(),
-                        },
-                        buffer: LabelBuffer::from_str(highlight.label.as_str()),
-                    };
-                    sections = sections.child(
-                        div()
-                            .id(SharedString::from(format!(
-                                "media-transcript-highlight-rename-{}",
-                                highlight.annotation_id
-                            )))
-                            .cursor_pointer()
-                            .flex()
-                            .flex_wrap()
-                            .gap_2()
-                            .hover(|el| el.bg(cx.theme().colors().element_hover))
-                            .child(
-                                Label::new(SharedString::from("rename label"))
-                                    .size(LabelSize::XSmall)
-                                    .color(ui::Color::Default),
-                            )
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.open_label_editor(edit.clone(), window, cx);
-                            })),
-                    );
-                }
-                // S4-3: delete — researcher-authored rows only (the layer's
-                // provenance marks them; a stray click must never destroy a
-                // model pass layer).
-                if highlight.researcher_supplied {
-                    let annotation_id = highlight.annotation_id.clone();
-                    sections = sections.child(
-                        div()
-                            .id(SharedString::from(format!(
-                                "media-transcript-highlight-delete-{annotation_id}"
-                            )))
-                            .cursor_pointer()
-                            .flex()
-                            .flex_wrap()
-                            .gap_2()
-                            .hover(|el| el.bg(cx.theme().colors().element_hover))
-                            .child(
-                                Label::new(SharedString::from("delete highlight"))
-                                    .size(LabelSize::XSmall)
-                                    .color(ui::Color::Error),
-                            )
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.delete_workspace_annotation(
-                                    annotation_id.clone(),
-                                    "Highlight",
-                                    cx,
-                                );
-                            })),
-                    );
-                }
-            }
-        }
-        // Strikes (R2): struck word ranges with their unstrike affordance;
-        // the line-through marks render in the text below (index-identical
-        // views only, D5).
-        if !state.strikes.is_empty() {
-            let index_identical = matches!(state.alignment.as_str(), "original" | "aligned");
-            sections = sections.child(Self::section_label("Strikes"));
-            if !index_identical {
-                sections = sections.child(
-                    Label::new(SharedString::from(
-                        "Strikes list by range; the line-through overlay and jump-to-time need an index-identical view.",
-                    ))
-                    .size(LabelSize::XSmall)
-                    .color(ui::Color::Error),
-                );
-            }
-            for strike in &state.strikes {
-                let row = format!("struck words {}..{}", strike.start_word, strike.end_word);
-                let start_ms = if index_identical {
-                    state
-                        .words
-                        .as_deref()
-                        .and_then(|words| words.get(strike.start_word))
-                        .map(|word| word.start_ms)
-                } else {
-                    None
-                };
-                match start_ms {
-                    Some(start_ms) => {
-                        sections = sections.child(
-                            div()
-                                .id(SharedString::from(format!(
-                                    "media-transcript-strike-row-{}",
-                                    strike.annotation_id
-                                )))
-                                .cursor_pointer()
-                                .flex()
-                                .flex_wrap()
-                                .gap_2()
-                                .hover(|el| el.bg(cx.theme().colors().element_hover))
-                                .child(
-                                    Label::new(SharedString::from(row))
-                                        .size(LabelSize::XSmall)
-                                        .color(ui::Color::Default),
-                                )
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.seek_workspace_transcript(start_ms, cx);
-                                })),
-                        );
-                    }
-                    None => {
-                        sections = sections.child(Self::kv_row("strike", &row, cx));
-                    }
-                }
-                // Unstrike — delete the strike layer; the server dispatches
-                // on the stored kind.
-                let annotation_id = strike.annotation_id.clone();
-                sections = sections.child(
-                    div()
-                        .id(SharedString::from(format!(
-                            "media-transcript-strike-delete-{annotation_id}"
-                        )))
-                        .cursor_pointer()
-                        .flex()
-                        .flex_wrap()
-                        .gap_2()
-                        .hover(|el| el.bg(cx.theme().colors().element_hover))
-                        .child(
-                            Label::new(SharedString::from("unstrike (delete)"))
-                                .size(LabelSize::XSmall)
-                                .color(ui::Color::Error),
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.delete_workspace_annotation(annotation_id.clone(), "Strike", cx);
-                        })),
-                );
-            }
-        }
-        // R3: the three compose affordances — assemble the toggled
-        // highlights into a reel, reduce by cutting the strikes out of
-        // the whole transcript, or mixed (keeps minus strikes). Rendered
-        // after both annotation lists, outside either section's wrapper:
-        // reduce composes from strikes alone and must show on a
-        // strikes-only transcript. Each shows only when its inputs exist.
-        let any_researcher_highlight = state
-            .highlights
-            .iter()
-            .any(|highlight| highlight.researcher_supplied);
-        let affordances = [
-            (ReelComposeMode::Assemble, any_researcher_highlight),
-            (ReelComposeMode::Reduce, !state.strikes.is_empty()),
-            (
-                ReelComposeMode::Mixed,
-                any_researcher_highlight && !state.strikes.is_empty(),
-            ),
-        ];
-        for (mode, visible) in affordances {
-            if !visible {
-                continue;
-            }
-            sections = sections.child(
-                div()
-                    .id(SharedString::from(format!(
-                        "media-transcript-compose-reel-{}",
-                        mode.key()
-                    )))
-                    .cursor_pointer()
-                    .flex()
-                    .flex_wrap()
-                    .gap_2()
-                    .hover(|el| el.bg(cx.theme().colors().element_hover))
-                    .child(
-                        Label::new(SharedString::from(mode.label()))
-                            .size(LabelSize::XSmall)
-                            .color(ui::Color::Default),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.compose_workspace_reel(mode, cx);
-                    })),
-            );
-        }
+
         sections = sections.child(Self::section_label("Transcript"));
         // Review flags (task 1a): the derived marker rides the payload; the
         // pane renders it, never re-derives (D5). Per-block markers gate on
@@ -4232,12 +3935,9 @@ impl MediaViewer {
             }
             if let Some(flag) = review.and_then(|review| review.blocks.get(block_index)) {
                 let marker = match flag.status {
-                    PaneReviewStatus::Flagged => Some(format!(
-                        "⚑ review recommended (min {:.2})",
-                        flag.min_confidence.unwrap_or_default()
-                    )),
+                    PaneReviewStatus::Flagged => Some("Review suggested".to_string()),
                     PaneReviewStatus::NoConfidenceRecorded if per_block_no_confidence => {
-                        Some("no confidence recorded".to_string())
+                        Some("Review unavailable".to_string())
                     }
                     _ => None,
                 };
@@ -4342,6 +4042,262 @@ impl MediaViewer {
             };
             sections = sections.child(container.child(interactive));
         }
+
+        let index_identical = matches!(state.alignment.as_str(), "original" | "aligned");
+        if !state.highlights.is_empty() {
+            sections = sections.child(Self::section_label("Highlights"));
+            if !index_identical {
+                sections = sections.child(
+                    Label::new(SharedString::from(
+                        "Timed navigation and text overlays are unavailable for this view.",
+                    ))
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Muted),
+                );
+            }
+            for (row_index, highlight) in state.highlights.iter().enumerate() {
+                let row = if index_identical {
+                    format!(
+                        "{} — {}",
+                        highlight.label,
+                        transcript_range_excerpt(state, highlight.start_word, highlight.end_word)
+                    )
+                } else {
+                    highlight.label.clone()
+                };
+                let start_ms = if index_identical {
+                    state
+                        .words
+                        .as_deref()
+                        .and_then(|words| words.get(highlight.start_word))
+                        .map(|word| word.start_ms)
+                } else {
+                    None
+                };
+                let row_element = div()
+                    .id(SharedString::from(format!(
+                        "media-transcript-highlight-row-{row_index}"
+                    )))
+                    .cursor_pointer()
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .hover(|el| el.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Label::new(SharedString::from(row))
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Default),
+                    );
+                if let Some(start_ms) = start_ms {
+                    sections =
+                        sections.child(row_element.on_click(cx.listener(move |this, _, _, cx| {
+                            this.seek_workspace_transcript(start_ms, cx);
+                        })));
+                } else {
+                    sections = sections.child(row_element);
+                }
+                if highlight.researcher_supplied {
+                    let annotation_id = highlight.annotation_id.clone();
+                    let (start_word, end_word) = (highlight.start_word, highlight.end_word);
+                    let included = self.reel_selection.contains(&(start_word, end_word));
+                    let include_toggle = div()
+                        .id(SharedString::from(format!(
+                            "media-transcript-reel-toggle-{annotation_id}"
+                        )))
+                        .cursor_pointer()
+                        .flex()
+                        .flex_wrap()
+                        .gap_2()
+                        .hover(|el| el.bg(cx.theme().colors().element_hover))
+                        .child(
+                            Label::new(SharedString::from(if included {
+                                "Included in reel"
+                            } else {
+                                "Add to reel"
+                            }))
+                            .size(LabelSize::XSmall)
+                            .color(if included {
+                                ui::Color::Default
+                            } else {
+                                ui::Color::Muted
+                            }),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if !this.reel_selection.remove(&(start_word, end_word)) {
+                                this.reel_selection.insert((start_word, end_word));
+                            }
+                            cx.notify();
+                        }));
+                    let edit = HighlightEdit {
+                        kind: HighlightEditKind::Rename {
+                            annotation_id: highlight.annotation_id.clone(),
+                            start_word: highlight.start_word,
+                            end_word: highlight.end_word,
+                            note: highlight.note.clone(),
+                        },
+                        buffer: LabelBuffer::from_str(highlight.label.as_str()),
+                    };
+                    let rename = div()
+                        .id(SharedString::from(format!(
+                            "media-transcript-highlight-rename-{}",
+                            highlight.annotation_id
+                        )))
+                        .cursor_pointer()
+                        .flex()
+                        .flex_wrap()
+                        .gap_2()
+                        .hover(|el| el.bg(cx.theme().colors().element_hover))
+                        .child(
+                            Label::new(SharedString::from("Rename"))
+                                .size(LabelSize::XSmall)
+                                .color(ui::Color::Default),
+                        )
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.open_label_editor(edit.clone(), window, cx);
+                        }));
+                    let delete = div()
+                        .id(SharedString::from(format!(
+                            "media-transcript-highlight-delete-{annotation_id}"
+                        )))
+                        .cursor_pointer()
+                        .flex()
+                        .flex_wrap()
+                        .gap_2()
+                        .hover(|el| el.bg(cx.theme().colors().element_hover))
+                        .child(
+                            Label::new(SharedString::from("Delete"))
+                                .size(LabelSize::XSmall)
+                                .color(ui::Color::Error),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.delete_workspace_annotation(
+                                annotation_id.clone(),
+                                "Highlight",
+                                cx,
+                            );
+                        }));
+                    sections = sections.child(
+                        h_flex()
+                            .flex_wrap()
+                            .gap_3()
+                            .child(include_toggle)
+                            .child(rename)
+                            .child(delete),
+                    );
+                }
+            }
+        }
+        if !state.strikes.is_empty() {
+            sections = sections.child(Self::section_label("Cuts"));
+            if !index_identical {
+                sections = sections.child(
+                    Label::new(SharedString::from(
+                        "Timed navigation and line-through overlays are unavailable for this view.",
+                    ))
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Muted),
+                );
+            }
+            for strike in &state.strikes {
+                let row = if index_identical {
+                    transcript_range_excerpt(state, strike.start_word, strike.end_word)
+                } else {
+                    "Cut selection".to_string()
+                };
+                let start_ms = if index_identical {
+                    state
+                        .words
+                        .as_deref()
+                        .and_then(|words| words.get(strike.start_word))
+                        .map(|word| word.start_ms)
+                } else {
+                    None
+                };
+                let row_element = div()
+                    .id(SharedString::from(format!(
+                        "media-transcript-strike-row-{}",
+                        strike.annotation_id
+                    )))
+                    .cursor_pointer()
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .hover(|el| el.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Label::new(SharedString::from(row))
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Default),
+                    );
+                if let Some(start_ms) = start_ms {
+                    sections =
+                        sections.child(row_element.on_click(cx.listener(move |this, _, _, cx| {
+                            this.seek_workspace_transcript(start_ms, cx);
+                        })));
+                } else {
+                    sections = sections.child(row_element);
+                }
+                let annotation_id = strike.annotation_id.clone();
+                sections = sections.child(
+                    div()
+                        .id(SharedString::from(format!(
+                            "media-transcript-strike-delete-{annotation_id}"
+                        )))
+                        .cursor_pointer()
+                        .flex()
+                        .flex_wrap()
+                        .gap_2()
+                        .hover(|el| el.bg(cx.theme().colors().element_hover))
+                        .child(
+                            Label::new(SharedString::from("Restore"))
+                                .size(LabelSize::XSmall)
+                                .color(ui::Color::Default),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.delete_workspace_annotation(annotation_id.clone(), "Strike", cx);
+                        })),
+                );
+            }
+        }
+        let any_researcher_highlight = state
+            .highlights
+            .iter()
+            .any(|highlight| highlight.researcher_supplied);
+        let affordances = [
+            (ReelComposeMode::Assemble, any_researcher_highlight),
+            (ReelComposeMode::Reduce, !state.strikes.is_empty()),
+            (
+                ReelComposeMode::Mixed,
+                any_researcher_highlight && !state.strikes.is_empty(),
+            ),
+        ];
+        if affordances.iter().any(|(_, visible)| *visible) {
+            sections = sections.child(Self::section_label("Create a reel"));
+        }
+        for (mode, visible) in affordances {
+            if !visible {
+                continue;
+            }
+            sections = sections.child(
+                div()
+                    .id(SharedString::from(format!(
+                        "media-transcript-compose-reel-{}",
+                        mode.key()
+                    )))
+                    .cursor_pointer()
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .hover(|el| el.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Label::new(SharedString::from(mode.label()))
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Default),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.compose_workspace_reel(mode, cx);
+                    })),
+            );
+        }
         v_flex()
             .id("media-viewer-transcript")
             .flex_1()
@@ -4381,16 +4337,22 @@ impl MediaViewer {
         }
         let mut sections = v_flex().gap_2().p_3();
         sections = sections.child(Self::tab_purpose(
-            "Every stored recording — click one to open its transcript workspace.",
+            "Choose a recording to read, select text, and create a reel.",
         ));
         sections = sections.child(Self::section_label("Recordings"));
         for transcript in listing {
             let timings = if transcript.has_word_timings {
-                "word timings"
+                ""
             } else {
-                "no word timings"
+                " · text only"
             };
             let transcript_id = transcript.id.clone();
+            let title = recording_display_name(&transcript.media_path);
+            let metadata = format!(
+                "{} · {} words{timings}",
+                format_recording_duration(transcript.duration_secs),
+                transcript.words_count
+            );
             let mut row = div()
                 .id(SharedString::from(format!(
                     "media-transcript-open-{}",
@@ -4398,16 +4360,19 @@ impl MediaViewer {
                 )))
                 .cursor_pointer()
                 .flex()
-                .flex_wrap()
-                .gap_2()
+                .flex_col()
+                .gap_1()
+                .py_1()
                 .hover(|el| el.bg(cx.theme().colors().element_hover))
                 .child(
-                    Label::new(SharedString::from(format!(
-                        "{} — {} words, {timings}",
-                        transcript.media_path, transcript.words_count
-                    )))
-                    .size(LabelSize::XSmall)
-                    .color(ui::Color::Default),
+                    Label::new(SharedString::from(title))
+                        .size(LabelSize::Small)
+                        .color(ui::Color::Default),
+                )
+                .child(
+                    Label::new(SharedString::from(metadata))
+                        .size(LabelSize::XSmall)
+                        .color(ui::Color::Muted),
                 );
             // The capability note says what a click opens before the click:
             // gated recordings flag their read-only state on the row rather
@@ -4741,6 +4706,12 @@ fn parse_transcript_listing(payload: &Value) -> Result<Vec<TranscriptSummaryRow>
                 .get("has_word_timings")
                 .and_then(Value::as_bool)
                 .ok_or_else(|| "transcript summary has no has_word_timings.".to_string())?;
+            let duration_secs = object
+                .get("audio_duration_secs")
+                .and_then(Value::as_f64)
+                .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
+                .ok_or_else(|| "transcript summary has no valid audio_duration_secs.".to_string())?
+                .round() as u64;
             let alignment = object
                 .get("alignment")
                 .and_then(Value::as_str)
@@ -4759,6 +4730,7 @@ fn parse_transcript_listing(payload: &Value) -> Result<Vec<TranscriptSummaryRow>
                 id: id.to_string(),
                 media_path: media_path.to_string(),
                 words_count,
+                duration_secs,
                 has_word_timings,
                 alignment,
             })
@@ -4771,10 +4743,67 @@ fn parse_transcript_listing(payload: &Value) -> Result<Vec<TranscriptSummaryRow>
 /// default: every row is an editable bundle unless flagged), a named gate
 /// note for the read-only ones, so the entry surfaces say what a click
 /// opens (the F10 alignment flags, 2026-10-27).
+fn recording_display_name(media_path: &str) -> String {
+    let stem = std::path::Path::new(media_path)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or_default();
+    let compact: String = stem.chars().filter(|character| *character != '-').collect();
+    if matches!(compact.len(), 32 | 64)
+        && compact
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+    {
+        return "Untitled recording".to_string();
+    }
+    let display = stem.replace(['-', '_'], " ");
+    let display = display.trim();
+    if display.is_empty() {
+        "Untitled recording".to_string()
+    } else {
+        display.to_string()
+    }
+}
+
+fn format_recording_duration(seconds: u64) -> String {
+    if seconds >= 3600 {
+        format!("{}h {:02}m", seconds / 3600, (seconds % 3600) / 60)
+    } else if seconds >= 60 {
+        format!("{}m {:02}s", seconds / 60, seconds % 60)
+    } else {
+        format!("{seconds}s")
+    }
+}
+
+fn transcript_range_excerpt(
+    state: &TranscriptPaneState,
+    start_word: usize,
+    end_word: usize,
+) -> String {
+    let Some(words) = state.words.as_deref() else {
+        return "Selected text".to_string();
+    };
+    if start_word > end_word || end_word >= words.len() {
+        return "Selected text".to_string();
+    }
+    let text = words[start_word..=end_word]
+        .iter()
+        .map(|word| word.word.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut chars = text.chars();
+    let excerpt: String = chars.by_ref().take(72).collect();
+    if chars.next().is_some() {
+        format!("{excerpt}…")
+    } else {
+        excerpt
+    }
+}
+
 fn transcript_alignment_note(alignment: &str) -> Option<&'static str> {
     match alignment {
-        "re_anchored" => Some("re-anchored — read view (annotation gated)"),
-        "unaligned" => Some("unaligned — needs a realignment layer"),
+        "re_anchored" => Some("Estimated timings · review only"),
+        "unaligned" => Some("Timed editing unavailable"),
         _ => None,
     }
 }
@@ -4987,15 +5016,15 @@ fn highlight_range_gate(alignment: &str) -> Result<(), &'static str> {
     match alignment {
         "original" | "aligned" => Ok(()),
         "re_anchored" => Err(
-            "Highlights need an index-identical view — this one is re-anchored; the D5 v2 is the server-side index map.",
+            "Direct selection is unavailable for this corrected transcript. Review existing ranges or re-transcribe the section for precise timing.",
         ),
         "unaligned" => Err(
-            "Highlights need an index-identical view — this one is unaligned; store a realignment layer via educt_realign_transcript.",
+            "Direct selection needs a timing-aligned transcript. Re-transcribe or realign this correction first.",
         ),
         "untimed" => {
-            Err("Highlights need an index-identical view — this source has no word timings.")
+            Err("Direct selection needs word-level timings; this transcript is text only.")
         }
-        _ => Err("Highlights need an index-identical view — this one has an unknown alignment."),
+        _ => Err("Direct selection is unavailable for this transcript."),
     }
 }
 
@@ -5004,7 +5033,7 @@ fn highlight_range_gate(alignment: &str) -> Result<(), &'static str> {
 fn resolve_create_label(typed: &str) -> String {
     let trimmed = typed.trim();
     if trimmed.is_empty() {
-        "research-highlight".to_string()
+        "Highlight".to_string()
     } else {
         trimmed.to_string()
     }
@@ -5176,27 +5205,27 @@ impl ReelComposeMode {
     /// The compose affordance's label.
     fn label(self) -> &'static str {
         match self {
-            Self::Assemble => "Compose reel from toggled highlights",
-            Self::Reduce => "Compose reel minus strikes",
-            Self::Mixed => "Compose highlights minus strikes",
+            Self::Assemble => "From included highlights",
+            Self::Reduce => "From the recording with cuts applied",
+            Self::Mixed => "From included highlights with cuts applied",
         }
     }
 
     /// The nothing-to-compose status for the mode.
     fn empty_status(self) -> &'static str {
         match self {
-            Self::Assemble => "No pane highlights to compose — toggle some in first.",
-            Self::Reduce => "No strikes to reduce — strike a range from the label editor first.",
-            Self::Mixed => "Nothing to compose — toggle highlights in and strike ranges first.",
+            Self::Assemble => "No included highlights — include at least one highlight first.",
+            Self::Reduce => "No cuts to apply — cut a selection first.",
+            Self::Mixed => "Include highlights and cut selections before creating this reel.",
         }
     }
 
     /// The in-flight edit progress for the mode.
     fn progress(self) -> &'static str {
         match self {
-            Self::Assemble => "composing reel from pane highlights…",
-            Self::Reduce => "composing reel minus strikes…",
-            Self::Mixed => "composing highlights-minus-strikes reel…",
+            Self::Assemble => "Creating reel from included highlights…",
+            Self::Reduce => "Creating reel with cuts applied…",
+            Self::Mixed => "Creating reel from included highlights with cuts applied…",
         }
     }
 }
@@ -7786,8 +7815,8 @@ mod tests {
     fn transcript_listing_is_strict() {
         let valid = serde_json::json!({
             "transcripts": [
-                {"id": "caa6566e", "media_path": "/generated/vonnegut.mp4", "words_count": 558, "has_word_timings": true, "alignment": "re_anchored"},
-                {"id": "t-untimed", "media_path": "/generated/plain.mp3", "words_count": 12, "has_word_timings": false, "alignment": "untimed"}
+                {"id": "caa6566e", "media_path": "/generated/vonnegut.mp4", "words_count": 558, "audio_duration_secs": 276.392, "has_word_timings": true, "alignment": "re_anchored"},
+                {"id": "t-untimed", "media_path": "/generated/plain.mp3", "words_count": 12, "audio_duration_secs": 11, "has_word_timings": false, "alignment": "untimed"}
             ],
             "count": 2
         });
@@ -7798,6 +7827,7 @@ mod tests {
                     id: "caa6566e".into(),
                     media_path: "/generated/vonnegut.mp4".into(),
                     words_count: 558,
+                    duration_secs: 276,
                     has_word_timings: true,
                     alignment: "re_anchored".into(),
                 },
@@ -7805,6 +7835,7 @@ mod tests {
                     id: "t-untimed".into(),
                     media_path: "/generated/plain.mp3".into(),
                     words_count: 12,
+                    duration_secs: 11,
                     has_word_timings: false,
                     alignment: "untimed".into(),
                 }
@@ -7843,12 +7874,47 @@ mod tests {
         assert_eq!(transcript_alignment_note("untimed"), None);
         assert_eq!(
             transcript_alignment_note("re_anchored"),
-            Some("re-anchored — read view (annotation gated)")
+            Some("Estimated timings · review only")
         );
         assert_eq!(
             transcript_alignment_note("unaligned"),
-            Some("unaligned — needs a realignment layer")
+            Some("Timed editing unavailable")
         );
+    }
+
+    #[test]
+    fn human_recording_labels_avoid_internal_identifiers() {
+        assert_eq!(
+            recording_display_name("/generated/dunning-2017-audio.mp3"),
+            "dunning 2017 audio"
+        );
+        assert_eq!(
+            recording_display_name("/generated/2d014afb-07ca-418b-9d53-8cb1f7329fec.mp4"),
+            "Untitled recording"
+        );
+        assert_eq!(format_recording_duration(11), "11s");
+        assert_eq!(format_recording_duration(276), "4m 36s");
+        assert_eq!(format_recording_duration(4963), "1h 22m");
+
+        let mut state = pane_state("t");
+        state.words = Some(vec![
+            PaneWord {
+                word: "first".into(),
+                start_ms: 0,
+                end_ms: 100,
+            },
+            PaneWord {
+                word: "second".into(),
+                start_ms: 100,
+                end_ms: 200,
+            },
+            PaneWord {
+                word: "third".into(),
+                start_ms: 200,
+                end_ms: 300,
+            },
+        ]);
+        assert_eq!(transcript_range_excerpt(&state, 1, 2), "second third");
     }
 
     /// dcterms:identifier: `parse_reel_provenance`
@@ -7901,6 +7967,7 @@ mod tests {
                     id: "t-new".into(),
                     media_path: "/generated/new.mp4".into(),
                     words_count: 4,
+                    duration_secs: 2,
                     has_word_timings: true,
                     alignment: "original".into(),
                 }]),
@@ -7922,6 +7989,7 @@ mod tests {
                         id: "t-new".into(),
                         media_path: "/generated/new.mp4".into(),
                         words_count: 4,
+                        duration_secs: 2,
                         has_word_timings: true,
                         alignment: "original".into(),
                     }][..]
@@ -8370,8 +8438,8 @@ mod tests {
     /// label; typed text trims through verbatim.
     #[test]
     fn create_label_resolves_empty_to_the_default() {
-        assert_eq!(resolve_create_label(""), "research-highlight");
-        assert_eq!(resolve_create_label("   "), "research-highlight");
+        assert_eq!(resolve_create_label(""), "Highlight");
+        assert_eq!(resolve_create_label("   "), "Highlight");
         assert_eq!(resolve_create_label("  thesis  "), "thesis");
     }
 
@@ -8401,7 +8469,11 @@ mod tests {
         assert!(highlight_range_gate("aligned").is_ok());
         for alignment in ["re_anchored", "unaligned", "untimed", "unexpected"] {
             let reason = highlight_range_gate(alignment).expect_err("blocked");
-            assert!(reason.contains("index-identical"), "{alignment}: {reason}");
+            assert!(
+                reason.starts_with("Direct selection"),
+                "{alignment}: {reason}"
+            );
+            assert!(!reason.contains("index-identical"), "{alignment}: {reason}");
         }
     }
 
@@ -8776,7 +8848,7 @@ mod tests {
                     .status
                     .as_deref()
                     .unwrap()
-                    .contains("No pane highlights to compose"),
+                    .contains("No included highlights"),
                 "status: {:?}",
                 viewer.status
             );
@@ -9406,6 +9478,7 @@ mod viewer_layout_tests {
         for selector in [
             "media-transcript-back-to-recordings",
             "media-transcript-select-mode",
+            "media-transcript-paragraph",
         ] {
             let bounds = cx
                 .debug_bounds(selector)

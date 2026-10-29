@@ -141,12 +141,8 @@ No hKask crate dependencies — this is a standalone computation library.
   the old turn's cancellation state and weak pending-owner identity prevents stale
   writes/flushes into a successor. Raw/pure APIs are unchanged. Raw-output copying
   and bounded display formatting remain foreground (two counts, one emit).
-- H7 authorized IPC host calls (the delegated host decode/eval path through
-  `kask/crates/kask_bridge/src/host_skill_tools.rs` over the inference IPC
-  `tool_invoke` method) were removed 2026-10-28 with the swarm capability,
-  their only consumer. No host/IPC lisp path remains; the in-process native
-  decode/evaluation path is unchanged, and no host/IPC lisp promise survives
-  (see `kask/docs/reference/lisp-eval-dialect.md`).
+- No host/IPC lisp path exists; the in-process native decode/evaluation path
+  is the only path (see `kask/docs/reference/lisp-eval-dialect.md`).
 - H8 direct/routed corpus queries share one internal body; only Lisp-option work
   is offloaded. The pre-spawn guard and rmcp request-context cancellation cover
   evaluation/join only, leaving downstream inference/retrieval/generation alone

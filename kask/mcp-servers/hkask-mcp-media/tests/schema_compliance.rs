@@ -38,11 +38,11 @@ use hkask_mcp_media::types::{
     GalleryMoveToAlbumRequest, GalleryNameFaceRequest, GalleryOrganizeRequest,
     GalleryRefreshRequest, GalleryRemoveFromAlbumRequest, GallerySearchRequest,
     GalleryTimelineRequest, JobCancelRequest, JobListRequest, JobStatusRequest, JobSubmitRequest,
-    LayersGetRequest, LayersListRequest, LayersShotPassRequest, LayersStoreRequest,
-    ModelInfoRequest, ModelListRequest, RecordAndTranscribeRequest, TranscribeAndStoreRequest,
-    TranscribeBundleRequest, VideoAddCaptionRequest, VideoClipRequest, VideoConcatRequest,
-    VideoExtractFramesRequest, VideoFetchRequest, VideoInfoRequest, VideoToGifRequest,
-    VoiceEnrollRequest, VoiceListRequest, VoicePruneRequest, VoiceRemoveRequest,
+    LayersGetRequest, LayersListRequest, LayersSemanticPassRequest, LayersShotPassRequest,
+    LayersStoreRequest, ModelInfoRequest, ModelListRequest, RecordAndTranscribeRequest,
+    TranscribeAndStoreRequest, TranscribeBundleRequest, VideoAddCaptionRequest, VideoClipRequest,
+    VideoConcatRequest, VideoExtractFramesRequest, VideoFetchRequest, VideoInfoRequest,
+    VideoToGifRequest, VoiceEnrollRequest, VoiceListRequest, VoicePruneRequest, VoiceRemoveRequest,
     YoutubeSearchRequest,
 };
 use hkask_types::find_boolean_schema_positions;
@@ -55,8 +55,8 @@ fn live_router_schema_inventory_is_complete_and_clean() {
     let tools = hkask_mcp_media::MediaServer::combined_router().list_all();
     assert_eq!(
         tools.len(),
-        80,
-        "approved surface: 92 - 20 Reduct cloud tools + 4 media-layer tools + 1 section re-transcribe + 4 voice-profile tools"
+        81,
+        "approved surface: 92 - 20 Reduct cloud tools + 5 media-layer tools + 1 section re-transcribe + 4 voice-profile tools"
     );
     let actual = tools
         .iter()
@@ -323,6 +323,10 @@ schema_clean_test!(layers_store_request_schema, LayersStoreRequest);
 schema_clean_test!(layers_list_request_schema, LayersListRequest);
 schema_clean_test!(layers_get_request_schema, LayersGetRequest);
 schema_clean_test!(layers_shot_pass_request_schema, LayersShotPassRequest);
+schema_clean_test!(
+    layers_semantic_pass_request_schema,
+    LayersSemanticPassRequest
+);
 schema_clean_test!(voice_enroll_request_schema, VoiceEnrollRequest);
 schema_clean_test!(voice_list_request_schema, VoiceListRequest);
 schema_clean_test!(voice_remove_request_schema, VoiceRemoveRequest);
@@ -613,6 +617,10 @@ deser_totality_test!(layers_get_request_deser_totality, LayersGetRequest);
 deser_totality_test!(
     layers_shot_pass_request_deser_totality,
     LayersShotPassRequest
+);
+deser_totality_test!(
+    layers_semantic_pass_request_deser_totality,
+    LayersSemanticPassRequest
 );
 deser_totality_test!(voice_enroll_request_deser_totality, VoiceEnrollRequest);
 deser_totality_test!(voice_list_request_deser_totality, VoiceListRequest);

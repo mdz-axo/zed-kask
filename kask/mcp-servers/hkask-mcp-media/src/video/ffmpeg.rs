@@ -853,6 +853,113 @@ impl FfmpegRunner {
         })
     }
 
+    /// Sample decoded frames from `start_sec` on the source timeline, at
+    /// least `interval_sec` apart, at most `max_frames` — the
+    /// `extract_keyframes` contract (observed showinfo source PTS,
+    /// `-copyts`) with an input seek bounding the decode. Frames before
+    /// `start_sec` (including the seek's landing keyframe) are not selected:
+    /// the select gate adds `gte(t, start)`, so the first selected frame is
+    /// the first decoded frame at or after the range start — the chunk
+    /// sampling the vision passes consume.
+    pub(crate) async fn extract_keyframes_in_range(
+        &self,
+        input: &str,
+        start_sec: f64,
+        interval_sec: f32,
+        max_frames: u32,
+    ) -> Result<ExtractedFrames, crate::MediaError> {
+        if !self.available {
+            return Err(crate::MediaError::FfmpegUnavailable);
+        }
+        if !start_sec.is_finite() || start_sec < 0.0 {
+            return Err(crate::MediaError::FfmpegFailed(format!(
+                "Invalid range start {start_sec} — must be >= 0.0"
+            )));
+        }
+        if !interval_sec.is_finite() || interval_sec <= 0.0 || max_frames == 0 {
+            return Err(crate::MediaError::FfmpegFailed(
+                "Invalid frame sampling controls".into(),
+            ));
+        }
+        self.ensure_temp_dir()?;
+
+        let directory = self.temp_dir.join(uuid::Uuid::new_v4().to_string());
+        std::fs::create_dir(&directory).map_err(|error| {
+            crate::MediaError::Io(format!(
+                "Failed to create keyframe scratch directory {}: {error}",
+                directory.display()
+            ))
+        })?;
+        let mut frames = ExtractedFrames {
+            directory,
+            paths: Vec::new(),
+            timestamps_sec: Vec::new(),
+        };
+        let pattern = frames.directory.join("frame_%03d.jpg");
+
+        let mut command = Command::new(&self.ffmpeg_path);
+        command
+            .arg("-ss")
+            .arg(format!("{start_sec:.3}"))
+            .arg("-copyts")
+            .arg("-i")
+            .arg(input)
+            .arg("-map")
+            .arg("0:v:0")
+            .arg("-vf")
+            .arg(format!(
+                "select='isnan(prev_selected_t)*gte(t,{start_sec:.3})+gte(t-prev_selected_t,{interval_sec})',showinfo,scale=640:-1"
+            ))
+            .arg("-fps_mode")
+            .arg("vfr")
+            .arg("-frames:v")
+            .arg(max_frames.to_string())
+            .arg(&pattern);
+        let output = command.output().await.map_err(|error| {
+            crate::MediaError::FfmpegFailed(format!("frame extraction spawn: {error}"))
+        })?;
+        if !output.status.success() {
+            return Err(crate::MediaError::FfmpegFailed(format!(
+                "frame extraction failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+        let timestamps = selected_frame_timestamps(&String::from_utf8_lossy(&output.stderr))?;
+
+        for entry in std::fs::read_dir(&frames.directory).map_err(|error| {
+            crate::MediaError::Io(format!(
+                "Failed to read keyframe scratch directory {}: {error}",
+                frames.directory.display()
+            ))
+        })? {
+            let path = entry
+                .map_err(|error| {
+                    crate::MediaError::Io(format!("Failed to read extracted frame entry: {error}"))
+                })?
+                .path();
+            if path.extension().and_then(|extension| extension.to_str()) == Some("jpg") {
+                frames.paths.push(path);
+            }
+        }
+        frames.paths.sort();
+        if frames.paths.len() > max_frames as usize {
+            return Err(crate::MediaError::FfmpegFailed(
+                "Frame output exceeded requested maximum".into(),
+            ));
+        }
+        if timestamps.len() < frames.paths.len() {
+            return Err(crate::MediaError::FfmpegFailed(format!(
+                "Missing source PTS: {} images, {} observations",
+                frames.paths.len(),
+                timestamps.len()
+            )));
+        }
+        frames.timestamps_sec = timestamps.into_iter().take(frames.paths.len()).collect();
+
+        tracing::info!(target: "hkask.mcp.media.ffmpeg", input = %input, start_sec, frame_count = frames.len(), "Keyframes extracted in range");
+        Ok(frames)
+    }
+
     /// Trim an audio file to specified start/end times.
     /// Uses stream copy (-c copy) for fast, lossless trimming.
     pub async fn audio_trim(
@@ -1008,6 +1115,35 @@ mod tests {
                 "names the invalid control: {error}"
             );
         }
+    }
+
+    /// Range extraction gates on the range start (the seek's landing
+    /// keyframe before the start is not selected) and keeps the observed
+    /// showinfo source PTS — the chunk-sampling contract.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn range_extraction_gates_on_start_and_keeps_source_pts()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let (runner, _output_dir) = fake_ffmpeg_runner(
+            &root,
+            "range-frames.sh",
+            "#!/bin/sh\nseen_start=0\nfor arg do if [ \"$seen_start\" = 1 ]; then output=$arg; seen_start=2; fi; [ \"$arg\" = \"-vf\" ] && seen_start=1; done\nprintf frame > \"$output\"\nprintf '[Parsed_showinfo_1] n: 0 pts_time:10.000\\n' >&2\n",
+        )?;
+        let frames = runner
+            .extract_keyframes_in_range("source.mp4", 10.0, 1.0, 1)
+            .await
+            .expect("range extraction parses the fake output");
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames.timestamps_sec, vec![10.0]);
+        assert_eq!(frames.paths.len(), 1);
+
+        let error = runner
+            .extract_keyframes_in_range("source.mp4", -1.0, 1.0, 1)
+            .await
+            .expect_err("negative start fails before spawn");
+        assert!(error.to_string().contains("Invalid range start"));
+        Ok(())
     }
 
     /// Write a fake ffmpeg shell script, mark it executable, and build a

@@ -69,8 +69,8 @@ agent = { workspace = true, features = ["test-support"] }
 # `test-support` requests above forward `remote/test-support` on (via
 # `project`), exposing `RemoteConnectionOptions::Mock` — while
 # `remote_connection`'s Mock match arm is gated on its OWN `test-support`.
-# Both must be in sync whenever `remote/test-support` is on (the
-# swarm_panel precedent), so the pairing rides this dev closure too.
+# Both must be in sync whenever `remote/test-support` is on, so the
+# pairing rides this dev closure too.
 remote_connection = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
 agent-client-protocol.workspace = true

@@ -102,7 +102,7 @@ impl hkask_types::InferencePort for ConstantEmbedPort {
 
     fn embed<'a>(&'a self, _model: &str, texts: &[String]) -> hkask_types::EmbedFuture<'a> {
         // Capture only the count (owned, `Copy`) so the future borrows
-        // nothing — mirrors the swarm-server test stub pattern.
+        // nothing.
         let count = texts.len();
         let dim = test_dim();
         Box::pin(async move {

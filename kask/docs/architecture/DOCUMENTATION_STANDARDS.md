@@ -110,7 +110,7 @@ status: VERIFIED
 
 **Git history is the archive of record.** No archive index or migration guide is required. Superseded documents are removed from the active tree via lifecycle policy; their content is recoverable from git history. An operator-retained `Proposed` plan is not an archive: it remains under `kask/docs/plans/` while the product decision is open and explicitly states that it is a plan rather than an implementation record. No current-state document may include backward-compatibility references, migration notes, or `formerly`/`previously known as` annotations — git history serves that purpose.
 
-**Condensation requirement (2026-08-28; count basis aligned 2026-09-28; cap and target set 2026-09-30; cap raised 2026-10-07; cap raised 79 → 85 and target raised 60 → 75 by operator ruling 2026-10-07):** The docs tree is capped at **fewer than 85 files** (all files, not only Markdown — the two plain-text evidence companions and the YAML inventory count against the cap; `find kask/docs -type f | wc -l`), with a working **target of 75 files** on the same all-files basis — the cap is the hard gate, the target is the condensation direction (operator ruling 2026-09-30; cap raised from fewer-than-75 by operator ruling 2026-10-07 to accommodate the post-consolidation corpus: 77 Markdown documents plus the YAML inventory = 78 files; cap raised 79 → 85 by operator ruling 2026-10-07, justified by the experimentation and spreadsheet MCP servers' reference documentation and the Magnifica Humanitas values charter ([`core/magnifica-humanitas.md`](core/magnifica-humanitas.md)) grounding P1–P12; target raised 60 → 75 on the same ruling). A leaf document without a formal role — one that no other document links to, that duplicates an active document's coverage, or that describes a deleted surface — is folded into its successor or deleted. Stale plans and stale prompts are deleted, not archived; each deletion records its successor in the **Document lifecycle ledger** in [`kask/docs/README.md`](../README.md) (the working example: the 2026-08-28 condensation reduced the tree from 120 to under 70, with every deletion's successor recorded there). Git history preserves full content; the ledger preserves the mapping.
+**Condensation requirement (2026-08-28; count basis aligned 2026-09-28; cap and target set 2026-09-30; cap raised 2026-10-07; cap raised 79 → 85 and target raised 60 → 75 by operator ruling 2026-10-07):** The docs tree is capped at **fewer than 85 files** (all files, not only Markdown — the two plain-text evidence companions and the YAML inventory count against the cap; `find kask/docs -type f | wc -l`), with a working **target of 75 files** on the same all-files basis — the cap is the hard gate, the target is the condensation direction (operator ruling 2026-09-30; cap raised from fewer-than-75 by operator ruling 2026-10-07 to accommodate the post-consolidation corpus: 77 Markdown documents plus the YAML inventory = 78 files; cap raised 79 → 85 by operator ruling 2026-10-07, justified by the experimentation and spreadsheet MCP servers' reference documentation and the Magnifica Humanitas values charter ([`core/magnifica-humanitas.md`](core/magnifica-humanitas.md)) grounding P1–P12; target raised 60 → 75 on the same ruling). A leaf document without a formal role — one that no other document links to, that duplicates an active document's coverage, or that describes a deleted surface — is folded into its successor or deleted. Stale plans and stale prompts are deleted, not archived. Git history preserves full content.
 
 Git history is the project's Architecture Repository[^archrepo]. Retired
 documents are recoverable through `git log --all --diff-filter=D -- <path>`
@@ -245,7 +245,7 @@ This ensures:
 
 ### 6.2 What belongs where
 
-For the authoritative MDS category → directory mapping, see [`MDS.md`](../architecture/core/MDS.md) §9.1. The table below reflects the condensed tree. `explanation/`, `status/`, and `qa/` are not standalone top-level classes; operator-retained Proposed plans are the narrow exception and live under `kask/docs/plans/`. Every deletion remains recorded in the [`kask/docs/README.md`](../README.md) lifecycle ledger:
+For the authoritative MDS category → directory mapping, see [`MDS.md`](../architecture/core/MDS.md) §9.1. The table below reflects the condensed tree. `explanation/`, `status/`, and `qa/` are not standalone top-level classes; operator-retained Proposed plans are the narrow exception and live under `kask/docs/plans/`.
 
 | Content | Location |
 |---------|----------|
@@ -257,7 +257,7 @@ For the authoritative MDS category → directory mapping, see [`MDS.md`](../arch
 | Operator-retained, not-yet-authorized plans (`status: "Proposed"`) | `kask/docs/plans/` |
 | Plain-text evidence companions (durable tool-run logs, adoption-gate records; introduced 2026-09-28) | Beside their governing document, referenced from it, never standalone |
 | Consolidated Mermaid diagram files | `kask/docs/diagrams/` + `DIAGRAMS_INDEX.md` |
-| Portal / navigation / lifecycle ledger | `kask/docs/README.md` |
+| Portal / navigation | `kask/docs/README.md` |
 | Crate coding context (brief) | `<workspace>/crates/<crate>/README.md` |
 
 ### 6.3 Enforcement
@@ -429,12 +429,12 @@ This documentation standard itself maps to the 5 MDS categories:
 | `kask/docs/diataxis/` | Documentation steward | Per-release |
 | `kask/docs/reference/` | Documentation steward | Per-release |
 | `kask/docs/diagrams/` + `DIAGRAMS_INDEX.md` | Architecture steward | Per-release |
-| `kask/docs/README.md` (portal + lifecycle ledger) | Documentation steward | Per-release |
+| `kask/docs/README.md` (portal) | Documentation steward | Per-release |
 
 ### 12.2 Responsibilities
 
 - **Architecture steward:** Maintain `zed-host-architecture-plan.md`, review framework docs per release, approve ADRs.
-- **Documentation steward:** Run corpus hygiene sweeps (document-count gate, broken-link sweep), maintain the portal README and its lifecycle ledger.
+- **Documentation steward:** Run corpus hygiene sweeps (document-count gate, broken-link sweep), maintain the portal README.
 - **CI/CD steward:** Maintain verification scripts (`kask/scripts/check-*.sh`).
 - **User advocate:** Maintain user guides, test against current in-process surfaces (agent panel).
 - **Methodology steward:** Maintain research/practice guides.
@@ -446,7 +446,7 @@ This documentation standard itself maps to the 5 MDS categories:
 | Pre-release | Full corpus hygiene sweep (count gate + link sweep) | Documentation steward |
 | Post-merge (≥10 new docs) | Regenerate portal README tables | Documentation steward |
 | Per-release | Review architecture docs for staleness against code | Architecture steward |
-| Per-session | Fold or delete superseded handoffs; record successors in the README ledger | Agent / human user |
+| Per-session | Fold or delete superseded handoffs | Agent / human user |
 
 ---
 

@@ -2340,33 +2340,82 @@ pub fn load_default_keymap(cx: &mut App) {
         return;
     }
 
-    cx.bind_keys(filter_disabled_ai_bindings(
-        KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, Some(KeybindSource::Default), cx).unwrap(),
-        cx,
-    ));
+    // zed-kask: D96 — built-in keymap load failures surface and degrade
+    // instead of panicking. Upstream unwraps these four loads; a single stale
+    // binding (an action whose defining crate was removed) crash-loops the
+    // app at startup — observed live 2026-10-06 (collab removal) and
+    // 2026-10-28 (swarm removal, two failed starts before the binding was
+    // removed).
+    bind_built_in_keymap_asset(cx, DEFAULT_KEYMAP_PATH, KeybindSource::Default, true);
 
     if let Some(asset_path) = base_keymap.asset_path() {
-        cx.bind_keys(filter_disabled_ai_bindings(
-            KeymapFile::load_asset(asset_path, Some(KeybindSource::Base), cx).unwrap(),
-            cx,
-        ));
+        bind_built_in_keymap_asset(cx, asset_path, KeybindSource::Base, true);
     }
 
     if VimModeSetting::get_global(cx).0 || vim_mode_setting::HelixModeSetting::get_global(cx).0 {
-        cx.bind_keys(filter_disabled_ai_bindings(
-            KeymapFile::load_asset(VIM_KEYMAP_PATH, Some(KeybindSource::Vim), cx).unwrap(),
-            cx,
-        ));
+        bind_built_in_keymap_asset(cx, VIM_KEYMAP_PATH, KeybindSource::Vim, true);
     }
 
-    cx.bind_keys(
-        KeymapFile::load_asset(
-            SPECIFIC_OVERRIDES_KEYMAP_PATH,
-            Some(KeybindSource::Default),
-            cx,
-        )
-        .unwrap(),
+    bind_built_in_keymap_asset(
+        cx,
+        SPECIFIC_OVERRIDES_KEYMAP_PATH,
+        KeybindSource::Default,
+        false,
     );
+}
+
+/// zed-kask: D96 — load one built-in keymap asset and bind whatever in it
+/// parsed and resolved. A stale binding costs its own hotkey, not the app:
+/// `KeymapFile::load_asset` bails on any partial failure (discarding every
+/// loadable binding), which is why upstream's `unwrap` here crashed startup.
+fn bind_built_in_keymap_asset(
+    cx: &mut App,
+    asset_path: &str,
+    source: KeybindSource,
+    filter_ai_bindings: bool,
+) {
+    let result = KeymapFile::load_asset_result(asset_path, cx);
+    let key_bindings = built_in_keymap_bindings_from_result(asset_path, result, source);
+    if filter_ai_bindings {
+        cx.bind_keys(filter_disabled_ai_bindings(key_bindings, cx));
+    } else {
+        cx.bind_keys(key_bindings);
+    }
+}
+
+/// zed-kask: D96 — the pure degradation core: whatever in a built-in keymap
+/// load result is bindable comes back with its source meta set. A partial
+/// failure keeps the loadable bindings and logs the reason; a parse failure
+/// logs and binds nothing. Never panics — the app always starts.
+fn built_in_keymap_bindings_from_result(
+    asset_path: &str,
+    result: KeymapFileLoadResult,
+    source: KeybindSource,
+) -> Vec<KeyBinding> {
+    let mut key_bindings = match result {
+        KeymapFileLoadResult::Success { key_bindings } => key_bindings,
+        KeymapFileLoadResult::SomeFailedToLoad {
+            key_bindings,
+            error_message,
+        } => {
+            log::error!(
+                "built-in keymap \"{asset_path}\" has bindings that failed to load; \
+                 the remaining bindings are active: {error_message}"
+            );
+            key_bindings
+        }
+        KeymapFileLoadResult::JsonParseFailure { error } => {
+            log::error!(
+                "built-in keymap \"{asset_path}\" failed to parse; continuing without \
+                 its bindings: {error:#}"
+            );
+            Vec::new()
+        }
+    };
+    for key_binding in &mut key_bindings {
+        key_binding.set_meta(source.meta());
+    }
+    key_bindings
 }
 
 /// Namespaces of actions that are part of an AI feature. When the user opts out
@@ -5811,12 +5860,13 @@ mod tests {
 
     actions!(test_only, [ActionA, ActionB]);
 
-    /// Every built-in keymap asset must only bind registered actions. The default,
-    /// vim, specific-override and base keymaps are all loaded through `unwrap` in
-    /// `load_default_keymap`, so a binding to an action whose defining crate was
-    /// removed (e.g. the collab/channel removal) panics at startup. The keymap
-    /// list is derived from the asset tree at test time so new keymap files are
-    /// covered automatically.
+    /// Every built-in keymap asset must only bind registered actions. A
+    /// binding to an action whose defining crate was removed fails at load
+    /// (the collab/channel and swarm removals); since D96 `load_default_keymap`
+    /// degrades — the app starts and the failure is logged — but a stale
+    /// binding is still a defect, and this test keeps it out of the tree
+    /// before any rebuild. The keymap list is derived from the asset tree at
+    /// test time so new keymap files are covered automatically.
     #[gpui::test]
     fn test_keymap_assets_only_bind_registered_actions(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -5829,6 +5879,63 @@ mod tests {
                 KeymapFile::load_asset(&path, None, cx)
                     .unwrap_or_else(|error| panic!("error loading keymap asset {path}: {error}"));
             }
+        })
+    }
+
+    /// zed-kask: D96 — the startup crash-loop shape degrades: one loadable
+    /// binding plus one binding to a removed action loads the loadable
+    /// binding instead of panicking. This is the exact shape of the 2026-10-06
+    /// collab and 2026-10-28 swarm startup crashes, which upstream's
+    /// `load_default_keymap` unwrap turned into an unstartable app.
+    #[gpui::test]
+    fn built_in_keymap_partial_failure_degrades_instead_of_panicking(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let content = r#"[
+                {
+                    "bindings": {
+                        "ctrl-shift-alt-a": "test_only::ActionA",
+                        "ctrl-shift-alt-s": "swarm_panel::Toggle"
+                    }
+                }
+            ]"#;
+            let result = KeymapFile::load(content, cx);
+            assert!(
+                matches!(
+                    &result,
+                    KeymapFileLoadResult::SomeFailedToLoad { key_bindings, .. }
+                        if !key_bindings.is_empty()
+                ),
+                "fixture must produce a partial failure that still has loadable bindings"
+            );
+            let bindings = built_in_keymap_bindings_from_result(
+                "test fixture keymap",
+                result,
+                KeybindSource::Default,
+            );
+            assert_eq!(
+                bindings.len(),
+                1,
+                "the loadable binding survives the stale one"
+            );
+        })
+    }
+
+    /// zed-kask: D96 — an unparseable built-in keymap binds nothing and does
+    /// not panic.
+    #[gpui::test]
+    fn built_in_keymap_parse_failure_degrades_instead_of_panicking(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let result = KeymapFile::load("{ not json", cx);
+            assert!(matches!(
+                result,
+                KeymapFileLoadResult::JsonParseFailure { .. }
+            ));
+            let bindings = built_in_keymap_bindings_from_result(
+                "test fixture keymap",
+                result,
+                KeybindSource::Default,
+            );
+            assert!(bindings.is_empty(), "a parse failure binds nothing");
         })
     }
 

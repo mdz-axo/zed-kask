@@ -1000,9 +1000,7 @@ fn wire_field_name_matches_what_clients_send() {
 ///
 /// A kanban board does not need funding, and neither do spawned task agents: they
 /// run on the operator's own substrate, so there is nothing for the server to
-/// withhold. Before the local funding gate was removed, this call returned
-/// `permission_denied: "insufficient local credits: have 0, need 10 — fund via
-/// swarm_fund_local"` and never reached the work at all.
+/// withhold. The spawn error must never tell the operator to fund a ledger.
 ///
 /// The spawn still fails here — no inference port is wired in a test binary — but
 /// it must fail *past* the funding check. The assertion is therefore about which
@@ -1054,7 +1052,7 @@ async fn spawn_is_not_blocked_by_an_unfunded_ledger() {
         error.message
     );
     assert!(
-        !error.message.contains("swarm_fund_local"),
+        !error.message.contains("fund"),
         "the spawn path must not tell the operator to fund a ledger that is not a \
          gate. Got: {}",
         error.message

@@ -51,7 +51,7 @@ fn proposal(layer: &str) -> ExperimentProposeRequest {
                 description: "evaluator pass rate on the fixed set reaches 0.8".to_string(),
                 kind: RUBRIC_KIND_METRIC.to_string(),
                 verification: RubricVerification::ReportRef {
-                    harness: "swarm_eval_agent_local".to_string(),
+                    harness: "eval_harness".to_string(),
                 },
             },
             Rubric {
@@ -196,7 +196,7 @@ async fn full_protocol_runs_through_the_tool_seam() {
         .fitness_record(Parameters(FitnessRecordRequest {
             experiment_id: experiment_id.clone(),
             variant_id: challenger_id.clone(),
-            runs: vec!["swarm_eval_agent_local run 42".to_string()],
+            runs: vec!["eval_harness run 42".to_string()],
             run_count: 3,
             scores: AnyJsonValue(serde_json::json!({"pass_rate": 0.8, "total_tokens": 1200})),
             seal_id: Some(seal_id.clone()),
@@ -209,7 +209,7 @@ async fn full_protocol_runs_through_the_tool_seam() {
     assert_eq!(fitness["fitness"]["seal_id"], seal_id.as_str());
     assert_eq!(
         fitness["fitness"]["runs"][0],
-        "swarm_eval_agent_local run 42"
+        "eval_harness run 42"
     );
 
     // Select — the fossil resolves the experiment.
@@ -958,7 +958,7 @@ fn design_proposal(design_spec: serde_json::Value) -> ExperimentProposeRequest {
                     .to_string(),
                 kind: RUBRIC_KIND_METRIC.to_string(),
                 verification: RubricVerification::ReportRef {
-                    harness: "swarm_eval_agent_local".to_string(),
+                    harness: "eval_harness".to_string(),
                 },
             },
             Rubric {

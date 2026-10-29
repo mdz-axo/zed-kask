@@ -113,19 +113,51 @@ pub struct EdlLayer {
     pub ops: Vec<crate::transcript_select::EdlEntry>,
 }
 
-/// A recorded decision to project a correction layer with re-anchored
-/// timings: the working transcript interpolates each cardinality-changing
-/// edit's replacement tokens across its source range's span (equal
-/// slices), restoring timed consumers after insert/delete corrections.
-/// The layer names the correction it re-anchors; a newer correction
-/// supersedes it (the decision is per-correction). The projection is pure
-/// — recomputable from the source bundle and the correction at any time —
-/// so the layer records only the decision and its provenance.
+/**
+ * A recorded decision to project a correction layer with re-anchored
+ * timings: the working transcript interpolates each cardinality-changing
+ * edit's replacement tokens across its source range's span (equal
+ * slices), restoring timed consumers after insert/delete corrections.
+ * The layer names the correction it re-anchors; a newer correction
+ * supersedes it (the decision is per-correction). The projection is pure
+ * — recomputable from the source bundle and the correction at any time —
+ * so the layer records only the decision and its provenance.
+ */
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct RealignmentLayer {
     pub provenance: LayerProvenance,
     /// The correction layer this realignment re-anchors.
     pub correction_layer_id: String,
+}
+
+/// A scored voice-profile identification over a word range (suggest-only:
+/// the layer records the proposal, never an applied attribution — plan
+/// §7 Phase 3, T5). Carries the identification's own encoder fingerprint
+/// and the threshold version that produced it so every decision is
+/// auditable (T4). The fingerprint fields are inlined — stored layers
+/// deserialize independently of encoder evolution.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct IdentificationLayer {
+    pub provenance: LayerProvenance,
+    /// The enrolled voice profile this identification matched.
+    pub profile_id: String,
+    /// The profile's speaker name at identification time.
+    pub speaker_name: String,
+    /// The suggested word range.
+    pub start_word: usize,
+    pub end_word: usize,
+    /// The cosine similarity of the span embedding against the profile
+    /// centroid.
+    pub score: f64,
+    /// The top-1 minus runner-up similarity gap that won the match.
+    pub margin: f64,
+    /// The threshold policy that produced this decision (e.g.
+    /// `cos0.70-margin0.05-v1`).
+    pub threshold_version: String,
+    pub model_family: String,
+    pub weights_sha256: String,
+    pub preprocessing: String,
+    pub dimension: usize,
 }
 
 /// A transcript layer of any kind — the storage and tool-surface unit.
@@ -140,6 +172,7 @@ pub enum TranscriptLayer {
     Highlight(HighlightLayer),
     Edl(EdlLayer),
     Realignment(RealignmentLayer),
+    Identification(IdentificationLayer),
 }
 
 /// Named layer-validation failures — every variant names the broken
@@ -165,6 +198,10 @@ pub enum LayerValidationError {
     ConfidenceOutOfRange { confidence: f64 },
     #[error("EDL validation failed: {0}")]
     EdlSelection(SelectionError),
+    #[error("empty identification field: {field}")]
+    EmptyIdentificationField { field: &'static str },
+    #[error("identification margin {margin} is negative")]
+    NegativeMargin { margin: f64 },
 }
 
 impl TranscriptLayer {
@@ -178,6 +215,7 @@ impl TranscriptLayer {
             Self::Highlight(_) => "highlight",
             Self::Edl(_) => "edl",
             Self::Realignment(_) => "realignment",
+            Self::Identification(_) => "identification",
         }
     }
 
@@ -190,6 +228,7 @@ impl TranscriptLayer {
             Self::Highlight(layer) => &layer.provenance,
             Self::Edl(layer) => &layer.provenance,
             Self::Realignment(layer) => &layer.provenance,
+            Self::Identification(layer) => &layer.provenance,
         }
     }
 
@@ -274,6 +313,29 @@ impl TranscriptLayer {
                 // validated at its store time. Only the timing precondition
                 // applies: a realignment cannot anchor on an untimed
                 // transcript any more than the correction it re-anchors.
+            }
+            Self::Identification(layer) => {
+                check_range(layer.start_word, layer.end_word, words_count)?;
+                if layer.profile_id.trim().is_empty() {
+                    return Err(LayerValidationError::EmptyIdentificationField {
+                        field: "profile_id",
+                    });
+                }
+                if layer.speaker_name.trim().is_empty() {
+                    return Err(LayerValidationError::EmptyIdentificationField {
+                        field: "speaker_name",
+                    });
+                }
+                if layer.threshold_version.trim().is_empty() {
+                    return Err(LayerValidationError::EmptyIdentificationField {
+                        field: "threshold_version",
+                    });
+                }
+                if layer.margin < 0.0 {
+                    return Err(LayerValidationError::NegativeMargin {
+                        margin: layer.margin,
+                    });
+                }
             }
         }
         Ok(())

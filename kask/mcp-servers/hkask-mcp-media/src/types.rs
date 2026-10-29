@@ -863,3 +863,50 @@ pub struct LayersShotPassRequest {
     /// previous one is suppressed (default 0.5; 0.0 disables the guard).
     pub min_shot_length: Option<f64>,
 }
+
+/// A bounded source-PTS time range for the vision pass.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LayersTimeRangeRequest {
+    /// Range start in source-PTS seconds (>= 0).
+    pub start_sec: f64,
+    /// Range end in source-PTS seconds; omitted means to the probed media
+    /// duration.
+    pub end_sec: Option<f64>,
+}
+
+/// Request to generate semantic, object and OCR layers over a video's
+/// sampled frames via the bounded vision pass.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LayersSemanticPassRequest {
+    /// Absolute local path (or URL) of the source video to analyze.
+    pub media_path: String,
+    /// Optional gallery asset ID linking the produced layers to a gallery
+    /// asset.
+    pub gallery_asset_id: Option<String>,
+    /// Bound the pass to a source-PTS time range (mutually exclusive with
+    /// shot_layer_id).
+    pub time_range: Option<LayersTimeRangeRequest>,
+    /// Bound the pass to the shots of one stored shot layer (the
+    /// layers_shot_pass output) — each shot item is one chunk. Mutually
+    /// exclusive with time_range.
+    pub shot_layer_id: Option<String>,
+    /// Frames sampled per chunk (default 4, 1..=12).
+    pub frames_per_chunk: Option<u32>,
+    /// Chunk duration in seconds for time_range mode (default 5.0) — the
+    /// chunking granularity; ignored in shot mode (shots are the chunks).
+    pub chunk_duration_secs: Option<f64>,
+    /// Maximum chunks processed per call (default 8, 1..=64); a larger
+    /// plan returns a resume cursor.
+    pub max_chunks: Option<u32>,
+    /// Chunk index to resume from (the resume cursor of a prior call).
+    pub resume_from: Option<u32>,
+    /// Opt into structured outputs (v2): the schema rides in the prompt and
+    /// the structured-output counters are used — image inputs have no
+    /// provider-enforced strict-schema path (chat_json is text-only), so
+    /// the response names the mode actually used. Default false (v1).
+    pub structured: Option<bool>,
+    /// Optional model override (provider-prefixed). Default:
+    /// HKASK_MEDIA_PASS_MODEL, falling back to HKASK_MEDIA_VISION_MODEL —
+    /// an explicit per-call override wins.
+    pub model: Option<String>,
+}

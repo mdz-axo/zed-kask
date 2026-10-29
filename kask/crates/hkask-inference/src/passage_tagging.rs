@@ -634,16 +634,16 @@ mod tests {
     }
 
     /// expect: "The deployed tagging template's ID instructions hold for every caller's ID vocabulary, not just one's."
-    /// Root-cause pin for the 2026-10-23 swarm delegation failure
+    /// Root-cause pin for a cross-caller ID-vocabulary failure
     /// ("invalid passage-tagging response: unknown correlation ID
     /// 'item-0'"): the shared template claimed every ID is an
-    /// "item-<number>" string while the swarm caller sends
+    /// "item-<number>" string while another caller sends
     /// "chunk-<number>" (the corpus caller sends "item-<number>"), so a
     /// model obeying the template prose over the rendered headers returned
     /// an ID the validator correctly rejected. The template must state the
     /// echo contract caller-neutrally.
     /// pre: the deployed template renders a request whose IDs use the
-    /// swarm caller's chunk-<number> shape.
+    /// caller's chunk-<number> shape.
     /// post: the rendered prompt carries the actual IDs and carries no
     /// caller-specific ID-shape claim that contradicts them.
     #[test]
@@ -668,9 +668,9 @@ mod tests {
         );
         assert!(
             !rendered.contains("item-<number>"),
-            "the shared template must not claim a caller-specific ID shape: the \
-             2026-10-23 swarm failure was a model obeying the old 'item-<number>' \
-             prose over the rendered chunk-<number> headers"
+            "the shared template must not claim a caller-specific ID shape: a model \
+             obeying the old 'item-<number>' prose over the rendered \
+             chunk-<number> headers"
         );
     }
 }

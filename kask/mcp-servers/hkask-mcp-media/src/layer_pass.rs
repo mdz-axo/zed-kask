@@ -86,6 +86,55 @@ pub struct LayerPassResult<TOutput> {
     pub model: String,
 }
 
+/// The bounded chunk-plan guard: validates the plan is non-empty, the
+/// resume cursor is inside it, and the per-call chunk bound is at least
+/// one; returns the slice `[resume_from, end)` the call processes.
+fn plan_chunk_range(
+    plan_len: usize,
+    resume_from: usize,
+    max_chunks: usize,
+) -> Result<std::ops::Range<usize>, LayerPassError> {
+    if plan_len == 0 {
+        return Err(LayerPassError::ChunkPlan(
+            "no chunks to process — the caller degrades before the core".to_string(),
+        ));
+    }
+    if resume_from > plan_len {
+        return Err(LayerPassError::ChunkPlan(format!(
+            "resume cursor {resume_from} is past the chunk plan ({plan_len} chunks)"
+        )));
+    }
+    if max_chunks == 0 {
+        return Err(LayerPassError::ChunkPlan(
+            "max_chunks must be at least 1".to_string(),
+        ));
+    }
+    let end = (resume_from + max_chunks).min(plan_len);
+    Ok(resume_from..end)
+}
+
+/// Extract and typed-parse one chunk's model output, ticking the
+/// rejection counters (and the structured counters in structured mode) on
+/// failure — the shared tail of every inference leg.
+fn parse_chunk_output<TOutput: serde::de::DeserializeOwned>(
+    model_text: &str,
+    mode: PassMode,
+    rejections: &AtomicU64,
+    expected: &'static str,
+) -> Result<TOutput, LayerPassError> {
+    let extracted = hkask_types::json_extract::extract_json_from_response(model_text);
+    serde_json::from_str(&extracted).map_err(|_| {
+        rejections.fetch_add(1, Ordering::Relaxed);
+        if matches!(mode, PassMode::Structured) {
+            STRUCTURED_LAYER_PASS_REJECTIONS.fetch_add(1, Ordering::Relaxed);
+        }
+        LayerPassError::UnparseableOutput {
+            expected,
+            raw: truncate(&extracted, 200),
+        }
+    })
+}
+
 /// Run one bounded slice of a layer pass over pre-rendered chunk prompts:
 /// `chunk_prompts[resume_from .. resume_from + max_chunks]`, one inference
 /// call per chunk, typed parsing per chunk. When the plan extends past the
@@ -106,31 +155,15 @@ pub async fn run_layer_pass<TOutput: serde::de::DeserializeOwned>(
     rejections: &AtomicU64,
     expected: &'static str,
 ) -> Result<LayerPassResult<TOutput>, LayerPassError> {
-    if chunk_prompts.is_empty() {
-        return Err(LayerPassError::ChunkPlan(
-            "no chunks to process — the caller degrades before the core".to_string(),
-        ));
-    }
-    if resume_from > chunk_prompts.len() {
-        return Err(LayerPassError::ChunkPlan(format!(
-            "resume cursor {resume_from} is past the chunk plan ({} chunks)",
-            chunk_prompts.len()
-        )));
-    }
-    if max_chunks == 0 {
-        return Err(LayerPassError::ChunkPlan(
-            "max_chunks must be at least 1".to_string(),
-        ));
-    }
+    let range = plan_chunk_range(chunk_prompts.len(), resume_from, max_chunks)?;
     let model = resolve_layer_model(model_override)?;
     let strict = match mode {
         PassMode::PromptSchema => None,
         PassMode::Structured => Some(strict_layer_schema(schema)?),
     };
 
-    let end = (resume_from + max_chunks).min(chunk_prompts.len());
-    let mut outputs = Vec::with_capacity(end - resume_from);
-    for prompt in &chunk_prompts[resume_from..end] {
+    let mut outputs = Vec::with_capacity(range.len());
+    for prompt in &chunk_prompts[range.clone()] {
         let model_text = match mode {
             PassMode::PromptSchema => {
                 let result = inference
@@ -166,22 +199,66 @@ pub async fn run_layer_pass<TOutput: serde::de::DeserializeOwned>(
                     .to_string()
             }
         };
-        let extracted = hkask_types::json_extract::extract_json_from_response(&model_text);
-        let output: TOutput = serde_json::from_str(&extracted).map_err(|_| {
-            rejections.fetch_add(1, Ordering::Relaxed);
-            if matches!(mode, PassMode::Structured) {
-                STRUCTURED_LAYER_PASS_REJECTIONS.fetch_add(1, Ordering::Relaxed);
-            }
-            LayerPassError::UnparseableOutput {
-                expected,
-                raw: truncate(&extracted, 200),
-            }
-        })?;
+        let output: TOutput = parse_chunk_output(&model_text, mode, rejections, expected)?;
         outputs.push(output);
     }
     Ok(LayerPassResult {
         outputs,
-        resume_from: (end < chunk_prompts.len()).then_some(end),
+        resume_from: (range.end < chunk_prompts.len()).then_some(range.end),
+        model,
+    })
+}
+
+/// One vision chunk: the rendered prompt (the schema rides in it — vision
+/// inputs have no provider-enforced schema path) plus the base64 PNG
+/// images the chunk's sampled frames encode to.
+pub struct LayerVisionChunk {
+    pub prompt: String,
+    pub images: Vec<String>,
+}
+
+/// Run one bounded slice of a vision layer pass: one `generate_vision`
+/// call per chunk (the only image-carrying inference surface), the same
+/// chunk/resume plumbing, model chain, typed parse errors, and counters as
+/// the text leg. In structured mode the structured-output counters tick
+/// and the caller's prompt carries the schema — strict provider-side
+/// schema enforcement does not exist for image inputs (chat_json is
+/// prompt+schema text-only), so the mode is surfaced honestly by the tool
+/// rather than silently downgraded here.
+pub async fn run_layer_pass_vision<TOutput: serde::de::DeserializeOwned>(
+    inference: &Arc<dyn InferencePort>,
+    mode: PassMode,
+    model_override: Option<&str>,
+    chunks: &[LayerVisionChunk],
+    resume_from: usize,
+    max_chunks: usize,
+    attempts: &AtomicU64,
+    rejections: &AtomicU64,
+    expected: &'static str,
+) -> Result<LayerPassResult<TOutput>, LayerPassError> {
+    let range = plan_chunk_range(chunks.len(), resume_from, max_chunks)?;
+    let model = resolve_layer_model(model_override)?;
+    let mut outputs = Vec::with_capacity(range.len());
+    for chunk in &chunks[range.clone()] {
+        let result = inference
+            .generate_vision(
+                &chunk.prompt,
+                &chunk.images,
+                &LLMParameters::default(),
+                Some(&model),
+            )
+            .await
+            .map_err(LayerPassError::Inference)?;
+        attempts.fetch_add(1, Ordering::Relaxed);
+        if matches!(mode, PassMode::Structured) {
+            STRUCTURED_LAYER_PASS_ATTEMPTS.fetch_add(1, Ordering::Relaxed);
+        }
+        let output: TOutput = parse_chunk_output(&result.text, mode, rejections, expected)?;
+        outputs.push(output);
+    }
+    Ok(LayerPassResult {
+        outputs,
+        resume_from: (range.end < chunks.len()).then_some(range.end),
         model,
     })
 }

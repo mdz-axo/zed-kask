@@ -51,13 +51,7 @@ H6 uses one per-invocation monotonic `Arc<AtomicBool>`: caller Release-store, co
 
 Native result-task drop requests cancellation; user cancellation also waits for the worker. A constructor-held acknowledgement guard covers never-polled workers and teardown; the turn joins all receipts even after provider early exit, with missing acknowledgements surfaced as errors (`lisp_eval_tool.rs:374@LispEvalTool::run`, `:418@lisp_worker`; `thread.rs:3094@Thread::run_turn`, `:7754@ThreadEventStream::join_lisp_completions`, `:8149@ToolCallEventStream::register_lisp_completion`). A publication fence checks the result's old turn cancellation state before emitting buffered results. Weak pending-owner identity guards history insertion and deferred flushing, so old cleanup cannot mutate a successor (`thread.rs:4565@Thread::process_tool_result`, `:5688@Thread::owns_pending_message`, `:2630@Thread::cancel`).
 
-H7's authorized host decode/eval — the `host/lisp_eval` IPC surface that let
-MCP-server child processes run typed decoding/evaluation on the zed host — was
-removed 2026-10-28 with the swarm capability (commit `9a62f6a0bc`, removal-plan
-decision 3): the swarm server's local delegate was its only consumer, and
-`host_skill_tools.rs`, `HostSkillToolPort`, the lisp `InferenceMethod` dispatch
-arms and the H7 IPC test module are gone with it — `inference_ipc_server.rs`
-retains no lisp handling. The in-process surface is unchanged: the agent
+No host/IPC lisp surface exists: decode/evaluation runs in-process — the agent
 thread's `lisp_eval` background-spawns typed decoding/evaluation through the
 public shared `evaluate_lisp_controlled` (`lisp_eval_tool.rs:487`), with the
 H5 worker and H6 cancellation guards above; the pure entry remains

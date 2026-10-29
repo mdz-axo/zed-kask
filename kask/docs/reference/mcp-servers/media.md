@@ -31,7 +31,7 @@ research-evidence source.
 ```mermaid
 flowchart TD
     binary["main.rs binary — #[tokio::main] → run()"]
-    run["run() — hkask_mcp_media.rs:526"]
+    run["run() — hkask_mcp_media.rs:533"]
     port["InferencePort: vision/chat/embed via IPC; transcription child-local"]
     db["GalleryStore — SQLite file DB, no in-memory fallback"]
     ffmpeg["FfmpegRunner::detect — + YtDlpRunner::detect"]
@@ -52,8 +52,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-006
-verified_date: 2026-10-28 (media-layers landing re-verified: 74-tool pin, run() and MediaServer anchors re-pinned)
-verified_against: kask/mcp-servers/hkask-mcp-media/src/main.rs:6-9; kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:158-181 (MediaServer, 8 state fields),430-465 (combined_router and the 74-tool pin),526 (run())
+verified_date: 2026-10-28 (media-layers landing re-verified, voice-pass growth re-anchored: 80-tool pin, run() and MediaServer anchors)
+verified_against: kask/mcp-servers/hkask-mcp-media/src/main.rs:6-9; kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:158-181 (MediaServer, 8 state fields),436-471 (combined_router and the 80-tool pin),533 (run())
 status: VERIFIED
 -->
 
@@ -78,7 +78,7 @@ status: VERIFIED
 
 ## Bootstrap and configuration
 
-**Bootstrap pattern:** `kask/mcp-servers/hkask-mcp-media/src/main.rs:6-9` (`#[tokio::main] async fn main` → `hkask_mcp_media::run()`) → `run()` at `kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:519` → `hkask_mcp_server::run_server("hkask-mcp-media", env!("CARGO_PKG_VERSION"), ...)` at `kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:597`.
+**Bootstrap pattern:** `kask/mcp-servers/hkask-mcp-media/src/main.rs:6-9` (`#[tokio::main] async fn main` → `hkask_mcp_media::run()`) → `run()` at `kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:533` → `hkask_mcp_server::run_server("hkask-mcp-media", env!("CARGO_PKG_VERSION"), ...)` at `kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:611`.
 
 **Gallery DB:** durable file-backed SQLite at `{kask_data_dir}/mcp/media/gallery.db` (D28 — Standardized Artifact Storage), overridable via `HKASK_MEDIA_DB`. There is **no in-memory fallback**: a DB open failure aborts startup, because the fallback would make an outage look like an empty gallery. The file DB is unencrypted and therefore does **not** use `HKASK_DB_PASSPHRASE` (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:532-562`).
 

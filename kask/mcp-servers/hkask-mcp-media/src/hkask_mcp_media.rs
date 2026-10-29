@@ -453,7 +453,7 @@ impl rmcp::ServerHandler for MediaServer {}
 mod tool_surface_tests {
     use super::*;
 
-    // One macro call pins the surface two ways: the exact count (80) and
+    // One macro call pins the surface two ways: the exact count (81) and
     // the generated TOOL_NAMES set against the live rmcp surface. Catches
     // silent registration drops — a `#[tool]` impl block without
     // `#[tool_router]`, or a sub-router missing from `combined_router()`,
@@ -466,8 +466,8 @@ mod tool_surface_tests {
     hkask_mcp_server::tool_surface_pin!(
         MediaServer::combined_router(),
         "combined_router",
-        80,
-        tool_surface_is_exactly_80_registered_tools,
+        81,
+        tool_surface_is_exactly_81_registered_tools,
     );
 
     // Coverage: every registered tool must map to an OMC concept. Catches
@@ -6873,6 +6873,554 @@ mod tool_behavior_tests {
             error.to_string().contains("no chunks"),
             "the empty plan names the caller's duty: {error}"
         );
+    }
+
+    // ── Semantic vision pass contract tests (t4) ───────────────────────
+
+    /// The vision-capable layer-pass mock: the vision arm serves the canned
+    /// chunk output — the capability `layers_semantic_pass` requires (its
+    /// text arm is never reached and fails closed if it were).
+    struct VisionLayerMockPort {
+        vision_response: String,
+    }
+
+    crate::test_support::media_inference_stub! {
+        VisionLayerMockPort,
+        generate(self, _prompt): {
+            Box::pin(async {
+                Err(hkask_types::InferenceError::Connection(
+                    "text generate unused — the vision pass calls generate_vision".into(),
+                ))
+            })
+        },
+        generate_vision(self, _prompt, _images): {
+            let result = hkask_types::InferenceResult {
+                text: self.vision_response.clone(),
+                model: "mock-vision-model".to_string(),
+                usage: hkask_types::InferenceUsage {
+                    prompt_tokens: 1,
+                    completion_tokens: 1,
+                    total_tokens: 2,
+                    reported: true,
+                },
+                finish_reason: "stop".to_string(),
+                tool_calls: Vec::new(),
+                reasoning: None,
+                cost_usd: None,
+            };
+            Box::pin(async move { Ok(result) })
+        },
+    }
+
+    /// The vision-pass environment: the media test env, a real source.mp4,
+    /// and a server over the gallery whose inference port serves the
+    /// canned vision response — the `video_server_env` construction with
+    /// the pass capability swapped in (the capability-carrying constructor).
+    /// The tuple's reverse drop order keeps the guard discipline: the env
+    /// restores before the lock releases.
+    async fn vision_pass_env(
+        vision_response: String,
+    ) -> Result<
+        (
+            tokio::sync::MutexGuard<'static, ()>,
+            tempfile::TempDir,
+            ArtifactsEnvGuard,
+            tempfile::TempDir,
+            std::path::PathBuf,
+            MediaServer,
+        ),
+        Box<dyn std::error::Error>,
+    > {
+        let (env_lock, artifacts, env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let source = gallery_root.path().join("source.mp4");
+        create_real_video(&source).await?;
+        let port: Arc<dyn hkask_types::InferencePort> =
+            Arc::new(VisionLayerMockPort { vision_response });
+        let server = MediaServer::new(
+            hkask_types::WebID::new(),
+            port,
+            Arc::new(std::sync::Mutex::new(Some(GalleryState {
+                path: gallery_root.path().to_path_buf(),
+                mode: GalleryMode::ReadOnly,
+                gallery_id: Some(gallery.id.clone()),
+            }))),
+            store.clone(),
+            templates::create_env().expect("media templates must compile"),
+            video::ffmpeg::FfmpegRunner::detect(),
+            video::ytdlp::YtDlpRunner::detect(),
+            jobs::new_job_store(),
+            None,
+            Default::default(),
+        );
+        Ok((env_lock, artifacts, env, gallery_root, source, server))
+    }
+
+    /// The canned one-chunk vision output: caption, one event, one object
+    /// with an in-range box, one OCR item — the shape every kind's
+    /// normalization consumes.
+    fn canned_vision_response() -> String {
+        serde_json::json!({
+            "caption": {"text": "a solid blue test frame", "confidence": 0.9},
+            "events": [{"label": "static scene", "confidence": 0.8}],
+            "objects": [{
+                "label": "blue square",
+                "confidence": 0.7,
+                "box": {"x": 0.1, "y": 0.2, "w": 0.3, "h": 0.4},
+                "frame_index": 0
+            }],
+            "ocr": [{
+                "text": "TEST-2026",
+                "confidence": 0.6,
+                "box": {"x": 0.0, "y": 0.0, "w": 0.5, "h": 0.1},
+                "frame_index": 0
+            }]
+        })
+        .to_string()
+    }
+
+    fn semantic_pass_request(media_path: String) -> crate::types::LayersSemanticPassRequest {
+        crate::types::LayersSemanticPassRequest {
+            media_path,
+            gallery_asset_id: None,
+            time_range: Some(crate::types::LayersTimeRangeRequest {
+                start_sec: 0.0,
+                end_sec: Some(2.0),
+            }),
+            shot_layer_id: None,
+            frames_per_chunk: None,
+            chunk_duration_secs: None,
+            max_chunks: None,
+            resume_from: None,
+            structured: None,
+            model: Some("mock-vision-model".to_string()),
+        }
+    }
+
+    /// t4 AC1: the fixture yields an object item whose box lies within
+    /// 0..1 and whose frame asset id resolves to an existing gallery asset
+    /// with source_pts_sec inside the item range.
+    #[tokio::test]
+    async fn layers_semantic_pass_yields_objects_with_valid_boxes_and_resolvable_frames()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, _gallery_root, source, server) =
+            vision_pass_env(canned_vision_response()).await?;
+        let result = content_of(
+            &server
+                .layers_semantic_pass(Parameters(semantic_pass_request(
+                    source.to_string_lossy().into_owned(),
+                )))
+                .await?,
+        );
+        assert_eq!(result["status"], serde_json::json!("completed"));
+        assert_eq!(
+            result["coverage"]["chunking_mode"],
+            serde_json::json!("time_range")
+        );
+        let object_layer = result["layers"]
+            .as_array()
+            .ok_or("layers array")?
+            .iter()
+            .find(|layer| layer["kind"] == serde_json::json!("object"))
+            .ok_or("an object layer was stored")?;
+        let layer_id = object_layer["id"]
+            .as_str()
+            .ok_or("object layer id")?
+            .to_string();
+
+        let fetched = content_of(
+            &server
+                .layers_get(Parameters(crate::types::LayersGetRequest {
+                    layer_id: layer_id.clone(),
+                }))
+                .await?,
+        );
+        let items = fetched["layer"]["items"].as_array().ok_or("object items")?;
+        assert_eq!(items.len(), 1);
+        let item = &items[0];
+        let r#box = &item["payload"]["box"];
+        for name in ["x", "y", "w", "h"] {
+            let value = r#box[name].as_f64().ok_or("box value")?;
+            assert!(
+                (0.0..=1.0).contains(&value),
+                "box {name}={value} lies within 0..1"
+            );
+        }
+        assert_eq!(
+            r#box["x"].as_f64().unwrap_or(0.0) + r#box["w"].as_f64().unwrap_or(0.0),
+            0.4
+        );
+        assert_eq!(item["payload"]["confidence"], serde_json::json!(0.7));
+
+        let frame_asset_id = item["frame_asset_ids"][0]
+            .as_str()
+            .ok_or("frame asset ref")?
+            .to_string();
+        let frame_record = server
+            .gallery_store
+            .get_by_id(&frame_asset_id)
+            .map_err(|e| format!("frame asset lookup: {e}"))?;
+        assert!(!frame_record.missing, "the referenced frame asset exists");
+
+        let item_start = item["start_sec"].as_f64().ok_or("item start")?;
+        let item_end = item["end_sec"].as_f64().ok_or("item end")?;
+        let frame_entry = result["coverage"]["frames"]
+            .as_array()
+            .ok_or("coverage frames")?
+            .iter()
+            .find(|frame| frame["gallery_asset_id"] == serde_json::json!(frame_asset_id))
+            .ok_or("the frame appears in the coverage inventory")?;
+        let frame_pts = frame_entry["source_pts_sec"].as_f64().ok_or("frame pts")?;
+        assert!(
+            frame_pts >= item_start && frame_pts <= item_end,
+            "the frame's source_pts_sec {frame_pts} lies inside the item range [{item_start}, {item_end}]"
+        );
+        assert!(
+            result["coverage"]["items"]["ocr"]
+                .as_u64()
+                .is_some_and(|n| n >= 1),
+            "the OCR kind produced its items too"
+        );
+        Ok(())
+    }
+
+    /// t4 AC2: structured=true and structured=false both produce valid
+    /// stored layers through the capability-carrying constructor; the
+    /// response names the mode actually used (image inputs have no
+    /// provider-enforced strict schema — the structured run says so).
+    #[tokio::test]
+    async fn layers_semantic_pass_structured_and_prompt_modes_both_store_layers()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for structured in [false, true] {
+            let (_env_lock, _artifacts, _env, _gallery_root, source, server) =
+                vision_pass_env(canned_vision_response()).await?;
+            let mut request = semantic_pass_request(source.to_string_lossy().into_owned());
+            request.structured = Some(structured);
+            let result = content_of(
+                &server
+                    .layers_semantic_pass(Parameters(request))
+                    .await
+                    .expect("the pass stores layers in both modes"),
+            );
+            assert_eq!(result["status"], serde_json::json!("completed"));
+            let layers = result["layers"].as_array().ok_or("layers array")?;
+            assert_eq!(layers.len(), 3, "all three kinds stored: {layers:?}");
+            if structured {
+                assert_eq!(result["mode"]["requested"], serde_json::json!("structured"));
+                assert!(
+                    result["mode"]["note"].as_str().is_some_and(|note| {
+                        note.contains("no provider-enforced strict-schema path")
+                    }),
+                    "the structured run names the image-input limitation: {}",
+                    result["mode"]
+                );
+            } else {
+                assert_eq!(
+                    result["mode"]["requested"],
+                    serde_json::json!("prompt_schema")
+                );
+            }
+            for layer in layers {
+                assert_eq!(
+                    layer["provenance"]["parameters"]["structured"],
+                    serde_json::json!(structured),
+                    "provenance records the mode"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// t4 AC3: a plan beyond max_chunks processes the bounded slice and
+    /// returns the resume cursor with plan-vs-observed coverage; resuming
+    /// completes the plan.
+    #[tokio::test]
+    async fn layers_semantic_pass_beyond_max_chunks_returns_resume_cursor_with_coverage()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, _gallery_root, source, server) =
+            vision_pass_env(canned_vision_response()).await?;
+        let mut request = semantic_pass_request(source.to_string_lossy().into_owned());
+        request.chunk_duration_secs = Some(0.5);
+        request.max_chunks = Some(2);
+        let result = content_of(&server.layers_semantic_pass(Parameters(request)).await?);
+        assert_eq!(
+            result["resume_from"].as_u64(),
+            Some(2),
+            "the cursor names the next chunk: {}",
+            result["resume_from"]
+        );
+        assert_eq!(
+            result["coverage"]["planned_chunks"].as_u64(),
+            Some(4),
+            "plan-vs-observed reports the full plan"
+        );
+        assert_eq!(result["coverage"]["processed_chunks"].as_u64(), Some(2));
+
+        let mut resume = semantic_pass_request(source.to_string_lossy().into_owned());
+        resume.chunk_duration_secs = Some(0.5);
+        resume.max_chunks = Some(2);
+        resume.resume_from = Some(2);
+        let result = content_of(&server.layers_semantic_pass(Parameters(resume)).await?);
+        assert_eq!(
+            result["resume_from"],
+            serde_json::Value::Null,
+            "the plan is complete after resuming"
+        );
+        assert_eq!(result["coverage"]["processed_chunks"].as_u64(), Some(2));
+        Ok(())
+    }
+
+    /// Media without a video stream (audio-only) fails as a named
+    /// degradation naming the requirement — never a raw ffmpeg error.
+    #[tokio::test]
+    async fn layers_semantic_pass_audio_only_is_a_named_degradation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let source = gallery_root.path().join("audio-only.wav");
+        create_real_audio(&source).await?;
+        let media_path = source.to_string_lossy().into_owned();
+        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
+        let error = server
+            .layers_semantic_pass(Parameters(semantic_pass_request(media_path.clone())))
+            .await
+            .expect_err("audio-only media must fail the stream requirement");
+        let message = error.to_string();
+        assert!(
+            message.contains("failed_precondition"),
+            "classified failed_precondition: {message}"
+        );
+        assert!(
+            message.contains("video stream"),
+            "names the requirement: {message}"
+        );
+        let listed = content_of(
+            &server
+                .layers_list(Parameters(crate::types::LayersListRequest {
+                    media_path: Some(media_path.clone()),
+                    kind: None,
+                    limit: None,
+                }))
+                .await?,
+        );
+        assert_eq!(listed["count"].as_u64(), Some(0), "nothing is stored");
+        Ok(())
+    }
+
+    /// A missing media file fails as not_found naming the path.
+    #[tokio::test]
+    async fn layers_semantic_pass_missing_media_is_not_found() {
+        let server = make_server();
+        let error = server
+            .layers_semantic_pass(Parameters(semantic_pass_request(
+                "/nonexistent/semantic-pass-probe.mp4".to_string(),
+            )))
+            .await
+            .expect_err("missing media path fails");
+        let message = error.to_string();
+        assert!(
+            message.contains("not_found"),
+            "classified not_found: {message}"
+        );
+        assert!(
+            message.contains("/nonexistent/semantic-pass-probe.mp4"),
+            "names the missing path: {message}"
+        );
+    }
+
+    /// Shot mode chunks over the stored shot layer's items, and a shot
+    /// layer with no shots returns the t2-style no_shots note.
+    #[tokio::test]
+    async fn layers_semantic_pass_shot_mode_chunks_over_stored_shots_and_degrades_on_zero_shots()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, _gallery_root, source, server) =
+            vision_pass_env(canned_vision_response()).await?;
+        let media_path = source.to_string_lossy().into_owned();
+        // A real two-shot layer from the shot pass (the hard-cut fixture is
+        // not needed for chunking; the solid fixture has one shot, so build
+        // the plan from the hard-cut video in its own env).
+        let (_lock2, _art2, _env2, root2, store2, _driver2, gallery2) = media_test_env().await?;
+        let hard_cut = root2.path().join("hard-cut.mp4");
+        create_real_hard_cut_video(&hard_cut).await?;
+        let shot_server = server_with_gallery(store2.clone(), gallery2.id, root2.path());
+        let shot_layer = content_of(
+            &shot_server
+                .layers_shot_pass(Parameters(crate::types::LayersShotPassRequest {
+                    media_path: hard_cut.to_string_lossy().into_owned(),
+                    gallery_asset_id: None,
+                    threshold: None,
+                    min_shot_length: None,
+                }))
+                .await?,
+        );
+        let shot_layer_id = shot_layer["layer"]["id"]
+            .as_str()
+            .ok_or("shot layer id")?
+            .to_string();
+        assert_eq!(shot_layer["layer"]["items_count"].as_u64(), Some(2));
+
+        let mut request = semantic_pass_request(media_path.clone());
+        request.time_range = None;
+        request.shot_layer_id = Some(shot_layer_id.clone());
+        let result = content_of(&server.layers_semantic_pass(Parameters(request)).await?);
+        assert_eq!(result["status"], serde_json::json!("completed"));
+        assert_eq!(
+            result["coverage"]["chunking_mode"],
+            serde_json::json!("shot_layer")
+        );
+        assert_eq!(
+            result["coverage"]["processed_chunks"].as_u64(),
+            Some(2),
+            "each shot is one chunk"
+        );
+
+        // Zero shots in shot mode: the t2-style no_shots note, nothing stored.
+        let stored = content_of(
+            &server
+                .layers_store(Parameters(crate::types::LayersStoreRequest {
+                    media_path: media_path.clone(),
+                    gallery_asset_id: None,
+                    kind: crate::layer_store::MediaLayerKind::Shot,
+                    label: Some("empty shot layer".to_string()),
+                    provenance: crate::types::LayersProvenanceRequest {
+                        model: "user".to_string(),
+                        prompt_template: "researcher_annotation".to_string(),
+                    },
+                    items: vec![],
+                }))
+                .await?,
+        );
+        let empty_shot_layer_id = stored["id"].as_str().ok_or("stored layer id")?.to_string();
+        let mut request = semantic_pass_request(media_path.clone());
+        request.time_range = None;
+        request.shot_layer_id = Some(empty_shot_layer_id.clone());
+        let result = content_of(&server.layers_semantic_pass(Parameters(request)).await?);
+        assert_eq!(result["status"], serde_json::json!("no_shots"));
+        assert!(
+            result["note"]
+                .as_str()
+                .is_some_and(|note| note.contains("no shots")),
+            "the note names the degradation: {}",
+            result["note"]
+        );
+        let listed = content_of(
+            &server
+                .layers_list(Parameters(crate::types::LayersListRequest {
+                    media_path: Some(media_path),
+                    kind: Some(crate::layer_store::MediaLayerKind::Semantic),
+                    limit: None,
+                }))
+                .await?,
+        );
+        assert!(
+            listed["count"].as_u64().is_some_and(|count| count >= 1),
+            "the shot-mode pass stored its semantic layers"
+        );
+        Ok(())
+    }
+
+    /// Out-of-range boxes, confidences, and frame indices are named
+    /// rejections of the whole pass — nothing is stored, never a silent
+    /// clamp.
+    #[tokio::test]
+    async fn layers_semantic_pass_rejects_out_of_range_model_output()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let bad_outputs = [
+            (
+                "box outside 0..1",
+                serde_json::json!({
+                    "caption": {"text": "cap", "confidence": 0.5},
+                    "objects": [{
+                        "label": "bad box", "confidence": 0.5,
+                        "box": {"x": 1.5, "y": 0.0, "w": 0.1, "h": 0.1},
+                        "frame_index": 0
+                    }]
+                }),
+                "outside 0..1",
+            ),
+            (
+                "confidence outside 0..1",
+                serde_json::json!({
+                    "caption": {"text": "cap", "confidence": 1.7},
+                }),
+                "confidence 1.7 is outside 0..1",
+            ),
+            (
+                "frame index outside attached frames",
+                serde_json::json!({
+                    "caption": {"text": "cap", "confidence": 0.5},
+                    "ocr": [{
+                        "text": "t", "confidence": 0.5,
+                        "box": {"x": 0.0, "y": 0.0, "w": 0.1, "h": 0.1},
+                        "frame_index": 99
+                    }]
+                }),
+                "outside the attached frames",
+            ),
+        ];
+        for (name, output, expected_fragment) in bad_outputs {
+            let (_env_lock, _artifacts, _env, _gallery_root, source, server) =
+                vision_pass_env(output.to_string()).await?;
+            let error = server
+                .layers_semantic_pass(Parameters(semantic_pass_request(
+                    source.to_string_lossy().into_owned(),
+                )))
+                .await
+                .expect_err(name);
+            let message = error.to_string();
+            assert!(
+                message.contains("invalid_argument"),
+                "{name} is a caller-shaped rejection: {message}"
+            );
+            assert!(
+                message.contains(expected_fragment),
+                "{name} names the bound: {message}"
+            );
+            let listed = content_of(
+                &server
+                    .layers_list(Parameters(crate::types::LayersListRequest {
+                        media_path: Some(source.to_string_lossy().into_owned()),
+                        kind: None,
+                        limit: None,
+                    }))
+                    .await?,
+            );
+            assert_eq!(
+                listed["count"].as_u64(),
+                Some(0),
+                "{name}: nothing is stored"
+            );
+        }
+        Ok(())
+    }
+
+    /// Unparseable vision output surfaces as the pass core's typed error —
+    /// the unparseable-output class, never a silent empty result.
+    #[tokio::test]
+    async fn layers_semantic_pass_unparseable_output_surfaces_typed()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, _gallery_root, source, server) =
+            vision_pass_env("not-json {{{".to_string()).await?;
+        let error = server
+            .layers_semantic_pass(Parameters(semantic_pass_request(
+                source.to_string_lossy().into_owned(),
+            )))
+            .await
+            .expect_err("unparseable output must surface");
+        let message = error.to_string();
+        assert!(
+            message.contains("unavailable"),
+            "the unparseable-output class maps to unavailable (a model failure): {message}"
+        );
+        assert!(
+            message.contains("SemanticPassOutput"),
+            "names the expected shape: {message}"
+        );
+        assert!(
+            message.contains("not-json"),
+            "carries the raw model output: {message}"
+        );
+        Ok(())
     }
 
     #[tokio::test]

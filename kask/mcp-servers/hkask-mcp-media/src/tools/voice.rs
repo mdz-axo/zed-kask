@@ -3,7 +3,7 @@
 use crate::transcript_layers::TranscriptLayer;
 use crate::voice_profiles::{
     EncoderFingerprint, EnrollmentAudioEmbedding, NewVoiceEnrollment, OperatorAuthorization,
-    VoiceProfile, VoiceProfileError, VoiceProfileRemoval, VoiceProfileStore,
+    VoiceProfile, VoiceProfileError,
 };
 use crate::*;
 
@@ -70,29 +70,6 @@ fn map_voice_error(error: VoiceProfileError) -> McpToolError {
         ),
         other => McpToolError::internal(other.to_string()),
     }
-}
-
-fn remove_profile_and_derived(
-    driver: &dyn hkask_storage::database::driver::DatabaseDriver,
-    store: &VoiceProfileStore,
-    profile_id: &str,
-) -> Result<(VoiceProfileRemoval, usize), McpToolError> {
-    crate::transcript_store::ensure_schema(driver)
-        .map_err(|error| McpToolError::internal(error.to_string()))?;
-    // Derived layers are deleted first: if either database write fails, the
-    // profile remains as a durable retry handle instead of stranding layers.
-    let derived_layers_removed = driver
-        .execute(
-            "DELETE FROM transcript_layers
-             WHERE layer_kind = 'identification'
-               AND json_extract(payload_json, '$.profile_id') = ?1",
-            &[hkask_storage::database::value::DbValue::Text(
-                profile_id.to_string(),
-            )],
-        )
-        .map_err(|error| McpToolError::internal(error.to_string()))?;
-    let removal = store.remove_profile(profile_id).map_err(map_voice_error)?;
-    Ok((removal, derived_layers_removed))
 }
 
 fn single_speaker_evidence(
@@ -272,8 +249,9 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "voice_remove", async {
             let store = self.voice.profile_store().map_err(map_voice_error)?;
-            let (removal, derived_layers_removed) =
-                remove_profile_and_derived(&**self.gallery_store.driver(), &store, &profile_id)?;
+            let (removal, derived_layers_removed) = store
+                .remove_profile_and_derived(&**self.gallery_store.driver(), &profile_id)
+                .map_err(map_voice_error)?;
             Ok(serde_json::json!({
                 "profile_id": profile_id,
                 "profiles_removed": removal.profiles_removed,
@@ -305,9 +283,19 @@ impl MediaServer {
             let mut profiles_removed = 0;
             let mut embeddings_removed = 0;
             let mut derived_layers_removed = 0;
+            let mut skipped_refreshed = 0;
             for profile_id in &candidates {
-                let (removal, derived) =
-                    remove_profile_and_derived(&**self.gallery_store.driver(), &store, profile_id)?;
+                let Some((removal, derived)) = store
+                    .remove_stale_profile_and_derived(
+                        &**self.gallery_store.driver(),
+                        profile_id,
+                        &cutoff,
+                    )
+                    .map_err(map_voice_error)?
+                else {
+                    skipped_refreshed += 1;
+                    continue;
+                };
                 profiles_removed += removal.profiles_removed;
                 embeddings_removed += removal.embeddings_removed;
                 derived_layers_removed += derived;
@@ -318,6 +306,7 @@ impl MediaServer {
                 "profiles_removed": profiles_removed,
                 "embeddings_removed": embeddings_removed,
                 "derived_layers_removed": derived_layers_removed,
+                "skipped_refreshed": skipped_refreshed,
             }))
         })
         .await
@@ -330,7 +319,7 @@ mod tests {
     use crate::tools::educt::EductAnnotationCreateRequest;
     use crate::voice_profiles::{
         EncoderFingerprint, EnrollmentAudioEmbedding, NewVoiceEnrollment, OperatorAuthorization,
-        VoiceProfileRuntime,
+        VoiceProfileRuntime, VoiceProfileStore,
     };
 
     struct NoopPort;
@@ -769,6 +758,126 @@ mod tests {
             1,
             "the recently confirmed profile's derived layer must remain"
         );
+    }
+
+    #[tokio::test]
+    async fn confirmation_after_stale_selection_preserves_profile_and_layer() {
+        let fixture = tempfile::tempdir().expect("voice DB fixture");
+        let path = fixture.path().join("voice.db");
+        let store = VoiceProfileStore::open(&path.to_string_lossy(), "test-passphrase")
+            .expect("open voice store");
+        let profile = store.enroll(enrollment()).expect("seed profile");
+        let server = server(store);
+        let transcript_id = store_test_transcript(
+            &server,
+            vec![crate::transcript::TimedWord {
+                word: "alpha".to_string(),
+                start_ms: 0,
+                end_ms: 500,
+                confidence: None,
+            }],
+        )
+        .await;
+        seed_identification_layer(&server, &transcript_id, "derived-1", &profile.id);
+        let store = server.voice.profile_store().expect("voice store");
+        let selected = store
+            .stale_profile_ids("2998-01-01T00:00:00Z")
+            .expect("select stale profile");
+        assert_eq!(selected, vec![profile.id.clone()]);
+
+        // A separate open of the same DB confirms while pruning is paused
+        // after candidate selection but before any deletion.
+        let confirmation_store =
+            VoiceProfileStore::open(&path.to_string_lossy(), "test-passphrase")
+                .expect("open second voice store");
+        confirmation_store
+            .record_confirmed_match(&profile.id, "2999-01-01T00:00:00Z")
+            .expect("confirm before removal");
+        let removal = store
+            .remove_stale_profile_and_derived(
+                &**server.gallery_store.driver(),
+                &profile.id,
+                "2998-01-01T00:00:00Z",
+            )
+            .expect("recheck the selected profile");
+        assert!(removal.is_none(), "a refreshed profile must not be removed");
+        assert_eq!(
+            store
+                .list_profiles()
+                .expect("profiles after confirmation")
+                .len(),
+            1
+        );
+        assert_eq!(identification_layer_count(&server), 1);
+    }
+
+    #[tokio::test]
+    async fn two_store_removal_first_makes_confirmation_not_found() {
+        let fixture = tempfile::tempdir().expect("voice DB fixture");
+        let path = fixture.path().join("voice.db");
+        let store = VoiceProfileStore::open(&path.to_string_lossy(), "test-passphrase")
+            .expect("open voice store");
+        let profile = store.enroll(enrollment()).expect("seed profile");
+        let server = server(store.clone());
+        let transcript_id = store_test_transcript(
+            &server,
+            vec![crate::transcript::TimedWord {
+                word: "alpha".to_string(),
+                start_ms: 0,
+                end_ms: 500,
+                confidence: None,
+            }],
+        )
+        .await;
+        seed_identification_layer(&server, &transcript_id, "derived-1", &profile.id);
+        let confirmation_store =
+            VoiceProfileStore::open(&path.to_string_lossy(), "test-passphrase")
+                .expect("open second voice store");
+        let (rechecked_tx, rechecked_rx) = std::sync::mpsc::channel();
+        let (continue_tx, continue_rx) = std::sync::mpsc::channel();
+        let (attempt_tx, attempt_rx) = std::sync::mpsc::channel();
+        let gallery = server.gallery_store.driver().clone();
+        let profile_id = profile.id.clone();
+        let remover_profile_id = profile_id.clone();
+        let remover = std::thread::spawn(move || {
+            store.remove_stale_profile_and_derived_with_recheck_hook(
+                gallery.as_ref(),
+                &remover_profile_id,
+                "2998-01-01T00:00:00Z",
+                || {
+                    rechecked_tx.send(()).expect("signal stale recheck");
+                    continue_rx.recv().expect("continue stale removal");
+                },
+            )
+        });
+        rechecked_rx.recv().expect("wait for stale recheck");
+        let confirmer_profile_id = profile_id.clone();
+        let confirmer = std::thread::spawn(move || {
+            attempt_tx.send(()).expect("signal confirmation attempt");
+            confirmation_store.record_confirmed_match(&confirmer_profile_id, "2999-01-01T00:00:00Z")
+        });
+        attempt_rx.recv().expect("wait for confirmation attempt");
+        continue_tx.send(()).expect("release stale removal");
+        let removal = remover
+            .join()
+            .expect("join stale removal")
+            .expect("execute stale removal");
+        let confirmation = confirmer
+            .join()
+            .expect("join confirmation")
+            .expect_err("confirmation must follow the completed removal");
+        assert!(
+            matches!(
+                removal,
+                crate::voice_profiles::StaleProfileRemoval::Removed { .. }
+            ),
+            "the recheck transaction must remove first"
+        );
+        assert!(
+            matches!(confirmation, VoiceProfileError::ProfileNotFound(_)),
+            "confirmation must not report success after removal"
+        );
+        assert_eq!(identification_layer_count(&server), 0);
     }
 
     #[tokio::test]

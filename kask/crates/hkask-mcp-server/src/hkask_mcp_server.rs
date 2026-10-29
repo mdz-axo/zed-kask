@@ -133,7 +133,7 @@ macro_rules! tool_surface_pin {
 ///   directions: every registered tool has a mapping, and every
 ///   mapped name (found by `$predicate` over this file's quoted
 ///   strings) is a registered tool — the phantom-name catch
-///   (live 2026-10-18: `swarm_delete_local`, a typo, passed coverage);
+///   (live 2026-10-18: a typo'd phantom tool name passed coverage);
 /// - an `unknown_tool_has_no_axes` test (no default concept for a
 ///   non-registered name).
 ///
@@ -267,8 +267,8 @@ macro_rules! dual_axis_annotate {
                 }
                 // The reverse direction: every name the mapping claims
                 // must be a registered tool. Coverage alone let a
-                // phantom name sit in the swarm mapping undetected
-                // (live 2026-10-18: `swarm_delete_local`, a typo,
+                // phantom name sit in a mapping undetected
+                // (live 2026-10-18: a typo'd tool name,
                 // matched no call site and still passed coverage).
                 let ontology_src = std::fs::read_to_string(
                     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

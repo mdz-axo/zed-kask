@@ -15,10 +15,7 @@ sets. Eight tutorials were folded on 2026-09-16; on 2026-09-28 the eight
 per-crate how-to documents were folded into their set references (each reference
 gained a Procedures section) and the hkask-tool-port explanation was folded into
 its reference; `hkask-mcp-server/tutorial.md` is the one retained
-tutorial. The `swarm_system` set was removed 2026-10-28 with the swarm
-capability (the executed removal plan is
-[`plans/swarm-removal-plan-2026-10-28.md`](../plans/swarm-removal-plan-2026-10-28.md)).
-The count is the current filesystem result under
+tutorial. The count is the current filesystem result under
 `kask/docs/diataxis/*/*.md` on 2026-10-28, excluding this index.
 
 Artifacts are expected to carry repo-relative implementation evidence. This

@@ -31,6 +31,7 @@ pub fn create_env() -> Result<Environment<'static>, crate::MediaError> {
         ),
         ("educt_correction_pass", EDUCT_CORRECTION_PASS),
         ("educt_highlight_pass", EDUCT_HIGHLIGHT_PASS),
+        ("layers_semantic_pass", LAYERS_SEMANTIC_PASS),
     ];
     for (name, source) in templates {
         env.add_template(name, source).map_err(|e| {
@@ -52,6 +53,36 @@ pub fn render(
     tmpl.render(vars)
         .map_err(|e| crate::MediaError::Template(format!("Render error for '{}': {}", name, e)))
 }
+
+/// Media layers semantic vision pass — one chunk's prompt. The chunk's
+/// sampled frames arrive as images (the schema rides here: vision inputs
+/// have no provider-enforced schema path); the model returns per-kind
+/// items keyed by frame_index, never timestamps.
+const LAYERS_SEMANTIC_PASS: &str = r#"You are analyzing one sampled chunk of a video recording.
+
+The chunk covers [{{ start_sec }}, {{ end_sec }}) seconds on the source
+timeline. The attached images are the chunk's sampled frames, in order;
+their source-PTS seconds are: {{ frame_pts }}. Frame indices in your
+output refer to this attached order, 0-based.
+
+Return ONLY a JSON object matching this JSON Schema:
+{{ schema }}
+
+Rules:
+- "caption": one or two sentences describing what the frames show,
+  with your confidence in the reading.
+- "events": discrete observed events (a door opening, a hand wave) with
+  a label and confidence — empty if none.
+- "objects": visible objects with a normalized box {x, y, w, h} where x,y
+  is the top-left corner in 0..1 relative to the frame image and w,h its
+  extent — every value in 0..1, x+w <= 1, y+h <= 1 (the box lies inside
+  the frame) — plus a confidence in 0..1 and the frame_index it was seen
+  in. Empty if none.
+- "ocr": visible on-screen text with its box, confidence, and
+  frame_index — empty if none.
+- Report only what the frames show; do not invent events, objects, or
+  text. Reflect uncertainty in the confidence values.
+- Output the JSON object only — no prose, no code fences."#;
 
 /// Educt paragraph pass — the model sees indexed words and the schema of
 /// the expected output; it returns word indices only (never timestamps).

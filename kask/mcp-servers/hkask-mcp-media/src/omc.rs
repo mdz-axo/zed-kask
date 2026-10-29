@@ -167,7 +167,8 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         | "layers_store"
         | "layers_list"
         | "layers_get"
-        | "layers_shot_pass" => Some(VERSION_INFO),
+        | "layers_shot_pass"
+        | "layers_semantic_pass" => Some(VERSION_INFO),
         _ => None,
     }
 }

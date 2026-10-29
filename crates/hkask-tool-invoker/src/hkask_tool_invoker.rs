@@ -4,8 +4,7 @@
 //! This crate holds two things:
 //!
 //! 1. The [`ToolInvoker`] trait + its process-global accessor
-//!    ([`set_tool_invoker`] / [`shared_tool_invoker`]), relocated verbatim from
-//!    the former swarm panel's `tool_invoker.rs` (historical origin). The production impl
+//!    ([`set_tool_invoker`] / [`shared_tool_invoker`]). The production impl
 //!    (`PanelToolInvoker`) lives in `crates/zed/src/main.rs` and delegates to
 //!    `McpRuntime` (which implements `ToolPort`), so every call flows through
 //!    the same metered, call-capped path as agent-initiated tool

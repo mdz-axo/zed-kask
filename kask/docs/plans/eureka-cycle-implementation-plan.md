@@ -93,7 +93,7 @@ precisely the instruments for that problem.
 | propose ideas, multiple directions in parallel | `swarm_fanout_local` / `swarm_execute_plan_local`; `scenario_brainstorm` personas; the `hypothesis-framer` → `falsifiability` chain | tool schemas live in the session surface; pipeline named at `.agents/skills/hypothesis-testing/SKILL.md:15-27` |
 | keep context from prior experiments | `population_query`, `lineage_read`, curator recall (`curator_semantic_search` / `curator_federated_search`), `swarm_recall_local` | live: `population_query` returned 4 resolved experiments with full rubrics, budgets and pre-registered predictions |
 | implement + run an experiment | swarm delegation to coding agents; in-tree terminal/edit tools; job execution | live surface |
-| validate (reward hacks + variance) | `experiment_seal` (SHA-256 fingerprint + headroom pre-check), deterministic evaluators (`swarm_eval_agent_local`), `lean_check`, noise bands, the anti-gaming trio | `kask/docs/research/experimentation-reference-model.md` §3 step 3 (:71), §4 (:77) |
+| validate (reward hacks + variance) | `experiment_seal` (SHA-256 fingerprint + headroom pre-check), deterministic evaluators, `lean_check`, noise bands, the anti-gaming trio | `kask/docs/research/experimentation-reference-model.md` §3 step 3 (:71), §4 (:77) |
 | use results to choose the next experiment | `selection_record` (typed verdicts incl. `scientific_outcome`), `final_evaluation_record`, and the machine-side agenda generator (regulation signals + Brier history → `proposed` experiments) | reference model §3 step 4 (:72); `si-agenda-generator` (`.agents/skills/self-improvement/SKILL.md`, Plan-step extension; repair plan §P8.5 :569-572) |
 | retention / compounding | git germline + registry fossil record, `lineage_read`, curator memory via human-gated candidates, therapy reification | reference model §1 (:30); D5 ruling (curator memory record `04735a35`) |
 | the recursion (each output improves the researcher) | GEPA prompt evolution (`self-improvement`); prediction-Brier calibration of the agenda loop | repair plan §P8.5 :569-572 (E3: "0/3 claims held — the next agenda's confidences calibrate against a demonstrated hit rate of zero") |
@@ -208,7 +208,7 @@ becoming durable state):
 | 4 | FUNDING GATE — the PI chairs: rank candidates, fund K within an energy budget | human chair | the gate for steps 2-3; the board's `ready` state records it |
 | 5 | FRAME — per funded candidate: hypothesis-framer (FINER/PICO) → falsifiability (admission, rivals, counterfactuals, discriminating tests) → experimental-design (versioned DesignSpec) | P:propose-verify | `falsifiability-admit` + the declare boundary (step 6 schema validation) |
 | 6 | DECLARE + SEAL — `experiment_propose` (pre-registered prediction + confidence, rubrics, `budget.max_runs`, optional `linked_goal_id`) → `variant_register` (baseline) → the baseline's **pre-seal measurement** via `fitness_record` (`seal_id: null`) — the order the T0 rehearsal was taught by the server's typed refusal — → `experiment_seal` (fingerprint + headroom pre-check; single-arm designs supply `scientific_headroom`, never a fabricated pass rate) | D | experimentation server (schema validation, SHA-256 fingerprint, typed no-headroom refusal) |
-| 7 | EXECUTE — the delegated lifecycle runs the bound protocol (swarm delegation, harness runs, data pulls) | P execution, D measurement | sealed rubric evaluators (`swarm_eval_agent_local`), `lean_check`, pin suites |
+| 7 | EXECUTE — the delegated lifecycle runs the bound protocol (delegated worktree execution, harness runs, data pulls) | P execution, D measurement | sealed rubric evaluators, `lean_check`, pin suites |
 | 8 | MEASURE — `fitness_record` under the server-enforced budget | D | experimentation server (typed `BudgetExhausted` refusal — surface it, never retry silently) |
 | 9 | RESOLVE — `final_evaluation_record` on the selection set; verdict at the algedonic review (the human chair); `selection_record` | human chair, D record | the algedonic review board (single selection surface) |
 | 10 | DEPOSIT + BACK-EDGE — grounding-verified study report (on the question's board card + the registry; **no per-cycle doc file**); memory candidates proposed for review (D5); evaluator-hardening candidate filed if gaming was detected (`evolve_mcp_tool_schema`); follow-up questions spawned/filed | P report, D gates | `grounding-verify` over the report's claims; the human review for memory; kanban state moves |
@@ -385,7 +385,7 @@ VSM map — S5: the PI (question, values via the Magnifica Humanitas charter,
 closure). S4: generation fanout + personas + the agenda generator's signal scan
 (future-facing). S3: the eureka-cycle skill (orchestration, routing, funding
 allocation). S2: the registry + the board (shared ledgers, dedup, one selection
-surface — anti-oscillation). S1: executors (swarm agents, `swarm_eval_agent_local`,
+surface — anti-oscillation). S1: executors (delegated worktree agents,
 `lean_check`, research runs, FRED/DBnomics/WB pullers). Algedonic channel: the
 algedonic review board + curator alert log → the PI (open; verified live: the board
 exists among the 9, escalations surface via `curator_status`).

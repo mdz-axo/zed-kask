@@ -239,8 +239,7 @@ impl AgentTool for SkillTool {
 }
 
 /// Find a model-invocable skill and check its declared dependencies (the
-/// `skill` tool's resolution step; the former delegated `host/skill`
-/// dispatch was removed 2026-10-28 with the swarm capability).
+/// `skill` tool's resolution step).
 pub fn resolve_invocable_skill(
     snapshot: &[Skill],
     name: &str,

@@ -72,7 +72,7 @@ P1–P3 are enforced through explicit capability boundaries: capability *separat
 2. **The parent grant** — the authority the narrowing is measured against. `worktree_tools` intersects the requested narrowing with the grant's tool set (`kask_bridge/src/delegation_grants.rs:67`) and requires the grant to carry `host/create_worktree_thread`; a missing token or a poisoned lock yields no ceiling at all. Grants are minted parent-side from `kask.mcp.delegated_tools` (`kask_bridge/src/mcp_servers.rs:502`, minting at `delegation_grants.rs:16`) and revoked before an operator-requested unload (`delegation_grants.rs:54`). This is the gate a caller cannot write.
 3. **The per-server MCP env/credential allowlists** (`kask_bridge/src/mcp_servers.rs`), fail-closed on an unknown server id.
 
-There is no fourth gate. The former fourth boundary — each swarm agent card's declared `mcp_tools` allowlist — was removed 2026-10-28 with the swarm server (DIVERGENCE.md retired D33). Per P4's object-capability reading, boundary 1 is explicitly *not* a boundary on its own — "a per-call token check whose value the caller supplies is not a boundary" — which is precisely why boundary 2 exists: authority attenuates through the child's narrowing, it never amplifies. Information flow is **not** gated: Defense Layer 5 (information flow control) is **absent by decision** (taint check removed: its inputs were constants), in the same register as Layer 3 (no instruction-hierarchy layer, by decision). Treat every tool path as taint-unaware.
+There is no fourth gate. Per P4's object-capability reading, boundary 1 is explicitly *not* a boundary on its own — "a per-call token check whose value the caller supplies is not a boundary" — which is precisely why boundary 2 exists: authority attenuates through the child's narrowing, it never amplifies. Information flow is **not** gated: Defense Layer 5 (information flow control) is **absent by decision** (taint check removed: its inputs were constants), in the same register as Layer 3 (no instruction-hierarchy layer, by decision). Treat every tool path as taint-unaware.
 
 ---
 
@@ -280,6 +280,6 @@ The editor process hosts the Agent panel, Curator, shared Regulation graph, and 
 [^bibo]: D'Arcus, B. & Giasson, F. *Bibliographic Ontology (BIBO)*. <https://bibliontology.com/>.
 [^pko]: Carriero, V. A. et al. (2024). "The Procedural Knowledge Ontology (PKO)." ISWC 2024 / PERKS Project. <https://w3id.org/pko>.
 [^miller-ocap]: Miller, M. S. (2006). *Robust Composition: Towards a Unified Approach to Access Control and Concurrency Control*. Johns Hopkins University.
-[^onto4mat]: Hepworth, A. J., Baxter, D. P., & Abbass, H. A. (2022). Onto4MAT: A Swarm Shepherding Ontology for Generalized Multiagent Teaming. *IEEE Access*, 10, 59843–59861. https://doi.org/10.1109/ACCESS.2022.3180032 — prior art for multi-agent teaming concepts. Its interpretive consumer (`hkask-mcp-swarm/src/local_runtime.rs` comments) was removed 2026-10-28 with the swarm capability; the reference is retained as historical prior art.
+[^onto4mat]: Hepworth, A. J., Baxter, D. P., & Abbass, H. A. (2022). Onto4MAT: A Swarm Shepherding Ontology for Generalized Multiagent Teaming. *IEEE Access*, 10, 59843–59861. https://doi.org/10.1109/ACCESS.2022.3180032 — prior art for multi-agent teaming concepts.
 
 ---

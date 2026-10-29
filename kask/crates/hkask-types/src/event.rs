@@ -453,19 +453,17 @@ impl SpanKind {
 // zed's main.rs through PanelToolInvoker) polls the algedonic review board
 // every 10s to sense the awaiting-review count. Those polls arrive at the
 // governed MCP runtime under the kask-panel persona — the identity
-// PanelToolInvoker stamps on every call. The persona was renamed
-// swarm-panel → kask-panel with the swarm panel's removal (2026-10-28);
-// existing journal rows keep the historical name (verified 2026-10-02: the
-// pre-rename observer owned 91,355 of the journal's reg.tool.completed
-// records, 89,631 of them the two sensing tools below — pure write-only
-// audit volume with no reader).
+// PanelToolInvoker stamps on every call (verified 2026-10-02: the persona
+// owns 91,355 of the journal's reg.tool.completed records, 89,631 of them
+// the two sensing tools below — pure write-only audit volume with no
+// reader).
 
 /// The machine persona shared by the kask panels and the regulation
 /// loop's board connector — `PanelToolInvoker` stamps every call with
 /// `WebID::for_agent_name(KASK_PANEL_PERSONA)`, so the stamp and this
-/// journal-skip filter share one constant (a stamp rename that misses this
-/// constant silently re-journals the 10s sensing polls — observed in the
-/// 2026-10-28 removal's loose-end sweep, pinned by the test below).
+/// journal-skip filter share one constant (a stamp that drifts from the
+/// filter silently re-journals the 10s sensing polls — pinned by the test
+/// below).
 pub const KASK_PANEL_PERSONA: &str = "kask-panel";
 
 /// The regulation loop's board-sensing reads — the 10s
@@ -602,10 +600,9 @@ mod tests {
     }
 
     /// The stamp site (`PanelToolInvoker`, crates/zed/src/main.rs) and the
-    /// journal-skip filter must share one persona value. The 2026-10-28
-    /// swarm removal renamed the stamp to `kask-panel` while this constant
-    /// still read `swarm-panel` — the filter silently matched nothing and
-    /// the 10s sensing polls would have re-polluted the journal.
+    /// journal-skip filter must share one persona value — if the stamp
+    /// literal drifts from this constant, the filter silently matches
+    /// nothing and the 10s sensing polls re-pollute the journal.
     #[test]
     fn kask_panel_persona_matches_the_stamp_site_literal() {
         assert_eq!(KASK_PANEL_PERSONA, "kask-panel");

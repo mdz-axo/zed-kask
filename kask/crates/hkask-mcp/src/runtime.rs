@@ -518,9 +518,7 @@ impl McpRuntime {
     /// capability check: the prior gate compared a `resource_id` built
     /// from the same tool name passed to `invoke`, so it was a value against
     /// itself. Authority is enforced upstream — at the inference IPC
-    /// `tool_allowlist` and the per-server env allowlists (the former
-    /// swarm-card `mcp_tools` allowlist was removed 2026-10-28 with the
-    /// swarm capability) — not re-checked here. Must be called before the first invocation.
+    /// `tool_allowlist` and the per-server env allowlists — not re-checked here. Must be called before the first invocation.
     #[must_use]
     pub fn with_governance(
         mut self,
@@ -1498,8 +1496,7 @@ impl Default for McpRuntime {
 // comparison was a value against itself and could not deny. Authority lives at
 // the boundaries that hold a list the caller cannot choose: the per-request
 // `tool_allowlist` on the inference IPC dispatch and the per-server MCP
-// env/credential allowlists (the former swarm-card `mcp_tools` allowlist was
-// removed 2026-10-28 with the swarm capability).
+// env/credential allowlists.
 
 impl hkask_tool_port::ToolPort for McpRuntime {
     fn invoke<'a>(

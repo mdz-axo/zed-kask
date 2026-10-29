@@ -52,7 +52,7 @@ Does the improvement generalize to held-out tasks? Use:
 
 ### 4. Track Regressions
 
-Did the update break previously solved tasks? `regressions` is the number of tasks whose after-run `tasks[].pass_rate` is below the same task's baseline `tasks[].pass_rate`, on the identical recorded harness task set. (The former `swarm_eval_agent_local` harness was removed 2026-10-28 with the swarm capability — until a replacement executor is named, no reports exist and the `none_available` path applies.) The invoking agent computes this count with `lisp_eval` from both recorded reports — emit `regressions: null` in your response; do not count it yourself. The paper requires: "Iterative self-modification can induce goal drift, reward hacking, and compounding errors... evaluation should track regression rates on previously solved tasks" (Section 8.1.1).
+Did the update break previously solved tasks? `regressions` is the number of tasks whose after-run `tasks[].pass_rate` is below the same task's baseline `tasks[].pass_rate`, on the identical recorded harness task set. (Until a replacement executor is named, no harness reports exist and the `none_available` path applies.) The invoking agent computes this count with `lisp_eval` from both recorded reports — emit `regressions: null` in your response; do not count it yourself. The paper requires: "Iterative self-modification can induce goal drift, reward hacking, and compounding errors... evaluation should track regression rates on previously solved tasks" (Section 8.1.1).
 
 ### 5. Account for Resource Efficiency
 

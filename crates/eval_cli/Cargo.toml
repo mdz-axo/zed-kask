@@ -71,8 +71,7 @@ release_channel.workspace = true
 # remote_server's dev closure — exposing `RemoteConnectionOptions::Mock`
 # to a `remote_connection` unit whose own `test-support` (and with it the
 # Mock match arm) is off: E0004. A dev-dep pairing does not reach this
-# normal-dependency unit (the swarm_panel precedent), so the request rides
-# a NORMAL dep.
+# normal-dependency unit, so the request rides a NORMAL dep.
 remote_connection = { workspace = true, features = ["test-support"] }
 reqwest_client.workspace = true
 serde.workspace = true

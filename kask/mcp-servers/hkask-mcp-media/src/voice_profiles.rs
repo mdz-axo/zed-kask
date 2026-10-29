@@ -4,7 +4,7 @@
 //! transcript exports, corpus handoff, or curator memory. Matching is outside
 //! this module's Phase 2 storage and lifecycle contract.
 
-use hkask_storage::database::driver::DatabaseDriver;
+use hkask_storage::database::driver::{DatabaseDriver, TransactionOps};
 use hkask_storage::database::types::DbError;
 use hkask_storage::database::value::{DbRow, DbValue};
 use hkask_storage::{Database, DatabaseError, SqliteDriver};
@@ -84,6 +84,22 @@ pub struct VoiceProfileRemoval {
 enum VoiceProfileUnavailable {
     MissingCredential(String),
     Storage(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StaleProfileRemoval {
+    Removed {
+        removal: VoiceProfileRemoval,
+        derived_layers_removed: usize,
+    },
+    Refreshed,
+    Missing,
+}
+
+enum ProfileStaleness {
+    Stale,
+    Refreshed,
+    Missing,
 }
 
 #[derive(Clone, Default)]
@@ -174,6 +190,8 @@ pub enum VoiceProfileError {
     Unavailable(String),
     #[error("voice-profile credential unavailable: {0}")]
     MissingCredential(String),
+    #[error("derived identification layer cleanup failed: {0}")]
+    DerivedLayers(String),
     #[error("invalid voice enrollment: {0}")]
     InvalidEnrollment(String),
     #[error("voice profile {profile_id} has an incompatible encoder fingerprint")]
@@ -363,13 +381,17 @@ impl VoiceProfileStore {
         profile_id: &str,
         confirmed_at: &str,
     ) -> Result<(), VoiceProfileError> {
-        let changed = self.driver.execute(
-            "UPDATE voice_profiles SET last_confirmed_match_at = ?2 WHERE id = ?1",
-            &[
-                DbValue::Text(profile_id.to_string()),
-                DbValue::Text(confirmed_at.to_string()),
-            ],
-        )?;
+        let mut changed = 0;
+        self.driver.transaction(&mut |tx| {
+            changed = tx.execute(
+                "UPDATE voice_profiles SET last_confirmed_match_at = ?2 WHERE id = ?1",
+                &[
+                    DbValue::Text(profile_id.to_string()),
+                    DbValue::Text(confirmed_at.to_string()),
+                ],
+            )?;
+            Ok(())
+        })?;
         if changed == 0 {
             return Err(VoiceProfileError::ProfileNotFound(profile_id.to_string()));
         }
@@ -390,14 +412,18 @@ impl VoiceProfileStore {
             .collect()
     }
 
-    pub fn remove_profile(
+    pub fn remove_profile_and_derived(
         &self,
+        gallery_driver: &dyn DatabaseDriver,
         profile_id: &str,
-    ) -> Result<VoiceProfileRemoval, VoiceProfileError> {
+    ) -> Result<(VoiceProfileRemoval, usize), VoiceProfileError> {
+        crate::transcript_store::ensure_schema(gallery_driver)
+            .map_err(|error| VoiceProfileError::DerivedLayers(error.to_string()))?;
         let mut removal = VoiceProfileRemoval {
             profiles_removed: 0,
             embeddings_removed: 0,
         };
+        let mut derived_layers_removed = 0;
         self.driver.transaction(&mut |tx| {
             let segment_row = tx.query_optional(
                 "SELECT COUNT(*) FROM voice_profile_segments WHERE profile_id = ?1",
@@ -416,6 +442,14 @@ impl VoiceProfileStore {
             return Err(VoiceProfileError::ProfileNotFound(profile_id.to_string()));
         }
         Ok(removal)
+    }
+
+    fn lifecycle_guard(&self) -> Result<MutexGuard<'_, ()>, VoiceProfileError> {
+        self.lifecycle.lock().map_err(|error| {
+            VoiceProfileError::Unavailable(format!(
+                "voice-profile lifecycle lock is poisoned: {error}"
+            ))
+        })
     }
 
     pub fn require_compatible(

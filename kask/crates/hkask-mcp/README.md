@@ -28,6 +28,6 @@ A delivered tool call with an unknown outcome is still never automatically repla
 | Concept | Description |
 |---------|-------------|
 | **Dispatch** | Route tool invocations to MCP servers |
-| **Security** | Layered allowlists (per-server env + inference-IPC `tool_allowlist`; the former swarm-card `mcp_tools` gate was removed 2026-10-28 with the swarm capability) — no per-call OCAP gate |
+| **Security** | Layered allowlists (per-server env + inference-IPC `tool_allowlist`) — no per-call OCAP gate |
 | **Runtime** | MCP server lifecycle management |
 | **Transport** | stdio + child-process transport for MCP servers |

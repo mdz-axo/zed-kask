@@ -10,15 +10,15 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 # zed-kask Documentation
 
-> **zed-kask** is a minimal-divergence fork of the [Zed editor](https://zed.dev) with the hKask agent platform compiled in-process. The agent runtime, skills, Regulation nervous system, and sovereign memory run inside the editor as native surfaces; 8 managed MCP servers are launched as child processes over stdio by Zed's `context_server` host (`kask/crates/kask_bridge/src/mcp_servers.rs` — the companies server was removed 2026-10-18, commit `3439db5e00`; the swarm server was removed 2026-10-28 with the swarm capability).
+> **zed-kask** is a minimal-divergence fork of the [Zed editor](https://zed.dev) with the hKask agent platform compiled in-process. The agent runtime, skills, Regulation nervous system, and sovereign memory run inside the editor as native surfaces; 8 managed MCP servers are launched as child processes over stdio by Zed's `context_server` host (`kask/crates/kask_bridge/src/mcp_servers.rs`).
 
 **Canonical reference:** [`architecture/zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) describes the composition root and current crate inventory. The authoritative integration surface is [`DIVERGENCE.md`](../../DIVERGENCE.md), which lists current and retired numbered seams (retired numbers are never reused).
 
-**Pre-collapse hashes:** commit hashes cited in this corpus's pass ledgers and tombstones predate the 2026-10-27 history collapse (see [`DIVERGENCE.md`](../../DIVERGENCE.md), "History collapse and layered reconstruction") and reference erased pre-collapse history; they do not resolve in this repository. The seam register and these documents carry the durable record.
+**Pre-collapse hashes:** commit hashes cited in this corpus predate the 2026-10-27 history collapse (see [`DIVERGENCE.md`](../../DIVERGENCE.md), "History collapse and layered reconstruction") and reference erased pre-collapse history; they do not resolve in this repository. The seam register carries the durable record.
 
 **Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) lists 17 retained artifacts across 9 cross-cutting sets. Eight tutorials were folded on 2026-09-16; on 2026-09-28 the eight per-crate how-to documents were folded into their set references (each reference gained a Procedures section) and the hkask-tool-port explanation was folded into its reference; `diataxis/hkask-mcp-server/tutorial.md` is the one retained tutorial.
 
-**Corpus size (measured 2026-10-28, after the swarm-capability removal):** 79 Markdown documents and one live YAML inventory, 80 files total (`find kask/docs -type f | wc -l`) — under the formal **fewer-than-85** count gate, five above the working **75-file target** (cap and target history: operator rulings 2026-09-30 and 2026-10-07, [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3; the target is condensation direction, not a gate). The earlier 2026-10-28 condensation pass deleted the completed 2026-10-18 skill-semantic review (−1, tombstone below) and reconciled the drifted registry counts against their pinning tests; the same-day swarm-capability removal then took the corpus 83 → 80 files: `reference/mcp-servers/swarm.md`, the two `diataxis/swarm_system/` documents, and `diagrams/swarm.md` deleted, with `plans/swarm-removal-plan-2026-10-28.md` added — the MCP fleet 262 → 224 registered tools (the swarm server's 37 removed; kata-kanban 27 → 26 with its `kanban_task_delegate_result` bridge), skills 60 → 58 / template namespaces 57 → 55 / `.j2` resources 224 → 216 (the two swarm skills and their eight templates), and `DIAGRAM_ALIGNMENT` records 93 → 83 (ten swarm diagrams removed — six in `diagrams/swarm.md`, three in the `swarm_system` set, and the Swarm Widget's `DIAG-VIZ-SWARM` in `diagrams/ui-widgets.md`; 18 records now in the four consolidated diagram files, 65 inline). Two loop-register anchor rows were re-marked RETIRED (L19 portfolio, L22 spreadsheet — their reference surfaces were removed with their capabilities). `principle-constraints.yaml` is a live governance inventory consumed by `kask/scripts/check-principle-constraints.sh`, not a deletion candidate. One executed-to-termination plan deletion is deferred to the next pass because its two in-tree citations sit inside the EUREKA-2 cycle plan, under live edit by another stream. Per-pass addition and deletion deltas live in the dated lifecycle-ledger sections below; git history holds every removed document.
+**Corpus size (measured 2026-10-28):** 78 Markdown documents and one live YAML inventory, 79 files total (`find kask/docs -type f | wc -l`) — under the formal **fewer-than-85** count gate, four above the working **75-file target** (cap and target history: operator rulings 2026-09-30 and 2026-10-07, [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3; the target is condensation direction, not a gate). `principle-constraints.yaml` is a live governance inventory consumed by `kask/scripts/check-principle-constraints.sh`, not a deletion candidate.
 
 ## Repair and improvement plans
 
@@ -103,203 +103,14 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [`research/instrument-affordance-experiment.md`](research/instrument-affordance-experiment.md) | Instrument-affordance experiment — compliance baseline and harness bring-up record plus the production native-first-rate sensor/injection specs (sensor built 2026-10-23; the n ≥ 30 compliance experiment pending). Live consumer: `reference/kask-settings.md` § Affordance. Added 2026-10-23. |
 | [`research/native-first-denominator-sample.md`](research/native-first-denominator-sample.md) | First per-task skill-applicability adjudication — the measured native-first failure (100% activation when a skill is named, 0/3 primary-contract discovery otherwise) that grounds the settings-doc skill-injection perception surface. Live consumer: `reference/kask-settings.md`. Added 2026-10-24. |
 
-## Document lifecycle ledger
-
-Git history is the archive of record. Every removed document names its active successor here. The dated Corpus size measurement above, not this lifecycle ledger, applies the document-count gate (all files, per [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3) and identifies the live YAML inventory.
-
-### Deleted 2026-10-28 (doc-update condensation — the completed point-in-time skill audit; findings all landed, no consumer)
-
-| Artifact | Successor |
-| --- | --- |
-| `research/skill-semantic-review-2026-10-18.md` | The repaired skills corpus is the live record: every verified defect was repaired and landed in the review's own passes (the GV-1 env binding, the PS-1 modifier pin, the FIBO-wave anachronistic pins and the `RETIRED_SKILL_NAMES` reconciliation, and the S14 cohort's eight contract re-typings — commits `97f027ef37`, `64d5d4c1d9`, `a0e77870ad`, `014cf1ac6f`, `d0eeee1e4c`, `e3b6279efe`, `57345244fd`, `02a110ed68`, `f81e9b4484`, `32c48a646c`; pre-collapse hashes, see the corpus header). The read-only audit instruments live under `kask/scripts/audit/` (`skill-review-ledger-base.sh`, `skill-review-edges.sh`, `skill-review-anchors.sh`, `skill-review-doc-cites.sh`, `skill-review-loop-anatomy.sh`, `skill-review-s14-leads.sh`, `derive-retired-skill-gap.sh`, `check-retired-shipped-status.sh`). The review closed itself: findings remainder zero, S14 cohort complete ("Remaining S14 cards: none"), and its 58-skill census predates the security-audit and eureka-cycle additions. Zero documents in the tree linked the record (verified by sweep at deletion). |
-
-### Deleted 2026-10-26 (transcript-bench implementation plan — executed to termination, house lifecycle)
-
-| Artifact | Successor |
-| --- | --- |
-| `plans/transcript-bench-implementation-plan-2026-10-25.md` | The executed bench it specified is the live record: the media panel's Transcript tab is the direct transcript workspace — recordings browse (with a back-to-browser affordance), synced reading with word-click seek and follow-along, two-click select → label editor (typed or pasted labels) → researcher-highlight create/rename/delete, provenance-keyed reel compose+render (`reference/mcp-servers/media.md` § Media panel — transcript surface, function-cited). Delivered under goal `4841c444-5c11-4e6d-a0be-a8785d561316` on the "Transcript bench" board: S1–S7 across commits `18ad4e3f37` (S1 Detail), `d6a53e1213` + `cb88358e4f` (S2 seek + fixture), `3d1e88d32e` (invoker lock + CI gate), `57230722b0` + `da32b38557` + `36505c90f7` (S3 workspace), `38086ac772` (S6 browser), `adfba1d9e9` + `6d1d65f7ac` + `baf651f456` + `29f6399133` (S4 highlight CRUD + label editor), `7412afcdba` (wrap fix), `ab75671fe1` + `cfa4679064` (S5 reels), and `6fb45d938d` + `6c889f4296` (S7 docs + tombstone), with four live-verified media-server repairs under the plan's §1 operator-authorized amendment (`6c59e731c4` pass-model default, `9796279f80` highlight index map, `2897646c90` STT preconditioning, `14c6b1547c` paragraph windows); the 2026-10-26 review pass closed its findings across `1af61160fe` (server), `1d755630a0` (widget), and `ddcdb6b87a` (panel). An earlier revision of this entry cited hashes that never existed as git objects — corrected 2026-10-26 against `git cat-file` (the fabricated-hash trap). The pre-collapse history named above was erased by the 2026-10-27 history collapse (see the corpus-header disclosure); this entry and the seam register carry the durable record. |
-
-### Deleted 2026-10-28 (swarm capability removal — executed plan, successor recorded)
-
-| Artifact | Successor |
-| --- | --- |
-| `reference/mcp-servers/swarm.md` + `diataxis/swarm_system/{reference,explanation}.md` + `diagrams/swarm.md` | No successor docs — the entire swarm capability (the `hkask-mcp-swarm` server, `swarm_panel`, `hkask-swarm-widget`, the A2A protocol surface, the local agent registry, the shared swarm memory store, the two swarm skills and their 8 templates) was removed by operator order. The executed plan `plans/swarm-removal-plan-2026-10-28.md` is the live record; DIVERGENCE.md carries the retired D33 seam and the updated D1/D2/D3/D6/D18/D28/D45/D54/D80/D86 rows. Git history holds the full set. |
-
-### Deleted 2026-10-25 (executed point-in-time removal plans — house lifecycle)
-
-| Artifact | Successor |
-| --- | --- |
-| `plans/reduct-removal-plan-2026-10-22.md` | The executed removal it specified is the live record: the 20 `reduct_*` cloud tools, `tools/reduct.rs`, the `REDUCT_API_KEY` descriptor and the provider profile are gone; `kask_bridge::purge_removed_reduct_api_key` purges the dormant keychain slot at startup (DIVERGENCE.md D5; `reference/mcp-servers/media.md` § Redesign record's removed-surface note). Git history holds the full plan and its decision log. |
-| `plans/abw-removal-plan-2026-10-22.md` | The executed removal it specified is the live record: the ABW cloud backend and its credential chain are gone (the swarm server itself was later removed whole on 2026-10-28), and `kask_bridge::purge_removed_abw_api_key` purges the dormant keychain slot at startup (DIVERGENCE.md D5, Decision A). Git history holds the full plan. |
-| The ADC meta-study design record (added 2026-10-24; exact filename unrecoverable — purged with the history) | No successor — operator-directed full removal (2026-10-25): the record left the tree in the relocation pass, its data-directory artifacts were deleted, and its study files were purged from the git history in the same pass. The pre-collapse purge leaves this ledger row as the only record; no successor copy exists. |
-
-### Deleted 2026-10-19 (companies-removal docs reconciliation — executed plan, successor recorded)
-
-| Artifact | Successor |
-| --- | --- |
-| `plans/companies-fmp-eodhd-fibo-removal.md` | The landed surface it specified — the ported forecast tools and their behavior tests in `kask/mcp-servers/hkask-mcp-scenarios/src/equity_forecast.rs` and `tests/equity_forecast_port.rs` (port commit `4f13f108da`; removal commits `3439db5e00` server+FMP/EODHD, `3adc75c9e1` FIBO rung, `6af8ab2e18` company-research skills); the executed five operator decisions (§5) are visible as: N2 the `scenario_risk_measure` wrapper over caller-supplied returns (documented in [`reference/mcp-servers/scenarios.md`](reference/mcp-servers/scenarios.md) § Design model), and the FIBO-anchor replacement resolving through the `qb:`/SUMO fallbacks in [`reference/ontology-bridge.md`](reference/ontology-bridge.md). Git history holds the full plan and its §5 decision log. |
-
-### Deleted 2026-10-17 (training capability removal — out of scope for the co-researcher mandate)
-
-| Artifact | Successor |
-| --- | --- |
-| `reference/mcp-servers/training.md` | [`reference/mcp-servers/README.md`](reference/mcp-servers/README.md) — the server registry (the training row is removed with the server). |
-| `reference/lora-training-catalog.md` | No successor — the capability it catalogued (the training MCP server, the `lora-training` skill and its templates, the Nebius/HuggingFace data services, and the LoRA-adapter inference path) was removed end-to-end by operator ruling: model training is outside the co-researcher mandate. Git history holds the catalog, its nine-tool surface and the G-M1..G-Q5 gate definitions. |
-
-### Deleted 2026-10-16 (docs-consolidation pass — implemented design and superseded prior-art study)
-
-| Artifact | Successor |
-| --- | --- |
-| `research/agentic-scientist-v3-integration.md` | The landed surface it specified: the experimentation server's rubric block, variant roles, `experiment_seal`, and `final_evaluation_record`, plus the functionally named `hypothesis-testing` lifecycle and `experimental-design` deep module; the former `co-scientist` name/direct-design path was retired 2026-10-18. The D1–D4 operator rulings live in the derived ontology registry (commit `cfe8ecb654`); git history holds the full proposal and its §6 decision log. |
-| `research/deterministic-vs-probabilistic-compute-routing.md` | [`research/syntax-semantic-probabilistic-deterministic-space.md`](research/syntax-semantic-probabilistic-deterministic-space.md) — the region-routing skill's recorded reference model (its [R1] prior-art citation repointed); the ratified routing claim lives on as P8.4 and in the derived-ontology rulings; git history holds the hypotheses study. |
-
-### Deleted 2026-10-15 (spreadsheet capability removal — Tranche S)
-
-| Artifact | Successor |
-| --- | --- |
-| `plans/logisheets-spreadsheet-capability-plan.md` | No successor — the capability (server, engine, widget, fenced language, both presentation options) was removed end-to-end by operator ruling; git history holds the plan and its SP-01..SP-12 execution record. |
-| `reference/mcp-servers/spreadsheet.md` | [`reference/mcp-servers/README.md`](reference/mcp-servers/README.md) — the server registry (the spreadsheet row is removed with the server). |
-
-### Deleted 2026-10-13 (doc-update condensation — the point-in-time curiosity study; no capability, no consumer)
-
-| Artifact | Successor |
-| --- | --- |
-| `research/artificial-curiosity-capability-space.md` | Git history (the study, the seven-source follow-up, and the renderer-only pilot — the 2026-09-23 fold's full content — remain at `aa7f6ce4eb` and prior). The study's own verdict stood: **no distinct curiosity skill** — the analyzed skill set was consolidated out 2026-09-24, no curiosity-selection capability exists in the tree (verified by search 2026-09-28), and zero docs, skills, or scripts linked the record. The one standing decision survives here: promote a curiosity-probe capability only after it wins a repeatable, uniquely valuable input/output contract in a cost-matched test. |
-
-### Consolidated 2026-10-13 (media-server redesign set — doc-update condensation, the scenarios/spreadsheet precedent)
-
-| Artifact | Successor |
-| --- | --- |
-| `research/media-server-redesign-review.md` | [`reference/mcp-servers/media.md`](reference/mcp-servers/media.md) § Redesign record (method summary — the four verified reference models, the FINER-gated phase verdicts, the 39-primitive/8-family model reconciled to the 102-tool pin); git history (`1a8c500c12`..`42f885b0e3`) holds the full review. |
-| `research/media-server-redesign-findings.md` | [`reference/mcp-servers/media.md`](reference/mcp-servers/media.md) § Redesign record (the five target conditions MF-1…MF-5 with closure commits, the depth-pass closure MF-9…MF-15, the Phase-4 two-oracle verdicts and the Lean-deferred trigger); the per-tranche line-by-line audit narrative remains in git history. |
-| `research/media-server-redesign-proposals.md` | The landed proposals are the code and its pins (PR-M1 the `media_limits` imports, PR-M2 `collage_publishes_through_canonical_storage`, PR-S1 the skill line `fb22b0b4d5`); the standing decisions and receipts are recorded in the Redesign record. |
-| `research/media-server-redesign-improvement-plan.md` | [`reference/mcp-servers/media.md`](reference/mcp-servers/media.md) § Redesign record (the execution status — all slices DONE/CLOSED — the commit ledger, and the live receipts verified in the current tree); git history holds the slice-by-slice narrative. |
-
-### Folded 2026-10-13 (gallery docs recomposition — C1 follow-up; the gallery store code moved to the media server in commit `c85b1e4896`)
-
-| Artifact | Successor |
-| --- | --- |
-| `diataxis/hkask-storage/{explanation,reference}.md` § Gallery sections | [`reference/mcp-servers/media.md`](reference/mcp-servers/media.md) § Gallery store identity and reconciliation + § Gallery store entities (the store's sole-consumer doc; diagrams re-registered `DIAG-STOR-004`→`DIAG-RF-007`, `DIAG-STOR-006`→`DIAG-RF-008`); the storage set describes only what `hkask-storage` ships. |
-
-### Deleted 2026-10-11 (test-suite refresh — the working plan, executed to termination)
-
-| Artifact | Successor |
-| --- | --- |
-| `plans/test-suite-refresh-plan.md` | The saved final report (`report_load` kind `report`, name `test-suite-refresh-final-report`) + the `test-suite-refresh` kanban board (33/33 verdicts with per-batch findings comments) + git history (`aee548085a`..`4791c5b913` holds the plan and its execution log; `2886a2daee` the D90 ledger registration the mini-batch surfaced). Review outcome: zero stale pins across 246 kask-side test files and 48 zed-side pin files; zero test modifications. |
-
-### Consolidated 2026-10-07 (spreadsheet-capability redesign set — operator instruction)
-
-| Artifact | Successor |
-| --- | --- |
-| `research/spreadsheet-capability-redesign-review.md` | `reference/mcp-servers/spreadsheet.md` § Redesign record (the method summary — FINER-gated PDCA phases, the 54-row coverage, the 16 cited findings, the Lean spec pin and structural checks); the live state is the tree. |
-| `research/spreadsheet-capability-redesign-proposals.md` | The landed proposals are the code and its pins (the SP-01..SP-12 commit ledger in the Redesign record); the standing operator rulings (SP-05 complete, SP-06 enforce, SP-09 the Dublin Core/SUMO/PKO anchors) are recorded there. |
-| `research/spreadsheet-capability-redesign-improvement-plan.md` | `reference/mcp-servers/spreadsheet.md` § Redesign record (the execution record — Remaining: none — and the live receipts); git history (`b252d88b3d`..`87b8673285`) holds the full execution narrative. |
-
-### Consolidated 2026-10-07 (scenario redesign plan set — operator instruction)
-
-| Artifact | Successor |
-| --- | --- |
-| `research/scenario-server-redesign-review.md` | `reference/mcp-servers/scenarios.md` § Redesign record (method summary, coverage receipts, the git-history commit range); the live coverage is the 19-tool surface itself. |
-| `research/scenario-server-redesign-findings.md` | `reference/mcp-servers/scenarios.md` § Design model (the twelve primitives at their current state) and § Redesign record (the accepted-limitation rulings); `kask/lean/event_tree_marginalization.lean` (the formal pin, cited from the reference's Formal specification section). |
-| `research/scenario-server-redesign-proposals.md` | The landed proposals are the code and its pins (commit ledger in the Redesign record); the two standing decisions (PR-13 remove — executed; PR-15 deferred) are recorded in the Redesign record. |
-| `research/scenario-server-redesign-improvement-plan.md` | `reference/mcp-servers/scenarios.md` § Redesign record (decisions, commit ledger, live receipts, the goal-closure batch-record note); git history (`8692a23520`..`e677993804`) holds the full execution narrative. |
-
-### Deleted 2026-10-05 (docs deep-alignment — the closed guardrails plan; the P2 media-onboarding deletion was reversed by operator ruling 2026-10-06 and the record restored)
-
-| Artifact | Successor |
-| --- | --- |
-| `plans/agent-loop-guardrails-plan.md` | `DIVERGENCE.md`'s tool-retry row (the shipped C2 stop-loss contract, its design revision, and every pin name) + `kask/lean/repetition_guard_spec.lean` (the machine-checked contract) + the `lisp_eval` teaching contract (pinned in hkask-lisp, documented in `.rules`); git history holds the full kata record. Closed — executed and audited 2026-10-02; every §13 open question resolved. **Do not re-land C1a** (the removed reasoning-runaway watchdog) without a content-level discriminator (looping vs. progressing), a non-fatal recovery path, and a settings knob — the post-mortem is in git history. |
-
-### Folded 2026-10-01 (P1 ruling — region-space research consolidation)
-
-| Artifact | Successor |
-| --- | --- |
-| `research/navigating-the-region-space-collaboration.md` | `research/syntax-semantic-probabilistic-deterministic-space.md` §4 (the three-party collaboration overlay subsection — the durable model); the reification record lives in `.agents/skills/region-routing/SKILL.md` and the skills registry; git history is the session-record archive. |
-
-### Deleted 2026-09-28 (doc-update realignment — reference absorbs how-to)
-
-| Artifact | Successor |
-| --- | --- |
-| `diataxis/swarm_system/how-to.md` | Was `diataxis/swarm_system/reference.md` (Procedures section); the whole swarm_system set was removed 2026-10-28 with the swarm capability — git history. |
-| `diataxis/hkask-types/how-to.md` | `diataxis/hkask-types/reference.md` (Procedures section). |
-| `diataxis/hkask-storage/how-to.md` | `diataxis/hkask-storage/reference.md` (Procedures section). |
-| `diataxis/hkask-regulation/how-to.md` | `diataxis/hkask-regulation/reference.md` (Procedures section). |
-| `diataxis/hkask-inference/how-to.md` | `diataxis/hkask-inference/reference.md` (Procedures section). |
-| `diataxis/hkask-condenser/how-to.md` | `diataxis/hkask-condenser/reference.md` (Procedures section). |
-| `diataxis/kask_bridge/how-to.md` | `diataxis/kask_bridge/reference.md` (Procedures section). |
-| `diataxis/hkask-mcp-server/how-to.md` | `diataxis/hkask-mcp-server/reference.md` (Procedures section). |
-| `diataxis/hkask-tool-port/explanation.md` | `diataxis/hkask-tool-port/reference.md` (capability-separation rationale and the invoke-pipeline/boundary diagrams folded in). |
-| `diataxis/hkask-bridge-ontology/` (empty directory) | Residue of the 2026-09-09 how-to fold; no files. |
-| `reports/` (empty directory) | Residue of the 2026-09-17/19 report deletions; no files. |
-
-### Folded 2026-09-23 (research and pilot evidence)
-
-| Artifact | Successor |
-| --- | --- |
-| `research/artificial-curiosity-open-questions-followup.md` | `research/artificial-curiosity-capability-space.md` §§6, 8: distinct seven-source follow-up, limits and four-arm experiment design; full original remains in git at `aa7f6ce4eb`. |
-| `research/artificial-curiosity-probe-pilot.md` | `research/artificial-curiosity-capability-space.md` §9: four positive/negative renderer controls, measured boundary and unresolved experiment; full original remains in git at `aa7f6ce4eb`. |
-
-### Deleted 2026-08-28 (condensation — no formal role / stale / duplicative)
-
-| Artifact | Successor |
-| --- | --- |
-| `plans/` (10 files) | Point-in-time plans and implemented designs: swarm plans → `diataxis/swarm_system/`; fact-checking design → `grounding-verify`/`falsifiability`/`hypothesis-framer` skills; memory plans → `architecture/memory-system-specification.md`; other completed or abandoned work → git history. |
-| `explanation/` (13 files) | Durable content folded into `architecture/skills-and-composition.md`, `architecture/memory-system-specification.md`, `reference/mcp-servers/README.md`, and surviving Diataxis/reference coverage. |
-| `architecture/AGENT_SYSTEM_PROMPT.md` | `architecture/skills-and-composition.md` Part I. |
-| `architecture/memory-system-and-therapy.md` | `architecture/memory-system-specification.md` §§9–11. |
-| `architecture/salience-specification.md` | Implemented `word_frequencies` surface in `diataxis/hkask-condenser/reference.md`. |
-| `architecture/hkask-types-core-domain-split.md` | No accepted successor architecture; `hkask-types` remains one crate, with current coverage in `diataxis/hkask-types/`. |
-| `architecture/core/scenarios-companies-bridge.md` | `reference/mcp-servers/scenarios.md` (the companies server was removed 2026-10-18, commit `3439db5e00`; its provider-free forecast loop lives in the scenarios server). |
-| `diagrams/` (25 of 28 files) | Five consolidated files under `diagrams/`; three memory diagrams moved into `architecture/memory-system-specification.md`. |
-| `REFRESH_TRIAGE.md` | This lifecycle ledger. |
-
-### Deleted 2026-09-09 (doc-update realignment)
-
-| Artifact | Successor |
-| --- | --- |
-| `architecture/research-server-capability-plan.md` | Implemented record in `reference/mcp-servers/research.md` under Capability adoption record. |
-| `reference/README.md` | This portal's Reference table. |
-| `reference/upstream-removal-principles.md` | `reference/upstream-rebase-process.md` §9. |
-| `diataxis/hkask-bridge-ontology/how-to.md` | `reference/ontology-bridge.md` under How to use the bridge and term resolver. |
-
-### Deleted 2026-09-16 (tutorial folds and implemented inference plan)
-
-The eight tutorial removals landed in `5881f1f406fafe12f4fc65a549dbf1eb0a62ca84`; each successor below is the retained task-oriented document for that set. The implemented inference plan was removed in `5322725bdbaa067580943c2bf33634c3640d8341`.
-
-| Deleted artifact | Named successor |
-| --- | --- |
-| `diataxis/hkask-condenser/tutorial.md` | `diataxis/hkask-condenser/how-to.md` |
-| `diataxis/hkask-inference/tutorial.md` | `diataxis/hkask-inference/how-to.md` |
-| `diataxis/hkask-regulation/tutorial.md` | `diataxis/hkask-regulation/how-to.md` |
-| `diataxis/hkask-storage/tutorial.md` | `diataxis/hkask-storage/how-to.md` |
-| `diataxis/hkask-tool-port/tutorial.md` | `diataxis/hkask-tool-port/reference.md` |
-| `diataxis/hkask-types/tutorial.md` | `diataxis/hkask-types/how-to.md` |
-| `diataxis/kask_bridge/tutorial.md` | `diataxis/kask_bridge/how-to.md` |
-| `diataxis/swarm_system/tutorial.md` | Was `diataxis/swarm_system/how-to.md`; the whole swarm_system set was removed 2026-10-28 — git history. |
-| `plans/inference-regulation-loop-completion-plan.md` | Implemented inference-resilience behavior in `kask/crates/kask_bridge/src/inference_resilience.rs` and current operational explanation in `kask/docs/diataxis/hkask-regulation/explanation.md`. |
-
-### Deleted 2026-09-17 (point-in-time prediction-market reports)
-
-| Deleted artifact | Named successor |
-| --- | --- |
-| `reports/prediction-markets/` (5 files) | Current implementation and tool surface in `reference/mcp-servers/prediction-markets.md`; git history remains the research archive. |
-| `reports/gemba-loop-specification.md` | Active procedure in `.agents/skills/algedonic-review/SKILL.md` (its gemba walk phase; `gemba-walk` merged into it 2026-09-24); git history remains the design archive. |
-
-### Deleted 2026-09-19 (doc-update realignment)
-
-| Deleted artifact | Named successor |
-| --- | --- |
-| `reports/bug-hunt-report.json` | The bug-hunt skill's trace-filesystem expedition report (`.agents/skills/bug-hunt/SKILL.md:95` writes reports to the run trace dir); git history (added `ed9be534cc`, updated `8c92966ca6`, converged `be80e66916`) remains the durable archive of the 2026-09-18/19 expeditions. The docs-tree copy violated the `DOCUMENTATION_STANDARDS.md` §6.2 location policy (no `reports/` class) and pushed the tree to the 70-file cap. |
-| `plans/goedel-gap-closure-plan.md` | Completed plan consolidated out: R1 (evaluation correctness), R2 (bounded proofs — predicate core verified, harness set removed `5b4799bcad`), R3 (Rust inventory checker), R4 (advisory goal-traceability), and the R5 approved acceptance cycle are delivered in code and tests; the acceptance protocol and Kani budget conventions live in [`reference/testing-protocol.md`](reference/testing-protocol.md); the remaining authority, activation, and recovery work is carried by [`plans/hkask-core-mcp-repair-improvement-plan.md`](plans/hkask-core-mcp-repair-improvement-plan.md) (P2/P3); the full plan and execution record remain in git history. |
-
-### Verification gate
+## Verification gate
 
 - [x] Six-field metadata plus `mds_categories` is present on every active or operator-retained Proposed document.
 - [x] Current-state Mermaid alignment and the Proposed conceptual exception satisfy `DOCUMENTATION_STANDARDS.md`.
-- [x] Internal links target retained documents; the eight folded how-to documents' links were repointed to their set references (2026-09-28).
-- [x] Diagram metadata has unique-ID/location registry parity (95 records, tree-verified 2026-10-19).
+- [x] Internal links target retained documents.
+- [x] Diagram metadata has unique-ID/location registry parity (83 records, tree-verified 2026-10-28).
 - [x] Edited citations use full repository-relative paths; 525 sampled citations resolved (2026-09-28), and the 2026-10-05 deep-alignment run re-verified every citation it touched against live code (the compaction entry points and pin sample, the d-seam DIVERGENCE rows, kanban R1, the 13 live tool-surface pin sites, `SignalMetric` at `signals.rs:14`) with the tree-wide relative-link sweep resolving.
-- [x] Document count is 80, under the fewer-than-85 cap (measured 2026-10-28, `find kask/docs -type f | wc -l`): the 2026-10-28 condensation pass deleted the completed 2026-10-18 skill-semantic review (−1, tombstone below) and reconciled the drifted registry counts against the pinning tests; the same-day swarm-capability removal then took the corpus 83 → 80 files (`reference/mcp-servers/swarm.md`, the two `diataxis/swarm_system/` documents, `diagrams/swarm.md` deleted; the removal plan added) — the MCP fleet at 224 registered tools (kata-kanban 26, media 74, scenarios 22; the swarm server's 37 removed), skills 58 / 55 template namespaces / 216 `.j2` resources (the two swarm skills and their eight templates removed), 83 `DIAGRAM_ALIGNMENT` records (18 consolidated in four files / 65 inline; ten swarm diagrams removed), and two loop-register anchor rows re-marked RETIRED (L19 portfolio, L22 spreadsheet). The 75-file working target is exceeded by five — condensation direction, not a gate. Dated per-pass deltas live in the lifecycle-ledger sections below.
+- [x] Document count is 79, under the fewer-than-85 cap (measured 2026-10-28, `find kask/docs -type f | wc -l`); the 75-file working target is exceeded by four — condensation direction, not a gate.
 
 ## See also
 
