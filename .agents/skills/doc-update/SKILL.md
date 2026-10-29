@@ -54,8 +54,8 @@ to make every documented claim verifiable against the current tree.
 2. `kask/docs/architecture/core/MDS.md` — the surviving-crate list
    (Composition Root). A doc naming a crate not in that table, or a deleted
    surface, is stale by definition.
-3. `kask/docs/README.md` — the portal and the **document lifecycle ledger**:
-   every fold/delete must be recorded there with its successor.
+3. `kask/docs/README.md` — the portal: its rows must reflect
+   the current tree.
 
 ## D/P labelling
 
@@ -157,7 +157,7 @@ citations were not re-checked is unverified recomposition.
 ### Phase 5 — Reconcile
 
 1. Update `diataxis/INDEX.md` counts and links to match the tree.
-2. Update the README portal rows and the lifecycle ledger.
+2. Update the README portal rows.
 3. Update registries that carry counts (MCP server registry, skills
    registry, diagram registry) — a count in a doc is a claim like any other.
 4. Sweep for links to deleted artifacts and repoint them to successors.
@@ -189,9 +189,9 @@ Run every gate; all must pass before the pass is done:
    historical worktrees elsewhere in the repo. Use a literal, subtree-scoped
    search such as `rg -n --no-ignore --fixed-strings -- "$deleted_identifier" kask/docs`
    for each exact deleted path or identifier (not a generic basename like
-   `tutorial.md` that also names surviving files). Inspect each hit: a live
-   link or claim that the deleted surface exists fails; a lifecycle-ledger
-   tombstone or explicit historical mention passes. An empty exact-name search
+   `tutorial.md` that also names surviving files). Inspect each hit: any
+   live link or claim about the deleted surface fails — deleted surfaces
+   leave no surviving mentions (git history is the archive). An empty exact-name search
    is not a substitute for checking the links and claims in affected docs.
 
 Convergence check — call `lisp_eval` with the gate results:
@@ -243,7 +243,7 @@ Template context variables (from the template's `[inference]` contract):
   exists" and name the commit or date.
 - Never invent a tool name, test name, or count. Extract from the `#[tool]`
   attributes, pinning tests, or generated lists.
-- Deletions require a named successor in the README lifecycle ledger.
+- Deletions carry no README record; git history is the archive.
 - One agent process edits the tree at a time; a half-recomposed docs-set
   (broken links, unresolved citations) blocks other agents' validation.
 - Prefer folding into an existing doc over creating a new file; prefer

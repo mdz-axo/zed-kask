@@ -95,11 +95,19 @@ problem; it does not exonerate the focal hypothesis.
 ### 3.4 Information justification and preregistered analysis
 
 Use a fixed-seed, 10,000-resample session-cluster percentile bootstrap over the
-pooled final sessions, resampling whole sessions and recording the seed. CAM++
-versus majority is primary; ERes2NetV2 versus majority is secondary. Compute
-one-sided bootstrap p-values for `top-1 arm − top-1 majority > 0` and Holm-adjust
-them across those two comparisons. Use one-sided 95% bounds for the operating
-criteria and report two-sided 95% intervals plus every per-session result.
+pooled final sessions, resampling whole sessions and recording the seed, for
+confidence intervals only. CAM++ versus majority is primary; ERes2NetV2 versus
+majority is secondary.
+
+For each arm, compute per-session `Δs = top-1 arm,s − top-1 majority,s` and the
+paired statistic `T = Σs nsΔs`, where `ns` is the session's final-probe count.
+Test the positive alternative with a sign-flip permutation of each session's
+`nsΔs`. Enumerate all `2^n` sign assignments when n≤12; otherwise draw 10,000
+assignments with the recorded fixed seed. For observed `Tobs`, the one-sided
+p-value is `(1 + count(Tperm ≥ Tobs)) / (1 + N)`, with ties included in the
+numerator and `N` the number of sign assignments. Holm-adjust the two arm
+p-values. Use one-sided 95% bootstrap bounds for the operating criteria and
+report two-sided 95% intervals plus every per-session result.
 
 Precision is adequate only when at least three final sessions are present and
 the two-sided 95% interval widths are ≤0.10 for the CAM++−majority top-1
@@ -123,11 +131,15 @@ not confirmatory.
 ### 3.5 Stopping, deviations, and outcome rule
 
 Fixed maximum: **12 offline measurement passes** across all arms and partitions.
-Development stops at the frozen configuration. Final session C runs once; no
-optional stopping or repeated final peeking. `executor_unavailable`,
-`protocol_deviation`, and `measurement_failed` are operational states, not
-scientific refutations. A valid observation with no decisive conclusion is
-`scientific_non_result` / `inconclusive`.
+One pass means one arm over one complete partition (all sessions and probes in
+that partition), never one pass per session or probe. The minimum three-arm,
+two-partition protocol therefore requires six passes; development alternatives
+and the negative control share the remaining ceiling. Development stops at the
+frozen configuration. Each final session runs once as part of the single pooled
+final-partition pass per arm; no optional stopping or repeated final peeking.
+`executor_unavailable`, `protocol_deviation`, and `measurement_failed` are
+operational states, not scientific refutations. A valid observation with no
+decisive conclusion is `scientific_non_result` / `inconclusive`.
 
 ### 3.6 Executor binding — currently unavailable
 

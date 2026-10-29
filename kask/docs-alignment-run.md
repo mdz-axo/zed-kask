@@ -6,7 +6,7 @@ Goal record: `f277c85d-2621-4161-803f-14e6e36b6cb9` (intake prediction 0.8).
 ## Intake bindings (recorded before any editing)
 
 - **Count target**: fewer-than-75 cap — `kask/scripts/check-docs-count-gate.sh` fails on `actual >= cap`; the STANDARDS §3 canonical sentence is the parsed authority. Working target 60 is condensation direction, not a gate. The operator named no different number at intake; the run prompt's "≤ 75" restates the skill's <75 — skill + script are the authority the prompt points at.
-- **Authorities**: `architecture/DOCUMENTATION_STANDARDS.md` (writing quality, §10 checklist, four perspective tests incl. Gentle agent-correctness), `architecture/core/MDS.md` (crate/server inventory), `README.md` (portal + lifecycle ledger).
+- **Authorities**: `architecture/DOCUMENTATION_STANDARDS.md` (writing quality, §10 checklist, four perspective tests incl. Gentle agent-correctness), `architecture/core/MDS.md` (crate/server inventory), `README.md` (portal).
 - **Commit granularity** (technical decision): one pathspec'd commit per docs-set; `git diff --cached --stat` checked before each.
 - **Component reference models enumerated at intake** (aligned against, not discovered mid-edit):
   1. `research/cybernetic-nervous-system-reference-model.md` — loop layers A/B/C, INV1–INV6 (admitted 2026-09-30)

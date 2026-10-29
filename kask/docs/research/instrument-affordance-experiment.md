@@ -59,9 +59,6 @@ harness bring-up work it required, and the production specs for B and D.
 
 ## 2. Harness bring-up record (the seams found and fixed, 2026-10-23)
 
-**Removed surface (2026-10-28):** the local swarm agents this harness brought
-up were removed with the swarm capability (commit `9a62f6a0bc`,
-[`plans/swarm-removal-plan-2026-10-28.md`](../plans/swarm-removal-plan-2026-10-28.md)).
 This section stands as the bring-up record: the measured findings and the
 delegation-grant seam (item 2) survive on the worktree path; the
 executor-side mechanisms it names went with the server.

@@ -425,17 +425,121 @@ impl VoiceProfileStore {
         };
         let mut derived_layers_removed = 0;
         self.driver.transaction(&mut |tx| {
-            let segment_row = tx.query_optional(
-                "SELECT COUNT(*) FROM voice_profile_segments WHERE profile_id = ?1",
+            // The driver's BEGIN IMMEDIATE serializes this cleanup against
+            // confirmations from every open of this voice database.
+            derived_layers_removed = gallery_driver.execute(
+                "DELETE FROM transcript_layers
+                 WHERE layer_kind = 'identification'
+                   AND json_extract(payload_json, '$.profile_id') = ?1",
                 &[DbValue::Text(profile_id.to_string())],
             )?;
-            if let Some(row) = segment_row {
-                removal.embeddings_removed = row.get_int(0)? as usize;
+            removal = Self::remove_profile_with_ops(tx, profile_id)?;
+            Ok(())
+        })?;
+        if removal.profiles_removed == 0 {
+            return Err(VoiceProfileError::ProfileNotFound(profile_id.to_string()));
+        }
+        Ok((removal, derived_layers_removed))
+    }
+
+    pub fn remove_stale_profile_and_derived(
+        &self,
+        gallery_driver: &dyn DatabaseDriver,
+        profile_id: &str,
+        cutoff: &str,
+    ) -> Result<StaleProfileRemoval, VoiceProfileError> {
+        self.remove_stale_profile_and_derived_impl(gallery_driver, profile_id, cutoff, || {})
+    }
+
+    #[cfg(test)]
+    pub fn remove_stale_profile_and_derived_with_recheck_hook<F: Fn()>(
+        &self,
+        gallery_driver: &dyn DatabaseDriver,
+        profile_id: &str,
+        cutoff: &str,
+        after_recheck: F,
+    ) -> Result<StaleProfileRemoval, VoiceProfileError> {
+        self.remove_stale_profile_and_derived_impl(
+            gallery_driver,
+            profile_id,
+            cutoff,
+            after_recheck,
+        )
+    }
+
+    fn remove_stale_profile_and_derived_impl<F: Fn()>(
+        &self,
+        gallery_driver: &dyn DatabaseDriver,
+        profile_id: &str,
+        cutoff: &str,
+        after_recheck: F,
+    ) -> Result<StaleProfileRemoval, VoiceProfileError> {
+        crate::transcript_store::ensure_schema(gallery_driver)
+            .map_err(|error| VoiceProfileError::DerivedLayers(error.to_string()))?;
+        let mut outcome = StaleProfileRemoval::Missing;
+        self.driver.transaction(&mut |tx| {
+            match self.profile_staleness(tx, profile_id, cutoff)? {
+                ProfileStaleness::Missing => {}
+                ProfileStaleness::Refreshed => {
+                    outcome = StaleProfileRemoval::Refreshed;
+                }
+                ProfileStaleness::Stale => {
+                    // A separate store cannot confirm after this recheck
+                    // without waiting for the transaction's outcome.
+                    after_recheck();
+                    let derived_layers_removed = gallery_driver.execute(
+                        "DELETE FROM transcript_layers
+                         WHERE layer_kind = 'identification'
+                           AND json_extract(payload_json, '$.profile_id') = ?1",
+                        &[DbValue::Text(profile_id.to_string())],
+                    )?;
+                    let removal = Self::remove_profile_with_ops(tx, profile_id)?;
+                    outcome = StaleProfileRemoval::Removed {
+                        removal,
+                        derived_layers_removed,
+                    };
+                }
             }
-            removal.profiles_removed = tx.execute(
-                "DELETE FROM voice_profiles WHERE id = ?1",
-                &[DbValue::Text(profile_id.to_string())],
-            )?;
+            Ok(())
+        })?;
+        Ok(outcome)
+    }
+
+    fn profile_staleness(
+        &self,
+        tx: &dyn TransactionOps,
+        profile_id: &str,
+        cutoff: &str,
+    ) -> Result<ProfileStaleness, DbError> {
+        let Some(row) = tx.query_optional(
+            "SELECT created_at, last_confirmed_match_at
+             FROM voice_profiles WHERE id = ?1",
+            &[DbValue::Text(profile_id.to_string())],
+        )?
+        else {
+            return Ok(ProfileStaleness::Missing);
+        };
+        let created_at = row.get_str(0)?;
+        let confirmed_at = optional_column_text(&row, 1)?;
+        let stale = created_at < cutoff
+            && confirmed_at
+                .as_deref()
+                .is_none_or(|confirmed| confirmed < cutoff);
+        Ok(if stale {
+            ProfileStaleness::Stale
+        } else {
+            ProfileStaleness::Refreshed
+        })
+    }
+
+    #[cfg(test)]
+    fn remove_profile(&self, profile_id: &str) -> Result<VoiceProfileRemoval, VoiceProfileError> {
+        let mut removal = VoiceProfileRemoval {
+            profiles_removed: 0,
+            embeddings_removed: 0,
+        };
+        self.driver.transaction(&mut |tx| {
+            removal = Self::remove_profile_with_ops(tx, profile_id)?;
             Ok(())
         })?;
         if removal.profiles_removed == 0 {
@@ -444,12 +548,26 @@ impl VoiceProfileStore {
         Ok(removal)
     }
 
-    fn lifecycle_guard(&self) -> Result<MutexGuard<'_, ()>, VoiceProfileError> {
-        self.lifecycle.lock().map_err(|error| {
-            VoiceProfileError::Unavailable(format!(
-                "voice-profile lifecycle lock is poisoned: {error}"
-            ))
-        })
+    fn remove_profile_with_ops(
+        tx: &dyn TransactionOps,
+        profile_id: &str,
+    ) -> Result<VoiceProfileRemoval, DbError> {
+        let mut removal = VoiceProfileRemoval {
+            profiles_removed: 0,
+            embeddings_removed: 0,
+        };
+        let segment_row = tx.query_optional(
+            "SELECT COUNT(*) FROM voice_profile_segments WHERE profile_id = ?1",
+            &[DbValue::Text(profile_id.to_string())],
+        )?;
+        if let Some(row) = segment_row {
+            removal.embeddings_removed = row.get_int(0)? as usize;
+        }
+        removal.profiles_removed = tx.execute(
+            "DELETE FROM voice_profiles WHERE id = ?1",
+            &[DbValue::Text(profile_id.to_string())],
+        )?;
+        Ok(removal)
     }
 
     pub fn require_compatible(

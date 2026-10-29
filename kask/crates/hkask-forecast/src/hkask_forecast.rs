@@ -400,8 +400,7 @@ pub fn volatility_regime(prices: &[f64]) -> VolatilityRegime {
 //
 // The risk axis of the three-axes specification: probability-weighted risk
 // measures over scenario-tree branches. Pure math over caller-supplied branch
-// returns — the valuation engine (companies server) supplies per-branch
-// revaluations; this module turns them into risk measures and factor
+// returns; this module turns them into risk measures and factor
 // exposures. Time and return stay simple by design; the complexity budget
 // lives here.
 

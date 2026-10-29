@@ -5894,7 +5894,7 @@ mod tests {
                 {
                     "bindings": {
                         "ctrl-shift-alt-a": "test_only::ActionA",
-                        "ctrl-shift-alt-s": "swarm_panel::Toggle"
+                        "ctrl-shift-alt-s": "test_only::NoSuchAction"
                     }
                 }
             ]"#;

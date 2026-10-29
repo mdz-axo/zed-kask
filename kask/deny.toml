@@ -80,16 +80,6 @@ ignore = [
     { id = "RUSTSEC-2026-0371", reason = "zbus_names advisory, no released fix upstream; same zbus accessibility stack via upstream gpui-linux. Tracked upstream." },
     { id = "RUSTSEC-2026-0372", reason = "zvariant_derive advisory, no released fix upstream; same zbus accessibility stack. Tracked upstream." },
     { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml unmaintained with no safe upgrade; transitive via upstream atspi/accesskit (gpui-linux). Not kask-introduced." },
-    # Removed 2026-10-25 (the operator pulled the re-review ahead): ten
-    # advisory-not-detected entries dropped per cargo-deny — RUSTSEC-2026-0098,
-    # 0099, 0104 (rustls-webpki 0.101 chain gone from the graph), 0190 (anyhow
-    # patched >=1.0.103 — the workspace bumped), 0193/0213 (ammonia docs chain
-    # gone), 0196 (cgmath gone), 0222 (wasmtime gone), 0256 (circular-buffer
-    # dev-dep gone), 0258 (h2 0.3.27 gone; the 0.4.x copy is patched). The
-    # 2026-11-04 re-review still owns every remaining entry above.
-]
-
-[licenses]
 # face_id and nom-exif lack Cargo.toml license fields but are functionally
 # permissive (face_id: BSD-style, nom-exif: MIT — verified via repo LICENSE files).
 #

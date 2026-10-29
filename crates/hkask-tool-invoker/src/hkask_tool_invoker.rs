@@ -288,7 +288,7 @@ mod tests {
     fn record_render_then_drain() {
         let _guard = TEST_LOCK.lock().expect("correlator test lock poisoned");
         reset_correlator_state();
-        record_render(Some("portfolio_returns".into()), None);
+        record_render(Some("kanban_tasks".into()), None);
         record_render(Some("scenario_quantify".into()), Some("span-1".into()));
         record_render(None, None);
         // Three renders buffered before the drain.
@@ -333,7 +333,7 @@ mod tests {
         // Turn A: render turn. record_render pushes 2 renders; ingest_turn
         // fires correlate_reask(user_message=false) — drains the 2, sets
         // prev_had_render=true, no reask (not a user message).
-        record_render(Some("portfolio_returns".into()), None);
+        record_render(Some("kanban_tasks".into()), None);
         record_render(Some("scenario_quantify".into()), None);
         let emitted_a = correlate_reask(false);
         assert!(

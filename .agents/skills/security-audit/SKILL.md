@@ -80,8 +80,7 @@ they are de-advertised with reasons:
   delegation has no consent gate by design.
 - **Deception detection** — no production enforcement point (2026-10-24 tree
   sweep: test fixtures only).
-- **Content scanning, spotlighting, canary tokens** — none; the former guard
-  crate was deleted as inert (RR-0001/RR-0030).
+- **Content scanning, spotlighting, canary tokens** — none.
 
 New layers are added as research advances; every addition names its live
 enforcement point in the same change.

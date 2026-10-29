@@ -23,10 +23,7 @@ liveness, truth, grounding, binding — the rungs' zed-kask homes are
 mapped in `kask/docs/reference/verification-ladder.md`; this skill
 works the grounding, truth, presence and binding rungs over text, and
 liveness belongs to the regulation loop), the retrieve-cite-verify
-process (the technique the retired listening skill exercised on
-earnings-call transcripts; that skill retired 2026-10-18 with the
-companies research skills — the process lives here and in any
-pipeline that cites a verbatim substring against its source), and the
+process (citing a verbatim substring against its source), and the
 Verification Commons Protocol
 (Ostrom institutional design: bounded provenance, decoupled monitoring,
 graduated sanctions, conflict precedence, nested verification layers).
@@ -640,11 +637,7 @@ variables.
 This skill is designed as a **delegation target**, mirroring the
 architectural role of `essentialist` and `falsifiability`:
 
-- The former company-research skills (retired 2026-10-18 with the
-  companies MCP server) each ran their own author-side evidence review
-  over their frozen drafts instead of a decoupled verifier; neither
-  invoked this skill (observed 2026-09-27; if a sibling adopts this
-  skill, update this note in the same change).
+
 - Any pipeline that produces claims against source data can compose this
   skill as a verification step.
 

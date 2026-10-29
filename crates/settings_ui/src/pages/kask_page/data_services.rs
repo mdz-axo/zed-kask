@@ -213,8 +213,7 @@ fn render_data_service_row(
 mod tests {
     use super::*;
 
-    /// The removed Reduct.cloud integration must not reappear as a settings
-    /// row (removed 2026-10-22 with the media server's Reduct cloud tools).
+    /// The Reduct.cloud integration must not appear as a settings row.
     #[test]
     fn removed_reduct_cloud_row_is_absent() {
         let keys = data_service_descriptors()

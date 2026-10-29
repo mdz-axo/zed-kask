@@ -1271,7 +1271,7 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         term: "cash_conversion_cycle",
         aliases: &["ccc", "working capital cycle"],
         identity: "DSO + DIO - DPO, measuring the time in days between cash outlay for working-capital inputs and cash collection from sales",
-        definition: "Verlyn D. Richards & Eugene J. Laughlin, 'A Cash Conversion Cycle Approach to Liquidity Analysis', Financial Management 9(1):32-38 (1980): combines days sales outstanding (receivables), days inventory outstanding (inventory), and days payables outstanding (payables) into the net duration capital is tied up in operating working capital. In zed-kask it is a research-content concept; the working_capital_cycle tool and company-research-deep CFO signposts were removed 2026-10-18 with the companies server and its research skills.",
+        definition: "Verlyn D. Richards & Eugene J. Laughlin, 'A Cash Conversion Cycle Approach to Liquidity Analysis', Financial Management 9(1):32-38 (1980): combines days sales outstanding (receivables), days inventory outstanding (inventory), and days payables outstanding (payables) into the net duration capital is tied up in operating working capital. In zed-kask it is a research-content concept.",
         constituents: &[
             "days sales outstanding",
             "days inventory outstanding",
@@ -1828,7 +1828,7 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         term: "equity_duration",
         aliases: &["cash flow duration", "macaulay equity duration"],
         identity: "sum(t * PV(FCF_t)) / sum(PV(FCF_t)), the present-value-weighted average maturity in years of an equity's projected free cash flows and terminal value",
-        definition: "Patricia M. Dechow, Richard G. Sloan & Mark T. Soliman, 'Implied Equity Duration: A New Measure of Equity Risk', Review of Accounting Studies 9(2-3):197-228 (2004), doi:10.1023/b:rast.0000028186.44328.3f, extending Frederick R. Macaulay, Some Theoretical Problems Suggested by the Movements of Interest Rates, Bond Yields and Stock Prices in the United States Since 1856 (NBER, 1938): measures the cash-flow horizon and discount-rate sensitivity of an equity by weighting each future free cash flow (plus terminal value at the horizon year) by its time to receipt divided by total enterprise value. In zed-kask it grounds the companies server's equity_duration tool.",
+        definition: "Patricia M. Dechow, Richard G. Sloan & Mark T. Soliman, 'Implied Equity Duration: A New Measure of Equity Risk', Review of Accounting Studies 9(2-3):197-228 (2004), doi:10.1023/b:rast.0000028186.44328.3f, extending Frederick R. Macaulay, Some Theoretical Problems Suggested by the Movements of Interest Rates, Bond Yields and Stock Prices in the United States Since 1856 (NBER, 1938): measures the cash-flow horizon and discount-rate sensitivity of an equity by weighting each future free cash flow (plus terminal value at the horizon year) by its time to receipt divided by total enterprise value. In zed-kask it is a research-content concept.",
         constituents: &["discounted_cash_flow", "free_cash_flow"],
         authority: "operator ruling 2026-10-14 (Cohort 13 skill-corpus audit); Dechow, Sloan & Soliman, Review of Accounting Studies 9(2-3):197-228 (2004), doi:10.1023/b:rast.0000028186.44328.3f; Macaulay (1938)",
     },
