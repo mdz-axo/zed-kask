@@ -271,18 +271,34 @@ the listing on success, `apply_transcript_deletion_result` :1872); the
 server preserves durable exports and rendered reels detached from the
 removed record.
 
-- **Workspace**: one strict `educt_get_transcript` dispatch
-  (`parse_transcript_payload` :5616) drives paragraph blocks
-  (`build_pane_blocks` :5505), speaker labels, highlight overlays, and cut
-  line-through marks. The presentation order is recording title → bounded
-  140px player → Select text → transcript → highlights/cuts → Create a reel.
-  Raw layer inventories, source indices, and tool/lineage identifiers stay
-  out of this workflow; technical lineage remains available in Detail.
+- **Workspace**: one strict `educt_get_transcript` dispatch drives paragraph
+  blocks (`build_pane_blocks`,
+  crates/media_panel/src/media_viewer.rs:5813@build_pane_blocks), speaker
+  labels, highlight overlays, and cut line-through marks. The whole workspace —
+  recording title, bounded 140px player, Select text, transcript text,
+  highlights/cuts, Create a reel — renders as ONE virtualized `gpui::list`
+  (`render_transcript`,
+  crates/media_panel/src/media_viewer.rs:3973@render_transcript; item
+  dispatch `render_workspace_list_item` :4049), so long recordings render
+  only the visible blocks; the pending label editor stays pinned above the
+  list. The presentation order is unchanged: recording title → player →
+  Select text → transcript → highlights/cuts → Create a reel. Raw layer
+  inventories, source indices, and tool/lineage identifiers stay out of this
+  workflow; technical lineage remains available in Detail.
 - **Sync**: clicking a word seeks the bound shared player to its start
-  (`seek_workspace_transcript` :2824 over `MediaWidget::seek_to_secs`); while
-  playing, a 4 Hz GPUI-native follow-along marks the containing word
-  (`start_transcript_follow` :2837, `current_word_index` :5496, gated on
-  `MediaWidget::is_transport_playing`).
+  (`seek_workspace_transcript`,
+  crates/media_panel/src/media_viewer.rs:2875@seek_workspace_transcript over
+  `MediaWidget::seek_to_secs`); while playing, a 4 Hz GPUI-native follow-along
+  marks the containing word and KEEPS IT VISIBLE — the marked paragraph block
+  is scrolled into the list's viewport by an item-anchored scroll
+  (`start_transcript_follow` :2888@start_transcript_follow →
+  `follow_marked_block_into_view` :2972@follow_marked_block_into_view over
+  `current_word_index` :5778@current_word_index, gated on
+  `MediaWidget::is_transport_playing`), so the mark never rides off the
+  viewport during playback. A manual scroll suspends the viewport tracking
+  (`note_follow_scroll_tick` :2955@note_follow_scroll_tick); the Follow
+  toggle in the workspace header re-enables it and reveals the current mark
+  (`toggle_follow_viewport` :3011@toggle_follow_viewport).
 - **Annotation**: Select text turns word clicks into a two-click range
   (`handle_word_selection` :1982) opening a label editor (typed or pasted
   labels; Enter confirms, Escape cancels, empty uses “Highlight” —
@@ -357,9 +373,10 @@ rodio/symphonia stack (`decode_bytes`,
 fixture per format at :225-245); a failed load renders as a compact
 dismissible status line rather than a full-pane takeover
 (`crates/hkask-media-widget/src/media_widget.rs:906`), and in the
-transcript workspace the `← Recordings` affordance renders above
-the bounded player so a failed player never buries navigation or transcript
-text (`crates/media_panel/src/media_viewer.rs:3771`). Playback speed,
+transcript workspace the `← Recordings` affordance is the workspace list's
+first row — the first thing in view — and a failed player never dead-ends
+navigation or transcript text (`render_workspace_header_item`,
+crates/media_panel/src/media_viewer.rs:4076@render_workspace_header_item). Playback speed,
 zoom, and fullscreen controls are not implemented in `media_panel` or the
 widget as of this edit (method: grep for `playback_speed`, `set_rate`,
 `fullscreen`, `zoom` over `crates/media_panel/src/` and
@@ -376,6 +393,7 @@ widget as of this edit (method: grep for `playback_speed`, `set_rate`,
 | Bounded video concatenation | supplied |
 | Job list, polling, status, and cancellation | supplied |
 | Recordings browse + transcript workspace with synced reading | supplied |
+| Follow-along viewport tracking with manual-scroll suspend + Follow toggle | supplied (2026-10-28) |
 | Researcher highlight create/rename/delete via label editor | supplied |
 | Per-recording alignment flag on the browser and Detail rows | supplied (2026-10-27) |
 | Cut selection with line-through overlay and Restore | supplied (2026-10-27) |

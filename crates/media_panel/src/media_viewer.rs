@@ -17,13 +17,13 @@
 //! McpRuntime dispatch) against the `media` server. Failures surface in a
 //! status line — visible, never silent.
 
-use std::{collections::HashSet, ops::Range, time::Duration};
+use std::{collections::HashSet, ops::Range, sync::Arc, time::Duration};
 
 use acp_thread::AgentThreadEntry;
 use agent_client_protocol::schema::v2::ToolCallId;
 use gpui::{
-    Context, Entity, HighlightStyle, InteractiveText, KeyDownEvent, Keystroke, Render,
-    SharedString, StrikethroughStyle, StyledText, Task, Window,
+    Context, Entity, HighlightStyle, InteractiveText, KeyDownEvent, Keystroke, ListAlignment,
+    ListOffset, ListState, Render, SharedString, StrikethroughStyle, StyledText, Task, Window,
 };
 use hkask_mcp_media::{
     tools::jobs::parse_job_list_response,
@@ -41,6 +41,19 @@ const QUEUE_POLL_INTERVAL: Duration = Duration::from_secs(1);
 /// Follow-along polling cadence (S3c) — 4 Hz marks the containing word
 /// responsively without saturating the render loop.
 const FOLLOW_POLL_INTERVAL: Duration = Duration::from_millis(250);
+
+/// The workspace list's fixed header items before the transcript blocks:
+/// back row, player, mode chips, alignment note, and the Transcript
+/// section label — the whole workspace scrolls as one piece, exactly as it
+/// did before virtualization (a pinned header taller than a tight pane
+/// would starve the reading area).
+const WORKSPACE_HEADER_ITEMS: usize = 5;
+
+/// The workspace list's fixed tail items after the transcript blocks:
+/// highlights, cuts, and reel actions — always present as items, so the
+/// item count (and with it the reading position) stays stable while the
+/// operator curates annotations.
+const WORKSPACE_LIST_TAIL_ITEMS: usize = 3;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum RequestOwner {
@@ -384,6 +397,26 @@ pub struct MediaViewer {
     /// The follow-along polling task — one per open workspace; cancelled by
     /// taking the handle (tab leave, transcript change, viewer drop).
     transcript_follow_task: Option<Task<()>>,
+    /// The workspace's virtualized content list (S3d): transcript blocks
+    /// plus the highlight, cut, and reel sections as tail items. Owned
+    /// here so the follow task can scroll it statefully — no window
+    /// needed for a deferred reveal.
+    transcript_list: ListState,
+    /// The item count last pushed to `transcript_list` — the reset guard,
+    /// so a re-render never drops the reading position unless the content
+    /// actually changed.
+    transcript_list_count: usize,
+    /// Whether the follow-along keeps the marked block visible (S3d). A
+    /// manual scroll suspends it; the Follow toggle re-enables and
+    /// reveals the current mark.
+    follow_viewport: bool,
+    /// The list offset the follow tick last observed. Any change not
+    /// accounted for by a pending follow reveal is a manual scroll and
+    /// suspends tracking.
+    follow_scroll_baseline: ListOffset,
+    /// Follow reveals not yet absorbed by a tick — programmatic scrolls
+    /// the tick must not misread as manual scrolling.
+    follow_reveals_in_flight: u32,
     /// The recordings listing for the Transcript tab's idle state (from
     /// `educt_list_transcripts` unfiltered) — the browse surface the tab
     /// opens with when no workspace transcript is loaded.
@@ -459,6 +492,11 @@ impl MediaViewer {
             transcript_request: RequestLifecycle::new(),
             current_word: None,
             transcript_follow_task: None,
+            transcript_list: ListState::new(0, ListAlignment::Top, px(1000.)),
+            transcript_list_count: 0,
+            follow_viewport: true,
+            follow_scroll_baseline: ListOffset::default(),
+            follow_reveals_in_flight: 0,
             transcript_listing: None,
             transcript_listing_request: RequestLifecycle::new(),
             selection_mode: false,
@@ -1696,6 +1734,13 @@ impl MediaViewer {
         self.selection_anchor = None;
         self.highlight_edit = None;
         self.transcript_follow_task.take();
+        // A fresh open starts the virtualized list from the top — a
+        // previous workspace's reading position must not survive a
+        // reopen (S3d).
+        self.transcript_list.reset(0);
+        self.transcript_list_count = 0;
+        self.follow_reveals_in_flight = 0;
+        self.follow_viewport = true;
         self.activate_tab(ViewerTab::Transcript, cx);
         self.load_transcript_with(transcript_id, cx);
     }
@@ -1795,6 +1840,12 @@ impl MediaViewer {
                 self.current_word = None;
                 self.transcript_request.complete(epoch, Ok(()));
                 self.start_transcript_follow(cx);
+                // A fresh workspace follows the mark: tracking on, and the
+                // scroll baseline re-anchored so the first tick cannot
+                // misread the load-time layout as a manual scroll (S3d).
+                self.follow_viewport = true;
+                self.follow_reveals_in_flight = 0;
+                self.follow_scroll_baseline = self.transcript_list.logical_scroll_top();
             }
             Err(error) => {
                 self.transcript_request.complete(epoch, Err(error));
@@ -2852,12 +2903,15 @@ impl MediaViewer {
                     // D3: poll only while playing — a paused or stopped
                     // player keeps its frozen mark without the widget
                     // reads (2026-10-26 review: the loop previously polled
-                    // regardless of the playing state).
+                    // regardless of the playing state). The scroll baseline
+                    // still updates while paused, so a manual scroll during
+                    // a pause suspends follow too (S3d).
                     let playing = viewer
                         .media_widget
                         .as_ref()
                         .is_some_and(|widget| widget.read(cx).is_transport_playing());
                     if !playing {
+                        viewer.note_follow_scroll_tick(cx);
                         return true;
                     }
                     let position = viewer
@@ -2877,6 +2931,11 @@ impl MediaViewer {
                         viewer.current_word = next;
                         cx.notify();
                     }
+                    // S3d: keep the marked block visible — a manual scroll
+                    // (any offset change not from a follow reveal)
+                    // suspends tracking; the Follow toggle re-enables it.
+                    viewer.note_follow_scroll_tick(cx);
+                    viewer.follow_marked_block_into_view();
                     true
                 }) {
                     Ok(keep_going) => keep_going,
@@ -2887,6 +2946,83 @@ impl MediaViewer {
                 }
             }
         }));
+    }
+
+    /// Observe the workspace list's scroll position once per follow tick.
+    /// Any movement not accounted for by a pending follow reveal is a
+    /// manual scroll: tracking suspends until the operator re-enables it
+    /// through the Follow toggle (S3d).
+    fn note_follow_scroll_tick(&mut self, cx: &mut Context<Self>) {
+        let top = self.transcript_list.logical_scroll_top();
+        if top != self.follow_scroll_baseline {
+            if self.follow_reveals_in_flight > 0 {
+                self.follow_reveals_in_flight -= 1;
+            } else if self.follow_viewport {
+                self.follow_viewport = false;
+                cx.notify();
+            }
+            self.follow_scroll_baseline = top;
+        }
+    }
+
+    /// Keep the follow-along mark visible (S3d): scroll the marked block
+    /// into view when tracking is enabled and the block is not already
+    /// fully within the list's viewport. Pure list-state work — callable
+    /// from the follow task without a window.
+    fn follow_marked_block_into_view(&mut self) {
+        if !self.follow_viewport {
+            return;
+        }
+        let Some(word) = self.current_word else {
+            return;
+        };
+        let Some(state) = self.transcript.as_ref() else {
+            return;
+        };
+        let Some(block_ix) = block_index_for_word(state, word) else {
+            return;
+        };
+        let item_ix = WORKSPACE_HEADER_ITEMS + block_ix;
+        let visible = self
+            .transcript_list
+            .bounds_for_item(item_ix)
+            .is_some_and(|item| {
+                let viewport = self.transcript_list.viewport_bounds();
+                item.top() >= viewport.top() && item.bottom() <= viewport.bottom()
+            });
+        if !visible {
+            self.follow_reveals_in_flight = self.follow_reveals_in_flight.saturating_add(1);
+            // Anchor by item index, not by measured pixels: blocks deep in
+            // a long recording are unmeasured until rendered, so a
+            // pixel-based reveal would compute against zero heights and
+            // scroll nowhere. The item-anchored scroll lands the marked
+            // block at the viewport top (the chat list's scroll-to-item
+            // precedent).
+            self.transcript_list.scroll_to(ListOffset {
+                item_ix,
+                offset_in_item: px(0.),
+            });
+        }
+    }
+
+    /// The Follow toggle (S3d): re-enable viewport tracking (revealing the
+    /// current mark) or suspend it. A manual scroll suspends tracking; this
+    /// is the operator's way back.
+    fn toggle_follow_viewport(&mut self, cx: &mut Context<Self>) {
+        self.follow_viewport = !self.follow_viewport;
+        if self.follow_viewport
+            && let Some(word) = self.current_word
+            && let Some(state) = self.transcript.as_ref()
+            && let Some(block_ix) = block_index_for_word(state, word)
+        {
+            self.follow_reveals_in_flight = self.follow_reveals_in_flight.saturating_add(1);
+            self.transcript_list.scroll_to(ListOffset {
+                item_ix: WORKSPACE_HEADER_ITEMS + block_ix,
+                offset_in_item: px(0.),
+            });
+        }
+        self.follow_scroll_baseline = self.transcript_list.logical_scroll_top();
+        cx.notify();
     }
 
     /// Delete the gallery-index entry for the selected asset (two-step confirm; the
@@ -3844,7 +3980,6 @@ impl MediaViewer {
         };
         let media_path = state.media_path.clone();
         let body = transcript_media_body(&media_path);
-        let mut media_unavailable = false;
         if self.media_widget_body.as_deref() != Some(body.as_str()) {
             match hkask_viz_core::shared_media_widget(&body, window, cx) {
                 Some(widget) => {
@@ -3856,11 +3991,9 @@ impl MediaViewer {
                     // still renders without the player.
                     self.media_widget = None;
                     self.media_widget_body = None;
-                    media_unavailable = true;
                 }
             }
         }
-        let media_widget = self.media_widget.clone();
         // The label input's focus handle, created on first need (pure tests
         // construct the viewer without a GPUI context).
         let label_input_focus = self
@@ -3871,151 +4004,266 @@ impl MediaViewer {
             .transcript
             .as_ref()
             .expect("the empty-state guard returned above");
-        let recording_name = recording_display_name(&media_path);
-        let mut sections = v_flex().gap_2().p_3();
-        let back = div()
-            .id("media-transcript-back-to-recordings")
-            .debug_selector(|| "media-transcript-back-to-recordings".into())
-            .cursor_pointer()
-            .flex()
-            .flex_wrap()
-            .gap_2()
-            .hover(|el| el.bg(cx.theme().colors().element_hover))
-            .child(
-                Label::new(SharedString::from("← Recordings"))
-                    .size(LabelSize::XSmall)
-                    .color(ui::Color::Muted),
-            )
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.close_transcript_workspace(cx);
-            }));
-        sections = sections.child(
-            h_flex().items_center().gap_2().child(back).child(
-                Label::new(SharedString::from(recording_name))
-                    .size(LabelSize::Small)
-                    .color(ui::Color::Default),
-            ),
-        );
-        if let Some(widget) = media_widget {
-            sections = sections.child(
-                div()
+        // The open label editor (S4-3) stays pinned above the list —
+        // always in view while a create or rename is pending.
+        let pending_editor = self.highlight_edit.clone();
+        // The whole workspace content (header rows, transcript blocks,
+        // annotation sections) renders as ONE virtualized list (S3d):
+        // everything scrolls together exactly as the workspace always
+        // did. Timed blocks are interactive text — every word is a click
+        // range that seeks the bound player to its start (S3b-2), the
+        // word containing the playback position carries the follow-along
+        // mark (S3c), and the follow task keeps the marked block in view
+        // through the list state.
+        let blocks = Arc::new(build_pane_blocks(state));
+        let item_count = WORKSPACE_HEADER_ITEMS + blocks.len() + WORKSPACE_LIST_TAIL_ITEMS;
+        if self.transcript_list_count != item_count {
+            self.transcript_list.reset(item_count);
+            self.transcript_list_count = item_count;
+            self.follow_reveals_in_flight = 0;
+            self.follow_scroll_baseline = self.transcript_list.logical_scroll_top();
+        }
+        let list_state = self.transcript_list.clone();
+        let workspace_items = cx.processor(move |this, ix, _window, cx| {
+            this.render_workspace_list_item(ix, blocks.as_slice(), cx)
+        });
+        let workspace_list = gpui::list(list_state, workspace_items)
+            .flex_1()
+            .min_h_0()
+            .p_3();
+        let mut workspace = v_flex().id("media-viewer-transcript").flex_1().min_w_0();
+        if let Some(edit) = pending_editor {
+            workspace = workspace.child(v_flex().px_3().pt_3().child(Self::render_label_editor(
+                &edit,
+                &label_input_focus,
+                cx,
+            )));
+        }
+        workspace.child(workspace_list).into_any_element()
+    }
+
+    /// One workspace list item (S3d): a fixed header row, a transcript
+    /// block, or one of the fixed tail sections — highlights, cuts, reel
+    /// actions (the operator-ruled presentation order: transcript text
+    /// before annotation inventories).
+    fn render_workspace_list_item(
+        &self,
+        ix: usize,
+        blocks: &[PaneBlock],
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        if ix < WORKSPACE_HEADER_ITEMS {
+            return self.render_workspace_header_item(ix, cx);
+        }
+        let block_ix = ix - WORKSPACE_HEADER_ITEMS;
+        if let Some(block) = blocks.get(block_ix) {
+            return div()
+                .pb_2()
+                .child(self.render_workspace_block(block, block_ix, cx))
+                .into_any_element();
+        }
+        match ix - WORKSPACE_HEADER_ITEMS - blocks.len() {
+            0 => self.render_workspace_highlights_section(cx),
+            1 => self.render_workspace_cuts_section(cx),
+            _ => self.render_workspace_reel_section(cx),
+        }
+    }
+
+    /// The fixed header rows at the top of the workspace list (S3d): the
+    /// back row, the player, the mode chips, the alignment note, and the
+    /// Transcript label with the review note — the same rows the
+    /// workspace always showed, scrolling with the content.
+    fn render_workspace_header_item(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
+        let row = match ix {
+            0 => {
+                let Some(state) = self.transcript.as_ref() else {
+                    return div().into_any_element();
+                };
+                let recording_name = recording_display_name(&state.media_path);
+                let back = div()
+                    .id("media-transcript-back-to-recordings")
+                    .debug_selector(|| "media-transcript-back-to-recordings".into())
+                    .cursor_pointer()
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .hover(|el| el.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Label::new(SharedString::from("← Recordings"))
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Muted),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.close_transcript_workspace(cx);
+                    }));
+                h_flex()
+                    .items_center()
+                    .gap_2()
+                    .child(back)
+                    .child(
+                        Label::new(SharedString::from(recording_name))
+                            .size(LabelSize::Small)
+                            .color(ui::Color::Default),
+                    )
+                    .into_any_element()
+            }
+            1 => match self.media_widget.clone() {
+                Some(widget) => div()
                     .h(px(140.))
                     .flex()
                     .min_w_0()
                     .overflow_hidden()
-                    .child(widget),
-            );
-        } else if media_unavailable {
-            sections = sections.child(
-                Label::new(SharedString::from(
+                    .child(widget)
+                    .into_any_element(),
+                // Degradation surfaced, never silent: the transcript text
+                // still renders without the player.
+                None => Label::new(SharedString::from(
                     "Playback unavailable — the transcript and editing controls remain available.",
                 ))
                 .size(LabelSize::XSmall)
-                .color(ui::Color::Error),
-            );
-        }
-        let selection_mode = self.selection_mode;
-        // S4 part-2: the select-range mode toggle — an explicit mode beats
-        // every-click-seek plus accidental creation.
-        sections = sections.child(
-            div()
-                .id("media-transcript-select-mode")
-                .debug_selector(|| "media-transcript-select-mode".into())
-                .cursor_pointer()
-                .flex()
-                .flex_wrap()
-                .gap_2()
-                .hover(|el| el.bg(cx.theme().colors().element_hover))
-                .child(
-                    Label::new(SharedString::from(if selection_mode {
-                        "Finish selection"
-                    } else {
-                        "Select text"
-                    }))
-                    .size(LabelSize::XSmall)
-                    .color(if selection_mode {
-                        ui::Color::Default
-                    } else {
-                        ui::Color::Muted
-                    }),
-                )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.selection_mode = !this.selection_mode;
-                    this.selection_anchor = None;
-                    // Toggling the mode abandons any open label editor —
-                    // it is the tail of a selection this toggle ends.
-                    this.highlight_edit = None;
-                    this.status = Some(if this.selection_mode {
-                        "Select mode on — click the first word of the range.".into()
-                    } else {
-                        "Select mode off — clicks seek playback.".into()
-                    });
-                    cx.notify();
-                })),
-        );
-        // The open label editor (S4-3) renders above the transcript text —
-        // always in view while a create or rename is pending.
-        if let Some(edit) = self.highlight_edit.clone() {
-            sections = sections.child(Self::render_label_editor(&edit, &label_input_focus, cx));
-        }
-        match state.alignment.as_str() {
-            "original" | "aligned" => {}
-            "re_anchored" => {
-                sections = sections.child(
-                    Label::new(SharedString::from(
+                .color(ui::Color::Error)
+                .into_any_element(),
+            },
+            2 => {
+                let selection_mode = self.selection_mode;
+                let following = self.follow_viewport;
+                // S4 part-2: the select-range mode toggle — an explicit mode
+                // beats every-click-seek plus accidental creation.
+                let select_chip = div()
+                    .id("media-transcript-select-mode")
+                    .debug_selector(|| "media-transcript-select-mode".into())
+                    .cursor_pointer()
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .hover(|el| el.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Label::new(SharedString::from(if selection_mode {
+                            "Finish selection"
+                        } else {
+                            "Select text"
+                        }))
+                        .size(LabelSize::XSmall)
+                        .color(if selection_mode {
+                            ui::Color::Default
+                        } else {
+                            ui::Color::Muted
+                        }),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.selection_mode = !this.selection_mode;
+                        this.selection_anchor = None;
+                        // Toggling the mode abandons any open label editor —
+                        // it is the tail of a selection this toggle ends.
+                        this.highlight_edit = None;
+                        this.status = Some(if this.selection_mode {
+                            "Select mode on — click the first word of the range.".into()
+                        } else {
+                            "Select mode off — clicks seek playback.".into()
+                        });
+                        cx.notify();
+                    }));
+                // The Follow toggle (S3d): viewport tracking is on by
+                // default; a manual scroll suspends it and this affordance
+                // re-enables it.
+                let follow_chip = div()
+                    .id("media-transcript-follow-toggle")
+                    .debug_selector(|| "media-transcript-follow-toggle".into())
+                    .cursor_pointer()
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .hover(|el| el.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Label::new(SharedString::from(if following {
+                            "Following"
+                        } else {
+                            "Follow"
+                        }))
+                        .size(LabelSize::XSmall)
+                        .color(if following {
+                            ui::Color::Muted
+                        } else {
+                            ui::Color::Default
+                        }),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.toggle_follow_viewport(cx);
+                    }));
+                h_flex()
+                    .items_center()
+                    .flex_wrap()
+                    .gap_2()
+                    .child(select_chip)
+                    .child(follow_chip)
+                    .into_any_element()
+            }
+            3 => {
+                let Some(state) = self.transcript.as_ref() else {
+                    return div().into_any_element();
+                };
+                match state.alignment.as_str() {
+                    "re_anchored" => Label::new(SharedString::from(
                         "Estimated timings — review existing ranges before creating a reel.",
                     ))
                     .size(LabelSize::XSmall)
-                    .color(ui::Color::Muted),
-                );
-            }
-            "unaligned" => {
-                sections = sections.child(
-                    Label::new(SharedString::from(
+                    .color(ui::Color::Muted)
+                    .into_any_element(),
+                    "unaligned" => Label::new(SharedString::from(
                         "Corrected text only — playback and timed selection are unavailable.",
                     ))
                     .size(LabelSize::XSmall)
-                    .color(ui::Color::Error),
-                );
-            }
-            "untimed" => {
-                sections = sections.child(
-                    Label::new(SharedString::from(
+                    .color(ui::Color::Error)
+                    .into_any_element(),
+                    "untimed" => Label::new(SharedString::from(
                         "Text-only transcript — playback and timed selection are unavailable.",
                     ))
                     .size(LabelSize::XSmall)
-                    .color(ui::Color::Error),
-                );
+                    .color(ui::Color::Error)
+                    .into_any_element(),
+                    _ => div().into_any_element(),
+                }
             }
-            _ => {}
-        }
+            _ => {
+                let Some(state) = self.transcript.as_ref() else {
+                    return div().into_any_element();
+                };
+                let mut row = v_flex();
+                row = row.child(Self::section_label("Transcript"));
+                // Review flags (task 1a): the derived marker rides the
+                // payload; the pane renders it, never re-derives (D5).
+                let review = state
+                    .review
+                    .as_ref()
+                    .filter(|_| matches!(state.alignment.as_str(), "original" | "aligned"));
+                if let Some(note) = review.and_then(|review| review.note.as_deref()) {
+                    row = row.child(
+                        Label::new(SharedString::from(format!("Review: {note}")))
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Muted)
+                            .mt_1(),
+                    );
+                }
+                row.into_any_element()
+            }
+        };
+        div().pb_2().child(row).into_any_element()
+    }
 
-        sections = sections.child(Self::section_label("Transcript"));
-        // Review flags (task 1a): the derived marker rides the payload; the
-        // pane renders it, never re-derives (D5). Per-block markers gate on
-        // index-identical views like every source-index overlay; the note
-        // line speaks for whole-transcript absences (missing layers), so a
-        // per-block no-confidence marker renders only when both layers
-        // exist and the gap is isolated.
-        let review = state
-            .review
-            .as_ref()
-            .filter(|_| matches!(state.alignment.as_str(), "original" | "aligned"));
-        if let Some(note) = review.and_then(|review| review.note.as_deref()) {
-            sections = sections.child(
-                Label::new(SharedString::from(format!("Review: {note}")))
-                    .size(LabelSize::XSmall)
-                    .color(ui::Color::Muted)
-                    .mt_1(),
-            );
-        }
-        let per_block_no_confidence = review.is_some_and(|review| review.note.is_none());
-        // Paragraph blocks over the working words when the view is timed;
-        // the corrected/plain text as one block otherwise (S3a). Timed
-        // blocks are interactive text: every word is a click range that
-        // seeks the bound player to its start (S3b-2), and the word
-        // containing the playback position carries the follow-along mark
-        // (S3c).
+    /// One transcript block as a workspace list item (S3a/S3b/S3c):
+    /// speaker label, per-block review marker, interactive text with word
+    /// click-to-seek ranges, highlight and strike overlays, and the
+    /// follow-along mark. The marked block carries the layout-test
+    /// selector (S3d).
+    fn render_workspace_block(
+        &self,
+        block: &PaneBlock,
+        block_index: usize,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some(state) = self.transcript.as_ref() else {
+            return div().into_any_element();
+        };
         let current_word = self.current_word;
         let selection_anchor = self.selection_anchor;
         let highlight_style = HighlightStyle {
@@ -4030,299 +4278,209 @@ impl MediaViewer {
             }),
             ..Default::default()
         };
-        for (block_index, block) in build_pane_blocks(state).into_iter().enumerate() {
-            if let Some(speaker) = &block.speaker {
-                sections = sections.child(
-                    Label::new(SharedString::from(speaker.clone()))
+        let review = state
+            .review
+            .as_ref()
+            .filter(|_| matches!(state.alignment.as_str(), "original" | "aligned"));
+        let per_block_no_confidence = review.is_some_and(|review| review.note.is_none());
+        let mut section = v_flex();
+        if let Some(speaker) = &block.speaker {
+            section = section.child(
+                Label::new(SharedString::from(speaker.clone()))
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Muted)
+                    .mt_1(),
+            );
+        }
+        if let Some(flag) = review.and_then(|review| review.blocks.get(block_index)) {
+            let marker = match flag.status {
+                PaneReviewStatus::Flagged => Some("Review suggested".to_string()),
+                PaneReviewStatus::NoConfidenceRecorded if per_block_no_confidence => {
+                    Some("Review unavailable".to_string())
+                }
+                _ => None,
+            };
+            if let Some(marker) = marker {
+                section = section.child(
+                    Label::new(SharedString::from(marker))
                         .size(LabelSize::XSmall)
                         .color(ui::Color::Muted)
                         .mt_1(),
                 );
             }
-            if let Some(flag) = review.and_then(|review| review.blocks.get(block_index)) {
-                let marker = match flag.status {
-                    PaneReviewStatus::Flagged => Some("Review suggested".to_string()),
-                    PaneReviewStatus::NoConfidenceRecorded if per_block_no_confidence => {
-                        Some("Review unavailable".to_string())
-                    }
-                    _ => None,
-                };
-                if let Some(marker) = marker {
-                    sections = sections.child(
-                        Label::new(SharedString::from(marker))
-                            .size(LabelSize::XSmall)
-                            .color(ui::Color::Muted)
-                            .mt_1(),
-                    );
-                }
-            }
-            if block.word_char_ranges.is_empty() {
-                // Text-only view: no word map, no interaction — a wrapping
-                // StyledText (a single-line Label would overflow the same
-                // way the interactive blocks did).
-                sections =
-                    sections.child(div().min_w_0().child(StyledText::new(block.text.clone())));
-                continue;
-            }
-            let mut highlights = Vec::new();
-            if let Some(current) = current_word
-                && let Some(local) = block
-                    .word_starts
-                    .iter()
-                    .position(|(index, _)| *index == current)
-            {
-                highlights.push((block.word_char_ranges[local].clone(), highlight_style));
-            }
-            // The pending selection's anchor carries the same mark.
-            if let Some(anchor) = selection_anchor
-                && let Some(local) = block
-                    .word_starts
-                    .iter()
-                    .position(|(index, _)| *index == anchor)
-            {
-                highlights.push((block.word_char_ranges[local].clone(), highlight_style));
-            }
-            // Highlight overlays (S4): researcher/model ranges painted in
-            // deterministic label colors — only on index-identical views
-            // (D5: the panel never re-implements the server's projection).
-            // Strike marks (R2): struck words render line-through under the
-            // same gate.
-            if matches!(state.alignment.as_str(), "original" | "aligned") {
-                for highlight in &state.highlights {
-                    if let Some(range) =
-                        block_word_char_range(&block, highlight.start_word, highlight.end_word)
-                    {
-                        highlights.push((
-                            range,
-                            HighlightStyle {
-                                background_color: Some(highlight_label_color(&highlight.label)),
-                                ..Default::default()
-                            },
-                        ));
-                    }
-                }
-                for strike in &state.strikes {
-                    if let Some(range) =
-                        block_word_char_range(&block, strike.start_word, strike.end_word)
-                    {
-                        highlights.push((range, strike_style));
-                    }
-                }
-            }
-            let word_starts = block.word_starts.clone();
-            let entity = cx.entity().downgrade();
-            let interactive = InteractiveText::new(
-                SharedString::from(format!("media-transcript-paragraph-{block_index}")),
-                StyledText::new(block.text.clone())
-                    .with_highlights(resolved_highlight_runs(highlights)),
-            )
-            .on_click(
-                block.word_char_ranges.clone(),
-                move |range_index, window, cx| {
-                    if let Some((global_word, start_ms)) = word_starts.get(range_index) {
-                        entity
-                            .update(cx, |viewer, cx| {
-                                viewer.word_clicked(*global_word, *start_ms, window, cx)
-                            })
-                            .ok();
-                    }
-                },
-            );
-            // Block layout (NOT flex): the text element wraps only when it
-            // receives a definite width — a flex row lets the paragraph be
-            // probed at max-content and laid out as one overflowing line
-            // (operator report 2026-10-26). min_w_0 + block gives the pane
-            // width down the chain.
-            let container = div()
-                .id(SharedString::from(format!(
-                    "media-transcript-block-{block_index}"
-                )))
-                .min_w_0();
-            let container = if block_index == 0 {
-                container
-                    // Test-support hook: exposes this element's laid-out
-                    // bounds to layout ground-truth tests (noop in release).
-                    .debug_selector(|| "media-transcript-paragraph".into())
-            } else {
-                container
-            };
-            sections = sections.child(container.child(interactive));
         }
-
-        let index_identical = matches!(state.alignment.as_str(), "original" | "aligned");
-        if !state.highlights.is_empty() {
-            sections = sections.child(Self::section_label("Highlights"));
-            if !index_identical {
-                sections = sections.child(
-                    Label::new(SharedString::from(
-                        "Timed navigation and text overlays are unavailable for this view.",
-                    ))
-                    .size(LabelSize::XSmall)
-                    .color(ui::Color::Muted),
-                );
-            }
-            for (row_index, highlight) in state.highlights.iter().enumerate() {
-                let row = if index_identical {
-                    format!(
-                        "{} — {}",
-                        highlight.label,
-                        transcript_range_excerpt(state, highlight.start_word, highlight.end_word)
-                    )
-                } else {
-                    highlight.label.clone()
-                };
-                let start_ms = if index_identical {
-                    state
-                        .words
-                        .as_deref()
-                        .and_then(|words| words.get(highlight.start_word))
-                        .map(|word| word.start_ms)
-                } else {
-                    None
-                };
-                let row_element = div()
-                    .id(SharedString::from(format!(
-                        "media-transcript-highlight-row-{row_index}"
-                    )))
-                    .cursor_pointer()
-                    .flex()
-                    .flex_wrap()
-                    .gap_2()
-                    .hover(|el| el.bg(cx.theme().colors().element_hover))
-                    .child(
-                        Label::new(SharedString::from(row))
-                            .size(LabelSize::XSmall)
-                            .color(ui::Color::Default),
-                    );
-                if let Some(start_ms) = start_ms {
-                    sections =
-                        sections.child(row_element.on_click(cx.listener(move |this, _, _, cx| {
-                            this.seek_workspace_transcript(start_ms, cx);
-                        })));
-                } else {
-                    sections = sections.child(row_element);
-                }
-                if highlight.researcher_supplied {
-                    let annotation_id = highlight.annotation_id.clone();
-                    let (start_word, end_word) = (highlight.start_word, highlight.end_word);
-                    let included = self.reel_selection.contains(&(start_word, end_word));
-                    let include_toggle = div()
-                        .id(SharedString::from(format!(
-                            "media-transcript-reel-toggle-{annotation_id}"
-                        )))
-                        .cursor_pointer()
-                        .flex()
-                        .flex_wrap()
-                        .gap_2()
-                        .hover(|el| el.bg(cx.theme().colors().element_hover))
-                        .child(
-                            Label::new(SharedString::from(if included {
-                                "Included in reel"
-                            } else {
-                                "Add to reel"
-                            }))
-                            .size(LabelSize::XSmall)
-                            .color(if included {
-                                ui::Color::Default
-                            } else {
-                                ui::Color::Muted
-                            }),
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if !this.reel_selection.remove(&(start_word, end_word)) {
-                                this.reel_selection.insert((start_word, end_word));
-                            }
-                            cx.notify();
-                        }));
-                    let edit = HighlightEdit {
-                        kind: HighlightEditKind::Rename {
-                            annotation_id: highlight.annotation_id.clone(),
-                            start_word: highlight.start_word,
-                            end_word: highlight.end_word,
-                            note: highlight.note.clone(),
+        if block.word_char_ranges.is_empty() {
+            // Text-only view: no word map, no interaction — a wrapping
+            // StyledText (a single-line Label would overflow the same
+            // way the interactive blocks did).
+            return section
+                .child(div().min_w_0().child(StyledText::new(block.text.clone())))
+                .into_any_element();
+        }
+        let mut highlights = Vec::new();
+        if let Some(current) = current_word
+            && let Some(local) = block
+                .word_starts
+                .iter()
+                .position(|(index, _)| *index == current)
+        {
+            highlights.push((block.word_char_ranges[local].clone(), highlight_style));
+        }
+        // The pending selection's anchor carries the same mark.
+        if let Some(anchor) = selection_anchor
+            && let Some(local) = block
+                .word_starts
+                .iter()
+                .position(|(index, _)| *index == anchor)
+        {
+            highlights.push((block.word_char_ranges[local].clone(), highlight_style));
+        }
+        // Highlight overlays (S4): researcher/model ranges painted in
+        // deterministic label colors — only on index-identical views
+        // (D5: the panel never re-implements the server's projection).
+        // Strike marks (R2): struck words render line-through under the
+        // same gate.
+        if matches!(state.alignment.as_str(), "original" | "aligned") {
+            for highlight in &state.highlights {
+                if let Some(range) =
+                    block_word_char_range(block, highlight.start_word, highlight.end_word)
+                {
+                    highlights.push((
+                        range,
+                        HighlightStyle {
+                            background_color: Some(highlight_label_color(&highlight.label)),
+                            ..Default::default()
                         },
-                        buffer: LabelBuffer::from_str(highlight.label.as_str()),
-                    };
-                    let rename = div()
-                        .id(SharedString::from(format!(
-                            "media-transcript-highlight-rename-{}",
-                            highlight.annotation_id
-                        )))
-                        .cursor_pointer()
-                        .flex()
-                        .flex_wrap()
-                        .gap_2()
-                        .hover(|el| el.bg(cx.theme().colors().element_hover))
-                        .child(
-                            Label::new(SharedString::from("Rename"))
-                                .size(LabelSize::XSmall)
-                                .color(ui::Color::Default),
-                        )
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.open_label_editor(edit.clone(), window, cx);
-                        }));
-                    let delete = div()
-                        .id(SharedString::from(format!(
-                            "media-transcript-highlight-delete-{annotation_id}"
-                        )))
-                        .cursor_pointer()
-                        .flex()
-                        .flex_wrap()
-                        .gap_2()
-                        .hover(|el| el.bg(cx.theme().colors().element_hover))
-                        .child(
-                            Label::new(SharedString::from("Delete"))
-                                .size(LabelSize::XSmall)
-                                .color(ui::Color::Error),
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.delete_workspace_annotation(
-                                annotation_id.clone(),
-                                "Highlight",
-                                cx,
-                            );
-                        }));
-                    sections = sections.child(
-                        h_flex()
-                            .flex_wrap()
-                            .gap_3()
-                            .child(include_toggle)
-                            .child(rename)
-                            .child(delete),
-                    );
+                    ));
                 }
-            }
-        }
-        if !state.strikes.is_empty() {
-            sections = sections.child(Self::section_label("Cuts"));
-            if !index_identical {
-                sections = sections.child(
-                    Label::new(SharedString::from(
-                        "Timed navigation and line-through overlays are unavailable for this view.",
-                    ))
-                    .size(LabelSize::XSmall)
-                    .color(ui::Color::Muted),
-                );
             }
             for strike in &state.strikes {
-                let row = if index_identical {
-                    transcript_range_excerpt(state, strike.start_word, strike.end_word)
-                } else {
-                    "Cut selection".to_string()
-                };
-                let start_ms = if index_identical {
-                    state
-                        .words
-                        .as_deref()
-                        .and_then(|words| words.get(strike.start_word))
-                        .map(|word| word.start_ms)
-                } else {
-                    None
-                };
-                let row_element = div()
+                if let Some(range) =
+                    block_word_char_range(block, strike.start_word, strike.end_word)
+                {
+                    highlights.push((range, strike_style));
+                }
+            }
+        }
+        let word_starts = block.word_starts.clone();
+        let entity = cx.entity().downgrade();
+        let interactive = InteractiveText::new(
+            SharedString::from(format!("media-transcript-paragraph-{block_index}")),
+            StyledText::new(block.text.clone())
+                .with_highlights(resolved_highlight_runs(highlights)),
+        )
+        .on_click(
+            block.word_char_ranges.clone(),
+            move |range_index, window, cx| {
+                if let Some((global_word, start_ms)) = word_starts.get(range_index) {
+                    entity
+                        .update(cx, |viewer, cx| {
+                            viewer.word_clicked(*global_word, *start_ms, window, cx)
+                        })
+                        .ok();
+                }
+            },
+        );
+        // Block layout (NOT flex): the text element wraps only when it
+        // receives a definite width — a flex row lets the paragraph be
+        // probed at max-content and laid out as one overflowing line
+        // (operator report 2026-10-26). min_w_0 + block gives the pane
+        // width down the chain.
+        let container = div()
+            .id(SharedString::from(format!(
+                "media-transcript-block-{block_index}"
+            )))
+            .min_w_0();
+        let marked = current_word
+            .is_some_and(|word| block.word_starts.iter().any(|(index, _)| *index == word));
+        let container = if marked {
+            container
+                // Test-support hook (S3d): the follow-along visibility
+                // test locates the marked block through this selector
+                // (noop in release).
+                .debug_selector(|| "media-transcript-marked-block".into())
+        } else if block_index == 0 {
+            container
+                // Test-support hook: exposes this element's laid-out
+                // bounds to layout ground-truth tests (noop in release).
+                .debug_selector(|| "media-transcript-paragraph".into())
+        } else {
+            container
+        };
+        section
+            .child(container.child(interactive))
+            .into_any_element()
+    }
+
+    /// The highlights tail section (S4): labeled selection rows — seek,
+    /// reel-inclusion toggle, rename, delete — on index-identical views.
+    fn render_workspace_highlights_section(&self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(state) = self.transcript.as_ref() else {
+            return div().into_any_element();
+        };
+        if state.highlights.is_empty() {
+            return div().into_any_element();
+        }
+        let index_identical = matches!(state.alignment.as_str(), "original" | "aligned");
+        let mut section = v_flex().gap_2();
+        section = section.child(Self::section_label("Highlights"));
+        if !index_identical {
+            section = section.child(
+                Label::new(SharedString::from(
+                    "Timed navigation and text overlays are unavailable for this view.",
+                ))
+                .size(LabelSize::XSmall)
+                .color(ui::Color::Muted),
+            );
+        }
+        for (row_index, highlight) in state.highlights.iter().enumerate() {
+            let row = if index_identical {
+                format!(
+                    "{} — {}",
+                    highlight.label,
+                    transcript_range_excerpt(state, highlight.start_word, highlight.end_word)
+                )
+            } else {
+                highlight.label.clone()
+            };
+            let start_ms = if index_identical {
+                state
+                    .words
+                    .as_deref()
+                    .and_then(|words| words.get(highlight.start_word))
+                    .map(|word| word.start_ms)
+            } else {
+                None
+            };
+            let row_element = div()
+                .id(SharedString::from(format!(
+                    "media-transcript-highlight-row-{row_index}"
+                )))
+                .cursor_pointer()
+                .flex()
+                .flex_wrap()
+                .gap_2()
+                .hover(|el| el.bg(cx.theme().colors().element_hover))
+                .child(
+                    Label::new(SharedString::from(row))
+                        .size(LabelSize::XSmall)
+                        .color(ui::Color::Default),
+                );
+            if let Some(start_ms) = start_ms {
+                section =
+                    section.child(row_element.on_click(cx.listener(move |this, _, _, cx| {
+                        this.seek_workspace_transcript(start_ms, cx);
+                    })));
+            } else {
+                section = section.child(row_element);
+            }
+            if highlight.researcher_supplied {
+                let annotation_id = highlight.annotation_id.clone();
+                let (start_word, end_word) = (highlight.start_word, highlight.end_word);
+                let included = self.reel_selection.contains(&(start_word, end_word));
+                let include_toggle = div()
                     .id(SharedString::from(format!(
-                        "media-transcript-strike-row-{}",
-                        strike.annotation_id
+                        "media-transcript-reel-toggle-{annotation_id}"
                     )))
                     .cursor_pointer()
                     .flex()
@@ -4330,40 +4488,169 @@ impl MediaViewer {
                     .gap_2()
                     .hover(|el| el.bg(cx.theme().colors().element_hover))
                     .child(
-                        Label::new(SharedString::from(row))
+                        Label::new(SharedString::from(if included {
+                            "Included in reel"
+                        } else {
+                            "Add to reel"
+                        }))
+                        .size(LabelSize::XSmall)
+                        .color(if included {
+                            ui::Color::Default
+                        } else {
+                            ui::Color::Muted
+                        }),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if !this.reel_selection.remove(&(start_word, end_word)) {
+                            this.reel_selection.insert((start_word, end_word));
+                        }
+                        cx.notify();
+                    }));
+                let edit = HighlightEdit {
+                    kind: HighlightEditKind::Rename {
+                        annotation_id: highlight.annotation_id.clone(),
+                        start_word: highlight.start_word,
+                        end_word: highlight.end_word,
+                        note: highlight.note.clone(),
+                    },
+                    buffer: LabelBuffer::from_str(highlight.label.as_str()),
+                };
+                let rename = div()
+                    .id(SharedString::from(format!(
+                        "media-transcript-highlight-rename-{}",
+                        highlight.annotation_id
+                    )))
+                    .cursor_pointer()
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .hover(|el| el.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Label::new(SharedString::from("Rename"))
                             .size(LabelSize::XSmall)
                             .color(ui::Color::Default),
-                    );
-                if let Some(start_ms) = start_ms {
-                    sections =
-                        sections.child(row_element.on_click(cx.listener(move |this, _, _, cx| {
-                            this.seek_workspace_transcript(start_ms, cx);
-                        })));
-                } else {
-                    sections = sections.child(row_element);
-                }
-                let annotation_id = strike.annotation_id.clone();
-                sections = sections.child(
-                    div()
-                        .id(SharedString::from(format!(
-                            "media-transcript-strike-delete-{annotation_id}"
-                        )))
-                        .cursor_pointer()
-                        .flex()
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.open_label_editor(edit.clone(), window, cx);
+                    }));
+                let delete = div()
+                    .id(SharedString::from(format!(
+                        "media-transcript-highlight-delete-{annotation_id}"
+                    )))
+                    .cursor_pointer()
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .hover(|el| el.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Label::new(SharedString::from("Delete"))
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Error),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.delete_workspace_annotation(annotation_id.clone(), "Highlight", cx);
+                    }));
+                section = section.child(
+                    h_flex()
                         .flex_wrap()
-                        .gap_2()
-                        .hover(|el| el.bg(cx.theme().colors().element_hover))
-                        .child(
-                            Label::new(SharedString::from("Restore"))
-                                .size(LabelSize::XSmall)
-                                .color(ui::Color::Default),
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.delete_workspace_annotation(annotation_id.clone(), "Strike", cx);
-                        })),
+                        .gap_3()
+                        .child(include_toggle)
+                        .child(rename)
+                        .child(delete),
                 );
             }
         }
+        section.into_any_element()
+    }
+
+    /// The cuts tail section (R2): struck ranges with seek and Restore.
+    fn render_workspace_cuts_section(&self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(state) = self.transcript.as_ref() else {
+            return div().into_any_element();
+        };
+        if state.strikes.is_empty() {
+            return div().into_any_element();
+        }
+        let index_identical = matches!(state.alignment.as_str(), "original" | "aligned");
+        let mut section = v_flex().gap_2();
+        section = section.child(Self::section_label("Cuts"));
+        if !index_identical {
+            section = section.child(
+                Label::new(SharedString::from(
+                    "Timed navigation and line-through overlays are unavailable for this view.",
+                ))
+                .size(LabelSize::XSmall)
+                .color(ui::Color::Muted),
+            );
+        }
+        for strike in &state.strikes {
+            let row = if index_identical {
+                transcript_range_excerpt(state, strike.start_word, strike.end_word)
+            } else {
+                "Cut selection".to_string()
+            };
+            let start_ms = if index_identical {
+                state
+                    .words
+                    .as_deref()
+                    .and_then(|words| words.get(strike.start_word))
+                    .map(|word| word.start_ms)
+            } else {
+                None
+            };
+            let row_element = div()
+                .id(SharedString::from(format!(
+                    "media-transcript-strike-row-{}",
+                    strike.annotation_id
+                )))
+                .cursor_pointer()
+                .flex()
+                .flex_wrap()
+                .gap_2()
+                .hover(|el| el.bg(cx.theme().colors().element_hover))
+                .child(
+                    Label::new(SharedString::from(row))
+                        .size(LabelSize::XSmall)
+                        .color(ui::Color::Default),
+                );
+            if let Some(start_ms) = start_ms {
+                section =
+                    section.child(row_element.on_click(cx.listener(move |this, _, _, cx| {
+                        this.seek_workspace_transcript(start_ms, cx);
+                    })));
+            } else {
+                section = section.child(row_element);
+            }
+            let annotation_id = strike.annotation_id.clone();
+            section = section.child(
+                div()
+                    .id(SharedString::from(format!(
+                        "media-transcript-strike-delete-{annotation_id}"
+                    )))
+                    .cursor_pointer()
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .hover(|el| el.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Label::new(SharedString::from("Restore"))
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Default),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.delete_workspace_annotation(annotation_id.clone(), "Strike", cx);
+                    })),
+            );
+        }
+        section.into_any_element()
+    }
+
+    /// The reel tail section (S5): plain-language compose actions, visible
+    /// only when their inputs exist.
+    fn render_workspace_reel_section(&self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(state) = self.transcript.as_ref() else {
+            return div().into_any_element();
+        };
         let any_researcher_highlight = state
             .highlights
             .iter()
@@ -4376,14 +4663,15 @@ impl MediaViewer {
                 any_researcher_highlight && !state.strikes.is_empty(),
             ),
         ];
+        let mut section = v_flex().gap_2();
         if affordances.iter().any(|(_, visible)| *visible) {
-            sections = sections.child(Self::section_label("Create a reel"));
+            section = section.child(Self::section_label("Create a reel"));
         }
         for (mode, visible) in affordances {
             if !visible {
                 continue;
             }
-            sections = sections.child(
+            section = section.child(
                 div()
                     .id(SharedString::from(format!(
                         "media-transcript-compose-reel-{}",
@@ -4404,13 +4692,7 @@ impl MediaViewer {
                     })),
             );
         }
-        v_flex()
-            .id("media-viewer-transcript")
-            .flex_1()
-            .min_w_0()
-            .overflow_y_scroll()
-            .child(sections)
-            .into_any_element()
+        section.into_any_element()
     }
 
     /// The Transcript tab's idle state: the recordings browser — every
@@ -5495,6 +5777,32 @@ fn compose_reel_params(
 /// before the first word or for an empty view.
 fn current_word_index(words: &[PaneWord], position_ms: u64) -> Option<usize> {
     words.iter().rposition(|word| word.start_ms <= position_ms)
+}
+
+/// The list item index of the block containing `word` — the same boundary
+/// walk `build_pane_blocks` performs over the paragraph breaks, so the
+/// follow-along can map its mark to a list item without rebuilding blocks
+/// (S3d). Pinned against the builder by
+/// `block_index_for_word_matches_block_boundaries`.
+fn block_index_for_word(state: &TranscriptPaneState, word: usize) -> Option<usize> {
+    let words_len = state.words.as_ref()?.len();
+    if word >= words_len {
+        return None;
+    }
+    let breaks = state.paragraph_breaks.as_deref().unwrap_or(&[]);
+    let mut start = 0usize;
+    let mut block = 0usize;
+    for &break_after in breaks {
+        if break_after >= words_len || break_after < start {
+            continue;
+        }
+        if word <= break_after {
+            return Some(block);
+        }
+        start = break_after + 1;
+        block += 1;
+    }
+    Some(block)
 }
 
 /// Build the pane's paragraph blocks: paragraphs over the working words
@@ -9080,6 +9388,62 @@ mod tests {
         assert_eq!(current_word_index(&[], 100), None);
     }
 
+    /// dcterms:identifier: `block_index_for_word`
+    /// expect: The mark-to-item mapping mirrors the block builder's
+    /// boundaries exactly — every word maps to the block that contains it,
+    /// so the follow-along scrolls the block the operator is hearing.
+    /// [P1] Motivating: a mapping drift would scroll the wrong block.
+    #[test]
+    fn block_index_for_word_matches_block_boundaries() {
+        let state = TranscriptPaneState {
+            transcript_id: "t-parity".into(),
+            media_path: "/generated/parity.wav".into(),
+            alignment: "original".into(),
+            alignment_note: None,
+            words: Some(
+                (0..50)
+                    .map(|index| PaneWord {
+                        word: format!("parity-word-{index}"),
+                        start_ms: index as u64 * 100,
+                        end_ms: index as u64 * 100 + 90,
+                    })
+                    .collect(),
+            ),
+            working_text: String::new(),
+            paragraph_breaks: Some(vec![9, 19, 29, 39]),
+            speaker_spans: None,
+            review: None,
+            layers: Vec::new(),
+            highlights: Vec::new(),
+            strikes: Vec::new(),
+        };
+        let blocks = build_pane_blocks(&state);
+        assert_eq!(blocks.len(), 5, "four breaks split 50 words into 5 blocks");
+        for (block_index, block) in blocks.iter().enumerate() {
+            for (word, _) in &block.word_starts {
+                assert_eq!(
+                    block_index_for_word(&state, *word),
+                    Some(block_index),
+                    "word {word} must map to its own block"
+                );
+            }
+        }
+        assert_eq!(
+            block_index_for_word(&state, 50),
+            None,
+            "a past-the-end word has no block"
+        );
+        let no_breaks = TranscriptPaneState {
+            paragraph_breaks: None,
+            ..state
+        };
+        assert_eq!(
+            block_index_for_word(&no_breaks, 49),
+            Some(0),
+            "without breaks every word maps to the single block"
+        );
+    }
+
     /// dcterms:identifier: `build_pane_blocks`
     /// expect: Blocks honor breaks, align char ranges with the word text,
     /// and carry the global indices and start times the click map consumes.
@@ -9641,19 +10005,187 @@ mod viewer_layout_tests {
         cx.simulate_resize(size(px(480.), px(320.)));
         cx.run_until_parked();
 
-        for selector in [
-            "media-transcript-back-to-recordings",
-            "media-transcript-select-mode",
-            "media-transcript-paragraph",
-        ] {
-            let bounds = cx
-                .debug_bounds(selector)
-                .unwrap_or_else(|| panic!("{selector} remains laid out during media failure"));
+        // Back rides at the top of the workspace list — reachable without
+        // scrolling even on the tightest pane (the harness halves the
+        // window, so the viewer area here is ~160px).
+        let back = cx
+            .debug_bounds("media-transcript-back-to-recordings")
+            .expect("Back remains laid out during media failure");
+        assert!(
+            back.bottom() <= px(320.),
+            "Back remains reachable during media failure: {back:?}"
+        );
+        // The failed 140px player leaves the mode chips and the paragraph
+        // below the tight fold; the reachability contract under
+        // virtualization is that scrolling renders them — no dead end.
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript_list.scroll_to(ListOffset {
+                item_ix: 2,
+                offset_in_item: px(0.),
+            });
+            cx.notify();
+        });
+        cx.run_until_parked();
+        for selector in ["media-transcript-select-mode", "media-transcript-paragraph"] {
+            let bounds = cx.debug_bounds(selector).unwrap_or_else(|| {
+                panic!("{selector} renders when scrolled to during media failure")
+            });
             assert!(
                 bounds.bottom() <= px(320.),
                 "{selector} remains reachable during media failure: {bounds:?}"
             );
         }
+    }
+
+    /// The follow-along mark must stay VISIBLE during playback (S3d, the
+    /// repair plan's R1 acceptance): with the mark on a late block and
+    /// viewport tracking on, the marked block is scrolled into the pane.
+    /// A virtualized off-screen block renders nothing at all, so its
+    /// bounds being present AND inside the pane is visibility proof —
+    /// before the fix the marked block sits far below the fold.
+    #[gpui::test]
+    fn follow_along_scrolls_the_marked_block_into_view(cx: &mut TestAppContext) {
+        init_layout_test_globals(cx);
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript = Some(TranscriptPaneState {
+                transcript_id: "t-follow".into(),
+                media_path: "/generated/follow.wav".into(),
+                alignment: "original".into(),
+                alignment_note: None,
+                words: Some(
+                    (0..200)
+                        .map(|index| PaneWord {
+                            word: format!("follow-word-{index}"),
+                            start_ms: index as u64 * 100,
+                            end_ms: index as u64 * 100 + 90,
+                        })
+                        .collect(),
+                ),
+                working_text: String::new(),
+                paragraph_breaks: Some((1..20).map(|block| block * 10 - 1).collect()),
+                speaker_spans: None,
+                review: None,
+                layers: Vec::new(),
+                highlights: Vec::new(),
+                strikes: Vec::new(),
+            });
+            viewer.active_tab = ViewerTab::Transcript;
+            cx.notify();
+        });
+
+        let (_, cx) = cx.add_window_view(|_window, _cx| NarrowPaneHost {
+            viewer: viewer.clone(),
+        });
+        cx.simulate_resize(size(px(480.), px(600.)));
+        cx.run_until_parked();
+
+        // The mark lands on a late block — the follow must scroll that
+        // block into view (the loop calls the same method each tick;
+        // the mark computation is separately pinned by
+        // current_word_index_marks_the_containing_word).
+        viewer.update(cx, |viewer, cx| {
+            viewer.current_word = Some(190);
+            viewer.follow_viewport = true;
+            viewer.follow_marked_block_into_view();
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        let bounds = cx
+            .debug_bounds("media-transcript-marked-block")
+            .expect("the follow-along must scroll the marked block into view");
+        assert!(
+            bounds.top() >= px(0.),
+            "the marked block is on-screen, not above the pane: {bounds:?}"
+        );
+        assert!(
+            bounds.bottom() <= px(600.),
+            "the marked block is within the pane: {bounds:?}"
+        );
+    }
+
+    /// A manual scroll suspends follow-along viewport tracking, and the
+    /// Follow toggle re-enables it (S3d, R1 acceptance). The observable a
+    /// wheel scroll produces on the follow tick is the list-offset change;
+    /// the toggle then reveals the current mark again.
+    #[gpui::test]
+    fn manual_scroll_suspends_follow_and_the_toggle_re_enables(cx: &mut TestAppContext) {
+        init_layout_test_globals(cx);
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript = Some(TranscriptPaneState {
+                transcript_id: "t-suspend".into(),
+                media_path: "/generated/suspend.wav".into(),
+                alignment: "original".into(),
+                alignment_note: None,
+                words: Some(
+                    (0..200)
+                        .map(|index| PaneWord {
+                            word: format!("suspend-word-{index}"),
+                            start_ms: index as u64 * 100,
+                            end_ms: index as u64 * 100 + 90,
+                        })
+                        .collect(),
+                ),
+                working_text: String::new(),
+                paragraph_breaks: Some((1..20).map(|block| block * 10 - 1).collect()),
+                speaker_spans: None,
+                review: None,
+                layers: Vec::new(),
+                highlights: Vec::new(),
+                strikes: Vec::new(),
+            });
+            viewer.active_tab = ViewerTab::Transcript;
+            cx.notify();
+        });
+
+        let (_, cx) = cx.add_window_view(|_window, _cx| NarrowPaneHost {
+            viewer: viewer.clone(),
+        });
+        cx.simulate_resize(size(px(480.), px(600.)));
+        cx.run_until_parked();
+
+        // Baseline the tick, scroll by hand, and observe the next tick:
+        // the offset changed with no follow reveal pending, so tracking
+        // suspends.
+        viewer.update(cx, |viewer, cx| {
+            viewer.note_follow_scroll_tick(cx);
+            viewer.transcript_list.scroll_by(px(200.));
+            viewer.note_follow_scroll_tick(cx);
+            assert!(
+                !viewer.follow_viewport,
+                "a manual scroll suspends viewport tracking"
+            );
+            cx.notify();
+        });
+        cx.run_until_parked();
+        // Scrolling back to the top is the operator's way back to the Follow
+        // chip — the whole workspace scrolls together now (S3d).
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript_list.scroll_by(px(-200.));
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("media-transcript-follow-toggle").is_some(),
+            "the Follow toggle renders in the workspace header rows"
+        );
+
+        // The toggle re-enables tracking and reveals the current mark.
+        viewer.update(cx, |viewer, cx| {
+            viewer.current_word = Some(190);
+            viewer.toggle_follow_viewport(cx);
+            assert!(
+                viewer.follow_viewport,
+                "the toggle re-enables viewport tracking"
+            );
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("media-transcript-marked-block").is_some(),
+            "re-enabling follow reveals the marked block"
+        );
     }
 
     /// The recordings browser's two-click delete: the Delete affordance
