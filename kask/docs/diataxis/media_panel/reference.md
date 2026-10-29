@@ -388,6 +388,37 @@ widget as of this edit (method: grep for `playback_speed`, `set_rate`,
 `fullscreen`, `zoom` over `crates/media_panel/src/` and
 `crates/hkask-media-widget/src/` — zero hits).
 
+## The synced recording
+
+The operator's unit of work is **the synced recording**: a gallery recording
+(a video or audio asset) whose word-timed transcript is synced to its media,
+so text and media address each other — the reference model's
+capability (1) holding in experience, not just in data. Its lifecycle is
+the panel's complete loop, entirely in the panel:
+
+**import → organize → transcribe → read along → highlight → cut →
+compose and render a reel → play the reel.**
+
+Its capabilities and the surfaces that carry them:
+
+| Capability | Surface |
+| --- | --- |
+| Import (from conversation tool results) | Library + Media |
+| Play / pause / seek / stop / trim marks (both media kinds) | Media |
+| Per-recording transcription status (`Not transcribed` / `Transcribing…` / `Transcribed`) | Transcript (recording-first browse) |
+| Transcribe affordance (recording → transcript without a chat turn) | Transcript (per-recording row) |
+| Follow-along viewport tracking (manual scroll suspends; Follow re-enables) | Transcript workspace |
+| Word-click seek (text → media, both directions) | Transcript workspace |
+| Highlight create / rename / delete (labeled selections) | Transcript workspace (label editor) |
+| Cut selection with line-through overlay and Restore | Transcript workspace |
+| Reel compose (assemble / reduce / mixed), render, and play | Transcript workspace |
+| Delete (two-click confirm; transcripts and renders survive, detached) | Library + Transcript |
+| Tags and notes (researcher annotations) | Detail |
+
+An unlinked transcript (its recording left the gallery index) keeps its
+durable exports and its reel renders; the browser trails it in its own
+section with the same open and delete affordances.
+
 ## Capability summary
 
 | Capability | State |

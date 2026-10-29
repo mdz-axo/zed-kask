@@ -9,9 +9,11 @@
 //! - **Queue**: research jobs (via `job_list`) with cancel affordances.
 //! - **Detail**: the selected asset's inspector data (via
 //!   `gallery_asset_detail`) — record, tags, lineage.
-//! - **Transcript**: the recordings browser, and the transcript workspace —
-//!   synced reading, word-click seek, two-click select → label editor →
-//!   researcher highlight create/rename/delete, and reel compose+render.
+//! - **Transcript**: the synced recordings — the recording-first browser
+//!   (per-recording transcription status, the Transcribe affordance), and
+//!   the synced-recording workspace (follow-along viewport tracking,
+//!   word-click seek, two-click select → label editor → highlight
+//!   create/rename/delete, cuts, and reel compose+render).
 //!
 //! All tool calls go through the process-global `ToolInvoker` (the governed
 //! McpRuntime dispatch) against the `media` server. Failures surface in a
@@ -4825,9 +4827,16 @@ impl MediaViewer {
         section.into_any_element()
     }
 
-    /// The Transcript tab's idle state: the recordings browser — every
-    /// stored transcript, click-to-open (operator report 2026-10-26: the
-    /// tab's empty state must list what's available, not dead-end).
+    /// The Transcript tab's idle state: the synced recordings — the
+    /// recording-first browser. Every gallery recording (video/audio)
+    /// renders with its per-recording transcription status, its stored
+    /// transcripts beneath it, and — when not yet transcribed — the
+    /// Transcribe affordance that closes the recording→transcript→reel
+    /// loop entirely in the panel. Unlinked transcripts (their recording
+    /// left the gallery index) trail in their own section with the same
+    /// open + delete affordances, keeping the transcript and its durable
+    /// exports reachable (operator report 2026-10-26: the tab's empty
+    /// state must list what's available, not dead-end).
     fn render_transcript_browser(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         if let ResourceState::Failed(error) = &self.transcript_request.state {
             return self
