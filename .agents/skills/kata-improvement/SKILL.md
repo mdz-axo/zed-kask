@@ -88,7 +88,7 @@ Render `kata-improvement/improvement-step4-experiment` with `context`, `learner_
 
 ### Coaching Kata — the five questions (coach role)
 
-- **Learner:** named by `learner_bot` — the operator, or a local agent reached with `swarm_delegate_local`. The learner's own words come back as `learner_answer`. Reading the learner's storyboard is context for the coach's questions, not a substitute for the learner answering.
+- **Learner:** named by `learner_bot` — the operator, or a delegated agent reached via `kanban_task_spawn`. The learner's own words come back as `learner_answer`. Reading the learner's storyboard is context for the coach's questions, not a substitute for the learner answering.
 - **Initial condition:** the learner's current storyboard (step 1–4 outputs above: target, `metric_before`, obstacles, last experiment and its result).
 - **Target condition:** after Q5, the learner has stated in their own words a measurable target, a data-grounded actual condition, one focus obstacle, a next step with a testable prediction, and a committed check point — each coach assessment names what the template emits: Q1 `clear`, Q2 `data-driven`, Q3 `focused`, Q4 `testable`, Q5 `tight-loop`.
 - **Loop:** for each question, emit the fixed coach question directly as D text (no ASK template render), wait for the learner's answer (`learner_answer`), then run Phase ASSESS by rendering the coaching template with `{ "context": <object>, "learner_bot": <string>, "previous_steps": <array|null>, "learner_answer": <non-empty string> }`. A non-passing assessment asks one follow-up (max 2 per question); still failing, record the gap and move on — the gap is coaching data, not a reason to answer for the learner.

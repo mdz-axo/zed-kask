@@ -5,18 +5,17 @@
 //!
 //! 1. The [`ToolInvoker`] trait + its process-global accessor
 //!    ([`set_tool_invoker`] / [`shared_tool_invoker`]), relocated verbatim from
-//!    `crates/swarm_panel/src/tool_invoker.rs`. The production impl
+//!    the former swarm panel's `tool_invoker.rs` (historical origin). The production impl
 //!    (`PanelToolInvoker`) lives in `crates/zed/src/main.rs` and delegates to
 //!    `McpRuntime` (which implements `ToolPort`), so every call flows through
 //!    the same metered, call-capped path as agent-initiated tool
 //!    calls. Relocating the trait to a leaf crate lets the kask GPUI widget
-//!    crates dispatch MCP tools without depending on the heavy `swarm_panel`
+//!    crates dispatch MCP tools without depending on a heavy panel
 //!    crate (which would invert sane layering: leaf widgets → heavy panel).
 //!
-//!    `swarm_panel` re-exports these symbols so its existing call sites compile
-//!    unchanged. The `McpRuntime`/`ToolPort`/token minting stays in `main.rs`
-//!    (it needs `hkask-tool-port` + `hkask-mcp`); only the trait + the global
-//!    accessor live here.
+//!    The `McpRuntime`/`ToolPort` implementation machinery stays in
+//!    `crates/zed/src/main.rs` (it needs `hkask-tool-port` + `hkask-mcp`);
+//!    only the trait + the global accessor live here.
 //!
 //! 2. [`BlockProvenance`] — the payload a rendered widget block carries so the
 //!    widget can re-issue the *originating* MCP tool with modified args. Without
@@ -32,7 +31,7 @@
 //! `hkask-viz-core` depends one-way on the widget crates
 //! (`hkask-viz-core/Cargo.toml`). Widget crates do not depend on `viz-core`.
 //! A widget that wants to dispatch therefore cannot reach `ToolInvoker` via
-//! `viz-core`, and depending on `swarm_panel` would pull `agent`, `editor`,
+//! `viz-core`, and depending on a panel crate would pull `agent`, `editor`,
 //! `project`, … into a leaf widget. This crate is the minimal shared seam: it
 //! depends only on `gpui` (`Task`), `hkask-types` (`McpErrorKind` — the typed
 //! error classification panels match on structurally), `serde`, and

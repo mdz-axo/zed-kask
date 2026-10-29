@@ -6,7 +6,6 @@ use futures_util::Stream;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
 
 /// Future returned by [`InferencePort::embed`].
 ///
@@ -43,8 +42,7 @@ pub type InferenceFuture<'a> = PortFuture<'a, InferenceResult>;
 
 /// A pinned, `Send` port future resolving to `Result<T, InferenceError>` —
 /// the return shape of the typed long-tail port methods
-/// ([`InferencePort::generate_n`], [`ToolDispatchPort::tool_definition`],
-/// [`ToolDispatchPort::invoke_tool`],
+/// ([`InferencePort::generate_n`],
 /// [`WorktreeSpawnPort::create_worktree_thread`]). The generate family
 /// resolves to [`InferenceResult`] via [`InferenceFuture`]; other outputs
 /// parameterize `T` directly.
@@ -110,69 +108,6 @@ pub struct ModelEntry {
     pub model: String,
     /// Whether the model supports vision/multimodal input.
     pub supports_vision: bool,
-}
-
-/// MCP-server-side tool dispatch boundary.
-///
-/// Lets a child MCP server process (e.g. `hkask-mcp-swarm`'s local delegate
-/// loop) invoke governed MCP tools that live in the zed process's
-/// `McpRuntime`. The zed side mints the OCAP panel token — the child never
-/// sees or holds token material. `InferenceIpcClient` implements this over
-/// the `InferenceMethod::ToolInvoke` IPC method; backends without a bridge
-///
-/// Two implementors: the IPC client (real dispatch) and the fallback stub
-/// (clear error) — the swarm delegate loop reads it, so it is not
-/// speculative generality.
-pub trait ToolDispatchPort: Send + Sync {
-    /// Discover one declared tool's actual schema through the same governed
-    /// boundary as invocation. Missing, unauthorized, or unconfigured tool
-    /// metadata is an error, not an empty parameter schema.
-    fn tool_definition<'a>(
-        &'a self,
-        server: &'a str,
-        tool: &'a str,
-        allowed: &'a [String],
-    ) -> PortFuture<'a, ChatToolDefinition>;
-
-    /// Invoke a tool on a governed MCP server via the zed process.
-    ///
-    /// `allowed` is the caller's declared `server/tool` allowlist (the
-    /// delegated agent's `mcp_tools`). The zed-side dispatch refuses any
-    /// tool outside it before minting the panel token — the allowlist is
-    /// enforced at the dispatch boundary, not only inside the child.
-    ///
-    /// pre:  `server` is a registered MCP server id; `tool` exists on it;
-    ///       `server/tool` is in `allowed`
-    /// post: returns the tool's JSON output, or an error (tool not found,
-    ///       not in allowlist, capability denied, dispatch unavailable)
-    fn invoke_tool<'a>(
-        &'a self,
-        server: &'a str,
-        tool: &'a str,
-        args: serde_json::Value,
-        allowed: &'a [String],
-    ) -> PortFuture<'a, serde_json::Value>;
-}
-
-impl ToolDispatchPort for Arc<dyn ToolDispatchPort> {
-    fn tool_definition<'a>(
-        &'a self,
-        server: &'a str,
-        tool: &'a str,
-        allowed: &'a [String],
-    ) -> PortFuture<'a, ChatToolDefinition> {
-        self.as_ref().tool_definition(server, tool, allowed)
-    }
-
-    fn invoke_tool<'a>(
-        &'a self,
-        server: &'a str,
-        tool: &'a str,
-        args: serde_json::Value,
-        allowed: &'a [String],
-    ) -> PortFuture<'a, serde_json::Value> {
-        self.as_ref().invoke_tool(server, tool, args, allowed)
-    }
 }
 
 /// Port for spawning worktree-backed agent threads via the zed IPC bridge.

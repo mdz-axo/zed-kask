@@ -1640,11 +1640,11 @@ mod tests {
             input_schema: serde_json::Value::Null,
         };
         let counts = kask_tool_counts_from_descriptors(vec![
-            descriptor("swarm"),
-            descriptor("swarm"),
+            descriptor("research"),
+            descriptor("research"),
             descriptor("curator"),
         ]);
-        assert_eq!(counts.get("swarm"), Some(&2));
+        assert_eq!(counts.get("research"), Some(&2));
         assert_eq!(counts.get("curator"), Some(&1));
         assert!(!counts.contains_key("media"));
     }
@@ -1657,10 +1657,10 @@ mod tests {
     fn kask_server_loaded_follows_master_toggle_and_overrides() {
         let mut mcp = kask_bridge::KaskMcpSettings::default();
         mcp.load_default = true;
-        assert!(kask_server_loaded(&mcp, "swarm"));
+        assert!(kask_server_loaded(&mcp, "research"));
 
-        mcp.overrides.insert("swarm".to_string(), false);
-        assert!(!kask_server_loaded(&mcp, "swarm"));
+        mcp.overrides.insert("research".to_string(), false);
+        assert!(!kask_server_loaded(&mcp, "research"));
         // Un-overridden servers stay loaded.
         assert!(kask_server_loaded(&mcp, "curator"));
 

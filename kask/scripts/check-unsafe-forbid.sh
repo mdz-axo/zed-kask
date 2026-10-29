@@ -31,7 +31,7 @@ else
   # automatically; there is no list to drift.
   scan_dirs=(
     crates/*/ mcp-servers/*/
-    ../crates/hkask-*/ ../crates/swarm_panel/ ../crates/marketplace_ui_common/
+    ../crates/hkask-*/ ../crates/marketplace_ui_common/
   )
 fi
 

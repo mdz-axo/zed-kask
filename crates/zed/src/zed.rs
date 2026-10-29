@@ -632,7 +632,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
         let git_blame_status = cx.new(|_| git_ui::GitBlameStatus::default());
         let merge_conflict_indicator =
             cx.new(|cx| git_ui::MergeConflictIndicator::new(workspace, cx));
-        let swarm_panel_button = cx.new(|_| swarm_panel::panel_button::new());
         let kanban_panel_button = cx.new(|_| kanban_panel::panel_button::new());
         let media_panel_button = cx.new(|_| media_panel::panel_button::new());
         workspace.status_bar().update(cx, |status_bar, cx| {
@@ -643,7 +642,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
             status_bar.add_left_item(git_blame_status, window, cx);
             status_bar.add_left_item(merge_conflict_indicator, window, cx);
             status_bar.add_left_item(activity_indicator, window, cx);
-            status_bar.add_right_item(swarm_panel_button, window, cx);
             status_bar.add_right_item(kanban_panel_button, window, cx);
             status_bar.add_right_item(media_panel_button, window, cx);
             status_bar.add_right_item(edit_prediction_ui, window, cx);
@@ -6286,7 +6284,6 @@ mod tests {
                 "skill_creator",
                 "snippets",
                 "stash_picker",
-                "swarm_panel",
                 "svg",
                 "syntax_tree_view",
                 "tab_switcher",

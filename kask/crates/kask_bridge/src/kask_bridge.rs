@@ -34,7 +34,6 @@ pub use database_maintenance::{
 };
 mod delegation_grants;
 mod goals;
-mod host_skill_tools;
 mod identity;
 pub use goals::GoalHost;
 mod inference_chat;
@@ -98,7 +97,7 @@ pub use settings::{
     KaskCondenserSettings, KaskCorpusSettings, KaskCuratorEmailSettings, KaskCuratorSettings,
     KaskGeneralSettings, KaskMcpSettings, KaskMediaSettings, KaskMemorySettings,
     KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings, KaskScenariosSettings,
-    KaskSettings, KaskSwarmSettings,
+    KaskSettings,
 };
 
 mod metacognition_bridge;

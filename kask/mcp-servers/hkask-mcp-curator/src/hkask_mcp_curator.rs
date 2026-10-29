@@ -716,7 +716,7 @@ impl CuratorServer {
 
     // ── Consultation (Slice 8 — curator-as-callable-tool) ────────────────
 
-    /// Consult the curator's memory with a question. A swarm agent calls
+    /// Consult the curator's memory with a question. A delegated agent calls
     /// this to get the curator's perspective on a topic, grounded in the
     /// curator's sovereign memory.
     ///
@@ -1420,7 +1420,7 @@ impl CuratorServer {
     /// modified, or deleted. Turns (embedded at ingest), distillation
     /// watermarks and goal rows are excluded.
     #[tool(
-        description = "Backfill semantic embeddings across the memory stores. mode=missing (default) embeds h_mems whose exact canonical passage has no embedding row — eligibility is exact (entity + canonical passage), not entity-level; over the curator store it excludes turns, distillation watermarks, and goal rows; over the swarm store (store=swarm) eligibility mirrors the swarm server's own embed path: delegation response chunks only. mode=model_mismatch re-embeds stored rows whose recorded model matches neither the current requested embedding model nor its provider-confirmed actual form — the same two-form predicate the search gate excludes on, so a model migration's gated-out rows are restored rather than silently invisible. store=curator (default) or store=swarm (the shared swarm memory DB). dry_run lists candidates without embedding."
+        description = "Backfill semantic embeddings across the curator's memory store. mode=missing (default) embeds h_mems whose exact canonical passage has no embedding row — eligibility is exact (entity + canonical passage), not entity-level; turns, distillation watermarks, and goal rows are excluded. mode=model_mismatch re-embeds stored rows whose recorded model matches neither the current requested embedding model nor its provider-confirmed actual form — the same two-form predicate the search gate excludes on, so a model migration's gated-out rows are restored rather than silently invisible. dry_run lists candidates without embedding."
     )]
     pub async fn curator_memory_backfill_embeddings(
         &self,
@@ -1436,30 +1436,14 @@ impl CuratorServer {
                     )));
                 }
             };
-            let store_target = match req.store.as_deref().map(str::trim) {
-                None | Some("") | Some("curator") => backfill::BackfillStore::Curator,
-                Some("swarm") => backfill::BackfillStore::Swarm,
-                Some(other) => {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "store must be \"curator\" or \"swarm\", got \"{other}\""
-                    )));
-                }
-            };
 
-            let stores = self.db.get();
-            let memory: Arc<hkask_memory::MemoryStore> = match store_target {
-                backfill::BackfillStore::Curator => stores.memory()?.clone(),
-                backfill::BackfillStore::Swarm => {
-                    backfill::open_swarm_memory_store(self.db.passphrase.as_deref())?
-                }
-            };
+            let memory = self.db.get().memory()?.clone();
 
             match mode {
                 backfill::BackfillMode::Missing => {
                     backfill::backfill_missing_passages(
                         self.inference_port.as_ref(),
                         &memory,
-                        store_target,
                         req.dry_run.unwrap_or(false),
                     )
                     .await

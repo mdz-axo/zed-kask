@@ -176,6 +176,8 @@ hkask_mcp_server::mcp_server!(
         /// SerpApi credential for structured YouTube discovery and metadata.
         /// Binary media retrieval remains the separate `YtDlpRunner` concern.
         pub serpapi_key: Option<String>,
+        /// Protected voice-profile storage and lazy local encoder state.
+        pub voice: voice_profiles::VoiceProfileRuntime,
     } = crate::ontology::annotate;
 );
 
@@ -190,6 +192,8 @@ pub mod transcript_review;
 pub mod transcript_select;
 pub mod transcript_store;
 pub mod types;
+pub mod voice_encoder;
+pub mod voice_profiles;
 use types::*;
 
 /// Read an image file with a size cap to prevent OOM. Gallery images are
@@ -437,6 +441,7 @@ impl MediaServer {
             + Self::jobs_router()
             + Self::educt_router()
             + Self::layers_router()
+            + Self::voice_router()
             + Self::youtube_router()
     }
 }
@@ -448,7 +453,7 @@ impl rmcp::ServerHandler for MediaServer {}
 mod tool_surface_tests {
     use super::*;
 
-    // One macro call pins the surface two ways: the exact count (75) and
+    // One macro call pins the surface two ways: the exact count (79) and
     // the generated TOOL_NAMES set against the live rmcp surface. Catches
     // silent registration drops — a `#[tool]` impl block without
     // `#[tool_router]`, or a sub-router missing from `combined_router()`,
@@ -461,8 +466,8 @@ mod tool_surface_tests {
     hkask_mcp_server::tool_surface_pin!(
         MediaServer::combined_router(),
         "combined_router",
-        76,
-        tool_surface_is_exactly_76_registered_tools,
+        79,
+        tool_surface_is_exactly_79_registered_tools,
     );
 
     // Coverage: every registered tool must map to an OMC concept. Catches
@@ -613,6 +618,16 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     detail: e.to_string(),
                 }
             })?;
+            let voice_path = hkask_types::agent_paths::resolve_under_data_dir(
+                &hkask_types::agent_paths::mcp_server_db("media", "voice_profiles"),
+            );
+            let voice = match hkask_mcp_server::resolve_db_passphrase(&ctx.credentials) {
+                Ok(passphrase) => voice_profiles::VoiceProfileRuntime::open(
+                    &voice_path.to_string_lossy(),
+                    &passphrase,
+                ),
+                Err(error) => voice_profiles::VoiceProfileRuntime::unavailable(error.to_string()),
+            };
             Ok(MediaServer::new(
                 ctx.webid,
                 vision_port.clone(),
@@ -623,6 +638,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 YtDlpRunner::detect(),
                 jobs::new_job_store(),
                 ctx.credentials.get("HKASK_SERPAPI_API_KEY").cloned(),
+                voice,
             ))
         },
         vec![
@@ -633,6 +649,10 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             hkask_mcp_server::CredentialRequirement::optional(
                 "HKASK_SERPAPI_API_KEY",
                 "SerpApi key for YouTube search metadata",
+            ),
+            hkask_mcp_server::CredentialRequirement::optional(
+                "HKASK_DB_PASSPHRASE",
+                "SQLCipher passphrase for the protected voice-profile database; other media tools remain available without it",
             ),
         ],
     )
@@ -1265,6 +1285,7 @@ mod tool_behavior_tests {
             YtDlpRunner::detect(),
             jobs::new_job_store(),
             None,
+            Default::default(),
         );
 
         let response = server
@@ -1552,6 +1573,7 @@ mod tool_behavior_tests {
             video::ytdlp::YtDlpRunner::detect(),
             jobs::new_job_store(),
             None,
+            Default::default(),
         );
         (server, gallery_state)
     }
@@ -1592,6 +1614,7 @@ mod tool_behavior_tests {
             video::ytdlp::YtDlpRunner::detect(),
             jobs::new_job_store(),
             None,
+            Default::default(),
         ))
     }
 
@@ -1673,6 +1696,7 @@ mod tool_behavior_tests {
             video::ytdlp::YtDlpRunner::detect(),
             jobs::new_job_store(),
             None,
+            Default::default(),
         ));
         Ok(TwoGalleryArms {
             _env,
@@ -1729,6 +1753,7 @@ mod tool_behavior_tests {
             ytdlp,
             jobs::new_job_store(),
             None,
+            Default::default(),
         )
     }
 
@@ -3245,6 +3270,7 @@ mod tool_behavior_tests {
             video::ytdlp::YtDlpRunner::detect(),
             jobs::new_job_store(),
             None,
+            Default::default(),
         )
     }
 
@@ -6934,6 +6960,7 @@ mod gallery_lifecycle_tests {
             YtDlpRunner::detect(),
             jobs::new_job_store(),
             None,
+            Default::default(),
         )
     }
 

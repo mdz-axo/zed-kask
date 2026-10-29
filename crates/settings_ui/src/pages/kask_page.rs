@@ -29,7 +29,7 @@ pub(crate) use {
     mcp_servers::render_mcp_servers_page, media::render_media_page, memory::render_memory_page,
     models::render_models_page, prediction_markets::render_prediction_markets_page,
     research::render_research_page, scenarios::render_scenarios_page,
-    security::render_security_page, swarm::render_swarm_page,
+    security::render_security_page,
 };
 mod corpus;
 mod mcp_servers;
@@ -39,7 +39,6 @@ mod models;
 mod prediction_markets;
 mod research;
 mod scenarios;
-mod swarm;
 
 use std::sync::{Arc, Mutex};
 
@@ -629,7 +628,7 @@ pub(crate) fn kask_page() -> SettingsPage {
             json_path: None,
             description: Some(
                 "Change the SQLCipher passphrase for every kask memory database \
-                 (curator, swarm memory, kata-kanban, research). \
+                 (curator, kata-kanban, research). \
                  Scheduled here and applied at the next editor restart: every \
                  confirmed database is re-encrypted atomically before anything \
                  opens it, and a failure leaves all of them on the old \
@@ -699,20 +698,6 @@ pub(crate) fn kask_page() -> SettingsPage {
             in_json: true,
             files: USER,
             render: render_prediction_markets_page,
-        }),
-        SettingsPageItem::SubPageLink(SubPageLink {
-            title: "Swarm".into(),
-            r#type: Default::default(),
-            json_path: Some("kask.swarm"),
-            description: Some(
-                "Configure the swarm MCP server (local swarm agents and local \
-                 swarms): default agent model, A2A HTTP gateway, and the local \
-                 semantic-memory store.".into(),
-            ),
-            search_aliases: &["swarm", "local agents", "local swarms", "a2a"],
-            in_json: true,
-            files: USER,
-            render: render_swarm_page,
         }),
         SettingsPageItem::SubPageLink(SubPageLink {
             title: "Media".into(),

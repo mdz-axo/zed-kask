@@ -21,9 +21,8 @@ The corpus contains 93 Mermaid blocks (mechanically counted 2026-10-27: 93 `merm
 | [`diagrams/architecture.md`](./diagrams/architecture.md) | 8 |
 | [`diagrams/kanban.md`](./diagrams/kanban.md) | 3 |
 | [`diagrams/mcp-dispatch.md`](./diagrams/mcp-dispatch.md) | 2 |
-| [`diagrams/swarm.md`](./diagrams/swarm.md) | 6 |
 | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 6 |
-| **Total** | **25** |
+| **Total** | **16** |
 
 ## Current metadata registry
 
@@ -52,12 +51,6 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-COND-002` | [`diataxis/hkask-condenser/reference.md`](./diataxis/hkask-condenser/reference.md) | 2026-09-28 | VERIFIED |
 | `DIAG-COND-003` | [`diataxis/hkask-condenser/reference.md`](./diataxis/hkask-condenser/reference.md) | 2026-09-28 | VERIFIED |
 | `DIAG-COND-004` | [`diataxis/hkask-condenser/explanation.md`](./diataxis/hkask-condenser/explanation.md) | 2026-09-28 | VERIFIED |
-| `DIAG-DIA-SWARM-001` | [`diagrams/swarm.md`](./diagrams/swarm.md) | 2026-09-28 | VERIFIED |
-| `DIAG-DIA-SWARM-006` | [`diagrams/swarm.md`](./diagrams/swarm.md) | 2026-09-28 | VERIFIED |
-| `DIAG-DIA-SWARM-007` | [`diagrams/swarm.md`](./diagrams/swarm.md) | 2026-09-28 | VERIFIED |
-| `DIAG-DIA-SWARM-008` | [`diagrams/swarm.md`](./diagrams/swarm.md) | 2026-09-28 | VERIFIED |
-| `DIAG-DIA-SWARM-009` | [`diagrams/swarm.md`](./diagrams/swarm.md) | 2026-09-28 | VERIFIED |
-| `DIAG-DIA-SWARM-010` | [`diagrams/swarm.md`](./diagrams/swarm.md) | 2026-09-28 | VERIFIED |
 | `DIAG-ERD-CREDENTIAL-RESOLUTION-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-28 | VERIFIED |
 | `DIAG-ES-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-28 | VERIFIED |
 | `DIAG-FUNCTIONAL-001` | [`architecture/functional-interaction-spec.md`](./architecture/functional-interaction-spec.md) | 2026-09-28 | VERIFIED |
@@ -114,9 +107,6 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-STOR-005` | [`diataxis/hkask-storage/explanation.md`](./diataxis/hkask-storage/explanation.md) | 2026-09-28 | VERIFIED |
 | `DIAG-STOR-007` | [`diataxis/hkask-storage/reference.md`](./diataxis/hkask-storage/reference.md) | 2026-09-28 | VERIFIED |
 | `DIAG-STOR-008` | [`diataxis/hkask-storage/reference.md`](./diataxis/hkask-storage/reference.md) | 2026-09-28 | VERIFIED |
-| `DIAG-SWARM-010` | [`diataxis/swarm_system/reference.md`](./diataxis/swarm_system/reference.md) | 2026-09-28 | VERIFIED |
-| `DIAG-SWARM-020` | [`diataxis/swarm_system/reference.md`](./diataxis/swarm_system/reference.md) | 2026-09-28 | VERIFIED |
-| `DIAG-SWARM-030` | [`diataxis/swarm_system/explanation.md`](./diataxis/swarm_system/explanation.md) | 2026-09-28 | VERIFIED |
 
 | `DIAG-TYPES-002` | [`diataxis/hkask-types/reference.md`](./diataxis/hkask-types/reference.md) | 2026-09-28 | VERIFIED |
 | `DIAG-TYPES-003` | [`diataxis/hkask-types/reference.md`](./diataxis/hkask-types/reference.md) | 2026-09-28 | VERIFIED |

@@ -1,8 +1,6 @@
 //! Memory embedding backfill sweeps (`missing` and `model_mismatch` modes).
 
-use std::sync::Arc;
-
-use hkask_mcp_server::server::{McpToolError, map_memory_store_error, resolve_db_passphrase};
+use hkask_mcp_server::server::{McpToolError, map_memory_store_error};
 use hkask_types::regulation::RegulationSpan;
 use serde_json::json;
 
@@ -13,84 +11,6 @@ use crate::{curator_embedding_model, distillation, embed_for_semantic_recall, th
 pub(crate) enum BackfillMode {
     Missing,
     ModelMismatch,
-}
-
-/// The sweep's two store targets: the curator's own memory DB, or the
-/// shared swarm memory DB.
-pub(crate) enum BackfillStore {
-    Curator,
-    Swarm,
-}
-
-/// The swarm server's sole embed path stores delegation response chunks
-/// (`hkask-mcp-swarm/src/local_knowledge.rs`); the swarm-store missing-mode
-/// backfill mirrors that eligibility exactly rather than guessing a
-/// knowledge-layer shape the swarm store does not have.
-const SWARM_RESPONSE_CHUNK_ATTRIBUTE: &str = "delegation:response_chunk";
-
-/// Resolve the shared swarm memory DB path. Mirrors
-/// `kask_bridge::identity::resolve_swarm_memory_db_path`: an absolute
-/// `HKASK_SWARM_MEMORY_DB` wins; anything else resolves under the shared
-/// kask data dir (the swarm server's own default, `mcp/swarm/memory.db`).
-fn swarm_memory_db_path() -> std::path::PathBuf {
-    match std::env::var("HKASK_SWARM_MEMORY_DB")
-        .ok()
-        .filter(|raw| !raw.trim().is_empty())
-    {
-        Some(raw) if std::path::Path::new(&raw).is_absolute() => raw.into(),
-        Some(raw) => hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(&raw)),
-        None => hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(
-            "mcp/swarm/memory.db",
-        )),
-    }
-}
-
-/// Open the shared swarm memory DB for the sweep. The passphrase resolves
-/// through the canonical env chain — a missing or empty key is
-/// `permission_denied` naming the env var, never a silent empty-key open.
-pub(crate) fn open_swarm_memory_store(
-    cached_passphrase: Option<&str>,
-) -> Result<Arc<hkask_memory::MemoryStore>, McpToolError> {
-    let passphrase = match cached_passphrase.filter(|p| !p.is_empty()) {
-        Some(passphrase) => passphrase.to_owned(),
-        None => resolve_db_passphrase(&std::collections::HashMap::new()).map_err(|error| {
-            tracing::warn!(
-                target: "hkask.mcp.curator",
-                %error,
-                "HKASK_DB_PASSPHRASE resolution failed — the swarm store sweep is permission_denied"
-            );
-            McpToolError::permission_denied(
-                "HKASK_DB_PASSPHRASE is not resolvable — the swarm store sweep is unavailable \
-                 (relaunch with HKASK_DB_PASSPHRASE in the server env)",
-            )
-        })?,
-    };
-    let path = swarm_memory_db_path();
-    let store = hkask_memory::MemoryStore::open_existing(
-        &path.to_string_lossy(),
-        &passphrase,
-        hkask_storage::embedding_dim(),
-    )
-    .map_err(|error| {
-        hkask_mcp_server::map_database_error(
-            error,
-            &format!("Cannot open swarm memory DB at {}", path.display()),
-        )
-    })?;
-    let removed = store.delete_orphaned_embeddings().map_err(|error| {
-        McpToolError::internal(format!(
-            "orphaned-embedding sweep failed on swarm memory DB {}: {error}",
-            path.display()
-        ))
-    })?;
-    if removed > 0 {
-        tracing::warn!(
-            target: "hkask.mcp.curator",
-            removed,
-            "swarm memory DB carried orphaned embedding rows — swept at open"
-        );
-    }
-    Ok(Arc::new(store))
 }
 
 /// The gate's two-form predicate: a stored row is mismatched when its
@@ -109,7 +29,6 @@ fn model_is_mismatched(stored: Option<&str>, requested: &str, actual: Option<&st
 pub(crate) async fn backfill_missing_passages(
     inference_port: &dyn hkask_types::InferencePort,
     memory: &hkask_memory::MemoryStore,
-    store_target: BackfillStore,
     dry_run: bool,
 ) -> Result<serde_json::Value, McpToolError> {
     let active = memory
@@ -121,30 +40,16 @@ pub(crate) async fn backfill_missing_passages(
             || entity.starts_with(distillation::WATERMARK_PREFIX)
             || entity.starts_with("curator:goal:")
     };
-    let eligible = |h_mem: &hkask_storage::HMem| match store_target {
-        BackfillStore::Curator => !is_excluded(&h_mem.entity),
-        BackfillStore::Swarm => h_mem.attribute == SWARM_RESPONSE_CHUNK_ATTRIBUTE,
-    };
 
     let mut candidates: Vec<(&hkask_storage::HMem, String, bool)> = Vec::new();
-    let mut unsupported: Vec<serde_json::Value> = Vec::new();
-    for h_mem in active.iter().filter(|h_mem| eligible(h_mem)) {
+    for h_mem in active.iter().filter(|h_mem| !is_excluded(&h_mem.entity)) {
         let (passage, repair) = match hkask_memory::semantic_passage_for_h_mem(h_mem) {
             Some(passage) => (passage, false),
-            None if matches!(store_target, BackfillStore::Curator) => {
+            None => {
                 let write = memory.prepare_semantic_repair(&h_mem.id).map_err(|error| {
                     map_memory_store_error(error, "Failed to prepare legacy passage repair")
                 })?;
                 (write.passage().to_string(), true)
-            }
-            None => {
-                unsupported.push(json!({
-                    "h_mem_id": h_mem.id.to_string(),
-                    "entity": h_mem.entity,
-                    "attribute": h_mem.attribute,
-                    "reason": "value has no string, recall_text or text field",
-                }));
-                continue;
             }
         };
         let already_embedded = memory
@@ -157,10 +62,7 @@ pub(crate) async fn backfill_missing_passages(
         }
     }
 
-    let store_name = match store_target {
-        BackfillStore::Curator => "curator",
-        BackfillStore::Swarm => "swarm",
-    };
+    let store_name = "curator";
 
     if dry_run {
         return Ok(json!({
@@ -168,8 +70,6 @@ pub(crate) async fn backfill_missing_passages(
             "mode": "missing",
             "store": store_name,
             "candidate_count": candidates.len(),
-            "unsupported_count": unsupported.len(),
-            "unsupported": unsupported,
             "candidates": candidates.iter().map(|(h_mem, _passage, repair)| json!({
                 "requires_passage_repair": repair,
                 "h_mem_id": h_mem.id.to_string(),
@@ -227,8 +127,6 @@ pub(crate) async fn backfill_missing_passages(
         "candidate_count": candidate_count,
         "backfilled": embedded_count,
         "failed": failed_count,
-        "unsupported_count": unsupported.len(),
-        "unsupported": unsupported,
         "results": results,
         "guidance": "Embeddings are backfilled per exact canonical passage. Curator knowledge rows lacking a passage are revised with derived recall_text and an embedding atomically; results report replacement IDs. Goal rows are excluded and never repaired here. Failed candidates remain candidates on re-run."
     }))

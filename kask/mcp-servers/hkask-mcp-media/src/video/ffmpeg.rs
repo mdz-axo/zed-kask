@@ -534,6 +534,57 @@ impl FfmpegRunner {
         Ok(output)
     }
 
+    /// Decode an authorized span to 16 kHz mono signed-16 PCM. Resampling and
+    /// downmixing happen here, before any speaker-embedding feature extraction.
+    pub(crate) async fn decode_speech_pcm_16khz_mono(
+        &self,
+        input: &std::path::Path,
+        start_ms: u64,
+        end_ms: u64,
+    ) -> Result<Vec<i16>, crate::MediaError> {
+        if !self.available {
+            return Err(crate::MediaError::FfmpegUnavailable);
+        }
+        if end_ms <= start_ms {
+            return Err(crate::MediaError::FfmpegFailed(format!(
+                "PCM span end {end_ms} must be after start {start_ms}"
+            )));
+        }
+        self.ensure_temp_dir()?;
+        let output = RollbackOwnedOutput::new(self.output_path("s16le"));
+        let mut command = Command::new(&self.ffmpeg_path);
+        command
+            .arg("-y")
+            .arg("-ss")
+            .arg(format!("{:.3}", start_ms as f64 / 1_000.0))
+            .arg("-to")
+            .arg(format!("{:.3}", end_ms as f64 / 1_000.0))
+            .arg("-i")
+            .arg(input)
+            .arg("-vn")
+            .arg("-ac")
+            .arg("1")
+            .arg("-ar")
+            .arg("16000")
+            .arg("-f")
+            .arg("s16le")
+            .arg("-acodec")
+            .arg("pcm_s16le")
+            .arg(output.path());
+        Self::run_to_completion(command, "speech-pcm-decode").await?;
+        let bytes = std::fs::read(output.path())
+            .map_err(|error| crate::MediaError::Io(format!("read decoded PCM span: {error}")))?;
+        if bytes.len() % 2 != 0 {
+            return Err(crate::MediaError::FfmpegFailed(
+                "decoded signed-16 PCM has an odd byte count".to_string(),
+            ));
+        }
+        Ok(bytes
+            .chunks_exact(2)
+            .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect())
+    }
+
     /// Extract the speech track for STT upload (16 kHz mono, 32 kbps mp3
     /// — the profile the provider consumes internally): the long-input
     /// precondition for transcription, after the observed provider body

@@ -9,7 +9,7 @@
 //! `None` to fall through to the default code-block renderer.
 //!
 //! This crate composes the kask viz widgets (the `viz`-tagged widgets:
-//! graph, kanban, scenarios, swarm) into one such callback, so
+//! graph, kanban, scenarios) into one such callback, so
 //! `agent_ui::render_agent_markdown` registers a single renderer that
 //! dispatches across all viz block types. The widgets share
 //! an identical create-and-cache pattern (guard → parse → discriminator check
@@ -51,8 +51,6 @@ use hkask_kanban_widget::KanbanWidget;
 use hkask_kanban_widget::block::{KanbanBlockBody, parse_kanban_body};
 use hkask_scenarios_widget::ScenariosWidget;
 use hkask_scenarios_widget::block::{ScenariosBlockBody, parse_scenarios_body};
-use hkask_swarm_widget::SwarmWidget;
-use hkask_swarm_widget::block::{SwarmBlockBody, parse_swarm_body};
 
 /// The composed block renderer: tries each registered renderer in order and
 /// returns the first `Some(element)`. Structurally identical to
@@ -63,7 +61,7 @@ pub type BlockRenderer = Box<dyn Fn(&str, &mut Window, &mut App) -> Option<AnyEl
 /// A viz widget that self-selects on a JSON `viz` discriminator field and is
 /// cached across renders.
 ///
-/// The viz widgets (graph, kanban, scenarios, swarm) share
+/// The viz widgets (graph, kanban, scenarios) share
 /// an identical create-and-cache pattern that differs only in the parsed block
 /// type, the `viz` tag value, the log prefix, and the view constructor. This
 /// trait captures that pattern once; [`try_create`] drives it generically.
@@ -137,21 +135,6 @@ impl VizWidget for ScenariosWidget {
     }
 }
 
-impl VizWidget for SwarmWidget {
-    type Block = SwarmBlockBody;
-    const VIZ_TAG: &str = "swarm_delegate_results";
-    const LOG_PREFIX: &str = "hkask-swarm-widget";
-    fn parse_body(body: &str) -> anyhow::Result<Self::Block> {
-        parse_swarm_body(body)
-    }
-    fn viz_of(block: &Self::Block) -> Option<&str> {
-        block.viz.as_deref()
-    }
-    fn new_widget(block: Self::Block, cx: &mut Context<Self>) -> Self {
-        SwarmWidget::new(block, cx)
-    }
-}
-
 /// A cached viz widget entity, type-erased to a render closure. The cache
 /// holds strong references so entities survive across renders (preserving
 /// playback position, pan/zoom, evidence state).
@@ -210,14 +193,13 @@ type VizFactory = fn(&str, &mut App) -> Option<CachedWidget>;
 
 /// The ordered registry of `viz`-discriminated widget factories. Order
 /// matters only for bodies whose `viz` tag could match more than one widget;
-/// the tags (`event_tree`, `kanban`, `scenarios`,
-/// `swarm_delegate_results`) are disjoint, so order is arbitrary.
+/// the tags (`event_tree`, `kanban`,
+/// `scenarios`) are disjoint, so order is arbitrary.
 fn viz_factories() -> &'static [VizFactory] {
     &[
         try_create::<GraphWidget>,
         try_create::<KanbanWidget>,
         try_create::<ScenariosWidget>,
-        try_create::<SwarmWidget>,
     ]
 }
 
@@ -548,23 +530,11 @@ mod tests {
         // `event_tree`), the rest under their tag names. The gate lives
         // upstream-side and cannot import this crate's types, so the contract
         // is pinned here as a literal set.
-        let mut admitted: Vec<&str> = vec![
-            "graph",
-            "kanban",
-            "scenarios",
-            "swarm_delegate_results",
-            "media",
-        ];
+        let mut admitted: Vec<&str> = vec!["graph", "kanban", "scenarios", "media"];
         admitted.sort_unstable();
         assert_eq!(
             admitted,
-            [
-                "graph",
-                "kanban",
-                "media",
-                "scenarios",
-                "swarm_delegate_results"
-            ],
+            ["graph", "kanban", "media", "scenarios",],
             "the D18 gate in crates/markdown/src/markdown.rs must admit exactly \
              these fence languages — update both together"
         );
@@ -605,11 +575,5 @@ mod tests {
         let scenarios = parse_scenarios_body(r#"{"viz":"scenarios","ontology":"pko:Procedure"}"#)
             .expect("scenarios body parses");
         assert_eq!(scenarios.ontology.as_deref(), Some("pko:Procedure"));
-
-        // Swarm widget
-        let swarm =
-            parse_swarm_body(r#"{"viz":"swarm_delegate_results","ontology":"pko:Procedure"}"#)
-                .expect("swarm body parses");
-        assert_eq!(swarm.ontology.as_deref(), Some("pko:Procedure"));
     }
 }

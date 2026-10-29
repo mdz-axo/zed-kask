@@ -203,7 +203,7 @@ static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
 // the state; `main.rs` calls `set_inference_socket_path` /
 // `get_inference_socket_path`.
 
-/// Per-tick call ceiling seeded for the `swarm-panel` persona (the kask panel's
+/// Per-tick call ceiling seeded for the `kask-panel` persona (the kask panels'
 /// `ToolInvoker`).
 ///
 /// This is a runaway-loop breaker and a usage meter, not an authority: one call
@@ -214,12 +214,10 @@ static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
 /// Seeding is no longer load-bearing for correctness. `charge_call_metered`
 /// auto-registers an unseeded agent at
 /// `hkask_regulation::DEFAULT_RUNAWAY_CALL_CEILING` and logs the gap instead of
-/// refusing — the prior fail-closed behavior silently broke the two
-/// paths that mint *different* personas (`kask-panel` on the inference-IPC
-/// dispatch, the skill execution), since those derive
-/// different WebIDs than the one seeded here. This seed now only sets an
+/// refusing — the prior fail-closed behavior silently broke paths that mint
+/// *different* personas than the one seeded here. This seed now only sets an
 /// explicit ceiling for the panel persona.
-const SWARM_PANEL_CALL_CAP: u32 = 10_000;
+const KASK_PANEL_CALL_CAP: u32 = 10_000;
 
 /// Install a panic hook that logs the panic (location + payload + backtrace)
 /// via `log::error!` so it appears in `Zed.log`, then chains to the default
@@ -723,8 +721,8 @@ fn main() {
         };
         agent::set_template_base_path(template_base_path);
 
-        // Seed templates to the registry path so MCP servers (corpus and
-        // swarm) find them regardless of dev/prod. The `render_template`
+        // Seed templates to the registry path so MCP servers (e.g. corpus)
+        // find them regardless of dev/prod. The `render_template`
         // tool uses the live source tree in dev (via `template_base_path`
         // above), so this seeding only affects MCP servers which read
         // `HKASK_TEMPLATE_ROOT`. In dev, the seeded copy mirrors the
@@ -806,8 +804,8 @@ fn main() {
             .with_event_sink(event_sink.clone());
         // zed-kask: event-substrate phase 6 — wire the rollout event source
         // so `verify_impact` can query the store for before/after metric
-        // values. The store path mirrors the swarm server's default
-        // (`mcp/swarm/events.db` under the kask data dir, overridable via
+        // values. The store path is the D28 default (`mcp/swarm/events.db`
+        // under the kask data dir, overridable via
         // `HKASK_SWARM_EVENTS_PATH`). A missing/unopenable store leaves the
         // loop unwired (degraded, not broken — the re-sense fallback still
         // verifies) with a warn naming the path, per the failure-signal rule.
@@ -820,8 +818,8 @@ fn main() {
         // seam.
         let (cybernetics_loop_inner, harness_event_store) = {
             // The path contract (HKASK_SWARM_EVENTS_PATH override, D28
-            // default) is shared by the swarm server and zed's harness
-            // regression monitor — single-sourced in swarm_events_db_path.
+            // default) is consumed by zed's harness regression monitor —
+            // single-sourced in swarm_events_db_path.
             let events_path = hkask_types::agent_paths::swarm_events_db_path();
             match kask_bridge::BridgeRolloutEventSource::open(&events_path) {
                 Ok(source) => {
@@ -846,19 +844,18 @@ fn main() {
         } else {
             cybernetics_loop_inner
         };
-        // zed-kask: D3/D8 — F5: swarm-panel gas budget persona (call cap seed).
-        // Seed a call cap for the `swarm-panel` persona (see
-        // `SWARM_PANEL_CALL_CAP` for the rationale — fail-closed gate, no other
+        // zed-kask: D3/D8 — F5: kask-panel gas budget persona (call cap seed).
+        // Seed a call cap for the `kask-panel` persona (see
+        // `KASK_PANEL_CALL_CAP` for the rationale — fail-closed gate, no other
         // production cap-creation path). The McpRuntime's governance gate would
-        // otherwise refuse every governed tool call with `EnergyBudgetExceeded`,
-        // which includes the swarm IPC `tool_invoke` dispatch the local delegate
-        // loop depends on.
+        // otherwise refuse every governed panel tool call with
+        // `EnergyBudgetExceeded`.
         {
-            let panel_webid = hkask_types::WebID::from_persona(b"swarm-panel");
+            let panel_webid = hkask_types::WebID::from_persona(b"kask-panel");
             cx.foreground_executor()
-                .block_on(cybernetics_loop_inner.register_call_cap(panel_webid, SWARM_PANEL_CALL_CAP));
+                .block_on(cybernetics_loop_inner.register_call_cap(panel_webid, KASK_PANEL_CALL_CAP));
             log::info!(
-                "seeded swarm-panel call cap (ceiling {SWARM_PANEL_CALL_CAP} calls/tick)"
+                "seeded kask-panel call cap (ceiling {KASK_PANEL_CALL_CAP} calls/tick)"
             );
         }
         // zed-kask: context-server health source for the cybernetics loop.
@@ -1223,8 +1220,8 @@ fn main() {
         // compared a caller-supplied tool name against itself and could deny
         // nothing. `invoke` takes an `agent: WebID` for call metering
         // only. Delegated-dispatch authority is the per-request `tool_allowlist`
-        // in `kask_bridge::inference_ipc_server` (fail-closed), the swarm card
-        // `mcp_tools` allowlist, and the per-server MCP env allowlists.
+        // in `kask_bridge::inference_ipc_server` (fail-closed) and the
+        // per-server MCP env allowlists.
 
         // D5: Keystore uses `oo7` for all keychain reads/writes in the
         // unified `kask://credentials/*` namespace (same as zed's
@@ -1487,9 +1484,8 @@ fn main() {
 
         // The governed McpRuntime instances (kask panel + skill execution)
         // are started once at login and keep their startup env. A settings
-        // change that alters a server's env (e.g.
-        // `kask.swarm.default_agent_model` → `HKASK_SWARM_DEFAULT_AGENT_MODEL`)
-        // restarts it; a `kask.mcp` load/unload toggle
+        // change that alters a server's env (e.g. the models settings →
+        // their `HKASK_*_MODEL` env vars) restarts it; a `kask.mcp` load/unload toggle
         // stops/starts it through the runtime's own primitives (D45). The
         // restart baseline is recorded by the deferred launch task once
         // servers actually start — an empty baseline means "not launched
@@ -1687,10 +1683,10 @@ fn main() {
                     })
                     .await;
 
-                // zed-kask: no separate swarm-memory passphrase provisioning —
+                // zed-kask: no separate per-DB passphrase provisioning —
                 // there is ONE passphrase (HKASK_DB_PASSPHRASE, provisioned
                 // above via `provision_agent`), and every managed SQLCipher DB
-                // (curator, swarm memory, kanban, research) opens with it.
+                // (curator, kanban, research) opens with it.
 
                 // Hoisted to the outer scope so the IPC server (started later
                 // in the `cx.update` block) can access it. Set inside the
@@ -2501,10 +2497,10 @@ fn main() {
                     })
                     .detach();
                     log::info!("hKask algedonic alerts wired to the Algedonic review kanban board");
-                    swarm_panel::set_tool_invoker(Some(panel_tool_invoker));
+                    hkask_tool_invoker::set_tool_invoker(Some(panel_tool_invoker));
                     log::info!(
-                        "Swarm panel tool invoker wired \
-                         (swarm panel calls route through the governed MCP runtime)"
+                        "Kask panel tool invoker wired \
+                         (panel calls route through the governed MCP runtime)"
                     );
 
                     // D8: the condenser serves ingestion-time tool-result
@@ -2610,14 +2606,9 @@ fn main() {
                         );
                         let no_model_port: std::sync::Arc<dyn hkask_types::InferencePort> =
                             std::sync::Arc::new(kask_bridge::NoModelInferencePort);
-                        // No tool port here: the no-op port means no chat model
-                        // is configured yet, so delegated agents have nothing to
-                        // dispatch against. The governed IPC server (started after
-                        // the model resolves) carries the McpRuntime tool port.
                         match kask_bridge::InferenceIpcServer::start(
                             no_model_port,
                             embedding_port_for_ipc.clone(),
-                            None,
                             cx,
                         ) {
                             Ok(ipc_server) => {
@@ -3142,7 +3133,6 @@ fn main() {
             }).detach();
         })
         .detach();
-        swarm_panel::init(cx);
         kanban_panel::init(cx);
         media_panel::init(cx);
         zed::watch_user_agents_md(app_state.fs.clone(), cx);
@@ -3688,11 +3678,6 @@ fn wire_kask_inference_stack(
     // API keys) instead of constructing their own MediaRouter with separate
     // keys.
     //
-    // The governed McpRuntime backs `tool_invoke` requests (delegated swarm
-    // agents calling MCP tools). The IPC server mints the panel token — the
-    // child process never holds token material.
-    let tool_port_for_ipc: Option<std::sync::Arc<dyn hkask_tool_port::ToolPort>> =
-        Some(mcp_runtime.clone());
     // zed-kask: P7h — swap-first. When the no-op server from the deferred
     // task is holding the socket, replace its serving ports in place: the
     // socket path (and every MCP child's `HKASK_INFERENCE_SOCKET` /
@@ -3706,23 +3691,14 @@ fn wire_kask_inference_stack(
     // case: the no-op start failed, or the model was already configured at
     // deferred-task time so this call starts the first server.
     let mut ipc_established = false;
-    if kask_bridge::swap_inference_ipc_ports(
-        inference_port.clone(),
-        embedding_port.clone(),
-        tool_port_for_ipc.clone(),
-    ) {
+    if kask_bridge::swap_inference_ipc_ports(inference_port.clone(), embedding_port.clone()) {
         log::info!(
             "hKask inference IPC ports swapped in place (no-op → real) — socket path \
              unchanged, no MCP child restarts"
         );
         ipc_established = true;
     } else {
-        match kask_bridge::InferenceIpcServer::start(
-            inference_port,
-            embedding_port,
-            tool_port_for_ipc,
-            cx,
-        ) {
+        match kask_bridge::InferenceIpcServer::start(inference_port, embedding_port, cx) {
             Ok(ipc_server) => {
                 let socket_path = ipc_server.socket_path().to_string_lossy().to_string();
                 kask_bridge::set_inference_socket_path(&socket_path);
@@ -4052,13 +4028,13 @@ fn wire_kask_mcp_shutdown(runtime: std::sync::Arc<hkask_mcp::McpRuntime>, cx: &m
 
 // zed-kask: D3/D8 — F25: sync_kask_mcp_runtime_servers (governed McpRuntime restart).
 /// Re-sync the governed `McpRuntime` server processes when kask settings
-/// change (e.g. `kask.swarm.mode`, credit ceilings, provider toggles).
+/// change (e.g. model settings, credit ceilings, provider toggles).
 ///
 /// `sync_kask_mcp_servers` (above) only removes stale per-project entries.
 /// The governed McpRuntime instances — which the
 /// kask panel's `ToolInvoker` and the skill execution route through — are
 /// started once at login and would otherwise keep their startup env forever
-/// (a `kask.swarm.mode` toggle would never re-route the panel's own tool
+/// (a model-settings change would never re-route the panel's own tool
 /// calls). This restarts exactly the servers whose computed env actually
 /// changed; servers not yet tracked by the deferred launch (empty baseline)
 /// are left alone. The baseline is recorded by the launch loop, so this
@@ -4290,12 +4266,13 @@ fn sync_kask_mcp_runtime_servers(
 
 // ── Swarm panel tool-invoker adapter ───────────────────────────────────────
 //
-// This adapter implements swarm_panel's ToolInvoker trait by delegating to
+// This adapter implements the kask panels' `ToolInvoker` trait (from the
+// `hkask-tool-invoker` leaf crate) by delegating to
 // the McpRuntime (which implements ToolPort directly). It's defined here (in
 // the zed binary crate) because the composition root is the natural place for
 // adapter construction.
 
-/// Adapter implementing `swarm_panel::ToolInvoker` via the `McpRuntime`.
+/// Adapter implementing `hkask_tool_invoker::ToolInvoker` via the `McpRuntime`.
 ///
 /// The dispatch future MUST run on the Tokio runtime, not on the GPUI
 /// background executor. `McpRuntime::invoke` → `call_tool_inner` →
@@ -4372,19 +4349,19 @@ impl kask_bridge::WorktreeSpawner for AgentPanelWorktreeSpawner {
     }
 }
 
-impl swarm_panel::ToolInvoker for PanelToolInvoker {
+impl hkask_tool_invoker::ToolInvoker for PanelToolInvoker {
     fn invoke_tool(
         &self,
         server: &str,
         tool: &str,
         args: serde_json::Value,
-    ) -> gpui::Task<Result<String, swarm_panel::InvokeError>> {
+    ) -> gpui::Task<Result<String, hkask_tool_invoker::InvokeError>> {
+        use hkask_tool_invoker::InvokeError;
         use hkask_tool_port::ToolPort;
         use hkask_types::WebID;
-        use swarm_panel::InvokeError;
 
         // Accounting identity for the call meter — not a credential.
-        let webid = WebID::from_persona(b"swarm-panel");
+        let webid = WebID::from_persona(b"kask-panel");
 
         let tool_port = self.tool_port.clone();
         let server = server.to_string();
@@ -4437,7 +4414,7 @@ impl swarm_panel::ToolInvoker for PanelToolInvoker {
             let result = join_handle.await;
             drop(cancel);
             result.map_err(|join_error| {
-                use swarm_panel::InvokeError;
+                use hkask_tool_invoker::InvokeError;
                 if join_error.is_cancelled() {
                     InvokeError::Interrupted("panel tool call cancelled".to_string())
                 } else {
@@ -5730,10 +5707,10 @@ mod tests {
         // is not a type — `TypeId::of::<CONST>()` does not compile).
         let _ = hkask_regulation::DEFAULT_VARIETY_MAX_DEFICIT;
 
-        // F5: swarm-panel gas budget persona. SWARM_PANEL_CALL_CAP is the
-        // call cap seeded for the swarm-panel persona; removing it breaks
+        // F5: kask-panel gas budget persona. KASK_PANEL_CALL_CAP is the
+        // call cap seeded for the kask-panel persona; removing it breaks
         // the F5 wiring in main(). Reading the const value pins it.
-        let _ = SWARM_PANEL_CALL_CAP;
+        let _ = KASK_PANEL_CALL_CAP;
 
         // F6: CyberneticsLoop and MetacognitionLoop must be accessible.
         let _ = std::any::TypeId::of::<hkask_regulation::CyberneticsLoop>();

@@ -20,11 +20,6 @@ pub struct BackfillEmbeddingsRequest {
     /// migration's gated-out rows are restored rather than silently
     /// invisible.
     pub mode: Option<String>,
-    /// Memory store to sweep. "curator" (default): the curator's own memory
-    /// DB. "swarm": the shared swarm memory DB (missing-mode eligibility
-    /// mirrors the swarm server's own embed path — delegation response
-    /// chunks only).
-    pub store: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -91,7 +86,7 @@ pub struct AlgedonicLogRequest {
     pub hours: Option<u32>,
 }
 
-/// Consultation request — a swarm agent asks the curator a question.
+/// Consultation request — a delegated agent asks the curator a question.
 /// The curator searches its semantic + episodic memory for relevant
 /// fragments and returns them as a structured consultation response.
 ///

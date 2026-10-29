@@ -238,6 +238,23 @@ pub struct EductSpeakerPassRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct VoiceEnrollRequest {
+    pub transcript_id: String,
+    /// Inclusive immutable source-word range authorizing one named speaker.
+    pub start_word: usize,
+    pub end_word: usize,
+    pub speaker_name: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct VoiceListRequest {}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct VoiceRemoveRequest {
+    pub profile_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct EductRetranscribeSectionRequest {
     pub transcript_id: String,
     /// Inclusive source word range to re-transcribe. Indices anchor the

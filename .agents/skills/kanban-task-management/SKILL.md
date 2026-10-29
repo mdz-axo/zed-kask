@@ -16,7 +16,7 @@ Decompose → Delegate → Operate
 - **Decompose**: Break a project description into INVEST-compliant kanban
   tasks with acceptance criteria, dependencies, and recomposition strategy.
   The agent then calls `kanban_board_create` + `kanban_task_create`.
-- **Delegate**: Configure one spawn for a task, call `kanban_task_spawn`, then read its persisted `kanban_task_delegate_result`. Comments and deliverable links are derived from that observed result; no second execution prompt runs.
+- **Delegate**: Configure one spawn for a task, call `kanban_task_spawn`, then read the spawn receipt and the delegate's report from the task's comment thread (`kanban_task_comments_since`). Comments and deliverable links are derived from that observed report; no second execution prompt runs.
 - **Operate**: Monitor the board, coordinate agents through comment threads,
   track deliverables, move tasks through columns, verify completion, and
   escalate to the human operator. The agent calls `kanban_task_list`,
@@ -66,7 +66,7 @@ Step 0 (deterministic triage and preflight, **`KTM-1`** via `lisp_eval`) examine
 | Input present | Phase | Steps |
 |---|---|---|
 | `project_description` | decompose | `decompose-tasks` → `review-tasks` → `kanban_board_create` + `kanban_task_create` |
-| `task_to_delegate` | delegate | `configure-spawn` → `kanban_task_spawn` → `kanban_task_delegate_result` |
+| `task_to_delegate` | delegate | `configure-spawn` → `kanban_task_spawn` → `kanban_task_comments_since` |
 | `board_id` | operate | `kanban_board_list` + `kanban_task_list` → `coordinate-agents` → `track-deliverables` → `kanban_task_move` → `verify-completion` → `escalate` |
 
 Templates for non-active phases are not rendered. Before Decompose, confirm the operator's functional goal, 2–4 observable criteria and any existing goal identity; an inferred goal is only a question. When confirmed and no goal exists, call `kanban_goal_create` once with the operator's `goal_text`, criteria, actual `source` and a stable idempotency key; omit routine `forecast` and retain the returned full goal's `id` and verbatim criterion text for `kanban_task_create.advances` (verified by `KTM-1`). Render `kanban-task-management/decompose-tasks` with `project_description`, `target_task_hours`, `goals`, `constraints`, and `resources`; it emits `project_name`, `tasks`, and `recomposition`. Then render `kanban-task-management/review-tasks` with `tasks` and `project_name`, and create the board (`kanban_board_create`) and accepted tasks (`kanban_task_create`) directly via MCP tools. If the user has not confirmed the target, stop before board creation. For Delegate, render `kanban-task-management/configure-spawn` with `task` and `available_skills`.
@@ -77,7 +77,7 @@ Anderson, *Kanban: Successful Evolutionary Change* (2010) — visualize work, li
 
 ### Delegate result handoff
 
-After `kanban_task_spawn`, read `kanban_task_delegate_result` for the *same* task ID. If it is unavailable or failed, leave the task open and surface the missing receipt; do not render another execution prompt. Use the persisted response and any verified paths to add a deliverable or post a progress/blocker comment. A delegate's `task_success` verdict is evidence for Review, not operator-confirmed task completion. No second task record or model-produced execution report is created.
+After `kanban_task_spawn`, the spawned worktree agent executes in its own session and reports through the task's comment thread — read the spawn receipt and the delegate's report with `kanban_task_comments_since` for the *same* task ID. If no report has landed, leave the task open and surface the missing receipt; do not render another execution prompt. Use the reported response and any verified paths to add a deliverable or post a progress/blocker comment. No second task record or model-produced execution report is created.
 
 ### Operate-phase sweep loop
 
@@ -102,7 +102,7 @@ One bounded PDCA applies to the active phase: Plan from the initial and target c
 | `kanban_task_list` | decompose, operate | Post-step: verify / pre-step: fetch |
 | `kanban_board_list` | operate | Pre-step: fetch board state |
 | `kanban_task_spawn` | delegate | Post-step: spawn subagent once (tool may require enabling in this session) |
-| `kanban_task_delegate_result` | delegate | Post-step: read structured result |
+| `kanban_task_comments_since` | delegate, operate | Post-step: read the spawn receipt and the delegate's report |
 | `kanban_task_comment` | delegate, operate | Post-step: post progress notes / coordinator replies |
 | `kanban_task_add_deliverable` | delegate, operate | Post-step: record deliverable links |
 | `kanban_task_move` | operate | Post-step: execute status transitions |
@@ -163,8 +163,8 @@ The skill's forms are executed at use time, never anchored in code.
 
 - The board is the durable ledger: a task's state comes from `kanban_task_list` re-reads, never from the manager's memory. Every transition is confirmed by re-listing before it is reported.
 - A criterion is satisfied only by `ran-and-pasted` or `demonstrated` evidence; `asserted` never satisfies (the floor tier is never the ceiling). A done task without its evidence tier recorded is unverified, not complete.
-- `kanban_task_verify` runs only after the operator confirms a Review task's observed pass evidence; its nonempty `evidence` is the pass signal. A delegate's `task_success` verdict or the template's `passed: true` is evidence for Review, never operator-confirmed completion.
-- After `kanban_task_spawn`, read `kanban_task_delegate_result` for the same task ID; if unavailable or failed, leave the task open and surface the missing receipt. Never replay a spawn after an uncertain tool error, and never render a second execution prompt.
+- `kanban_task_verify` runs only after the operator confirms a Review task's observed pass evidence; its nonempty `evidence` is the pass signal. A delegate's reported outcome is evidence for Review, never operator-confirmed completion.
+- After `kanban_task_spawn`, read the spawn receipt and the delegate's report via `kanban_task_comments_since` for the same task ID; if no report has landed, leave the task open and surface the missing receipt. Never replay a spawn after an uncertain tool error, and never render a second execution prompt.
 - The sweep gate `(and (= (length unverified_review) 0) (= (length stalled_in_progress) 0))` checks sweep obstacles only — it never proves the functional goal. Goal achievement is the operator's judgment.
 - Board deletion happens only after every task is Done, deliverables are recorded outside the board, and the operator confirms closure; a board with any open task is kept and named. Never delete a board to make a sweep look clean.
 - Before Decompose, an inferred goal is only a question; board creation stops until the operator confirms the target. `kanban_goal_create` runs once, with a stable idempotency key.

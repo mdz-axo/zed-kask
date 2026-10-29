@@ -350,15 +350,9 @@ impl InferenceIpcServer {
     /// error.
     /// Media generation (image, video, speech, transcription) never crosses
     /// this bridge — it is child-local in each MCP server process.
-    /// `tool_port` is the governed `McpRuntime` (as `ToolPort`) used for
-    /// `tool_invoke` requests from MCP servers that run agent loops (e.g.
-    /// `hkask-mcp-swarm`'s local delegate). When `None`, `tool_invoke`
-    /// requests return an error. The zed side mints the OCAP panel token —
-    /// the child process never holds token material.
     pub fn start(
         inference_port: Arc<dyn InferencePort>,
         embedding_port: Option<LanguageModelEmbeddingPort>,
-        tool_port: Option<Arc<dyn hkask_tool_port::ToolPort>>,
         cx: &gpui::App,
     ) -> Result<Self, std::io::Error> {
         // Generate a unique socket path inside a per-user private directory
@@ -411,28 +405,6 @@ impl InferenceIpcServer {
             ))
         })?;
 
-        // Delegated `host/skill` activation reads the GPUI-held skill catalog;
-        // same channel pattern as `ListModels` below.
-        let (skill_tx, mut skill_rx) =
-            tokio::sync::mpsc::unbounded_channel::<crate::host_skill_tools::SkillRequest>();
-        // Detached: see the list_models task below.
-        cx.spawn(async move |cx| {
-            while let Some((name, reply)) = skill_rx.recv().await {
-                let result = agent::activate_delegated_skill(name, cx).await;
-                if reply.send(result).is_err() {
-                    tracing::debug!(target: "reg.inference", "host/skill caller dropped before reply");
-                }
-            }
-        })
-        .detach();
-        let tools = tool_port.map(|inner| {
-            Arc::new(crate::host_skill_tools::HostSkillToolPort {
-                inner,
-                skill_tx: skill_tx.clone(),
-                #[cfg(test)]
-                lisp_probe: None,
-            }) as Arc<dyn hkask_tool_port::ToolPort>
-        });
         // The serving backend lives behind a swappable slot
         // so the model-resolved re-wire replaces the ports in place
         // (`swap_inference_ipc_ports`) instead of starting a second server
@@ -441,14 +413,10 @@ impl InferenceIpcServer {
         // respawning every MCP child launched against the no-op server
         // (measured 2026-10-02: 30 restart events, portfolio 4× in 13 s,
         // ~2.5 min to fleet stability).
-        let backend_slot = Arc::new(IpcBackendSlot::new(
-            IpcBackend {
-                inference: inference_port,
-                embedding: embedding_port,
-                tools,
-            },
-            skill_tx,
-        ));
+        let backend_slot = Arc::new(IpcBackendSlot::new(IpcBackend {
+            inference: inference_port,
+            embedding: embedding_port,
+        }));
         {
             let mut guard = match IPC_BACKEND_SLOT.lock() {
                 Ok(guard) => guard,
@@ -626,28 +594,18 @@ impl InferenceIpcServer {
 pub(crate) struct IpcBackend {
     pub(crate) inference: Arc<dyn InferencePort>,
     pub(crate) embedding: Option<LanguageModelEmbeddingPort>,
-    pub(crate) tools: Option<Arc<dyn hkask_tool_port::ToolPort>>,
 }
 
 /// The swappable backend holder shared by the accept loop and the
-/// model-resolved re-wire. `skill_tx` is the delegated `host/skill`
-/// activation channel created once at [`InferenceIpcServer::start`] (its
-/// GPUI-side task is model-independent); every tool port installed through
-/// [`IpcBackendSlot::swap`] is wrapped in `HostSkillToolPort` against that
-/// same channel.
+/// model-resolved re-wire.
 pub(crate) struct IpcBackendSlot {
     backend: std::sync::RwLock<IpcBackend>,
-    skill_tx: tokio::sync::mpsc::UnboundedSender<crate::host_skill_tools::SkillRequest>,
 }
 
 impl IpcBackendSlot {
-    pub(crate) fn new(
-        backend: IpcBackend,
-        skill_tx: tokio::sync::mpsc::UnboundedSender<crate::host_skill_tools::SkillRequest>,
-    ) -> Self {
+    pub(crate) fn new(backend: IpcBackend) -> Self {
         Self {
             backend: std::sync::RwLock::new(backend),
-            skill_tx,
         }
     }
 
@@ -658,16 +616,7 @@ impl IpcBackendSlot {
         &self,
         inference: Arc<dyn InferencePort>,
         embedding: Option<LanguageModelEmbeddingPort>,
-        tool: Option<Arc<dyn hkask_tool_port::ToolPort>>,
     ) {
-        let tools = tool.map(|inner| {
-            Arc::new(crate::host_skill_tools::HostSkillToolPort {
-                inner,
-                skill_tx: self.skill_tx.clone(),
-                #[cfg(test)]
-                lisp_probe: None,
-            }) as Arc<dyn hkask_tool_port::ToolPort>
-        });
         let mut guard = match self.backend.write() {
             Ok(guard) => guard,
             Err(poisoned) => {
@@ -681,7 +630,6 @@ impl IpcBackendSlot {
         *guard = IpcBackend {
             inference,
             embedding,
-            tools,
         };
     }
 
@@ -724,7 +672,6 @@ static IPC_BACKEND_SLOT: std::sync::Mutex<Option<Arc<IpcBackendSlot>>> =
 pub fn swap_inference_ipc_ports(
     inference_port: Arc<dyn InferencePort>,
     embedding_port: Option<LanguageModelEmbeddingPort>,
-    tool_port: Option<Arc<dyn hkask_tool_port::ToolPort>>,
 ) -> bool {
     let guard = match IPC_BACKEND_SLOT.lock() {
         Ok(guard) => guard,
@@ -738,7 +685,7 @@ pub fn swap_inference_ipc_ports(
     };
     match guard.as_ref() {
         Some(slot) => {
-            slot.swap(inference_port, embedding_port, tool_port);
+            slot.swap(inference_port, embedding_port);
             true
         }
         None => false,
@@ -827,7 +774,7 @@ async fn handle_connection(
         // One in-flight request per connection. Monitor EOF while dispatch is
         // pending so dropping a client cancels queued/provider work immediately.
         let outcome = tokio::select! {
-            result = dispatch(&backend.inference, backend.embedding.as_ref(), backend.tools.as_ref(),
+            result = dispatch(&backend.inference, backend.embedding.as_ref(),
                 &list_models_tx, worktree_spawn_tx.as_ref(), &provider_credential_tx, request) => result,
             next = reader.read_line() => {
                 match next {
@@ -946,7 +893,6 @@ fn embed_error_outcome(error: hkask_types::EmbeddingGenerationError) -> Inferenc
 async fn dispatch(
     port: &Arc<dyn InferencePort>,
     embedding_port: Option<&LanguageModelEmbeddingPort>,
-    tool_port: Option<&Arc<dyn hkask_tool_port::ToolPort>>,
     list_models_tx: &Arc<
         tokio::sync::mpsc::UnboundedSender<(tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,)>,
     >,
@@ -999,130 +945,6 @@ async fn dispatch(
                 return ipc_error("Connection", format!("list_models channel failed: {e}"));
             }
         }
-    }
-
-    if matches!(request.method, InferenceMethod::ToolDefinition) {
-        let Some(tool_port) = tool_port else {
-            return ipc_error(
-                "Connection",
-                "tool definition lookup not configured on the zed side",
-            );
-        };
-        let Some(server) = params.tool_server.as_deref() else {
-            return ipc_error("ToolPort", "tool_definition request missing tool_server");
-        };
-        let Some(tool) = params.tool_name.as_deref() else {
-            return ipc_error("ToolPort", "tool_definition request missing tool_name");
-        };
-        let qualified = format!("{server}/{tool}");
-        if !params
-            .tool_allowlist
-            .as_ref()
-            .is_some_and(|allowed| allowed.iter().any(|name| name == &qualified))
-            || !crate::delegation_grants::parent_allows(params.tool_grant.as_deref(), &qualified)
-        {
-            return ipc_error(
-                "Auth",
-                format!(
-                    "tool definition '{qualified}' is not permitted by the card allowlist and parent grant"
-                ),
-            );
-        }
-        // Server-scoped lookup: the caller names the server, so a same-named
-        // tool on another server can neither answer this request nor shadow it.
-        let Some(info) = tool_port.get_tool_info(server, tool).await else {
-            return ipc_error(
-                "ToolPort",
-                format!("tool definition '{qualified}' not found on server '{server}'"),
-            );
-        };
-        if !info.input_schema.is_object() {
-            return ipc_error(
-                "ToolPort",
-                format!("tool definition '{qualified}' has a non-object schema"),
-            );
-        }
-        let mut input_schema = info.input_schema;
-        language_model_core::tool_schema::normalize_tool_schema(&mut input_schema);
-        return InferenceOutcome::ToolDefinition {
-            definition: hkask_types::ChatToolDefinition {
-                tool_type: "function".into(),
-                function: hkask_types::ChatToolFunction {
-                    name: qualified,
-                    description: info.description,
-                    parameters: input_schema,
-                },
-            },
-        };
-    }
-
-    // Tool dispatch requests route to the `McpRuntime` (as `ToolPort`) on the
-    // zed side. The child MCP server (e.g. the swarm server's local delegate
-    // loop) holds no credential — the `tool_allowlist` check below IS the
-    // authority boundary for this dispatch, and it is enforced here rather than
-    // in the child so it does not depend on the child's own matching being
-    // correct.
-    //
-    // This replaced a `DelegationToken` capability check inside
-    // `McpRuntime::invoke` that could not deny anything: the token's
-    // `resource_id` was set from the same `tool` value passed to `invoke`, so
-    // the check compared a value against itself. The allowlist below is the
-    // real gate because the caller does not choose its contents.
-    if matches!(request.method, InferenceMethod::ToolInvoke) {
-        let Some(tool_port) = tool_port else {
-            return ipc_error(
-                "Connection",
-                "tool dispatch not configured on the zed side — the IPC server was started without a tool port. This indicates a startup wiring bug.",
-            );
-        };
-        let Some(server) = params.tool_server.clone() else {
-            return ipc_error("ToolPort", "tool_invoke request missing tool_server");
-        };
-        let Some(tool) = params.tool_name.clone() else {
-            return ipc_error("ToolPort", "tool_invoke request missing tool_name");
-        };
-        let args = params.tool_args.unwrap_or(serde_json::Value::Null);
-        // The child's declared `server/tool` allowlist is enforced HERE, at
-        // the dispatch boundary, before any token is minted — a tool outside
-        // it is never authorized, so the allowlist does not depend on the
-        // child's in-process matching being correct. Fail closed: a missing
-        // or empty allowlist is a protocol violation (the child must declare
-        // what it may dispatch), never an implicit grant-all. This is the
-        // enforcement point for the .rules "advertised invariants need
-        // enforcement points" trap on the delegated-tool authority claim.
-        let qualified = format!("{server}/{tool}");
-        match &params.tool_allowlist {
-            Some(allowlist) if !allowlist.is_empty() => {
-                if !allowlist.iter().any(|a| a == &qualified) {
-                    return ipc_error(
-                        "ToolPort",
-                        format!(
-                            "tool '{qualified}' is not in the delegated tool allowlist — refused before minting the panel token"
-                        ),
-                    );
-                }
-            }
-            _ => {
-                return ipc_error(
-                    "ToolPort",
-                    "tool_invoke request missing tool_allowlist — the delegated tool allowlist must be declared per request (fail closed)",
-                );
-            }
-        }
-        if !crate::delegation_grants::parent_allows(params.tool_grant.as_deref(), &qualified) {
-            return ipc_error(
-                "Auth",
-                format!(
-                    "Parent grant does not permit '{qualified}'. Configure kask.mcp.delegated_tools for the calling server; its request list cannot grant authority."
-                ),
-            );
-        }
-        // Accounting identity for the call meter — not a credential.
-        let webid = hkask_types::WebID::from_persona(b"kask-panel");
-        return match tool_port.invoke(&server, &tool, args, webid).await {
-            Ok(value) => InferenceOutcome::ToolResult { result: value },
-            Err(e) => ipc_error("ToolPort", e.to_string()),
-        };
     }
 
     // CreateWorktreeThread requests are dispatched via the GPUI context —
@@ -1313,8 +1135,6 @@ async fn dispatch(
         // peer-supplied value (DoS vector).
         InferenceMethod::Embed
         | InferenceMethod::ListModels
-        | InferenceMethod::ToolInvoke
-        | InferenceMethod::ToolDefinition
         | InferenceMethod::CreateWorktreeThread
         | InferenceMethod::Rerank => {
             tracing::error!(
@@ -1344,7 +1164,6 @@ async fn dispatch(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hkask_tool_port::{ToolFuture, ToolInfo, ToolPort, ToolPortError};
     use hkask_types::inference_ipc::InferenceParams;
     use hkask_types::{
         ChatMessage, ChatToolDefinition, InferenceResult, InferenceUsage, LLMParameters,
@@ -1405,198 +1224,6 @@ mod tests {
         }
     }
 
-    // ── Mock ToolPort ──────────────────────────────────────────────────────
-    //
-    // A canned-response mock for testing the `tool_invoke` dispatch path.
-    // Returns a fixed JSON result for every call.
-
-    struct CannedToolPort;
-
-    impl ToolPort for CannedToolPort {
-        fn invoke<'a>(
-            &'a self,
-            server: &'a str,
-            tool: &'a str,
-            _args: serde_json::Value,
-            _agent: hkask_types::WebID,
-        ) -> ToolFuture<'a, Result<serde_json::Value, ToolPortError>> {
-            Box::pin(async move {
-                Ok(serde_json::json!({"result": "ok", "server": server, "tool": tool}))
-            })
-        }
-
-        fn get_tool_info<'a>(
-            &'a self,
-            _server: &'a str,
-            _tool: &'a str,
-        ) -> ToolFuture<'a, Option<ToolInfo>> {
-            Box::pin(async { None })
-        }
-    }
-
-    struct SchemaToolPort;
-    impl ToolPort for SchemaToolPort {
-        fn invoke<'a>(
-            &'a self,
-            _: &'a str,
-            _: &'a str,
-            _: serde_json::Value,
-            _: hkask_types::WebID,
-        ) -> ToolFuture<'a, Result<serde_json::Value, ToolPortError>> {
-            Box::pin(async { panic!("metadata lookup must not invoke a tool") })
-        }
-        fn get_tool_info<'a>(
-            &'a self,
-            server: &'a str,
-            name: &'a str,
-        ) -> ToolFuture<'a, Option<ToolInfo>> {
-            Box::pin(async move {
-                (server == "fixture" && name == "required_argument").then(|| ToolInfo {
-                    name: name.to_string(),
-                    description: "Requires a query".into(),
-                    input_schema: serde_json::json!({
-                        "type": "object",
-                        "$defs": {"LookupQuery": {"type": "string"}},
-                        "properties": {"query": {"$ref": "#/$defs/LookupQuery"}},
-                        "required": ["query"]
-                    }),
-                })
-            })
-        }
-    }
-
-    /// A definition read is subject to the same card and parent grants as invocation.
-    #[tokio::test]
-    async fn tool_definition_requires_both_grants_and_returns_real_schema() {
-        let inference: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
-        let tools: Arc<dyn ToolPort> = Arc::new(SchemaToolPort);
-        let server = format!("schema-test-{}", uuid::Uuid::new_v4());
-        let token = crate::delegation_grants::grant_for_server(
-            &server,
-            &["fixture/required_argument".into()],
-        )
-        .expect("grant");
-        let request = |allowlist: Vec<String>, grant: Option<String>| InferenceRequest {
-            id: 1,
-            method: InferenceMethod::ToolDefinition,
-            params: InferenceParams {
-                tool_server: Some("fixture".into()),
-                tool_name: Some("required_argument".into()),
-                tool_allowlist: Some(allowlist),
-                tool_grant: grant,
-                ..Default::default()
-            },
-        };
-        for (allowed, grant) in [
-            (vec!["fixture/required_argument".into()], None),
-            (vec![], Some(token.clone())),
-        ] {
-            let result = dispatch(
-                &inference,
-                None,
-                Some(&tools),
-                &make_list_models_tx(),
-                None,
-                &make_provider_credential_tx(),
-                request(allowed, grant),
-            )
-            .await;
-            assert!(matches!(result, InferenceOutcome::Error { error } if error.code == "Auth"));
-        }
-        let result = dispatch(
-            &inference,
-            None,
-            Some(&tools),
-            &make_list_models_tx(),
-            None,
-            &make_provider_credential_tx(),
-            request(vec!["fixture/required_argument".into()], Some(token)),
-        )
-        .await;
-        let InferenceOutcome::ToolDefinition { definition } = result else {
-            panic!("authorized metadata lookup must return the definition");
-        };
-        assert_eq!(definition.function.name, "fixture/required_argument");
-        assert_eq!(definition.function.description, "Requires a query");
-        assert_eq!(definition.function.parameters["required"][0], "query");
-        assert_eq!(
-            definition.function.parameters["properties"]["query"]["type"],
-            "string"
-        );
-        assert!(definition.function.parameters.get("$defs").is_none());
-        crate::revoke_delegation_grant(&server);
-    }
-
-    struct RecordingToolPort(std::sync::atomic::AtomicUsize);
-    impl ToolPort for RecordingToolPort {
-        fn invoke<'a>(
-            &'a self,
-            _server: &'a str,
-            _tool: &'a str,
-            _args: serde_json::Value,
-            _agent: hkask_types::WebID,
-        ) -> ToolFuture<'a, Result<serde_json::Value, ToolPortError>> {
-            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Box::pin(async { Ok(serde_json::json!({"ok":true})) })
-        }
-        fn get_tool_info<'a>(
-            &'a self,
-            _server: &'a str,
-            _tool: &'a str,
-        ) -> ToolFuture<'a, Option<ToolInfo>> {
-            Box::pin(async { None })
-        }
-    }
-
-    /// expect: "A child cannot enlarge its parent-held grant or invoke tools with inference-only access" [P1]
-    #[tokio::test]
-    async fn ipc_child_cannot_expand_parent_grant() {
-        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
-        let recording = Arc::new(RecordingToolPort(std::sync::atomic::AtomicUsize::new(0)));
-        let tools: Arc<dyn ToolPort> = recording.clone();
-        let server = format!("grant-test-{}", uuid::Uuid::new_v4());
-        let token = crate::delegation_grants::grant_for_server(&server, &["kanban/read".into()])
-            .expect("grant");
-        for grant in [None, Some(token.clone())] {
-            let mut request =
-                make_tool_invoke_request("kanban", "write", Some(vec!["kanban/write".into()]));
-            request.params.tool_grant = grant;
-            let outcome = dispatch(
-                &port,
-                None,
-                Some(&tools),
-                &make_list_models_tx(),
-                None,
-                &make_provider_credential_tx(),
-                request,
-            )
-            .await;
-            let InferenceOutcome::Error { error } = outcome else {
-                panic!("unauthorized dispatch succeeded");
-            };
-            assert_eq!(error.code, "Auth");
-        }
-        assert_eq!(recording.0.load(std::sync::atomic::Ordering::SeqCst), 0);
-        let mut request =
-            make_tool_invoke_request("kanban", "read", Some(vec!["kanban/read".into()]));
-        request.params.tool_grant = Some(token);
-        assert!(matches!(
-            dispatch(
-                &port,
-                None,
-                Some(&tools),
-                &make_list_models_tx(),
-                None,
-                &make_provider_credential_tx(),
-                request
-            )
-            .await,
-            InferenceOutcome::ToolResult { .. }
-        ));
-        assert_eq!(recording.0.load(std::sync::atomic::Ordering::SeqCst), 1);
-        crate::revoke_delegation_grant(&server);
-    }
-
     /// expect: "Malformed IPC requests never log grant tokens or prompt bodies" [P1]
     #[test]
     fn malformed_request_logging_withholds_payload() {
@@ -1650,15 +1277,10 @@ mod tests {
                 capacity: Arc::new(tokio::sync::Semaphore::new(1)),
             });
             let port: Arc<dyn InferencePort> = pending.clone();
-            let (skill_tx, _skill_rx) = tokio::sync::mpsc::unbounded_channel();
-            let backend_slot = Arc::new(IpcBackendSlot::new(
-                IpcBackend {
-                    inference: port,
-                    embedding: None,
-                    tools: None,
-                },
-                skill_tx,
-            ));
+            let backend_slot = Arc::new(IpcBackendSlot::new(IpcBackend {
+                inference: port,
+                embedding: None,
+            }));
             let handler = tokio::spawn(handle_connection(
                 server,
                 backend_slot,
@@ -1694,425 +1316,6 @@ mod tests {
                 .expect("handler");
             assert_eq!(pending.capacity.available_permits(), 1);
         }
-    }
-
-    // H7 uses a real connection and host port. The inference/inner ports are
-    // unreachable controls; Lisp entry/result/exit captures identify the leg.
-    async fn h7_event(
-        events: &mut tokio::sync::mpsc::UnboundedReceiver<crate::host_skill_tools::LispEvent>,
-    ) -> crate::host_skill_tools::LispEvent {
-        tokio::time::timeout(std::time::Duration::from_secs(5), events.recv())
-            .await
-            .expect("bounded H7 event wait")
-            .expect("H7 event sender alive")
-    }
-
-    struct H7Grant(String);
-
-    impl Drop for H7Grant {
-        fn drop(&mut self) {
-            crate::revoke_delegation_grant(&self.0);
-        }
-    }
-
-    struct H7Connection {
-        client: tokio::net::UnixStream,
-        handler: tokio::task::JoinHandle<()>,
-        events: tokio::sync::mpsc::UnboundedReceiver<crate::host_skill_tools::LispEvent>,
-        probe: Arc<crate::host_skill_tools::LispProbe>,
-        inner: Arc<RecordingToolPort>,
-        token: String,
-        _grant: H7Grant,
-    }
-
-    impl H7Connection {
-        fn new() -> Self {
-            use crate::host_skill_tools::{HostSkillToolPort, LispProbe};
-            let (events, rx) = tokio::sync::mpsc::unbounded_channel();
-            let probe = Arc::new(LispProbe {
-                events,
-                before_spawn: tokio::sync::Mutex::new(None),
-                worker_release: std::sync::Mutex::new(None),
-            });
-            let (skill_tx, _skill_rx) = tokio::sync::mpsc::unbounded_channel();
-            let inner = Arc::new(RecordingToolPort(std::sync::atomic::AtomicUsize::new(0)));
-            let host = Arc::new(HostSkillToolPort {
-                inner: inner.clone(),
-                skill_tx: skill_tx.clone(),
-                lisp_probe: Some(probe.clone()),
-            });
-            let slot = Arc::new(IpcBackendSlot::new(
-                IpcBackend {
-                    inference: Arc::new(CannedInferencePort),
-                    embedding: None,
-                    tools: Some(host),
-                },
-                skill_tx,
-            ));
-            let (client, server) = tokio::net::UnixStream::pair().expect("socket pair");
-            let handler = tokio::spawn(handle_connection(
-                server,
-                slot,
-                make_list_models_tx(),
-                None,
-                make_provider_credential_tx(),
-            ));
-            let server = format!("h7-{}", uuid::Uuid::new_v4());
-            let token =
-                crate::delegation_grants::grant_for_server(&server, &["host/lisp_eval".into()])
-                    .expect("host grant");
-            Self {
-                client,
-                handler,
-                events: rx,
-                probe,
-                inner,
-                token,
-                _grant: H7Grant(server),
-            }
-        }
-
-        fn request(&self, args: serde_json::Value) -> InferenceRequest {
-            let mut request =
-                make_tool_invoke_request("host", "lisp_eval", Some(vec!["host/lisp_eval".into()]));
-            request.params.tool_grant = Some(self.token.clone());
-            request.params.tool_args = Some(args);
-            request
-        }
-
-        async fn send(&mut self, request: InferenceRequest) {
-            self.client
-                .write_all((serde_json::to_string(&request).expect("request") + "\n").as_bytes())
-                .await
-                .expect("write request");
-        }
-
-        async fn response(&mut self) -> InferenceOutcome {
-            let mut reader = CappedReader::new(&mut self.client);
-            let line = tokio::time::timeout(std::time::Duration::from_secs(5), reader.read_line())
-                .await
-                .expect("response deadline")
-                .expect("read response")
-                .expect("response line");
-            serde_json::from_str::<InferenceResponse>(&line)
-                .expect("response")
-                .outcome
-        }
-
-        // Half-close supplies real EOF but retains the response half, so zero
-        // published bytes is observed rather than inferred from a dead socket.
-        async fn disconnect(&mut self) {
-            use tokio::io::AsyncReadExt;
-            self.client.shutdown().await.expect("client EOF");
-            tokio::time::timeout(std::time::Duration::from_secs(5), &mut self.handler)
-                .await
-                .expect("handler exit deadline")
-                .expect("handler exit");
-            let mut bytes = Vec::new();
-            tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                self.client.read_to_end(&mut bytes),
-            )
-            .await
-            .expect("response EOF deadline")
-            .expect("response EOF");
-            assert!(bytes.is_empty(), "dead request received a result");
-            assert_eq!(
-                self.inner.0.load(std::sync::atomic::Ordering::SeqCst),
-                0,
-                "no fallback serving leg"
-            );
-        }
-
-        async fn guard(&mut self) -> Arc<std::sync::atomic::AtomicBool> {
-            let crate::host_skill_tools::LispEvent::GuardReady(flag) =
-                h7_event(&mut self.events).await
-            else {
-                panic!("pre-spawn guard")
-            };
-            flag
-        }
-
-        async fn held_worker(
-            &mut self,
-            args: serde_json::Value,
-        ) -> (
-            Arc<std::sync::atomic::AtomicBool>,
-            std::sync::mpsc::Sender<()>,
-        ) {
-            use crate::host_skill_tools::LispEvent;
-            let (release, wait) = std::sync::mpsc::channel();
-            *self.probe.worker_release.lock().expect("gate") = Some(wait);
-            self.send(self.request(args)).await;
-            let flag = self.guard().await;
-            assert!(matches!(
-                (
-                    h7_event(&mut self.events).await,
-                    h7_event(&mut self.events).await
-                ),
-                (LispEvent::Spawned, LispEvent::Entered(_))
-                    | (LispEvent::Entered(_), LispEvent::Spawned)
-            ));
-            (flag, release)
-        }
-
-        async fn cancelled_exit(&mut self) {
-            use crate::host_skill_tools::LispEvent;
-            // Signal and helper completion are distinct, ordered observations.
-            assert!(matches!(
-                h7_event(&mut self.events).await,
-                LispEvent::Cancelled
-            ));
-            let LispEvent::Evaluated(result) = h7_event(&mut self.events).await else {
-                panic!("real core return")
-            };
-            assert!(matches!(
-                h7_event(&mut self.events).await,
-                LispEvent::Exited
-            ));
-            // Entry/exit captures, not error text, identify the serving leg.
-            assert_eq!(result, Err("Lisp evaluation cancelled".into()));
-            assert!(self.events.try_recv().is_err(), "one worker exit only");
-        }
-    }
-
-    /// expect: "Authorized IPC Lisp uses the blocking pool and retains editor results and errors" [H7]
-    #[tokio::test]
-    async fn h7_ipc_authorized_lisp_uses_real_blocking_worker() {
-        use crate::host_skill_tools::LispEvent;
-        let runtime_thread = std::thread::current().id();
-        let mut ipc = H7Connection::new();
-        let cases = [
-            (
-                serde_json::json!({"form":"(begin (define make-adder (lambda (x) (lambda (y) (+ x y)))) (define add (make-adder 40)) (add 2))"}),
-                Ok(serde_json::json!(42)),
-            ),
-            (
-                serde_json::json!({"form":"(begin (define x 1) (define x (+ x 1)) x)"}),
-                Ok(serde_json::json!(2)),
-            ),
-            (
-                serde_json::json!({"form":"(/ 6 3)", "maxSteps":100000, "maxDepth":1024}),
-                Ok(serde_json::json!(2.0)),
-            ),
-            (
-                serde_json::json!({"form":"(= 9007199254740993 9007199254740992)"}),
-                Ok(serde_json::json!(false)),
-            ),
-            (
-                serde_json::json!({"form":"(+ 9223372036854775807 1)"}),
-                Err(()),
-            ),
-            (serde_json::json!({"form":"(+ 1 2)","max_steps":0}), Err(())),
-            (
-                serde_json::json!({"form":"1","env":"{\"x\":18446744073709551616}"}),
-                Err(()),
-            ),
-            (serde_json::json!({"form":"1","env":{}}), Err(())),
-        ];
-        for (args, literal) in cases {
-            let expected = serde_json::from_value(args.clone())
-                .map_err(|e| format!("invalid lisp_eval input: {e}"))
-                .and_then(agent::evaluate_lisp);
-            match literal {
-                Ok(value) => assert_eq!(expected, Ok(value)),
-                Err(()) => assert!(expected.is_err()),
-            }
-            ipc.send(ipc.request(args)).await;
-            let flag = ipc.guard().await;
-            let mut entered = false;
-            let mut spawned = false;
-            let mut actual = None;
-            let mut exited = false;
-            loop {
-                match h7_event(&mut ipc.events).await {
-                    LispEvent::Spawned => {
-                        assert!(!spawned);
-                        spawned = true;
-                    }
-                    LispEvent::Entered(thread) => {
-                        assert!(!entered);
-                        entered = true;
-                        assert_ne!(
-                            thread, runtime_thread,
-                            "decode/eval must leave the async runtime"
-                        );
-                    }
-                    LispEvent::Evaluated(result) => {
-                        assert!(entered);
-                        actual = Some(result);
-                    }
-                    LispEvent::Exited => {
-                        assert!(actual.is_some());
-                        exited = true;
-                    }
-                    LispEvent::Cancelled => break,
-                    other => panic!("unexpected event {other:?}"),
-                }
-            }
-            assert!(spawned && entered && exited);
-            assert_eq!(actual.expect("evaluation capture"), expected);
-            assert!(flag.load(std::sync::atomic::Ordering::Acquire));
-            match (ipc.response().await, expected) {
-                (InferenceOutcome::ToolResult { result }, Ok(expected)) => {
-                    assert_eq!(result, expected)
-                }
-                (InferenceOutcome::Error { error }, Err(expected)) => assert_eq!(
-                    error.message,
-                    ToolPortError::InvocationFailed {
-                        detail: expected,
-                        kind: None
-                    }
-                    .to_string()
-                ),
-                other => panic!("IPC/editor mismatch: {other:?}"),
-            }
-        }
-        ipc.disconnect().await;
-    }
-
-    /// expect: "Neither a missing parent grant nor a missing/narrowed card enters a Lisp worker" [H7]
-    #[tokio::test]
-    async fn h7_ipc_denied_lisp_never_enters_worker() {
-        let mut ipc = H7Connection::new();
-        for denial in 0..5 {
-            let mut request = ipc.request(serde_json::json!({"form":"42"}));
-            match denial {
-                0 => request.params.tool_grant = None,
-                1 => request.params.tool_grant = Some("not-a-grant".into()),
-                2 => request.params.tool_allowlist = None,
-                3 => request.params.tool_allowlist = Some(vec![]),
-                _ => request.params.tool_allowlist = Some(vec!["host/skill".into()]),
-            }
-            ipc.send(request).await;
-            assert!(matches!(
-                ipc.response().await,
-                InferenceOutcome::Error { .. }
-            ));
-            assert!(
-                ipc.events.try_recv().is_err(),
-                "denial reached host Lisp guard/worker"
-            );
-        }
-        ipc.disconnect().await;
-    }
-
-    /// expect: "EOF before spawn drops the installed guard without launching Lisp work" [H7]
-    #[tokio::test]
-    async fn h7_ipc_disconnect_before_spawn_signals_guard() {
-        use crate::host_skill_tools::LispEvent;
-        let mut ipc = H7Connection::new();
-        let (_release, wait) = tokio::sync::oneshot::channel();
-        *ipc.probe.before_spawn.lock().await = Some(wait);
-        ipc.send(ipc.request(serde_json::json!({"form":"42"})))
-            .await;
-        let flag = ipc.guard().await;
-        ipc.disconnect().await;
-        assert!(matches!(
-            h7_event(&mut ipc.events).await,
-            LispEvent::Cancelled
-        ));
-        assert!(flag.load(std::sync::atomic::Ordering::Acquire));
-        assert!(
-            ipc.events.try_recv().is_err(),
-            "pre-spawn request launched a worker"
-        );
-    }
-
-    /// expect: "EOF during a real entered worker signals cancellation before eventual core return and cleanup" [H7]
-    #[tokio::test]
-    async fn h7_ipc_disconnect_during_worker_acknowledges_core_exit() {
-        let mut ipc = H7Connection::new();
-        let (flag, release) = ipc.held_worker(serde_json::json!({"form":"(begin (define f (lambda (n) (if (= n 0) 0 (f (- n 1))))) (f 20))"})).await;
-        ipc.disconnect().await;
-        // Handler has exited while the real blocking worker is still held.
-        // Release reaches the real core entry checkpoint, not a fake evaluator.
-        release.send(()).expect("release real evaluation");
-        ipc.cancelled_exit().await;
-        assert!(flag.load(std::sync::atomic::Ordering::Acquire));
-    }
-
-    /// expect: "Dropping the actual IPC handler signals its entered worker and still acknowledges cleanup" [H7]
-    #[tokio::test]
-    async fn h7_ipc_handler_drop_acknowledges_core_exit() {
-        let mut ipc = H7Connection::new();
-        let (flag, release) = ipc.held_worker(serde_json::json!({"form":"42"})).await;
-        ipc.handler.abort();
-        let exit = tokio::time::timeout(std::time::Duration::from_secs(5), &mut ipc.handler)
-            .await
-            .expect("handler-drop deadline")
-            .expect_err("aborted handler");
-        assert!(exit.is_cancelled());
-        release
-            .send(())
-            .expect("release evaluation after owner drop");
-        ipc.cancelled_exit().await;
-        assert!(flag.load(std::sync::atomic::Ordering::Acquire));
-        let mut reader = CappedReader::new(&mut ipc.client);
-        assert!(
-            tokio::time::timeout(std::time::Duration::from_secs(5), reader.read_line())
-                .await
-                .expect("dead response deadline")
-                .expect("dead response read")
-                .is_none()
-        );
-        assert_eq!(ipc.inner.0.load(std::sync::atomic::Ordering::SeqCst), 0);
-    }
-
-    /// expect: "A queued Lisp worker retains cancellation after its IPC owner exits" [H7]
-    #[test]
-    fn h7_ipc_disconnect_queued_worker_acknowledges_core_exit() {
-        use crate::host_skill_tools::LispEvent;
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .max_blocking_threads(1)
-            .build()
-            .expect("bounded test runtime");
-        runtime.block_on(async {
-            let (release, wait) = std::sync::mpsc::channel();
-            let (entered, entry) = tokio::sync::oneshot::channel();
-            let occupied = tokio::task::spawn_blocking(move || {
-                entered.send(()).expect("pool entry");
-                wait.recv_timeout(std::time::Duration::from_secs(5))
-                    .expect("bounded pool release");
-            });
-            tokio::time::timeout(std::time::Duration::from_secs(5), entry)
-                .await
-                .expect("pool-entry deadline")
-                .expect("blocking pool occupied");
-            let mut ipc = H7Connection::new();
-            ipc.send(ipc.request(serde_json::json!({"form":"42"})))
-                .await;
-            let flag = ipc.guard().await;
-            assert!(matches!(
-                h7_event(&mut ipc.events).await,
-                LispEvent::Spawned
-            ));
-            ipc.disconnect().await;
-            assert!(matches!(
-                h7_event(&mut ipc.events).await,
-                LispEvent::Cancelled
-            ));
-            assert!(
-                ipc.events.try_recv().is_err(),
-                "queued Lisp entered an occupied pool"
-            );
-            release.send(()).expect("release pool");
-            tokio::time::timeout(std::time::Duration::from_secs(5), occupied)
-                .await
-                .expect("pool-exit deadline")
-                .expect("pool occupant exit");
-            assert!(matches!(
-                h7_event(&mut ipc.events).await,
-                LispEvent::Entered(_)
-            ));
-            let LispEvent::Evaluated(result) = h7_event(&mut ipc.events).await else {
-                panic!("real core return")
-            };
-            assert!(matches!(h7_event(&mut ipc.events).await, LispEvent::Exited));
-            assert_eq!(result, Err("Lisp evaluation cancelled".into()));
-            assert!(flag.load(std::sync::atomic::Ordering::Acquire));
-        });
     }
 
     // ── CappedReader tests ─────────────────────────────────────────────
@@ -2188,74 +1391,17 @@ mod tests {
         Arc::new(tx)
     }
 
-    fn make_tool_invoke_request(
-        server: &str,
-        tool: &str,
-        allowlist: Option<Vec<String>>,
-    ) -> InferenceRequest {
-        InferenceRequest {
-            id: 1,
-            method: InferenceMethod::ToolInvoke,
-            params: InferenceParams {
-                tool_server: Some(server.to_string()),
-                tool_name: Some(tool.to_string()),
-                tool_args: Some(serde_json::Value::Null),
-                tool_allowlist: allowlist,
-                ..Default::default()
-            },
-        }
-    }
-
-    #[tokio::test]
-    async fn dispatch_tool_invoke_rejects_unallowed_tool() {
-        // The tool is not in the allowlist — dispatch must fail closed
-        // with a "ToolPort" error, never calling the tool port.
-        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
-        let tool_port: Arc<dyn ToolPort> = Arc::new(CannedToolPort);
-        let list_models_tx = make_list_models_tx();
-        let provider_credential_tx = make_provider_credential_tx();
-
-        let request = make_tool_invoke_request(
-            "kanban",
-            "kanban_task_create",
-            Some(vec!["swarm/swarm_delegate_local".to_string()]),
-        );
-
-        let outcome = dispatch(
-            &port,
-            None,
-            Some(&tool_port),
-            &list_models_tx,
-            None,
-            &provider_credential_tx,
-            request,
-        )
-        .await;
-        let error = require_error(outcome);
-        assert_eq!(error.code, "ToolPort");
-        assert!(
-            error
-                .message
-                .contains("not in the delegated tool allowlist")
-        );
-    }
-
     /// Dispatch a request through the canned test ports — the scaffolding
     /// every dispatch test repeats: the canned inference port, fresh
     /// list-models and provider-credential channels, no embedding port, no
     /// worktree spawn port (the worktree tests use `dispatch_worktree`).
-    /// `tool_port` toggles the tool-dispatch leg.
-    async fn dispatch_canned(
-        request: InferenceRequest,
-        tool_port: Option<&Arc<dyn ToolPort>>,
-    ) -> InferenceOutcome {
+    async fn dispatch_canned(request: InferenceRequest) -> InferenceOutcome {
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let list_models_tx = make_list_models_tx();
         let provider_credential_tx = make_provider_credential_tx();
         dispatch(
             &port,
             None,
-            tool_port,
             &list_models_tx,
             None,
             &provider_credential_tx,
@@ -2307,74 +1453,6 @@ mod tests {
         (server, request)
     }
 
-    #[tokio::test]
-    async fn dispatch_tool_invoke_rejects_missing_allowlist() {
-        // A missing allowlist is a protocol violation — fail closed,
-        // never an implicit grant-all.
-        let tool_port: Arc<dyn ToolPort> = Arc::new(CannedToolPort);
-
-        let request = make_tool_invoke_request("kanban", "kanban_task_create", None);
-
-        let error = require_error(dispatch_canned(request, Some(&tool_port)).await);
-        assert_eq!(error.code, "ToolPort");
-        assert!(error.message.contains("missing tool_allowlist"));
-    }
-
-    #[tokio::test]
-    async fn dispatch_tool_invoke_rejects_empty_allowlist() {
-        // An empty allowlist is also a protocol violation — fail closed.
-        let tool_port: Arc<dyn ToolPort> = Arc::new(CannedToolPort);
-
-        let request = make_tool_invoke_request("kanban", "kanban_task_create", Some(vec![]));
-
-        let error = require_error(dispatch_canned(request, Some(&tool_port)).await);
-        assert_eq!(error.code, "ToolPort");
-        assert!(error.message.contains("missing tool_allowlist"));
-    }
-
-    #[tokio::test]
-    async fn dispatch_tool_invoke_allows_listed_tool() {
-        // The tool IS in the allowlist — dispatch must succeed and return
-        // the tool result.
-        let tool_port: Arc<dyn ToolPort> = Arc::new(CannedToolPort);
-
-        let mut request = make_tool_invoke_request(
-            "kanban",
-            "kanban_task_create",
-            Some(vec!["kanban/kanban_task_create".to_string()]),
-        );
-
-        request.params.tool_grant = crate::delegation_grants::grant_for_server(
-            "allow-test",
-            &["kanban/kanban_task_create".into()],
-        );
-
-        let outcome = dispatch_canned(request, Some(&tool_port)).await;
-
-        match outcome {
-            InferenceOutcome::ToolResult { result } => {
-                assert_eq!(result["result"], "ok");
-                assert_eq!(result["tool"], "kanban_task_create");
-            }
-            other => panic!("expected tool result outcome, got {other:?}"),
-        }
-    }
-
-    // ── dispatch: missing-port error paths ──────────────────────────────
-
-    #[tokio::test]
-    async fn dispatch_tool_invoke_errors_without_tool_port() {
-        let request = make_tool_invoke_request(
-            "kanban",
-            "kanban_task_create",
-            Some(vec!["kanban/kanban_task_create".to_string()]),
-        );
-
-        let error = require_error(dispatch_canned(request, None).await); // no tool port
-        assert_eq!(error.code, "Connection");
-        assert!(error.message.contains("tool dispatch not configured"));
-    }
-
     /// expect: "IPC rejects a different embedding destination before HTTP dispatch" [P1]
     #[tokio::test]
     async fn ipc_embedding_provider_mismatch_is_invalid_request() {
@@ -2397,7 +1475,6 @@ mod tests {
         let outcome = dispatch(
             &port,
             Some(&embedding),
-            None,
             &make_list_models_tx(),
             None,
             &make_provider_credential_tx(),
@@ -2431,7 +1508,7 @@ mod tests {
             },
         };
 
-        let error = require_error(dispatch_canned(request, None).await); // no embedding port
+        let error = require_error(dispatch_canned(request).await); // no embedding port
         assert_eq!(error.code, "Connection");
         assert!(error.message.contains("embedding port not configured"));
     }
@@ -2452,7 +1529,7 @@ mod tests {
             },
         };
 
-        let result = require_result(dispatch_canned(request, None).await);
+        let result = require_result(dispatch_canned(request).await);
         assert_eq!(result.text, "canned response");
         assert_eq!(result.model, "test-model");
     }
@@ -2472,7 +1549,7 @@ mod tests {
             },
         };
 
-        let result = require_result(dispatch_canned(request, None).await);
+        let result = require_result(dispatch_canned(request).await);
         assert_eq!(result.text, "canned response");
     }
 
@@ -2489,57 +1566,12 @@ mod tests {
             },
         };
 
-        let result = require_result(dispatch_canned(request, None).await);
+        let result = require_result(dispatch_canned(request).await);
         assert_eq!(result.text, "canned response");
     }
-
-    // ── dispatch: tool_invoke missing fields ────────────────────────────
-
-    #[tokio::test]
-    async fn dispatch_tool_invoke_errors_without_tool_server() {
-        let tool_port: Arc<dyn ToolPort> = Arc::new(CannedToolPort);
-
-        let request = InferenceRequest {
-            id: 1,
-            method: InferenceMethod::ToolInvoke,
-            params: InferenceParams {
-                tool_server: None, // missing
-                tool_name: Some("kanban_task_create".to_string()),
-                tool_allowlist: Some(vec!["kanban/kanban_task_create".to_string()]),
-                ..Default::default()
-            },
-        };
-
-        let error = require_error(dispatch_canned(request, Some(&tool_port)).await);
-        assert_eq!(error.code, "ToolPort");
-        assert!(error.message.contains("missing tool_server"));
-    }
-
-    #[tokio::test]
-    async fn dispatch_tool_invoke_errors_without_tool_name() {
-        let tool_port: Arc<dyn ToolPort> = Arc::new(CannedToolPort);
-
-        let request = InferenceRequest {
-            id: 1,
-            method: InferenceMethod::ToolInvoke,
-            params: InferenceParams {
-                tool_server: Some("kanban".to_string()),
-                tool_name: None, // missing
-                tool_allowlist: Some(vec!["kanban/kanban_task_create".to_string()]),
-                ..Default::default()
-            },
-        };
-
-        let error = require_error(dispatch_canned(request, Some(&tool_port)).await);
-        assert_eq!(error.code, "ToolPort");
-        assert!(error.message.contains("missing tool_name"));
-    }
-
-    // ── dispatch: early-return coverage for non-generate methods ───────
-    //
     // P17 / P3: the `dispatch` function has a defensive error arm at the
     // bottom of the final `match request.method` that catches
-    // `Embed | ListModels | ToolInvoke | CreateWorktreeThread` and returns
+    // `Embed | ListModels | CreateWorktreeThread | Rerank` and returns
     // `InferenceOutcome::Error` instead of panicking (the prior `unreachable!`
     // was a DoS vector on peer-supplied values). That arm is only reachable
     // if a non-generate method bypasses its early-return block — which the
@@ -2576,7 +1608,6 @@ mod tests {
         let outcome = dispatch(
             &port,
             None,
-            None,
             &list_models_tx,
             None,
             &provider_credential_tx,
@@ -2601,7 +1632,7 @@ mod tests {
         // `CreateWorktreeThread`.
         let (server, request) = granted_worktree_request();
 
-        let error = require_error(dispatch_canned(request, None).await); // no worktree spawn port
+        let error = require_error(dispatch_canned(request).await); // no worktree spawn port
         assert_eq!(error.code, "Connection");
         assert!(
             error.message.contains("worktree spawn port not configured"),
@@ -2652,7 +1683,6 @@ mod tests {
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         dispatch(
             &port,
-            None,
             None,
             &make_list_models_tx(),
             Some(tx),
@@ -2784,15 +1814,10 @@ mod tests {
         start.await.expect("A started");
         let (mut client, socket) = tokio::net::UnixStream::pair().expect("socket pair");
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
-        let (skill_tx, _skill_rx) = tokio::sync::mpsc::unbounded_channel();
-        let backend_slot = Arc::new(IpcBackendSlot::new(
-            IpcBackend {
-                inference: port,
-                embedding: None,
-                tools: None,
-            },
-            skill_tx,
-        ));
+        let backend_slot = Arc::new(IpcBackendSlot::new(IpcBackend {
+            inference: port,
+            embedding: None,
+        }));
         let handler = tokio::spawn(handle_connection(
             socket,
             backend_slot,
@@ -2885,35 +1910,25 @@ mod tests {
 
     #[test]
     fn backend_slot_swap_replaces_serving_ports_in_place() {
-        let (skill_tx, _skill_rx) = tokio::sync::mpsc::unbounded_channel();
         let initial: Arc<dyn InferencePort> = Arc::new(crate::NoModelInferencePort);
-        let slot = IpcBackendSlot::new(
-            IpcBackend {
-                inference: initial.clone(),
-                embedding: None,
-                tools: None,
-            },
-            skill_tx,
-        );
+        let slot = IpcBackendSlot::new(IpcBackend {
+            inference: initial.clone(),
+            embedding: None,
+        });
 
         let before = slot.current();
         assert!(
             Arc::ptr_eq(&before.inference, &initial),
             "current() must serve the backend the slot was built with"
         );
-        assert!(before.tools.is_none());
 
         let replacement: Arc<dyn InferencePort> = Arc::new(crate::NoModelInferencePort);
-        slot.swap(replacement.clone(), None, Some(Arc::new(CannedToolPort)));
+        slot.swap(replacement.clone(), None);
 
         let after = slot.current();
         assert!(
             Arc::ptr_eq(&after.inference, &replacement),
             "swap must replace the inference port in place"
-        );
-        assert!(
-            after.tools.is_some(),
-            "swap must install the tool port (wrapped in HostSkillToolPort against the slot's skill channel)"
         );
     }
 
@@ -2924,7 +1939,7 @@ mod tests {
         // back to a fresh start) and must not touch the socket-path global —
         // the re-wire never changes `HKASK_INFERENCE_SOCKET` (P7h).
         crate::set_inference_socket_path("/tmp/kask-test-swap-socket-path.sock");
-        let swapped = swap_inference_ipc_ports(Arc::new(crate::NoModelInferencePort), None, None);
+        let swapped = swap_inference_ipc_ports(Arc::new(crate::NoModelInferencePort), None);
         assert!(!swapped, "no server is running in this test process");
         assert_eq!(
             crate::get_inference_socket_path().as_deref(),

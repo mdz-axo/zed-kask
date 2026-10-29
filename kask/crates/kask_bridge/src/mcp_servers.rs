@@ -138,7 +138,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_DATA_DIR",
             // IPC bridge socket — required for semantic memory recall. The
             // curator server embeds recall queries through zed's
-            // LanguageModelRegistry (same routing as corpus/media/swarm).
+            // LanguageModelRegistry (same routing as corpus/media).
             // Without it, `curator_semantic_search` / `curator_consult`
             // degrade to exact-entity lookup, which never matches a
             // natural-language question.
@@ -177,10 +177,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // model configured" — the exact gap observed live 2026-09-04
             // (the allowlist must align with actual env-var reads).
             "HKASK_EMBEDDING_MODEL",
-            // Swarm memory DB path — read by `swarm_memory_db_path()` in
-            // `hkask_mcp_curator.rs` for `curator_memory_backfill_embeddings`
-            // when `store = "swarm"`.
-            "HKASK_SWARM_MEMORY_DB",
         ],
     },
     BuiltinMcpServer {
@@ -203,9 +199,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // config; moved from `credentials` to align with the pattern used
             // by every other DB-path env var in the registry.
             "HKASK_KANBAN_DB",
-            // Local-swarm delegation surface (`kanban_task_spawn`) — shares the
-            // swarm-root-derived `HKASK_LOCAL_AGENTS_DIR` with hkask-mcp-swarm.
-            "HKASK_LOCAL_AGENTS_DIR",
         ],
     },
     BuiltinMcpServer {
@@ -282,69 +275,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         ],
     },
     BuiltinMcpServer {
-        id: "swarm",
-        binary: "hkask-mcp-swarm",
-        description: "Swarm — local swarm agents, local swarms, and A2A collaboration",
-        // HKASK_DB_PASSPHRASE is the ONE SQLCipher passphrase — the swarm
-        // memory DB opens with it, same as curator/kanban/research. (The
-        // separate HKASK_SWARM_MEMORY_PASSPHRASE was removed: two passphrases
-        // for one system was a setup trap and a rotation inconsistency —
-        // rotating one left the other unopenable.)
-        credentials: &["HKASK_DB_PASSPHRASE"],
-        config_env: &[
-            "HKASK_SWARM_DEFAULT_AGENT_MODEL",
-            "HKASK_LOCAL_AGENTS_DIR",
-            // Local swarms dir — read by `LocalSwarmRegistry::new` via
-            // `HKASK_LOCAL_SWARMS_DIR` in `config.rs`. Without this entry,
-            // a kask-settings-derived `local_swarms_dir` override is
-            // silently dropped by `filter_config_env_for_server`.
-            "HKASK_LOCAL_SWARMS_DIR",
-            // The governed server id set — the swarm server filters imported
-            // cards' declared mcp_tools to these servers (the provenance
-            // boundary for cards cloned into the local registry).
-            "HKASK_MCP_SERVER_IDS",
-            // Data dir — needed so `resolve_under_data_dir` in the swarm
-            // server resolves `local_agents_dir` under the same root as the
-            // parent process. Without this, a relative default
-            // (`agents/local/curated`) resolves against the MCP server's CWD
-            // (Zed's working dir, typically home or project root — not the
-            // zed-kask repo), and local agent cards are never found.
-            "HKASK_DATA_DIR",
-            // Swarm memory store shape — read in config.rs alongside the
-            // passphrase above. Without these the DB path and embedding
-            // dimension overrides were silently dropped.
-            "HKASK_SWARM_MEMORY_DB",
-            "HKASK_SWARM_EMBEDDING_DIM",
-            // A2A HTTP listener toggle — read via `config.a2a_http_enabled`
-            // (hkask_mcp_swarm.rs:264). Unallowlisted, an operator could not
-            // enable or disable the listener.
-            "HKASK_A2A_HTTP_ENABLE",
-            // Event-store path + rollout-retention knob — read via
-            // `std::env::var` (hkask_mcp_swarm.rs events store; local_tools.rs
-            // compaction sweep). Carried by `emit_operator_override_env`;
-            // without these entries an operator override is silently dropped
-            // under governed launch (`cmd.env_clear()`).
-            "HKASK_SWARM_EVENTS_PATH",
-            "HKASK_SWARM_ROLLOUT_RETENTION_DAYS",
-            // Embedding model — read by `local_knowledge.rs`
-            // (`ingest_turn` / `recall_turns`) via
-            // `hkask_inference::model_constants::embedding_model()`. Without
-            // this entry the per-server filter drops it and swarm KNN recall
-            // fails with "no embedding model configured".
-            "HKASK_EMBEDDING_MODEL",
-            // Classifier model + template registry root — both read
-            // transitively by `local_knowledge.rs` agent-response chunk
-            // tagging through `hkask_inference`
-            // (`model_constants::classifier_model()` and
-            // `passage_tagging::render_deployed_tagging_prompt`). The reads
-            // live in a dependency crate, so a crate-local env-var grep
-            // cannot see them; without these entries swarm tagging degrades
-            // to structural-only on every delegated turn.
-            "HKASK_CLASSIFIER_MODEL",
-            "HKASK_TEMPLATE_ROOT",
-        ],
-    },
-    BuiltinMcpServer {
         id: "media",
         binary: "hkask-mcp-media",
         description: "Media — research evidence ingestion, annotation, transcription, and excerpts",
@@ -355,6 +285,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "OPENROUTER_API_KEY",
             "DEEPINFRA_API_KEY",
             "HKASK_SERPAPI_API_KEY",
+            "HKASK_DB_PASSPHRASE",
         ],
         config_env: &[
             // IPC bridge socket — required for vision/chat/embed routing
@@ -391,7 +322,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         description: "Experimentation — experiment registry for the sharded experimentation program: registered experiments with pre-registered predictions, variant lineages, fitness records (caller-asserted report references), and selection fossils",
         // HKASK_DB_PASSPHRASE is the ONE SQLCipher passphrase — the experimentation
         // registry opens with it via the canonical resolve_db_passphrase
-        // chain (same as curator/kata-kanban/research/swarm). A
+        // chain (same as curator/kata-kanban/research). A
         // missing passphrase fails startup visibly (Infrastructure), never
         // an empty-key open.
         credentials: &["HKASK_DB_PASSPHRASE"],
@@ -411,7 +342,8 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
 ];
 
 /// Just the server IDs, derived from [`BUILT_IN_MCP_SERVERS`].
-/// Convenience for consumers that only need the ID list (e.g. `swarm_panel`).
+/// Convenience for consumers that only need the ID list (the shadowed-server
+/// settings sweep).
 pub fn builtin_mcp_server_ids() -> Vec<&'static str> {
     BUILT_IN_MCP_SERVERS.iter().map(|s| s.id).collect()
 }
@@ -560,17 +492,13 @@ pub async fn build_mcp_server_env(
     // must not re-grant access after a newer settings pass revoked it.
     let loaded =
         settings.mcp.load_default && *settings.mcp.overrides.get(server_id).unwrap_or(&true);
-    let mut tools = settings
+    let tools = settings
         .mcp
         .delegated_tools
         .get(server_id)
         .filter(|_| loaded)
         .cloned()
         .unwrap_or_default();
-    // Local swarm agents get the Curator's skill access by default.
-    if server_id == "swarm" && loaded {
-        tools.extend(crate::host_skill_tools::SKILL_TOOLS.map(String::from));
-    }
     if let Some(grant) = crate::delegation_grants::grant_for_server(server_id, &tools) {
         env.insert(
             hkask_types::inference_ipc::TOOL_GRANT_ENV.to_string(),
@@ -1182,162 +1110,6 @@ mod tests {
         assert!(filtered.is_empty());
     }
 
-    // The swarm server should only receive the shared DB passphrase, not
-    // SMTP or inference keys. This pins the credential blast-radius
-    // reduction for the swarm server specifically — a future edit that
-    // widens the swarm `credentials` allowlist would not be caught by the
-    // generic `all_servers_have_credential_allowlist` test.
-    #[test]
-    fn swarm_credentials_exclude_other_servers_secrets() {
-        let all_credentials: Vec<(String, String)> = [
-            "HKASK_ABW_API_KEY",
-            "HKASK_DB_PASSPHRASE",
-            "HKASK_EODHD_API_KEY",
-            "HKASK_FMP_API_KEY",
-            "HKASK_SMTP_PASSWORD",
-            "OPENROUTER_API_KEY",
-        ]
-        .iter()
-        .map(|env| (env.to_string(), "url".to_string()))
-        .collect();
-        let filtered = filter_credentials_for_server("swarm", &all_credentials);
-        // The invariant that matters is not the count — it is that no OTHER
-        // server's secret reaches this one. The swarm receives only the
-        // shared DB passphrase (its memory DB is one of the kask SQLCipher
-        // DBs).
-        let names: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
-        assert_eq!(
-            names,
-            vec!["HKASK_DB_PASSPHRASE"],
-            "swarm should receive exactly its own one declared secret"
-        );
-        assert!(
-            !filtered.iter().any(|(k, _)| k == "HKASK_ABW_API_KEY"),
-            "the ABW cloud swarm integration is removed — its API key must not reach the swarm server"
-        );
-        assert!(
-            !filtered.iter().any(|(k, _)| k == "HKASK_SMTP_PASSWORD"),
-            "swarm server must not receive SMTP credentials"
-        );
-        assert!(
-            !filtered.iter().any(|(k, _)| k == "OPENROUTER_API_KEY"),
-            "swarm server must not receive inference keys"
-        );
-    }
-    // The swarm server should only receive its allowlisted local config
-    // env — not curator email config, and not the removed cloud vars even
-    // when a stale operator environment still carries them.
-    #[test]
-    fn swarm_config_env_excludes_unrelated_vars() {
-        let mut config_env = std::collections::HashMap::new();
-        config_env.insert(
-            "HKASK_SWARM_DEFAULT_AGENT_MODEL".to_string(),
-            "test-agent-model".to_string(),
-        );
-        config_env.insert(
-            "HKASK_LOCAL_AGENTS_DIR".to_string(),
-            "/custom/dir".to_string(),
-        );
-        config_env.insert("HKASK_DATA_DIR".to_string(), "/data/hkask".to_string());
-        config_env.insert(
-            "HKASK_ABW_API_URL".to_string(),
-            "https://abw.example".to_string(),
-        );
-        config_env.insert("HKASK_SWARM_MODE".to_string(), "local".to_string());
-        config_env.insert(
-            "HKASK_SMTP_USERNAME".to_string(),
-            "ops@example.com".to_string(),
-        );
-        let filtered = filter_config_env_for_server("swarm", &config_env);
-        assert!(filtered.contains_key("HKASK_SWARM_DEFAULT_AGENT_MODEL"));
-        assert!(filtered.contains_key("HKASK_LOCAL_AGENTS_DIR"));
-        assert!(
-            filtered.contains_key("HKASK_DATA_DIR"),
-            "swarm server must receive HKASK_DATA_DIR so it can resolve local_agents_dir"
-        );
-        assert!(
-            !filtered.contains_key("HKASK_ABW_API_URL"),
-            "the ABW cloud swarm integration is removed — its env must not reach the swarm server"
-        );
-        assert!(
-            !filtered.contains_key("HKASK_SWARM_MODE"),
-            "the single-backend swarm has no mode switch"
-        );
-        assert!(
-            filtered.contains_key("HKASK_DATA_DIR"),
-            "swarm server must receive HKASK_DATA_DIR so it can resolve local_agents_dir"
-        );
-        assert!(
-            !filtered.contains_key("HKASK_SMTP_USERNAME"),
-            "swarm server must not receive curator email config"
-        );
-    }
-
-    // The under-granting direction: every env var the swarm server actually
-    // reads (directly via `std::env::var` in its source) MUST be in its
-    // `config_env` or `credentials` allowlist. The `.rules` trap: under-granting
-    // silently drops operator overrides (the server falls back to default). The
-    // over-grant test above checks that unrelated vars are excluded; this
-    // test checks that no read var is forgotten. When a new env var read is
-    // added to the swarm server, this list MUST be updated — that is the
-    // point (it forces allowlist alignment to be reviewed, not silently
-    // drifted). Verified against `grep std::env::var
-    // kask/mcp-servers/hkask-mcp-swarm/src/**/*.rs` PLUS the transitive
-    // reads `hkask-inference` performs on the swarm server's behalf
-    // (`model_constants::classifier_model` → `HKASK_CLASSIFIER_MODEL`,
-    // `passage_tagging::render_deployed_tagging_prompt` →
-    // `HKASK_TEMPLATE_ROOT`) — a crate-local grep cannot see those, which is
-    // exactly how the swarm's tagging path shipped unallowlisted.
-    #[test]
-    fn swarm_config_env_includes_all_read_vars() {
-        // The env vars the swarm server reads at runtime (non-test).
-        // `HKASK_DB_PASSPHRASE` is a credential (read via `ServerContext`),
-        // not `config_env`; assert it via the credential allowlist instead.
-        let read_config_vars = [
-            "HKASK_SWARM_DEFAULT_AGENT_MODEL",
-            "HKASK_LOCAL_AGENTS_DIR",
-            "HKASK_LOCAL_SWARMS_DIR",
-            "HKASK_MCP_SERVER_IDS",
-            "HKASK_DATA_DIR",
-            "HKASK_SWARM_MEMORY_DB",
-            "HKASK_SWARM_EMBEDDING_DIM",
-            "HKASK_A2A_HTTP_ENABLE",
-            "HKASK_SWARM_EVENTS_PATH",
-            "HKASK_SWARM_ROLLOUT_RETENTION_DAYS",
-            // Transitive reads through `hkask-inference` (agent-response
-            // chunk tagging in `local_knowledge.rs`) and `hkask-types`
-            // (`agent_paths` events-path override).
-            "HKASK_EMBEDDING_MODEL",
-            "HKASK_CLASSIFIER_MODEL",
-            "HKASK_TEMPLATE_ROOT",
-        ];
-        let mut config_env = std::collections::HashMap::new();
-        for v in &read_config_vars {
-            config_env.insert(v.to_string(), "sentinel".to_string());
-        }
-        let filtered = filter_config_env_for_server("swarm", &config_env);
-        for v in &read_config_vars {
-            assert!(
-                filtered.contains_key(*v),
-                "swarm server reads {v} but it is not in the config_env allowlist — \
-                 a kask-settings-derived override would be silently dropped (.rules trap)"
-            );
-        }
-        // The credential (secret) read is gated by the credentials allowlist,
-        // not config_env. Assert it via the credential-filter path.
-        let credentials: Vec<(String, String)> = [("HKASK_DB_PASSPHRASE", "secret")]
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
-        let filtered_creds = filter_credentials_for_server("swarm", &credentials);
-        assert!(
-            filtered_creds
-                .iter()
-                .any(|(k, _)| k == "HKASK_DB_PASSPHRASE"),
-            "swarm server reads HKASK_DB_PASSPHRASE but it is not in the credentials allowlist"
-        );
-    }
-
     /// fal.ai is deprecated for the corpus server (the OCR docres path was
     /// removed). The corpus
     /// server no longer reads `FALAI_API_KEY` or `HKASK_USE_FAL_DOCRES`. Pin
@@ -1552,49 +1324,6 @@ mod tests {
         );
     }
 
-    // ── the swarm under-grants that silently disabled real features ──
-
-    /// The swarm memory DB is one of the kask SQLCipher DBs — the swarm
-    /// server must receive the shared `HKASK_DB_PASSPHRASE` or its memory
-    /// store cannot decrypt (the read-alignment lesson, now unified: one passphrase).
-    #[test]
-    fn swarm_credentials_include_db_passphrase() {
-        let s = server_by_id("swarm");
-        assert!(
-            s.credentials.contains(&"HKASK_DB_PASSPHRASE"),
-            "HKASK_DB_PASSPHRASE is read by the swarm server (its memory DB is \
-             one of the kask SQLCipher DBs) but is not allowlisted — the store \
-             would fall back to the compiled-in default with no way for an \
-             operator to override it"
-        );
-    }
-
-    /// The swarm memory store shape and the A2A listener toggle were read but
-    /// unallowlisted, so those overrides were silently dropped.
-    #[test]
-    fn swarm_config_env_includes_memory_store_and_a2a_toggle() {
-        let cfg = server_by_id("swarm").config_env;
-        for key in [
-            "HKASK_SWARM_MEMORY_DB",
-            "HKASK_SWARM_EMBEDDING_DIM",
-            "HKASK_A2A_HTTP_ENABLE",
-        ] {
-            assert!(
-                cfg.contains(&key),
-                "{key} is read by the swarm server but is not allowlisted — the \
-                 operator override is silently dropped"
-            );
-        }
-    }
-
-    #[test]
-    fn swarm_config_env_excludes_retired_body_retention_control() {
-        let cfg = server_by_id("swarm").config_env;
-        assert!(!cfg.contains(&"HKASK_SWARM_BODY_RETENTION_HOURS"));
-        assert!(cfg.contains(&"HKASK_SWARM_EVENTS_PATH"));
-        assert!(cfg.contains(&"HKASK_SWARM_ROLLOUT_RETENTION_DAYS"));
-    }
-
     /// Every secret-shaped credential grant must be justified by a read site.
     /// This is the generic backstop for the 8 servers without a bespoke test:
     /// it cannot verify each name, but it catches the case where a credential
@@ -1788,7 +1517,7 @@ mod tests {
         let context = gpui::TestAppContext::single();
         let cx = context.to_async();
         let content: settings_content::KaskSettingsContent = serde_json::from_value(
-            serde_json::json!({"mcp":{"delegated_tools":{"swarm":["research/rss_search"]}}}),
+            serde_json::json!({"mcp":{"delegated_tools":{"kata-kanban":["research/rss_search"]}}}),
         )
         .expect("settings");
         let mut settings = crate::KaskSettings::from(content);
@@ -1803,7 +1532,8 @@ mod tests {
         ))
         .expect("schema");
         assert!(schema["properties"]["delegated_tools"].is_object());
-        let first = build_mcp_server_env("swarm", &settings, &provider, None, None, &cx).await;
+        let first =
+            build_mcp_server_env("kata-kanban", &settings, &provider, None, None, &cx).await;
         let token = first
             .get(hkask_types::inference_ipc::TOOL_GRANT_ENV)
             .expect("token")
@@ -1816,10 +1546,8 @@ mod tests {
             Some(&token),
             "research/rss_fetch"
         ));
-        for tool in crate::host_skill_tools::SKILL_TOOLS {
-            assert!(crate::delegation_grants::parent_allows(Some(&token), tool));
-        }
-        let again = build_mcp_server_env("swarm", &settings, &provider, None, None, &cx).await;
+        let again =
+            build_mcp_server_env("kata-kanban", &settings, &provider, None, None, &cx).await;
         assert_eq!(
             again.get(hkask_types::inference_ipc::TOOL_GRANT_ENV),
             Some(token.as_str())
@@ -1830,9 +1558,10 @@ mod tests {
                 .get(hkask_types::inference_ipc::TOOL_GRANT_ENV)
                 .is_none()
         );
-        settings.mcp.overrides.insert("swarm".into(), false);
-        crate::revoke_delegation_grant("swarm");
-        let unloaded = build_mcp_server_env("swarm", &settings, &provider, None, None, &cx).await;
+        settings.mcp.overrides.insert("kata-kanban".into(), false);
+        crate::revoke_delegation_grant("kata-kanban");
+        let unloaded =
+            build_mcp_server_env("kata-kanban", &settings, &provider, None, None, &cx).await;
         assert!(
             unloaded
                 .get(hkask_types::inference_ipc::TOOL_GRANT_ENV)
@@ -1843,8 +1572,9 @@ mod tests {
             Some(&token),
             "research/rss_search"
         ));
-        settings.mcp.overrides.insert("swarm".into(), true);
-        let reloaded = build_mcp_server_env("swarm", &settings, &provider, None, None, &cx).await;
+        settings.mcp.overrides.insert("kata-kanban".into(), true);
+        let reloaded =
+            build_mcp_server_env("kata-kanban", &settings, &provider, None, None, &cx).await;
         assert_ne!(
             reloaded.get(hkask_types::inference_ipc::TOOL_GRANT_ENV),
             Some(token.as_str())
@@ -1852,14 +1582,15 @@ mod tests {
         settings
             .mcp
             .delegated_tools
-            .insert("swarm".into(), vec!["research/*".into()]);
-        let invalid = build_mcp_server_env("swarm", &settings, &provider, None, None, &cx).await;
+            .insert("kata-kanban".into(), vec!["research/*".into()]);
+        let invalid =
+            build_mcp_server_env("kata-kanban", &settings, &provider, None, None, &cx).await;
         assert!(
             invalid
                 .get(hkask_types::inference_ipc::TOOL_GRANT_ENV)
                 .is_none()
         );
-        crate::revoke_delegation_grant("swarm");
+        crate::revoke_delegation_grant("kata-kanban");
     }
 
     #[tokio::test]
@@ -1884,14 +1615,6 @@ mod tests {
             curator_env.get("HKASK_CURATOR_DB"),
             Some("/tmp/test-curator-override.db"),
             "HKASK_CURATOR_DB set by main.rs must survive build_mcp_server_env for curator"
-        );
-        assert_eq!(
-            curator_env.get("HKASK_SWARM_MEMORY_DB"),
-            settings
-                .mcp_env()
-                .get("HKASK_SWARM_MEMORY_DB")
-                .map(String::as_str),
-            "HKASK_SWARM_MEMORY_DB must reach curator for swarm backfill sweep"
         );
     }
 
@@ -2117,25 +1840,25 @@ mod tests {
     /// credential map too.
     ///
     /// This test constructs a `KaskSettings` whose `mcp_env()` emits a config
-    /// var that collides with a credential key for the `swarm` server, then
+    /// var that collides with a credential key for the `curator` server, then
     /// asserts the credential value (from the mock keychain) survives in the
     /// composed output — not the config value, and not absent.
     #[tokio::test]
     async fn build_mcp_server_env_composed_path_credential_survives_config_filter() {
         let _guard = ENV_TEST_LOCK.lock().await;
-        // The swarm server's `credentials` allowlist includes
+        // The curator server's `credentials` allowlist includes
         // `HKASK_DB_PASSPHRASE`. We inject a mock keychain secret
         // for its credential URL and assert it lands in the composed env.
         let settings = crate::KaskSettings::default();
-        // Collect the (env_var, url) pairs the swarm server would receive.
-        let cred_urls = filter_credentials_for_server("swarm", &crate::credential_urls_for_mcp());
+        // Collect the (env_var, url) pairs the curator server would receive.
+        let cred_urls = filter_credentials_for_server("curator", &crate::credential_urls_for_mcp());
         // Find the DB passphrase URL; if absent, the test setup is
         // stale relative to the registry and we fail loudly.
         let passphrase_url = cred_urls
             .iter()
             .find(|(env_var, _)| env_var == "HKASK_DB_PASSPHRASE")
             .map(|(_, url)| url.clone())
-            .expect("HKASK_DB_PASSPHRASE must be in the swarm credentials allowlist");
+            .expect("HKASK_DB_PASSPHRASE must be in the curator credentials allowlist");
 
         let mut secrets = std::collections::HashMap::new();
         secrets.insert(
@@ -2150,7 +1873,7 @@ mod tests {
 
         let cx = gpui::TestAppContext::single().to_async();
         let env = build_mcp_server_env(
-            "swarm",
+            "curator",
             &settings,
             &provider,
             Some("/tmp/sock"),
@@ -2258,7 +1981,7 @@ mod tests {
             ["HKASK_DB_PASSPHRASE"],
             "the startup-default passphrase set is a stated requirement — \
              the ONE DB passphrase defaults to 'allostery' on first run and \
-             every SQLCipher DB (curator, swarm memory, kanban, research, \
+             every SQLCipher DB (curator, kanban, research, \
              experimentation) opens with it; changing this set is a requirements \
              change, not a refactor"
         );

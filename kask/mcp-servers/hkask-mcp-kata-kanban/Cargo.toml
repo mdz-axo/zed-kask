@@ -13,9 +13,6 @@ hkask-storage.workspace = true
 hkask-inference.workspace = true
 # Pure binary Brier arithmetic for optional, prospectively eligible forecasts.
 hkask-forecast.workspace = true
-# Local swarm delegation — kanban_task_spawn delegates to local agents via the
-# shared local-swarm runtime (inference + guard + agent executor).
-hkask-mcp-swarm.workspace = true
 # PKO execution-status mapping for task status transitions (the shared
 # vocabulary bridge — kanban_status_to_pko_execution).
 hkask-bridge-ontology.workspace = true

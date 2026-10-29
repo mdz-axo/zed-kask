@@ -241,7 +241,6 @@ pub struct TaskInfo {
     pub criteria_count: usize,
     /// Number of goal-criterion citations on the task.
     pub advances_count: usize,
-    pub swarm_id: Option<String>,
     pub activity: Option<TaskActivity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ontology: Option<String>,
@@ -443,7 +442,6 @@ pub struct TaskSpawnRequest {
     /// Memory scope: "none", "episodic", or "full".
     #[serde(default)]
     pub memory_scope: Option<String>,
-    pub swarm_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -451,23 +449,6 @@ pub(crate) struct TaskSpawnResponse {
     pub task_id: String,
     pub message: String,
     pub result_note_error: Option<String>,
-}
-
-// ── Delegation result (kanban-as-swarm-coordination) ──────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct TaskDelegateResultRequest {
-    pub task_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct TaskDelegateResultResponse {
-    pub task_id: String,
-    /// Whether the task has a recorded delegation result.
-    pub has_result: bool,
-    pub delegate_result: Option<hkask_mcp_swarm::LocalDelegateResult>,
-    pub deterministic_verdict: Option<hkask_mcp_swarm::TaskSuccessVerdict>,
-    pub swarm_id: Option<String>,
 }
 
 // ── Board delete ────────────────────────────────────────────────────────

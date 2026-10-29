@@ -4,7 +4,7 @@
 //! Steer mode embeds a curator `ConversationView` in a panel with the full
 //! cross-domain MCP surface. The panel prompt supplies workflow context but
 //! does not restrict which servers the conversation can use. Both
-//! `kanban_panel` and `swarm_panel` hand-rolled this
+//! `kanban_panel` previously hand-rolled this
 //! lifecycle with divergent wiring; this crate is the single deep module
 //! that owns it:
 //!
@@ -19,7 +19,7 @@
 //!
 //! The panel's obligation shrinks to: build the prompt, call `ensure` when
 //! the Steer tab is shown, call `invalidate` when scope-relevant state
-//! (selected board, swarm mode, workspace) changes.
+//! (selected board, workspace) changes.
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -127,7 +127,7 @@ impl SteerSurface {
     }
 
     /// Drop the conversation so the next `ensure` rebuilds it. Call this
-    /// when scope-relevant panel state changes (selected board, swarm
+    /// when scope-relevant panel state changes (selected board,
     /// backend mode, active workspace) — the system prompt is baked at
     /// construction, so a stale conversation would steer against the
     /// previous state. The connection store survives invalidation.

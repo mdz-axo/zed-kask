@@ -591,3 +591,28 @@ recomputable from the ledger.
   criterion 4 judged **passed** at the worker level (limitations named) —
   the cheap-wins track is complete; next is Phase 2 after the operator's
   rebuild/commit.
+- 2026-10-28 — 1c **committed** (`6056178075` "Land section
+  re-transcription (speaker 1c)"); operator rebuilt + restarted; fresh
+  suite on the committed tree 535/535. **All three cheap wins live-verified
+  in the running server** on the fresh JFK sample (transcript 19bde400):
+  the text speaker pass stored a layer live; the 1b correction mode ran
+  with the gate reporting zero runs (a clean one-speaker clip — the
+  honest no-op); the 1c loop ran end-to-end (ffmpeg span clip →
+  configured STT → candidate correction layer, "my fellow Americans."
+  landing as a one-for-one aligned edit, source words immutable); and the
+  1a review view now shows two **scored** blocks (min_confidence 0.9,
+  ok) over the paragraph layer — the probe artifacts are real layers on
+  the gallery asset, visible in the panel.
+- 2026-10-28 — Phase 2 kickoff: the T1 encoder is provisioned and
+  fingerprint-verified — `wespeaker_en_voxceleb_CAM++.onnx` (Apache-2.0,
+  via the k2-fsa/sherpa-onnx `speaker-recongition-models` release;
+  sha256 `c46fad10b5f81e1aa4a60c162714208577093655076c5450f8c469e522ec54ef`,
+  matching the release's own checksum.txt) at
+  `~/Documents/zk-data/media-mcp/models/`. The same release carries the
+  short-duration ERes2NetV2 alternative (`3dspeaker_speech_eres2netv2_sv_zh-cn_16k-common.onnx`)
+  and the 3D-Speaker EN CAM++ packaging — candidate encoders for the
+  Phase 4 comparison. Remaining Phase 2 slices (next build turn): the
+  `ort` + pure-Rust fbank encoder module (the resample-before-fbank
+  invariant is a pinned test), the fingerprint-scoped voice-profile
+  storage beside `face_registry` (decay fields per §5.5), and the
+  enrollment tools mirroring `face_register`/`face_list`/`face_remove`.

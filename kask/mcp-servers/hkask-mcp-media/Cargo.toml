@@ -35,6 +35,8 @@ nom-exif.workspace = true
 reqwest.workspace = true
 rusqlite.workspace = true
 tempfile.workspace = true
+ort = "=2.0.0-rc.15"
+kaldi-native-fbank = "=0.1.0"
 
 [lib]
 name = "hkask_mcp_media"

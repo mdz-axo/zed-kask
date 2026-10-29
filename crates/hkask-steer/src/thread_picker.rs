@@ -1,6 +1,6 @@
 //! Searchable thread picker for Steer panels.
 //!
-//! Every Steer panel (media, kanban, swarm) embeds one `ThreadPicker` — an
+//! Every Steer panel (media, kanban) embeds one `ThreadPicker` — an
 //! "Open Thread" button that deploys a popover listing the threads in the
 //! thread database (`ThreadStore`), fuzzy-filtered by a search box, mirroring
 //! the sidebar's thread history. Selecting a thread invokes the panel's

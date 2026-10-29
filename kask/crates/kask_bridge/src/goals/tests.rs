@@ -663,7 +663,6 @@ async fn native_drainers_share_private_claim_and_late_result_cannot_replace_new_
 async fn mcp_declare(
     host: &GoalHost,
     owner: WebID,
-    dir: &std::path::Path,
     source: GoalSource,
     cx: &mut gpui::TestAppContext,
 ) -> Goal {
@@ -676,9 +675,6 @@ async fn mcp_declare(
     let server = KanbanServer::new(
         owner,
         KanbanService::new(host.ledger.clone()),
-        Arc::new(hkask_mcp_swarm::LocalAgentRegistry::new(
-            dir.to_str().expect("registry path"),
-        )),
         Arc::new(test_support::UnavailableWorktreeSpawn),
         idempotency.clone(),
         idempotency,
@@ -738,7 +734,6 @@ async fn mcp_created_goal_closes_from_distinct_native_session(cx: &mut gpui::Tes
     let goal = mcp_declare(
         &host,
         owner,
-        dir.path(),
         GoalSource {
             interaction_id: "worker-declared-turn".into(),
             session_id: "worker-declared-session".into(),
@@ -802,7 +797,7 @@ async fn foreign_goal_denied_before_prompt_despite_forged_native_source(
             .into(),
         source: "native-action-choice".into(),
     };
-    let goal = mcp_declare(&host, foreign, dir.path(), source.clone(), cx).await;
+    let goal = mcp_declare(&host, foreign, source.clone(), cx).await;
     let keepalive = stream.clone();
     let native_host = host.clone();
     let id = goal.id.to_string();

@@ -76,11 +76,9 @@ pub(crate) fn tool_to_pko(tool_name: &str) -> Option<PkoConcept> {
         | "kanban_task_comment"
         | "kanban_task_add_deliverable"
         | "kanban_task_update" => Some(CHANGE_OF_STATUS),
-        // Reading tasks/comments/delegation results observes stored
-        // records — compiled readings over prior executions.
-        "kanban_task_list" | "kanban_task_comments_since" | "kanban_task_delegate_result" => {
-            Some(STEP)
-        }
+        // Reading tasks/comments observes stored records — compiled
+        // readings over prior executions.
+        "kanban_task_list" | "kanban_task_comments_since" => Some(STEP),
         // Task verification records the Review-column evidence — the
         // verification of a step's completion.
         "kanban_task_verify" => Some(STEP_VERIFICATION),
@@ -109,14 +107,13 @@ pub(crate) fn tool_to_pko(tool_name: &str) -> Option<PkoConcept> {
 /// — reports.
 pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
     match tool_name {
-        // Reads: board/task/goal lists, comments, delegation results —
-        // compiled readings over stored records.
+        // Reads: board/task/goal lists, comments — compiled readings
+        // over stored records.
         "kanban_board_list"
         | "kanban_goal_list"
         | "kanban_goal_get"
         | "kanban_task_list"
-        | "kanban_task_comments_since"
-        | "kanban_task_delegate_result" => Some(REPORT),
+        | "kanban_task_comments_since" => Some(REPORT),
         // Writes: everything that stores or modifies a record.
         "kanban_board_create"
         | "kanban_board_delete"
@@ -195,7 +192,6 @@ mod tests {
     async fn a_live_tool_response_carries_the_dual_axis_stamp() {
         use crate::KanbanService;
         use crate::test_support::UnavailableWorktreeSpawn;
-        use hkask_mcp_swarm::LocalAgentRegistry;
         use hkask_storage::HMemStore;
         use hkask_storage::database::sqlite::SqliteDriver;
         use hkask_types::WebID;
@@ -211,7 +207,6 @@ mod tests {
         let server = crate::KanbanServer::new(
             WebID::new(),
             service,
-            Arc::new(LocalAgentRegistry::new("/nonexistent")),
             Arc::new(UnavailableWorktreeSpawn),
             Arc::clone(&idempotency),
             idempotency,

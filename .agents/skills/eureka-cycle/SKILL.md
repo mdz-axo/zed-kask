@@ -65,9 +65,6 @@ itself; it routes to the owners and carries the cycle's memory.
 - One scientific hypothesis needs its full lifecycle — use `hypothesis-testing`
   directly; this skill routes to it and never replaces it.
 - One artifact / self-improvement experiment — use `self-improvement`.
-- One bounded research project with a changing task roster — use
-  `local-research-swarm` (project-work coordination; its own boundary excludes
-  domain verdicts).
 - Forecasting one resolvable question — use `superforecasting`.
 - Project-scale scenario construction (forces, 2x2 narratives, early-warning
   indicators) — use `scenario-planning` directly; this loop's forecasting route
@@ -95,8 +92,8 @@ itself; it routes to the owners and carries the cycle's memory.
 1. **ORIENT.** Read the Open Questions board (`kanban_task_list` — pull only
    `ready` cards), the agenda queue (`population_query` over `proposed`
    experiments — read, never re-host), prior lineage (`lineage_read`) and curator
-   memory (`curator_semantic_search` / `curator_federated_search`,
-   `swarm_recall_local`). Dedup: a question with a live experiment on the same
+   memory (`curator_semantic_search` / `curator_federated_search`). Dedup: a
+   question with a live experiment on the same
    subject is not funded twice. Move exactly one card to `in_progress` — one cycle
    per card at a time; the board columns are the concurrency lock.
 2. **ROUTE.** Classify each funded question: research-resolvable (answerable by

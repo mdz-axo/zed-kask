@@ -35,7 +35,6 @@ pub(crate) use kanban::{
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
 use hkask_mcp_server::server::{McpToolError, ServerContext, execute_tool, resolve_db_passphrase};
-use hkask_mcp_swarm::{LocalAgentCapabilities, LocalAgentCard, LocalAgentRegistry};
 use hkask_storage::HMemStore;
 use pko::kanban_type_to_pko;
 use rmcp::handler::server::wrapper::Parameters;
@@ -49,7 +48,7 @@ use types::*;
 // signatures in `src/*.rs`. The single source of truth — the
 // `tool_names_match_live_router` test below asserts it matches the live
 // `tool_router().list_all()` surface, so drift is caught at test time.
-// Consumers across the seam (`kanban_panel`, `swarm_panel`) use this const
+// Consumers across the seam (`kanban_panel`) use this const
 // to verify their Steer-mode prompt tool advertisements.
 include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
 
@@ -58,10 +57,6 @@ include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
 hkask_mcp_server::mcp_server!(
     pub struct KanbanServer {
         pub service: KanbanService,
-        /// Local agent registry — reusable expert agents (cards on disk). When a
-        /// spawn's `delegated_skills` are covered by an existing card, it is
-        /// reused; otherwise a task-specific agent is built in-memory.
-        pub local_registry: Arc<LocalAgentRegistry>,
         /// Worktree spawn port — when available, `kanban_task_spawn` creates a
         /// worktree-backed agent thread (isolated git worktree) via the zed IPC
         /// bridge. Missing authority or an uncertain reply never starts a fallback.
@@ -206,45 +201,6 @@ where
 /// reusable expert agent covers the requested skills. The card is not persisted;
 /// its declared MCP tools narrow the parent's worktree grant. An empty tool set
 /// grants no tools to the child; skill instructions do not expand that authority.
-fn build_task_agent_card(
-    task_id: hkask_types::TaskId,
-    title: &str,
-    skills: &[String],
-) -> LocalAgentCard {
-    LocalAgentCard {
-        agent_id: format!("kanban-task-{task_id}"),
-        agent_type: "task".to_string(),
-        description: title.to_string(),
-        display_name: title.to_string(),
-        accepts: vec!["task".to_string()],
-        produces: vec!["task_result".to_string()],
-        dependencies: Default::default(),
-        capabilities: LocalAgentCapabilities {
-            system_prompt: Some(
-                "You are a task-execution agent spawned by the kata-kanban. \
-                 Complete the assigned task using your declared skills. \
-                 \
-                 ## Output format \
-                 \
-                 Produce your response as a JSON object with these fields: \
-                 - \"deliverable_path\": the path of any file you wrote or edited (string, or null if none). \
-                 - \"test_verdict\": the result of running tests (string like \"pass: N ran, M failed\", or null if you did not run tests). \
-                 - \"summary\": a concise summary of what you did (string). \
-                 - \"approach\": a brief description of your approach (string). \
-                 \
-                 Only claim a deliverable_path if you actually called a file-writing tool \
-                 (edit_file, write_file, terminal) that succeeded. Only claim a test_verdict \
-                 if you actually ran tests via the terminal tool and it succeeded. \
-                 Do not fabricate file paths or test results."
-                    .to_string(),
-            ),
-            skills: skills.to_vec(),
-            ..Default::default()
-        },
-        ..Default::default()
-    }
-}
-
 /// Derive a one-line `TaskActivity` from a task's most recent comment (R3).
 /// The spawn/delegation flow already appends durable comments ("Spawn
 /// executed: agent=…, tokens=…", "Spawned worktree agent for task …"), so
@@ -738,7 +694,6 @@ impl KanbanServer {
                                     .collect(),
                                 criteria_count: t.criteria.len(),
                                 advances_count: t.advances.len(),
-                                swarm_id: t.swarm_id,
                                 activity,
                                 ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
                             }
@@ -1124,9 +1079,10 @@ impl KanbanServer {
     // ── Spawn — activate a subagent pod for task execution ─────────────────
 
     /// Spawn a subagent for task execution. Tries worktree-isolated spawn
-    /// via the parent-authorized `WorktreeSpawnPort`. Children auto-run with the
-    /// parent grant intersected with the selected agent card's declared MCP tools.
-    /// A missing grant or uncertain outcome is surfaced without fallback execution.
+    /// via the parent-authorized `WorktreeSpawnPort`. The spawned sibling runs
+    /// with native built-in tools only — this server passes an empty MCP
+    /// narrowing to the parent grant. A missing grant or uncertain outcome is
+    /// surfaced without fallback execution.
     #[tool(description = "Spawn a subagent for task execution with delegated skills")]
     pub async fn kanban_task_spawn(
         &self,
@@ -1136,7 +1092,6 @@ impl KanbanServer {
             delegation_level,
             delegated_skills,
             memory_scope,
-            swarm_id,
         }): Parameters<TaskSpawnRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(
@@ -1147,7 +1102,7 @@ impl KanbanServer {
                 "kanban_task_spawn",
                 idempotency_key.as_deref(),
                 &self.webid,
-                serde_json::json!({ "task_id": task_id, "delegation_level": delegation_level, "delegated_skills": delegated_skills, "memory_scope": memory_scope, "swarm_id": swarm_id }),
+                serde_json::json!({ "task_id": task_id, "delegation_level": delegation_level, "delegated_skills": delegated_skills, "memory_scope": memory_scope }),
                 async {
                     let tid = self.validate_and_prepare_spawn(
                         &task_id,
@@ -1157,8 +1112,7 @@ impl KanbanServer {
                     let skills_for_agent = delegated_skills.clone();
                     let spec = crate::SpawnSpec::new(tid)
                         .with_level(&delegation_level)
-                        .with_skills(delegated_skills)
-                        .with_swarm(swarm_id.clone());
+                        .with_skills(delegated_skills);
                     let spec = if let Some(ref ms) = memory_scope {
                         spec.with_memory(ms)
                     } else {
@@ -1175,31 +1129,11 @@ impl KanbanServer {
                         .map_err(map_kanban_error)?
                         .ok_or_else(|| McpToolError::not_found(format!("task {tid} not found")))?;
 
-                    // Resolve the agent: reuse an expert agent whose declared skills
-                    // cover the requested set; otherwise build a task-specific agent
-                    // card in-memory ("create agents w/ skills for tasks").
-                    let agent = self
-                        .local_registry
-                        .list()
-                        .into_iter()
-                        .find(|card| {
-                            !skills_for_agent.is_empty()
-                                && skills_for_agent
-                                    .iter()
-                                    .all(|s| card.capabilities.skills.iter().any(|cs| cs == s))
-                        })
-                        .unwrap_or_else(|| {
-                            build_task_agent_card(tid, &task.title, &skills_for_agent)
-                        });
-
-                    // Fail closed: a refusal or lost reply never authorizes another executor.
+                    // Fail closed: a refusal or lost reply never authorizes another
+                    // executor. The spawned sibling runs with native built-in tools
+                    // only — this server passes an empty MCP narrowing to the grant.
                     let response = self
-                        .spawn_via_worktree(
-                            tid,
-                            &task,
-                            &skills_for_agent,
-                            &agent.capabilities.mcp_tools,
-                        )
+                        .spawn_via_worktree(tid, &task, &skills_for_agent, &[])
                         .await?;
                     serde_json::to_value(response)
                         .map_err(|e| McpToolError::internal(e.to_string()))
@@ -1258,7 +1192,7 @@ impl KanbanServer {
             "You are working on kanban task '{}' (id: {}).\n\
              Task description: {}\n\
              Delegated skills: {}\n\
-             Execute the task and report results via kanban_task_delegate_result.",
+             Execute the task and report results via kanban_task_comment.",
             task.title,
             tid,
             task_text,
@@ -1313,42 +1247,6 @@ impl KanbanServer {
                 "Worktree spawn did not return success: {error}. No fallback was started; reconcile before retrying because effects may have occurred."
             ))),
         }
-    }
-
-    /// Read the structured delegation result and deterministic verdict for a
-    /// task that was spawned via `kanban_task_spawn`. Returns the persisted
-    /// `LocalDelegateResult` and `TaskSuccessVerdict` fields, enabling the
-    /// swarm-intelligence SENSE phase and the Curator to query the durable
-    /// coordination state without parsing free-text comments.
-    ///
-    /// contract: P3-svc-kanban-010
-    /// expect: "I can read the structured delegation result for a spawned task" \[P3\]
-    /// pre:  task_id is a valid task id
-    /// post: returns the delegation result + verdict, or `has_result: false`
-    #[tool(
-        description = "Read the structured delegation result and deterministic verdict for a task spawned via kanban_task_spawn. Returns the persisted LocalDelegateResult and TaskSuccessVerdict."
-    )]
-    pub async fn kanban_task_delegate_result(
-        &self,
-        Parameters(TaskDelegateResultRequest { task_id }): Parameters<TaskDelegateResultRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "kanban_task_delegate_result", async {
-            let tid = parse_task_id(&task_id)?;
-            let task = self
-                .service
-                .task_get(tid)
-                .map_err(map_kanban_error)?
-                .ok_or_else(|| McpToolError::not_found(format!("task {tid} not found")))?;
-            serde_json::to_value(TaskDelegateResultResponse {
-                task_id: tid.to_string(),
-                has_result: task.delegate_result.is_some(),
-                delegate_result: task.delegate_result.clone(),
-                deterministic_verdict: task.deterministic_verdict.clone(),
-                swarm_id: task.swarm_id,
-            })
-            .map_err(|e| McpToolError::internal(e.to_string()))
-        })
-        .await
     }
 
     /// Create kanban tasks for contracts missing `expect:` user-voice annotations.
@@ -1638,29 +1536,27 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 // `std::env::var` (matching every other DB-path env var:
                 // `HKASK_CURATOR_DB`, `HKASK_RESEARCH_DB`, etc.)
                 // and injected via `config_env`, not `credentials`.
-                let kanban_db_path = std::env::var("HKASK_KANBAN_DB")
-                    .unwrap_or_else(|_| {
-                        let relative_path =
-                            hkask_types::agent_paths::mcp_server_db("kata-kanban", "kanban");
-                        let default_path =
-                            hkask_types::agent_paths::resolve_under_data_dir(&relative_path);
-                        if let Some(Err(error)) = default_path.parent().map(std::fs::create_dir_all)
-                        {
-                            tracing::warn!(
-                                target: "hkask.mcp.kata_kanban",
-                                path = %default_path.display(),
-                                %error,
-                                "Failed to create default kanban DB directory \
-                                 — the subsequent DB open will surface the failure"
-                            );
-                        }
-                        tracing::info!(
+                let kanban_db_path = std::env::var("HKASK_KANBAN_DB").unwrap_or_else(|_| {
+                    let relative_path =
+                        hkask_types::agent_paths::mcp_server_db("kata-kanban", "kanban");
+                    let default_path =
+                        hkask_types::agent_paths::resolve_under_data_dir(&relative_path);
+                    if let Some(Err(error)) = default_path.parent().map(std::fs::create_dir_all) {
+                        tracing::warn!(
                             target: "hkask.mcp.kata_kanban",
                             path = %default_path.display(),
-                            "Using default per-agent kanban database"
+                            %error,
+                            "Failed to create default kanban DB directory \
+                             — the subsequent DB open will surface the failure"
                         );
-                        default_path.to_string_lossy().to_string()
-                    });
+                    }
+                    tracing::info!(
+                        target: "hkask.mcp.kata_kanban",
+                        path = %default_path.display(),
+                        "Using default per-agent kanban database"
+                    );
+                    default_path.to_string_lossy().to_string()
+                });
                 // Resolve the DB passphrase through the canonical 2-tier chain
                 // (ctx.credentials → resolve_credential which does env → keychain).
                 // See `hkask_mcp_server::server::resolve_db_passphrase`.
@@ -1671,12 +1567,11 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 let pool = db
                     .sqlite_pool()
                     .map_err(|error| anyhow::anyhow!("pool: {error}"))?;
-                let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> = Arc::new(
-                    hkask_storage::database::sqlite::SqliteDriver::new_labeled(
+                let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
+                    Arc::new(hkask_storage::database::sqlite::SqliteDriver::new_labeled(
                         pool,
                         kanban_db_path.as_str(),
-                    ),
-                );
+                    ));
                 // Clone the handle before `HMemStore` takes ownership: replay
                 // protection lives in the same database as the writes it guards.
                 let idempotency_driver = driver.clone();
@@ -1684,61 +1579,31 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     .map_err(|e| anyhow::anyhow!("hmem store init: {e}"))?;
                 let service = KanbanService::new(store);
 
-                // Local swarm delegation surface (kanban_task_spawn). No
-                // ledger: local agents run on the operator's own substrate
-                // (operator ruling 2026-09-04 — no local budget).
-                // Local agent registry — same dir resolution as hkask-mcp-swarm
-                // (relative paths resolve under the hKask data dir, not CWD).
-                // The FALLBACK default must match the swarm server's
-                // (`mcp/swarm/agents/curated`) so a standalone kanban run
-                // reads the same registry the swarm server reads — zed
-                // always injects `HKASK_LOCAL_AGENTS_DIR`, but the two
-                // servers must not silently diverge when it is absent.
-                let local_agents_dir = std::env::var("HKASK_LOCAL_AGENTS_DIR")
-                    .ok()
-                    .filter(|s| !s.trim().is_empty())
-                    .unwrap_or_else(|| "mcp/swarm/agents/curated".to_string());
-                let local_agents_dir =
-                    if std::path::Path::new(&local_agents_dir).is_absolute() {
-                        local_agents_dir
-                    } else {
-                        hkask_types::agent_paths::resolve_under_data_dir(
-                            std::path::Path::new(&local_agents_dir),
-                        )
-                        .to_string_lossy()
-                        .to_string()
-                    };
-                let local_registry = Arc::new(LocalAgentRegistry::new(local_agents_dir));
-                if let Err(error) = local_registry.load() {
-                    tracing::warn!(
-                        target: "hkask.mcp.kata_kanban",
-                        %error,
-                        "failed to load local agent cards — kanban_task_spawn will fall back to creating task-specific agents"
-                    );
-                }
-
-                let worktree_spawn_port =
-                    tokio::task::block_in_place(|| {
-                        tokio::runtime::Handle::current()
-                            .block_on(hkask_inference::resolve_worktree_spawn_port())
-                    });
+                let worktree_spawn_port = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current()
+                        .block_on(hkask_inference::resolve_worktree_spawn_port())
+                });
 
                 // Replay protection shares the durable encrypted kanban driver.
                 // Schema initialization failure aborts startup; accepting writes
                 // without durable replay protection would violate the same
                 // persistence contract as an unavailable kanban database.
-                let idempotency = idempotency::IdempotencyStore::with_driver(
-                    idempotency_driver,
-                )
-                .map_err(|error| anyhow::anyhow!(
-                    "replay-protection schema initialization failed: {error}"
-                ))?;
+                let idempotency = idempotency::IdempotencyStore::with_driver(idempotency_driver)
+                    .map_err(|error| {
+                        anyhow::anyhow!("replay-protection schema initialization failed: {error}")
+                    })?;
 
                 // Goal replay protection shares the canonical durable store.
                 let idempotency = Arc::new(idempotency);
                 let goal_idempotency = Arc::clone(&idempotency);
 
-                Ok(KanbanServer::new(ctx.webid, service, local_registry, worktree_spawn_port, idempotency, goal_idempotency))
+                Ok(KanbanServer::new(
+                    ctx.webid,
+                    service,
+                    worktree_spawn_port,
+                    idempotency,
+                    goal_idempotency,
+                ))
             })()
             .map_err(|e| hkask_mcp_server::McpError::UnexpectedResponse {
                 context: "kanban server init".into(),
@@ -1755,7 +1620,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     .await
 }
 
-// Pins the registered tool surface end-to-end: the exact count (27) plus
+// Pins the registered tool surface end-to-end: the exact count (26) plus
 // the generated TOOL_NAMES const against the live rmcp surface — a tool
 // added/removed/renamed without regenerating (or a `name =` override the
 // build script can't see) fails here instead of degrading to "tool not
@@ -1763,8 +1628,8 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 hkask_mcp_server::tool_surface_pin!(
     KanbanServer::tool_router(),
     "tool_router",
-    27,
-    tool_surface_is_exactly_27_registered_tools,
+    26,
+    tool_surface_is_exactly_26_registered_tools,
 );
 
 /// expect: "Kanban refuses startup rather than accepting mutations without durable encrypted state."

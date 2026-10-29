@@ -100,7 +100,7 @@ mod tests {
                 description: "evaluator pass rate on the fixed set reaches 0.8".to_string(),
                 kind: RUBRIC_KIND_METRIC.to_string(),
                 verification: RubricVerification::ReportRef {
-                    harness: "swarm_eval_agent_local".to_string(),
+                    harness: "harness:evals/foo_bar".to_string(),
                 },
             },
             Rubric {

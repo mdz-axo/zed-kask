@@ -78,7 +78,6 @@ agent-client-protocol.workspace = true
 acp_thread = { workspace = true, features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }
 hkask-mcp-curator = { path = "../../mcp-servers/hkask-mcp-curator" }
-hkask-mcp-swarm.workspace = true
 hkask-mcp-server.workspace = true
 rmcp = { workspace = true, features = ["server", "macros"] }
 http_client = { workspace = true, features = ["test-support"] }

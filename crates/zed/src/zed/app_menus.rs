@@ -51,7 +51,6 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
 
     view_items.extend([
         MenuItem::action("Git Panel", git_panel::ToggleFocus),
-        MenuItem::action("Agent Swarm", swarm_panel::Toggle),
         MenuItem::action("Kanban Board", kanban_panel::Toggle),
         MenuItem::action("Media", media_panel::Toggle),
         MenuItem::separator(),

@@ -13,7 +13,7 @@
 
 use crate::settings::{
     KaskCorpusSettings, KaskGeneralSettings, KaskMediaSettings, KaskMemorySettings,
-    KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings, KaskSwarmSettings,
+    KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings,
 };
 
 // Defaults are read from each subsection's `Default` impl so there's a
@@ -87,18 +87,6 @@ pub(crate) fn emit_curator_distillation_env(
             memory.memory_life_days.to_string(),
         );
     }
-}
-
-pub(crate) fn emit_mcp_server_ids_env(env: &mut std::collections::HashMap<String, String>) {
-    // Pass the governed server id set to the swarm server so it can
-    // filter imported cards' declared `mcp_tools` to these servers (the
-    // provenance boundary for cards cloned into the local registry).
-    // Only the swarm server's `config_env` allowlist includes this var, so
-    // no other child receives it.
-    env.insert(
-        "HKASK_MCP_SERVER_IDS".to_string(),
-        crate::builtin_mcp_server_ids().join(","),
-    );
 }
 
 pub(crate) fn emit_research_env(
@@ -227,55 +215,6 @@ pub(crate) fn emit_prediction_markets_env(
     }
 }
 
-pub(crate) fn emit_swarm_env(
-    data_dir: &str,
-    swarm: &KaskSwarmSettings,
-    env: &mut std::collections::HashMap<String, String>,
-) {
-    // ── Swarm (local substrate) ──
-    // No cloud config or credentials: the ABW cloud integration is removed;
-    // the memory DB passphrase arrives as the HKASK_DB_PASSPHRASE
-    // credential, injected by `build_mcp_server_env` from the keychain.
-    let swarm_default = KaskSwarmSettings::default();
-    // D28 — Standardized Artifact Storage. The swarm server's local
-    // registries and memory DB are derived from the global `data_dir` under
-    // `mcp/swarm/`. No per-server override — one global data root, each
-    // server owns its subfolder.
-    let swarm_root = std::path::Path::new(data_dir)
-        .join(hkask_types::agent_paths::mcp_server_subdir("swarm", ""));
-    let local_agents_dir = swarm_root
-        .join("agents")
-        .join("curated")
-        .to_string_lossy()
-        .to_string();
-    env.insert("HKASK_LOCAL_AGENTS_DIR".to_string(), local_agents_dir);
-    let local_swarms_dir = swarm_root.join("swarms").to_string_lossy().to_string();
-    env.insert("HKASK_LOCAL_SWARMS_DIR".to_string(), local_swarms_dir);
-    if !swarm.default_agent_model.is_empty() {
-        env.insert(
-            "HKASK_SWARM_DEFAULT_AGENT_MODEL".to_string(),
-            swarm.default_agent_model.clone(),
-        );
-    }
-    if swarm.a2a_http_enabled != swarm_default.a2a_http_enabled {
-        env.insert(
-            "HKASK_A2A_HTTP_ENABLE".to_string(),
-            swarm.a2a_http_enabled.to_string(),
-        );
-    }
-    // No HKASK_SWARM_MEMORY_PASSPHRASE emission: the swarm memory DB opens
-    // with the ONE shared DB passphrase (HKASK_DB_PASSPHRASE, delivered as a
-    // credential via the allowlist), same as every other kask SQLCipher DB.
-    let memory_db_path = swarm_root.join("memory.db").to_string_lossy().to_string();
-    env.insert("HKASK_SWARM_MEMORY_DB".to_string(), memory_db_path);
-    if swarm.embedding_dim != swarm_default.embedding_dim {
-        env.insert(
-            "HKASK_SWARM_EMBEDDING_DIM".to_string(),
-            swarm.embedding_dim.to_string(),
-        );
-    }
-}
-
 pub(crate) fn emit_media_env(
     media: &KaskMediaSettings,
     env: &mut std::collections::HashMap<String, String>,
@@ -315,12 +254,6 @@ const SETTINGS_BACKED_CONFIG_ENV_VARS: &[&str] = &[
     "HKASK_SCENARIOS_DATA",
     "HKASK_PREDICTION_MARKETS_DATA",
     "HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS",
-    "HKASK_LOCAL_AGENTS_DIR",
-    "HKASK_LOCAL_SWARMS_DIR",
-    "HKASK_SWARM_DEFAULT_AGENT_MODEL",
-    "HKASK_A2A_HTTP_ENABLE",
-    "HKASK_SWARM_MEMORY_DB",
-    "HKASK_SWARM_EMBEDDING_DIM",
     "HKASK_MEDIA_STT_MODEL",
     "HKASK_MEDIA_VISION_MODEL",
     "HKASK_DEFAULT_MODEL",
@@ -535,43 +468,6 @@ mod tests {
             Some(expected_pm.as_str()),
             "default prediction_markets_data must resolve to `{{data_dir}}/mcp/prediction-markets`"
         );
-        // Swarm local agents dir resolves under the swarm server's subtree.
-        let expected_swarm_agents = std::path::Path::new(data_dir)
-            .join("mcp")
-            .join("swarm")
-            .join("agents")
-            .join("curated")
-            .to_string_lossy()
-            .to_string();
-        assert_eq!(
-            env.get("HKASK_LOCAL_AGENTS_DIR").map(String::as_str),
-            Some(expected_swarm_agents.as_str()),
-            "default local_agents_dir must resolve to `{{data_dir}}/mcp/swarm/agents/curated`"
-        );
-        // Swarm local swarms dir resolves under the swarm server's subtree.
-        let expected_swarm_swarms = std::path::Path::new(data_dir)
-            .join("mcp")
-            .join("swarm")
-            .join("swarms")
-            .to_string_lossy()
-            .to_string();
-        assert_eq!(
-            env.get("HKASK_LOCAL_SWARMS_DIR").map(String::as_str),
-            Some(expected_swarm_swarms.as_str()),
-            "default local_swarms_dir must resolve to `{{data_dir}}/mcp/swarm/swarms`"
-        );
-        // Swarm memory DB resolves under the swarm server's subtree.
-        let expected_swarm_mem = std::path::Path::new(data_dir)
-            .join("mcp")
-            .join("swarm")
-            .join("memory.db")
-            .to_string_lossy()
-            .to_string();
-        assert_eq!(
-            env.get("HKASK_SWARM_MEMORY_DB").map(String::as_str),
-            Some(expected_swarm_mem.as_str()),
-            "default swarm memory_db_path must resolve to `{{data_dir}}/mcp/swarm/memory.db`"
-        );
     }
 
     // `HKASK_DATA_DIR` is a kask-wide critical path — it must ALWAYS be
@@ -730,80 +626,4 @@ mod tests {
     // settings emit no optional swarm env vars (the always-on D28 data-dir
     // vars are the exception). The removed ABW cloud config must never be
     // re-emitted.
-
-    #[test]
-    fn swarm_settings_default_emits_no_env() {
-        let settings = KaskSettings::default();
-        let env = settings.mcp_env();
-        assert!(
-            !env.keys().any(|k| k.starts_with("HKASK_ABW")),
-            "the ABW cloud swarm integration is removed — no HKASK_ABW_* var may be emitted"
-        );
-        assert!(!env.contains_key("HKASK_SWARM_MODE"));
-        assert!(!env.contains_key("HKASK_SWARM_DEFAULT_AGENT_MODEL"));
-        assert!(!env.contains_key("HKASK_A2A_HTTP_ENABLE"));
-        assert!(!env.contains_key("HKASK_SWARM_EMBEDDING_DIM"));
-        // D28 — HKASK_LOCAL_AGENTS_DIR, HKASK_LOCAL_SWARMS_DIR, and
-        // HKASK_SWARM_MEMORY_DB are now always emitted (resolved from
-        // `data_dir` per the Standardized Artifact Storage layout), so they
-        // are NOT suppressed for default settings. See
-        // `mcp_env_always_emits_per_server_data_dirs`.
-        assert!(
-            env.contains_key("HKASK_LOCAL_AGENTS_DIR"),
-            "HKASK_LOCAL_AGENTS_DIR must always be emitted — the swarm server resolves its local agent registry from it"
-        );
-        assert!(
-            env.contains_key("HKASK_LOCAL_SWARMS_DIR"),
-            "HKASK_LOCAL_SWARMS_DIR must always be emitted — the swarm server resolves its local swarms registry from it"
-        );
-        assert!(
-            env.contains_key("HKASK_SWARM_MEMORY_DB"),
-            "HKASK_SWARM_MEMORY_DB must always be emitted — the swarm server resolves its semantic-memory DB from it"
-        );
-        assert_eq!(settings.swarm.default_agent_model, "");
-        assert!(!settings.swarm.a2a_http_enabled);
-        assert_eq!(settings.swarm.embedding_dim, 1024);
-    }
-
-    #[test]
-    fn swarm_settings_non_default_emits_env() {
-        let mut settings = KaskSettings::default();
-        settings.data_dir = "/custom/kask/data".to_string();
-        settings.swarm.default_agent_model = "claude-sonnet-4-6".to_string();
-        settings.swarm.a2a_http_enabled = true;
-        settings.swarm.embedding_dim = 2048;
-        let env = settings.mcp_env();
-        assert!(
-            !env.keys().any(|k| k.starts_with("HKASK_ABW")),
-            "the ABW cloud swarm integration is removed — no HKASK_ABW_* var may be emitted"
-        );
-        assert!(!env.contains_key("HKASK_SWARM_MODE"));
-        // Local agents/swarms/memory paths are derived from the global
-        // `data_dir` — no per-server override. The custom data_dir propagates.
-        assert_eq!(
-            env.get("HKASK_LOCAL_AGENTS_DIR").map(String::as_str),
-            Some("/custom/kask/data/mcp/swarm/agents/curated")
-        );
-        assert_eq!(
-            env.get("HKASK_LOCAL_SWARMS_DIR").map(String::as_str),
-            Some("/custom/kask/data/mcp/swarm/swarms")
-        );
-        assert_eq!(
-            env.get("HKASK_SWARM_DEFAULT_AGENT_MODEL")
-                .map(String::as_str),
-            Some("claude-sonnet-4-6")
-        );
-        assert_eq!(
-            env.get("HKASK_A2A_HTTP_ENABLE").map(String::as_str),
-            Some("true")
-        );
-        assert_eq!(
-            env.get("HKASK_SWARM_MEMORY_DB").map(String::as_str),
-            Some("/custom/kask/data/mcp/swarm/memory.db")
-        );
-        assert_eq!(
-            env.get("HKASK_SWARM_EMBEDDING_DIM").map(String::as_str),
-            Some("2048")
-        );
-    }
 }

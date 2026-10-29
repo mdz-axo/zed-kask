@@ -1473,7 +1473,7 @@ mod tests {
     #[test]
     fn variant_key_converges_within_an_experiment() {
         let store = store();
-        let experiment = propose(&store, "agent_card", None);
+        let experiment = propose(&store, "prompt_template", None);
         let first = variant(&store, &experiment.id, "v1", None, Some("v1-key"));
         let second = variant(&store, &experiment.id, "v1", None, Some("v1-key"));
         assert_eq!(
@@ -1564,7 +1564,7 @@ mod tests {
     fn population_filters_by_layer_and_status() {
         let store = store();
         let skill = propose(&store, "skill", None);
-        let card = propose(&store, "agent_card", None);
+        let template = propose(&store, "prompt_template", None);
         let all = store.population(None, None, None, 50).expect("all");
         assert_eq!(all.len(), 2);
         let skills = store
@@ -1572,13 +1572,13 @@ mod tests {
             .expect("skills");
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].id, skill.id);
-        // Registering a variant moves the card experiment to running.
-        variant(&store, &card.id, "v1", None, None);
+        // Registering a variant moves the template experiment to running.
+        variant(&store, &template.id, "v1", None, None);
         let running = store
-            .population(Some("agent_card"), Some(STATUS_RUNNING), None, 50)
+            .population(Some("prompt_template"), Some(STATUS_RUNNING), None, 50)
             .expect("running");
         assert_eq!(running.len(), 1);
-        assert_eq!(running[0].id, card.id);
+        assert_eq!(running[0].id, template.id);
         let proposed = store
             .population(Some("skill"), Some(STATUS_PROPOSED), None, 50)
             .expect("proposed");

@@ -3,7 +3,7 @@ name = "hkask-mcp-experimentation"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Experimentation MCP server — the experiment registry for the sharded experimentation program (repair plan §P8): registered experiments with pre-registered Brier-scored predictions, variant lineages with roles, sealed eval contracts, fitness records (caller-asserted report references), and selection fossils across the seven artifact layers"
+description = "Experimentation MCP server — the experiment registry for the sharded experimentation program (repair plan §P8): registered experiments with pre-registered Brier-scored predictions, variant lineages with roles, sealed eval contracts, fitness records (caller-asserted report references), and selection fossils across the five artifact layers"
 
 [lib]
 name = "hkask_mcp_experimentation"

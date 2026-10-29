@@ -40,7 +40,6 @@ How-to quadrant alone.
 
 | Set | Tutorial | How-to | Reference | Explanation |
 | --- | --- | --- | --- | --- |
-| [swarm_system](./swarm_system/) | folded | folded | [Reference](./swarm_system/reference.md) | [Explanation](./swarm_system/explanation.md) |
 | [hkask-types](./hkask-types/) | folded | folded | [Reference](./hkask-types/reference.md) | [Explanation](./hkask-types/explanation.md) |
 | [hkask-tool-port](./hkask-tool-port/) | folded | — | [Reference](./hkask-tool-port/reference.md) | folded |
 | [hkask-storage](./hkask-storage/) | folded | folded | [Reference](./hkask-storage/reference.md) | [Explanation](./hkask-storage/explanation.md) |
@@ -61,10 +60,10 @@ than receiving another per-crate set:
 
 `hkask-mcp-corpus`, `hkask-mcp-curator`,
 `hkask-mcp-experimentation`, `hkask-mcp-kata-kanban`, `hkask-mcp-media`,
-`hkask-mcp-prediction-markets`, `hkask-mcp-research`, `hkask-mcp-scenarios`,
-and `hkask-mcp-swarm`.
+`hkask-mcp-prediction-markets`, `hkask-mcp-research`, and
+`hkask-mcp-scenarios`.
 
-The authoritative managed registry contains the same 9 IDs at
+The authoritative managed registry contains the same 8 IDs at
 `kask/crates/kask_bridge/src/mcp_servers.rs` (the companies server was removed
 2026-10-18, commit `3439db5e00`).
 

@@ -119,7 +119,7 @@ template cannot override. The gates are D:
 the propose-or-discard acceptance predicate, the regression count, the GEPA
 dominance and convergence computations, the noise-floor standard error,
 and the PDCA convergence form all run in `lisp_eval` over measured
-harness reports (`swarm_eval_agent_local`) — a
+harness reports (the former `swarm_eval_agent_local`) — a
 candidate that fails the gate is discarded regardless of the model's
 assessment. (The `safety_violations` gate term is model-judged input:
 the gate is deterministic over its inputs, but that one input is P —
@@ -131,6 +131,15 @@ resolution) and the headroom pre-check; signal reads, registry queries, the
 pre-check verdict, and Brier computation are D.
 
 ## Instructions
+
+> **Executor status (2026-10-28):** the local swarm runtime that backed this
+> skill's measurement phases (`swarm_create_local_agent`,
+> `swarm_delegate_local`, `swarm_eval_agent_local`, `swarm_remove_local`)
+> was removed with the swarm MCP server. No in-process agent-loop executor
+> exists. Until the operator names a replacement harness, scaffold-side
+> measurement is `evaluation_method: "none_available"` (the gate discards,
+> never fabricates), and the GEPA sub-loop below cannot run its Test phase.
+> Do not call the removed tools. A redesign is filed with `skill-maintenance`.
 
 ### Outer Kata Steps 1–3 (rendered from `kata-improvement`)
 

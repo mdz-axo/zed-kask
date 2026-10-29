@@ -2,7 +2,7 @@
 //!
 //! A `marketplace_ui_common::PanelToggleButton` configured with the Kanban
 //! Board button's id, icon, labels, and `Toggle` action. Mirrors
-//! `swarm_panel::panel_button`.
+//! `kanban_panel::panel_button`'s upstream pattern (shared `StatusItemView`).
 
 use marketplace_ui_common::PanelToggleButton;
 use ui::IconName;

@@ -2,8 +2,9 @@
 //! per-task comment fetching, and the detail-open detection. Extracted
 //! from `kanban_panel.rs` — the fetchers stay methods on `KanbanPanel`
 //! (they mutate panel state via `cx.spawn` + `this.update`); this module
-//! owns the tool invocations and response parsing. See the swarm panel's
-//! `fetch.rs` for the same extraction pattern.
+//! owns the tool invocations and response parsing.
+//! The fetch-lifecycle extraction pattern (state object + methods) matches
+//! the panel-wide compose-form pattern.
 
 use gpui::Context;
 use gpui_util::ResultExt;

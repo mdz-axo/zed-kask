@@ -369,7 +369,7 @@ All receipts executed live through the tools — `lisp_eval` for the forms, `ren
   exact practiced/thin/conflicted counts; a duplicate/missing value, unknown
   state, missing version, or wrong row count reports `Values pass incomplete`
   and never renders alignment counts.
-- `therapy/scan` renders with `{}` and names curator memory without a store-selection branch or corpus/swarm query instructions.
+- `therapy/scan` renders with `{}` and names curator memory without a store-selection branch or corpus query instructions.
 - `therapy/classify` renders with `{findings}` and the findings list
   appears in the rendered prompt (before the repair the template never
   injected the findings it exists to classify).

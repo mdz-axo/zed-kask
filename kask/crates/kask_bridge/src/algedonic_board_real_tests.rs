@@ -8,7 +8,6 @@ use std::sync::Arc;
 use crate::BoardAlertEscalationSink;
 use gpui::BackgroundExecutor;
 use hkask_mcp_server::server::McpToolError;
-use hkask_mcp_swarm::LocalAgentRegistry;
 use hkask_storage::HMemStore;
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_tool_invoker::{InvokeError, ToolInvoker};
@@ -116,7 +115,6 @@ async fn alert_to_real_board_repeats_recovers_and_requires_verification(
     let server = Arc::new(KanbanServer::new(
         WebID::new(),
         KanbanService::new(store),
-        Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::new(NoWorktree),
         idempotency.clone(),
         idempotency,

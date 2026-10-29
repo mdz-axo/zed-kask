@@ -464,6 +464,7 @@ mod tests {
                 "model_",
                 "job_",
                 "describe_",
+                "voice_",
             ],
         ) {
             assert!(
@@ -477,7 +478,7 @@ mod tests {
     /// while retaining source processing, annotations, retrieval, and history.
     #[test]
     fn steer_prompt_carries_research_scope_and_boundaries() {
-        assert_eq!(hkask_mcp_media::TOOL_NAMES.len(), 75);
+        assert_eq!(hkask_mcp_media::TOOL_NAMES.len(), 79);
         let prompt = steer_system_prompt();
         for required in [
             "gallery_annotation_create",

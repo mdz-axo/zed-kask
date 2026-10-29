@@ -137,8 +137,7 @@ pub(crate) fn provision_db_passphrase() -> Result<String, ProvisionError> {
 
 // There is ONE DB passphrase (provisioned by
 // `hkask_keystore::provision_db_passphrase_string`) for every SQLCipher
-// database (curator, corpus, kanban, swarm memory, research).
-// The swarm memory DB has no separate passphrase; it opens with this one.
+// database (curator, corpus, kanban, research).
 
 /// Resolve the curator DB path.
 ///
@@ -170,15 +169,6 @@ fn resolve_env_db_path(env_var: &str, default: &str) -> String {
     }
 }
 
-/// Resolve the swarm memory DB path.
-///
-/// `HKASK_SWARM_MEMORY_DB` if set (absolute override), else
-/// `mcp/swarm/memory.db` under the hKask data dir. Mirrors the resolution
-/// in `SwarmConfig::from_env`.
-fn resolve_swarm_memory_db_path() -> String {
-    resolve_env_db_path("HKASK_SWARM_MEMORY_DB", "mcp/swarm/memory.db")
-}
-
 /// The fixed-path SQLCipher databases that share `HKASK_DB_PASSPHRASE`,
 /// each resolved the same way its owning MCP server resolves it (env-var
 /// override, else the Standardized Artifact Storage default under the
@@ -190,7 +180,6 @@ pub(crate) fn kask_db_paths() -> Vec<(&'static str, String)> {
         .map(|(name, variable, default)| {
             let path = match name {
                 "curator" => resolve_curator_db_path(),
-                "swarm_memory" => resolve_swarm_memory_db_path(),
                 _ => resolve_env_db_path(variable, &default.to_string_lossy()),
             };
             (name, path)
@@ -198,15 +187,10 @@ pub(crate) fn kask_db_paths() -> Vec<(&'static str, String)> {
         .collect()
 }
 
-pub(crate) fn managed_database_layout() -> [(&'static str, &'static str, std::path::PathBuf); 4] {
+pub(crate) fn managed_database_layout() -> [(&'static str, &'static str, std::path::PathBuf); 3] {
     use hkask_types::agent_paths::{agent_db, mcp_server_db};
     [
         ("curator", "HKASK_CURATOR_DB", agent_db("curator")),
-        (
-            "swarm_memory",
-            "HKASK_SWARM_MEMORY_DB",
-            mcp_server_db("swarm", "memory"),
-        ),
         (
             "kata_kanban",
             "HKASK_KANBAN_DB",
@@ -226,7 +210,7 @@ mod tests {
 
     // The requirement that drives this module:
     //
-    // 1. **Default** — every SQLCipher DB (curator, swarm memory, corpus, RSS,
+    // 1. **Default** — every SQLCipher DB (curator, corpus, RSS,
     //    kata-kanan) opens with the fixed default `"allostery"`
     //    on first run. The default and the whole provisioning chain
     //    (env → keychain → first-run default, empty env treated as unset)
@@ -260,6 +244,5 @@ mod tests {
         // to read from it.
         // (CI mock replacement lives behind `KeychainHarness` in hkask-keystore.)
         let _ = resolve_curator_db_path; // referenced so the seam stays alive
-        let _ = resolve_swarm_memory_db_path;
     }
 }

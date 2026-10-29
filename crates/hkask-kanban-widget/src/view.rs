@@ -432,24 +432,6 @@ impl KanbanWidget {
                         .color(Color::Muted),
                 )
             })
-            // R1: the visible swarm↔kanban link. When the server emits a
-            // `swarm_id` on the task, render a badge so the operator can see
-            // which swarm is running the task at a glance.
-            .when_some(task.swarm_id.clone(), |this, swarm_id| {
-                this.child(
-                    div()
-                        .id(format!("kanban-swarm-{}", task.task_id))
-                        .tooltip(Tooltip::text(format!(
-                            "Running in swarm {swarm_id} — the durable \
-                             coordination link (Task.swarm_id)."
-                        )))
-                        .child(
-                            Label::new(format!("◈ {swarm_id}"))
-                                .size(LabelSize::XSmall)
-                                .color(Color::Accent),
-                        ),
-                )
-            })
             .when_some(task.ontology.clone(), |this, ontology| {
                 this.child(
                     div()
@@ -996,7 +978,6 @@ mod tests {
             status: status.to_string(),
             description: None,
             assignee: None,
-            swarm_id: None,
 
             activity: None,
             ontology: None,

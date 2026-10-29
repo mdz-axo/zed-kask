@@ -3,7 +3,7 @@ name = "hkask-tool-invoker"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Governed widget→MCP dispatch: the ToolInvoker trait + global accessor, relocated to a leaf crate so GPUI widgets can dispatch MCP tools without depending on the heavy swarm_panel crate. The block-provenance value type lives in hkask-types; this crate is dispatch only."
+description = "Governed widget→MCP dispatch: the ToolInvoker trait + global accessor, relocated to a leaf crate so GPUI widgets can dispatch MCP tools without depending on a heavy panel crate. The block-provenance value type lives in hkask-types; this crate is dispatch only."
 
 [lib]
 path = "src/hkask_tool_invoker.rs"

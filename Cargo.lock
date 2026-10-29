@@ -3,20 +3,6 @@
 version = 4
 
 [[package]]
-name = "a2a-lf"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b24d0f12bb1205e7ff85edbac2ea34aedd028f31dfebe8628e3aae4a66c200bd"
-dependencies = [
- "base64 0.23.1",
- "chrono",
- "serde",
- "serde_json",
- "thiserror 2.0.17",
- "uuid",
-]
-
-[[package]]
 name = "accesskit"
 version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4300,6 +4286,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "der"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a996a108feb8b427a6e12fcf6af4aa83409b79d72c15337d7741368131ee004"
+dependencies = [
+ "pem-rfc7468",
+ "zeroize",
+]
+
+[[package]]
 name = "deranged"
 version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7765,7 +7761,6 @@ dependencies = [
  "hkask-forecast",
  "hkask-inference",
  "hkask-mcp-server",
- "hkask-mcp-swarm",
  "hkask-storage",
  "hkask-types",
  "regex",
@@ -7793,8 +7788,10 @@ dependencies = [
  "hkask-storage",
  "hkask-types",
  "image",
+ "kaldi-native-fbank",
  "minijinja",
  "nom-exif",
+ "ort",
  "proptest",
  "regex",
  "rmcp",
@@ -7915,35 +7912,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "zed-reqwest",
-]
-
-[[package]]
-name = "hkask-mcp-swarm"
-version = "0.40.2"
-dependencies = [
- "a2a-lf",
- "chrono",
- "hkask-bridge-ontology",
- "hkask-event-store",
- "hkask-inference",
- "hkask-keystore",
- "hkask-mcp-server",
- "hkask-memory",
- "hkask-storage",
- "hkask-types",
- "r2d2",
- "regex",
- "rmcp",
- "schemars 1.0.4",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror 2.0.17",
- "tiny_http",
- "tokio",
- "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -8095,18 +8063,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hkask-swarm-widget"
-version = "0.40.2"
-dependencies = [
- "anyhow",
- "gpui",
- "serde",
- "serde_json",
- "theme",
- "ui",
-]
-
-[[package]]
 name = "hkask-tool-invoker"
 version = "0.40.2"
 dependencies = [
@@ -8154,7 +8110,6 @@ dependencies = [
  "hkask-kanban-widget",
  "hkask-media-widget",
  "hkask-scenarios-widget",
- "hkask-swarm-widget",
  "log",
  "serde",
 ]
@@ -8176,6 +8131,12 @@ checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
 dependencies = [
  "digest",
 ]
+
+[[package]]
+name = "hmac-sha256"
+version = "1.1.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ad320b3b96fb2a455a0726d16efe0a5afdbd34b71dea5bc53b05ea057714d4e"
 
 [[package]]
 name = "home"
@@ -9354,6 +9315,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "kaldi-native-fbank"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f297ca19f4c2069ccc7969cba1d4c496b46c0b88f6ceddb88a9ae3200a6cf506"
+dependencies = [
+ "anyhow",
+ "log",
+ "rand 0.8.6",
+ "rand_distr",
+ "realfft",
+ "rustfft",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "kanban_panel"
 version = "0.1.0"
 dependencies = [
@@ -9406,12 +9382,10 @@ dependencies = [
  "hkask-mcp-experimentation",
  "hkask-mcp-kata-kanban",
  "hkask-mcp-server",
- "hkask-mcp-swarm",
  "hkask-memory",
  "hkask-regulation",
  "hkask-storage",
  "hkask-tool-invoker",
- "hkask-tool-port",
  "hkask-types",
  "http_client",
  "language_model",
@@ -10476,6 +10450,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "lzma-rust2"
+version = "0.15.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e20f57f9918e5bd7bc58c22cdd70a6afc7375d4dd9683af5f2b34bd3d2bba619"
+
+[[package]]
 name = "lzma-sys"
 version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10672,6 +10652,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d1525a2a28c7f4fa0fc98bb91ae755d1e2d1505079e05539e35bc876b5d65ae9"
 dependencies = [
  "regex-automata",
+]
+
+[[package]]
+name = "matrixmultiply"
+version = "0.3.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f607c237553f086e7043417a51df26b2eb899d3caff94e6a67592ff992fedc7"
+dependencies = [
+ "autocfg",
+ "rawpointer",
 ]
 
 [[package]]
@@ -11266,6 +11256,21 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "uuid",
+]
+
+[[package]]
+name = "ndarray"
+version = "0.17.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "520080814a7a6b4a6e9070823bb24b4531daac8c4627e08ba5de8c5ef2f2752d"
+dependencies = [
+ "matrixmultiply",
+ "num-complex",
+ "num-integer",
+ "num-traits",
+ "portable-atomic",
+ "portable-atomic-util",
+ "rawpointer",
 ]
 
 [[package]]
@@ -12481,6 +12486,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "ort"
+version = "2.0.0-rc.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "37c87aa7a90b7ff3e0fe36cccd475df8d67f15f07f4d6c370c4b38464232813c"
+dependencies = [
+ "ndarray",
+ "ort-sys",
+ "smallvec",
+ "tracing",
+ "ureq",
+]
+
+[[package]]
+name = "ort-sys"
+version = "2.0.0-rc.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d22b0417f1838db5a3ac0b3f98dfe39f6fb73624aa0a27c6bbb5040b9c7db2b"
+dependencies = [
+ "hmac-sha256",
+ "lzma-rust2",
+ "ureq",
+]
+
+[[package]]
 name = "outline"
 version = "0.1.0"
 dependencies = [
@@ -12838,6 +12867,15 @@ checksum = "1d30c53c26bc5b31a98cd02d20f25a7c8567146caf63ed593a9d87b2775291be"
 dependencies = [
  "base64 0.22.1",
  "serde_core",
+]
+
+[[package]]
+name = "pem-rfc7468"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6305423e0e7738146434843d1694d621cce767262b2a86910beab705e4493d9"
+dependencies = [
+ "base64ct",
 ]
 
 [[package]]
@@ -13571,7 +13609,7 @@ version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8ffb9f10fa047879315e6625af03c164b16962a5368d724ed16323b68ace47f"
 dependencies = [
- "der",
+ "der 0.7.10",
  "pkcs8",
  "spki",
 ]
@@ -13582,7 +13620,7 @@ version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f950b2377845cebe5cf8b5165cb3cc1a5e0fa5cfa3e1f7f55707d8fd82e0a7b7"
 dependencies = [
- "der",
+ "der 0.7.10",
  "spki",
 ]
 
@@ -13867,6 +13905,15 @@ checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
 dependencies = [
  "proc-macro2",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "primal-check"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc0d895b311e3af9902528fbb8f928688abbd95872819320517cc24ca6b2bd08"
+dependencies = [
+ "num-integer",
 ]
 
 [[package]]
@@ -14708,6 +14755,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
+name = "rand_distr"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32cb0b9bc82b0a0876c2dd994a7e7a2683d3e7390ca40e6886785ef0c7e3ee31"
+dependencies = [
+ "num-traits",
+ "rand 0.8.6",
+]
+
+[[package]]
 name = "rand_pcg"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14833,6 +14890,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "rawpointer"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "60a357793950651c4ed0f3f52338f53b2f809f32d83a07f72909fa13e4c6c1e3"
+
+[[package]]
 name = "rayon"
 version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14880,6 +14943,15 @@ dependencies = [
  "bytemuck",
  "core_maths",
  "font-types 0.11.0",
+]
+
+[[package]]
+name = "realfft"
+version = "3.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "538895ccf2006b473aafbe8d72770e21038961ab67aae34f3c577485fc703a7d"
+dependencies = [
+ "rustfft",
 ]
 
 [[package]]
@@ -15622,6 +15694,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92"
 dependencies = [
  "semver",
+]
+
+[[package]]
+name = "rustfft"
+version = "6.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "21db5f9893e91f41798c88680037dba611ca6674703c1a18601b01a72c8adb89"
+dependencies = [
+ "num-complex",
+ "num-integer",
+ "num-traits",
+ "primal-check",
+ "strength_reduce",
+ "transpose",
 ]
 
 [[package]]
@@ -16967,7 +17053,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d91ed6c858b01f942cd56b37a94b3e0a1798290327d1236e4d9cf4eaca44d29d"
 dependencies = [
  "base64ct",
- "der",
+ "der 0.7.10",
 ]
 
 [[package]]
@@ -17078,6 +17164,12 @@ dependencies = [
  "rope",
  "util",
 ]
+
+[[package]]
+name = "strength_reduce"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe895eb47f22e2ddd4dabc02bce419d2e643c8e3b585c78158b349195bc24d82"
 
 [[package]]
 name = "strict-num"
@@ -17343,32 +17435,6 @@ checksum = "695b5790b3131dafa99b3bbfd25a216edb3d216dad9ca208d4657bfb8f2abc3d"
 dependencies = [
  "kurbo",
  "siphasher 1.0.4",
-]
-
-[[package]]
-name = "swarm_panel"
-version = "0.1.0"
-dependencies = [
- "agent-client-protocol",
- "anyhow",
- "editor",
- "fs",
- "gpui",
- "hkask-mcp-kata-kanban",
- "hkask-mcp-swarm",
- "hkask-steer",
- "hkask-tool-invoker",
- "hkask-types",
- "kask_bridge",
- "log",
- "marketplace_ui_common",
- "project",
- "remote_connection",
- "serde",
- "serde_json",
- "settings",
- "ui",
- "workspace",
 ]
 
 [[package]]
@@ -18686,6 +18752,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "transpose"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ad61aed86bc3faea4300c7aee358b4c6d0c8d6ccc36524c96e4c92ccf26e77e"
+dependencies = [
+ "num-integer",
+ "strength_reduce",
+]
+
+[[package]]
 name = "trash"
 version = "5.2.5"
 source = "git+https://github.com/zed-industries/trash-rs?rev=41c6c800d884a89351f3b8856d12894cccee261d#41c6c800d884a89351f3b8856d12894cccee261d"
@@ -19216,6 +19292,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
+name = "ureq"
+version = "3.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cde93ff05758a36a851a398a772b0b79a82fbe3c186a46f2696baaeaf84c966b"
+dependencies = [
+ "base64 0.23.1",
+ "der 0.8.3",
+ "log",
+ "native-tls",
+ "percent-encoding",
+ "rustls-pki-types",
+ "ureq-proto",
+ "utf8-zero",
+ "webpki-root-certs",
+]
+
+[[package]]
+name = "ureq-proto"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "841583fc36089d7d59419568ae157f43a5a03a2e5a81ba87c77d1596ef46e922"
+dependencies = [
+ "base64 0.23.1",
+ "http 1.3.1",
+ "httparse",
+ "log",
+]
+
+[[package]]
 name = "url"
 version = "2.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -19281,6 +19386,12 @@ checksum = "ebe49e006d6df172d7f14794568a90fe41e05a1fa9e03dc276fa6da4bb747ec3"
 dependencies = [
  "arrayvec",
 ]
+
+[[package]]
+name = "utf8-zero"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8c0a043c9540bae7c578c88f91dda8bd82e59ae27c21baca69c8b191aaf5a6e"
 
 [[package]]
 name = "utf8_iter"
@@ -22128,6 +22239,7 @@ dependencies = [
  "hkask-keystore",
  "hkask-mcp",
  "hkask-regulation",
+ "hkask-tool-invoker",
  "hkask-tool-port",
  "hkask-types",
  "http_client",
@@ -22201,7 +22313,6 @@ dependencies = [
  "snippet_provider",
  "snippets_ui",
  "svg_preview",
- "swarm_panel",
  "sysinfo 0.39.6",
  "system_specs",
  "tab_switcher",

@@ -49,7 +49,6 @@ members = [
     "crates/debugger_ui",
     "crates/deepseek",
     "crates/dev_container",
-    "crates/swarm_panel",
     "crates/kanban_panel",
     "crates/marketplace_ui_common",
     "crates/diagnostics",
@@ -296,7 +295,6 @@ members = [
 
     "crates/media_panel",
     "crates/hkask-scenarios-widget",
-    "crates/hkask-swarm-widget",
     "crates/hkask-media-widget",
     "crates/hkask-media-benchmarks",
 
@@ -310,7 +308,6 @@ members = [
     "kask/mcp-servers/hkask-mcp-kata-kanban",
 
     "kask/mcp-servers/hkask-mcp-corpus",
-    "kask/mcp-servers/hkask-mcp-swarm",
     "kask/mcp-servers/hkask-mcp-media",
     "kask/mcp-servers/hkask-mcp-experimentation",
 ]
@@ -380,7 +377,6 @@ deepseek = { path = "crates/deepseek" }
 derive_refineable = { path = "crates/refineable/derive_refineable" }
 dev_container = { path = "crates/dev_container" }
 
-swarm_panel = { path = "crates/swarm_panel" }
 kanban_panel = { path = "crates/kanban_panel" }
 marketplace_ui_common = { path = "crates/marketplace_ui_common" }
 kask_bridge = { path = "kask/crates/kask_bridge" }
@@ -392,7 +388,6 @@ hkask_steer = { path = "crates/hkask-steer", package = "hkask-steer" }
 
 media_panel = { path = "crates/media_panel" }
 hkask_scenarios_widget = { path = "crates/hkask-scenarios-widget", package = "hkask-scenarios-widget" }
-hkask_swarm_widget = { path = "crates/hkask-swarm-widget", package = "hkask-swarm-widget" }
 hkask_media_widget = { path = "crates/hkask-media-widget", package = "hkask-media-widget" }
 diagnostics = { path = "crates/diagnostics" }
 edit_prediction = { path = "crates/edit_prediction" }
@@ -993,7 +988,6 @@ hkask-storage = { path = "kask/crates/hkask-storage" }
 hkask-condenser = { path = "kask/crates/hkask-condenser" }
 hkask-mcp = { path = "kask/crates/hkask-mcp" }
 hkask-mcp-kata-kanban = { path = "kask/mcp-servers/hkask-mcp-kata-kanban" }
-hkask-mcp-swarm = { path = "kask/mcp-servers/hkask-mcp-swarm" }
 hkask-mcp-media = { path = "kask/mcp-servers/hkask-mcp-media" }
 hkask-mcp-experimentation = { path = "kask/mcp-servers/hkask-mcp-experimentation" }
 ed25519-dalek = "2"
@@ -1121,7 +1115,6 @@ r2d2_sqlite = "0.25"
 rusqlite = { version = "0.32", features = ["bundled-sqlcipher", "blob", "backup"] }
 utoipa = { version = "5.5", features = ["axum_extras", "uuid", "chrono"] }
 # Single-source-of-truth for kask-only third-party crates consumed by hKask crates.
-a2a = { package = "a2a-lf", version = "0.3" }
 sqlite-vec = "0.1"
 docx-rs = "0.4"
 calamine = "0.36"

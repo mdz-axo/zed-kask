@@ -23,7 +23,6 @@
 use hkask_mcp_kata_kanban::types::*;
 use hkask_mcp_kata_kanban::{KanbanServer, KanbanService};
 use hkask_mcp_server::server::McpToolError;
-use hkask_mcp_swarm::LocalAgentRegistry;
 use hkask_storage::HMemStore;
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_types::{InferenceError, McpErrorKind, WebID, WorktreeSpawnPort};
@@ -48,7 +47,6 @@ fn make_server_over_driver(
     KanbanServer::new(
         webid,
         KanbanService::new(HMemStore::from_driver(driver).expect("hmem store")),
-        Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::new(UnavailableWorktreeSpawn),
         Arc::clone(&idempotency),
         idempotency,
@@ -745,7 +743,6 @@ async fn replay_is_absorbed_across_processes() {
     let process_b = KanbanServer::new(
         process_a.webid,
         KanbanService::new(store),
-        Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::new(UnavailableWorktreeSpawn),
         Arc::new(
             hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(shared_driver)
@@ -786,7 +783,6 @@ async fn non_durable_protection_is_labelled_in_the_response() {
     let server = KanbanServer::new(
         WebID::new(),
         KanbanService::new(store),
-        Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::new(UnavailableWorktreeSpawn),
         Arc::new(
             hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(
@@ -1002,7 +998,7 @@ fn wire_field_name_matches_what_clients_send() {
 
 /// `kanban_task_spawn` is not blocked by an unfunded ledger.
 ///
-/// A kanban board does not need funding, and neither do local swarm agents: they
+/// A kanban board does not need funding, and neither do spawned task agents: they
 /// run on the operator's own substrate, so there is nothing for the server to
 /// withhold. Before the local funding gate was removed, this call returned
 /// `permission_denied: "insufficient local credits: have 0, need 10 — fund via
@@ -1028,7 +1024,6 @@ async fn spawn_is_not_blocked_by_an_unfunded_ledger() {
             delegation_level: "standard".to_string(),
             delegated_skills: vec![],
             memory_scope: None,
-            swarm_id: None,
         }))
         .await
         .expect_err("spawn fails without a wired inference port");
@@ -1042,7 +1037,6 @@ async fn spawn_is_not_blocked_by_an_unfunded_ledger() {
             delegation_level: "standard".into(),
             delegated_skills: vec![],
             memory_scope: None,
-            swarm_id: None,
         }))
         .await
         .expect_err("unknown spawn outcome must not repeat");
@@ -1187,7 +1181,6 @@ fn make_spawn_server() -> (
     let server = KanbanServer::new(
         WebID::new(),
         service,
-        Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::clone(&port) as Arc<dyn WorktreeSpawnPort>,
         Arc::new(idempotency),
         Arc::new(
@@ -1212,7 +1205,6 @@ async fn spawn_task(
             delegation_level: "standard".to_string(),
             delegated_skills: vec![],
             memory_scope: None,
-            swarm_id: None,
         }))
         .await?;
     Ok(parse(&out))
@@ -1329,7 +1321,7 @@ async fn pending_claim_survives_reopen_and_refuses_the_spawn() {
             .expect("idempotency schema");
     let request = serde_json::json!({
         "task_id": task_id, "delegation_level": "standard",
-        "delegated_skills": [], "memory_scope": null, "swarm_id": null,
+        "delegated_skills": [], "memory_scope": null,
     });
     let digest =
         hkask_mcp_kata_kanban::idempotency::request_sha256(&request).expect("request digest");
@@ -1350,7 +1342,6 @@ async fn pending_claim_survives_reopen_and_refuses_the_spawn() {
     let restarted = KanbanServer::new(
         server.webid,
         KanbanService::new(HMemStore::from_driver(driver.clone()).expect("hmem store")),
-        Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::new(CountingWorktreeSpawn {
             spawns: std::sync::atomic::AtomicUsize::new(0),
         }) as Arc<dyn WorktreeSpawnPort>,

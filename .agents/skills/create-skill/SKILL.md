@@ -437,10 +437,9 @@ is checkably wrong.
    the checks. Add each failed S/T check to `scaffold_findings`. A check you
    could not perform is reported `unverified`, never passed.
 3. **Functional trial (D).** Run the trial task fixed in Phase 1 step 6
-   through the new skill (follow its SKILL.md, or delegate it via
-   `swarm_delegate_local` to a card declaring the skill), and check the
-   result against the expected result with the named evaluator
-   (`swarm_evaluate_local` for contains/not_contains/regex). Set
+   through the new skill (follow its SKILL.md in-session), and check the
+   result against the expected result with the named evaluator.
+   Set
    `functional` to 1 if it met the expectation, else 0. If the trial cannot
    run (a required tool, key or spend is unavailable), set `functional` to 0
    and record the blocker; the skill is not done.

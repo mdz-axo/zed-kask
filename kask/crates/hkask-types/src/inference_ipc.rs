@@ -35,10 +35,9 @@
 //! - `generate_vision` — prompt + images → result
 //! - `embed` — model + texts → embedding vectors (OpenAI-compatible `/embeddings`)
 //! - `list_models` — list available models from zed's `LanguageModelRegistry`
-//! - `tool_invoke` — invoke a governed MCP tool on the zed side (`ToolDispatchPort`);
-//!   used by MCP servers that run agent loops (e.g. `hkask-mcp-swarm`'s local
-//!   delegate) so a delegated agent can call MCP tools that live in the parent
-//!   process. The child carries an opaque parent-issued grant token and a
+//! - `create_worktree_thread` — create a sibling agent thread in a new git
+//!   worktree workspace on the zed side (`kanban_task_spawn`'s delegation
+//!   path). The child carries an opaque parent-issued grant token and a
 //!   request allowlist; dispatch intersects them. Default is deny. Tokens are
 //!   per server, not PID-bound or OS isolation against arbitrary same-UID code.
 //!
@@ -98,13 +97,6 @@ pub enum InferenceMethod {
     /// List available models from zed's `LanguageModelRegistry`.
     /// The result is returned as `InferenceOutcome::ModelList`.
     ListModels,
-    /// Invoke a governed MCP tool on the zed side (`ToolDispatchPort`).
-    /// Uses `tool_server`, `tool_name`, `tool_args` from `InferenceParams`.
-    /// The result is returned as `InferenceOutcome::ToolResult`.
-    ToolInvoke,
-    /// Return a governed tool's real description and input schema without
-    /// invoking it. Uses tool_server, tool_name, tool_allowlist, tool_grant.
-    ToolDefinition,
     /// Create a sibling agent thread in a new git worktree workspace. Uses
     /// `worktree_prompt`, `worktree_title`, `worktree_name`, `worktree_base_ref`
     /// from `InferenceParams`. The result is returned as
@@ -143,17 +135,10 @@ pub struct InferenceParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embed_dimensions: Option<u32>,
 
-    // ── Tool dispatch fields (for `InferenceMethod::ToolInvoke`) ──
-    pub tool_server: Option<String>,
-    /// Tool name to invoke.
-    pub tool_name: Option<String>,
-    /// Tool arguments (JSON).
-    pub tool_args: Option<serde_json::Value>,
-    /// Qualified `server/tool` names the child may dispatch (the delegated
-    /// agent's declared `mcp_tools` allowlist). The zed side refuses any
-    /// tool outside this list and the independent parent grant. ToolInvoke
-    /// requires a nonempty list. CreateWorktreeThread also requires this field;
-    /// an empty list deliberately creates an inference-only child, never grant-all.
+    /// Qualified `server/tool` names the spawned child may use. The zed side
+    /// refuses any tool outside this list and the independent parent grant.
+    /// CreateWorktreeThread requires this field; an empty list deliberately
+    /// creates an inference-only child, never grant-all.
     #[serde(default)]
     pub tool_allowlist: Option<Vec<String>>,
     /// Opaque reference to a parent-owned grant; never a caller-defined permission set.
@@ -235,21 +220,7 @@ pub enum InferenceOutcome {
         #[serde(rename = "models")]
         models: Vec<ModelListEntry>,
     },
-    /// Tool dispatch result from `InferenceMethod::ToolInvoke`.
-    /// The value is the tool's JSON output. The key is `tool_result` (not
-    /// `result`) so the untagged enum cannot confuse a tool output that
-    /// happens to carry `result` with the `Result` variant.
-    ToolResult {
-        #[serde(rename = "tool_result")]
-        result: serde_json::Value,
-    },
-    ToolDefinition {
-        #[serde(rename = "tool_definition")]
-        definition: crate::ChatToolDefinition,
-    },
-    /// Worktree thread creation result from
-    /// `InferenceMethod::CreateWorktreeThread`. The value is the new
-    /// thread's id + worktree path.
+    /// Create a sibling agent thread in a new git worktree workspace.
     WorktreeThread {
         #[serde(rename = "worktree_thread")]
         thread: WorktreeThreadInfo,

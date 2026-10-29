@@ -59,7 +59,7 @@ use hkask_types::inference_ipc::{
 use hkask_types::template::LLMParameters;
 use hkask_types::{
     ChatMessage, ChatToolDefinition, EmbeddingGenerationError, InferenceError, InferencePort,
-    InferenceResult, ToolDispatchPort,
+    InferenceResult,
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -287,8 +287,6 @@ fn outcome_variant_name(outcome: &InferenceOutcome) -> &'static str {
         InferenceOutcome::Error { .. } => "Error",
         InferenceOutcome::Embeddings { .. } => "Embeddings",
         InferenceOutcome::ModelList { .. } => "ModelList",
-        InferenceOutcome::ToolResult { .. } => "ToolResult",
-        InferenceOutcome::ToolDefinition { .. } => "ToolDefinition",
         InferenceOutcome::WorktreeThread { .. } => "WorktreeThread",
         InferenceOutcome::RerankScores { .. } => "RerankScores",
     }
@@ -305,19 +303,6 @@ fn unexpected_outcome_error(method: &InferenceMethod, outcome: InferenceOutcome)
         other => {
             InferenceError::Connection(unexpected_outcome_msg(method, outcome_variant_name(&other)))
         }
-    }
-}
-
-/// The tool-addressing params shared by the governed-tool IPC calls:
-/// server, tool name, the caller's declared allowlist, and the OCAP grant
-/// env. `invoke_tool` layers `tool_args` on top of this base.
-fn tool_call_params(server: &str, tool: &str, allowed: &[String]) -> InferenceParams {
-    InferenceParams {
-        tool_server: Some(server.to_string()),
-        tool_name: Some(tool.to_string()),
-        tool_allowlist: Some(allowed.to_vec()),
-        tool_grant: std::env::var(hkask_types::inference_ipc::TOOL_GRANT_ENV).ok(),
-        ..Default::default()
     }
 }
 
@@ -616,50 +601,6 @@ impl InferenceIpcClient {
         self.call_rerank(model, query, documents).await
     }
 
-    pub async fn get_tool_definition(
-        &self,
-        server: &str,
-        tool: &str,
-        allowed: &[String],
-    ) -> Result<ChatToolDefinition, InferenceError> {
-        let method = InferenceMethod::ToolDefinition;
-        let params = tool_call_params(server, tool, allowed);
-        let response = self.ipc_roundtrip(&method, params).await?;
-        match response.outcome {
-            InferenceOutcome::ToolDefinition { definition } => Ok(definition),
-            InferenceOutcome::Error { error } => Err(error.into()),
-            other => Err(InferenceError::Connection(format!(
-                "unexpected response to tool definition request: {other:?}"
-            ))),
-        }
-    }
-
-    /// Invoke a governed MCP tool on the zed side via the IPC bridge.
-    ///
-    /// name, `args` the JSON arguments. `allowed` is the caller's declared
-    /// `server/tool` allowlist (the delegated agent's `mcp_tools`) — the zed
-    /// side refuses any tool outside it before minting the OCAP panel token,
-    /// so the allowlist is enforced at the dispatch boundary, not only inside
-    /// the child. Returns the tool's JSON output.
-    pub async fn invoke_tool(
-        &self,
-        server: &str,
-        tool: &str,
-        args: serde_json::Value,
-        allowed: &[String],
-    ) -> Result<serde_json::Value, InferenceError> {
-        let method = InferenceMethod::ToolInvoke;
-        let params = InferenceParams {
-            tool_args: Some(args),
-            ..tool_call_params(server, tool, allowed)
-        };
-        let response = self.ipc_roundtrip(&method, params).await?;
-        match response.outcome {
-            InferenceOutcome::ToolResult { result } => Ok(result),
-            other => Err(unexpected_outcome_error(&method, other)),
-        }
-    }
-
     /// Create a sibling agent thread in a new git worktree workspace on the
     /// zed side. The thread runs in an isolated worktree (separate from the
     /// user's working tree). Used by `kanban_task_spawn` to isolate spawned
@@ -825,30 +766,6 @@ impl InferencePort for InferenceIpcClient {
                 })
                 .collect())
         })
-    }
-}
-
-impl ToolDispatchPort for InferenceIpcClient {
-    fn tool_definition<'a>(
-        &'a self,
-        server: &'a str,
-        tool: &'a str,
-        allowed: &'a [String],
-    ) -> hkask_types::PortFuture<'a, ChatToolDefinition> {
-        Box::pin(async move { self.get_tool_definition(server, tool, allowed).await })
-    }
-
-    fn invoke_tool<'a>(
-        &'a self,
-        server: &'a str,
-        tool: &'a str,
-        args: serde_json::Value,
-        allowed: &'a [String],
-    ) -> hkask_types::PortFuture<'a, serde_json::Value> {
-        let server = server.to_string();
-        let tool = tool.to_string();
-        let allowed = allowed.to_vec();
-        Box::pin(async move { self.invoke_tool(&server, &tool, args, &allowed).await })
     }
 }
 
@@ -1126,54 +1043,18 @@ mod tests {
     #[tokio::test]
     async fn ipc_roundtrip_returns_validated_response() {
         let bridge = TestBridge::with_response(
-            response_line(
-                InferenceOutcome::ToolResult {
-                    result: serde_json::Value::Null,
-                },
-                1,
-            )
-            .into_bytes(),
+            response_line(InferenceOutcome::ModelList { models: vec![] }, 1).into_bytes(),
         );
         let client = bridge.client();
         let response = client
-            .ipc_roundtrip(&InferenceMethod::ToolInvoke, InferenceParams::default())
+            .ipc_roundtrip(&InferenceMethod::ListModels, InferenceParams::default())
             .await
             .expect("happy path returns the validated response");
         assert_eq!(response.id, 1);
         assert!(matches!(
             response.outcome,
-            InferenceOutcome::ToolResult { .. }
+            InferenceOutcome::ModelList { .. }
         ));
-    }
-
-    #[tokio::test]
-    async fn tool_definition_roundtrip_preserves_required_arguments() {
-        let bridge = TestBridge::with_response(
-            response_line(
-                InferenceOutcome::ToolDefinition {
-                    definition: ChatToolDefinition {
-                        tool_type: "function".into(),
-                        function: hkask_types::ChatToolFunction {
-                            name: "fixture/lookup".into(),
-                            description: "Lookup with query".into(),
-                            parameters: serde_json::json!({
-                                "type": "object", "properties": {"query": {"type": "string"}},
-                                "required": ["query"]
-                            }),
-                        },
-                    },
-                },
-                1,
-            )
-            .into_bytes(),
-        );
-        let definition = bridge
-            .client()
-            .get_tool_definition("fixture", "lookup", &["fixture/lookup".into()])
-            .await
-            .expect("tool definition should cross the IPC boundary");
-        assert_eq!(definition.function.name, "fixture/lookup");
-        assert_eq!(definition.function.parameters["required"][0], "query");
     }
 
     #[tokio::test]
@@ -1197,9 +1078,7 @@ mod tests {
     async fn ipc_roundtrip_returns_error_on_id_mismatch() {
         let bridge = TestBridge::with_response(
             response_line(
-                InferenceOutcome::ToolResult {
-                    result: serde_json::Value::Null,
-                },
+                InferenceOutcome::ModelList { models: vec![] },
                 999, // wrong id — client expects 1
             )
             .into_bytes(),

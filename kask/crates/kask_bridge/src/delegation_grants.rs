@@ -62,18 +62,6 @@ pub fn revoke_delegation_grant(server: &str) {
     }
 }
 
-pub(crate) fn parent_allows(token: Option<&str>, qualified: &str) -> bool {
-    let Some(token) = token else {
-        return false;
-    };
-    let Ok(grants) = GRANTS.lock() else {
-        return false;
-    };
-    grants
-        .values()
-        .any(|grant| grant.token == token && grant.tools.iter().any(|tool| tool == qualified))
-}
-
 /// Derive the child's ceiling from the parent grant and the requested narrowing.
 /// Missing narrowing is not an implicit grant of the parent's whole tool set.
 pub(crate) fn worktree_tools(
@@ -103,19 +91,40 @@ mod tests {
     #[test]
     fn grants_are_stable_until_changed_and_revoked() {
         let server = format!("test-{}", uuid::Uuid::new_v4());
-        let token = grant_for_server(&server, &["research/search".into()]).expect("grant");
+        let tools = vec![WORKTREE_SPAWN.to_string(), "research/search".to_string()];
+        let token = grant_for_server(&server, &tools).expect("grant");
+        assert_eq!(grant_for_server(&server, &tools), Some(token.clone()));
+        // The requested narrowing is intersected with the grant; a
+        // non-granted tool drops out, never widens.
         assert_eq!(
-            grant_for_server(&server, &["research/search".into()]),
-            Some(token.clone())
+            worktree_tools(Some(&token), Some(&["research/search".to_string()])),
+            Some(vec!["research/search".to_string()])
         );
-        assert!(parent_allows(Some(&token), "research/search"));
-        assert!(!parent_allows(Some(&token), "ledger/debit"));
-        assert!(!parent_allows(None, "research/search"));
-        let replacement =
-            grant_for_server(&server, &["research/read".into()]).expect("replacement");
-        assert!(!parent_allows(Some(&token), "research/search"));
-        assert!(parent_allows(Some(&replacement), "research/read"));
+        assert_eq!(
+            worktree_tools(Some(&token), Some(&["ledger/debit".to_string()])),
+            Some(Vec::new())
+        );
+        // No token or no narrowing request: no ceiling, never grant-all.
+        assert_eq!(
+            worktree_tools(None, Some(&["research/search".to_string()])),
+            None
+        );
+        let replacement_tools = vec![WORKTREE_SPAWN.to_string(), "research/read".to_string()];
+        let replacement = grant_for_server(&server, &replacement_tools).expect("replacement");
+        // A changed tool list replaces the grant: the old token resolves to
+        // no grant at all, so its ceiling is None.
+        assert_eq!(
+            worktree_tools(Some(&token), Some(&["research/search".to_string()])),
+            None
+        );
+        assert_eq!(
+            worktree_tools(Some(&replacement), Some(&["research/read".to_string()])),
+            Some(vec!["research/read".to_string()])
+        );
         revoke_delegation_grant(&server);
-        assert!(!parent_allows(Some(&replacement), "research/read"));
+        assert_eq!(
+            worktree_tools(Some(&replacement), Some(&["research/read".to_string()])),
+            None
+        );
     }
 }

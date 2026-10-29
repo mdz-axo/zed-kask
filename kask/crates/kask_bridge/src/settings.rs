@@ -15,7 +15,7 @@ use settings_content::{
     KaskCuratorSettingsContent, KaskGeneralSettingsContent, KaskMcpSettingsContent,
     KaskMediaSettingsContent, KaskMemorySettingsContent, KaskModelsSettingsContent,
     KaskPredictionMarketsSettingsContent, KaskResearchSettingsContent,
-    KaskScenariosSettingsContent, KaskSettingsContent, KaskSwarmSettingsContent,
+    KaskScenariosSettingsContent, KaskSettingsContent,
 };
 
 use collections::HashMap;
@@ -77,9 +77,6 @@ pub struct KaskSettings {
     pub scenarios: KaskScenariosSettings,
     /// Prediction-markets data-service configuration.
     pub prediction_markets: KaskPredictionMarketsSettings,
-
-    /// Swarm MCP server configuration (local swarm agents and local swarms).
-    pub swarm: KaskSwarmSettings,
 
     /// Media MCP server configuration: research transcription and vision models.
     pub media: KaskMediaSettings,
@@ -388,48 +385,6 @@ pub struct KaskPredictionMarketsSettings {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
 pub struct KaskScenariosSettings {}
 
-/// Swarm MCP server configuration — the local substrate (local swarm
-/// agents and local swarms) only.
-///
-/// No cloud credentials or config: the former ABW cloud integration is
-/// removed. The swarm memory DB opens with the ONE shared
-/// `HKASK_DB_PASSPHRASE` keychain credential, like every kask SQLCipher DB.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct KaskSwarmSettings {
-    /// Default model id for newly created local agents when the caller omits
-    /// `model` (KA-05); also used by local agents without a per-card model.
-    /// Empty leaves the host session to resolve its own default.
-    pub default_agent_model: String,
-
-    /// Whether to start the A2A HTTP gateway (loopback JSON-RPC server that
-    /// exposes local agents to external A2A clients). Default `false`
-    /// (opt-in — it opens a loopback port).
-    pub a2a_http_enabled: bool,
-
-    /// Embedding vector dimension for the semantic-memory embedding store.
-    /// Default 1024.
-    pub embedding_dim: usize,
-}
-
-impl Default for KaskSwarmSettings {
-    fn default() -> Self {
-        // These defaults MUST stay in sync with `SwarmConfig::default()` in
-        // `kask/mcp-servers/hkask-mcp-swarm/src/config.rs`. The bridge emits
-        // env vars (`HKASK_SWARM_*`) from this `Default` via `mcp_env()`; the
-        // server reads them in `SwarmConfig::from_env`. The two `Default`
-        // impls are deliberately separate (the server crate does not depend
-        // on the bridge crate) to avoid a circular dependency — the
-        // duplication is the seam between them. If you change a default
-        // here, change it there too, and update the
-        // `swarm_settings_default_emits_no_env` test below.
-        Self {
-            default_agent_model: String::new(),
-            a2a_http_enabled: false,
-            embedding_dim: 1024,
-        }
-    }
-}
-
 /// Media MCP server configuration.
 ///
 /// Research transcription and vision model overrides. Both carry
@@ -681,14 +636,12 @@ impl KaskSettings {
         env.insert("HKASK_ARTIFACTS_DIR".to_string(), artifacts_dir);
         crate::mcp_env::emit_general_env(&self.general, &mut env);
         crate::mcp_env::emit_curator_webid_env(&mut env);
-        crate::mcp_env::emit_mcp_server_ids_env(&mut env);
         crate::mcp_env::emit_research_env(&self.research, &mut env);
         let effective_embedding = self.effective_embedding_model();
         crate::mcp_env::emit_corpus_embedding_env(&self.corpus, &effective_embedding, &mut env);
         crate::mcp_env::emit_corpus_template_root_env(&self.corpus, &data_dir, &mut env);
         crate::mcp_env::emit_scenarios_env(&data_dir, &mut env);
         crate::mcp_env::emit_prediction_markets_env(&data_dir, &self.prediction_markets, &mut env);
-        crate::mcp_env::emit_swarm_env(&data_dir, &self.swarm, &mut env);
         crate::mcp_env::emit_media_env(&self.media, &mut env);
         crate::mcp_env::emit_models_env(&self.models, &mut env);
         crate::mcp_env::emit_curator_distillation_env(&self.memory, &mut env);
@@ -904,17 +857,6 @@ impl From<KaskScenariosSettingsContent> for KaskScenariosSettings {
     }
 }
 
-impl From<KaskSwarmSettingsContent> for KaskSwarmSettings {
-    fn from(c: KaskSwarmSettingsContent) -> Self {
-        let default = Self::default();
-        Self {
-            default_agent_model: c.default_agent_model.unwrap_or(default.default_agent_model),
-            a2a_http_enabled: c.a2a_http_enabled.unwrap_or(default.a2a_http_enabled),
-            embedding_dim: c.embedding_dim.unwrap_or(default.embedding_dim),
-        }
-    }
-}
-
 impl From<KaskMediaSettingsContent> for KaskMediaSettings {
     fn from(c: KaskMediaSettingsContent) -> Self {
         let default = Self::default();
@@ -954,7 +896,6 @@ impl From<KaskSettingsContent> for KaskSettings {
             corpus: c.corpus.map(Into::into).unwrap_or_default(),
             scenarios: c.scenarios.map(Into::into).unwrap_or_default(),
             prediction_markets: c.prediction_markets.map(Into::into).unwrap_or_default(),
-            swarm: c.swarm.map(Into::into).unwrap_or_default(),
             models: c.models.map(Into::into).unwrap_or_default(),
         }
     }

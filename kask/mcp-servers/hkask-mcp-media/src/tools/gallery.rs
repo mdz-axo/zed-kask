@@ -1732,6 +1732,7 @@ pub(super) mod tests {
             YtDlpRunner::detect(),
             jobs::new_job_store(),
             None,
+            Default::default(),
         )
     }
 

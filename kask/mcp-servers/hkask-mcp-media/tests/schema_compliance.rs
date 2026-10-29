@@ -42,7 +42,7 @@ use hkask_mcp_media::types::{
     ModelInfoRequest, ModelListRequest, RecordAndTranscribeRequest, TranscribeAndStoreRequest,
     TranscribeBundleRequest, VideoAddCaptionRequest, VideoClipRequest, VideoConcatRequest,
     VideoExtractFramesRequest, VideoFetchRequest, VideoInfoRequest, VideoToGifRequest,
-    YoutubeSearchRequest,
+    VoiceEnrollRequest, VoiceListRequest, VoiceRemoveRequest, YoutubeSearchRequest,
 };
 use hkask_types::find_boolean_schema_positions;
 use schemars::schema_for;
@@ -54,8 +54,8 @@ fn live_router_schema_inventory_is_complete_and_clean() {
     let tools = hkask_mcp_media::MediaServer::combined_router().list_all();
     assert_eq!(
         tools.len(),
-        76,
-        "approved surface: 92 - 20 Reduct cloud tools + 4 media-layer tools + 1 section re-transcribe"
+        79,
+        "approved surface: 92 - 20 Reduct cloud tools + 4 media-layer tools + 1 section re-transcribe + 3 voice-profile tools"
     );
     let actual = tools
         .iter()
@@ -322,6 +322,9 @@ schema_clean_test!(layers_store_request_schema, LayersStoreRequest);
 schema_clean_test!(layers_list_request_schema, LayersListRequest);
 schema_clean_test!(layers_get_request_schema, LayersGetRequest);
 schema_clean_test!(layers_shot_pass_request_schema, LayersShotPassRequest);
+schema_clean_test!(voice_enroll_request_schema, VoiceEnrollRequest);
+schema_clean_test!(voice_list_request_schema, VoiceListRequest);
+schema_clean_test!(voice_remove_request_schema, VoiceRemoveRequest);
 
 /// The closed layer-kind vocabulary rejects unknown values at the wire
 /// boundary naming every valid kind — the rmcp deserializer surfaces this
@@ -609,3 +612,6 @@ deser_totality_test!(
     layers_shot_pass_request_deser_totality,
     LayersShotPassRequest
 );
+deser_totality_test!(voice_enroll_request_deser_totality, VoiceEnrollRequest);
+deser_totality_test!(voice_list_request_deser_totality, VoiceListRequest);
+deser_totality_test!(voice_remove_request_deser_totality, VoiceRemoveRequest);

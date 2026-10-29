@@ -62,8 +62,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [`reference/mcp-servers/prediction-markets.md`](reference/mcp-servers/prediction-markets.md) | Prediction-markets server — Polymarket/Kalshi calibration and economic data. |
 | [`reference/mcp-servers/research.md`](reference/mcp-servers/research.md) | Research server — web/RSS retrieval, evidence scoring, run ledger, and paper identity. |
 | [`reference/mcp-servers/scenarios.md`](reference/mcp-servers/scenarios.md) | Scenarios server — Schwartz/Tetlock pipeline (22 tools; the provider-free forecast loop moved here from the removed companies server, and `scenario_from_markets_set` bridges prediction-market records into event trees). |
-| [`reference/mcp-servers/swarm.md`](reference/mcp-servers/swarm.md) | Swarm server — local swarm agents and local swarms (37 tools). |
-| [`reference/skills/README.md`](reference/skills/README.md) | Registry of 60 skills, 57 template namespaces, and 224 `.j2` resources. |
+| [`reference/skills/README.md`](reference/skills/README.md) | Registry of 58 skills, 55 template namespaces, and 216 `.j2` resources. |
 | [`loop-register.md`](loop-register.md) | Loop audit register — 25 system loops (L24 the experimentation protocol, L25 experimentation-health sensing, added 2026-09-30/10-01) with audit verdicts, three-layer (A/B/C) classifications with per-row sense→report→actuate maps and INV1–INV6 alignment verdicts (pass 3), deferred operator decisions, and the change-log ledger. |
 | [`reference/kask-settings.md`](reference/kask-settings.md) | Kask settings and environment reference. |
 | [`reference/lisp-eval-dialect.md`](reference/lisp-eval-dialect.md) | Sandboxed `lisp_eval` dialect and `form`/`env` contract. |
@@ -78,7 +77,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) | Registry of 93 current `DIAGRAM_ALIGNMENT` records representing 93 unique IDs; 25 records are in the five consolidated diagram files and 68 are inline. |
 | [`diagrams/architecture.md`](diagrams/architecture.md) | Cross-cutting architecture diagrams. |
 | [`diagrams/kanban.md`](diagrams/kanban.md) | Kata-kanban state machines: task status, move controller, and the goal lifecycle (create → progress → human closure → assessment → current recall). |
-| [`diagrams/swarm.md`](diagrams/swarm.md) | Swarm architecture and control loops. |
+| [`reference/kask-settings.md`](reference/kask-settings.md) | Kask settings and environment reference. |
 | [`diagrams/ui-widgets.md`](diagrams/ui-widgets.md) | Native UI-widget structures. |
 | [`diagrams/mcp-dispatch.md`](diagrams/mcp-dispatch.md) | MCP runtime and tool-dispatch flows. |
 
@@ -121,12 +120,18 @@ Git history is the archive of record. Every removed document names its active su
 | --- | --- |
 | `plans/transcript-bench-implementation-plan-2026-10-25.md` | The executed bench it specified is the live record: the media panel's Transcript tab is the direct transcript workspace — recordings browse (with a back-to-browser affordance), synced reading with word-click seek and follow-along, two-click select → label editor (typed or pasted labels) → researcher-highlight create/rename/delete, provenance-keyed reel compose+render (`reference/mcp-servers/media.md` § Media panel — transcript surface, function-cited). Delivered under goal `4841c444-5c11-4e6d-a0be-a8785d561316` on the "Transcript bench" board: S1–S7 across commits `18ad4e3f37` (S1 Detail), `d6a53e1213` + `cb88358e4f` (S2 seek + fixture), `3d1e88d32e` (invoker lock + CI gate), `57230722b0` + `da32b38557` + `36505c90f7` (S3 workspace), `38086ac772` (S6 browser), `adfba1d9e9` + `6d1d65f7ac` + `baf651f456` + `29f6399133` (S4 highlight CRUD + label editor), `7412afcdba` (wrap fix), `ab75671fe1` + `cfa4679064` (S5 reels), and `6fb45d938d` + `6c889f4296` (S7 docs + tombstone), with four live-verified media-server repairs under the plan's §1 operator-authorized amendment (`6c59e731c4` pass-model default, `9796279f80` highlight index map, `2897646c90` STT preconditioning, `14c6b1547c` paragraph windows); the 2026-10-26 review pass closed its findings across `1af61160fe` (server), `1d755630a0` (widget), and `ddcdb6b87a` (panel). An earlier revision of this entry cited hashes that never existed as git objects — corrected 2026-10-26 against `git cat-file` (the fabricated-hash trap). The pre-collapse history named above was erased by the 2026-10-27 history collapse (see the corpus-header disclosure); this entry and the seam register carry the durable record. |
 
+### Deleted 2026-10-28 (swarm capability removal — executed plan, successor recorded)
+
+| Artifact | Successor |
+| --- | --- |
+| `reference/mcp-servers/swarm.md` + `diataxis/swarm_system/{reference,explanation}.md` + `diagrams/swarm.md` | No successor docs — the entire swarm capability (the `hkask-mcp-swarm` server, `swarm_panel`, `hkask-swarm-widget`, the A2A protocol surface, the local agent registry, the shared swarm memory store, the two swarm skills and their 8 templates) was removed by operator order. The executed plan `plans/swarm-removal-plan-2026-10-28.md` is the live record; DIVERGENCE.md carries the retired D33 seam and the updated D1/D2/D3/D6/D18/D28/D45/D54/D80/D86 rows. Git history holds the full set. |
+
 ### Deleted 2026-10-25 (executed point-in-time removal plans — house lifecycle)
 
 | Artifact | Successor |
 | --- | --- |
 | `plans/reduct-removal-plan-2026-10-22.md` | The executed removal it specified is the live record: the 20 `reduct_*` cloud tools, `tools/reduct.rs`, the `REDUCT_API_KEY` descriptor and the provider profile are gone; `kask_bridge::purge_removed_reduct_api_key` purges the dormant keychain slot at startup (DIVERGENCE.md D5; `reference/mcp-servers/media.md` § Redesign record's removed-surface note). Git history holds the full plan and its decision log. |
-| `plans/abw-removal-plan-2026-10-22.md` | The executed removal it specified is the live record: the ABW cloud backend and its credential chain are gone, the swarm server's local mode is the surviving surface (`reference/mcp-servers/swarm.md`), and `kask_bridge::purge_removed_abw_api_key` purges the dormant keychain slot at startup (DIVERGENCE.md D5, Decision A). Git history holds the full plan. |
+| `plans/abw-removal-plan-2026-10-22.md` | The executed removal it specified is the live record: the ABW cloud backend and its credential chain are gone (the swarm server itself was later removed whole on 2026-10-28), and `kask_bridge::purge_removed_abw_api_key` purges the dormant keychain slot at startup (DIVERGENCE.md D5, Decision A). Git history holds the full plan. |
 | The ADC meta-study design record (added 2026-10-24; exact filename unrecoverable — purged with the history) | No successor — operator-directed full removal (2026-10-25): the record left the tree in the relocation pass, its data-directory artifacts were deleted, and its study files were purged from the git history in the same pass. The pre-collapse purge leaves this ledger row as the only record; no successor copy exists. |
 
 ### Deleted 2026-10-19 (companies-removal docs reconciliation — executed plan, successor recorded)
@@ -216,7 +221,7 @@ Git history is the archive of record. Every removed document names its active su
 
 | Artifact | Successor |
 | --- | --- |
-| `diataxis/swarm_system/how-to.md` | `diataxis/swarm_system/reference.md` (Procedures section). |
+| `diataxis/swarm_system/how-to.md` | Was `diataxis/swarm_system/reference.md` (Procedures section); the whole swarm_system set was removed 2026-10-28 with the swarm capability — git history. |
 | `diataxis/hkask-types/how-to.md` | `diataxis/hkask-types/reference.md` (Procedures section). |
 | `diataxis/hkask-storage/how-to.md` | `diataxis/hkask-storage/reference.md` (Procedures section). |
 | `diataxis/hkask-regulation/how-to.md` | `diataxis/hkask-regulation/reference.md` (Procedures section). |
@@ -271,7 +276,7 @@ The eight tutorial removals landed in `5881f1f406fafe12f4fc65a549dbf1eb0a62ca84`
 | `diataxis/hkask-tool-port/tutorial.md` | `diataxis/hkask-tool-port/reference.md` |
 | `diataxis/hkask-types/tutorial.md` | `diataxis/hkask-types/how-to.md` |
 | `diataxis/kask_bridge/tutorial.md` | `diataxis/kask_bridge/how-to.md` |
-| `diataxis/swarm_system/tutorial.md` | `diataxis/swarm_system/how-to.md` |
+| `diataxis/swarm_system/tutorial.md` | Was `diataxis/swarm_system/how-to.md`; the whole swarm_system set was removed 2026-10-28 — git history. |
 | `plans/inference-regulation-loop-completion-plan.md` | Implemented inference-resilience behavior in `kask/crates/kask_bridge/src/inference_resilience.rs` and current operational explanation in `kask/docs/diataxis/hkask-regulation/explanation.md`. |
 
 ### Deleted 2026-09-17 (point-in-time prediction-market reports)

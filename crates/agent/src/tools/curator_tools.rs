@@ -900,7 +900,7 @@ impl From<CuratorClearAlgedonicLogOutput> for language_model::LanguageModelToolR
 ///
 /// This is a tool-local representation — the composition root converts it to
 /// `hkask_types::CuratorDirective` before sending. Agent fields use names
-/// (e.g. `"curator"`, `"swarm-panel"`), not raw WebIDs, because the model
+/// (e.g. `"curator"`, `"kask-panel"`), not raw WebIDs, because the model
 /// knows agents by name.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -914,7 +914,7 @@ pub enum CuratorDirectiveRequest {
     },
     /// Add or remove capabilities for an agent.
     UpdateCapabilities {
-        /// Agent name (e.g., "curator", "swarm-panel").
+        /// Agent name (e.g., "curator", "kask-panel").
         agent: String,
         /// Capabilities to add.
         #[serde(default)]

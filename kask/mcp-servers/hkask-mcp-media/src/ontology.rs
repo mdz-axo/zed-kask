@@ -35,7 +35,8 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
         | "educt_annotation_list"
         | "educt_search_transcripts"
         | "layers_list"
-        | "layers_get" => Some(REPORT),
+        | "layers_get"
+        | "voice_list" => Some(REPORT),
         "image_create_collage"
         | "video_clip"
         | "video_to_gif"
@@ -78,6 +79,8 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
         | "gallery_name_face"
         | "face_register"
         | "face_remove"
+        | "voice_enroll"
+        | "voice_remove"
         | "face_scan_folder"
         | "job_submit"
         | "job_cancel"
@@ -182,6 +185,7 @@ mod tests {
             crate::video::ytdlp::YtDlpRunner::detect(),
             crate::jobs::new_job_store(),
             None,
+            Default::default(),
         );
         let response = server
             .job_list(Parameters(crate::types::JobListRequest {

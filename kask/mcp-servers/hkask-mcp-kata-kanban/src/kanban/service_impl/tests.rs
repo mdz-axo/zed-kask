@@ -1026,11 +1026,7 @@ fn remaining_task_mutations_preserve_interleaved_comments_in_both_orders() {
                 "verify" => svc.task_verify(task.id, "Confirmed", owner).map(|_| ()),
                 "reopen" => svc.task_reopen(task.id, owner).map(|_| ()),
                 "spawn" => svc
-                    .spawn_task(
-                        task.id,
-                        SpawnSpec::new(task.id).with_swarm(Some("fixture-swarm".into())),
-                        owner,
-                    )
+                    .spawn_task(task.id, SpawnSpec::new(task.id), owner)
                     .map(|_| ()),
                 _ => unreachable!("fixture operation"),
             };
@@ -1064,7 +1060,7 @@ fn remaining_task_mutations_preserve_interleaved_comments_in_both_orders() {
                     expected.status = TaskStatus::InProgress;
                     expected.verification = None;
                 }
-                "spawn" => expected.swarm_id = Some("fixture-swarm".into()),
+                "spawn" => {}
                 _ => unreachable!("fixture operation"),
             }
             let comments = svc
@@ -1853,61 +1849,6 @@ fn board_get_succeeds() {
 #[test]
 fn board_isolation() {
     assert_boards_isolated_by_owner();
-}
-
-// ── Kanban-as-swarm-coordination tests (Slices 1-4) ──────────────────────
-
-#[test]
-fn task_swarm_fields_default_to_none() {
-    // Slice 1: new tasks have swarm_id, delegate_result, deterministic_verdict = None.
-    let (svc, board, owner) = make_service_with_board();
-    let task = svc
-        .task_create(board.id, TaskSpec::new("Swarm task".into()), owner)
-        .unwrap();
-    assert!(task.swarm_id.is_none(), "swarm_id should default to None");
-    assert!(
-        task.delegate_result.is_none(),
-        "delegate_result should default to None"
-    );
-    assert!(
-        task.deterministic_verdict.is_none(),
-        "deterministic_verdict should default to None"
-    );
-}
-
-#[test]
-fn spawn_task_writes_swarm_id_when_spec_carries_it() {
-    // C2: `spawn_task` writes `SpawnSpec.swarm_id` to `Task.swarm_id` so the
-    // durable link is set before worktree admission in `kanban_task_spawn`
-    // and exposed through `kanban_task_delegate_result`.
-    let (svc, board, owner) = make_service_with_board();
-    let task = svc
-        .task_create(board.id, TaskSpec::new("Spawn task".into()), owner)
-        .unwrap();
-    let spec = SpawnSpec::new(task.id).with_swarm(Some("sw-42".to_string()));
-    svc.spawn_task(task.id, spec, owner).unwrap();
-    let reloaded = svc.task_get(task.id).unwrap().expect("task should persist");
-    assert_eq!(
-        reloaded.swarm_id.as_deref(),
-        Some("sw-42"),
-        "spawn_task must persist the spec's swarm_id"
-    );
-}
-
-#[test]
-fn spawn_task_leaves_swarm_id_none_when_spec_omits_it() {
-    // C2: a spec with `swarm_id: None` (the default) must not set a swarm link.
-    let (svc, board, owner) = make_service_with_board();
-    let task = svc
-        .task_create(board.id, TaskSpec::new("Spawn task".into()), owner)
-        .unwrap();
-    let spec = SpawnSpec::new(task.id);
-    svc.spawn_task(task.id, spec, owner).unwrap();
-    let reloaded = svc.task_get(task.id).unwrap().expect("task should persist");
-    assert!(
-        reloaded.swarm_id.is_none(),
-        "spawn_task with no swarm_id must leave Task.swarm_id as None"
-    );
 }
 
 #[test]

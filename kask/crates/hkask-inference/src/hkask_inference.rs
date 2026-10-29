@@ -8,9 +8,9 @@
 //! via zed's `LanguageModelRegistry` (with zed's configured credentials). This
 //! crate provides the MCP-server side of that bridge:
 //!
-//! - [`InferenceIpcClient`] — `InferencePort` / `ToolDispatchPort` /
+//! - [`InferenceIpcClient`] — `InferencePort` /
 //!   `WorktreeSpawnPort` implementation over the Unix socket. Construct it via
-//!   [`resolve_inference_port`] / [`resolve_tool_dispatch_port`] /
+//!   [`resolve_inference_port`] /
 //!   [`resolve_worktree_spawn_port`], which return an unavailable stub (with a
 //!   clear, socket-named error) when `HKASK_INFERENCE_SOCKET` is not set.
 //! - [`InferenceConfig`] — shared configuration (base URLs, default model).
@@ -944,58 +944,6 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
             Err(hkask_types::InferenceError::Connection(
                 "list_models unavailable on direct inference fallback".to_string(),
             ))
-        })
-    }
-}
-
-/// Resolve the tool-dispatch port for an MCP server.
-///
-/// Returns the IPC-bridge client when the socket is available (the zed process
-/// dispatches governed tools through its `McpRuntime`), or a stub that returns
-/// a clear, socket-named error. Tool dispatch only exists on the zed side —
-/// there is no standalone fallback.
-#[must_use]
-pub async fn resolve_tool_dispatch_port() -> std::sync::Arc<dyn hkask_types::ToolDispatchPort> {
-    match connect_bridge("MCP tool dispatch").await {
-        Some(client) => {
-            std::sync::Arc::new(client) as std::sync::Arc<dyn hkask_types::ToolDispatchPort>
-        }
-        None => std::sync::Arc::new(UnavailableToolDispatch),
-    }
-}
-
-/// Tool-dispatch stub for MCP servers without the IPC bridge. Returns a clear
-/// error naming the missing socket so the caller can distinguish "dispatch
-/// unavailable" from "tool not found".
-struct UnavailableToolDispatch;
-
-impl hkask_types::ToolDispatchPort for UnavailableToolDispatch {
-    fn tool_definition<'a>(
-        &'a self,
-        _server: &'a str,
-        _tool: &'a str,
-        _allowed: &'a [String],
-    ) -> hkask_types::PortFuture<'a, hkask_types::ChatToolDefinition> {
-        Box::pin(async {
-            Err(hkask_types::InferenceError::Connection(format!(
-                "tool definition unavailable: {IPC_BRIDGE_UNAVAILABLE} — \
-                 delegated tools require the zed process"
-            )))
-        })
-    }
-
-    fn invoke_tool<'a>(
-        &'a self,
-        _server: &'a str,
-        _tool: &'a str,
-        _args: serde_json::Value,
-        _allowed: &'a [String],
-    ) -> hkask_types::PortFuture<'a, serde_json::Value> {
-        Box::pin(async {
-            Err(hkask_types::InferenceError::Connection(format!(
-                "tool dispatch unavailable: {IPC_BRIDGE_UNAVAILABLE} — \
-                 MCP tool calls from delegated agents require the zed process"
-            )))
         })
     }
 }

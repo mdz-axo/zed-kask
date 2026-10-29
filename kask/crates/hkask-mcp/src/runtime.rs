@@ -1414,7 +1414,7 @@ impl McpRuntime {
     ///
     /// Used by the settings-change restart path: governed `McpRuntime`
     /// instances are started once at login, so a settings change that alters
-    /// a server's env (e.g. `kask.swarm.mode` → `HKASK_SWARM_MODE`) requires
+    /// a server's env (e.g. a models override → its `HKASK_*_MODEL` var) requires
     /// stopping the old process and re-running `start_server_with_env` with
     /// the new env (`start_server_with_env` alone is idempotent per
     /// connection and would no-op on an already-connected server).

@@ -5335,37 +5335,6 @@ pub fn skill_body_resolver_for_project(
     }
 }
 
-/// Activate a skill for a delegated (local swarm) agent: the app-published
-/// catalog (`SkillIndex`, the same global and project skills sessions see),
-/// resolved and rendered exactly as `SkillTool` does. Bodies are read from disk.
-pub fn activate_delegated_skill(name: String, cx: &mut AsyncApp) -> Task<Result<String, String>> {
-    let resolved = cx.update(|cx| {
-        let index = cx.try_global::<SkillIndex>().cloned().unwrap_or_default();
-        let all: Vec<Skill> = index
-            .global_skills
-            .iter()
-            .chain(index.project_skills.iter().flat_map(|group| &group.skills))
-            .cloned()
-            .collect();
-        resolve_invocable_skill(&apply_skill_overrides(&all), &name, DELEGATED_SKILL_INVOKER)
-            .map(|skill| (skill, <dyn Fs>::global(cx)))
-    });
-    let (skill, fs) = match resolved {
-        Ok(resolved) => resolved,
-        Err(error) => return Task::ready(Err(error)),
-    };
-    cx.background_spawn(async move {
-        let body = agent_skills::read_skill_body(fs.as_ref(), &skill.skill_file_path)
-            .await
-            .map_err(Into::into);
-        activate_skill(&skill, body, DELEGATED_SKILL_INVOKER)
-    })
-}
-
-/// Invoker stamped on skill outcomes activated over inference IPC
-/// (`host/skill`) by delegated swarm agents.
-pub const DELEGATED_SKILL_INVOKER: &str = "delegated";
-
 /// Global hook for the kask registry templates directory (D1).
 /// Wired in `main.rs` at startup. The `render_template` tool reads this
 /// to resolve Jinja2 template refs (e.g., `essentialist/essentialist-flow`).
@@ -5443,11 +5412,11 @@ recorder_hook!(MCP_TOOL_OUTCOME_RECORDER, McpToolOutcomeRecorder);
 /// Skill activation outcome — the observe stage of the skill learning loop
 /// (`DIAG-ARCH-LEARNING-LOOP-001`, `kask/docs/diagrams/architecture.md`):
 /// (skill id, invoker, success, error). `invoker` is the session agent id —
-/// `Curator` or `Zed Agent` — or [`DELEGATED_SKILL_INVOKER`]. Production
+/// `Curator` or `Zed Agent`. Production
 /// persists `reg.skill.<id>.outcome` (read by the algedonic review's gemba
 /// walk via `reg_query`) and feeds `RegulationLedger::record_skill_span` for
-/// `sense_feedback_drift`. Fired by `SkillTool::run` and
-/// `activate_delegated_skill` for skills found and attempted; not-found and
+/// `sense_feedback_drift`. Fired by `SkillTool::run` for skills found and
+/// attempted; not-found and
 /// authorization denial are request errors and are not recorded.
 pub type SkillOutcomeRecorder = Arc<dyn Fn(&str, &str, bool, Option<&str>) + Send + Sync>;
 recorder_hook!(SKILL_OUTCOME_RECORDER, SkillOutcomeRecorder);

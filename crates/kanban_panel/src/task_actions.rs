@@ -6,7 +6,7 @@
 //! renderers, and the action handlers.
 //!
 //! Each form is a lightweight inline panel rendered below the board header.
-//! Forms use `Editor::single_line` for text input (matching the swarm panel's
+//! Forms use `Editor::single_line` for text input (the panel-wide
 //! compose form pattern). Form state is owned by the `KanbanPanel` so it
 //! persists across re-renders.
 
@@ -200,7 +200,6 @@ fn task_edit_args(
 pub(crate) struct SpawnTaskForm {
     pub skills: Entity<Editor>,
     pub delegation_level: Entity<Editor>,
-    pub swarm_id: Entity<Editor>,
     /// The task id to spawn.
     pub task_id: String,
 }
@@ -231,11 +230,6 @@ impl SpawnTaskForm {
                 editor.set_text("standard".to_string(), window, cx);
                 editor
             }),
-            swarm_id: cx.new(|cx| {
-                let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text("Swarm id (optional)", window, cx);
-                editor
-            }),
             task_id: task_id.to_string(),
         }
     }
@@ -244,7 +238,6 @@ impl SpawnTaskForm {
     pub(crate) fn collect_args(&self, cx: &gpui::App) -> serde_json::Value {
         let skills_text = self.skills.read(cx).text(cx);
         let level = self.delegation_level.read(cx).text(cx);
-        let swarm_id = self.swarm_id.read(cx).text(cx);
 
         let mut args = json!({
             "task_id": self.task_id,
@@ -258,9 +251,6 @@ impl SpawnTaskForm {
                 .filter(|s| !s.is_empty())
                 .collect();
             args["delegated_skills"] = json!(skills);
-        }
-        if !swarm_id.trim().is_empty() {
-            args["swarm_id"] = json!(swarm_id);
         }
         args
     }
@@ -439,8 +429,7 @@ pub(crate) fn render_spawn_task_form(
         .child(
             h_flex()
                 .gap_2()
-                .child(div().w_48().child(form.delegation_level.clone()))
-                .child(div().flex_1().child(form.swarm_id.clone())),
+                .child(div().w_48().child(form.delegation_level.clone())),
         )
         .child(action_row(
             cx,

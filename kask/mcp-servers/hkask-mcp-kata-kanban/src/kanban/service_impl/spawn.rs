@@ -10,10 +10,6 @@ impl KanbanService {
         let (task, ()) = self.mutate_task(task_id, |task| {
             Self::require_task_owner(task, actor)?;
 
-            // Write the durable swarm link before worktree admission so the
-            // configuration remains visible through `kanban_task_delegate_result`.
-            task.swarm_id = spawn_spec.swarm_id.clone();
-
             let spawn_note = format!(
                 "Spawn configured: level={}, skills={:?}, memory={}, tools={:?}",
                 spawn_spec.delegation_level,

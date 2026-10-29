@@ -1379,7 +1379,6 @@ async fn backfill_repairs_legacy_rows_without_canonical_passage() {
         &server
             .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
                 mode: None,
-                store: None,
                 dry_run: Some(true),
             }))
             .await
@@ -1400,7 +1399,6 @@ async fn backfill_repairs_legacy_rows_without_canonical_passage() {
         &server
             .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
                 mode: None,
-                store: None,
                 dry_run: Some(false),
             }))
             .await
@@ -1426,7 +1424,6 @@ async fn backfill_repairs_legacy_rows_without_canonical_passage() {
         &server
             .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
                 mode: None,
-                store: None,
                 dry_run: Some(true),
             }))
             .await
@@ -1492,7 +1489,6 @@ async fn backfill_embeddings_covers_knowledge_layer_and_excludes_turns() {
         &server
             .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
                 mode: None,
-                store: None,
                 dry_run: Some(true),
             }))
             .await
@@ -1515,7 +1511,6 @@ async fn backfill_embeddings_covers_knowledge_layer_and_excludes_turns() {
         &server
             .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
                 mode: None,
-                store: None,
                 dry_run: Some(false),
             }))
             .await
@@ -1550,7 +1545,6 @@ async fn backfill_embeddings_covers_knowledge_layer_and_excludes_turns() {
         &server
             .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
                 mode: None,
-                store: None,
                 dry_run: None,
             }))
             .await
@@ -1605,7 +1599,6 @@ async fn backfill_is_passage_scoped_and_excludes_goals() {
         &server
             .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
                 mode: None,
-                store: None,
                 dry_run: Some(true),
             }))
             .await
@@ -1622,7 +1615,6 @@ async fn backfill_is_passage_scoped_and_excludes_goals() {
         &server
             .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
                 mode: None,
-                store: None,
                 dry_run: Some(false),
             }))
             .await
@@ -1689,7 +1681,6 @@ async fn model_mismatch_sweep_restores_gated_rows_until_search_excludes_nothing(
         &server
             .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
                 mode: Some("model_mismatch".to_string()),
-                store: None,
                 dry_run: Some(true),
             }))
             .await
@@ -1703,7 +1694,6 @@ async fn model_mismatch_sweep_restores_gated_rows_until_search_excludes_nothing(
         &server
             .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
                 mode: Some("model_mismatch".to_string()),
-                store: None,
                 dry_run: Some(false),
             }))
             .await
@@ -1750,7 +1740,6 @@ async fn model_mismatch_sweep_accepts_the_provider_actual_form() {
         &server
             .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
                 mode: Some("model_mismatch".to_string()),
-                store: None,
                 dry_run: Some(true),
             }))
             .await
@@ -1769,208 +1758,15 @@ async fn model_mismatch_sweep_accepts_the_provider_actual_form() {
     );
 }
 
-/// `HKASK_SWARM_MEMORY_DB` and `HKASK_DB_PASSPHRASE` are process-global —
-/// every test that repoints the tool's swarm path must hold this lock for
-/// its full seeded-DB lifetime (across the awaited tool calls) or the env
-/// writes race. The tokio mutex is safe to hold across await points.
-static SWARM_DB_ENV_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
-    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
-
-/// Over the swarm store, missing-mode eligibility mirrors the swarm
-/// server's own embed path — delegation response chunks only — and the
-/// model-mismatch sweep reaches the swarm DB through the same tool.
-#[tokio::test]
-async fn backfill_reaches_the_swarm_store_with_response_chunk_eligibility() {
-    let (server, _curator_memory) = make_server_with_embeddings();
-    let _env_guard = SWARM_DB_ENV_LOCK.lock().await;
-
-    // Route the tool's swarm path at a throwaway DB. The env writes are
-    // test-only and serialized on SWARM_DB_ENV_LOCK; the
-    // ensure_embedding_model_env precedent allows the unsafe set_var.
-    let dir = std::env::temp_dir().join(format!("curator-swarm-sweep-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("tempdir");
-    let db_path = dir.join("swarm-test.db");
-    unsafe {
-        std::env::set_var("HKASK_SWARM_MEMORY_DB", &db_path);
-        std::env::set_var("HKASK_DB_PASSPHRASE", "test-passphrase");
-    }
-
-    let swarm_memory = hkask_memory::MemoryStore::open(
-        &db_path.to_string_lossy(),
-        "test-passphrase",
-        hkask_storage::embedding_dim(),
-    )
-    .expect("open swarm test DB");
-
-    // A delegation response chunk (the swarm's recall surface) and a
-    // non-chunk row its write path never embeds.
-    let chunk = hkask_storage::HMem::new(
-        "agent:probe:turn:t1:chunk:0",
-        "delegation:response_chunk",
-        serde_json::json!({"text": "swarm response chunk passage"}),
-        WebID::new(),
-    );
-    swarm_memory.store(chunk).expect("seed response chunk");
-    let other = hkask_storage::HMem::new(
-        "agent:probe:knowledge",
-        "note",
-        serde_json::json!({"text": "never embedded by the swarm write path"}),
-        WebID::new(),
-    );
-    swarm_memory.store(other).expect("seed non-chunk row");
-    // A stale-model row the mismatch sweep must retire. Its h_mem exists —
-    // the swarm write path stores the chunk before embedding it, and an
-    // embedding whose entity has no h_mem is an orphan the open-time
-    // sweep retires first.
-    let second_chunk = hkask_storage::HMem::new(
-        "agent:probe:turn:t1:chunk:1",
-        "delegation:response_chunk",
-        serde_json::json!({"text": "second chunk passage"}),
-        WebID::new(),
-    );
-    swarm_memory.store(second_chunk).expect("seed second chunk");
-    swarm_memory
-        .store_embedding(
-            "agent:probe:turn:t1:chunk:1",
-            &unit_vector(),
-            "legacy-model",
-            Some("second chunk passage"),
-        )
-        .expect("seed stale-model row");
-
-    // Missing mode: only the response chunk is eligible.
-    let missing = parse(
-        &server
-            .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
-                mode: None,
-                store: Some("swarm".to_string()),
-                dry_run: Some(false),
-            }))
-            .await
-            .expect("swarm missing backfill ok"),
-    );
-    assert_eq!(missing["store"].as_str(), Some("swarm"));
-    assert_eq!(
-        missing["backfilled"].as_u64(),
-        Some(1),
-        "only the delegation response chunk is eligible over the swarm store"
-    );
-
-    // Mismatch mode: the stale row is re-embedded under the current model.
-    let current_model =
-        std::env::var("HKASK_EMBEDDING_MODEL").unwrap_or_else(|_| "test-model".to_string());
-    let swept = parse(
-        &server
-            .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
-                mode: Some("model_mismatch".to_string()),
-                store: Some("swarm".to_string()),
-                dry_run: Some(false),
-            }))
-            .await
-            .expect("swarm sweep ok"),
-    );
-    assert_eq!(swept["re_embedded"].as_u64(), Some(1));
-
-    let after = swarm_memory
-        .search_similar(&unit_vector(), 10, &current_model, None)
-        .expect("search after swarm sweep");
-    assert_eq!(after.excluded_model_mismatch, 0);
-    assert_eq!(
-        after.results.len(),
-        2,
-        "the chunk and the swept row both rank"
-    );
-
-    std::fs::remove_dir_all(&dir).expect("cleanup tempdir");
-}
-
-/// Orphaned vec0 shadow rows — metadata deleted without vec access, e.g.
-/// a therapy-style SQL pass — collide on re-insert at the reused rowid
-/// (the 2026-09-28 swarm backfill failed 53/53 on exactly this). The
-/// swarm open sweeps them first, so the backfill writes succeed.
-#[tokio::test]
-async fn swarm_backfill_sweeps_orphaned_vec_rows_at_open() {
-    let (server, _curator_memory) = make_server_with_embeddings();
-    let _env_guard = SWARM_DB_ENV_LOCK.lock().await;
-
-    let dir = std::env::temp_dir().join(format!("curator-swarm-orphan-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("tempdir");
-    let db_path = dir.join("swarm-orphan-test.db");
-    unsafe {
-        std::env::set_var("HKASK_SWARM_MEMORY_DB", &db_path);
-        std::env::set_var("HKASK_DB_PASSPHRASE", "test-passphrase");
-    }
-
-    // Seed a live response chunk with its embedding, then delete the
-    // metadata row via raw SQL — the vec shadow row stays behind.
-    let swarm_memory = hkask_memory::MemoryStore::open(
-        &db_path.to_string_lossy(),
-        "test-passphrase",
-        hkask_storage::embedding_dim(),
-    )
-    .expect("open swarm test DB");
-    let chunk = hkask_storage::HMem::new(
-        "agent:probe:turn:t3:chunk:0",
-        "delegation:response_chunk",
-        serde_json::json!({"text": "orphan collision passage"}),
-        WebID::new(),
-    );
-    swarm_memory.store(chunk).expect("seed response chunk");
-    swarm_memory
-        .store_embedding(
-            "agent:probe:turn:t3:chunk:0",
-            &unit_vector(),
-            "legacy-model",
-            Some("orphan collision passage"),
-        )
-        .expect("seed embedding");
-    drop(swarm_memory);
-
-    {
-        let database = hkask_storage::open_or_repair(&db_path.to_string_lossy(), "test-passphrase")
-            .expect("open raw handle");
-        let conn = database
-            .sqlite_pool()
-            .expect("pool")
-            .get()
-            .expect("connection");
-        conn.execute("DELETE FROM embeddings", ())
-            .expect("delete metadata rows, orphaning the vec shadow row");
-    }
-
-    // Without the open-time sweep this fails on the vec_embeddings
-    // UNIQUE constraint: the fresh metadata insert reuses rowid 1, which
-    // the orphaned shadow row still holds.
-    let result = parse(
-        &server
-            .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
-                mode: None,
-                store: Some("swarm".to_string()),
-                dry_run: Some(false),
-            }))
-            .await
-            .expect("swarm backfill over an orphaned store ok"),
-    );
-    assert_eq!(result["store"].as_str(), Some("swarm"));
-    assert_eq!(
-        result["backfilled"].as_u64(),
-        Some(1),
-        "the orphaned vec row was swept at open, so the write lands"
-    );
-
-    std::fs::remove_dir_all(&dir).expect("cleanup tempdir");
-}
-
-/// Unknown mode or store values are rejected as invalid_argument — the
+/// Unknown mode values are rejected as invalid_argument — the
 /// closed vocabulary never silently defaults a typo.
 #[tokio::test]
-async fn backfill_rejects_unknown_mode_and_store() {
+async fn backfill_rejects_unknown_mode() {
     let (server, _memory) = make_server_with_embeddings();
 
     let mode_error = server
         .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
             mode: Some("sideways".to_string()),
-            store: None,
             dry_run: Some(true),
         }))
         .await
@@ -1978,19 +1774,6 @@ async fn backfill_rejects_unknown_mode_and_store() {
     assert!(
         matches!(mode_error.kind, hkask_types::McpErrorKind::InvalidArgument),
         "unknown mode is invalid_argument — got: {mode_error:?}"
-    );
-
-    let store_error = server
-        .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
-            mode: None,
-            store: Some("elsewhere".to_string()),
-            dry_run: Some(true),
-        }))
-        .await
-        .expect_err("unknown store must be rejected");
-    assert!(
-        matches!(store_error.kind, hkask_types::McpErrorKind::InvalidArgument),
-        "unknown store is invalid_argument — got: {store_error:?}"
     );
 }
 

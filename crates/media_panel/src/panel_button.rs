@@ -2,7 +2,7 @@
 //!
 //! A `marketplace_ui_common::PanelToggleButton` configured with the Media
 //! panel's id, icon, labels, and `Toggle` action. Mirrors
-//! `swarm_panel::panel_button` and `kanban_panel::panel_button`.
+//! `kanban_panel::panel_button`.
 
 use marketplace_ui_common::PanelToggleButton;
 use ui::IconName;

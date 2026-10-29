@@ -73,12 +73,12 @@ agent-client-protocol.workspace = true
 kask_bridge.workspace = true
 hkask-mcp.workspace = true
 hkask-tool-port.workspace = true
+hkask_tool_invoker.workspace = true
 hkask-types.workspace = true
 hkask-keystore.workspace = true
 hkask-regulation.workspace = true
 hkask-email.workspace = true
 
-swarm_panel.workspace = true
 kanban_panel.workspace = true
 media_panel.workspace = true
 agent.workspace = true

@@ -173,7 +173,7 @@ pub fn map_image_open_error(path: &std::path::Path, e: image::ImageError) -> Mcp
 /// A missing-credential / missing-provider configuration failure (the typed
 /// `InferenceError::NotConfigured` variant, emitted by `hkask-inference` when
 /// an API key env var is unset or no provider is registered for the op) maps
-/// to `permission_denied` (matching the canonical `hkask-mcp-swarm` pattern
+/// to `permission_denied` (matching the canonical missing-credential pattern
 /// for `"no API key configured"`); so does a rejected credential (the typed
 /// `InferenceError::Auth` variant — HTTP 401/403 from a provider: the key is
 /// present but invalid, expired, or unauthorized for the resource, which is

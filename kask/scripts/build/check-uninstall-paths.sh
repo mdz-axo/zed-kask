@@ -127,7 +127,7 @@ seed_installed_state
 cat > "$XDG_CONFIG_HOME/zed-kask/settings.json" <<JSON
 {
   "context_servers": {
-    "kask-server": { "command": "$BIN_DIR/hkask-mcp-swarm" },
+    "kask-server": { "command": "$BIN_DIR/hkask-mcp-media" },
     "user-custom": { "command": "/usr/local/bin/something-else" }
   }
 }
@@ -197,7 +197,7 @@ fi
 grep -q "jq is required" "$sandbox/write.log" || fail "missing-jq error did not name jq"
 
 # (c) The uninstall-side cleanup degrades loudly, never blocks uninstall.
-printf '{"context_servers":{"kask-server":{"command":"%s/hkask-mcp-swarm"}}}' "$BIN_DIR" \
+printf '{"context_servers":{"kask-server":{"command":"%s/hkask-mcp-media"}}}' "$BIN_DIR" \
     > "$XDG_CONFIG_HOME/zed-kask/settings.json"
 if ! (PATH="$jq_shim" remove_mcp_server_settings) >"$sandbox/remove.log" 2>&1; then
     fail "remove_mcp_server_settings failed without jq (must degrade, not block)"

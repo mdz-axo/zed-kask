@@ -18,7 +18,7 @@
 #
 # Scope: the check-unsafe-forbid.sh surface — every kask crate
 # (kask/crates/*, kask/mcp-servers/*) plus the zed-path kask-owned crates
-# (crates/hkask-*, crates/swarm_panel, crates/marketplace_ui_common),
+# (crates/hkask-*, crates/marketplace_ui_common),
 # src/ trees only (tests/ dirs are test code: "in test code prefer
 # expect with a message"). Inline `#[cfg(test)]` mods are excluded by
 # the rule itself.
@@ -64,7 +64,6 @@ else
     kask/crates/*/src
     kask/mcp-servers/*/src
     crates/hkask-*/src
-    crates/swarm_panel/src
     crates/marketplace_ui_common/src
   )
 fi

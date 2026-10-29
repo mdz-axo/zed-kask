@@ -108,7 +108,7 @@ for server_dir in $SCAN_DIRS; do
       has_tool_tests=1
     fi
   fi
-  # Servers whose struct is pub(crate) (e.g. swarm) cannot be constructed
+  # Servers whose struct is pub(crate) cannot be constructed
   # from an external tests/ file — their contract tests live in inline
   # #[cfg(test)] modules in src/. Accept a Parameters( call inside a
   # #[cfg(test)]-gated src file as satisfying the seam requirement.

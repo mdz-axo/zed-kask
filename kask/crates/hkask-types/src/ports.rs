@@ -13,7 +13,7 @@ pub mod regulation;
 pub use embedding::{EmbeddingBatch, EmbeddingGenerationError, RerankBatch};
 pub use inference_port::{
     EmbedFuture, EmbedWithIdentityFuture, InferenceFuture, InferencePort, MediaFuture,
-    MediaGenerateParams, ModelEntry, PortFuture, RerankFuture, ToolDispatchPort, WorktreeSpawnPort,
+    MediaGenerateParams, ModelEntry, PortFuture, RerankFuture, WorktreeSpawnPort,
 };
 pub use inference_types::{
     ChatMessage, ChatToolDefinition, ChatToolFunction, InferenceError, InferenceResult,

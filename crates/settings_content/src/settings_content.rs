@@ -1698,10 +1698,6 @@ pub struct KaskSettingsContent {
     #[serde(default)]
     pub prediction_markets: Option<KaskPredictionMarketsSettingsContent>,
 
-    /// Swarm MCP server configuration (local swarm agents and local swarms).
-    #[serde(default)]
-    pub swarm: Option<KaskSwarmSettingsContent>,
-
     /// Media MCP server configuration: research transcription and vision models.
     #[serde(default)]
     pub media: Option<KaskMediaSettingsContent>,
@@ -1871,22 +1867,6 @@ pub struct KaskScenariosSettingsContent {}
 pub struct KaskPredictionMarketsSettingsContent {
     /// Cache TTL in seconds for market-data responses.
     pub cache_ttl_secs: Option<u64>,
-}
-
-#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
-pub struct KaskSwarmSettingsContent {
-    /// Operator-selected model for new local agents without an explicit
-    /// model and for unpinned local agents at execution time. When empty,
-    /// local agents use the host session model.
-    pub default_agent_model: Option<String>,
-    /// Whether to start the A2A HTTP gateway (loopback JSON-RPC server that
-    /// exposes local agents to external A2A clients). Default `false`
-    /// (opt-in — it opens a loopback port). Security-relevant: only enable
-    /// when you need external A2A clients to reach your local agents.
-    pub a2a_http_enabled: Option<bool>,
-    /// Embedding vector dimension for the semantic-memory embedding store.
-    /// Default 1024. Only relevant if the embedding-search path is used.
-    pub embedding_dim: Option<usize>,
 }
 
 /// Media MCP server configuration (the `"kask.media"` section in settings.json).

@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 //! zed-kask: Shared chrome for marketplace-style catalog pages (card
-//! container, bordered search bar, empty-state row). Used by `swarm_panel`
+//! container, bordered search bar, empty-state row). Used by
 //! and `kanban_panel`.
 
 use editor::{Editor, EditorElement, EditorStyle};

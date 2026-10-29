@@ -40,7 +40,7 @@ Utility tools (`scenario_status` and the `*_status` / `ping` family) have no pub
 
 ## Initial and target condition
 
-- **Initial:** a server name from the operator's sweep order (scenarios → prediction-markets → swarm → kata-kanban → media → remaining; reorder only with a stated connectedness rationale); the source tree at `kask/mcp-servers/<server>/`; the live surface via `list_mcp_tools`; any saved inventory artifact.
+- **Initial:** a server name from the operator's sweep order (scenarios → prediction-markets → kata-kanban → media → remaining; reorder only with a stated connectedness rationale); the source tree at `kask/mcp-servers/<server>/`; the live surface via `list_mcp_tools`; any saved inventory artifact.
 - **Target:** a findings artifact for the server where enumerated tool count == reviewed count (per server and total, `lisp_eval`-reconciled), every finding cites tool + file:line verified by `kask/scripts/check-mcp-review-citations.sh`, efficiency numbers come from measured invocations with the harness named (a blocked axis is recorded as a harness-gap finding, never an asserted number), every tool carries an anchor + fidelity label (or a flagged default), and every finding routes to a named actuator.
 
 ## When to Use

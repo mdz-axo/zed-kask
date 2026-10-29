@@ -6,4 +6,5 @@ pub mod jobs;
 pub mod layers;
 pub mod models;
 pub mod processing;
+pub mod voice;
 pub mod youtube;

@@ -611,6 +611,7 @@ mod tests {
             YtDlpRunner::detect(),
             crate::jobs::new_job_store(),
             None,
+            Default::default(),
         ))
     }
 

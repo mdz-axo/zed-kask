@@ -35,7 +35,6 @@ system deserializes `SettingsContent`, not `KaskSettings`).
 | `corpus` | `KaskCorpusSettings` | `Default` |
 | `scenarios` | `KaskScenariosSettings` | derived `Default` |
 | `prediction_markets` | `KaskPredictionMarketsSettings` | derived `Default` |
-| `swarm` | `KaskSwarmSettings` | `Default` |
 | `media` | `KaskMediaSettings` | `Default` |
 | `models` | `KaskModelsSettings` | `Default` |
 
@@ -60,11 +59,11 @@ queued or running work and releases capacity.
 ## MCP Servers (`KaskMcpSettings`)
 
 Toggle which of the built-in kask MCP servers are loaded.[^mcp-spec-settings]
-The 9 servers (`BUILT_IN_MCP_SERVERS` registry in `kask/crates/kask_bridge/src/mcp_servers.rs`,
+The 8 servers (`BUILT_IN_MCP_SERVERS` registry in `kask/crates/kask_bridge/src/mcp_servers.rs`,
 IDs via `builtin_mcp_server_ids()`):
 `corpus`, `curator`, `experimentation`, `kata-kanban`, `media`,
-`prediction-markets`, `research`, `scenarios`, `swarm`. The crates live under `kask/mcp-servers/`
-(9 `hkask-mcp-*` crates).
+`prediction-markets`, `research`, `scenarios`. The crates live under `kask/mcp-servers/`
+(8 `hkask-mcp-*` crates).
 
 | Field | Type | Default |
 |-------|------|--------|
@@ -90,7 +89,7 @@ is not a successful-tool-call probe: a later call can still fail.
 `server/tool` names. For example (illustrative; not installed automatically):
 
 ```json
-{"kask":{"mcp":{"delegated_tools":{"swarm":["research/rss_search"]}}}}
+{"kask":{"mcp":{"delegated_tools":{"kata-kanban":["research/rss_search"]}}}}
 ```
 
 The parent injects only that child's opaque `HKASK_TOOL_GRANT` token. The IPC
@@ -306,7 +305,7 @@ Artifacts built for the 0.6B model were deleted 2026-09-28: the sealed
 calibration corpus under `zk-data/corpus-mcp/calibration/`, the
 `gentle-lovelace` style DB (rebuilt from
 `zk-data/corpus-mcp/styles/gentle-rebuild/chunks.jsonl` with the new model),
-and every stale embedding row in the curator and swarm memory DBs
+and every stale embedding row in the curator memory DB
 (≈11,923 + 58; the h_mems were kept — `curator_memory_backfill_embeddings`
 re-embeds them with the new model after the restart).
 
@@ -322,35 +321,6 @@ Prediction-markets data-service configuration (`kask/crates/kask_bridge/src/sett
 |-------|------|---------|-------------------|-------|
 | `cache_ttl_secs` | `u64` | `0` | `HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS` | Market-data cache TTL; 0 = server default |
 
-## Swarm (`KaskSwarmSettings`)
-
-Local swarm substrate — local swarm agents and local swarms (the former ABW
-cloud backend was removed 2026-10-22). See `diataxis/swarm_system/` and
-`DIVERGENCE.md` D2/D33.[^reynolds-swarm-settings]
-
-| Field | Type | Default | Env var injected | Notes |
-|-------|------|---------|-------------------|-------|
-| `default_agent_model` | `String` | `""` | `HKASK_SWARM_DEFAULT_AGENT_MODEL` | New local agents and unpinned local agents inherit this model at execution time; empty uses the local host session model. Explicit card models win. |
-| `a2a_http_enabled` | `bool` | `false` | server configuration | Opt-in loopback A2A HTTP gateway |
-| `embedding_dim` | `usize` | `1024` | `HKASK_SWARM_EMBEDDING_DIM` | Shared semantic-memory vector dimension — the width requested from MRL embedding models (`mcp_env.rs`; read by the swarm server at `config.rs`) |
-
-The complete subsection and defaults are at `kask/crates/kask_bridge/src/settings.rs`.
-
-No `local_agents_dir`, `local_swarms_dir`, or `memory_db_path` fields — these paths are derived from the global `data_dir` as `mcp/swarm/agents/curated/`, `mcp/swarm/swarms/`, and `mcp/swarm/memory.db` by `mcp_env()`. The server reads them via `HKASK_LOCAL_AGENTS_DIR`, `HKASK_LOCAL_SWARMS_DIR`, and `HKASK_SWARM_MEMORY_DB`.
-
-Removed settings (2026-10-22, with the ABW cloud backend): `mode`, `api_url`,
-`max_credits_per_dispatch`, `curator_consent_default`. A settings.json still
-carrying them parses (serde-unknown fields are ignored) and the keys are
-inert. The removed keychain credential
-`kask://credentials/hkask_abw_api_key` is purged at startup (DIVERGENCE.md D5).
-The memory DB opens with the one shared `HKASK_DB_PASSPHRASE` keychain
-credential, injected by `mcp_env_with_credentials`, not by `mcp_env()`. The
-bridge `Default` impl MUST stay in sync with `SwarmConfig::default()` in
-`kask/mcp-servers/hkask-mcp-swarm/src/config.rs` — the two impls are
-deliberately duplicated across the crate boundary to avoid a circular
-dependency.
-
-## Media (`KaskMediaSettings`)
 
 | Field | Type | Default | Env var |
 |-------|------|---------|---------|
@@ -449,8 +419,8 @@ keychain write/delete does not trigger a restart.
 The SQLCipher passphrase is resolved through a canonical 2-tier helper,
 `hkask_mcp_server::server::resolve_db_passphrase(&ctx.credentials)`:
 `ctx.credentials.get("HKASK_DB_PASSPHRASE")` → `resolve_credential("HKASK_DB_PASSPHRASE")`
-(env → hKask keychain). All six DB-passphrase-consuming servers (kata-kanban,
-research, curator, swarm, corpus) use this helper, not inline
+(env → hKask keychain). All five DB-passphrase-consuming servers (kata-kanban,
+research, curator, corpus) use this helper, not inline
 re-implementations. A miss
 returns `McpToolError::permission_denied` naming the env var.
 
@@ -463,10 +433,10 @@ keychain) without changing serde-default signatures.
 
 ### First-run provisioning
 
-`kask_bridge::identity::provision_db_passphrase` delegates to the one canonical `hkask_keystore::provision_db_passphrase_string` chain: environment override → existing `kask://credentials/hkask_db_passphrase` entry → first-run default (`kask/crates/kask_bridge/src/identity.rs:121-141`; `kask/crates/hkask-keystore/src/keychain.rs:367-429`). Governed MCP server launch calls that wrapper before building the server environment (`kask/crates/kask_bridge/src/mcp_servers.rs:536@build_mcp_server_env`). There is no separate swarm-memory passphrase.
+`kask_bridge::identity::provision_db_passphrase` delegates to the one canonical `hkask_keystore::provision_db_passphrase_string` chain: environment override → existing `kask://credentials/hkask_db_passphrase` entry → first-run default (`kask/crates/kask_bridge/src/identity.rs:121-141`; `kask/crates/hkask-keystore/src/keychain.rs:367-429`). Governed MCP server launch calls that wrapper before building the server environment (`kask/crates/kask_bridge/src/mcp_servers.rs:536@build_mcp_server_env`). 
 
 On first run, the DB passphrase defaults to `"allostery"`. There is ONE
-passphrase for every SQLCipher database (curator, corpus, swarm memory,
+passphrase for every SQLCipher database (curator, corpus,
 kata-kanban, research — `kask/crates/kask_bridge/src/identity.rs:139-141`)
 — no per-DB passphrases. The user can change it later
 via the settings UI (Security page); the change is scheduled there and
@@ -515,9 +485,6 @@ action) until the next startup applies it
 
 All env vars can be set either via the settings UI (keychain) or via shell
 environment. Shell env vars take precedence over keychain values. `KaskSettings::mcp_env` delegates to the environment builder at `kask/crates/kask_bridge/src/settings.rs:738` and `kask/crates/kask_bridge/src/mcp_env.rs`; settings defaults determine which optional values are emitted.
-`mcp_env()` also unconditionally injects `HKASK_MCP_SERVER_IDS` (the
-comma-joined `BUILT_IN_MCP_SERVERS_IDS`, consumed only by the swarm server's
-`config_env` allowlist) and passes through `HKASK_DATA_DIR` and
 `HKASK_CURATOR_WEBID` → `HKASK_WEBID` when set in the parent environment.
 
 ### Storage
@@ -574,20 +541,15 @@ into the editor process env).
 | Env Var | Server | Source setting |
 |---------|--------|----------------|
 
-| `HKASK_TEMPLATE_ROOT` | corpus, swarm | `corpus.template_root` |
+| `HKASK_TEMPLATE_ROOT` | corpus | `corpus.template_root` |
 | `HKASK_SCENARIOS_DATA` | scenarios | derived from `data_dir` as `mcp/scenarios/` |
 | `HKASK_PREDICTION_MARKETS_DATA` | prediction-markets | derived from `data_dir` as `mcp/prediction-markets/` |
 | `HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS` | prediction-markets | `prediction_markets.cache_ttl_secs` |
-| `HKASK_SWARM_DEFAULT_AGENT_MODEL` | swarm | `swarm.default_agent_model` |
-| `HKASK_LOCAL_AGENTS_DIR` | swarm | derived from `data_dir` as `mcp/swarm/agents/curated/` |
-| `HKASK_LOCAL_SWARMS_DIR` | swarm | derived from `data_dir` as `mcp/swarm/swarms/` |
-| `HKASK_SWARM_MEMORY_DB` | swarm | derived from `data_dir` as `mcp/swarm/memory.db` |
 | `HKASK_DEFAULT_MODEL` | all | `models.default_model` |
 | `HKASK_EMBEDDING_MODEL` | all | `models.embedding_model` / `corpus.embedding_model` |
 | `HKASK_CLASSIFIER_MODEL` | all | `models.classifier_model` |
 | `HKASK_QA_GENERATION_MODEL` | corpus | `models.qa_generation_model` (no default) |
 | `HKASK_WEBID` | curator | mapped from `HKASK_CURATOR_WEBID` |
-| `HKASK_MCP_SERVER_IDS` | swarm | `BUILT_IN_MCP_SERVERS_IDS` joined (unconditional) |
 | `HKASK_CURATOR_DB` | curator | injected by deferred task |
 | `HKASK_KANBAN_DB` | kata-kanban | Operator override for kanban DB path (default `mcp/kata-kanban/kanban.db`) |
 | `HKASK_RESEARCH_DB` | research | Operator override for research DB path (default `mcp/research/research.db`) |
@@ -632,8 +594,6 @@ The skill-span history cap (`max_skill_span_history`) is configurable via the
 [^owasp-llm-guard-settings]: OWASP. (2025). *OWASP Top 10 for Large Language Model Applications*. OWASP Foundation. https://owasp.org/www-project-top-10-for-large-language-model-applications/
     Cited for the LLM-specific security model the former guard layer (D4, removed 2026-08-10) was built to wrap the skill process with; provider-side safety and refusal fallbacks remain the active defense.
 
-[^reynolds-swarm-settings]: Reynolds, C. W. (1987). Flocks, herds and schools: A distributed behavioral model. *ACM SIGGRAPH Computer Graphics*, 21(4), 25–34. https://doi.org/10.1145/37402.37406
-    Cited for the swarm-coordination model the local swarm settings configure.
 
 [^ousterhout-models-settings]: Ousterhout, J. (2018). *A Philosophy of Software Design*. Yakny Press.
     Cited for the two-layer default design (empty-string fields with effective_* fallback to constants) that avoids magic-number defaults.

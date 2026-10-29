@@ -1,6 +1,6 @@
 //! Shared status bar toggle button for center-pane catalog pages.
 //!
-//! `swarm_panel::SwarmPanelButton` and `kanban_panel::KanbanPanelButton`
+//! `kanban_panel::KanbanPanelButton`
 //! implement the same `StatusItemView` pattern — track the active pane item's focus
 //! handle, render an `IconButton` that dispatches a `Toggle` action on click, and
 //! expose a tooltip whose keybinding reflects the active item.

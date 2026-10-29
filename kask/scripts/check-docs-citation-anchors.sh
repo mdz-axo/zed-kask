@@ -62,11 +62,8 @@ SCOPED_BASENAMES=(
   memory.rs
   thread.rs
   hkask_mcp_media.rs
-  hkask_mcp_swarm.rs
   hkask_mcp_kata_kanban.rs
   hkask_mcp_corpus.rs
-  local_tools.rs
-  swarm_panel.rs
   hkask_lisp.rs
 )
 

@@ -197,7 +197,7 @@ Use `lean-prover` only when an exact finite proposition is useful (for example o
 
 ### 5. Bind the executor and hand off
 
-Name the exact executable seam and its typed report. Software/agent designs may bind swarm or test harnesses; economic designs may bind FRED/DBnomics/World Bank/market observations; physical, biological and human-subject designs bind a human-operated protocol and stop. An unavailable executor is not a negative scientific result.
+Name the exact executable seam and its typed report. Software/agent designs may bind test harnesses; economic designs may bind FRED/DBnomics/World Bank/market observations; physical, biological and human-subject designs bind a human-operated protocol and stop. An unavailable executor is not a negative scientific result.
 
 Return the complete `DesignSpec` to `hypothesis-testing`. Do not call the registry here.
 

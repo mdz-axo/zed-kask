@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 //! Kanban Panel — a center-pane `Item` showing a persistent, auto-refreshing
-//! kanban board. Mirrors the `swarm_panel` crate's center-pane `Item` pattern.
+//! kanban board. A center-pane `Item` panel.
 //!
 //! The panel fetches boards and tasks from the `hkask-mcp-kata-kanban` MCP
 //! server through the global `ToolInvoker` hook (the metered MCP
@@ -265,7 +265,7 @@ pub enum TaskActionKind {
 }
 
 /// The panel's active mode: Browse (board view) or Steer (a cross-domain
-/// curator conversation framed around swarm-agent kanban coordination).
+/// curator conversation framed around kanban coordination).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PanelMode {
     Browse,
@@ -385,10 +385,7 @@ fn steer_system_prompt(board_name: Option<&str>, board_id: Option<&str>) -> Shar
          \n\
          When the operator asks to plan or decompose work, the `kanban-task-management` skill \
          cascade is available. Pass the board id so the cascade writes the durable link on every \
-         spawned task.{board_clause}\n\
-         \n\
-         Pass the swarm id to `kanban_task_spawn` (the `swarm_id` arg) whenever the task is \
-         scoped to a swarm — this stamps the durable `Task.swarm_id` link.",
+         spawned task.{board_clause}",
     );
     // A `kanban_*`/`contract_*` name in the prompt that the server does not
     // expose degrades to "tool not found" at dispatch time, so catch it here
@@ -451,8 +448,6 @@ struct TaskInfo {
     status: String,
     #[serde(default)]
     assignee: Option<String>,
-    #[serde(default)]
-    swarm_id: Option<String>,
     #[serde(default)]
     activity: Option<TaskActivityInfo>,
 }
@@ -955,7 +950,6 @@ impl KanbanPanel {
                 status: task.status.clone(),
                 description: task.description.clone(),
                 assignee: task.assignee.clone(),
-                swarm_id: task.swarm_id.clone(),
                 activity: task.activity.as_ref().map(|activity| TaskActivityBody {
                     text: activity.text.clone(),
                     kind: activity.kind.clone(),
@@ -1086,8 +1080,7 @@ impl KanbanPanel {
         // `selected_board_id` once). Switching boards while Steer is open would
         // leave the curator creating and moving tasks on the previously selected
         // board. Drop the conversation so the next Steer selection rebuilds with
-        // the new board. Mirrors the swarm panel, which invalidates its Steer
-        // surface on backend-mode change for the same reason.
+        // the new board.
         self.steer.invalidate();
         self.fetch_tasks(cx);
         cx.notify();
@@ -1642,8 +1635,8 @@ impl Render for KanbanPanel {
                                 .items_center()
                                 .child(
                                     // Mode toggle: Browse / Steer — uses
-                                    // `ToggleButtonGroup` for consistency with the
-                                    // swarm panel (the prior hand-rolled
+                                    // `ToggleButtonGroup` for consistency (the
+                                    // prior hand-rolled
                                     // `div().cursor_pointer()` toggle had no
                                     // measurement and could collide at narrow
                                     // widths).
@@ -2146,8 +2139,7 @@ mod tests {
     /// Every `kanban_*`/`contract_*` token the Steer prompt names in backticks
     /// must be a tool the server actually exposes. Without this, a rename in
     /// `hkask-mcp-kata-kanban` degrades silently to "tool not found" at dispatch
-    /// time instead of failing here. Mirrors the swarm panel's
-    /// `steer_prompt_mentions_only_known_tools`.
+    /// time instead of failing here.
     #[test]
     fn steer_prompt_advertises_only_known_tools() {
         for prompt in [

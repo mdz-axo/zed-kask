@@ -106,7 +106,7 @@ fn require_non_empty(label: &'static str, value: &str) -> Result<(), McpToolErro
 pub struct ExperimentProposeRequest {
     /// The falsifiable hypothesis the experiment tests.
     pub hypothesis: String,
-    /// The artifact layer: skill, agent_card, prompt_template, tool_schema,
+    /// The artifact layer: skill, prompt_template, tool_schema,
     /// regulation_scalar, or scientific_hypothesis (the
     /// general lab notebook — D2, operator ruling 2026-10-15).
     pub layer: String,
@@ -269,7 +269,7 @@ pub struct PopulationQueryRequest {
 #[tool_router(router = experimentation_router, vis = "pub")]
 impl ExperimentationServer {
     #[tool(
-        description = "Register an experiment (protocol step 1, Declare): hypothesis, artifact layer (skill | agent_card | prompt_template | tool_schema | regulation_scalar | scientific_hypothesis), genotype refs, eval set, fitness function, noise band, a typed rubric bundle (the machine-checkable eval contract: non-empty, at least one metric rubric and one implementation or grounded_report rubric, stable snake_case ids, verification in the swarm evaluator vocabulary — contains / not_contains / regex / report_ref), pre-registered prediction with confidence in [0,1], and an energy budget that MUST carry max_runs (a positive integer the server enforces at fitness_record — recording past the ceiling is a typed budget_exhausted refusal, §P8.9 step 2). Optional design_spec carries a typed, versioned scientific DesignSpec (a JSON object with a non-empty spec_version) for a scientific-hypothesis declaration — it is stored, exposed through lineage/population reads, and joins the seal fingerprint, so a post-seal design edit yields a different fingerprint rather than silently reusing a stale design; omit it for a legacy artifact experiment. Optional linked_goal_id joins the experiment to the kanban goal that Brier-scores its claim. Returns the experiment record with status proposed. Optional experiment_key converges retried calls onto the existing record instead of duplicating it."
+        description = "Register an experiment (protocol step 1, Declare): hypothesis, artifact layer (skill | prompt_template | tool_schema | regulation_scalar | scientific_hypothesis), genotype refs, eval set, fitness function, noise band, a typed rubric bundle (the machine-checkable eval contract: non-empty, at least one metric rubric and one implementation or grounded_report rubric, stable snake_case ids, verification in the swarm evaluator vocabulary — contains / not_contains / regex / report_ref), pre-registered prediction with confidence in [0,1], and an energy budget that MUST carry max_runs (a positive integer the server enforces at fitness_record — recording past the ceiling is a typed budget_exhausted refusal, §P8.9 step 2). Optional design_spec carries a typed, versioned scientific DesignSpec (a JSON object with a non-empty spec_version) for a scientific-hypothesis declaration — it is stored, exposed through lineage/population reads, and joins the seal fingerprint, so a post-seal design edit yields a different fingerprint rather than silently reusing a stale design; omit it for a legacy artifact experiment. Optional linked_goal_id joins the experiment to the kanban goal that Brier-scores its claim. Returns the experiment record with status proposed. Optional experiment_key converges retried calls onto the existing record instead of duplicating it."
     )]
     pub async fn experiment_propose(
         &self,
