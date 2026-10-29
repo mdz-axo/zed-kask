@@ -171,7 +171,8 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         | "layers_shot_pass"
         | "layers_semantic_pass"
         | "layers_audio_pass"
-        | "layers_search" => Some(VERSION_INFO),
+        | "layers_search"
+        | "layers_export" => Some(VERSION_INFO),
         _ => None,
     }
 }

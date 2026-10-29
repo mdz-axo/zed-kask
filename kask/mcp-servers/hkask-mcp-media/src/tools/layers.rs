@@ -23,8 +23,9 @@ use crate::tools::educt::{
 use crate::tools::processing::SourceSnapshot;
 use crate::transcript_pass::PassMode;
 use crate::types::{
-    LayersAudioPassRequest, LayersGetRequest, LayersListRequest, LayersSearchRequest,
-    LayersSemanticPassRequest, LayersShotPassRequest, LayersStoreItemRequest, LayersStoreRequest,
+    LayersAudioPassRequest, LayersExportRequest, LayersGetRequest, LayersListRequest,
+    LayersSearchRequest, LayersSemanticPassRequest, LayersShotPassRequest, LayersStoreItemRequest,
+    LayersStoreRequest,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -1748,6 +1749,72 @@ impl MediaServer {
                 "search_complete": next_cursor.is_none(),
                 "scope_notes": scope_notes,
                 "coverage_note": "Bounded search from the supplied cursor over each recording's scan stream (its kind-filtered layer items, then its newest transcript's working text). Resume with next_recording_offset and next_start_byte; offsets refer to the current recording order and scan streams, not a frozen snapshot. The byte budget bounds matching, not loading/projection.",
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Export every stored media layer item over one recording as corpus passages — the semantic handoff for corpus ingestion. Each item becomes one passage carrying its stable item id (resolvable via layers_get), start-end seconds, kind, label, and confidence, preceded by a recording header naming the media path. Feed the output to corpus_convert → corpus_chunk → corpus_embed; each item's text is a natural chunk boundary. Only the recording's layers are exported — the transcript has its own educt_export corpus_text path."
+    )]
+    pub async fn layers_export(
+        &self,
+        Parameters(request): Parameters<LayersExportRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "layers_export", async {
+            ensure_local_input_exists(&request.media_path)?;
+            let driver = &**self.gallery_store.driver();
+            let layer_filter = MediaLayerFilter {
+                media_path: Some(request.media_path.clone()),
+                kind: request.kind,
+                limit: MAX_LAYERS_PER_RECORDING,
+            };
+            let summaries =
+                layer_store::list_layers(driver, &layer_filter).map_err(map_layer_store_error)?;
+            if summaries.is_empty() {
+                return Err(McpToolError::not_found(format!(
+                    "no layers found for {} — run a pass first",
+                    request.media_path
+                )));
+            }
+            let mut passages = String::new();
+            let mut items_exported = 0;
+            for summary in &summaries {
+                let Some(record) =
+                    layer_store::get_layer(driver, &summary.id).map_err(map_layer_store_error)?
+                else {
+                    return Err(McpToolError::not_found(format!(
+                        "layer {} disappeared during export",
+                        summary.id
+                    )));
+                };
+                for item in &record.items {
+                    let confidence = item
+                        .item
+                        .payload
+                        .get("confidence")
+                        .and_then(serde_json::Value::as_f64);
+                    passages.push_str(&format!(
+                        "## recording: {}\n### item: {} kind={} start={:.3}s end={:.3}s label={:?} confidence={:?}\n{}\n\n",
+                        request.media_path,
+                        item.id,
+                        record.kind.as_str(),
+                        item.item.start_sec,
+                        item.item.end_sec.unwrap_or(item.item.start_sec),
+                        record.label.as_deref().unwrap_or(""),
+                        confidence,
+                        item.item.searchable_text,
+                    ));
+                    items_exported += 1;
+                }
+            }
+            Ok(serde_json::json!({
+                "status": "exported",
+                "media_path": request.media_path,
+                "layers": summaries.len(),
+                "items": items_exported,
+                "passages": passages,
+                "composition": "run corpus_convert → corpus_chunk → corpus_embed on the passages; each item id resolves back via layers_get",
             }))
         })
         .await

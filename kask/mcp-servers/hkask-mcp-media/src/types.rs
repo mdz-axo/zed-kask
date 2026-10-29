@@ -930,6 +930,15 @@ pub struct LayersSemanticPassRequest {
     pub model: Option<String>,
 }
 
+/// Request to export media layer items as corpus passages.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LayersExportRequest {
+    /// Absolute local path (or URL) of the annotated media.
+    pub media_path: String,
+    /// Optional kind filter (same closed set as layers_store).
+    pub kind: Option<crate::layer_store::MediaLayerKind>,
+}
+
 /// Request to generate labeled audio_event items over a recording's audio
 /// via the bounded audio pass (t5).
 #[derive(Debug, Deserialize, JsonSchema)]
