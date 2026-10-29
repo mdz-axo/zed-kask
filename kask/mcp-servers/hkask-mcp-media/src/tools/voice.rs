@@ -1,6 +1,8 @@
 //! Authorized voice-profile enrollment and lifecycle tools.
 
+use crate::tools::educt::map_store_error;
 use crate::transcript_layers::TranscriptLayer;
+use crate::voice_encoder::VoiceEncoderError;
 use crate::voice_profiles::{
     EncoderFingerprint, EnrollmentAudioEmbedding, NewVoiceEnrollment, OperatorAuthorization,
     StaleProfileRemoval, VoiceProfile, VoiceProfileError,
@@ -97,6 +99,24 @@ fn map_voice_error(error: VoiceProfileError) -> McpToolError {
     }
 }
 
+/// Classify a `VoiceEncoderError` from the CAM++ encoder into the MCP
+/// wire-level `McpToolError` kind — per-variant, never blanket (the
+/// canonical classification, operator ruling 2026-10-05): the `Media` arm
+/// re-enters `map_media_error`, so an ffmpeg-unavailable media failure
+/// stays `unavailable` and a media I/O failure stays `internal`; a model
+/// download failure is a transient outage (`unavailable`); model I/O,
+/// integrity, and ONNX runtime failures are server faults (`internal`).
+fn map_voice_encoder_error(error: VoiceEncoderError) -> McpToolError {
+    let message = error.to_string();
+    match error {
+        VoiceEncoderError::Media(media) => map_media_error(media),
+        VoiceEncoderError::Download(_) => McpToolError::unavailable(message),
+        VoiceEncoderError::Io(_)
+        | VoiceEncoderError::Integrity(_)
+        | VoiceEncoderError::Runtime(_) => McpToolError::internal(message),
+    }
+}
+
 fn single_speaker_evidence(
     driver: &dyn hkask_storage::database::driver::DatabaseDriver,
     transcript_id: &str,
@@ -160,7 +180,7 @@ impl MediaServer {
             let driver = &**self.gallery_store.driver();
             let Some((summary, bundle)) =
                 crate::transcript_store::load_transcript(driver, &transcript_id)
-                    .map_err(|error| McpToolError::internal(error.to_string()))?
+                    .map_err(map_store_error)?
             else {
                 return Err(McpToolError::not_found(format!(
                     "transcript {transcript_id} not found"
@@ -202,7 +222,7 @@ impl MediaServer {
                 .voice
                 .encoder()
                 .await
-                .map_err(|error| McpToolError::unavailable(error.to_string()))?;
+                .map_err(map_voice_encoder_error)?;
             let embedded = encoder
                 .embed_span(
                     &self.ffmpeg,
@@ -211,7 +231,7 @@ impl MediaServer {
                     end_ms,
                 )
                 .await
-                .map_err(|error| McpToolError::unavailable(error.to_string()))?;
+                .map_err(map_voice_encoder_error)?;
             let profile = store
                 .enroll(NewVoiceEnrollment {
                     speaker_name: speaker_name.trim().to_string(),
@@ -264,11 +284,10 @@ impl MediaServer {
                 }));
             }
             let driver = &**self.gallery_store.driver();
-            crate::transcript_store::ensure_schema(driver)
-                .map_err(|error| McpToolError::internal(error.to_string()))?;
-            let Some((summary, bundle)) =
+            crate::transcript_store::ensure_schema(driver).map_err(map_store_error)?;
+            let Some((_summary, bundle)) =
                 crate::transcript_store::load_transcript(driver, &transcript_id)
-                    .map_err(|error| McpToolError::internal(error.to_string()))?
+                    .map_err(map_store_error)?
             else {
                 return Err(McpToolError::not_found(format!(
                     "transcript {transcript_id} not found"
@@ -280,7 +299,7 @@ impl MediaServer {
                 ));
             }
             let layers = crate::transcript_store::list_layers(driver, &transcript_id)
-                .map_err(|error| McpToolError::internal(error.to_string()))?;
+                .map_err(map_store_error)?;
             let Some(speaker_layer) = layers.iter().rev().find_map(|record| match &record.layer {
                 TranscriptLayer::Speaker(layer) => Some(layer),
                 _ => None,
@@ -293,7 +312,7 @@ impl MediaServer {
                 .voice
                 .encoder()
                 .await
-                .map_err(|error| McpToolError::unavailable(error.to_string()))?;
+                .map_err(map_voice_encoder_error)?;
             let media_path = std::path::Path::new(&bundle.audio_path);
             let mut span_results = Vec::new();
             let mut identified = 0;
@@ -304,7 +323,7 @@ impl MediaServer {
                 let embedded = encoder
                     .embed_span(&self.ffmpeg, media_path, start_ms, end_ms)
                     .await
-                    .map_err(|error| McpToolError::unavailable(error.to_string()))?;
+                    .map_err(map_voice_encoder_error)?;
                 let mut best: Option<(&VoiceProfile, f64)> = None;
                 let mut runner_up: f64 = 0.0;
                 for profile in &profiles {
@@ -374,7 +393,7 @@ impl MediaServer {
                     &transcript_id,
                     &TranscriptLayer::Identification(identification),
                 )
-                .map_err(|error| McpToolError::internal(error.to_string()))?;
+                .map_err(map_store_error)?;
                 identified += 1;
                 span_results.push(serde_json::json!({
                     "start_word": span.start_word,
@@ -389,7 +408,6 @@ impl MediaServer {
                     "layer_id": record.id,
                 }));
             }
-            let _ = summary;
             Ok(serde_json::json!({
                 "status": "ok",
                 "identified": identified,
@@ -511,6 +529,41 @@ mod tests {
         EncoderFingerprint, EnrollmentAudioEmbedding, NewVoiceEnrollment, OperatorAuthorization,
         VoiceProfileRuntime, VoiceProfileStore,
     };
+
+    /// Per-variant classification pin (the canonical ruling 2026-10-05,
+    /// the error.rs classification-tests discipline): the encoder's Media
+    /// arm re-enters the canonical media mapping, a model download failure
+    /// is a transient outage, and integrity/runtime failures are server
+    /// faults. Under the deleted blanket mapping every encoder failure
+    /// surfaced as `unavailable` — a corrupted model read as a retryable
+    /// outage.
+    #[test]
+    fn voice_encoder_errors_classify_per_variant() {
+        use hkask_types::McpErrorKind;
+
+        let unavailable = map_voice_encoder_error(VoiceEncoderError::Media(
+            crate::MediaError::FfmpegUnavailable,
+        ));
+        assert_eq!(
+            unavailable.kind,
+            McpErrorKind::Unavailable,
+            "{unavailable:?}"
+        );
+
+        let download =
+            map_voice_encoder_error(VoiceEncoderError::Download("connection reset".to_string()));
+        assert_eq!(download.kind, McpErrorKind::Unavailable, "{download:?}");
+
+        let integrity = map_voice_encoder_error(VoiceEncoderError::Integrity(
+            "weights hash mismatch".to_string(),
+        ));
+        assert_eq!(integrity.kind, McpErrorKind::Internal, "{integrity:?}");
+
+        let runtime = map_voice_encoder_error(VoiceEncoderError::Runtime(
+            "onnx session failed".to_string(),
+        ));
+        assert_eq!(runtime.kind, McpErrorKind::Internal, "{runtime:?}");
+    }
 
     static CONFIRMATION_BUSY_TX: std::sync::OnceLock<std::sync::mpsc::Sender<()>> =
         std::sync::OnceLock::new();
