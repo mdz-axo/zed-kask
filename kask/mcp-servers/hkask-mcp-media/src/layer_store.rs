@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS media_layers (
     kind TEXT NOT NULL,
     label TEXT,
     provenance_json TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    detached_at TEXT
 );
 CREATE TABLE IF NOT EXISTS media_layer_items (
     id TEXT PRIMARY KEY,
@@ -59,6 +60,23 @@ CREATE INDEX IF NOT EXISTS idx_media_layers_media_kind
     ON media_layers(media_path, kind);
 CREATE INDEX IF NOT EXISTS idx_media_layer_items_layer
     ON media_layer_items(layer_id);
+";
+
+/// The asset-detach trigger — the layer-side mirror of the transcript
+/// store's `educt_gallery_asset_detach_transcripts`: a deleted gallery
+/// asset severs the layer's asset link and stamps the severance
+/// (`detached_at`), the durable-record detach-and-surface contract —
+/// never a block, never a cascade delete. The layer survives keyed to
+/// its media_path; the severance is surfaced in every list/get.
+const ASSET_DETACH_TRIGGER_SQL: &str = "
+CREATE TRIGGER IF NOT EXISTS media_layers_gallery_asset_detach
+BEFORE DELETE ON gallery_images
+BEGIN
+    UPDATE media_layers
+       SET gallery_asset_id = NULL,
+           detached_at = COALESCE(detached_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+     WHERE gallery_asset_id = OLD.id;
+END;
 ";
 
 /// The closed layer-kind vocabulary — what a layer asserts over its media.
@@ -204,6 +222,9 @@ pub struct MediaLayerSummary {
     pub id: String,
     pub media_path: String,
     pub gallery_asset_id: Option<String>,
+    /// Stamped when a gallery-asset deletion severed the layer's asset
+    /// link (the detach-and-surface contract) — `None` while attached.
+    pub detached_at: Option<String>,
     pub kind: MediaLayerKind,
     pub label: Option<String>,
     pub provenance: LayerProvenance,
@@ -228,6 +249,9 @@ pub struct MediaLayerRecord {
     pub id: String,
     pub media_path: String,
     pub gallery_asset_id: Option<String>,
+    /// Stamped when a gallery-asset deletion severed the layer's asset
+    /// link (the detach-and-surface contract) — `None` while attached.
+    pub detached_at: Option<String>,
     pub kind: MediaLayerKind,
     pub label: Option<String>,
     pub provenance: LayerProvenance,
@@ -290,7 +314,45 @@ pub enum LayerStoreError {
 /// Create the media layer schema.
 pub fn ensure_schema(driver: &dyn DatabaseDriver) -> Result<(), LayerStoreError> {
     driver.execute_batch(SCHEMA_SQL)?;
+    // `detached_at` ships in the CREATE TABLE for every new database; a
+    // database whose media_layers table predates the column gains it
+    // here — CREATE TABLE IF NOT EXISTS never alters an existing table.
+    if !column_exists(driver, "media_layers", "detached_at")? {
+        driver.execute("ALTER TABLE media_layers ADD COLUMN detached_at TEXT", &[])?;
+    }
+    // Install the detach trigger only where the gallery table exists
+    // (the same guard the transcript store's ensure_schema uses) — the
+    // trigger references gallery_images.
+    if table_exists(driver, "gallery_images")? {
+        driver.execute_batch(ASSET_DETACH_TRIGGER_SQL)?;
+    }
     Ok(())
+}
+
+/// Whether `table` exists (the sqlite_master check, mirroring
+/// `transcript_store::table_exists`).
+fn table_exists(driver: &dyn DatabaseDriver, table: &str) -> Result<bool, LayerStoreError> {
+    Ok(driver
+        .query_optional(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            &[DbValue::Text(table.to_string())],
+        )?
+        .is_some())
+}
+
+/// Whether `table` carries `column` — the idempotent ALTER guard.
+fn column_exists(
+    driver: &dyn DatabaseDriver,
+    table: &str,
+    column: &str,
+) -> Result<bool, LayerStoreError> {
+    let rows = driver.query(&format!("PRAGMA table_info({table})"), &[])?;
+    for row in rows.iter() {
+        if row.get_named("name")?.as_text()? == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Store one media layer. Every item is validated first (against the
@@ -362,6 +424,7 @@ pub fn store_layer(
         id,
         media_path: layer.media_path.clone(),
         gallery_asset_id: layer.gallery_asset_id.clone(),
+        detached_at: None,
         kind: layer.kind,
         label: layer.label.clone(),
         provenance: layer.provenance.clone(),
@@ -475,7 +538,7 @@ pub fn list_layers(
 ) -> Result<Vec<MediaLayerSummary>, LayerStoreError> {
     ensure_schema(driver)?;
     let mut sql = String::from(
-        "SELECT id, media_path, gallery_asset_id, kind, label, provenance_json, created_at, \
+        "SELECT id, media_path, gallery_asset_id, detached_at, kind, label, provenance_json, created_at, \
          (SELECT COUNT(*) FROM media_layer_items WHERE layer_id = media_layers.id) AS items_count \
          FROM media_layers",
     );
@@ -510,7 +573,7 @@ pub fn get_layer(
 ) -> Result<Option<MediaLayerRecord>, LayerStoreError> {
     ensure_schema(driver)?;
     let Some(row) = driver.query_optional(
-        "SELECT id, media_path, gallery_asset_id, kind, label, provenance_json, created_at \
+        "SELECT id, media_path, gallery_asset_id, detached_at, kind, label, provenance_json, created_at \
          FROM media_layers WHERE id = ?1",
         &[DbValue::Text(layer_id.to_string())],
     )?
@@ -578,6 +641,7 @@ fn summary_from_row(row: &DbRow) -> Result<MediaLayerSummary, LayerStoreError> {
         id: row.get_named("id")?.as_text()?.to_string(),
         media_path: row.get_named("media_path")?.as_text()?.to_string(),
         gallery_asset_id: opt_text(row, "gallery_asset_id")?,
+        detached_at: opt_text(row, "detached_at")?,
         kind,
         label: opt_text(row, "label")?,
         provenance: get_json_named(row, "provenance_json")?,
@@ -598,6 +662,7 @@ fn record_from_row(row: &DbRow) -> Result<MediaLayerRecord, LayerStoreError> {
         id: row.get_named("id")?.as_text()?.to_string(),
         media_path: row.get_named("media_path")?.as_text()?.to_string(),
         gallery_asset_id: opt_text(row, "gallery_asset_id")?,
+        detached_at: opt_text(row, "detached_at")?,
         kind,
         label: opt_text(row, "label")?,
         provenance: get_json_named(row, "provenance_json")?,
@@ -890,6 +955,50 @@ mod tests {
             error.to_string(),
             "gallery asset missing-gallery-asset not found"
         );
+    }
+
+    /// A deleted gallery asset detaches the layer — asset link severed,
+    /// severance stamped (`detached_at`), layer and items intact — the
+    /// transcript store's detach-and-surface asset contract, mirrored
+    /// for media layers.
+    #[test]
+    fn deleting_a_gallery_asset_detaches_layers_and_stamps_the_time() {
+        use hkask_storage::database::driver::DatabaseDriver;
+
+        let (root, driver, gallery_store, gallery) = gallery_root();
+        let source_path = root.path().join("linked-source.jpg");
+        std::fs::write(&source_path, b"source bytes").expect("source fixture");
+        let asset = add_frame_asset(&gallery_store, &gallery.id, &source_path);
+
+        let mut layer = new_layer("/tmp/a.mp4", vec![item(0.0, Some(0.5))]);
+        layer.gallery_asset_id = Some(asset.id.clone());
+        let stored = store_layer(&*driver, &layer).expect("store the linked layer");
+        assert_eq!(stored.gallery_asset_id.as_deref(), Some(asset.id.as_str()));
+        assert!(
+            stored.detached_at.is_none(),
+            "freshly stored layers are attached"
+        );
+
+        driver
+            .execute(
+                "DELETE FROM gallery_images WHERE id = ?1",
+                &[DbValue::Text(asset.id.clone())],
+            )
+            .expect("delete the asset row (fires the detach trigger)");
+
+        let detached = get_layer(&*driver, &stored.id)
+            .expect("get the detached layer")
+            .expect("the layer survives the asset deletion");
+        assert_eq!(
+            detached.gallery_asset_id, None,
+            "the asset link is severed, not left dangling"
+        );
+        assert!(
+            detached.detached_at.is_some(),
+            "the severance is stamped: {:?}",
+            detached.detached_at
+        );
+        assert_eq!(detached.items.len(), 1, "items survive with the layer");
     }
 
     #[test]

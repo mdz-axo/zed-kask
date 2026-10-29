@@ -54,18 +54,29 @@ struct VoiceProfileView {
     id: String,
     speaker_name: String,
     authorization: OperatorAuthorization,
+    /// Whether the authorization transcript still resolves in the
+    /// transcript store: "present" or "deleted". Voice profiles live in a
+    /// separate database and cannot reference-enforce the transcript they
+    /// were authorized over — deleting the transcript detaches the
+    /// profile's provenance (the enrollment itself stays valid; its
+    /// voiceprint bytes are durable), and the state is resolved and
+    /// reported here, never left as a silent dangling id.
+    authorization_transcript_status: &'static str,
     fingerprint: EncoderFingerprint,
     segments: Vec<VoiceSegmentView>,
     created_at: String,
     last_confirmed_match_at: Option<String>,
 }
 
-impl From<&VoiceProfile> for VoiceProfileView {
-    fn from(profile: &VoiceProfile) -> Self {
+impl VoiceProfileView {
+    /// Build the response view; `authorization_transcript_status` is the
+    /// resolved state of the authorization transcript, never assumed.
+    fn from_profile(profile: &VoiceProfile, authorization_transcript_status: &'static str) -> Self {
         Self {
             id: profile.id.clone(),
             speaker_name: profile.speaker_name.clone(),
             authorization: profile.authorization.clone(),
+            authorization_transcript_status,
             fingerprint: profile.fingerprint.clone(),
             segments: profile
                 .segments
@@ -254,8 +265,25 @@ impl MediaServer {
                     }],
                 })
                 .map_err(map_voice_error)?;
+            // The authorization transcript status is resolved the same way
+            // voice_list resolves it — never assumed, even here where the
+            // transcript was loaded moments before.
+            let authorization_transcript_status =
+                if crate::transcript_store::transcript_exists(
+                    driver,
+                    &profile.authorization.transcript_id,
+                )
+                .map_err(map_store_error)?
+                {
+                    "present"
+                } else {
+                    "deleted"
+                };
             Ok(serde_json::json!({
-                "profile": VoiceProfileView::from(&profile),
+                "profile": VoiceProfileView::from_profile(
+                    &profile,
+                    authorization_transcript_status,
+                ),
                 "speaker_evidence": evidence,
                 "authorization_kind": "operator_authorization",
                 "authenticated_data_subject_consent": false,
@@ -421,7 +449,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "List authorized speaker voice profiles with exact-range, media, and model provenance. Responses contain segment metadata only — never centroid or per-segment voiceprint bytes."
+        description = "List authorized speaker voice profiles with exact-range, media, and model provenance. Each profile also reports its authorization transcript status (present/deleted) — a deleted transcript detaches the profile's provenance visibly; the enrollment itself stays valid. Responses contain segment metadata only — never centroid or per-segment voiceprint bytes."
     )]
     pub async fn voice_list(
         &self,
@@ -430,8 +458,33 @@ impl MediaServer {
         execute_tool(self, "voice_list", async {
             let store = self.voice.profile_store().map_err(map_voice_error)?;
             let profiles = store.list_profiles().map_err(map_voice_error)?;
-            let views: Vec<VoiceProfileView> =
-                profiles.iter().map(VoiceProfileView::from).collect();
+            // Resolve each profile's authorization transcript against the
+            // transcript store: voice profiles live in a separate database
+            // and cannot reference-enforce the transcript they were
+            // authorized over, so a deleted transcript detaches the
+            // profile's provenance (the enrollment itself stays valid —
+            // its voiceprint bytes are durable). The state is resolved and
+            // reported per profile, never left as a silent dangling id —
+            // the read-side form of the transcript store's
+            // detach-and-surface asset contract.
+            let driver = &**self.gallery_store.driver();
+            let mut views = Vec::with_capacity(profiles.len());
+            for profile in &profiles {
+                let authorization_transcript_status = if crate::transcript_store::transcript_exists(
+                    driver,
+                    &profile.authorization.transcript_id,
+                )
+                .map_err(map_store_error)?
+                {
+                    "present"
+                } else {
+                    "deleted"
+                };
+                views.push(VoiceProfileView::from_profile(
+                    profile,
+                    authorization_transcript_status,
+                ));
+            }
             Ok(serde_json::json!({
                 "count": views.len(),
                 "profiles": views,
@@ -1347,5 +1400,68 @@ mod tests {
             .await
             .expect("list after removal");
         assert_eq!(content_of(&listed)["count"], serde_json::json!(0));
+    }
+
+    /// A deleted authorization transcript detaches the profile's
+    /// provenance visibly: the profile stays enrolled (its voiceprint
+    /// bytes are durable) while voice_list reports the authorization
+    /// transcript as deleted — never a silent dangling id.
+    #[tokio::test]
+    async fn voice_list_surfaces_a_deleted_authorization_transcript() {
+        let fixture = tempfile::tempdir().expect("voice DB fixture");
+        let path = fixture.path().join("voice.db");
+        let store = VoiceProfileStore::open(&path.to_string_lossy(), "test-passphrase")
+            .expect("open voice store");
+        let server = server(store);
+
+        // A transcript in the server's gallery store, then an enrollment
+        // authorized over exactly that transcript.
+        let source = fixture.path().join("auth-source.wav");
+        std::fs::write(&source, b"RIFF dummy").expect("auth source fixture");
+        let bundle = crate::transcript::TranscriptBundle::new(
+            source.to_string_lossy().into_owned(),
+            1.5,
+            "alpha beta".to_string(),
+        );
+        let driver = &**server.gallery_store.driver();
+        let summary = crate::transcript_store::store_transcript(driver, &bundle, None)
+            .expect("store the authorization transcript");
+        let mut enrolled = enrollment();
+        enrolled.authorization.transcript_id = summary.id.clone();
+        enrolled.segments[0].transcript_id = summary.id.clone();
+        server
+            .voice
+            .profile_store()
+            .expect("profile store")
+            .enroll(enrolled)
+            .expect("enroll against the live transcript");
+
+        let listed = server
+            .voice_list(Parameters(VoiceListRequest {}))
+            .await
+            .expect("list profiles");
+        assert_eq!(
+            content_of(&listed)["profiles"][0]["authorization_transcript_status"],
+            serde_json::json!("present")
+        );
+
+        crate::transcript_store::delete_transcript(driver, &summary.id)
+            .expect("delete the authorization transcript");
+
+        let listed = server
+            .voice_list(Parameters(VoiceListRequest {}))
+            .await
+            .expect("list after transcript deletion");
+        let listed = content_of(&listed);
+        assert_eq!(
+            listed["count"],
+            serde_json::json!(1),
+            "the profile survives"
+        );
+        assert_eq!(
+            listed["profiles"][0]["authorization_transcript_status"],
+            serde_json::json!("deleted"),
+            "the detached provenance is reported, never silent"
+        );
     }
 }

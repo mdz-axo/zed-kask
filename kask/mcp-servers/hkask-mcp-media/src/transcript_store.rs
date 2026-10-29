@@ -258,6 +258,25 @@ fn table_exists(driver: &dyn DatabaseDriver, table: &str) -> Result<bool, Transc
 /// path over time are distinct rows. A bundle without word timings is
 /// stored (text/segments remain usable) with `has_word_timings: false` —
 /// the surfaced degradation.
+/// Whether a transcript id resolves in the store — the lightweight
+/// existence check read-side provenance resolution uses. Voice profiles
+/// carry authorization transcript ids from a separate database and cannot
+/// reference-enforce them; they resolve and report the state (present or
+/// deleted) instead of leaving a silent dangling id — the read-side form
+/// of the store's detach-and-surface asset contract.
+pub fn transcript_exists(
+    driver: &dyn DatabaseDriver,
+    transcript_id: &str,
+) -> Result<bool, TranscriptStoreError> {
+    ensure_schema(driver)?;
+    Ok(driver
+        .query_optional(
+            "SELECT 1 FROM transcripts WHERE id = ?1",
+            &[DbValue::Text(transcript_id.to_string())],
+        )?
+        .is_some())
+}
+
 pub fn store_transcript(
     driver: &dyn DatabaseDriver,
     bundle: &TranscriptBundle,
