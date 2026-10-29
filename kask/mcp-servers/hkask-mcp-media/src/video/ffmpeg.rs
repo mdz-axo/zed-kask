@@ -163,6 +163,16 @@ impl Drop for FfmpegRunner {
 }
 
 impl FfmpegRunner {
+    /// The runner's per-instance intermediate directory — its unique
+    /// subdirectory under the shared `hkask-media` temp root. The hermetic
+    /// observation scope for tests asserting which files an operation left
+    /// behind: the shared root is written by every concurrent runner on
+    /// the machine (parallel tests, live servers), so observing the root
+    /// turns a cleanup assertion into a race against unrelated processes.
+    pub fn temp_dir(&self) -> &std::path::Path {
+        &self.temp_dir
+    }
+
     /// Detect ffmpeg on PATH. Returns a runner with `available` set accordingly.
     /// Cleans up leftover temp files from previous crashed sessions.
     pub fn detect() -> Self {

@@ -2874,9 +2874,19 @@ mod tool_behavior_tests {
         Ok(())
     }
 
-    fn temp_media_files() -> Result<std::collections::HashSet<std::path::PathBuf>, std::io::Error> {
+    /// The hermetic intermediate-observation scope: one ffmpeg runner's
+    /// per-instance temp directory, never the shared `hkask-media` root.
+    /// The root is written by every concurrent runner on the machine —
+    /// sibling tests in the suite and any live media server — so
+    /// snapshotting it turned these cleanup assertions into races against
+    /// unrelated processes (the recorded intermittent EDL-render flake:
+    /// green in isolation, red in full runs when a sibling runner's file
+    /// landed between the before/after snapshots).
+    fn temp_media_files(
+        runner_temp: &std::path::Path,
+    ) -> Result<std::collections::HashSet<std::path::PathBuf>, std::io::Error> {
         let mut files = std::collections::HashSet::new();
-        collect_temp_media_files(&std::env::temp_dir().join("hkask-media"), &mut files)?;
+        collect_temp_media_files(runner_temp, &mut files)?;
         Ok(files)
     }
 
@@ -3011,7 +3021,7 @@ mod tool_behavior_tests {
     -> Result<(), Box<dyn std::error::Error>> {
         use hkask_storage::database::driver::DatabaseDriver;
         let env = video_server_env().await?;
-        let before = temp_media_files()?;
+        let before = temp_media_files(env.server.ffmpeg.temp_dir())?;
         env.driver.execute(
             "CREATE TRIGGER fail_gif_asset BEFORE INSERT ON gallery_images \
              BEGIN SELECT RAISE(ABORT, 'injected gallery failure'); END",
@@ -3040,7 +3050,7 @@ mod tool_behavior_tests {
             std::fs::read_dir(crate::assets::generated_assets_dir())?.count(),
             0
         );
-        let after = temp_media_files()?;
+        let after = temp_media_files(env.server.ffmpeg.temp_dir())?;
         assert_eq!(
             after.difference(&before).count(),
             0,
@@ -4413,7 +4423,8 @@ mod tool_behavior_tests {
             .await
             .expect("edl stored");
 
-        let temp_files_before = temp_media_files().expect("read temp media files before render");
+        let temp_files_before = temp_media_files(server.ffmpeg.temp_dir())
+            .expect("read temp media files before render");
         let rendered = server
             .educt_render_edl(Parameters(EductRenderEdlRequest {
                 transcript_id: transcript_id.clone(),
@@ -4462,7 +4473,7 @@ mod tool_behavior_tests {
             render_relation.edl_layer_id,
             Some(render_relation.source_edl_layer_id.clone())
         );
-        let temp_files_after = temp_media_files()?;
+        let temp_files_after = temp_media_files(server.ffmpeg.temp_dir())?;
         assert_eq!(
             temp_files_after.difference(&temp_files_before).count(),
             0,
@@ -4569,7 +4580,8 @@ mod tool_behavior_tests {
             .expect("strike annotation ID")
             .to_string();
 
-        let temp_files_before = temp_media_files().expect("read temp media files before render");
+        let temp_files_before = temp_media_files(server.ffmpeg.temp_dir())
+            .expect("read temp media files before render");
         let rendered = server
             .educt_render_edl(Parameters(EductRenderEdlRequest {
                 transcript_id: transcript_id.clone(),
@@ -4608,7 +4620,7 @@ mod tool_behavior_tests {
             Some(strike_id.as_str()),
             "the render lineage names the struck EDL"
         );
-        let temp_files_after = temp_media_files()?;
+        let temp_files_after = temp_media_files(server.ffmpeg.temp_dir())?;
         assert_eq!(
             temp_files_after.difference(&temp_files_before).count(),
             0,
