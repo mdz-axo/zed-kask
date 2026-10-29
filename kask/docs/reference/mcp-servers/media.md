@@ -528,7 +528,7 @@ response contracts are pinned in `jobs.rs`, `tools/jobs.rs`, and `assets.rs`.
 
 | Tool | Description |
 |------|-------------|
-| `job_submit` | Admit `transcribe`, `audio_trim`, `audio_concat`, `video_clip`, or `video_concat` with serialized operation-specific `params`; returns a job ID or a typed rate-limit error when four combined heavy operations are active. |
+| `job_submit` | Admit `transcribe`, `audio_trim`, `audio_concat`, `video_clip`, or `video_concat` with serialized operation-specific `params`; returns a job ID or a typed rate-limit error when four combined heavy operations are active. `transcribe` params are `audio_url`, optional `language`, and optional `gallery_asset_id` (a recording's stable asset id) — when given, the finished transcript is stored and linked to that recording on completion, so a panel-initiated transcription closes the recording→transcript→reel loop end-to-end; a stale asset id fails fast at submit before any STT spend. A job record carries the operation's source path, which the panel's recordings rows match running jobs to their recording by (R2/R5, operator ruling 2026-10-28). |
 | `job_list` | List retained jobs plus explicit process-local history scope and restart behavior. |
 | `job_status` | Return one job and explicit history scope; missing jobs name restart data loss. |
 | `job_cancel` | Cancel queued/running work and acknowledge only after teardown, rollback, and slot release. |
