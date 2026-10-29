@@ -315,7 +315,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Transcribe audio and return a synchronized TranscriptBundle with word-level timings (full_text carries the plain text). Enables interactive highlighting and click-to-seek in frontends, and is the ingest format for the educt transcript layers."
+        description = "Transcribe audio or video and return a synchronized TranscriptBundle with word-level timings (full_text carries the plain text). Enables interactive highlighting and click-to-seek in frontends, and is the ingest format for the educt transcript layers."
     )]
     pub async fn transcribe_bundle(
         &self,
@@ -347,7 +347,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Transcribe audio AND store the TranscriptBundle server-side in one call, returning only the transcript summary (id, words_count, has_word_timings). For long media this is the path: an hour-long talk is ~550KB of bundle JSON, and relaying it through the model context (transcribe_bundle then educt_store_transcript) costs ~140K tokens each way. Accepts the same inputs as transcribe_bundle plus an optional gallery asset id; continue with the educt passes by transcript id."
+        description = "Transcribe audio or video AND store the TranscriptBundle server-side in one call, keyed to its recording when a gallery asset id is supplied, returning only the transcript summary (id, words_count, has_word_timings, gallery_asset_id when linked). For long media this is the path: an hour-long talk is ~550KB of bundle JSON, and relaying it through the model context (transcribe_bundle then educt_store_transcript) costs ~140K tokens each way. Accepts the same inputs as transcribe_bundle plus an optional gallery asset id; continue with the educt passes by transcript id."
     )]
     pub async fn transcribe_and_store(
         &self,

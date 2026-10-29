@@ -494,10 +494,10 @@ causal error and removes the generated file and coupled gallery row/lineage.
 
 | Tool | Description |
 |------|-------------|
-| `transcribe_bundle` | Transcribe audio into a synchronized `TranscriptBundle` with word-level timings (full_text carries the plain text) — the single transcription entry point, and the ingest format for the educt layers. The former raw-JSON `transcribe` tool was removed (the bundle is a strict superset). |
+| `transcribe_bundle` | Transcribe audio or video into a synchronized `TranscriptBundle` with word-level timings (full_text carries the plain text) — the single transcription entry point, and the ingest format for the educt layers. The former raw-JSON `transcribe` tool was removed (the bundle is a strict superset). |
 | `audio_capture` | Capture audio from the default microphone and publish it as a canonical durable WAV asset (16 kHz mono); callers cannot select an output path. |
 | `record_and_transcribe` | Record from microphone and transcribe in one call; returns linked audio file path and transcript. |
-| `transcribe_and_store` | Transcribe audio AND store the `TranscriptBundle` server-side in one call, returning only the transcript summary (id, words_count, has_word_timings) — the ingest entry point when the educt layers will be used afterwards. |
+| `transcribe_and_store` | Transcribe audio or video AND store the `TranscriptBundle` server-side in one call, keyed to its recording when a gallery asset id is supplied, returning only the transcript summary (id, words_count, has_word_timings, gallery_asset_id when linked) — the ingest entry point when the educt layers will be used afterwards. |
 | `audio_trim` | Trim an audio file to start/end times and publish the result as a canonical durable WAV asset; ffmpeg stream copy is fast and lossless. |
 | `audio_concat` | Concatenate audio files and publish one canonical durable WAV asset; ffmpeg uses the lossless concat demuxer. |
 

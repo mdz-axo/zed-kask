@@ -274,7 +274,13 @@ removed record.
 - **Workspace**: one strict `educt_get_transcript` dispatch drives paragraph
   blocks (`build_pane_blocks`,
   crates/media_panel/src/media_viewer.rs:5856@build_pane_blocks), speaker
-  labels, highlight overlays, and cut line-through marks. The whole workspace —
+  labels, highlight overlays, and cut line-through marks. The workspace
+  media body is the RECORDING's (`workspace_media_body`,
+  crates/media_panel/src/media_viewer.rs:4094@workspace_media_body):
+  a transcript linked to a live gallery recording renders the recording's
+  asset body — a video-keyed transcript plays the video; an unlinked
+  transcript falls to its stored media path, keeping the transcript and
+  its durable exports reachable. The whole workspace —
   recording title, bounded 140px player, Select text, transcript text,
   highlights/cuts, Create a reel — renders as ONE virtualized `gpui::list`
   (`render_transcript`,
