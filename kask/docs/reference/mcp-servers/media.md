@@ -121,6 +121,13 @@ model as an explicit per-call override, then `HKASK_MEDIA_PASS_MODEL`
 (operator process env — no settings field yet), then the configured
 analysis model (`HKASK_MEDIA_VISION_MODEL`); the STT model serves
 transcription only (2026-10-25 repair, commit `f6a786cdcb`).
+Audio-input passes (`layers_audio_pass`, the speaker pass's audio source)
+take the same per-call override; the verified audio-capable model is
+`OpenRouter/qwen/qwen3.8-omni-flash` (input_audio probe 2026-10-29 — one
+call on a real recording, labeled audio_event items), with
+`OpenRouter/mistralai/voxtral-small-24b-2507` as the named fallback.
+Audio-only models are passed per-call only, never via `HKASK_MEDIA_PASS_MODEL`
+(there is no pass settings field, and the env is shared with vision passes).
 
 **System dependencies:**
 
@@ -574,9 +581,15 @@ retrieval handoff. A lexical hit is not verified evidence.
 
 **Review flags** (speaker-identity plan Phase 1a, landed 2026-10-27, commit `6d7caa0c65`): `educt_get_transcript` carries a derived `review` view and `educt_export` gained the `review_csv` format (`tools/educt.rs:1769,1861-1880`) — paragraph blocks scored by the latest speaker layer's stored attribution confidences against `REVIEW_CONFIDENCE_THRESHOLD` (0.75; `transcript_review.rs:17`), with every unscoreable state named `no-confidence-recorded`, never a fabricated green. Deterministic and LLM-free (`transcript_review.rs:1-40`).
 
-### Media layers (`kask/mcp-servers/hkask-mcp-media/src/tools/layers.rs`, 3 tools)
+### Media layers (`kask/mcp-servers/hkask-mcp-media/src/tools/layers.rs`, 10 tools)
 
-`layers_store`, `layers_list`, and `layers_get` implement time-keyed layers over an immutable media file — the media sibling of the word-indexed educt transcript layers. Items anchor to source-PTS second ranges validated against the ffprobe-anchored media duration (`layers_store` at `tools/layers.rs:115`, `layers_list` at `:173`, `layers_get` at `:197`); the closed kind vocabulary is shot, semantic, object, ocr, audio_event, researcher, edl. Persistence is SQLite in the media server's existing database (`media_layers` + `media_layer_items`, FK cascade on delete — `layer_store.rs`, 918 lines); layers are database rows only, source media bytes are never modified. Landed 2026-10-28, commit `512ac8723a` (EUREKA-2 board task t1).
+`layers_store`, `layers_list`, `layers_get`, `layers_shot_pass`, `layers_semantic_pass`, `layers_audio_pass`, `layers_search`, `layers_edl_compose`, `layers_render_edl`, and `layers_export` implement time-keyed layers over an immutable media file — the media sibling of the word-indexed educt transcript layers.
+
+**Concept map:** Transcript layers (`educt_*`) anchor to immutable source-word indices; media layers (`layers_*`) anchor to source-PTS second ranges over the media file itself. The two families are joined by media path — the unified search (`layers_search`) scans each recording's layer items then its newest transcript's working text as one byte stream, so one query crosses both families. The transcript's `educt_export corpus_text` and the media `layers_export` provide the two corpus-ingestion hands (one passage per chunk or per layer item).
+
+Items anchor to source-PTS second ranges validated against the ffprobe-anchored media duration; the closed kind vocabulary is shot, semantic, object, ocr, audio_event, researcher, edl. Persistence is SQLite in the media server's existing database (`media_layers` + `media_layer_items`, FK cascade on delete). Layers are database rows only — source media bytes are never modified.
+
+The five passes are: `layers_shot_pass` (deterministic ffmpeg scene detection → shot boundaries), `layers_semantic_pass` (bounded vision pass → semantic/object/OCR items with labels and 0..1-normalized boxes), `layers_audio_pass` (bounded audio pass → labeled audio_event spans), `layers_edl_compose` (researcher selections → union-merged Keep ops), and `layers_render_edl` (EDL → playable gallery reel). The unified search and export provide retrieval and corpus handoff.
 
 
 ### Support modules (no registered tools)
