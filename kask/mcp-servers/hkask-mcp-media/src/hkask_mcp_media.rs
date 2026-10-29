@@ -466,8 +466,8 @@ mod tool_surface_tests {
     hkask_mcp_server::tool_surface_pin!(
         MediaServer::combined_router(),
         "combined_router",
-        82,
-        tool_surface_is_exactly_82_registered_tools,
+        83,
+        tool_surface_is_exactly_83_registered_tools,
     );
 
     // Coverage: every registered tool must map to an OMC concept. Catches
@@ -7008,6 +7008,266 @@ mod tool_behavior_tests {
             structured: None,
             model: Some("mock-vision-model".to_string()),
         }
+    }
+
+    // ── Audio pass contract tests (t5) ────────────────────────────────
+
+    /// A real audio fixture with one distinctive non-speech sound: 0.75s
+    /// silence, a 0.5s 880 Hz beep, 0.75s of trailing silence — exactly
+    /// 2.0s, the beep at source-PTS [0.75, 1.25].
+    async fn create_beep_wav(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+        let output = tokio::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=880:duration=0.5",
+                "-af",
+                "adelay=750|750,apad=pad_dur=0.75",
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+            ])
+            .arg(path)
+            .output()
+            .await?;
+        if !output.status.success() {
+            return Err(format!(
+                "beep fixture creation failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+        Ok(())
+    }
+
+    /// The audio-capable layer-pass mock: the media_generate arm serves
+    /// the canned chunk output — the capability `layers_audio_pass`
+    /// requires (its text and vision arms are never reached and fail
+    /// closed if they were).
+    struct AudioLayerMockPort {
+        audio_response: String,
+    }
+
+    crate::test_support::media_inference_stub! {
+        AudioLayerMockPort,
+        generate(self, _prompt): {
+            Box::pin(async {
+                Err(hkask_types::InferenceError::Connection(
+                    "text generate unused — the audio pass calls media_generate".into(),
+                ))
+            })
+        },
+        media_generate(self, _op, _params): {
+            let text = self.audio_response.clone();
+            Box::pin(
+                async move {
+                    Ok(serde_json::json!({ "text": text, "model": "mock-audio-model" }))
+                },
+            )
+        },
+    }
+
+    /// The audio-pass environment: the shared media test env, a real
+    /// beep fixture, and a server over the audio mock port. The tuple's
+    /// reverse drop order keeps the guard discipline (env restores before
+    /// the lock releases).
+    async fn audio_pass_env(
+        audio_response: String,
+    ) -> Result<
+        (
+            tokio::sync::MutexGuard<'static, ()>,
+            tempfile::TempDir,
+            ArtifactsEnvGuard,
+            tempfile::TempDir,
+            std::path::PathBuf,
+            MediaServer,
+        ),
+        Box<dyn std::error::Error>,
+    > {
+        let (env_lock, artifacts, env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let source = gallery_root.path().join("beep-source.wav");
+        create_beep_wav(&source).await?;
+        let port: Arc<dyn hkask_types::InferencePort> =
+            Arc::new(AudioLayerMockPort { audio_response });
+        let server = MediaServer::new(
+            hkask_types::WebID::new(),
+            port,
+            Arc::new(std::sync::Mutex::new(Some(GalleryState {
+                path: gallery_root.path().to_path_buf(),
+                mode: GalleryMode::ReadOnly,
+                gallery_id: Some(gallery.id.clone()),
+            }))),
+            store.clone(),
+            templates::create_env().expect("media templates must compile"),
+            video::ffmpeg::FfmpegRunner::detect(),
+            video::ytdlp::YtDlpRunner::detect(),
+            jobs::new_job_store(),
+            None,
+            Default::default(),
+        );
+        Ok((env_lock, artifacts, env, gallery_root, source, server))
+    }
+
+    /// The bounded-range audio-pass request: the range starts at 0.5s, so
+    /// the beep's chunk-relative span [0.25, 0.75) maps onto source-PTS
+    /// [0.75, 1.25) — the offset mapping is the assertion's point.
+    fn audio_pass_request(media_path: String) -> crate::types::LayersAudioPassRequest {
+        crate::types::LayersAudioPassRequest {
+            media_path,
+            gallery_asset_id: None,
+            time_range: Some(crate::types::LayersTimeRangeRequest {
+                start_sec: 0.5,
+                end_sec: Some(2.0),
+            }),
+            chunk_duration_secs: Some(3.0),
+            max_chunks: None,
+            resume_from: None,
+            structured: None,
+            model: Some("mock-audio-model".to_string()),
+        }
+    }
+
+    /// t5 AC1: the fixture's distinctive non-speech sound yields a labeled
+    /// event span inside the probed duration — the chunk-relative span is
+    /// mapped onto the source timeline — and the layer's provenance
+    /// records the model and template (AC3). The chunk's extracted wav is
+    /// gone after the pass (the hermetic intermediate observation).
+    #[tokio::test]
+    async fn layers_audio_pass_labels_a_distinctive_sound_inside_duration()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, _gallery_root, source, server) = audio_pass_env(
+            serde_json::json!({
+                "events": [{
+                    "label": "beep",
+                    "start_sec": 0.25,
+                    "end_sec": 0.75,
+                    "confidence": 0.9,
+                }],
+            })
+            .to_string(),
+        )
+        .await?;
+        let temp_before = temp_media_files(server.ffmpeg.temp_dir())?;
+        let media_path = source.to_string_lossy().into_owned();
+
+        let result = content_of(
+            &server
+                .layers_audio_pass(Parameters(audio_pass_request(media_path.clone())))
+                .await?,
+        );
+        assert_eq!(result["status"], serde_json::json!("completed"));
+        assert_eq!(result["layer"]["kind"], serde_json::json!("audio_event"));
+        assert_eq!(result["coverage"]["events_count"].as_u64(), Some(1));
+        let layer_id = result["layer"]["id"]
+            .as_str()
+            .ok_or("layer id")?
+            .to_string();
+
+        let layer = content_of(
+            &server
+                .layers_get(Parameters(crate::types::LayersGetRequest {
+                    layer_id: layer_id.clone(),
+                }))
+                .await?,
+        )["layer"]
+            .clone();
+        let item = layer["items"][0].clone();
+        assert_eq!(item["start_sec"], serde_json::json!(0.75));
+        assert_eq!(item["end_sec"], serde_json::json!(1.25));
+        assert_eq!(item["searchable_text"], serde_json::json!("beep"));
+        assert_eq!(
+            layer["provenance"]["model"],
+            serde_json::json!("mock-audio-model")
+        );
+        assert_eq!(
+            layer["provenance"]["prompt_template"],
+            serde_json::json!("layers_audio_pass"),
+            "AC3: provenance records the model and template"
+        );
+
+        let temp_after = temp_media_files(server.ffmpeg.temp_dir())?;
+        assert_eq!(
+            temp_after.difference(&temp_before).count(),
+            0,
+            "the extracted chunk wav leaked: {:?}",
+            temp_after.difference(&temp_before).collect::<Vec<_>>()
+        );
+        Ok(())
+    }
+
+    /// t5 AC2: media without an audio stream returns a named degradation,
+    /// never silent empty success — and nothing is stored.
+    #[tokio::test]
+    async fn layers_audio_pass_without_an_audio_stream_is_a_named_degradation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let video = gallery_root.path().join("no-audio-source.mp4");
+        create_real_video(&video).await?;
+        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
+
+        let error = server
+            .layers_audio_pass(Parameters(audio_pass_request(
+                video.to_string_lossy().into_owned(),
+            )))
+            .await
+            .expect_err("a video-only file must fail the audio pass");
+        assert!(
+            error.to_string().contains("audio stream"),
+            "the degradation names the requirement: {error}"
+        );
+
+        let listed = content_of(
+            &server
+                .layers_list(Parameters(crate::types::LayersListRequest {
+                    media_path: Some(video.to_string_lossy().into_owned()),
+                    kind: Some(crate::layer_store::MediaLayerKind::AudioEvent),
+                    limit: None,
+                }))
+                .await?,
+        );
+        assert_eq!(listed["count"].as_u64(), Some(0), "nothing was stored");
+        Ok(())
+    }
+
+    /// A pass that finds no events returns a named no_events note and
+    /// stores nothing — never silent empty success.
+    #[tokio::test]
+    async fn layers_audio_pass_with_no_events_is_a_named_no_events_note()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, _gallery_root, source, server) =
+            audio_pass_env(serde_json::json!({"events": []}).to_string()).await?;
+        let media_path = source.to_string_lossy().into_owned();
+
+        let result = content_of(
+            &server
+                .layers_audio_pass(Parameters(audio_pass_request(media_path.clone())))
+                .await?,
+        );
+        assert_eq!(result["status"], serde_json::json!("no_events"));
+        assert!(
+            result["note"]
+                .as_str()
+                .is_some_and(|note| note.contains("no audio events")),
+            "the note names the degradation: {}",
+            result["note"]
+        );
+
+        let listed = content_of(
+            &server
+                .layers_list(Parameters(crate::types::LayersListRequest {
+                    media_path: Some(media_path),
+                    kind: Some(crate::layer_store::MediaLayerKind::AudioEvent),
+                    limit: None,
+                }))
+                .await?,
+        );
+        assert_eq!(listed["count"].as_u64(), Some(0), "nothing was stored");
+        Ok(())
     }
 
     /// t4 AC1: the fixture yields an object item whose box lies within

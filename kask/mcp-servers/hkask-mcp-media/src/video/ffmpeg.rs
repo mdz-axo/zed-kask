@@ -111,6 +111,10 @@ pub struct VideoProbeInfo {
     /// signal the video passes degrade on (an audio-only file probes fine
     /// but has none; width/height/fps stay zero).
     pub has_video_stream: bool,
+    /// Whether the input carries an audio stream — the stream-requirement
+    /// signal the audio pass degrades on (a video-only file probes fine
+    /// but has none).
+    pub has_audio_stream: bool,
 }
 
 /// Parse only selected-frame showinfo records; no ordinal-based fallback.
@@ -341,6 +345,10 @@ impl FfmpegRunner {
             s.iter()
                 .find(|st| st.get("codec_type").and_then(|t| t.as_str()) == Some("video"))
         });
+        let audio_stream = streams.and_then(|s| {
+            s.iter()
+                .find(|st| st.get("codec_type").and_then(|t| t.as_str()) == Some("audio"))
+        });
         let format = json.get("format");
         let duration = format
             .and_then(|f| f.get("duration"))
@@ -387,6 +395,7 @@ impl FfmpegRunner {
             fps: fps as f32,
             bit_rate,
             has_video_stream: video_stream.is_some(),
+            has_audio_stream: audio_stream.is_some(),
         })
     }
 

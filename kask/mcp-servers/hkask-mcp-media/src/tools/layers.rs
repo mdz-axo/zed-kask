@@ -8,14 +8,16 @@
 //! layer is rejected with the named invariant and nothing is written.
 //! Layers are database rows — these tools never modify source media bytes.
 
-use crate::layer_pass::{LayerPassError, LayerVisionChunk, run_layer_pass_vision};
+use crate::layer_pass::{
+    LayerAudioChunk, LayerPassError, LayerVisionChunk, run_layer_pass_audio, run_layer_pass_vision,
+};
 use crate::layer_store::{self, LayerProvenance, MediaLayerFilter, MediaLayerItem, NewMediaLayer};
 use crate::tools::educt::parse_json_value;
 use crate::tools::processing::SourceSnapshot;
 use crate::transcript_pass::PassMode;
 use crate::types::{
-    LayersGetRequest, LayersListRequest, LayersSemanticPassRequest, LayersShotPassRequest,
-    LayersStoreItemRequest, LayersStoreRequest,
+    LayersAudioPassRequest, LayersGetRequest, LayersListRequest, LayersSemanticPassRequest,
+    LayersShotPassRequest, LayersStoreItemRequest, LayersStoreRequest,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -46,6 +48,11 @@ const MAX_PLANNED_CHUNKS: usize = 10_000;
 /// measurement (the transcript-pass counter pattern).
 static SEMANTIC_PASS_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 static SEMANTIC_PASS_REJECTIONS: AtomicU64 = AtomicU64::new(0);
+
+/// The audio pass's attempts and rejections — the same per-pass
+/// measurement.
+static AUDIO_PASS_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
+static AUDIO_PASS_REJECTIONS: AtomicU64 = AtomicU64::new(0);
 
 /// Map store errors to MCP wire-level kinds per-variant (never a blanket
 /// internal): a validation failure is InvalidArgument carrying the named
@@ -183,6 +190,25 @@ pub struct OcrItem {
     pub confidence: f64,
     pub r#box: NormalizedBox,
     pub frame_index: u32,
+}
+
+/// The audio pass's typed chunk output — the schema the model is held
+/// to (the template embeds it; the deterministic layer validates it).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct AudioPassOutput {
+    #[serde(default)]
+    pub events: Vec<AudioEventSpan>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct AudioEventSpan {
+    pub label: String,
+    /// Chunk-relative span start, seconds.
+    pub start_sec: f64,
+    /// Chunk-relative span end, seconds.
+    pub end_sec: f64,
+    /// Confidence in the observation, 0..1.
+    pub confidence: f64,
 }
 
 /// Map pass-core errors to MCP wire kinds per-variant (the educt
@@ -1064,6 +1090,286 @@ impl MediaServer {
                 "pass_stats": {
                     "attempts": SEMANTIC_PASS_ATTEMPTS.load(Ordering::Relaxed),
                     "rejections": SEMANTIC_PASS_REJECTIONS.load(Ordering::Relaxed),
+                },
+                "probed_duration_secs": probe.duration_secs,
+                "time_basis": "source_pts_seconds",
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Generate labeled audio_event items over a recording's audio via the bounded audio pass — one chat_audio inference call per chunk. Bound by a source-PTS time_range (default: the full probed duration); chunks beyond max_chunks return a resume cursor. Model-produced event spans are validated (finite, inside the chunk, confidences within 0..1, nonblank labels) before storing one kind=audio_event layer whose provenance records the model and template — a violation rejects the whole pass and nothing is stored. Speech is not transcribed (that is the transcript pipeline's job); media without an audio stream fails as failed_precondition naming the requirement; a pass that finds no events returns a named no_events note and stores nothing. Source media bytes are never modified."
+    )]
+    pub async fn layers_audio_pass(
+        &self,
+        Parameters(request): Parameters<LayersAudioPassRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "layers_audio_pass", async {
+            let _admission = self.admit_heavy_operation()?;
+            ensure_local_input_exists(&request.media_path)?;
+            if !crate::is_local_media_path(&request.media_path) {
+                validate_tool_url_with_dns(&request.media_path).await?;
+            }
+            let ffmpeg = self.require_ffmpeg()?;
+            let max_chunks = request.max_chunks.unwrap_or(DEFAULT_MAX_CHUNKS);
+            crate::validate_item_count(
+                "max_chunks",
+                max_chunks as usize,
+                1,
+                MAX_CHUNKS_CAP as usize,
+            )?;
+            let chunk_duration = request
+                .chunk_duration_secs
+                .unwrap_or(DEFAULT_CHUNK_DURATION_SECS);
+            if !chunk_duration.is_finite() || chunk_duration <= 0.0 {
+                return Err(McpToolError::invalid_argument(format!(
+                    "chunk_duration_secs must be finite and > 0, got {chunk_duration}"
+                )));
+            }
+            let structured = request.structured.unwrap_or(false);
+            let mode = if structured {
+                PassMode::Structured
+            } else {
+                PassMode::PromptSchema
+            };
+
+            let probe = ffmpeg
+                .probe(&request.media_path)
+                .await
+                .map_err(map_media_error)?;
+            if !probe.has_audio_stream {
+                return Err(McpToolError::failed_precondition(format!(
+                    "the audio pass requires an audio stream; {} has none \
+                     (probed codec {:?}, {}x{}) — no layer stored",
+                    request.media_path, probe.codec, probe.width, probe.height
+                )));
+            }
+            let duration_secs = probe.duration_secs as f64;
+
+            let (range_start, range_end) = match &request.time_range {
+                Some(range) => {
+                    let end = range.end_sec.unwrap_or(duration_secs);
+                    if !range.start_sec.is_finite() || range.start_sec < 0.0 {
+                        return Err(McpToolError::invalid_argument(format!(
+                            "time_range start_sec must be >= 0, got {}",
+                            range.start_sec
+                        )));
+                    }
+                    if end <= range.start_sec {
+                        return Err(McpToolError::invalid_argument(format!(
+                            "reversed time_range: start_sec {} >= end_sec {}",
+                            range.start_sec, end
+                        )));
+                    }
+                    if end > duration_secs + 1e-6 {
+                        return Err(McpToolError::invalid_argument(format!(
+                            "time_range end_sec {end} exceeds the probed duration {duration_secs}"
+                        )));
+                    }
+                    (range.start_sec, end)
+                }
+                None => (0.0, duration_secs),
+            };
+            let mut plan: Vec<(f64, f64)> = Vec::new();
+            let mut start = range_start;
+            while start < range_end - 1e-9 {
+                let chunk_end = (start + chunk_duration).min(range_end);
+                plan.push((start, chunk_end));
+                start = chunk_end;
+            }
+            if plan.len() > MAX_PLANNED_CHUNKS {
+                return Err(McpToolError::invalid_argument(format!(
+                    "the range with chunk_duration_secs {chunk_duration} yields {} chunks \
+                     — raise chunk_duration_secs",
+                    plan.len()
+                )));
+            }
+            let resume_from = request.resume_from.unwrap_or(0) as usize;
+            if resume_from > plan.len() {
+                return Err(McpToolError::invalid_argument(format!(
+                    "resume_from {resume_from} is past the chunk plan ({} chunks)",
+                    plan.len()
+                )));
+            }
+            let slice_end = (resume_from + max_chunks as usize).min(plan.len());
+
+            // Extract each chunk's audio span to a transient wav (the
+            // runner's temp dir — tracked for removal) and render its
+            // prompt: the schema rides in the prompt (v1 — audio inputs
+            // have no provider-enforced strict-schema path).
+            let schema = serde_json::to_string(&schemars::schema_for!(AudioPassOutput))
+                .map_err(|e| McpToolError::internal(format!("schema serialization: {e}")))?;
+            let mut intermediates = crate::assets::ScratchIntermediates::new("layers_audio_pass");
+            let mut chunks: Vec<LayerAudioChunk> = Vec::new();
+            for chunk_index in resume_from..slice_end {
+                let (chunk_start, chunk_end) = plan[chunk_index];
+                let span_path = ffmpeg
+                    .audio_trim(&request.media_path, chunk_start as f32, chunk_end as f32)
+                    .await
+                    .map_err(map_media_error)?;
+                intermediates.track(span_path.clone());
+                let start_text = format!("{:.3}", chunk_start);
+                let end_text = format!("{:.3}", chunk_end);
+                let mut vars: std::collections::HashMap<&str, &str> =
+                    std::collections::HashMap::new();
+                vars.insert("schema", &schema);
+                vars.insert("start_sec", &start_text);
+                vars.insert("end_sec", &end_text);
+                let prompt = crate::templates::render(
+                    &self.template_env,
+                    "layers_audio_pass",
+                    &vars,
+                )
+                .map_err(|e| McpToolError::internal(format!("Template render failed: {e}")))?;
+                chunks.push(LayerAudioChunk {
+                    prompt,
+                    audio_path: span_path.to_string_lossy().into_owned(),
+                });
+            }
+
+            let expected =
+                "AudioPassOutput {\"events\": [{\"label\", \"start_sec\", \"end_sec\", \"confidence\"}]}";
+            let result = run_layer_pass_audio::<AudioPassOutput>(
+                &self.vision_port,
+                mode,
+                request.model.as_deref(),
+                &chunks,
+                0,
+                chunks.len(),
+                &AUDIO_PASS_ATTEMPTS,
+                &AUDIO_PASS_REJECTIONS,
+                expected,
+            )
+            .await
+            .map_err(map_layer_pass_error)?;
+            intermediates.cleanup().map_err(map_media_error)?;
+
+            // Normalize chunk-relative spans onto the source timeline —
+            // the deterministic gates (finite, inside the chunk, ordered,
+            // confidence, nonblank) reject the whole pass; nothing is
+            // stored on a violation.
+            let mut items: Vec<MediaLayerItem> = Vec::new();
+            for (index, output) in result.outputs.iter().enumerate() {
+                let chunk_index = resume_from + index;
+                let (chunk_start, chunk_end) = plan[chunk_index];
+                let chunk_span = chunk_end - chunk_start;
+                for event in &output.events {
+                    let label = event.label.trim();
+                    if label.is_empty() {
+                        return Err(McpToolError::invalid_argument(format!(
+                            "chunk {chunk_index}: event label is blank"
+                        )));
+                    }
+                    validate_confidence(chunk_index, "event", event.confidence)?;
+                    for (which, value) in
+                        [("start_sec", event.start_sec), ("end_sec", event.end_sec)]
+                    {
+                        if !value.is_finite() || value < 0.0 || value > chunk_span + 1e-6 {
+                            return Err(McpToolError::invalid_argument(format!(
+                                "chunk {chunk_index}: event {which} {value} is outside the chunk \
+                                 span 0..={chunk_span} (chunk-relative seconds)"
+                            )));
+                        }
+                    }
+                    if event.end_sec < event.start_sec {
+                        return Err(McpToolError::invalid_argument(format!(
+                            "chunk {chunk_index}: reversed event span: start_sec {} > end_sec {}",
+                            event.start_sec, event.end_sec
+                        )));
+                    }
+                    items.push(MediaLayerItem {
+                        start_sec: chunk_start + event.start_sec,
+                        end_sec: Some(chunk_start + event.end_sec),
+                        searchable_text: label.to_string(),
+                        payload: serde_json::json!({
+                            "label": label,
+                            "confidence": event.confidence,
+                            "chunk_index": chunk_index,
+                        }),
+                        frame_asset_ids: None,
+                    });
+                }
+            }
+
+            let resume_cursor = if slice_end < plan.len() {
+                Some(slice_end)
+            } else {
+                None
+            };
+            if items.is_empty() {
+                return Ok(serde_json::json!({
+                    "status": "no_events",
+                    "note": "no audio events detected in the bounded slice; no layer stored",
+                    "resume_from": resume_cursor,
+                    "coverage": {
+                        "chunking_mode": "time_range",
+                        "planned_chunks": plan.len(),
+                        "processed_chunks": result.outputs.len(),
+                    },
+                    "mode": if structured {
+                        serde_json::json!({
+                            "requested": "structured",
+                            "note": "audio inputs have no provider-enforced strict-schema path — the schema rode in the prompt and the structured-output counters were used",
+                        })
+                    } else {
+                        serde_json::json!({"requested": "prompt_schema"})
+                    },
+                    "probed_duration_secs": probe.duration_secs,
+                }));
+            }
+            let events_count = items.len();
+            let provenance = LayerProvenance {
+                model: result.model,
+                prompt_template: "layers_audio_pass".to_string(),
+                created_at: hkask_types::time::now_rfc3339(),
+                parameters: Some(serde_json::json!({
+                    "chunking": {
+                        "chunk_duration_secs": chunk_duration,
+                        "max_chunks": max_chunks,
+                        "resume_from": resume_from,
+                        "planned_chunks": plan.len(),
+                        "processed_chunks": result.outputs.len(),
+                    },
+                    "structured": structured,
+                })),
+            };
+            let driver = &**self.gallery_store.driver();
+            let summary = layer_store::store_layer(
+                driver,
+                &NewMediaLayer {
+                    media_path: request.media_path.clone(),
+                    gallery_asset_id: request.gallery_asset_id.clone(),
+                    kind: layer_store::MediaLayerKind::AudioEvent,
+                    label: Some("audio events".to_string()),
+                    provenance,
+                    duration_secs,
+                    items,
+                },
+            )
+            .map_err(map_layer_store_error)?;
+            Ok(serde_json::json!({
+                "status": "completed",
+                "layer": summary,
+                "resume_from": resume_cursor,
+                "coverage": {
+                    "chunking_mode": "time_range",
+                    "planned_chunks": plan.len(),
+                    "processed_chunks": result.outputs.len(),
+                    "events_count": events_count,
+                    "limitation": "The analyzed audio span only — unanalyzed intervals are not assessed.",
+                },
+                "mode": if structured {
+                    serde_json::json!({
+                        "requested": "structured",
+                        "note": "audio inputs have no provider-enforced strict-schema path — the schema rode in the prompt and the structured-output counters were used",
+                    })
+                } else {
+                    serde_json::json!({"requested": "prompt_schema"})
+                },
+                "pass_stats": {
+                    "attempts": AUDIO_PASS_ATTEMPTS.load(Ordering::Relaxed),
+                    "rejections": AUDIO_PASS_REJECTIONS.load(Ordering::Relaxed),
                 },
                 "probed_duration_secs": probe.duration_secs,
                 "time_basis": "source_pts_seconds",

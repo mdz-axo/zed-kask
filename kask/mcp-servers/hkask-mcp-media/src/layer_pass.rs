@@ -263,6 +263,75 @@ pub async fn run_layer_pass_vision<TOutput: serde::de::DeserializeOwned>(
     })
 }
 
+/// One audio chunk: the rendered prompt (the schema rides in it — audio
+/// inputs have no provider-enforced schema path) plus the audio file path
+/// the chunk's extracted span lives at.
+pub struct LayerAudioChunk {
+    pub prompt: String,
+    pub audio_path: String,
+}
+
+/// Run one bounded slice of an audio layer pass: one `media_generate`
+/// "chat_audio" call per chunk (the speaker-pass audio wiring — the only
+/// audio-carrying inference surface), the same chunk/resume plumbing,
+/// model chain, typed parse errors, and counters as the text leg. In
+/// structured mode the structured-output counters tick and the caller's
+/// prompt carries the schema — strict provider-side schema enforcement
+/// does not exist for audio inputs (chat_json is text-only), so the mode
+/// is surfaced honestly by the tool rather than silently downgraded here.
+pub async fn run_layer_pass_audio<TOutput: serde::de::DeserializeOwned>(
+    inference: &Arc<dyn InferencePort>,
+    mode: PassMode,
+    model_override: Option<&str>,
+    chunks: &[LayerAudioChunk],
+    resume_from: usize,
+    max_chunks: usize,
+    attempts: &AtomicU64,
+    rejections: &AtomicU64,
+    expected: &'static str,
+) -> Result<LayerPassResult<TOutput>, LayerPassError> {
+    let range = plan_chunk_range(chunks.len(), resume_from, max_chunks)?;
+    let model = resolve_layer_model(model_override)?;
+    let mut outputs = Vec::with_capacity(range.len());
+    for chunk in &chunks[range.clone()] {
+        let params = hkask_types::MediaGenerateParams {
+            prompt: Some(chunk.prompt.clone()),
+            audio_url: Some(chunk.audio_path.clone()),
+            model: Some(model.clone()),
+            ..Default::default()
+        };
+        let raw = inference
+            .media_generate("chat_audio", &params)
+            .await
+            .map_err(LayerPassError::Inference)?;
+        attempts.fetch_add(1, Ordering::Relaxed);
+        if matches!(mode, PassMode::Structured) {
+            STRUCTURED_LAYER_PASS_ATTEMPTS.fetch_add(1, Ordering::Relaxed);
+        }
+        let model_text = raw
+            .get("text")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                rejections.fetch_add(1, Ordering::Relaxed);
+                if matches!(mode, PassMode::Structured) {
+                    STRUCTURED_LAYER_PASS_REJECTIONS.fetch_add(1, Ordering::Relaxed);
+                }
+                LayerPassError::UnparseableOutput {
+                    expected: "chat_audio response {\"text\": …}",
+                    raw: truncate(&raw.to_string(), 200),
+                }
+            })?
+            .to_string();
+        let output: TOutput = parse_chunk_output(&model_text, mode, rejections, expected)?;
+        outputs.push(output);
+    }
+    Ok(LayerPassResult {
+        outputs,
+        resume_from: (range.end < chunks.len()).then_some(range.end),
+        model,
+    })
+}
+
 /// Normalize a schemars-generated schema for strict-mode structured
 /// outputs: strict providers require `additionalProperties: false` on
 /// every object schema, which schemars does not emit (verified by probe

@@ -929,3 +929,34 @@ pub struct LayersSemanticPassRequest {
     /// an explicit per-call override wins.
     pub model: Option<String>,
 }
+
+/// Request to generate labeled audio_event items over a recording's audio
+/// via the bounded audio pass (t5).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LayersAudioPassRequest {
+    /// Absolute local path (or URL) of the source media to analyze.
+    pub media_path: String,
+    /// Optional gallery asset ID linking the produced layer to a gallery
+    /// asset.
+    pub gallery_asset_id: Option<String>,
+    /// Bound the pass to a source-PTS time range; omitted means the full
+    /// probed duration.
+    pub time_range: Option<LayersTimeRangeRequest>,
+    /// Chunk duration in seconds (default 5.0) — the chunking granularity;
+    /// each chunk is one inference call.
+    pub chunk_duration_secs: Option<f64>,
+    /// Maximum chunks processed per call (default 8, 1..=64); a larger
+    /// plan returns a resume cursor.
+    pub max_chunks: Option<u32>,
+    /// Chunk index to resume from (the resume cursor of a prior call).
+    pub resume_from: Option<u32>,
+    /// Opt into structured outputs (v2): the schema rides in the prompt and
+    /// the structured-output counters are used — audio inputs have no
+    /// provider-enforced strict-schema path (chat_json is text-only), so
+    /// the response names the mode actually used. Default false (v1).
+    pub structured: Option<bool>,
+    /// Optional model override (provider-prefixed). Default:
+    /// HKASK_MEDIA_PASS_MODEL, falling back to HKASK_MEDIA_VISION_MODEL —
+    /// an explicit per-call override wins.
+    pub model: Option<String>,
+}

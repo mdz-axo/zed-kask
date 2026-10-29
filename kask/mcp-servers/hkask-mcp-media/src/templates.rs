@@ -32,6 +32,7 @@ pub fn create_env() -> Result<Environment<'static>, crate::MediaError> {
         ("educt_correction_pass", EDUCT_CORRECTION_PASS),
         ("educt_highlight_pass", EDUCT_HIGHLIGHT_PASS),
         ("layers_semantic_pass", LAYERS_SEMANTIC_PASS),
+        ("layers_audio_pass", LAYERS_AUDIO_PASS),
     ];
     for (name, source) in templates {
         env.add_template(name, source).map_err(|e| {
@@ -58,6 +59,29 @@ pub fn render(
 /// sampled frames arrive as images (the schema rides here: vision inputs
 /// have no provider-enforced schema path); the model returns per-kind
 /// items keyed by frame_index, never timestamps.
+/// The audio pass's chunk prompt (t5): one bounded audio span per call,
+/// chunk-relative event times, the JSON Schema embedded (v1 — audio
+/// inputs have no provider-enforced strict-schema path).
+const LAYERS_AUDIO_PASS: &str = r#"You are analyzing one bounded chunk of a recording's audio.
+
+The chunk covers [{{ start_sec }}, {{ end_sec }}) seconds on the source
+timeline; the attached audio is exactly this chunk. Times in your output
+are chunk-relative seconds: 0.0 is the chunk's first sample, and the
+chunk's duration is {{ end_sec }} minus {{ start_sec }}.
+
+Label every distinct audible NON-SPEECH event (a beep, chime, clap, door,
+tone, machine sound — not silence, not spoken words): its label, its
+chunk-relative start and end seconds, and a confidence in 0..1.
+
+Return ONLY a JSON object matching this JSON Schema:
+{{ schema }}
+
+Rules:
+- Events are non-speech sounds; do not transcribe speech.
+- 0 <= start_sec <= end_sec <= chunk duration.
+- No audible events? Return {"events": []}.
+"#;
+
 const LAYERS_SEMANTIC_PASS: &str = r#"You are analyzing one sampled chunk of a video recording.
 
 The chunk covers [{{ start_sec }}, {{ end_sec }}) seconds on the source
