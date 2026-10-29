@@ -412,6 +412,9 @@ pub struct MediaViewer {
     edit_progress: Option<String>,
     /// Two-step delete confirmation: the asset awaiting confirmation.
     confirm_delete: Option<usize>,
+    /// Two-step delete confirmation for the Transcript tab's recordings: the
+    /// transcript id whose Confirm delete is armed.
+    confirm_delete_transcript: Option<String>,
     /// Visible status line (errors from tool dispatch, notices).
     status: Option<String>,
     /// Tool-call ids whose results `ingest_thread` has already examined. A
@@ -466,6 +469,7 @@ impl MediaViewer {
             edit_request: RequestLifecycle::new(),
             edit_progress: None,
             confirm_delete: None,
+            confirm_delete_transcript: None,
             status: None,
             processed_tool_results: HashSet::new(),
         }
@@ -529,6 +533,7 @@ impl MediaViewer {
         }
         self.active_tab = tab;
         self.confirm_delete = None;
+        self.confirm_delete_transcript = None;
         match tab {
             ViewerTab::Library => self.load_gallery(cx),
             ViewerTab::Queue => self.load_jobs(cx),
@@ -1802,6 +1807,96 @@ impl MediaViewer {
     /// `educt_list_transcripts` — the browse surface the tab opens with
     /// (operator report 2026-10-26: the tab must list what's available,
     /// not dead-end).
+    /// Delete one stored recording through `educt_delete_transcript` — the
+    /// CRUD delete the recordings listing owed the reference model
+    /// (recordings are project-scoped assets the operator manages, not
+    /// read-only fixtures). Durable exports and rendered reels are preserved
+    /// by the server, detached from the removed record.
+    fn delete_transcript_recording(&mut self, transcript_id: String, cx: &mut Context<Self>) {
+        let epoch = match self.begin_edit("educt_delete_transcript") {
+            Ok(epoch) => epoch,
+            Err(error) => {
+                self.status = Some(error);
+                cx.notify();
+                return;
+            }
+        };
+        self.edit_progress = Some("Deleting recording…".into());
+        self.confirm_delete_transcript = None;
+        let Some(invoker) = hkask_tool_invoker::shared_tool_invoker() else {
+            self.apply_transcript_deletion_result(
+                epoch,
+                Err("Tool invoker not wired — panel cannot delete recordings.".to_string()),
+                cx,
+            );
+            return;
+        };
+        cx.notify();
+        let task = invoker.invoke_tool(
+            MEDIA_SERVER,
+            "educt_delete_transcript",
+            serde_json::json!({
+                "transcript_id": transcript_id,
+            }),
+        );
+        cx.spawn(async move |this, cx| {
+            let result = match task.await {
+                Ok(text) => match hkask_types::tool_response::parse_tool_response(&text) {
+                    Some(value) => value
+                        .get("transcripts_removed")
+                        .and_then(serde_json::Value::as_u64)
+                        .filter(|removed| *removed > 0)
+                        .map(|removed| removed as usize)
+                        .ok_or_else(|| {
+                            "educt_delete_transcript returned no removal acknowledgement."
+                                .to_string()
+                        }),
+                    None => Err("educt_delete_transcript returned no parsable data.".to_string()),
+                },
+                Err(error) => Err(format!(
+                    "educt_delete_transcript failed: {}",
+                    error.message()
+                )),
+            };
+            this.update(cx, |this, cx| {
+                this.apply_transcript_deletion_result(epoch, result, cx)
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    /// The deletion's result gate: owned epochs only, the edit lifecycle
+    /// closes either way, and a successful deletion reloads the recordings
+    /// listing so the removed row disappears from the browser.
+    fn apply_transcript_deletion_result(
+        &mut self,
+        epoch: u64,
+        result: Result<usize, String>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.edit_request.owns(epoch) {
+            return;
+        }
+        self.edit_progress = None;
+        match result {
+            Ok(removed) => {
+                self.status = Some(format!(
+                    "Deleted {removed} recording{} — exports and rendered reels are preserved.",
+                    if removed == 1 { "" } else { "s" }
+                ));
+                self.edit_request.complete(epoch, Ok(()));
+                self.load_transcript_listing(cx);
+            }
+            Err(error) => {
+                self.status = Some(error);
+                self.edit_request
+                    .complete(epoch, Err("recording deletion failed".to_string()));
+            }
+        }
+        cx.notify();
+    }
+
     fn load_transcript_listing(&mut self, cx: &mut Context<Self>) {
         let Some(epoch) = self
             .transcript_listing_request
@@ -1859,6 +1954,17 @@ impl MediaViewer {
         match result {
             Ok(rows) => {
                 self.transcript_listing = Some(rows);
+                // A deletion or concurrent listing change may have removed the
+                // recording whose Confirm delete is armed — never leave a confirm
+                // aimed at a row that no longer exists.
+                if let Some(id) = self.confirm_delete_transcript.as_ref()
+                    && !self
+                        .transcript_listing
+                        .as_ref()
+                        .is_some_and(|listing| listing.iter().any(|row| &row.id == id))
+                {
+                    self.confirm_delete_transcript = None;
+                }
                 self.transcript_listing_request.complete(epoch, Ok(()));
             }
             Err(error) => {
@@ -4363,6 +4469,8 @@ impl MediaViewer {
                 .flex_col()
                 .gap_1()
                 .py_1()
+                .flex_1()
+                .min_w_0()
                 .hover(|el| el.bg(cx.theme().colors().element_hover))
                 .child(
                     Label::new(SharedString::from(title))
@@ -4384,9 +4492,67 @@ impl MediaViewer {
                         .color(ui::Color::Error),
                 );
             }
-            sections = sections.child(row.on_click(cx.listener(move |this, _, _, cx| {
-                this.open_transcript(transcript_id.clone(), cx);
-            })));
+            // The Delete affordance is a SIBLING of the clickable open area,
+            // never nested in it (the Library row pattern), so opening and
+            // deleting can never fire together. Two clicks: Delete arms the
+            // confirmation, Confirm delete dispatches the server's
+            // `educt_delete_transcript` (durable exports and rendered reels
+            // are preserved by the server, detached from the removed record).
+            let confirming = self.confirm_delete_transcript.as_deref() == Some(&transcript.id);
+            let delete_row_id = transcript.id.clone();
+            let delete_button = div()
+                .id(SharedString::from(format!(
+                    "media-transcript-delete-{}",
+                    transcript.id
+                )))
+                .debug_selector(move || {
+                    if confirming {
+                        "media-transcript-delete-confirm".into()
+                    } else {
+                        "media-transcript-delete".into()
+                    }
+                })
+                .cursor_pointer()
+                .px_2()
+                .py_1()
+                .flex_none()
+                .hover(|el| el.bg(cx.theme().colors().element_hover))
+                .child(
+                    Label::new(if confirming {
+                        SharedString::from("Confirm delete")
+                    } else {
+                        SharedString::from("Delete")
+                    })
+                    .size(LabelSize::XSmall)
+                    .color(if confirming {
+                        ui::Color::Error
+                    } else {
+                        ui::Color::Muted
+                    }),
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if this.confirm_delete_transcript.as_deref() == Some(&delete_row_id) {
+                        this.confirm_delete_transcript = None;
+                        this.delete_transcript_recording(delete_row_id.clone(), cx);
+                    } else {
+                        this.confirm_delete_transcript = Some(delete_row_id.clone());
+                        cx.notify();
+                    }
+                }));
+            sections = sections.child(
+                div()
+                    .id(SharedString::from(format!(
+                        "media-transcript-row-{}",
+                        transcript.id
+                    )))
+                    .flex()
+                    .items_start()
+                    .gap_2()
+                    .child(row.on_click(cx.listener(move |this, _, _, cx| {
+                        this.open_transcript(transcript_id.clone(), cx);
+                    })))
+                    .child(delete_button),
+            );
         }
         v_flex()
             .id("media-viewer-transcript-browser")
@@ -9488,6 +9654,87 @@ mod viewer_layout_tests {
                 "{selector} remains reachable during media failure: {bounds:?}"
             );
         }
+    }
+
+    /// The recordings browser's two-click delete: the Delete affordance
+    /// renders per row, arming swaps it for Confirm delete, and the
+    /// dispatch closes the edit lifecycle through the unwired-invoker
+    /// degradation path (tests run without a shared tool invoker).
+    #[gpui::test]
+    fn transcript_browser_delete_confirms_and_closes_the_edit(cx: &mut TestAppContext) {
+        init_layout_test_globals(cx);
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript_listing = Some(vec![TranscriptSummaryRow {
+                id: "t-delete".into(),
+                media_path: "/generated/dunning.mp4".into(),
+                words_count: 558,
+                duration_secs: 276,
+                has_word_timings: true,
+                alignment: "original".into(),
+            }]);
+            viewer.active_tab = ViewerTab::Transcript;
+            cx.notify();
+        });
+
+        let (_, cx) = cx.add_window_view(|_window, _cx| NarrowPaneHost {
+            viewer: viewer.clone(),
+        });
+        cx.simulate_resize(size(px(480.), px(320.)));
+        cx.run_until_parked();
+
+        // The Delete affordance is laid out on the row, alongside the open
+        // affordance — the operator can always remove a recording.
+        assert!(
+            cx.debug_bounds("media-transcript-delete").is_some(),
+            "the Delete affordance must render on the recordings row"
+        );
+
+        // Arming the confirmation swaps the affordance.
+        viewer.update(cx, |viewer, cx| {
+            viewer.confirm_delete_transcript = Some("t-delete".into());
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("media-transcript-delete-confirm").is_some(),
+            "the armed row must show Confirm delete"
+        );
+        assert!(
+            cx.debug_bounds("media-transcript-delete").is_none(),
+            "the plain Delete affordance must be replaced while confirming"
+        );
+
+        // The dispatch closes the edit lifecycle even on the unwired
+        // degradation path — a second admission must not report an edit
+        // already in progress (the lifecycle would be stuck Loading).
+        viewer.update(cx, |viewer, cx| {
+            viewer.delete_transcript_recording("t-delete".into(), cx);
+        });
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, cx| {
+            assert!(
+                viewer
+                    .status
+                    .as_deref()
+                    .is_some_and(|status| status.contains("cannot delete recordings")),
+                "the unwired-invoker degradation must surface a status, got {:?}",
+                viewer.status
+            );
+            assert_eq!(
+                viewer.confirm_delete_transcript, None,
+                "dispatch disarms the confirmation"
+            );
+            viewer.delete_transcript_recording("t-delete".into(), cx);
+            assert!(
+                !viewer
+                    .status
+                    .as_deref()
+                    .is_some_and(|status| status.contains("already in progress")),
+                "a completed edit must admit the next one"
+            );
+            cx.notify();
+        });
     }
 
     /// The shared fit assertions: the video area and the whole player
