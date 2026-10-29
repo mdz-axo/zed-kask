@@ -104,8 +104,11 @@ replay overrides with the intended full provider name; install that
 provider's key. Remove overrides from fixed-model operations. Settings
 remain the source of defaults; standalone callers must configure the env
 model or pass an override. The current STT settings default remains
-`OpenRouter/openai/whisper-large-v3-turbo`; image, video, and TTS settings
-have no default. No compatibility fallback is provided.
+`OpenRouter/openai/whisper-large-v3-turbo`; the reviewed Nemotron-Transcribe
+flip (DeepInfra) is prepared and pinned but held — the endpoint's word
+chunking was unstable 2026-10-29 (one success, then 0/7), and the live
+probe `live_stt_nemotron_returns_word_timings` re-checks it. Image, video,
+and TTS settings have no default. No compatibility fallback is provided.
 
 Offline pins: `media_routing_tests` exercises all eight selectable ops,
 invalid selections, absent keys, fixed ops, typed failures, real adapter

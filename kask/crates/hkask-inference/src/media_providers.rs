@@ -324,6 +324,15 @@ impl DeepInfraMediaProvider {
         if let Some(lang) = language {
             form = form.text("language", lang.to_string());
         }
+        // DeepInfra's ASR API defaults `chunk_level` to "segment" — a
+        // segments-only response cannot back the word-indexed transcript
+        // layer (the same rationale as the OpenRouter arm's
+        // `timestamp_granularities: ["word", "segment"]`). The live
+        // Nemotron response at chunk_level:"word" is Whisper-shaped
+        // (`word`-keyed entries, verified 2026-10-29 against the real
+        // endpoint); the API docs' example keys the token as "text" —
+        // the bundle parse accepts both.
+        form = form.text("chunk_level", "word");
 
         let resp = self
             .client
@@ -451,7 +460,9 @@ impl MediaProvider for DeepInfraMediaProvider {
                 // `input_audio` content-part format.
                 MediaOp::ChatAudio => Err(InferenceError::Connection(
                     "deepinfra does not support chat_audio — route via an \
-                     OpenRouter audio-chat model (e.g. OpenRouter/mistralai/voxtral-small-24b-2507)"
+                     OpenRouter audio-chat model (e.g. OpenRouter/qwen/qwen3.8-omni-flash, \
+                     verified against the endpoint 2026-10-29, or \
+                     OpenRouter/mistralai/voxtral-small-24b-2507)"
                         .into(),
                 )),
                 // Same discipline for structured outputs: served by

@@ -22,6 +22,9 @@ consumed_capabilities:
     source: kask/crates/hkask-inference/src/media_providers.rs
   - capability: STT — openai/whisper-large-v3-turbo
     source: kask/crates/hkask-inference/src/model_constants.rs
+    note: the reviewed Nemotron-Transcribe flip (DeepInfra) is prepared and
+      pinned but held 2026-10-29 — the endpoint's word chunking was unstable
+      same-day (one success, then 0/7); the live probe re-checks it
   - capability: vision — openai/gpt-4o-mini
     source: kask/crates/hkask-inference/src/model_constants.rs
   - capability: edit predictions — z-ai/glm-5.2

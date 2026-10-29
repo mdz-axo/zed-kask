@@ -1,4 +1,5 @@
-//! Offline pins for the operator's 2026-09-06 routing decision (P1/P4).
+//! Offline pins for the operator's 2026-09-06 routing decision (P1/P4), plus
+//! the env-gated live STT probe (skipped unless HKASK_STT_LIVE_PROBE=1).
 use crate::InferenceConfig;
 use crate::media_router::MediaRouter;
 use crate::provider::{MediaOp, MediaProvider, ProviderRegistry};
@@ -675,6 +676,9 @@ async fn lazy_media_is_child_local_with_actual_settings_stt_default() {
         )
         .env("OPENROUTER_API_KEY", "sentinel-openrouter")
         .env("DEEPINFRA_API_KEY", "sentinel-deepinfra")
+        // The settings default is the OpenRouter Whisper path (the
+        // reviewed Nemotron flip is prepared but held — see the new
+        // sibling test for the DeepInfra-qualified routing shape).
         .env("OPENROUTER_BASE_URL", &selected.url)
         .env("DEEPINFRA_BASE_URL", &other.url);
     let output = tokio::time::timeout(
@@ -712,6 +716,163 @@ async fn lazy_media_is_child_local_with_actual_settings_stt_default() {
             .1
     );
     assert_eq!(body["input_audio"]["data"], "UklGRg==");
+}
+
+/// expect: "A DeepInfra-qualified STT model routes child-local to the native
+/// inference endpoint and requests word-level chunks."
+/// [P1] Motivating; dcterms:identifier: LazyInferencePort::media_generate
+#[cfg(unix)]
+#[tokio::test]
+async fn deepinfra_qualified_stt_routes_with_chunk_level_word() {
+    if std::env::var_os("HKASK_MEDIA_ROUTING_TEST_CASE").is_some() {
+        let result = crate::LazyInferencePort::new()
+            .media_generate(
+                "transcribe",
+                &MediaGenerateParams {
+                    audio_url: Some(
+                        std::env::var("HKASK_MEDIA_TEST_AUDIO").expect("audio fixture"),
+                    ),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("child-local transcription");
+        assert_eq!(result["text"], "hello");
+        return;
+    }
+    let directory = tempfile::tempdir().expect("temporary fixtures");
+    let socket = directory.path().join("inference.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).expect("IPC listener");
+    let audio = directory.path().join("input.wav");
+    std::fs::write(&audio, b"RIFF").expect("audio fixture");
+    let selected = HttpCapture::start(200).await;
+    let other = HttpCapture::start(200).await;
+    let mut command = subprocess(
+        "deepinfra_qualified_stt_routes_with_chunk_level_word",
+        "lazy",
+    );
+    command
+        .env("HKASK_INFERENCE_SOCKET", &socket)
+        .env("HKASK_MEDIA_TEST_AUDIO", &audio)
+        // NOT the settings default: this pins the explicit
+        // DeepInfra-qualified STT routing — the held Nemotron flip's exact
+        // shape (the arm sends chunk_level=word; the API's "segment"
+        // default cannot back the word-indexed layer system).
+        .env(
+            "HKASK_MEDIA_STT_MODEL",
+            "DeepInfra/nvidia/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B",
+        )
+        .env("OPENROUTER_API_KEY", "sentinel-openrouter")
+        .env("DEEPINFRA_API_KEY", "sentinel-deepinfra")
+        .env("OPENROUTER_BASE_URL", &other.url)
+        .env("DEEPINFRA_BASE_URL", &selected.url);
+    let output = tokio::time::timeout(
+        Duration::from_secs(10),
+        tokio::process::Command::from(command)
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .expect("bounded child")
+    .expect("child output");
+    assert!(
+        output.status.success(),
+        "{} {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), listener.accept())
+            .await
+            .is_err(),
+        "media must not connect to IPC"
+    );
+    assert!(other.requests.lock().expect("unselected").is_empty());
+    let requests = selected.requests.lock().expect("capture");
+    assert_eq!(requests.len(), 1);
+    let request = requests.first().expect("STT request");
+    assert_eq!(
+        request.path,
+        "/v1/inference/nvidia/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B"
+    );
+    assert!(
+        request.body.contains("name=\"chunk_level\""),
+        "the DeepInfra STT arm must request word-level chunks: {}",
+        request.body
+    );
+    assert!(
+        request.body.contains("\r\n\r\nword\r\n"),
+        "chunk_level value must be word: {}",
+        request.body
+    );
+    assert!(
+        request.body.contains("filename=\"audio.wav\""),
+        "the audio part rides the multipart form: {}",
+        request.body
+    );
+}
+
+/// Live STT probe for the reviewed-but-held Nemotron-Transcribe flip
+/// (2026-10-29): one real transcription through the DeepInfra Nemotron arm
+/// sending `chunk_level: "word"` against the real API. Env-gated: runs
+/// only with `HKASK_STT_LIVE_PROBE=1` and `HKASK_STT_LIVE_AUDIO` set to
+/// speech-bearing audio (a machine-noise clip legitimately returns zero
+/// words; live-probe discipline: `--test-threads=1`; the credential
+/// rides the child env and never appears in output). STATUS 2026-10-29:
+/// the endpoint returned word-level, `word`-keyed tokens ONCE (8 words,
+/// real speech clip) and then segment-only across 7 consecutive
+/// requests — the flip is held until this probe is green repeatedly.
+/// Pins that the real response's word entries carry exactly the shape
+/// the media-server bundle parse consumes (`word`-keyed tokens with
+/// start/end seconds; the DeepInfra docs' `text`-keyed example is
+/// accepted too), matching the parse fixture in
+/// `deepinfra_nemotron_response_parses_into_word_timed_bundle`.
+#[tokio::test]
+async fn live_stt_nemotron_returns_word_timings() {
+    if std::env::var("HKASK_STT_LIVE_PROBE").ok().as_deref() != Some("1") {
+        eprintln!("skipped: HKASK_STT_LIVE_PROBE != 1");
+        return;
+    }
+    let audio = std::env::var("HKASK_STT_LIVE_AUDIO")
+        .ok()
+        .filter(|path| !path.trim().is_empty());
+    let Some(audio) = audio else {
+        eprintln!("skipped: HKASK_STT_LIVE_AUDIO unset");
+        return;
+    };
+    let result = crate::LazyInferencePort::new()
+        .media_generate(
+            "transcribe",
+            &MediaGenerateParams {
+                audio_url: Some(audio),
+                language: Some("en".into()),
+                model: Some("DeepInfra/nvidia/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("live transcription through the DeepInfra Nemotron arm");
+    let words = result["words"].as_array().expect("word-level chunks");
+    assert!(
+        !words.is_empty(),
+        "chunk_level=word returned no words: {result}"
+    );
+    for word in words {
+        assert!(
+            word.get("word").or_else(|| word.get("text")).is_some(),
+            "word- or text-keyed token: {word}"
+        );
+        assert!(
+            word.get("start").and_then(|s| s.as_f64()).is_some(),
+            "start seconds: {word}"
+        );
+        assert!(
+            word.get("end").and_then(|e| e.as_f64()).is_some(),
+            "end seconds: {word}"
+        );
+    }
+    let text = result["text"].as_str().expect("full text");
+    assert!(!text.trim().is_empty(), "transcript text: {result}");
 }
 
 const UNSAFE_LOCAL_MODELS: &[&str] = &[

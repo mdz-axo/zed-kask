@@ -233,9 +233,13 @@ existing semantic handoff [tree].
   `hkask_mcp_media.rs:536-546`.
 - The face registry uses vision-LLM matching and intentionally stores no local face
   embeddings: `faces.rs:72-82`; it is not a modality-independent person registry.
-- Default managed STT remains `OpenRouter/openai/whisper-large-v3-turbo` through
-  settings: `hkask-inference/src/model_constants.rs:200-209`. Local voice embedding
-  would not make the existing complete transcription pipeline local.
+- Default managed STT was `OpenRouter/openai/whisper-large-v3-turbo` through
+  settings at assessment time: `hkask-inference/src/model_constants.rs:200-214`
+  (2026-10-29 update: a Nemotron-Transcribe flip was prepared and pinned but
+  held — the DeepInfra endpoint returned word timestamps once and then
+  segment-only across 7 same-day requests; Whisper remains the default). Local
+  voice embedding would not make the existing complete transcription pipeline
+  local.
 
 The tests inspected for speaker passes use mocked model outputs; they validate
 storage/contracts, not acoustic attribution accuracy. A `SpeakerLayer` comment

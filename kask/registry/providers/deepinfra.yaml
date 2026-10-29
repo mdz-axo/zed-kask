@@ -22,6 +22,10 @@ consumed_capabilities:
     source: kask/crates/kask_bridge/src/inference_providers.rs
   - capability: media ops — generate_image, image_to_image, remove_background, upscale, generate_speech, transcribe, generate_video, image_to_video
     source: kask/crates/hkask-inference/src/media_providers.rs
+  - capability: STT (flip prepared, held) — nvidia/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B (the transcribe arm sends chunk_level "word"; the observed live response is word-keyed, the API docs' example is text-keyed, both parse)
+    source: kask/crates/hkask-inference/src/model_constants.rs
+    note: held 2026-10-29 — the endpoint returned word timestamps once and then
+      segment-only across 7 same-day requests; re-check with the live probe
   - capability: rerank — Qwen/Qwen3-Reranker-8B
     source: kask/crates/hkask-inference/src/model_constants.rs
 deliberate_non_consumption: []

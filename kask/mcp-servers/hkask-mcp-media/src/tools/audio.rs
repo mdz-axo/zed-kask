@@ -86,9 +86,11 @@ struct AudioCaptureEffectiveParams {
 /// real passages in a verbatim-stored whisper bundle).
 ///
 /// Two key shapes parse here: Whisper's verbose_json keys the token as
-/// `word`; DeepInfra's ASR schema (Nemotron-Transcribe — the default STT
-/// since 2026-10-29 — at `chunk_level: "word"`) keys it as `text`. Same
-/// separator-prefixed shape otherwise.
+/// `word` — and the live DeepInfra Nemotron-Transcribe response (the
+/// default STT since 2026-10-29, `chunk_level: "word"`, verified against
+/// the real endpoint) is the same `word`-keyed shape. DeepInfra's API
+/// docs' example keys the token as `text`, so that shape is accepted
+/// too.
 fn timed_words_from_provider(entries: &[serde_json::Value]) -> Vec<TimedWord> {
     entries
         .iter()
@@ -382,7 +384,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Capture audio from the default system microphone and publish a canonical durable WAV asset optimized for Whisper transcription (16kHz mono)."
+        description = "Capture audio from the default system microphone and publish a canonical durable WAV asset optimized for STT transcription (16 kHz mono)."
     )]
     pub async fn audio_capture(
         &self,

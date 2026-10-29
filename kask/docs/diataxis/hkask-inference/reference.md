@@ -23,7 +23,7 @@ The crate root declares nine public modules and re-exports three public types (`
 |---|---|---|
 | `config` | `InferenceConfig`, `ProviderId`, environment resolution | `kask/crates/hkask-inference/src/config.rs:1-30` |
 | `inference_ipc_client` | Unix-socket adapter for inference, tools, and worktrees | `kask/crates/hkask-inference/src/inference_ipc_client.rs:1-48` |
-| `media_providers` | DeepInfra and OpenRouter media adapters | `kask/crates/hkask-inference/src/media_providers.rs:60-76`, `kask/crates/hkask-inference/src/media_providers.rs:472-488` |
+| `media_providers` | DeepInfra and OpenRouter media adapters | `kask/crates/hkask-inference/src/media_providers.rs:60-76`, `kask/crates/hkask-inference/src/media_providers.rs:482-498` |
 | `media_router` | Child-local media dispatcher | `kask/crates/hkask-inference/src/media_router.rs:1-12` |
 | `model_constants` | Environment bindings and QA model validation | `kask/crates/hkask-inference/src/model_constants.rs:1-24` |
 | `openai_compat` | Provider-error body redaction helpers | `kask/crates/hkask-inference/src/openai_compat.rs:1-24` |
@@ -122,17 +122,17 @@ Defined at `kask/crates/hkask-inference/src/config.rs:38-49`.
 
 ## `InferenceConfig`
 
-Defined at `kask/crates/hkask-inference/src/config.rs:73-90`.
+Defined at `kask/crates/hkask-inference/src/config.rs:73-92`.
 
 | Field group | Default/effective source | Evidence |
 |---|---|---|
-| `default_provider` | `OpenRouter`; `HKASK_DEFAULT_PROVIDER` accepts `RunPod`, `OpenRouter`, `ollama` | `kask/crates/hkask-inference/src/config.rs:92-107`, `kask/crates/hkask-inference/src/config.rs:176-179,188-204` |
-| OpenRouter URL/key | `https://openrouter.ai/api`; `OPENROUTER_BASE_URL`, `OPENROUTER_API_KEY` | `kask/crates/hkask-inference/src/config.rs:78-79`, `kask/crates/hkask-inference/src/config.rs:92-107`, `kask/crates/hkask-inference/src/config.rs:120-135`, `kask/crates/hkask-inference/src/config.rs:212-219,235-246` |
-| DeepInfra URL/key | `https://api.deepinfra.com`; `DEEPINFRA_BASE_URL`, `DEEPINFRA_API_KEY` | `kask/crates/hkask-inference/src/config.rs:82-83`, `kask/crates/hkask-inference/src/config.rs:92-107`, `kask/crates/hkask-inference/src/config.rs:120-135` |
-| Ollama URL/key | `http://localhost:11434`; `OLLAMA_BASE_URL`, `OLLAMA_API_KEY` | `kask/crates/hkask-inference/src/config.rs:87-88`, `kask/crates/hkask-inference/src/config.rs:92-107`, `kask/crates/hkask-inference/src/config.rs:120-135` |
-| `default_model` | Empty in `Default`; `HKASK_DEFAULT_MODEL` in `from_env` | `kask/crates/hkask-inference/src/config.rs:101-105`, `kask/crates/hkask-inference/src/config.rs:124-133` |
+| `default_provider` | `OpenRouter`; `HKASK_DEFAULT_PROVIDER` accepts `RunPod`, `OpenRouter`, `ollama` | `kask/crates/hkask-inference/src/config.rs:94-110`, `kask/crates/hkask-inference/src/config.rs:178-181,188-204` |
+| OpenRouter URL/key | `https://openrouter.ai/api`; `OPENROUTER_BASE_URL`, `OPENROUTER_API_KEY` | `kask/crates/hkask-inference/src/config.rs:78-79`, `kask/crates/hkask-inference/src/config.rs:94-110`, `kask/crates/hkask-inference/src/config.rs:122-137`, `kask/crates/hkask-inference/src/config.rs:214-221,235-246` |
+| DeepInfra URL/key | `https://api.deepinfra.com`; `DEEPINFRA_BASE_URL`, `DEEPINFRA_API_KEY` | `kask/crates/hkask-inference/src/config.rs:82-83`, `kask/crates/hkask-inference/src/config.rs:94-110`, `kask/crates/hkask-inference/src/config.rs:122-137` |
+| Ollama URL/key | `http://localhost:11434`; `OLLAMA_BASE_URL`, `OLLAMA_API_KEY` | `kask/crates/hkask-inference/src/config.rs:87-88`, `kask/crates/hkask-inference/src/config.rs:94-110`, `kask/crates/hkask-inference/src/config.rs:122-137` |
+| `default_model` | Empty in `Default`; `HKASK_DEFAULT_MODEL` in `from_env` | `kask/crates/hkask-inference/src/config.rs:103-107`, `kask/crates/hkask-inference/src/config.rs:126-135` |
 
-Provider keys are read from the process environment only (`kask/crates/hkask-inference/src/config.rs:160-169,235-246`).
+Provider keys are read from the process environment only (`kask/crates/hkask-inference/src/config.rs:162-171,235-246`).
 
 ## Inference port resolution
 
@@ -259,7 +259,7 @@ For chat generation without an explicit override, configure the visible default:
 export HKASK_DEFAULT_MODEL='OpenRouter/vendor/model'
 ```
 
-In zed-kask this value normally comes from `kask.models.default_model` and is injected into the child process. `InferenceConfig::from_env()` leaves `default_model` empty when the variable is absent (`kask/crates/hkask-inference/src/config.rs:120-135`). The direct generation path then returns `InferenceError::NotConfigured` with instructions to set the setting or pass an explicit model; it does not select a code constant (`kask/crates/hkask-inference/src/hkask_inference.rs:128-152`, `kask/crates/hkask-inference/src/hkask_inference.rs:639-651`).
+In zed-kask this value normally comes from `kask.models.default_model` and is injected into the child process. `InferenceConfig::from_env()` leaves `default_model` empty when the variable is absent (`kask/crates/hkask-inference/src/config.rs:122-137`). The direct generation path then returns `InferenceError::NotConfigured` with instructions to set the setting or pass an explicit model; it does not select a code constant (`kask/crates/hkask-inference/src/hkask_inference.rs:128-152`, `kask/crates/hkask-inference/src/hkask_inference.rs:639-651`).
 
 When you do pass an explicit model, pass the complete registry name:
 
@@ -305,7 +305,7 @@ Bridge-routed model support belongs in zed's model registry. To add standalone d
 
 1. Add a `DirectEmbeddingProvider { id, api_url, env_var }` entry to `DIRECT_EMBEDDING_PROVIDERS` (`kask/crates/hkask-inference/src/hkask_inference.rs:420-436`).
 2. Keep the provider descriptor aligned with zed's registry integration; the table comment identifies the table as the embedding-capable SUBSET of `kask_bridge::inference_providers` — not a full mirror: RunPod (endpoint discovery) and KiloCode (chat-only, no embeddings endpoint) are deliberately absent (`kask/crates/hkask-inference/src/hkask_inference.rs:427-437`).
-3. If configuration fields are required by other crate features, add them to `InferenceConfig::default` and `InferenceConfig::from_env` together (`kask/crates/hkask-inference/src/config.rs:73-135`).
+3. If configuration fields are required by other crate features, add them to `InferenceConfig::default` and `InferenceConfig::from_env` together (`kask/crates/hkask-inference/src/config.rs:73-137`).
 4. Test an explicit provider-qualified model, a missing credential, and an unknown prefix. `DirectEmbeddingPort::try_new` accepts only a recognized prefix and required credentials (`kask/crates/hkask-inference/src/hkask_inference.rs:525-571`).
 
 `ProviderId` needs a new variant only if the shared configuration must represent that provider. Its public behavior is the `as_str()` match (`kask/crates/hkask-inference/src/config.rs:34-64`); dispatch parsing remains in the direct-provider table or media registry.

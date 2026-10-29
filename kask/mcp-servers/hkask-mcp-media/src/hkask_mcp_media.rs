@@ -3360,21 +3360,24 @@ mod tool_behavior_tests {
     }
 
     /// M1 pin (2026-10-29 STT flip): the DeepInfra Nemotron-Transcribe
-    /// default returns word entries keyed `text` — not Whisper's `word`
-    /// (DeepInfra API docs, chunk_level:"word") — and the DeepInfra arm
-    /// now sends `chunk_level=word` (the API defaults to "segment",
-    /// which cannot back the word-indexed layer system). This fixture is
-    /// the documented response shape; the parse must produce trimmed,
-    /// word-timed TimedWords through the same stored-bundle path the
-    /// Whisper default used (the sibling test above).
+    /// default at `chunk_level:"word"` returns Whisper-shaped word entries
+    /// (`word`/`start`/`end`) — verified live against the real endpoint
+    /// 2026-10-29. The DeepInfra API docs' example keys the token as
+    /// `text`; the live response is `word`-keyed, and the parse accepts
+    /// both. The DeepInfra arm now sends `chunk_level=word` (the API
+    /// defaults to "segment", which cannot back the word-indexed layer
+    /// system). This fixture is the observed live shape; the parse must
+    /// produce trimmed, word-timed TimedWords through the same
+    /// stored-bundle path the Whisper default used (the sibling test
+    /// above).
     #[tokio::test]
     async fn deepinfra_nemotron_response_parses_into_word_timed_bundle() {
         let media_json = serde_json::json!({
             "text": " hello world",
             "duration": 2.0,
             "words": [
-                {"text": " hello", "start": 0.0, "end": 1.0},
-                {"text": " world", "start": 1.0, "end": 2.0}
+                {"word": " hello", "start": 0.0, "end": 1.0},
+                {"word": " world", "start": 1.0, "end": 2.0}
             ],
             "segments": [
                 {"text": " hello world", "start": 0.0, "end": 2.0}

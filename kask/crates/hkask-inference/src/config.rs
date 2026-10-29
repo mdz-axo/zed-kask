@@ -78,7 +78,9 @@ pub struct InferenceConfig {
     pub openrouter_base_url: String,
     pub openrouter_api_key: String,
     /// DeepInfra — media generation (image, TTS, STT, background removal).
-    /// Base URL defaults to `https://api.deepinfra.com/v1/openai`.
+    /// Base URL defaults to `https://api.deepinfra.com` (native inference
+    /// endpoints under `/v1/inference/...`; the OpenAI-compatible surface
+    /// lives under `/v1/openai/...`).
     pub deepinfra_base_url: String,
     pub deepinfra_api_key: String,
     /// Ollama local inference — defaults to `http://localhost:11434`. The API key

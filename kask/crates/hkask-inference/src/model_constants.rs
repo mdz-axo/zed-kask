@@ -198,11 +198,19 @@ mod qa_generation_tests {
 // (operator ruling 2026-09-04 — settings layers carry the code defaults).
 
 /// Default STT model for the transcribe pipeline (env `HKASK_MEDIA_STT_MODEL`
-/// via `KaskMediaSettings::stt_model`). OpenRouter's transcriptions endpoint
-/// serves this model with word-level timestamps — the educt layer system
-/// anchors to word indices, so a segments-only STT response cannot back a
-/// reel. Verified 2026-09-04: a 62-minute talk transcribes in a single call
-/// (~$0.04) with 8.5K word timings.
+/// via `KaskMediaSettings::stt_model`). Whisper-large-v3-turbo via OpenRouter —
+/// word-level timestamps are reliable here (verified 2026-09-04: a
+/// 62-minute talk transcribes in a single call, ~$0.04, 8.5K word
+/// timings) and the educt layer system anchors to word indices, so a
+/// segments-only STT response cannot back a reel. The reviewed
+/// Nemotron-3.5-Transcribe flip (DeepInfra, $0.002/min, 40 languages,
+/// one-hour context) is prepared and pinned — the DeepInfra arm sends
+/// `chunk_level: "word"`, and the bundle parse accepts both the observed
+/// `word`-keyed response shape and the docs' `text`-keyed example — but
+/// the flip is HELD (2026-10-29): the endpoint returned word timestamps
+/// once and then segment-only across 7 same-day requests. Re-run the
+/// live probe (`live_stt_nemotron_returns_word_timings`) when
+/// re-evaluating; Whisper stays the documented default.
 pub const DEFAULT_MEDIA_STT_MODEL: &str = "OpenRouter/openai/whisper-large-v3-turbo";
 
 /// Default vision model for gallery analysis and image description (env

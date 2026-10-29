@@ -119,7 +119,7 @@ and the bridge rejects anything else with `InvalidArgument` naming the
 requirement (`kask/crates/kask_bridge/src/inference_ipc_server.rs:1018-1027`).
 The settings-chain default for `kask.models.rerank_model` is
 `DEFAULT_RERANK_MODEL` = `deepinfra/Qwen/Qwen3-Reranker-8B`
-(`kask/crates/hkask-inference/src/model_constants.rs:203`, wired as the
+(`kask/crates/hkask-inference/src/model_constants.rs:226`, wired as the
 settings default at `kask/crates/kask_bridge/src/settings.rs:665`) — NOT
 `OpenRouter/`-prefixed, so under the default a deep-strategy rerank fails the
 eligibility check and surfaces as the degraded `mode: "heuristic"` with the

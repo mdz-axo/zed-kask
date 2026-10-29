@@ -330,7 +330,7 @@ Prediction-markets data-service configuration (`kask/crates/kask_bridge/src/sett
 | `image_gen_model` | `String` | `""` | `HKASK_MEDIA_IMAGE_GEN_MODEL` |
 | `video_model` | `String` | `""` | `HKASK_MEDIA_VIDEO_MODEL` |
 
-Empty TTS, image, or video values remain unconfigured and fail visibly; STT and vision defaults come from shared inference constants (`kask/crates/kask_bridge/src/settings.rs:531-567`, `kask/crates/hkask-inference/src/model_constants.rs:173-203`).
+Empty TTS, image, or video values remain unconfigured and fail visibly; STT and vision defaults come from shared inference constants (`kask/crates/kask_bridge/src/settings.rs:531-567`, `kask/crates/hkask-inference/src/model_constants.rs:191-229`).
 
 ## Models (`KaskModelsSettings`)
 
@@ -382,7 +382,7 @@ installed automatically.
 `classifier_model()`, `embedding_model()`, `ocr_model()`, `rerank_model()` —
 each returning `Option<String>` (`None` = env var not injected; the settings
 layers carry the code defaults and inject these env vars for MCP server
-children). The general/chat, embedding, classifier, QA-generation, and OCR defaults live in the settings `Default` implementations (`kask/crates/kask_bridge/src/settings.rs:650-718`; `kask/mcp-servers/hkask-mcp-corpus/src/settings.rs`). Shared constants remain where multiple settings layers consume one ratified value: media STT, media vision, and research reranking are defined in `kask/crates/hkask-inference/src/model_constants.rs:173-203`. TTS, video, and image-generation remain explicitly unconfigured when their media setting is empty.
+children). The general/chat, embedding, classifier, QA-generation, and OCR defaults live in the settings `Default` implementations (`kask/crates/kask_bridge/src/settings.rs:650-718`; `kask/mcp-servers/hkask-mcp-corpus/src/settings.rs`). Shared constants remain where multiple settings layers consume one ratified value: media STT, media vision, and research reranking are defined in `kask/crates/hkask-inference/src/model_constants.rs:191-229`. TTS, video, and image-generation remain explicitly unconfigured when their media setting is empty.
 
 ## Keychain Architecture
 

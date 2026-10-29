@@ -221,7 +221,9 @@ pipelines and a validated face registry (`faces.rs`, `gallery/store.rs`
 `face_registry`) with **no stored embeddings by recorded design** (`faces.rs`
 documents that an LLM-produced-"embedding" cosine path was removed because LLMs
 cannot emit geometrically consistent vectors); media jobs; transcription via
-cloud `OpenRouter/openai/whisper-large-v3-turbo` (sole default STT).
+cloud STT — `OpenRouter/openai/whisper-large-v3-turbo` (a Nemotron-Transcribe
+flip was prepared and pinned 2026-10-29 but held — the DeepInfra endpoint's
+word chunking was unstable same-day; Whisper remains the default).
 
 **Externally demonstrated reference behavior, not yet in tree [ref]**: review
 flags; section re-transcribe; any acoustic diarization; any voice identity;
