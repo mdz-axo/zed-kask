@@ -498,6 +498,15 @@ pub struct TranscribeBundleRequest {
     pub audio_url: String,
     /// Optional ISO 639-1 language code (e.g., "en", "ja").
     pub language: Option<String>,
+    /// Optional stable gallery asset id of the RECORDING this
+    /// transcription belongs to (R5, operator ruling 2026-10-28). The
+    /// transcribe JOB stores and links the finished transcript to the
+    /// recording on completion, so a panel-initiated transcription closes
+    /// the loop end-to-end; the synchronous transcribe_bundle REFUSES it
+    /// (storing belongs to transcribe_and_store) instead of silently
+    /// dropping it.
+    #[serde(default)]
+    pub gallery_asset_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -608,6 +617,11 @@ pub struct JobRecord {
     pub result: Option<serde_json::Value>,
     /// Error message on failure.
     pub error: Option<String>,
+    /// The operation's primary source path/URL — the transcribe input, the
+    /// trim/clip source. The media panel's recordings rows match running
+    /// jobs to their recording by it (R2/R5, 2026-10-28).
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 /// Strict `job_list` response consumed by the media panel.

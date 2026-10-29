@@ -446,6 +446,7 @@ mod tests {
             completed_at: None,
             result: None,
             error: None,
+            source: None,
         }
     }
 

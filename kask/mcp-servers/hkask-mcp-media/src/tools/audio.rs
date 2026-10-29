@@ -322,9 +322,21 @@ impl MediaServer {
         Parameters(TranscribeBundleRequest {
             audio_url,
             language,
+            gallery_asset_id,
         }): Parameters<TranscribeBundleRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "transcribe_bundle", async {
+            // R5 (operator ruling 2026-10-28): storing belongs to the
+            // dedicated paths — this tool returns a bundle only, so the
+            // storing parameter is refused with a pointer rather than
+            // silently accepted and dropped.
+            if let Some(asset_id) = gallery_asset_id {
+                return Err(McpToolError::invalid_argument(format!(
+                    "transcribe_bundle returns a TranscriptBundle only — pass \
+                     gallery_asset_id to transcribe_and_store, or submit a transcribe \
+                     job with it, to store the transcript against recording {asset_id}"
+                )));
+            }
             let _admission = self.admit_heavy_operation()?;
             let bundle = self.transcribe_to_bundle(&audio_url, &language).await?;
 

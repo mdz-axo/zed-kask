@@ -6729,6 +6729,7 @@ mod tests {
             completed_at: None,
             result: None,
             error: None,
+            source: None,
         };
         let viewer = cx.new(|_| MediaViewer::new());
         let response = serde_json::json!({"content": {

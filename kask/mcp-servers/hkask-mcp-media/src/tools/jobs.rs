@@ -1,7 +1,9 @@
 //! Research jobs — source-linked transcription and lossless trim/concat.
 //!
 //! File-producing jobs share staged publication and cancellation rollback;
-//! transcription returns the source-linked TranscriptBundle without creating media.
+//! transcription returns the source-linked TranscriptBundle without creating
+//! media — and, when submitted against a recording (R5), stores and links
+//! the finished transcript to that recording on completion.
 use crate::types::{
     JobCancelRequest, JobListPayload, JobListRequest, JobRecord, JobStatusRequest, JobSubmitRequest,
 };
@@ -298,7 +300,7 @@ impl MediaServer {
     /// Submit an async research media job. Returns a job ID immediately;
     /// poll `job_status` for completion. The job runs in the background.
     #[tool(
-        description = "Submit a research job: transcribe, audio_trim, audio_concat, video_clip, or video_concat. params is a JSON-serialized request for that operation: transcribe takes audio_url and optional language; trim/clip takes audio_url/video_url, start_sec, end_sec; concat takes audio_urls/video_urls. Transcription returns a source-linked TranscriptBundle; edits publish durable source-linked media. No creative operations. Returns job_id; poll job_status for completion."
+        description = "Submit a research job: transcribe, audio_trim, audio_concat, video_clip, or video_concat. params is a JSON-serialized request for that operation: transcribe takes audio_url, optional language, and optional gallery_asset_id (a recording's stable asset id — when given, the finished transcript is stored and linked to that recording on completion); trim/clip takes audio_url/video_url, start_sec, end_sec; concat takes audio_urls/video_urls. Transcription returns a source-linked TranscriptBundle (or the stored transcript summary when linked to a recording); edits publish durable source-linked media. Job records carry the operation's source path. No creative operations. Returns job_id; poll job_status for completion."
     )]
     pub async fn job_submit(
         &self,
@@ -307,11 +309,25 @@ impl MediaServer {
         execute_tool(self, "job_submit", async {
             let operation = ResearchJob::parse(&op, &params)?;
             operation.validate().await?;
+            // R5 (operator ruling 2026-10-28): a transcription submitted
+            // against a recording fails fast when the asset id is not a live
+            // gallery asset — after the operator's click is the wrong time
+            // to spend STT on a stale id.
+            if let ResearchJob::Transcribe(request) = &operation
+                && let Some(asset_id) = request.gallery_asset_id.as_deref()
+            {
+                self.gallery_store
+                    .get_by_id(asset_id)
+                    .map_err(map_gallery_store_error)?;
+            }
             if !matches!(operation, ResearchJob::Transcribe(_)) {
                 self.require_ffmpeg()?;
             }
             let job_id = uuid::Uuid::new_v4().to_string();
             let now = hkask_types::time::now_rfc3339();
+            // The operation's primary source — what the panel's recordings
+            // rows match running jobs to their recording by.
+            let source = operation.sources().first().copied().map(str::to_string);
 
             // Admission owns a slot before the queued record becomes visible,
             // so overload cannot grow an unbounded waiting queue.
@@ -325,6 +341,7 @@ impl MediaServer {
                     completed_at: None,
                     result: None,
                     error: None,
+                    source,
                 })
                 .map_err(map_job_store_error)?;
 
@@ -334,6 +351,14 @@ impl MediaServer {
             let gallery_store = self.gallery_store.clone();
             let job_id_for_task = job_id.clone();
             let op_for_task = op.clone();
+            // R5: threaded into the spawned task — a transcription against a
+            // recording stores and links its transcript on completion.
+            let gallery_asset_id_for_task =
+                if let ResearchJob::Transcribe(request) = &operation {
+                    request.gallery_asset_id.clone()
+                } else {
+                    None
+                };
             // Each worker owns its scratch directory. Cloning the server runner
             // would share a directory whose Drop cleanup can delete sibling work.
             let ffmpeg = if matches!(operation, ResearchJob::Transcribe(_)) {
@@ -385,7 +410,42 @@ impl MediaServer {
 
                 let (mut publication, effective_params, kind_for_task) = match value {
                     ResearchOutput::Transcript(bundle) => {
-                        if let Err(error) = lease.finish(crate::jobs::JobOutcome::Completed(bundle)) {
+                        // R5 (operator ruling 2026-10-28): a transcription
+                        // submitted against a recording stores and links
+                        // the finished transcript on completion, so a
+                        // panel-initiated transcription closes the loop
+                        // end-to-end. Without an asset id the job returns
+                        // the raw bundle — the chat flow stores it itself
+                        // through educt_store_transcript.
+                        let outcome = match gallery_asset_id_for_task.as_deref() {
+                            None => crate::jobs::JobOutcome::Completed(bundle),
+                            Some(asset_id) => {
+                                match serde_json::from_value::<
+                                    crate::transcript::TranscriptBundle,
+                                >(bundle)
+                                {
+                                    Err(error) => crate::jobs::JobOutcome::Failed(format!(
+                                        "decode job transcript for storage: {error}"
+                                    )),
+                                    Ok(stored) => {
+                                        let driver = &**gallery_store.driver();
+                                        match super::educt::store_transcript_summary_value(
+                                            driver,
+                                            &stored,
+                                            Some(asset_id),
+                                        ) {
+                                            Ok(summary) => {
+                                                crate::jobs::JobOutcome::Completed(summary)
+                                            }
+                                            Err(error) => crate::jobs::JobOutcome::Failed(
+                                                error.to_string(),
+                                            ),
+                                        }
+                                    }
+                                }
+                            }
+                        };
+                        if let Err(error) = lease.finish(outcome) {
                             tracing::warn!(target: "hkask.mcp.media.jobs", job_id = %job_id_for_task, %error, "Failed to record transcript completion");
                         }
                         return;
@@ -734,6 +794,104 @@ mod tests {
         Ok(())
     }
 
+    /// expect: A transcription submitted against a recording stores and
+    /// links the finished transcript on completion, and the job record
+    /// carries the operation's source — the panel's Transcribe affordance
+    /// (R5) closes the recording→transcript loop end-to-end.
+    /// [P1] Motivating: the operator can take a recording from import to
+    /// transcript to reel entirely in the panel (operator ruling
+    /// 2026-10-28).
+    #[tokio::test]
+    async fn transcription_job_against_a_recording_stores_the_transcript()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server = server(stt())?;
+        let input = tempfile::NamedTempFile::new()?;
+        let root = tempfile::tempdir()?;
+        let gallery = server.gallery_store.open(
+            &root.path().to_string_lossy(),
+            crate::gallery::GalleryMode::ReadOnly,
+        )?;
+        let asset = server.gallery_store.add_media(
+            &gallery.id,
+            &input.path().to_string_lossy(),
+            "hash-talk",
+            0,
+            0,
+            "wav",
+            1000,
+            "audio",
+        )?;
+        let response = server
+            .job_submit(Parameters(JobSubmitRequest {
+                op: "transcribe".into(),
+                params: serde_json::json!({
+                    "audio_url": input.path().to_string_lossy(),
+                    "language": "en",
+                    "gallery_asset_id": asset.id,
+                })
+                .to_string(),
+            }))
+            .await?;
+        let id = payload(&response)["job_id"]
+            .as_str()
+            .expect("submitted job ID")
+            .to_string();
+        wait_until(|| server.job_store.active_count().expect("active count") == 0).await;
+        let job = server.job_store.get(&id)?.expect("completed job");
+        assert_eq!(job.status, "completed");
+        assert_eq!(
+            job.source.as_deref(),
+            Some(input.path().to_string_lossy().as_ref()),
+            "the record carries the operation's source"
+        );
+        let summary = job.result.expect("stored transcript summary");
+        assert_eq!(
+            summary["gallery_asset_id"], asset.id,
+            "the stored summary links the recording"
+        );
+        // The transcript is retrievable through the recordings join the
+        // panel's rows use.
+        let listing = server
+            .educt_list_transcripts(Parameters(crate::types::EductListTranscriptsRequest {
+                media_path: None,
+                gallery_asset_id: Some(asset.id.clone()),
+                limit: Some(10),
+            }))
+            .await?;
+        let binding = payload(&listing);
+        let rows = binding["transcripts"]
+            .as_array()
+            .expect("transcripts array");
+        assert_eq!(rows.len(), 1, "exactly the stored transcript");
+        assert_eq!(rows[0]["gallery_asset_id"], asset.id);
+        Ok(())
+    }
+
+    /// expect: A transcription submitted against a stale recording id fails
+    /// at submit — before any STT spend — and admits no job.
+    /// [P1] Motivating: fail-fast beats spending transcription on a stale id.
+    #[tokio::test]
+    async fn transcription_job_against_a_missing_recording_fails_fast() {
+        let server = server(stt()).expect("server");
+        let error = server
+            .job_submit(Parameters(JobSubmitRequest {
+                op: "transcribe".into(),
+                params: serde_json::json!({
+                    "audio_url": "/nowhere/talk.wav",
+                    "gallery_asset_id": "no-such-recording",
+                })
+                .to_string(),
+            }))
+            .await
+            .expect_err("stale recording id rejected at submit");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::NotFound);
+        assert_eq!(
+            server.job_store.active_count().expect("active count"),
+            0,
+            "no job admitted"
+        );
+    }
+
     /// expect: Cancellation waits for transcription teardown and releases the
     /// shared heavy-operation slot; control reads still work under saturation.
     #[tokio::test]
@@ -888,6 +1046,7 @@ mod tests {
                 completed_at: None,
                 result: None,
                 error: None,
+                source: None,
             })?;
             assert!(!lease.finish_published(slim, &mut publication)?);
             publication.rollback()?;
@@ -1002,6 +1161,7 @@ mod tests {
                 completed_at: None,
                 result: Some(serde_json::json!({"output": "/tmp/雪.png"})),
                 error: None,
+                source: None,
             })?;
         }
         let response = server
@@ -1147,6 +1307,7 @@ mod tests {
             completed_at: None,
             result: None,
             error: None,
+            source: None,
         };
         store.insert_record_for_test(record)?;
         assert_eq!(store.list()?.len(), 1);

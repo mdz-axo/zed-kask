@@ -1150,6 +1150,7 @@ mod tool_behavior_tests {
             .transcribe_bundle(Parameters(crate::types::TranscribeBundleRequest {
                 audio_url: "/nonexistent/mcp-review-probe.wav".to_string(),
                 language: None,
+                gallery_asset_id: None,
             }))
             .await
             .expect_err("missing file must fail");
