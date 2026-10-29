@@ -231,11 +231,7 @@ fn require_metadata(
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    #[ignore = "requires the pinned 29 MiB CAM++ model in the media data directory"]
-    async fn onnx_encoder_resamples_before_fbank_and_returns_finite_embedding() {
-        let fixture = tempfile::tempdir().expect("encoder fixture directory");
-        let source = fixture.path().join("8khz-stereo.wav");
+    async fn generate_8khz_stereo_fixture(source: &Path) {
         let status = tokio::process::Command::new("ffmpeg")
             .args([
                 "-y",
@@ -250,11 +246,36 @@ mod tests {
                 "-c:a",
                 "pcm_s16le",
             ])
-            .arg(&source)
+            .arg(source)
             .status()
             .await
             .expect("generate 8 kHz stereo fixture");
         assert!(status.success());
+    }
+
+    #[tokio::test]
+    async fn speech_pcm_decode_resamples_to_16khz_mono_s16le() {
+        let fixture = tempfile::tempdir().expect("PCM fixture directory");
+        let source = fixture.path().join("8khz-stereo.wav");
+        generate_8khz_stereo_fixture(&source).await;
+        let pcm = FfmpegRunner::detect()
+            .decode_speech_pcm_16khz_mono(&source, 0, 1_500)
+            .await
+            .expect("decode and resample speech PCM");
+        assert_eq!(
+            pcm.len(),
+            24_000,
+            "1.5 seconds at 16 kHz mono must yield exactly 24,000 signed-16 samples"
+        );
+        assert!(pcm.iter().any(|sample| *sample != 0));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires the pinned 29 MiB CAM++ model in the media data directory"]
+    async fn onnx_encoder_resamples_before_fbank_and_returns_finite_embedding() {
+        let fixture = tempfile::tempdir().expect("encoder fixture directory");
+        let source = fixture.path().join("8khz-stereo.wav");
+        generate_8khz_stereo_fixture(&source).await;
         let encoder =
             OnnxVoiceEncoder::open(&default_model_path()).expect("load the pinned CAM++ model");
         let embedded = encoder

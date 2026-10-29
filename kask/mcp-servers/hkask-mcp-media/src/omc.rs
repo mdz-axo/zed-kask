@@ -129,6 +129,7 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         | "voice_enroll"
         | "voice_list"
         | "voice_remove"
+        | "voice_prune"
         | "gallery_name_face" => Some(ASSET),
         "audio_capture"
         | "record_and_transcribe"

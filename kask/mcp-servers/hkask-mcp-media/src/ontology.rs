@@ -81,6 +81,7 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
         | "face_remove"
         | "voice_enroll"
         | "voice_remove"
+        | "voice_prune"
         | "face_scan_folder"
         | "job_submit"
         | "job_cancel"

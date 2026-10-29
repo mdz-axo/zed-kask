@@ -3,9 +3,11 @@
 use crate::transcript_layers::TranscriptLayer;
 use crate::voice_profiles::{
     EncoderFingerprint, EnrollmentAudioEmbedding, NewVoiceEnrollment, OperatorAuthorization,
-    VoiceProfile, VoiceProfileError,
+    VoiceProfile, VoiceProfileError, VoiceProfileRemoval, VoiceProfileStore,
 };
 use crate::*;
+
+const MAX_ENROLLMENT_SPAN_MS: u64 = 60_000;
 
 #[derive(Debug, serde::Serialize)]
 struct VoiceSegmentView {
@@ -60,12 +62,36 @@ impl From<&VoiceProfile> for VoiceProfileView {
 fn map_voice_error(error: VoiceProfileError) -> McpToolError {
     match error {
         VoiceProfileError::Unavailable(message) => McpToolError::failed_precondition(message),
+        VoiceProfileError::MissingCredential(message) => McpToolError::permission_denied(message),
         VoiceProfileError::ProfileNotFound(message) => McpToolError::not_found(message),
         VoiceProfileError::ModelMismatch { profile_id, .. } => McpToolError::invalid_argument(
             format!("voice profile {profile_id} has an incompatible encoder fingerprint"),
         ),
         other => McpToolError::internal(other.to_string()),
     }
+}
+
+fn remove_profile_and_derived(
+    driver: &dyn hkask_storage::database::driver::DatabaseDriver,
+    store: &VoiceProfileStore,
+    profile_id: &str,
+) -> Result<(VoiceProfileRemoval, usize), McpToolError> {
+    crate::transcript_store::ensure_schema(driver)
+        .map_err(|error| McpToolError::internal(error.to_string()))?;
+    // Derived layers are deleted first: if either database write fails, the
+    // profile remains as a durable retry handle instead of stranding layers.
+    let derived_layers_removed = driver
+        .execute(
+            "DELETE FROM transcript_layers
+             WHERE layer_kind = 'identification'
+               AND json_extract(payload_json, '$.profile_id') = ?1",
+            &[hkask_storage::database::value::DbValue::Text(
+                profile_id.to_string(),
+            )],
+        )
+        .map_err(|error| McpToolError::internal(error.to_string()))?;
+    let removal = store.remove_profile(profile_id).map_err(map_voice_error)?;
+    Ok((removal, derived_layers_removed))
 }
 
 fn single_speaker_evidence(
@@ -109,7 +135,7 @@ fn single_speaker_evidence(
 #[tool_router(router = voice_router, vis = "pub")]
 impl MediaServer {
     #[tool(
-        description = "Enroll one explicitly authorized speaker name over an inclusive immutable source-word range. The exact audio span is decoded to 16 kHz mono before fbank and embedded locally with the pinned CAM++ model. Full operator-authorization and model provenance is stored in a separate SQLCipher DB; no speaker annotation is authored and no identity match is made. Returns metadata only, never voiceprint bytes."
+        description = "Enroll one explicitly authorized speaker name over an inclusive immutable source-word range spanning 1–60 seconds. The exact audio span is decoded to 16 kHz mono before fbank and embedded locally with the pinned CAM++ model. Full operator-authorization and model provenance is stored in a separate SQLCipher DB; no speaker annotation is authored and no identity match is made. Returns metadata only, never voiceprint bytes."
     )]
     pub async fn voice_enroll(
         &self,
@@ -122,6 +148,7 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "voice_enroll", async {
             let _admission = self.admit_heavy_operation()?;
+            let store = self.voice.profile_store().map_err(map_voice_error)?;
             if speaker_name.trim().is_empty() {
                 return Err(McpToolError::invalid_argument(
                     "speaker_name must not be blank",
@@ -159,6 +186,11 @@ impl MediaServer {
                     "enrollment audio span is under 1000 ms; select a longer single-speaker range",
                 ));
             }
+            if end_ms - start_ms > MAX_ENROLLMENT_SPAN_MS {
+                return Err(McpToolError::failed_precondition(format!(
+                    "enrollment audio span exceeds the {MAX_ENROLLMENT_SPAN_MS} ms resource bound; select a shorter single-speaker range"
+                )));
+            }
             let evidence = single_speaker_evidence(driver, &transcript_id, start_word, end_word)?;
             if !crate::is_local_media_path(&bundle.audio_path) {
                 validate_tool_url_with_dns(&bundle.audio_path).await?;
@@ -177,7 +209,6 @@ impl MediaServer {
                 )
                 .await
                 .map_err(|error| McpToolError::unavailable(error.to_string()))?;
-            let store = self.voice.profile_store().map_err(map_voice_error)?;
             let profile = store
                 .enroll(NewVoiceEnrollment {
                     speaker_name: speaker_name.trim().to_string(),
@@ -239,26 +270,47 @@ impl MediaServer {
         Parameters(VoiceRemoveRequest { profile_id }): Parameters<VoiceRemoveRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "voice_remove", async {
-            crate::transcript_store::ensure_schema(&**self.gallery_store.driver())
-                .map_err(|error| McpToolError::internal(error.to_string()))?;
             let store = self.voice.profile_store().map_err(map_voice_error)?;
-            let removal = store.remove_profile(&profile_id).map_err(map_voice_error)?;
-            let derived_layers_removed = self
-                .gallery_store
-                .driver()
-                .execute(
-                    "DELETE FROM transcript_layers
-                     WHERE layer_kind = 'identification'
-                       AND json_extract(payload_json, '$.profile_id') = ?1",
-                    &[hkask_storage::database::value::DbValue::Text(
-                        profile_id.clone(),
-                    )],
-                )
-                .map_err(|error| McpToolError::internal(error.to_string()))?;
+            let (removal, derived_layers_removed) =
+                remove_profile_and_derived(&**self.gallery_store.driver(), &store, &profile_id)?;
             Ok(serde_json::json!({
                 "profile_id": profile_id,
                 "profiles_removed": removal.profiles_removed,
                 "embeddings_removed": removal.embeddings_removed,
+                "derived_layers_removed": derived_layers_removed,
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Prune voice profiles older than max_age_days, sparing profiles with a human-confirmed match inside the same retention window. Each candidate goes through the voice_remove cleanup path for embeddings and derived identification layers. No pruning runs implicitly."
+    )]
+    pub async fn voice_prune(
+        &self,
+        Parameters(VoicePruneRequest { max_age_days }): Parameters<VoicePruneRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "voice_prune", async {
+            let _admission = self.admit_heavy_operation()?;
+            let cutoff =
+                (chrono::Utc::now() - chrono::Duration::days(i64::from(max_age_days))).to_rfc3339();
+            let store = self.voice.profile_store().map_err(map_voice_error)?;
+            let candidates = store.stale_profile_ids(&cutoff).map_err(map_voice_error)?;
+            let mut profiles_removed = 0;
+            let mut embeddings_removed = 0;
+            let mut derived_layers_removed = 0;
+            for profile_id in &candidates {
+                let (removal, derived) =
+                    remove_profile_and_derived(&**self.gallery_store.driver(), &store, profile_id)?;
+                profiles_removed += removal.profiles_removed;
+                embeddings_removed += removal.embeddings_removed;
+                derived_layers_removed += derived;
+            }
+            Ok(serde_json::json!({
+                "max_age_days": max_age_days,
+                "candidates": candidates.len(),
+                "profiles_removed": profiles_removed,
+                "embeddings_removed": embeddings_removed,
                 "derived_layers_removed": derived_layers_removed,
             }))
         })
@@ -271,7 +323,7 @@ mod tests {
     use super::*;
     use crate::voice_profiles::{
         EncoderFingerprint, EnrollmentAudioEmbedding, NewVoiceEnrollment, OperatorAuthorization,
-        VoiceProfileRuntime, VoiceProfileStore,
+        VoiceProfileRuntime,
     };
 
     struct NoopPort;
@@ -335,6 +387,10 @@ mod tests {
     }
 
     fn server(store: VoiceProfileStore) -> MediaServer {
+        server_with_runtime(VoiceProfileRuntime::with_store(store))
+    }
+
+    fn server_with_runtime(voice: VoiceProfileRuntime) -> MediaServer {
         let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
         let gallery_store = Arc::new(GalleryStore::from_driver(driver).expect("gallery store"));
         MediaServer::new(
@@ -347,8 +403,82 @@ mod tests {
             YtDlpRunner::detect(),
             jobs::new_job_store(),
             None,
-            VoiceProfileRuntime::with_store(store),
+            voice,
         )
+    }
+
+    async fn store_test_transcript(
+        server: &MediaServer,
+        words: Vec<crate::transcript::TimedWord>,
+    ) -> String {
+        let full_text = words
+            .iter()
+            .map(|word| word.word.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let duration_secs = words.last().map_or(0, |word| word.end_ms) as f32 / 1_000.0;
+        let bundle = crate::transcript::TranscriptBundle {
+            words,
+            ..crate::transcript::TranscriptBundle::new(
+                "/tmp/test.wav".to_string(),
+                duration_secs,
+                full_text,
+            )
+        };
+        let stored = server
+            .educt_store_transcript(Parameters(EductStoreTranscriptRequest {
+                transcript: hkask_types::AnyJsonValue(
+                    serde_json::to_value(&bundle).expect("serialize bundle"),
+                ),
+                gallery_asset_id: None,
+            }))
+            .await
+            .expect("store transcript");
+        content_of(&stored)["id"]
+            .as_str()
+            .expect("transcript id")
+            .to_string()
+    }
+
+    fn seed_identification_layer(
+        server: &MediaServer,
+        transcript_id: &str,
+        layer_id: &str,
+        profile_id: &str,
+    ) {
+        server
+            .gallery_store
+            .driver()
+            .execute(
+                "INSERT INTO transcript_layers
+                 (id, transcript_id, layer_kind, payload_json, created_at)
+                 VALUES (?1, ?2, 'identification', ?3, '2026-10-28T23:00:00Z')",
+                &[
+                    hkask_storage::database::value::DbValue::Text(layer_id.to_string()),
+                    hkask_storage::database::value::DbValue::Text(transcript_id.to_string()),
+                    hkask_storage::database::value::DbValue::Text(
+                        serde_json::json!({
+                            "kind": "identification",
+                            "profile_id": profile_id,
+                            "speaker": "Test Speaker"
+                        })
+                        .to_string(),
+                    ),
+                ],
+            )
+            .expect("seed derived identification layer");
+    }
+
+    fn identification_layer_count(server: &MediaServer) -> usize {
+        let rows = server
+            .gallery_store
+            .driver()
+            .query(
+                "SELECT COUNT(*) FROM transcript_layers WHERE layer_kind = 'identification'",
+                &[],
+            )
+            .expect("count derived identification layers");
+        rows[0].get_int(0).expect("layer count") as usize
     }
 
     #[tokio::test]
@@ -455,95 +585,199 @@ mod tests {
                 .is_empty(),
             "enrollment must not author a speaker annotation as a side effect"
         );
-        let exported = server
-            .educt_export(Parameters(EductExportRequest {
-                transcript_id,
-                format: "corpus_text".to_string(),
-            }))
-            .await
-            .expect("export transcript text");
-        let document_path = content_of(&exported)["output"]
-            .as_str()
-            .expect("export document path")
-            .to_string();
-        let document = std::fs::read_to_string(document_path).expect("read corpus export");
-        assert!(!document.contains(&profile_id));
-        assert!(
-            !document.contains("c46fad10b5f81e1aa4a60c162714208577093655076c5450f8c469e522ec54ef")
-        );
-        assert!(!document.contains("centroid"));
-        assert!(!document.contains("embedding"));
+        for format in ["srt", "highlights_csv", "corpus_text"] {
+            let exported = server
+                .educt_export(Parameters(EductExportRequest {
+                    transcript_id: transcript_id.clone(),
+                    format: format.to_string(),
+                }))
+                .await
+                .expect("export transcript");
+            let document_path = content_of(&exported)["output"]
+                .as_str()
+                .expect("export document path")
+                .to_string();
+            let document = std::fs::read_to_string(document_path).expect("read export");
+            assert!(
+                !document.contains(&profile_id),
+                "{format} leaked profile id"
+            );
+            assert!(
+                !document
+                    .contains("c46fad10b5f81e1aa4a60c162714208577093655076c5450f8c469e522ec54ef"),
+                "{format} leaked model fingerprint"
+            );
+            assert!(!document.contains("centroid"), "{format} leaked centroid");
+            assert!(!document.contains("embedding"), "{format} leaked embedding");
+        }
     }
 
     #[tokio::test]
-    async fn voice_remove_deletes_derived_identification_layers() {
+    async fn voice_remove_retries_after_derived_layer_delete_failure() {
         let fixture = tempfile::tempdir().expect("voice DB fixture");
         let path = fixture.path().join("voice.db");
         let store = VoiceProfileStore::open(&path.to_string_lossy(), "test-passphrase")
             .expect("open voice store");
         let profile = store.enroll(enrollment()).expect("seed profile");
+        let profile_id = profile.id.clone();
         let server = server(store);
-        let bundle = crate::transcript::TranscriptBundle {
-            words: vec![crate::transcript::TimedWord {
+        let transcript_id = store_test_transcript(
+            &server,
+            vec![crate::transcript::TimedWord {
                 word: "alpha".to_string(),
                 start_ms: 0,
                 end_ms: 500,
                 confidence: None,
             }],
-            ..crate::transcript::TranscriptBundle::new(
-                "/tmp/test.wav".to_string(),
-                1.0,
-                "alpha".to_string(),
-            )
-        };
-        let stored = server
-            .educt_store_transcript(Parameters(EductStoreTranscriptRequest {
-                transcript: hkask_types::AnyJsonValue(
-                    serde_json::to_value(&bundle).expect("serialize bundle"),
-                ),
-                gallery_asset_id: None,
-            }))
-            .await
-            .expect("store transcript");
-        let transcript_id = content_of(&stored)["id"]
-            .as_str()
-            .expect("transcript id")
-            .to_string();
+        )
+        .await;
+        seed_identification_layer(&server, &transcript_id, "derived-1", &profile_id);
         server
             .gallery_store
             .driver()
-            .execute(
-                "INSERT INTO transcript_layers
-                 (id, transcript_id, layer_kind, payload_json, created_at)
-                 VALUES ('derived-1', ?1, 'identification', ?2, '2026-10-28T23:00:00Z')",
-                &[
-                    hkask_storage::database::value::DbValue::Text(transcript_id.clone()),
-                    hkask_storage::database::value::DbValue::Text(
-                        serde_json::json!({
-                            "kind": "identification",
-                            "profile_id": profile.id,
-                            "speaker": "Test Speaker"
-                        })
-                        .to_string(),
-                    ),
-                ],
+            .execute_batch(
+                "CREATE TRIGGER reject_identification_delete
+                 BEFORE DELETE ON transcript_layers
+                 WHEN OLD.layer_kind = 'identification'
+                 BEGIN
+                     SELECT RAISE(FAIL, 'injected gallery delete failure');
+                 END;",
             )
-            .expect("seed derived identification layer");
-        let removed = server
+            .expect("install gallery failure injection");
+
+        server
             .voice_remove(Parameters(VoiceRemoveRequest {
-                profile_id: profile.id,
+                profile_id: profile_id.clone(),
             }))
             .await
-            .expect("remove profile");
+            .expect_err("injected gallery failure must abort removal");
+        assert_eq!(
+            server
+                .voice
+                .profile_store()
+                .expect("voice store")
+                .list_profiles()
+                .expect("profiles after failed removal")
+                .len(),
+            1,
+            "the profile must remain as the retry handle"
+        );
+        assert_eq!(identification_layer_count(&server), 1);
+
+        server
+            .gallery_store
+            .driver()
+            .execute_batch("DROP TRIGGER reject_identification_delete")
+            .expect("clear gallery failure injection");
+        let removed = server
+            .voice_remove(Parameters(VoiceRemoveRequest { profile_id }))
+            .await
+            .expect("retry removal");
         assert_eq!(
             content_of(&removed)["derived_layers_removed"],
             serde_json::json!(1)
         );
-        assert!(
-            crate::transcript_store::list_layers(&**server.gallery_store.driver(), &transcript_id)
-                .expect("list layers after removal")
-                .is_empty()
+        assert_eq!(identification_layer_count(&server), 0);
+    }
+
+    #[tokio::test]
+    async fn voice_prune_uses_shared_cleanup_and_spares_recent_confirmation() {
+        let fixture = tempfile::tempdir().expect("voice DB fixture");
+        let path = fixture.path().join("voice.db");
+        let store = VoiceProfileStore::open(&path.to_string_lossy(), "test-passphrase")
+            .expect("open voice store");
+        let stale = store.enroll(enrollment()).expect("seed stale profile");
+        let recent = store.enroll(enrollment()).expect("seed recent profile");
+        store
+            .record_confirmed_match(&recent.id, "2999-01-01T00:00:00Z")
+            .expect("record recent confirmation");
+        let server = server(store);
+        let transcript_id = store_test_transcript(
+            &server,
+            vec![crate::transcript::TimedWord {
+                word: "alpha".to_string(),
+                start_ms: 0,
+                end_ms: 500,
+                confidence: None,
+            }],
+        )
+        .await;
+        seed_identification_layer(&server, &transcript_id, "derived-stale", &stale.id);
+        seed_identification_layer(&server, &transcript_id, "derived-recent", &recent.id);
+
+        let pruned = server
+            .voice_prune(Parameters(VoicePruneRequest { max_age_days: 0 }))
+            .await
+            .expect("prune stale profiles");
+        let content = content_of(&pruned);
+        assert_eq!(content["candidates"], serde_json::json!(1));
+        assert_eq!(content["profiles_removed"], serde_json::json!(1));
+        assert_eq!(content["embeddings_removed"], serde_json::json!(1));
+        assert_eq!(content["derived_layers_removed"], serde_json::json!(1));
+        let profiles = server
+            .voice
+            .profile_store()
+            .expect("voice store")
+            .list_profiles()
+            .expect("profiles after pruning");
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].id, recent.id);
+        assert_eq!(
+            identification_layer_count(&server),
+            1,
+            "the recently confirmed profile's derived layer must remain"
         );
+    }
+
+    #[tokio::test]
+    async fn voice_enroll_rejects_an_excessive_span_before_decoding() {
+        let fixture = tempfile::tempdir().expect("voice DB fixture");
+        let path = fixture.path().join("voice.db");
+        let store = VoiceProfileStore::open(&path.to_string_lossy(), "test-passphrase")
+            .expect("open voice store");
+        let server = server(store);
+        let transcript_id = store_test_transcript(
+            &server,
+            vec![
+                crate::transcript::TimedWord {
+                    word: "alpha".to_string(),
+                    start_ms: 0,
+                    end_ms: 1_000,
+                    confidence: None,
+                },
+                crate::transcript::TimedWord {
+                    word: "beta".to_string(),
+                    start_ms: 1_000,
+                    end_ms: 61_000,
+                    confidence: None,
+                },
+            ],
+        )
+        .await;
+        let error = server
+            .voice_enroll(Parameters(VoiceEnrollRequest {
+                transcript_id,
+                start_word: 0,
+                end_word: 1,
+                speaker_name: "Test Speaker".to_string(),
+            }))
+            .await
+            .expect_err("an excessive decode span must be rejected");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::FailedPrecondition);
+        assert!(error.message.contains("60000 ms resource bound"));
+    }
+
+    #[tokio::test]
+    async fn voice_list_classifies_a_missing_passphrase_as_permission_denied() {
+        let server = server_with_runtime(VoiceProfileRuntime::missing_credential(
+            "HKASK_DB_PASSPHRASE not configured".to_string(),
+        ));
+        let error = server
+            .voice_list(Parameters(VoiceListRequest {}))
+            .await
+            .expect_err("missing protected-storage credential must be visible");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::PermissionDenied);
+        assert!(error.message.contains("HKASK_DB_PASSPHRASE"));
     }
 
     #[tokio::test]

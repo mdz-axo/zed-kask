@@ -1517,7 +1517,7 @@ mod tests {
         let context = gpui::TestAppContext::single();
         let cx = context.to_async();
         let content: settings_content::KaskSettingsContent = serde_json::from_value(
-            serde_json::json!({"mcp":{"delegated_tools":{"kata-kanban":["research/rss_search"]}}}),
+            serde_json::json!({"mcp":{"delegated_tools":{"kata-kanban":["host/create_worktree_thread","research/rss_search"]}}}),
         )
         .expect("settings");
         let mut settings = crate::KaskSettings::from(content);
@@ -1538,14 +1538,22 @@ mod tests {
             .get(hkask_types::inference_ipc::TOOL_GRANT_ENV)
             .expect("token")
             .to_string();
-        assert!(crate::delegation_grants::parent_allows(
-            Some(&token),
-            "research/rss_search"
-        ));
-        assert!(!crate::delegation_grants::parent_allows(
-            Some(&token),
-            "research/rss_fetch"
-        ));
+        // The granted ceiling: a granted tool survives the narrowing
+        // intersection; a non-granted tool drops out, never widens.
+        assert_eq!(
+            crate::delegation_grants::worktree_tools(
+                Some(&token),
+                Some(&["research/rss_search".to_string()])
+            ),
+            Some(vec!["research/rss_search".to_string()])
+        );
+        assert_eq!(
+            crate::delegation_grants::worktree_tools(
+                Some(&token),
+                Some(&["research/rss_fetch".to_string()])
+            ),
+            Some(Vec::new())
+        );
         let again =
             build_mcp_server_env("kata-kanban", &settings, &provider, None, None, &cx).await;
         assert_eq!(
@@ -1568,10 +1576,14 @@ mod tests {
                 .is_none(),
             "observer env diff must not remint an unloaded grant"
         );
-        assert!(!crate::delegation_grants::parent_allows(
-            Some(&token),
-            "research/rss_search"
-        ));
+        assert_eq!(
+            crate::delegation_grants::worktree_tools(
+                Some(&token),
+                Some(&["research/rss_search".to_string()])
+            ),
+            None,
+            "the revoked grant resolves to no ceiling at all"
+        );
         settings.mcp.overrides.insert("kata-kanban".into(), true);
         let reloaded =
             build_mcp_server_env("kata-kanban", &settings, &provider, None, None, &cx).await;

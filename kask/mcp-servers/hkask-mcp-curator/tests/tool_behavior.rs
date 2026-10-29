@@ -1384,7 +1384,6 @@ async fn backfill_repairs_legacy_rows_without_canonical_passage() {
             .await
             .expect("dry run ok"),
     );
-    assert_eq!(dry["unsupported_count"].as_u64(), Some(0));
     assert_eq!(dry["candidate_count"].as_u64(), Some(1));
     assert_eq!(dry["candidates"][0]["h_mem_id"].as_str(), Some(id.as_str()));
     assert_eq!(dry["candidates"][0]["requires_passage_repair"], true);

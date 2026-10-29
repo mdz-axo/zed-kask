@@ -80,10 +80,16 @@ pub struct VoiceProfileRemoval {
     pub embeddings_removed: usize,
 }
 
+#[derive(Debug, Clone)]
+enum VoiceProfileUnavailable {
+    MissingCredential(String),
+    Storage(String),
+}
+
 #[derive(Clone, Default)]
 pub struct VoiceProfileRuntime {
     store: Option<Arc<VoiceProfileStore>>,
-    unavailable_reason: Option<String>,
+    unavailable: Option<VoiceProfileUnavailable>,
     encoder: Arc<tokio::sync::Mutex<Option<Arc<crate::voice_encoder::OnnxVoiceEncoder>>>>,
 }
 
@@ -91,7 +97,7 @@ impl VoiceProfileRuntime {
     pub fn with_store(store: VoiceProfileStore) -> Self {
         Self {
             store: Some(Arc::new(store)),
-            unavailable_reason: None,
+            unavailable: None,
             encoder: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
@@ -112,20 +118,35 @@ impl VoiceProfileRuntime {
     }
 
     pub fn unavailable(reason: String) -> Self {
+        Self::degraded(VoiceProfileUnavailable::Storage(reason))
+    }
+
+    pub fn missing_credential(reason: String) -> Self {
+        Self::degraded(VoiceProfileUnavailable::MissingCredential(reason))
+    }
+
+    fn degraded(reason: VoiceProfileUnavailable) -> Self {
         Self {
             store: None,
-            unavailable_reason: Some(reason),
+            unavailable: Some(reason),
             encoder: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 
     pub fn profile_store(&self) -> Result<Arc<VoiceProfileStore>, VoiceProfileError> {
-        self.store.clone().ok_or_else(|| {
-            VoiceProfileError::Unavailable(
-                self.unavailable_reason
-                    .clone()
-                    .unwrap_or_else(|| "voice-profile store is not configured".to_string()),
-            )
+        if let Some(store) = self.store.clone() {
+            return Ok(store);
+        }
+        Err(match &self.unavailable {
+            Some(VoiceProfileUnavailable::MissingCredential(reason)) => {
+                VoiceProfileError::MissingCredential(reason.clone())
+            }
+            Some(VoiceProfileUnavailable::Storage(reason)) => {
+                VoiceProfileError::Unavailable(reason.clone())
+            }
+            None => {
+                VoiceProfileError::Unavailable("voice-profile store is not configured".to_string())
+            }
         })
     }
 
@@ -151,6 +172,8 @@ pub enum VoiceProfileError {
     Driver(#[from] DbError),
     #[error("voice-profile storage unavailable: {0}")]
     Unavailable(String),
+    #[error("voice-profile credential unavailable: {0}")]
+    MissingCredential(String),
     #[error("invalid voice enrollment: {0}")]
     InvalidEnrollment(String),
     #[error("voice profile {profile_id} has an incompatible encoder fingerprint")]
@@ -353,33 +376,18 @@ impl VoiceProfileStore {
         Ok(())
     }
 
-    pub fn prune_stale(&self, cutoff: &str) -> Result<VoiceProfileRemoval, VoiceProfileError> {
-        let mut removal = VoiceProfileRemoval {
-            profiles_removed: 0,
-            embeddings_removed: 0,
-        };
-        self.driver.transaction(&mut |tx| {
-            let candidates = tx.query(
-                "SELECT id,
-                    (SELECT COUNT(*) FROM voice_profile_segments s
-                     WHERE s.profile_id = voice_profiles.id)
-                 FROM voice_profiles
-                 WHERE created_at < ?1
-                   AND (last_confirmed_match_at IS NULL
-                        OR last_confirmed_match_at < ?1)",
-                &[DbValue::Text(cutoff.to_string())],
-            )?;
-            for row in candidates {
-                let profile_id = row.get_str(0)?.to_string();
-                removal.embeddings_removed += row.get_int(1)? as usize;
-                removal.profiles_removed += tx.execute(
-                    "DELETE FROM voice_profiles WHERE id = ?1",
-                    &[DbValue::Text(profile_id)],
-                )?;
-            }
-            Ok(())
-        })?;
-        Ok(removal)
+    pub fn stale_profile_ids(&self, cutoff: &str) -> Result<Vec<String>, VoiceProfileError> {
+        let rows = self.driver.query(
+            "SELECT id FROM voice_profiles
+             WHERE created_at < ?1
+               AND (last_confirmed_match_at IS NULL
+                    OR last_confirmed_match_at < ?1)
+             ORDER BY created_at, id",
+            &[DbValue::Text(cutoff.to_string())],
+        )?;
+        rows.iter()
+            .map(|row| Ok(row.get_str(0)?.to_string()))
+            .collect()
     }
 
     pub fn remove_profile(
@@ -495,6 +503,11 @@ fn validate_enrollment(enrollment: &NewVoiceEnrollment) -> Result<(), VoiceProfi
             "embedding dimension must be positive".to_string(),
         ));
     }
+    if enrollment.authorization.start_word > enrollment.authorization.end_word {
+        return Err(VoiceProfileError::InvalidEnrollment(
+            "authorization word range must be ordered and nonempty".to_string(),
+        ));
+    }
     for segment in &enrollment.segments {
         if segment.transcript_id != enrollment.authorization.transcript_id {
             return Err(VoiceProfileError::InvalidEnrollment(
@@ -504,6 +517,13 @@ fn validate_enrollment(enrollment: &NewVoiceEnrollment) -> Result<(), VoiceProfi
         if segment.start_word > segment.end_word || segment.end_ms <= segment.start_ms {
             return Err(VoiceProfileError::InvalidEnrollment(
                 "word and time ranges must be ordered and nonempty".to_string(),
+            ));
+        }
+        if segment.start_word != enrollment.authorization.start_word
+            || segment.end_word != enrollment.authorization.end_word
+        {
+            return Err(VoiceProfileError::InvalidEnrollment(
+                "every segment must equal the exact authorized word range".to_string(),
             ));
         }
         if segment.embedding.len() != enrollment.fingerprint.dimension
@@ -641,7 +661,7 @@ mod tests {
     }
 
     #[test]
-    fn decay_prunes_stale_profiles_and_spares_recent_confirmation() {
+    fn stale_candidates_spare_recent_confirmation() {
         let fixture = tempfile::tempdir().expect("voice DB fixture directory");
         let path = fixture.path().join("voice-profiles.db");
         let store = VoiceProfileStore::open(&path.to_string_lossy(), "test-passphrase")
@@ -651,23 +671,27 @@ mod tests {
         store
             .record_confirmed_match(&recent.id, "2999-01-01T00:00:00Z")
             .expect("record confirmation");
-        let removed = store
-            .prune_stale("2998-01-01T00:00:00Z")
-            .expect("prune stale profiles");
-        assert_eq!(removed.profiles_removed, 1);
-        assert_eq!(removed.embeddings_removed, 1);
-        let profiles = store.list_profiles().expect("list remaining profiles");
-        assert_eq!(profiles.len(), 1);
-        assert_eq!(profiles[0].id, recent.id);
-        assert_eq!(
-            profiles[0].last_confirmed_match_at.as_deref(),
-            Some("2999-01-01T00:00:00Z")
-        );
+        let candidates = store
+            .stale_profile_ids("2998-01-01T00:00:00Z")
+            .expect("list stale profiles");
+        assert_eq!(candidates, vec![stale.id]);
+        assert!(!candidates.contains(&recent.id));
+    }
+
+    #[test]
+    fn enrollment_rejects_a_segment_outside_the_exact_authorized_range() {
+        let fixture = tempfile::tempdir().expect("voice DB fixture directory");
+        let path = fixture.path().join("voice-profiles.db");
+        let store = VoiceProfileStore::open(&path.to_string_lossy(), "test-passphrase")
+            .expect("open encrypted voice store");
+        let mut enrollment = enrollment();
+        enrollment.segments[0].end_word -= 1;
+        let error = store
+            .enroll(enrollment)
+            .expect_err("segment outside the authorized range must be rejected");
         assert!(
-            store
-                .require_compatible(&stale.id, &stale.fingerprint)
-                .is_err(),
-            "the stale profile must no longer be readable"
+            matches!(error, VoiceProfileError::InvalidEnrollment(_)),
+            "expected an enrollment invariant error, got {error}"
         );
     }
 

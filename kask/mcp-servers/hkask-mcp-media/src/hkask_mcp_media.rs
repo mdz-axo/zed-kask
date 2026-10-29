@@ -453,7 +453,7 @@ impl rmcp::ServerHandler for MediaServer {}
 mod tool_surface_tests {
     use super::*;
 
-    // One macro call pins the surface two ways: the exact count (79) and
+    // One macro call pins the surface two ways: the exact count (80) and
     // the generated TOOL_NAMES set against the live rmcp surface. Catches
     // silent registration drops — a `#[tool]` impl block without
     // `#[tool_router]`, or a sub-router missing from `combined_router()`,
@@ -466,8 +466,8 @@ mod tool_surface_tests {
     hkask_mcp_server::tool_surface_pin!(
         MediaServer::combined_router(),
         "combined_router",
-        79,
-        tool_surface_is_exactly_79_registered_tools,
+        80,
+        tool_surface_is_exactly_80_registered_tools,
     );
 
     // Coverage: every registered tool must map to an OMC concept. Catches
@@ -626,7 +626,9 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     &voice_path.to_string_lossy(),
                     &passphrase,
                 ),
-                Err(error) => voice_profiles::VoiceProfileRuntime::unavailable(error.to_string()),
+                Err(error) => {
+                                    voice_profiles::VoiceProfileRuntime::missing_credential(error.to_string())
+                                }
             };
             Ok(MediaServer::new(
                 ctx.webid,

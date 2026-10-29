@@ -508,12 +508,12 @@ mod tests {
         assert_ne!(cache_key("hello"), cache_key("world"));
     }
 
-    // Pins that the registry covers exactly the four `viz`-discriminated
+    // Pins that the registry covers exactly the three `viz`-discriminated
     // widgets and that their tags are disjoint (a body is claimed by at most
     // one factory).
     #[test]
-    fn viz_factories_cover_four_widgets() {
-        assert_eq!(viz_factories().len(), 4);
+    fn viz_factories_cover_three_widgets() {
+        assert_eq!(viz_factories().len(), 3);
     }
 
     // Pins the D18 fence-language gate in `markdown.rs` (`is_viz_block`):

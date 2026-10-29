@@ -42,7 +42,8 @@ use hkask_mcp_media::types::{
     ModelInfoRequest, ModelListRequest, RecordAndTranscribeRequest, TranscribeAndStoreRequest,
     TranscribeBundleRequest, VideoAddCaptionRequest, VideoClipRequest, VideoConcatRequest,
     VideoExtractFramesRequest, VideoFetchRequest, VideoInfoRequest, VideoToGifRequest,
-    VoiceEnrollRequest, VoiceListRequest, VoiceRemoveRequest, YoutubeSearchRequest,
+    VoiceEnrollRequest, VoiceListRequest, VoicePruneRequest, VoiceRemoveRequest,
+    YoutubeSearchRequest,
 };
 use hkask_types::find_boolean_schema_positions;
 use schemars::schema_for;
@@ -325,6 +326,7 @@ schema_clean_test!(layers_shot_pass_request_schema, LayersShotPassRequest);
 schema_clean_test!(voice_enroll_request_schema, VoiceEnrollRequest);
 schema_clean_test!(voice_list_request_schema, VoiceListRequest);
 schema_clean_test!(voice_remove_request_schema, VoiceRemoveRequest);
+schema_clean_test!(voice_prune_request_schema, VoicePruneRequest);
 
 /// The closed layer-kind vocabulary rejects unknown values at the wire
 /// boundary naming every valid kind — the rmcp deserializer surfaces this
@@ -615,3 +617,4 @@ deser_totality_test!(
 deser_totality_test!(voice_enroll_request_deser_totality, VoiceEnrollRequest);
 deser_totality_test!(voice_list_request_deser_totality, VoiceListRequest);
 deser_totality_test!(voice_remove_request_deser_totality, VoiceRemoveRequest);
+deser_totality_test!(voice_prune_request_deser_totality, VoicePruneRequest);

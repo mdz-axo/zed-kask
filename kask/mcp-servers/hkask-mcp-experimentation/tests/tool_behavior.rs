@@ -611,7 +611,10 @@ async fn invalid_inputs_are_rejected_with_named_errors() {
         .experiment_propose(Parameters(proposal("genome")))
         .await
         .expect_err("unknown layer rejected");
-    assert!(error.to_string().contains("skill, agent_card"), "{error}");
+    assert!(
+        error.to_string().contains("skill, prompt_template"),
+        "{error}"
+    );
 
     let mut request = proposal("skill");
     request.prediction.confidence = 1.5;

@@ -7781,6 +7781,7 @@ name = "hkask-mcp-media"
 version = "0.40.2"
 dependencies = [
  "base64 0.22.1",
+ "chrono",
  "hkask-bridge-ontology",
  "hkask-inference",
  "hkask-keystore",
