@@ -40,7 +40,7 @@ target=$(sed -n 's/.*working \*\*target of \([0-9]\{1,\}\) files\*\*.*/\1/p' "$D
 actual=$(find "$DOCS_ROOT" -type f | wc -l | tr -d ' ') || fail "scanning $DOCS_ROOT failed"
 if (( actual >= cap )); then
     fail "kask/docs holds $actual files — at or over the fewer-than-$cap cap (DOCUMENTATION_STANDARDS.md §3)" \
-    "fold or delete a leaf document per §3 (recording its successor in the README lifecycle ledger), or raise the cap by operator ruling — updating every gate reference in the same change"
+    "fold or delete a leaf document per §3, or raise the cap by operator ruling — updating every gate reference in the same change"
 fi
 
 # ── Recorded-measurement parity (the drift detector) ──────────────────────

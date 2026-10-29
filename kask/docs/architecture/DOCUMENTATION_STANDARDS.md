@@ -593,10 +593,8 @@ Created → Active → Superseded → Archived (git history)
 ### B.3 Archive Procedure
 
 1. Verify the handoff is superseded or stale.
-2. Fold durable content into the successor document (or the README lifecycle ledger) and delete the scratch file.
+2. Fold durable content into the successor document and delete the scratch file.
 3. No on-disk archive copy is kept. Git history is the canonical archive for anything committed.
-
-The [`kask/docs/README.md`](../README.md) lifecycle ledger records fold-and-delete decisions; it stores no document contents.
 
 ### B.4 Handoff Hygiene Rules
 
@@ -612,7 +610,6 @@ The [`kask/docs/README.md`](../README.md) lifecycle ledger records fold-and-dele
 
 - **DOCUMENTATION_STANDARDS.md** governs formal documents with frontmatter. Handoffs skip frontmatter.
 - **MDS.md §9** governs placement of formal documents. Handoffs are not formal documents and hold no reserved directory in the capped tree.
-- **The README lifecycle ledger** records fold-and-delete decisions for anything that transits through a handoff into (or out of) the tree.
 - **Forward-looking work** lives in the workstream's tooling by default. When the operator explicitly retains a formal review artifact, it lives under `kask/docs/plans/` with `status: "Proposed"` and the §4.2 conceptual-diagram rule.
 
 ### B.6 Verification
@@ -622,8 +619,8 @@ The [`kask/docs/README.md`](../README.md) lifecycle ledger records fold-and-dele
 # kask/scripts/check-docs-count-gate.sh (CI: kask-invariants); manual form:
 find kask/docs -type f | wc -l     # must stay < 85 (working target: 75)
 
-# Anything durable from a handoff must be traceable to the ledger:
-grep -n "lifecycle ledger" kask/docs/README.md
+# Anything durable from a handoff must be traceable to the docs tree:
+grep -rn "<the durable topic>" kask/docs
 ```
 
 ---

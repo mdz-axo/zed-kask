@@ -89,10 +89,9 @@ citations were not re-checked is unverified recomposition.
 3. Render the triage output shapes: call `render_template` with template ref
    `doc-update/triage` (the template lives in
    `kask/registry/templates/doc-update/triage.j2` — templates are registry
-   resources, NOT files next to SKILL.md). Record every decision with a
-   successor.
-4. Never delete without a successor named. Git history is the content
-   archive; the ledger is the map to it. Verify the Phase 0 triage cap and successor completeness in `lisp_eval` (`DU-1`) before starting Phase 1: `(and (< count_after 85) (= successorless_folds 0) (= count_after (- count_before deleted_or_folded)))`.
+   resources, NOT files next to SKILL.md). FOLD rows name their successor doc.
+4. Never fold without a successor named. Git history is the content
+   archive. Verify the Phase 0 triage cap and successor completeness in `lisp_eval` (`DU-1`) before starting Phase 1: `(and (< count_after 85) (= successorless_folds 0) (= count_after (- count_before deleted_or_folded)))`.
 
 ### Phase 1 — Ground (per docs-set, one pass each)
 

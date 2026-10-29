@@ -10,6 +10,31 @@ use crate::*;
 const MAX_ENROLLMENT_SPAN_MS: u64 = 60_000;
 const MAX_PRUNE_AGE_DAYS: u32 = 365_000;
 
+/// The minimum cosine similarity between a span embedding and the enrolled
+/// centroid for a positive identification (plan §5.3: threshold ≈0.75).
+const IDENTIFICATION_THRESHOLD: f64 = 0.75;
+
+/// The minimum top-1 minus runner-up similarity gap for a positive
+/// identification (plan §5.3: margin ≈0.05).
+const IDENTIFICATION_MARGIN: f64 = 0.05;
+
+/// The L2-normalized cosine similarity between two vectors. Both inputs
+/// should already be L2-normalized (the CAM++ model output is), so this
+/// is effectively a dot product, but we compute the full cosine to be
+/// robust to non-normalized inputs.
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+    let dot: f64 = a.iter().zip(b).map(|(x, y)| (x * y) as f64).sum();
+    let norm_a: f64 = a.iter().map(|x| (x * x) as f64).sum::<f64>().sqrt();
+    let norm_b: f64 = b.iter().map(|x| (x * x) as f64).sum::<f64>().sqrt();
+    if norm_a == 0.0 || norm_b == 0.0 {
+        return 0.0;
+    }
+    dot / (norm_a * norm_b)
+}
+
 #[derive(Debug, serde::Serialize)]
 struct VoiceSegmentView {
     id: String,
@@ -214,6 +239,164 @@ impl MediaServer {
                 "speaker_evidence": evidence,
                 "authorization_kind": "operator_authorization",
                 "authenticated_data_subject_consent": false,
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Identify the speaker of every span in the latest speaker layer of a stored transcript by cosine-comparing each span's CAM++ embedding against every enrolled voice profile's centroid (suggest-only). Suggested matches are stored as separate identification layers carrying the matched profile id, speaker name, cosine similarity, and the top-1 minus runner-up margin. No match is auto-confirmed; confirmation flows through the existing annotation tools or through voice_prune sparing the matched profile."
+    )]
+    pub async fn voice_identify(
+        &self,
+        Parameters(VoiceIdentifyRequest { transcript_id }): Parameters<VoiceIdentifyRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "voice_identify", async {
+            let _admission = self.admit_heavy_operation()?;
+            let store = self.voice.profile_store().map_err(map_voice_error)?;
+            let profiles = store.list_profiles().map_err(map_voice_error)?;
+            if profiles.is_empty() {
+                return Ok(serde_json::json!({
+                    "status": "no_profiles",
+                    "identified": 0,
+                    "unknown": 0,
+                    "spans": [],
+                }));
+            }
+            let driver = &**self.gallery_store.driver();
+            crate::transcript_store::ensure_schema(driver)
+                .map_err(|error| McpToolError::internal(error.to_string()))?;
+            let Some((summary, bundle)) =
+                crate::transcript_store::load_transcript(driver, &transcript_id)
+                    .map_err(|error| McpToolError::internal(error.to_string()))?
+            else {
+                return Err(McpToolError::not_found(format!(
+                    "transcript {transcript_id} not found"
+                )));
+            };
+            if bundle.words.is_empty() {
+                return Err(McpToolError::failed_precondition(
+                    "transcript has no word-level timings; identification cannot anchor",
+                ));
+            }
+            let layers = crate::transcript_store::list_layers(driver, &transcript_id)
+                .map_err(|error| McpToolError::internal(error.to_string()))?;
+            let Some(speaker_layer) = layers.iter().rev().find_map(|record| match &record.layer {
+                TranscriptLayer::Speaker(layer) => Some(layer),
+                _ => None,
+            }) else {
+                return Err(McpToolError::failed_precondition(
+                    "no speaker layer; run the speaker pass (educt_speaker_pass) first",
+                ));
+            };
+            let encoder = self
+                .voice
+                .encoder()
+                .await
+                .map_err(|error| McpToolError::unavailable(error.to_string()))?;
+            let media_path = std::path::Path::new(&bundle.audio_path);
+            let mut span_results = Vec::new();
+            let mut identified = 0;
+            let mut unknown = 0;
+            for span in &speaker_layer.spans {
+                let start_ms = bundle.words[span.start_word].start_ms;
+                let end_ms = bundle.words[span.end_word].end_ms;
+                let embedded = encoder
+                    .embed_span(&self.ffmpeg, media_path, start_ms, end_ms)
+                    .await
+                    .map_err(|error| McpToolError::unavailable(error.to_string()))?;
+                let mut best: Option<(&VoiceProfile, f64)> = None;
+                let mut runner_up: f64 = 0.0;
+                for profile in &profiles {
+                    let similarity = cosine_similarity(&embedded.embedding, &profile.centroid);
+                    match best {
+                        Some((_, current)) if current >= similarity => {
+                            if similarity > runner_up {
+                                runner_up = similarity;
+                            }
+                        }
+                        _ => {
+                            if let Some((_, prev)) = best {
+                                runner_up = prev;
+                            }
+                            best = Some((profile, similarity));
+                        }
+                    }
+                }
+                let Some((profile, top)) = best else {
+                    unknown += 1;
+                    span_results.push(serde_json::json!({
+                        "start_word": span.start_word,
+                        "end_word": span.end_word,
+                        "start_ms": start_ms,
+                        "end_ms": end_ms,
+                        "status": "unknown",
+                        "reason": "no profile had a computable centroid",
+                    }));
+                    continue;
+                };
+                let margin = top - runner_up;
+                if top < IDENTIFICATION_THRESHOLD || margin < IDENTIFICATION_MARGIN {
+                    unknown += 1;
+                    span_results.push(serde_json::json!({
+                        "start_word": span.start_word,
+                        "end_word": span.end_word,
+                        "start_ms": start_ms,
+                        "end_ms": end_ms,
+                        "status": "unknown",
+                        "top_similarity": top,
+                        "margin": margin,
+                    }));
+                    continue;
+                }
+                let identification = crate::transcript_layers::IdentificationLayer {
+                    provenance: crate::transcript_layers::LayerProvenance {
+                        model: embedded.fingerprint.model_family.clone(),
+                        prompt_template: "voice_identify".to_string(),
+                        created_at: hkask_types::time::now_rfc3339(),
+                    },
+                    profile_id: profile.id.clone(),
+                    speaker_name: profile.speaker_name.clone(),
+                    start_word: span.start_word,
+                    end_word: span.end_word,
+                    score: top,
+                    margin,
+                    threshold_version: format!(
+                        "cos{IDENTIFICATION_THRESHOLD:.2}-margin{IDENTIFICATION_MARGIN:.2}"
+                    ),
+                    model_family: embedded.fingerprint.model_family.clone(),
+                    weights_sha256: embedded.fingerprint.weights_sha256.clone(),
+                    preprocessing: embedded.fingerprint.preprocessing.clone(),
+                    dimension: embedded.fingerprint.dimension,
+                };
+                let record = crate::transcript_store::store_layer(
+                    driver,
+                    &transcript_id,
+                    &TranscriptLayer::Identification(identification),
+                )
+                .map_err(|error| McpToolError::internal(error.to_string()))?;
+                identified += 1;
+                span_results.push(serde_json::json!({
+                    "start_word": span.start_word,
+                    "end_word": span.end_word,
+                    "start_ms": start_ms,
+                    "end_ms": end_ms,
+                    "status": "identified",
+                    "profile_id": profile.id,
+                    "speaker_name": profile.speaker_name,
+                    "similarity": top,
+                    "margin": margin,
+                    "layer_id": record.id,
+                }));
+            }
+            let _ = summary;
+            Ok(serde_json::json!({
+                "status": "ok",
+                "identified": identified,
+                "unknown": unknown,
+                "spans": span_results,
+                "threshold": IDENTIFICATION_THRESHOLD,
+                "margin": IDENTIFICATION_MARGIN,
             }))
         })
         .await

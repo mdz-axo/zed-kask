@@ -124,10 +124,6 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 
 Metadata-date distribution: 81 records at 2026-09-28, five at 2026-10-19 (the realignment pass re-verifying the companies-wave-touched records: `DIAG-ARCH-SKILL-MCP-LISP-001`, `DIAG-BRIDGE-002`, `DIAG-BRIDGE-003`, `DIAG-BRIDGE-004`, `DIAG-MDS-001`), three at 2026-10-13, two at 2026-10-26 (the media_panel diataxis re-anchor pass re-verifying `DIAG-MEDIA-PANEL-001` and `DIAG-MEDIA-PANEL-002` against the five-tab viewer), two at 2026-09-30 (the cybernetic-nervous-system model diagrams), one at 2026-10-05, and one externally-anchored record at 2026-09-16 (`DIAG-RES-CHUNK-001`, verified against arXiv/Anthropic engineering sources rather than tree files). All active records are `VERIFIED` (one tombstoned ID mention is excluded from the active count).
 
-## Retired/tombstone IDs (excluded from active registry validation)
-
-The 2026-09-16 tutorial folds removed these registry IDs with their owning documents: `DIAG-COND-001`, `DIAG-INF-001`, `DIAG-REG-001`, `DIAG-STOR-001`, `DIAG-TYPES-001`, `DIAG-BRIDGE-001`, `DIAG-SWARM-001`, `DIAG-SWARM-002`, and `DIAG-SWARM-003`. The deleted `hkask-tool-port/tutorial.md` carried no registered diagram ID. Their document successors are recorded in the lifecycle ledger at [`README.md`](./README.md).
-
 ## Preserved memory diagrams
 
 The former standalone memory diagrams remain inline in [`architecture/memory-system-specification.md`](./architecture/memory-system-specification.md) under IDs `DIAG-PL-MEMORY-ERD`, `DIAG-PL-MEMORY-INGEST`, and `DIAG-PL-MEMORY-RECALL`.

@@ -490,8 +490,8 @@ lands.
 ### Execution record — sixth slice (2026-10-01: CU-5(c) continuation — the whole-file pricing pass; a ruling menu, no deletions)
 
 Method: line counts, frontmatter statuses (all 72 claim Active —
-status does not discriminate), the README lifecycle ledger (seven
-prior condensation rounds), and a corrected repo-wide
+status does not discriminate), the recorded condensation
+rounds, and a corrected repo-wide
 inbound-reference matrix over every basename (the first sweep's
 exclusion filtered inbound references too — the `.rules`
 under-match class, caught when the region-routing SKILL.md citation

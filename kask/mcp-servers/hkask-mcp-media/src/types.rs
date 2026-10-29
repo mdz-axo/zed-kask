@@ -262,6 +262,11 @@ pub struct VoicePruneRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct VoiceIdentifyRequest {
+    pub transcript_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct EductRetranscribeSectionRequest {
     pub transcript_id: String,
     /// Inclusive source word range to re-transcribe. Indices anchor the

@@ -1,4 +1,4 @@
-{# goal: Emit the Phase 0 condensation-triage output shapes for the doc-update skill: the triage table (CORE / FOLD / DELETE with named successors), the fold plan, and the lifecycle-ledger entry appended to kask/docs/README.md. Every decision needs a successor; "none" is only valid for DELETE rows whose content is fully obsolete. Feeds the fewer-than-85-document cap check (working target 75 — operator ruling 2026-10-07, DOCUMENTATION_STANDARDS.md §3). The Phase 6 gate results are reported by the skill's own convergence form, not by this template — gate data does not exist at Phase 0 render time. #}
+{# goal: Emit the Phase 0 condensation-triage output shapes for the doc-update skill: the triage table (CORE / FOLD / DELETE) and the fold plan. Every FOLD needs a successor; "none" is only valid for DELETE rows whose content is fully obsolete. Feeds the fewer-than-85-document cap check (working target 75 — operator ruling 2026-10-07, DOCUMENTATION_STANDARDS.md §3). The Phase 6 gate results are reported by the skill's own convergence form, not by this template — gate data does not exist at Phase 0 render time. #}
 [inference]
 contract:
   input:
@@ -8,11 +8,9 @@ contract:
     reason_category: string
     triage_rows: array
     fold_rows: array
-    ledger_rows: array
   output:
     triage_table: string
     fold_plan: string
-    ledger_entry: string
 ---
 ## Condensation triage (`triage_table`) — {{ date }}
 
@@ -34,14 +32,4 @@ being carried forward, and the links that must be repointed.
 |--------|-------------------|-----------------|------------------|
 {%- for row in fold_rows %}
 | {{ row.source }} | {{ row.section }} | {{ row.content }} | {{ row.links }} |
-{%- endfor %}
-
-## Lifecycle ledger entry (`ledger_entry` — append to kask/docs/README.md)
-
-### Deleted {{ date }} ({{ reason_category }})
-
-| Artifact | Successor |
-|----------|-----------|
-{%- for row in ledger_rows %}
-| {{ row.artifact }} | {{ row.successor }} |
 {%- endfor %}
