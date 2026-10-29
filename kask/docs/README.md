@@ -18,7 +18,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 **Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) lists 17 retained artifacts across 9 cross-cutting sets. Eight tutorials were folded on 2026-09-16; on 2026-09-28 the eight per-crate how-to documents were folded into their set references (each reference gained a Procedures section) and the hkask-tool-port explanation was folded into its reference; `diataxis/hkask-mcp-server/tutorial.md` is the one retained tutorial.
 
-**Corpus size (measured 2026-10-28):** 78 Markdown documents and one live YAML inventory, 79 files total (`find kask/docs -type f | wc -l`) — under the formal **fewer-than-85** count gate, four above the working **75-file target** (cap and target history: operator rulings 2026-09-30 and 2026-10-07, [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3; the target is condensation direction, not a gate). `principle-constraints.yaml` is a live governance inventory consumed by `kask/scripts/check-principle-constraints.sh`, not a deletion candidate.
+**Corpus size (measured 2026-10-28):** 79 Markdown documents and one live YAML inventory, 80 files total (`find kask/docs -type f | wc -l`) — under the formal **fewer-than-85** count gate, five above the working **75-file target** (cap and target history: operator rulings 2026-09-30 and 2026-10-07, [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3; the target is condensation direction, not a gate). `principle-constraints.yaml` is a live governance inventory consumed by `kask/scripts/check-principle-constraints.sh`, not a deletion candidate.
 
 ## Repair and improvement plans
 
@@ -110,7 +110,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 - [x] Internal links target retained documents.
 - [x] Diagram metadata has unique-ID/location registry parity (83 records, tree-verified 2026-10-28).
 - [x] Edited citations use full repository-relative paths; 525 sampled citations resolved (2026-09-28), and the 2026-10-05 deep-alignment run re-verified every citation it touched against live code (the compaction entry points and pin sample, the d-seam DIVERGENCE rows, kanban R1, the 13 live tool-surface pin sites, `SignalMetric` at `signals.rs:14`) with the tree-wide relative-link sweep resolving.
-- [x] Document count is 79, under the fewer-than-85 cap (measured 2026-10-28, `find kask/docs -type f | wc -l`); the 75-file working target is exceeded by four — condensation direction, not a gate.
+- [x] Document count is 80, under the fewer-than-85 cap (measured 2026-10-28, `find kask/docs -type f | wc -l`); the 75-file working target is exceeded by five — condensation direction, not a gate.
 
 ## See also
 

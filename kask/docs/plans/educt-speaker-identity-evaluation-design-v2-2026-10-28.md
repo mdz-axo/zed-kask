@@ -1,3 +1,13 @@
+---
+title: "educt speaker identity — evaluation DesignSpec v2 (declaration-blocked)"
+audience: [operator, architects, developers]
+last_updated: 2026-10-28
+version: "2.0.0"
+status: "Proposed — design only, no measurements, registry declaration, seal, or accuracy claim"
+domain: "Media / transcript capabilities"
+mds_categories: [domain, trust]
+---
+
 # educt speaker identity — evaluation DesignSpec v2 (declaration-blocked)
 
 Status: **design only; no measurements, registry declaration, seal, or accuracy claim**.
