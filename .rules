@@ -86,6 +86,7 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 * A zed-side edit carries its DIVERGENCE.md seam update in the same pass — an unrecorded zed-side change is indistinguishable from upstream drift at the next rebase.
 * `cargo machete` in `script/clippy` stays scoped to `kask/` on purpose — root scope flags ~30 upstream deps as macro/feature-activated false positives, and silencing them means editing ~30 upstream Cargo.tomls (rebase friction) while masking genuinely-dead deps. A machete finding in `kask/` is always actionable: verify zero `use <dep>` hits in `src/` and `tests/`, then remove the dep line.
 * A DIVERGENCE.md file-coverage reconciliation must expand brace-shorthand path groups (`{a,b}.rs`) before declaring a file uncovered — the register's compact style (`crates/language_models/src/provider/{anthropic,anthropic_compatible,bedrock,opencode}.rs` under D83) reads as absence to an exact-string check and manufactured four false unregistered-edit findings (2026-10-23 audit).
+* Removing a registered action (or its defining crate) must sweep `assets/keymaps/*.json` in the same change — a stale built-in binding fails the startup keymap load and, before D96's degradation, crash-looped the app (live 2026-10-06 collab removal; 2026-10-28 swarm removal, two failed starts). After any action removal run the `cargo test -p zed keymap` set — `test_keymap_assets_only_bind_registered_actions` walks every keymap asset — before the operator rebuilds.
 
 ## Failure signals
 
@@ -181,6 +182,7 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 
 * A build-breaking half-edit left in the tree (e.g. an API change without its call sites) blocks every other agent's validation and is a release blocker, not work-in-progress. If you cannot finish a refactor in one pass, do not leave the tree broken — gate it, branch it, or revert it.
 * Inherited committed code must re-pass the FULL gate (`./script/clippy --deny warnings` over the touched scope), not just its own tests — a handoff that calls uncommitted-then-committed changes "validated" on tests alone ships clippy failures (convert.rs charset `and_then`, 2026-10-02).
+* Another stream's `git add -A` can overwrite a partial `git apply --cached` mid-turn and sweep finished-but-uncommitted work into its own commit — the shared index and working tree are mutable by every stream (observed 3x 2026-10-28: two staged-index overwrites during a split-file decode-fix commit, then a full commit sweep of gate-verified D96 work that rode in under the sweeping stream's message). Stage split-file work as ONE terminal chain (restore-staged → apply → assert the expected staged numstat → commit), and commit finished work the moment its gates pass — a gate-verified change left sitting through another stream's `git add -A && git commit` loses its attribution.
 
 # Repository fragmentation (absolute prohibition)
 
