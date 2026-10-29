@@ -333,6 +333,46 @@ pub enum ViewerTab {
     Transcript,
 }
 
+/// The shared two-click delete confirmation (media-refactor plan R4): the
+/// first click arms a row's stable identity, the second click on the SAME
+/// row confirms (consumes the arm and reports the confirming click), and a
+/// click on a different row re-aims at that row — a confirm never acts on
+/// the row beside the armed one. One pattern serves every row family
+/// (Library asset indexes, transcript recording ids); disarm on any path
+/// that can invalidate the aimed row (listing reloads, tab switches,
+/// dispatches) so a confirm is never aimed at a row that no longer exists.
+#[derive(Clone, Debug, Default)]
+struct ConfirmArm<K> {
+    /// The armed row key. The listing reconcile re-aims this directly when
+    /// it follows an armed row across a merge (the key shifts position).
+    armed: Option<K>,
+}
+
+impl<K: Clone + Eq> ConfirmArm<K> {
+    /// A row click: consume the arm and report the confirming click when
+    /// `key` is the armed row; any other row (including the first click
+    /// on a disarmed list) arms that row instead.
+    fn confirm(&mut self, key: &K) -> bool {
+        if self.armed.as_ref() == Some(key) {
+            self.armed = None;
+            true
+        } else {
+            self.armed = Some(key.clone());
+            false
+        }
+    }
+
+    /// Disarm without dispatching.
+    fn disarm(&mut self) {
+        self.armed = None;
+    }
+
+    /// Whether `key` is the armed row (renders the Confirm delete state).
+    fn is_armed(&self, key: &K) -> bool {
+        self.armed.as_ref() == Some(key)
+    }
+}
+
 pub struct MediaViewer {
     assets: Vec<MediaAsset>,
     selected: Option<usize>,
@@ -443,11 +483,12 @@ pub struct MediaViewer {
     reel_selection: HashSet<(usize, usize)>,
     edit_request: RequestLifecycle,
     edit_progress: Option<String>,
-    /// Two-step delete confirmation: the asset awaiting confirmation.
-    confirm_delete: Option<usize>,
-    /// Two-step delete confirmation for the Transcript tab's recordings: the
-    /// transcript id whose Confirm delete is armed.
-    confirm_delete_transcript: Option<String>,
+    /// Two-step delete confirmation for Library rows: the armed asset row
+    /// index (the one shared confirm-arm pattern — see `ConfirmArm`).
+    confirm_delete: ConfirmArm<usize>,
+    /// Two-step delete confirmation for the Transcript tab's recordings:
+    /// the armed transcript id (the same confirm-arm pattern).
+    confirm_delete_transcript: ConfirmArm<String>,
     /// Visible status line (errors from tool dispatch, notices).
     status: Option<String>,
     /// Tool-call ids whose results `ingest_thread` has already examined. A
@@ -506,8 +547,8 @@ impl MediaViewer {
             reel_selection: HashSet::new(),
             edit_request: RequestLifecycle::new(),
             edit_progress: None,
-            confirm_delete: None,
-            confirm_delete_transcript: None,
+            confirm_delete: ConfirmArm::default(),
+            confirm_delete_transcript: ConfirmArm::default(),
             status: None,
             processed_tool_results: HashSet::new(),
         }
@@ -570,8 +611,8 @@ impl MediaViewer {
             self.annotation_edit = None;
         }
         self.active_tab = tab;
-        self.confirm_delete = None;
-        self.confirm_delete_transcript = None;
+        self.confirm_delete.disarm();
+        self.confirm_delete_transcript.disarm();
         match tab {
             ViewerTab::Library => self.load_gallery(cx),
             ViewerTab::Queue => self.load_jobs(cx),
@@ -972,6 +1013,7 @@ impl MediaViewer {
             .map(|asset| asset.src.clone());
         let confirmed_src = self
             .confirm_delete
+            .armed
             .and_then(|ix| self.assets.get(ix))
             .map(|asset| asset.src.clone());
         for record in &listing.assets {
@@ -1017,7 +1059,7 @@ impl MediaViewer {
         self.gallery_limit = listing.limit;
         self.gallery_id = Some(listing.gallery_id);
         self.selected = next_selected;
-        self.confirm_delete = next_confirm_delete;
+        self.confirm_delete.armed = next_confirm_delete;
         if gallery_changed || selected_changed {
             self.clear_media_widget(cx);
             self.detail = None;
@@ -1873,7 +1915,7 @@ impl MediaViewer {
             }
         };
         self.edit_progress = Some("Deleting recording…".into());
-        self.confirm_delete_transcript = None;
+        self.confirm_delete_transcript.disarm();
         let Some(invoker) = hkask_tool_invoker::shared_tool_invoker() else {
             self.apply_transcript_deletion_result(
                 epoch,
@@ -2008,13 +2050,13 @@ impl MediaViewer {
                 // A deletion or concurrent listing change may have removed the
                 // recording whose Confirm delete is armed — never leave a confirm
                 // aimed at a row that no longer exists.
-                if let Some(id) = self.confirm_delete_transcript.as_ref()
+                if let Some(id) = self.confirm_delete_transcript.armed.as_ref()
                     && !self
                         .transcript_listing
                         .as_ref()
-                        .is_some_and(|listing| listing.iter().any(|row| &row.id == id))
+                        .is_some_and(|listing| listing.iter().any(|row| row.id == *id))
                 {
-                    self.confirm_delete_transcript = None;
+                    self.confirm_delete_transcript.disarm();
                 }
                 self.transcript_listing_request.complete(epoch, Ok(()));
             }
@@ -3056,7 +3098,7 @@ impl MediaViewer {
             }) {
                 Ok(transcripts_detached) => {
                     this.update(cx, |this, cx| {
-                        this.confirm_delete = None;
+                        this.confirm_delete.disarm();
                         this.status = Some(format!(
                             "Asset removed from the gallery index; {transcripts_detached} transcript link(s) detached."
                         ));
@@ -3446,7 +3488,7 @@ impl MediaViewer {
             })
             .map(|(ix, asset)| {
                 let selected = self.selected == Some(ix);
-                let confirming = self.confirm_delete == Some(ix);
+                let confirming = self.confirm_delete.is_armed(&ix);
                 let icon = if asset.kind == "image" {
                     IconName::Image
                 } else {
@@ -3520,10 +3562,9 @@ impl MediaViewer {
                                 }),
                             )
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                if this.confirm_delete == Some(ix) {
+                                if this.confirm_delete.confirm(&ix) {
                                     this.delete_asset(ix, cx);
                                 } else {
-                                    this.confirm_delete = Some(ix);
                                     cx.notify();
                                 }
                             })),
@@ -4780,7 +4821,7 @@ impl MediaViewer {
             // confirmation, Confirm delete dispatches the server's
             // `educt_delete_transcript` (durable exports and rendered reels
             // are preserved by the server, detached from the removed record).
-            let confirming = self.confirm_delete_transcript.as_deref() == Some(&transcript.id);
+            let confirming = self.confirm_delete_transcript.is_armed(&transcript.id);
             let delete_row_id = transcript.id.clone();
             let delete_button = div()
                 .id(SharedString::from(format!(
@@ -4813,11 +4854,9 @@ impl MediaViewer {
                     }),
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    if this.confirm_delete_transcript.as_deref() == Some(&delete_row_id) {
-                        this.confirm_delete_transcript = None;
+                    if this.confirm_delete_transcript.confirm(&delete_row_id) {
                         this.delete_transcript_recording(delete_row_id.clone(), cx);
                     } else {
-                        this.confirm_delete_transcript = Some(delete_row_id.clone());
                         cx.notify();
                     }
                 }));
@@ -6987,13 +7026,13 @@ mod tests {
                 })), cx);
                 if gallery == "a" {
                     viewer.selected = Some(0);
-                    viewer.confirm_delete = Some(0);
+                    viewer.confirm_delete.confirm(&0);
                     viewer.detail = Some(serde_json::json!({"old": true}));
                 }
             }
             assert_eq!(viewer.assets.len(), 1, "old gallery rows are invalid");
             assert!(viewer.selected.is_none());
-            assert!(viewer.confirm_delete.is_none());
+            assert!(viewer.confirm_delete.armed.is_none());
             assert!(viewer.detail.is_none());
         });
     }
@@ -7061,7 +7100,7 @@ mod tests {
                 })),
                 cx,
             );
-            viewer.confirm_delete = Some(0); // pending deletion of A's row
+            viewer.confirm_delete.confirm(&0); // pending deletion of A's row
             viewer.merge_gallery_listing(
                 Some(serde_json::json!({
                     "gallery_id": "gallery-b", "total": 1, "offset": 0, "limit": 100,
@@ -7070,7 +7109,7 @@ mod tests {
                 cx,
             );
             // The switch invalidated the pending action and every A row.
-            assert!(viewer.confirm_delete.is_none(),
+            assert!(viewer.confirm_delete.armed.is_none(),
                 "a confirmation captured in A must not act on B");
             assert!(viewer.assets.iter().all(|asset| asset.src != "/a.png"),
                 "A's rows are gone");
@@ -7140,7 +7179,7 @@ mod tests {
                 indexed_asset("/gallery/survivor.png", 1),
             ];
             viewer.selected = Some(0); // the asset about to be deleted
-            viewer.confirm_delete = Some(1); // the survivor, pre-shift
+            viewer.confirm_delete.confirm(&1); // the survivor, pre-shift
         });
         let payload = serde_json::json!({
             "gallery_id": "gallery-a",
@@ -7165,7 +7204,7 @@ mod tests {
                 "the deleted asset's detail is cleared"
             );
             assert_eq!(
-                viewer.confirm_delete,
+                viewer.confirm_delete.armed,
                 Some(0),
                 "the pending confirmation follows its asset to the shifted index"
             );
@@ -9444,6 +9483,33 @@ mod tests {
         );
     }
 
+    /// dcterms:identifier: `ConfirmArm`
+    /// expect: The shared two-click confirm: the first click arms, the same
+    /// row's next click confirms and consumes the arm, a different row's
+    /// click re-aims at it (a confirm never acts on the row beside the
+    /// armed one), and disarm leaves no aim. One pattern serves every row
+    /// family — Library indexes and transcript ids alike (R4).
+    /// [P1] Motivating: two hand-rolled confirm state machines drifted
+    /// apart in the disarm paths; one implementation cannot.
+    #[test]
+    fn confirm_arm_arms_confirms_and_disarms() {
+        let mut arm = ConfirmArm::default();
+        assert!(
+            !arm.confirm(&"row-a"),
+            "the first click arms, never confirms"
+        );
+        assert!(arm.is_armed(&"row-a"), "the clicked row is armed");
+        assert!(
+            !arm.confirm(&"row-b") && arm.is_armed(&"row-b"),
+            "clicking another row re-aims at it"
+        );
+        assert!(arm.confirm(&"row-b"), "the armed row's next click confirms");
+        assert!(arm.armed.is_none(), "confirm consumes the arm");
+        arm.confirm(&"row-c");
+        arm.disarm();
+        assert!(!arm.is_armed(&"row-c"), "disarm leaves no aim");
+    }
+
     /// dcterms:identifier: `build_pane_blocks`
     /// expect: Blocks honor breaks, align char ranges with the word text,
     /// and carry the global indices and start times the click map consumes.
@@ -10224,7 +10290,9 @@ mod viewer_layout_tests {
 
         // Arming the confirmation swaps the affordance.
         viewer.update(cx, |viewer, cx| {
-            viewer.confirm_delete_transcript = Some("t-delete".into());
+            viewer
+                .confirm_delete_transcript
+                .confirm(&"t-delete".to_owned());
             cx.notify();
         });
         cx.run_until_parked();
@@ -10254,7 +10322,7 @@ mod viewer_layout_tests {
                 viewer.status
             );
             assert_eq!(
-                viewer.confirm_delete_transcript, None,
+                viewer.confirm_delete_transcript.armed, None,
                 "dispatch disarms the confirmation"
             );
             viewer.delete_transcript_recording("t-delete".into(), cx);
