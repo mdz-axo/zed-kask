@@ -1,8 +1,8 @@
 ---
 title: "zed-kask Diataxis Documentation Index"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-10-19
-version: "1.6.0"
+last_updated: 2026-10-28
+version: "1.7.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -10,13 +10,16 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 # zed-kask Diataxis Documentation Index
 
-This index lists 19 retained artifacts across 10 cross-cutting documentation
+This index lists 17 retained artifacts across 9 cross-cutting documentation
 sets. Eight tutorials were folded on 2026-09-16; on 2026-09-28 the eight
 per-crate how-to documents were folded into their set references (each reference
 gained a Procedures section) and the hkask-tool-port explanation was folded into
 its reference; `hkask-mcp-server/tutorial.md` is the one retained
-tutorial. The count is the current filesystem result under
-`kask/docs/diataxis/*/*.md` on 2026-09-28, excluding this index.
+tutorial. The `swarm_system` set was removed 2026-10-28 with the swarm
+capability (the executed removal plan is
+[`plans/swarm-removal-plan-2026-10-28.md`](../plans/swarm-removal-plan-2026-10-28.md)).
+The count is the current filesystem result under
+`kask/docs/diataxis/*/*.md` on 2026-10-28, excluding this index.
 
 Artifacts are expected to carry repo-relative implementation evidence. This
 index does not claim that every citation in every retained artifact has been
@@ -36,7 +39,7 @@ Since the 2026-09-28 fold, the per-crate task procedures live in each set's
 reference document under a `Procedures` section; no per-crate file carries the
 How-to quadrant alone.
 
-## Retained sets — 19 artifacts
+## Retained sets — 17 artifacts
 
 | Set | Tutorial | How-to | Reference | Explanation |
 | --- | --- | --- | --- | --- |
@@ -52,7 +55,7 @@ How-to quadrant alone.
 
 ## Out of scope for additional per-crate sets
 
-### MCP server crates — complete 9-server inventory
+### MCP server crates — complete 8-server inventory
 
 The managed server crates are documented cross-cuttingly under
 [`kask/docs/reference/mcp-servers/`](../reference/mcp-servers/README.md) rather

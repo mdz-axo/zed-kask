@@ -1,8 +1,8 @@
 ---
 title: "Instrument-affordance experiment: compliance baseline, harness bring-up record, and the production sensor/injection specs"
 audience: [architects, developers, operators]
-last_updated: 2026-10-23
-version: "1.0.0"
+last_updated: 2026-10-28
+version: "1.0.1"
 status: "Active"
 domain: "Agent instrumentation"
 mds_categories: [domain, trust, lifecycle]
@@ -59,25 +59,33 @@ harness bring-up work it required, and the production specs for B and D.
 
 ## 2. Harness bring-up record (the seams found and fixed, 2026-10-23)
 
+**Removed surface (2026-10-28):** the local swarm agents this harness brought
+up were removed with the swarm capability (commit `9a62f6a0bc`,
+[`plans/swarm-removal-plan-2026-10-28.md`](../plans/swarm-removal-plan-2026-10-28.md)).
+This section stands as the bring-up record: the measured findings and the
+delegation-grant seam (item 2) survive on the worktree path; the
+executor-side mechanisms it names went with the server.
+
 Local swarm agents could not use MCP tools at session start. Three seams, each found by
 evidence and fixed on the designed mechanism:
 
 1. **Qualified names required.** Card `mcp_tools` entries must be `server/tool` qualified
-   (`kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:249-283`); bare names are rejected
+   (the swarm server's `agent_executor.rs`, removed 2026-10-28); bare names were rejected
    before inference (tested: `invalid_tool_name_is_rejected_before_inference`). The rejection
    is silent to the caller: the first pilot delegation ran with zero tools and the model
    reported "tools not connected or accessible in this execution environment" — an
    observability gap that reads as a capability gap (filed, §6).
-2. **Parent grant required.** Tool advertising is denied at the zed-side IPC boundary unless
-   BOTH the card allowlist and the parent delegation grant permit the qualified name
-   (`kask/crates/kask_bridge/src/inference_ipc_server.rs:1018-1030`;
-   `kask/crates/kask_bridge/src/delegation_grants.rs`). Grants are minted from
-   `kask.mcp.delegated_tools` settings at server spawn
-   (`kask/crates/kask_bridge/src/mcp_servers.rs:559-575`); the swarm server additionally and
-   unconditionally receives the host skill tools (`host/skill`, `host/render_template`,
+2. **Parent grant required.** Tool advertising was denied at the zed-side IPC boundary unless
+   BOTH the card allowlist and the parent delegation grant permitted the qualified name —
+   the grant machinery survives on the worktree path
+   (`kask/crates/kask_bridge/src/delegation_grants.rs`: grants minted from
+   `kask.mcp.delegated_tools`, narrowing checked at dispatch), while the swarm-children
+   advertising gate went with the server. The swarm server additionally and
+   unconditionally received the host skill tools (`host/skill`, `host/render_template`,
    `host/lisp_eval`, `host/onto_anchor` — "Local swarm agents get the Curator's skill access
-   by default"). The `delegated_tools` entry for the swarm server did not exist.
-3. **Round budget.** `MAX_TOOL_ROUNDS = 4` (`agent_executor.rs:19-23`) bounds each delegation;
+   by default"); that unconditional host-tool grant is gone with it. The `delegated_tools`
+   entry for the swarm server did not exist.
+3. **Round budget.** `MAX_TOOL_ROUNDS = 4` (the removed swarm executor's round budget) bounded each delegation;
    parallel tool calls in one assistant message count as one round. Full instrumented flows
    must batch or the delegation errors ("exhausted 4 tool-call rounds without a final
    answer"). Both experiment arms carry an explicit round-budget line in their prompts.
@@ -95,10 +103,10 @@ Configuration change made this session (disclosed; reversible by removing the ke
 ] } } }
 ```
 
-Host tools ride a separate path: declaring any skill on a card auto-adds the host quartet to
-the executor's allowlist (`agent_executor.rs:259-261`); `host/skill` is further limited to the
-card's declared skill names. Host tools are granted without a `delegated_tools` entry
-(`kask/crates/kask_bridge/src/host_skill_tools.rs:19-20`).
+Host tools rode a separate path: declaring any skill on a card auto-added the host quartet to
+the executor's allowlist (the removed swarm executor); `host/skill` was further limited to the
+card's declared skill names. Host tools were granted without a `delegated_tools` entry
+(the removed `host_skill_tools.rs`).
 
 Defects observed during bring-up (filed to the audit board, §6):
 

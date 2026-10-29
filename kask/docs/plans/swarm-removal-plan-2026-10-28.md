@@ -1,3 +1,13 @@
+---
+title: "Swarm capability removal plan — 2026-10-28"
+audience: [architects, developers, operators]
+last_updated: 2026-10-28
+version: "1.0.0"
+status: "Active — executed 2026-10-28 in the same change that added it (commit 9a62f6a0bc: the hkask-mcp-swarm server, the swarm panel and widget, the A2A surface, the local agent registry, the swarm memory store, and the two swarm skills removed; DIVERGENCE.md retired seam D33)"
+domain: "MCP fleet / removed swarm capability"
+mds_categories: [domain, lifecycle]
+---
+
 # Swarm capability removal plan — 2026-10-28
 
 **Goal (operator order):** remove the `hkask-mcp-swarm` MCP server, its related

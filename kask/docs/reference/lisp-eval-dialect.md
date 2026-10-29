@@ -1,8 +1,8 @@
 ---
 title: "The lisp_eval Dialect"
 audience: [agents, developers]
-last_updated: 2026-10-21
-version: "0.42.2"
+last_updated: 2026-10-28
+version: "0.43.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, trust]
@@ -51,7 +51,18 @@ H6 uses one per-invocation monotonic `Arc<AtomicBool>`: caller Release-store, co
 
 Native result-task drop requests cancellation; user cancellation also waits for the worker. A constructor-held acknowledgement guard covers never-polled workers and teardown; the turn joins all receipts even after provider early exit, with missing acknowledgements surfaced as errors (`lisp_eval_tool.rs:374@LispEvalTool::run`, `:418@lisp_worker`; `thread.rs:3094@Thread::run_turn`, `:7535@ThreadEventStream::join_lisp_completions`, `:7930@ToolCallEventStream::register_lisp_completion`). A publication fence checks the result's old turn cancellation state before emitting buffered results. Weak pending-owner identity guards history insertion and deferred flushing, so old cleanup cannot mutate a successor (`thread.rs:4565@Thread::process_tool_result`, `:5494@Thread::owns_pending_message`, `:2626@Thread::cancel`).
 
-H7 offloads only authorized `host/lisp_eval` typed decoding/evaluation to existing Tokio `spawn_blocking`, reusing `LispEvalToolInput` and the public `evaluate_lisp_controlled`; the pure entry remains uncontrolled. Card narrowing and the parent grant are checked before invocation (`kask/crates/kask_bridge/src/inference_ipc_server.rs:1093-1124`; `kask/crates/kask_bridge/src/host_skill_tools.rs:149-171@run_lisp`). An invocation-owned drop guard exists before first poll/spawn; when the actual IPC EOF leg wins, dispatch drops the owner and signals its flag (`host_skill_tools.rs:107-137@LispCancellation`, `:221-231`; `inference_ipc_server.rs:827-840`). Connection tests observe eventual real-helper return/worker exit, separately from handler exit, including pre-spawn and queued cases (`inference_ipc_server.rs:1718-2116`). They do not prove an immediate join, hard deadline, whole-runtime shutdown join or EOF priority when result and EOF are simultaneously ready. Held-worker tests stop before decode/core entry; mid-evaluation checkpoint and scope-reclamation evidence belongs to H6A.
+H7's authorized host decode/eval — the `host/lisp_eval` IPC surface that let
+MCP-server child processes run typed decoding/evaluation on the zed host — was
+removed 2026-10-28 with the swarm capability (commit `9a62f6a0bc`, removal-plan
+decision 3): the swarm server's local delegate was its only consumer, and
+`host_skill_tools.rs`, `HostSkillToolPort`, the lisp `InferenceMethod` dispatch
+arms and the H7 IPC test module are gone with it — `inference_ipc_server.rs`
+retains no lisp handling. The in-process surface is unchanged: the agent
+thread's `lisp_eval` background-spawns typed decoding/evaluation through the
+public shared `evaluate_lisp_controlled` (`lisp_eval_tool.rs:487`), with the
+H5 worker and H6 cancellation guards above; the pure entry remains
+uncontrolled. No host/IPC lisp promise remains — immediate join, hard deadline,
+whole-runtime shutdown join and EOF priority are no longer claimed anywhere.
 
 H8 keeps the public direct `corpus_query` and metadata-preserving rmcp route on one internal body. Only Lisp-option evaluation/extraction runs on existing `spawn_blocking`; the pre-spawn drop guard and propagated request context cover only evaluation/join, not subsequent embedding, retrieval or generation (`kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs:155-389@corpus_query_inner`, lisp-option region `:180-222`; guard `:707-721@LispQueryCancellation`). The selector remains `query.trim_start().starts_with("(list")`; ordinary NL routing, defaults (top-k 5, include-text false, min-score 0.0, generate-answer false) and fixed 100000 steps / depth 100 are unchanged. Boolean options still require JSON booleans: `true`/`t` or `false`; `nil` is rejected before retrieval. Only the misleading diagnostic changed (`storage.rs:605-704@parse_lisp_query`).
 
