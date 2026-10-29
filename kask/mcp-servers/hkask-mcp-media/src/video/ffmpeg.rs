@@ -1119,7 +1119,11 @@ mod tests {
 
     /// Range extraction gates on the range start (the seek's landing
     /// keyframe before the start is not selected) and keeps the observed
-    /// showinfo source PTS — the chunk-sampling contract.
+    /// showinfo source PTS — the chunk-sampling contract. The fake ffmpeg
+    /// writes its one frame to the command's LAST argument — the output
+    /// pattern both extraction commands end with; never the argument
+    /// after `-vf`, which is the select filter (capturing that once wrote
+    /// a file named after the filter string into the crate root).
     #[cfg(unix)]
     #[tokio::test]
     async fn range_extraction_gates_on_start_and_keeps_source_pts()
@@ -1128,7 +1132,7 @@ mod tests {
         let (runner, _output_dir) = fake_ffmpeg_runner(
             &root,
             "range-frames.sh",
-            "#!/bin/sh\nseen_start=0\nfor arg do if [ \"$seen_start\" = 1 ]; then output=$arg; seen_start=2; fi; [ \"$arg\" = \"-vf\" ] && seen_start=1; done\nprintf frame > \"$output\"\nprintf '[Parsed_showinfo_1] n: 0 pts_time:10.000\\n' >&2\n",
+            "#!/bin/sh\nfor arg do output=$arg; done\nprintf frame > \"$output\"\nprintf '[Parsed_showinfo_1] n: 0 pts_time:10.000\\n' >&2\n",
         )?;
         let frames = runner
             .extract_keyframes_in_range("source.mp4", 10.0, 1.0, 1)

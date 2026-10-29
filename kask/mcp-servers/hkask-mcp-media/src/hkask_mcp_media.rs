@@ -466,8 +466,8 @@ mod tool_surface_tests {
     hkask_mcp_server::tool_surface_pin!(
         MediaServer::combined_router(),
         "combined_router",
-        81,
-        tool_surface_is_exactly_81_registered_tools,
+        82,
+        tool_surface_is_exactly_82_registered_tools,
     );
 
     // Coverage: every registered tool must map to an OMC concept. Catches
@@ -7233,18 +7233,19 @@ mod tool_behavior_tests {
     #[tokio::test]
     async fn layers_semantic_pass_shot_mode_chunks_over_stored_shots_and_degrades_on_zero_shots()
     -> Result<(), Box<dyn std::error::Error>> {
-        let (_env_lock, _artifacts, _env, _gallery_root, source, server) =
+        let (_env_lock, _artifacts, _env, gallery_root, source, server) =
             vision_pass_env(canned_vision_response()).await?;
         let media_path = source.to_string_lossy().into_owned();
-        // A real two-shot layer from the shot pass (the hard-cut fixture is
-        // not needed for chunking; the solid fixture has one shot, so build
-        // the plan from the hard-cut video in its own env).
-        let (_lock2, _art2, _env2, root2, store2, _driver2, gallery2) = media_test_env().await?;
-        let hard_cut = root2.path().join("hard-cut.mp4");
+        // A real two-shot layer from the shot pass (the solid fixture has
+        // one shot, so the plan comes from the hard-cut video). One env and
+        // one store: ARTIFACTS_ENV_LOCK is a single global mutex and not
+        // reentrant — a second media_test_env() here deadlocked the test
+        // holding the lock forever — and the shot layer must live in the
+        // store the semantic-pass server resolves shot_layer_id through.
+        let hard_cut = gallery_root.path().join("hard-cut.mp4");
         create_real_hard_cut_video(&hard_cut).await?;
-        let shot_server = server_with_gallery(store2.clone(), gallery2.id, root2.path());
         let shot_layer = content_of(
-            &shot_server
+            &server
                 .layers_shot_pass(Parameters(crate::types::LayersShotPassRequest {
                     media_path: hard_cut.to_string_lossy().into_owned(),
                     gallery_asset_id: None,
